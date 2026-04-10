@@ -755,8 +755,15 @@ class WorkflowValidator:
         """Check that all required child inputs are provided by the parent node."""
         from pflow.runtime.workflow_executor import WorkflowExecutor
 
+        inputs_value = parent_params.get("inputs")
+        if inputs_value is not None and not isinstance(inputs_value, dict):
+            # Opaque template (e.g. inputs: '${item}') — can't check statically.
+            return []
+
         diagnostics: list[Diagnostic] = []
         parent_keys = {k for k in parent_params if k not in WorkflowExecutor.RESERVED_PARAMS and not k.startswith("__")}
+        if isinstance(inputs_value, dict):
+            parent_keys |= set(inputs_value.keys())
         for input_name, input_spec in child_inputs.items():
             is_required = input_spec.get("required", True)
             has_default = "default" in input_spec

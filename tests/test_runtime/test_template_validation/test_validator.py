@@ -1306,3 +1306,113 @@ class TestBatchWorkflowNodeValidation:
         assert diagnostic.context is not None
         assert diagnostic.context.get("template") == "echo ${unclosed"
         assert diagnostic.context.get("path") == "nodes[id=n1].params.prompt"
+
+
+# ---------------------------------------------------------------------------
+# Inputs-as-context template validation
+# ---------------------------------------------------------------------------
+
+
+class TestInputsContextTemplateValidation:
+    """Tests for inputs-as-context template validation.
+
+    When a node declares ``- inputs: {key: ${source}}``, the key becomes a valid
+    template root within that node.  Both bare (``${key}``) and dotted
+    (``${key.field}``) references must pass validation.
+    """
+
+    def test_inputs_key_bare_recognized(self):
+        """${key} should be valid when node has inputs: {key: ...}."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "upstream",
+                    "type": "llm",
+                    "params": {"prompt": "Hello"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {
+                        "inputs": {"concept_brief": "${upstream.response}"},
+                        "prompt": "Write about ${concept_brief}",
+                    },
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "consumer"}],
+        }
+        registry = create_mock_registry()
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_inputs_key_dotted_path_recognized(self):
+        """${key.field} should be valid when key is in the node's inputs mapping."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "build-item",
+                    "type": "code",
+                    "params": {"code": "result = {'concept_md': 'test'}"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {
+                        "inputs": {"item": "${build-item.result}"},
+                        "prompt": "Repeat: ${item.concept_md}",
+                    },
+                },
+            ],
+            "edges": [{"from": "build-item", "to": "consumer"}],
+        }
+        registry = create_mock_registry()
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_inputs_key_deeply_nested_path_recognized(self):
+        """${key.a.b.c} should be valid when key is in the node's inputs mapping."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "upstream",
+                    "type": "code",
+                    "params": {"code": "result = {'a': {'b': {'c': 1}}}"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {
+                        "inputs": {"data": "${upstream.result}"},
+                        "prompt": "Value: ${data.a.b.c}",
+                    },
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "consumer"}],
+        }
+        registry = create_mock_registry()
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_inputs_key_on_non_code_node(self):
+        """inputs-as-context works on any node type, not just code nodes."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "params": {"command": "echo hello"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "shell",
+                    "params": {
+                        "inputs": {"output": "${upstream.stdout}"},
+                        "command": "echo ${output}",
+                    },
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "consumer"}],
+        }
+        registry = create_mock_registry()
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
