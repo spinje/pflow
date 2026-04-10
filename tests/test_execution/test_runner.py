@@ -530,3 +530,78 @@ def test_extract_runtime_warnings_skips_entries_without_diagnostic():
     warnings = runner._extract_runtime_warnings(permissive_shared_store)
 
     assert warnings == [], "Entries without a structured Diagnostic must be skipped"
+
+
+def test_exception_annotations_survive_full_pipeline():
+    """E2E: _pflow_* annotations set by the engine and template resolution
+    survive through the runner's _exception_to_result and land in the
+    ExecutionResult.
+
+    This is the enforcement test for the annotation preservation contract
+    documented in engine/CLAUDE.md. If a future change introduces
+    ``raise X from e`` in the annotation path, this test catches the
+    regression by verifying the structured context reaches the result.
+
+    Annotations verified:
+    - _pflow_node_id (engine.py) → result.errors[0].node_id
+    - _pflow_shared_store (runner.py) → result.shared_after is populated
+    - _pflow_template_diagnostic (template_resolution.py) → structured
+      Diagnostic with unresolved_references in result.errors
+    - _pflow_partial_resolutions (template_resolution.py) → trace event
+      has partial template_resolutions (tested in test_trace_integration)
+    """
+    # Two nodes: producer outputs stdout as a string. Consumer references
+    # ${producer.stdout} (resolves) and ${producer.stdout.nested} (fails
+    # at runtime — can't traverse into a plain string). Pre-execution
+    # validation passes because "stdout" is a known shell output, but
+    # runtime resolution raises a strict-mode ValueError with all
+    # _pflow_* annotations attached.
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "producer",
+                "type": "shell",
+                "params": {"command": "echo hello"},
+            },
+            {
+                "id": "consumer",
+                "type": "shell",
+                "params": {
+                    "command": "${producer.stdout}",
+                    "cwd": "${producer.stdout.nested}",
+                },
+            },
+        ],
+        "edges": [{"from": "producer", "to": "consumer"}],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
+
+    # Must fail
+    assert result.success is False
+
+    # _pflow_node_id survived → error diagnostic has node_id
+    assert result.errors, "Expected at least one error diagnostic"
+    error = result.errors[0]
+    assert error.node_id == "consumer", (
+        f"Expected node_id='consumer' from _pflow_node_id annotation, got '{error.node_id}'"
+    )
+
+    # _pflow_shared_store survived → shared_after is populated with
+    # producer's output and __failures__ archive
+    assert result.shared_after, "Expected populated shared_after from _pflow_shared_store annotation"
+    assert "producer" in result.shared_after, "Expected producer's output in shared_after"
+    assert "__failures__" in result.shared_after, "Expected __failures__ in shared_after"
+    assert "consumer" in result.shared_after["__failures__"], "Expected consumer in __failures__"
+
+    # _pflow_template_diagnostic survived → error has structured context
+    # with unresolved_references (not a flat string)
+    ctx = error.context or {}
+    assert ctx.get("category") == "template_error", (
+        f"Expected category='template_error' from _pflow_template_diagnostic, got '{ctx.get('category')}'"
+    )
+    refs = ctx.get("unresolved_references")
+    assert refs, "Expected unresolved_references in error context — _pflow_template_diagnostic annotation was lost"
+    assert any(r.get("root") == "producer" and r.get("status") == "path_error" for r in refs), (
+        f"Expected path_error reference to 'producer' in unresolved_references, got: {refs}"
+    )

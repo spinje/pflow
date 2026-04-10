@@ -360,7 +360,7 @@ def resolve_templates(  # noqa: C901
                     if upstream_context:
                         type_error += upstream_context
                     exc = ValueError(type_error)
-                    exc._partial_resolutions = partial  # type: ignore[attr-defined]
+                    exc._pflow_partial_resolutions = partial  # type: ignore[attr-defined]
                     raise exc
                 else:
                     # Build a structured Diagnostic at the source so
@@ -420,7 +420,7 @@ def resolve_templates(  # noqa: C901
                     for k in resolved_params
                 }
                 exc = ValueError(format_diagnostic(diagnostic))
-                exc._partial_resolutions = partial  # type: ignore[attr-defined]
+                exc._pflow_partial_resolutions = partial  # type: ignore[attr-defined]
                 exc._pflow_template_diagnostic = diagnostic  # type: ignore[attr-defined]
                 raise exc
             else:
