@@ -13,7 +13,7 @@ import logging
 from typing import Any, Optional
 
 from pflow.core.json_utils import try_parse_json
-from pflow.core.param_coercion import coerce_to_declared_type
+from pflow.core.param_coercion import coerce_param_for_node
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .template_errors import (
@@ -70,7 +70,7 @@ def split_params(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Separate params into template_params and static_params.
 
-    Static params get type coercion via coerce_to_declared_type.
+    Static params get type coercion via coerce_param_for_node.
     _source_line keys are kept in static_params (nodes read them for error
     reporting, e.g. python_code.py uses _code_source_line for line numbers).
     They are filtered out later by compute_node_config() for cache hashing.
@@ -90,7 +90,7 @@ def split_params(
             template_params[key] = value
         else:
             expected_type = expected_types.get(key)
-            coerced_value = coerce_to_declared_type(value, expected_type)
+            coerced_value = coerce_param_for_node(value, expected_type)
             static_params[key] = coerced_value
 
     return template_params, static_params
@@ -335,7 +335,7 @@ def resolve_templates(  # noqa: C901
         # Reverse: serialize dict/list -> str when expected type is str
         if isinstance(resolved_value, (dict, list)):
             expected_type = template_config.expected_types.get(key)
-            resolved_value = coerce_to_declared_type(resolved_value, expected_type)
+            resolved_value = coerce_param_for_node(resolved_value, expected_type)
 
         # Type validation for simple templates
         if is_simple_template:

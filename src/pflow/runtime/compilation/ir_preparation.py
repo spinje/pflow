@@ -14,7 +14,7 @@ import os
 from typing import Any
 
 from pflow.core.exceptions import CompilationError
-from pflow.core.param_coercion import coerce_input_to_declared_type
+from pflow.core.param_coercion import coerce_workflow_input
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 
 logger = logging.getLogger(__name__)
@@ -152,7 +152,7 @@ def _coerce_provided_input(
         )
         return None, False
 
-    coerced_value = coerce_input_to_declared_type(provided_value, declared_type, input_name=input_name)
+    coerced_value = coerce_workflow_input(provided_value, declared_type, input_name=input_name)
 
     # Explicit coercion check - don't rely on identity which is fragile
     # (e.g., string normalization could create new objects even when type matches)

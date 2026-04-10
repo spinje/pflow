@@ -104,7 +104,7 @@ IR structure validation and input preparation.
 - `prepare_inputs()` — validates inputs, resolves from fallback sources, coerces types. Returns `(errors, defaults, env_param_names)`. **Does NOT mutate `provided_params`** — returns defaults to be applied by the caller.
   - **5-tier precedence**: CLI args → `os.environ` → `settings.env` → workflow default → error if required
   - Only one `stdin: true` input allowed
-  - Type coercion via `coerce_input_to_declared_type()` — lenient (warns on failure, doesn't error)
+  - Type coercion via `coerce_workflow_input()` — lenient (warns on failure, doesn't error)
 
 **WARNING**: A DIFFERENT `validator.py` exists at `core/workflow/validator.py` (pre-execution 9-step orchestrator, 7+ external consumers). Don't confuse them.
 

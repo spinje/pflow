@@ -10,7 +10,7 @@ import click
 from pflow.cli.param_parsing import parse_workflow_params
 from pflow.core.diagnostic import exception_to_diagnostics, format_diagnostic
 from pflow.core.execution_cache import ExecutionCache
-from pflow.core.param_coercion import coerce_to_declared_type
+from pflow.core.param_coercion import coerce_param_for_node
 from pflow.core.user_errors import MCPError
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.registry import Registry
@@ -118,7 +118,7 @@ def _coerce_params_for_node(
     coerced = {}
     for key, value in params.items():
         expected_type = param_types.get(key)
-        coerced[key] = coerce_to_declared_type(value, expected_type)
+        coerced[key] = coerce_param_for_node(value, expected_type)
 
     return coerced
 

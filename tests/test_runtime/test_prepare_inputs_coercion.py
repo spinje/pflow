@@ -1,6 +1,6 @@
 """Tests for workflow input type coercion in prepare_inputs().
 
-This tests the integration of coerce_input_to_declared_type() into the
+This tests the integration of coerce_workflow_input() into the
 workflow validation pipeline, ensuring CLI-provided values are coerced
 to match declared input types.
 
