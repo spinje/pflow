@@ -140,7 +140,7 @@ class TestCopyPflowAnnotations:
         assert not hasattr(target, "_pflow_template_diagnostic")
         assert not hasattr(target, "_pflow_partial_resolutions")
 
-    def test_does_not_overwrite_existing_target_attrs(self):
+    def test_source_overwrites_existing_target_attrs(self):
         """Existing non-None attrs on source overwrite target — this is the
         expected behavior when wrapping (source has the authoritative context).
         """

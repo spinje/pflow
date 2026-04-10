@@ -397,7 +397,7 @@ class TestTemplateResolutionsOnError:
 
         Note: Template resolution errors ARE also captured in trace events
         (resolution runs inside the engine's try/except). Partial resolutions
-        up to the error point are included via _partial_resolutions on the ValueError.
+        up to the error point are included via _pflow_partial_resolutions on the ValueError.
         """
         ir = {
             "ir_version": "0.1.0",
