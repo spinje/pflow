@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from pflow.core.diagnostic import _CATEGORY_TITLES, Diagnostic, Severity
+from pflow.core.diagnostic import CATEGORY_TITLES, Diagnostic, Severity
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def _map_failure_category_to_diagnostic(failure_category: str) -> str:
 
     The node_state categories are precise ("shell_failure", "api_warning", etc.).
     The Diagnostic categories are coarser ("execution_failure", "template_error", etc.)
-    and drive _CATEGORY_TITLES lookup. Some node_state categories collapse to the
+    and drive CATEGORY_TITLES lookup. Some node_state categories collapse to the
     same Diagnostic category.
     """
     return _FAILURE_CATEGORY_MAP.get(failure_category, "execution_failure")
@@ -82,7 +82,7 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
         Diagnostic(
             severity=Severity.ERROR,
             message=error_info["message"] or "Workflow execution failed",
-            title=_CATEGORY_TITLES.get(category, "Execution Failed"),
+            title=CATEGORY_TITLES.get(category, "Execution Failed"),
             node_id=failed_node,
             source="runtime",
             context=context,

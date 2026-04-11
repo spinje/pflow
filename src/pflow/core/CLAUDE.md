@@ -96,13 +96,13 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 `Diagnostic` dataclass, `Severity` enum, dedup, exception conversion. Identity (eq/hash) is `severity + source + node_id + message` only — context, title, suggestions are display data. Use `deduplicate_diagnostics()` for collections.
 
-**`_CATEGORY_TITLES`** maps diagnostic categories to human-readable titles. Used by both `executor_service.py` (error categorization) and `diagnostic_render.py` (error title rendering). Lives here because it's a data constant, not rendering logic.
+**`CATEGORY_TITLES`** maps diagnostic categories to human-readable titles. Used by both `executor_service.py` (error categorization) and `diagnostic_render.py` (error title rendering). Lives here because it's a data constant, not rendering logic.
 
 **`exception_to_diagnostics()`** is a factory/dispatcher: calls `to_diagnostics()` on exceptions that implement it, falls back to `_builtin_exception_diagnostic()` for stdlib types. Creates `Diagnostic` instances — it does not render them. Used by both display-layer code (CLI, formatters) and execution pipeline code (`runner.py`).
 
 ### diagnostic_render.py
 
-Text rendering for `Diagnostic` objects. Single public function: `format_diagnostic()`. Imports `Diagnostic`, `Severity`, `_CATEGORY_TITLES` from `diagnostic.py` — dependency flows one way (render → model), never the reverse.
+Text rendering for `Diagnostic` objects. Single public function: `format_diagnostic()`. Imports `Diagnostic`, `Severity`, `CATEGORY_TITLES` from `diagnostic.py` — dependency flows one way (render → model), never the reverse.
 
 **Template error rendering** is structured, not prose: `Diagnostic.context["unresolved_references"]` is a list of per-reference dicts with `status` (`absent` / `failed` / `path_error`), `failure` (with category-aware data), `peer_suggestions`, `secondary_hint`, `did_you_mean`, `corrected_var`. The renderer (`_format_template_error_lines` → `_format_one_reference` → `_render_failure_data_block`) consumes this structure; agents reading JSON (`Diagnostic.to_dict()`) get the same data.
 

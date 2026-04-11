@@ -122,7 +122,7 @@ def format_child_provenance(step_id: str, message: str) -> str:
     return f"In step '{step_id}' sub-workflow: {message}"
 
 
-_CATEGORY_TITLES: dict[str, str] = {
+CATEGORY_TITLES: dict[str, str] = {
     "compilation": "Compilation Failed",
     "max_visits": "Infinite Loop Detected",
     "validation": "Validation Error",

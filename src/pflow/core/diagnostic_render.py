@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pflow.core.diagnostic import _CATEGORY_TITLES, Diagnostic, Severity
+from pflow.core.diagnostic import CATEGORY_TITLES, Diagnostic, Severity
 
 
 def format_diagnostic(
@@ -81,7 +81,7 @@ def _format_error_diagnostic(
     context = diagnostic.context or {}
 
     # 1. Title line
-    title = diagnostic.title or _CATEGORY_TITLES.get(context.get("category", ""), "Error")
+    title = diagnostic.title or CATEGORY_TITLES.get(context.get("category", ""), "Error")
     prefix = f"Error {error_number}" if error_number is not None else "Error"
     lines.append(f"{prefix}: {title}")
     lines.append("")
