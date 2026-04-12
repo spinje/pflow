@@ -703,11 +703,10 @@ def sync(name: Optional[str], all_servers: bool, verbose: bool) -> None:
 @click.argument("query")
 def find_tools(query: str) -> None:
     """Search MCP tools by intent using LLM."""
-    from pflow.cli.commands.find import _validate_discovery_query
-    from pflow.cli.find_errors import handle_discovery_error
+    from pflow.cli.find_errors import handle_discovery_error, validate_discovery_query
     from pflow.registry.discovery import find_components
 
-    validated_query = _validate_discovery_query(query, "mcp find")
+    validated_query = validate_discovery_query(query, "mcp find")
     registrar = MCPRegistrar()
     entries = _load_mcp_registry_entries(registrar)
 
@@ -785,19 +784,36 @@ def _suggest_similar_tools(registrar: MCPRegistrar, tool: str) -> None:
     click.echo(f"\n{message}")
 
 
+def _resolve_tool_id(tool: str, registrar: MCPRegistrar) -> str:
+    """Resolve a user-provided tool ID, handling ambiguity."""
+    from pflow.registry.node_id import normalize_node_id
+
+    available_nodes = set(registrar.registry.load().keys())
+    resolved = normalize_node_id(tool, available_nodes)
+
+    if resolved is not None:
+        return resolved
+
+    # normalize_node_id returns None for both not-found and ambiguous.
+    # Check for ambiguity so we can show candidates instead of a generic error.
+    normalized_check = tool.replace("-", "_")
+    matches = [node_id for node_id in available_nodes if node_id.endswith(tool) or node_id.endswith(normalized_check)]
+    if len(matches) > 1:
+        click.echo(f"Error: Ambiguous tool '{tool}'", err=True)
+        click.echo("  Matches:", err=True)
+        for match in sorted(matches):
+            click.echo(f"  - {match}", err=True)
+        sys.exit(1)
+
+    return tool
+
+
 @mcp.command(name="describe")
 @click.argument("tool")
 def describe_tool(tool: str) -> None:
     """Show detailed information about an MCP tool."""
-    from pflow.registry.node_id import normalize_node_id
-
     registrar = MCPRegistrar()
-
-    # Normalize the tool ID (hyphen/underscore, short-form matching)
-    registry = registrar.registry
-    available_nodes = set(registry.load().keys())
-    resolved = normalize_node_id(tool, available_nodes)
-    lookup_id = resolved if resolved else tool
+    lookup_id = _resolve_tool_id(tool, registrar)
 
     try:
         tool_info = registrar.get_tool_info(lookup_id)

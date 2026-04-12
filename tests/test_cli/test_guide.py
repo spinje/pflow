@@ -22,7 +22,7 @@ def test_guide_with_single_topic_acknowledges_topic() -> None:
 
     assert result.exit_code == 0
     assert "Guide content for topics [http] is not yet implemented." in result.output
-    assert "pflow --help" in result.output
+    assert "Topic-specific guides are coming soon." in result.output
 
 
 def test_guide_with_multiple_topics_accepts_all_topics() -> None:

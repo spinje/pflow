@@ -22,14 +22,14 @@ def find_cmd(query: str) -> None:
       pflow find "something that fetches github PRs"
       pflow find "workflow for sending slack notifications"
     """
-    from pflow.cli.find_errors import handle_discovery_error
+    from pflow.cli.find_errors import handle_discovery_error, validate_discovery_query
     from pflow.core.workflow.discovery import find_workflow
     from pflow.execution.formatters.discovery_formatter import (
         format_discovery_result,
         format_no_matches_with_suggestions,
     )
 
-    validated_query = _validate_discovery_query(query, "find")
+    validated_query = validate_discovery_query(query, "find")
     workflow_manager = WorkflowManager()
 
     try:
@@ -56,19 +56,3 @@ def find_cmd(query: str) -> None:
 
     all_workflows = workflow_manager.list_all()
     click.echo(format_no_matches_with_suggestions(all_workflows, validated_query, reasoning=result.reasoning))
-
-
-def _validate_discovery_query(query: str, command_name: str) -> str:
-    """Validate and sanitize a discovery query."""
-    query = query.strip()
-
-    if not query:
-        click.echo(f"Error: {command_name} query cannot be empty", err=True)
-        sys.exit(1)
-
-    if len(query) > 500:
-        click.echo(f"Error: Query too long (max 500 characters, got {len(query)})", err=True)
-        click.echo("  Please use a more concise description", err=True)
-        sys.exit(1)
-
-    return query

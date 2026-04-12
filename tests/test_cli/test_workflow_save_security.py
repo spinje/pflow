@@ -166,40 +166,40 @@ class TestDiscoveryQueryValidation:
 
     def test_empty_query_rejected(self):
         """Empty queries should be rejected by validation helper."""
-        from pflow.cli.commands.find import _validate_discovery_query
+        from pflow.cli.find_errors import validate_discovery_query
 
         # Empty string
         with pytest.raises(SystemExit):
-            _validate_discovery_query("", "test command")
+            validate_discovery_query("", "test command")
 
         # Whitespace only
         with pytest.raises(SystemExit):
-            _validate_discovery_query("   ", "test command")
+            validate_discovery_query("   ", "test command")
 
     def test_long_query_rejected(self):
         """Queries over 500 characters should be rejected."""
-        from pflow.cli.commands.find import _validate_discovery_query
+        from pflow.cli.find_errors import validate_discovery_query
 
         # 501 characters should fail
         too_long = "a" * 501
         with pytest.raises(SystemExit):
-            _validate_discovery_query(too_long, "test command")
+            validate_discovery_query(too_long, "test command")
 
     def test_valid_query_accepted(self):
         """Valid queries should pass through with whitespace stripped."""
-        from pflow.cli.commands.find import _validate_discovery_query
+        from pflow.cli.find_errors import validate_discovery_query
 
         # Normal query
-        result = _validate_discovery_query("I need to analyze pull requests", "test command")
+        result = validate_discovery_query("I need to analyze pull requests", "test command")
         assert result == "I need to analyze pull requests"
 
         # Query with leading/trailing whitespace
-        result = _validate_discovery_query("  query with spaces  ", "test command")
+        result = validate_discovery_query("  query with spaces  ", "test command")
         assert result == "query with spaces"
 
         # Exactly 500 characters should pass
         exactly_500 = "a" * 500
-        result = _validate_discovery_query(exactly_500, "test command")
+        result = validate_discovery_query(exactly_500, "test command")
         assert result == exactly_500
 
 

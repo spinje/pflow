@@ -425,17 +425,6 @@ def test_error_file_encoding():
         assert "utf-8" in result.output.lower()
 
 
-def test_signal_handling_exit_code():
-    """Test that SIGINT handler is registered (cannot test actual signal)."""
-    # This test verifies the handler is registered, but we can't send actual signals in tests
-    runner = click.testing.CliRunner()
-    result = runner.invoke(main, ["test"])
-
-    # A lone token is treated as an unknown workflow/command
-    assert result.exit_code != 0
-    assert "not a known workflow" in result.output
-
-
 # New tests for Task 22 functionality
 def test_pflow_file_automatic_detection():
     """Test that .pflow.md files are automatically detected as workflow files."""

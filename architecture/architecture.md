@@ -99,9 +99,9 @@ pflow mcp serve  # Start stdio server
 ## Execution Pipeline
 
 ```
-CLI Entry (main_wrapper.py)
+CLI Entry (main.py — PflowCLI group)
     │
-    ├── Routes to: mcp / registry / workflow / settings / run
+    ├── Routes to: list / find / describe / history / save / guide / probe / mcp / settings / run
     │
     ▼
 Workflow Resolution

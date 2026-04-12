@@ -1,12 +1,29 @@
 """Shared error handling utilities for `find` commands."""
 
 import logging
+import sys
 
 import click
 
 from pflow.core.exceptions import CriticalDiscoveryError
 
 logger = logging.getLogger(__name__)
+
+
+def validate_discovery_query(query: str, command_name: str) -> str:
+    """Validate and sanitize a discovery query."""
+    query = query.strip()
+
+    if not query:
+        click.echo(f"Error: {command_name} query cannot be empty", err=True)
+        sys.exit(1)
+
+    if len(query) > 500:
+        click.echo(f"Error: Query too long (max 500 characters, got {len(query)})", err=True)
+        click.echo("  Please use a more concise description", err=True)
+        sys.exit(1)
+
+    return query
 
 
 def handle_discovery_error(

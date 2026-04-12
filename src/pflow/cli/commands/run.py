@@ -116,7 +116,6 @@ def _handle_workflow_success(
     )
 
     if not output_produced:
-        status = getattr(result, "status", None)
         if status and hasattr(status, "value"):
             status_str = status.value
             if status_str == "degraded":
@@ -403,7 +402,25 @@ def _preprocess_run_prefix(workflow: tuple[str, ...]) -> tuple[str, ...]:
 def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
     """Validate that CLI flags are not misplaced in workflow arguments."""
     misplaced_flags = [
-        arg for arg in workflow if arg in ("--no-trace", "--verbose", "-v", "--output-key", "-o", "--output-format")
+        arg
+        for arg in workflow
+        if arg
+        in (
+            "--no-trace",
+            "--verbose",
+            "-v",
+            "--output-key",
+            "-o",
+            "--output-format",
+            "--print",
+            "-p",
+            "--report",
+            "--report-dir",
+            "--validate-only",
+            "--cache",
+            "--no-cache",
+            "--only",
+        )
     ]
     if misplaced_flags:
         from pflow.core.user_errors import UserFriendlyError
