@@ -23,7 +23,7 @@ pflow is a CLI-first workflow execution system. Its node system is built on `Bas
 
 1. AI agent creates a `.pflow.md` workflow file
 2. Runs it with `pflow ./my-workflow.pflow.md param1=value1` while iterating
-3. When satisfied, saves with `pflow workflow save ./my-workflow.pflow.md --name my-workflow`
+3. When satisfied, saves with `pflow save ./my-workflow.pflow.md --name my-workflow`
 4. `pflow my-workflow` runs the saved workflow by name
 5. Workflows are sequences of nodes: `shell`, `http`, `llm`, `file`, and dynamically loaded MCP tools
 
@@ -60,23 +60,23 @@ pflow provides three interface modes for different use cases:
 AI agents interact with pflow through CLI commands that expose internal capabilities as primitives:
 
 **Discovery:**
-- `pflow workflow discover "description"` - LLM-powered workflow search
-- `pflow registry discover "capability"` - LLM-powered node search
-- `pflow registry list <keywords>` - Filter available nodes
-- `pflow registry describe <node>` - Get detailed node interface
+- `pflow find "description"` - LLM-powered workflow search
+- `pflow mcp find "capability"` - LLM-powered node search
+- `pflow mcp list <keywords>` - Filter available nodes
+- `pflow mcp describe <node>` - Get detailed node interface
 
 **Execution:**
-- `pflow registry run <node> params` - Execute single node
+- `pflow probe <node> params` - Execute single node
 - `pflow workflow.pflow.md params` - Run workflow file
 - `pflow saved-name params` - Run saved workflow
 - `pflow read-fields exec-id path` - Inspect execution data
 
 **Building:**
-- `pflow instructions create --part 1/2/3` - Get workflow creation guide
+- `pflow guide` - Get workflow creation guide
 - `pflow --validate-only workflow.pflow.md` - Validate without running
-- `pflow workflow save ./file.pflow.md --name name` - Save to library
+- `pflow save ./file.pflow.md --name name` - Save to library
 
-Agents write `.pflow.md` workflows directly using these primitives. For the complete agent guide, run `pflow instructions usage`.
+Agents write `.pflow.md` workflows directly using these primitives. For the complete agent guide, run `pflow guide`.
 
 ### 2. Natural language (Removed)
 
@@ -227,7 +227,7 @@ claude-code
 mcp-<server>-<tool>
 ```
 
-Run `pflow registry list` to see all available nodes.
+Run `pflow mcp list` to see all available nodes.
 
 **Platform Nodes** follow `platform-action` pattern:
 
@@ -280,10 +280,10 @@ class MyNode(Node):
 The registry (`src/pflow/registry/`) discovers and catalogs nodes:
 
 ```bash
-pflow registry list              # List all nodes
+pflow mcp list              # List all nodes
 pflow registry search "http"     # Search nodes
-pflow registry describe shell    # Show node details
-pflow registry run shell cmd="echo hello"  # Test a node
+pflow mcp describe shell    # Show node details
+pflow probe shell cmd="echo hello"  # Test a node
 ```
 
 ## MCP Integration (Fully Implemented)
@@ -358,13 +358,13 @@ cat data.txt | pflow my-workflow
 
 ```bash
 # Save a workflow
-pflow workflow save ./workflow.pflow.md --name my-workflow
+pflow save ./workflow.pflow.md --name my-workflow
 
 # List saved workflows
-pflow workflow list
+pflow list
 
 # Describe a saved workflow
-pflow workflow describe my-workflow
+pflow describe my-workflow
 ```
 
 ### Settings Management
@@ -425,7 +425,7 @@ Description of the output.
 └── mcp/                # MCP server configurations
 ```
 
-Saved workflows have YAML frontmatter prepended by `pflow workflow save`. Metadata fields are flat (no nesting wrapper):
+Saved workflows have YAML frontmatter prepended by `pflow save`. Metadata fields are flat (no nesting wrapper):
 
 ```yaml
 ---
@@ -473,7 +473,7 @@ The pflow architecture separates concerns between user-facing nodes and internal
 ### User-Facing Nodes
 Building blocks users work with directly:
 - Defined in `src/pflow/nodes/`
-- Discoverable via `pflow registry list`
+- Discoverable via `pflow mcp list`
 - Have metadata describing their interface
 - Appear in workflow `.pflow.md` files with their `type` field
 - Examples: `read-file`, `write-file`, `llm`, `shell`, `http`

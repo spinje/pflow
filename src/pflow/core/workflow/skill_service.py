@@ -94,12 +94,10 @@ Always ask the user before modifying or extending the workflow or reading the in
 {command}
 
 # View execution history and last used inputs:
-pflow workflow history {workflow_name}
+pflow history {workflow_name}
 
 # To modify or extend - read all 3 parts IN FULL (do not truncate):
-pflow instructions create --part 1
-pflow instructions create --part 2
-pflow instructions create --part 3
+pflow guide
 ```
 
 > Pflow and all dependencies should be installed, working and ready to use.

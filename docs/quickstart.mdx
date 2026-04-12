@@ -64,7 +64,7 @@ Your AI agent (Claude Code, Cursor, Windsurf) uses pflow to build and run workfl
     <Accordion title="What the model is used for">
       This is **pflow's LLM configuration**, separate from whatever LLM your agent uses:
 
-      - **Discovery commands** - `pflow registry discover` and `pflow workflow discover` use LLM to find relevant nodes and workflows
+      - **Discovery commands** - `pflow mcp find` and `pflow find` use LLM to find relevant nodes and workflows
       - **LLM nodes** - workflows that include an LLM node for text processing
       - **Smart filtering** - automatic field selection for large API responses
 
@@ -91,7 +91,7 @@ Your AI agent (Claude Code, Cursor, Windsurf) uses pflow to build and run workfl
     If your agent has terminal access (Claude Code, Cursor, Windsurf), instruct it to run:
 
     ```bash
-    pflow instructions usage
+    pflow guide
     ```
 
     This gives the agent everything it needs to discover existing workflows, run them, or build new ones.
@@ -119,11 +119,11 @@ Your AI agent (Claude Code, Cursor, Windsurf) uses pflow to build and run workfl
 
 Once connected, your agent can:
 
-- **Discover workflows**: `pflow workflow discover "what I want to do"`
+- **Discover workflows**: `pflow find "what I want to do"`
 - **Run workflows**: `pflow my-workflow param1=value1`
-- **List workflows**: `pflow workflow list`
-- **Discover nodes**: `pflow registry discover "capability I need"`
-- **Build new workflows**: Following `pflow instructions create`
+- **List workflows**: `pflow list`
+- **Discover nodes**: `pflow mcp find "capability I need"`
+- **Build new workflows**: Following `pflow guide`
 
 ## Next steps
 

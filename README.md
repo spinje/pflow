@@ -93,19 +93,19 @@ Before anything runs, validation catches errors — wrong template references, m
 
 ```bash
 # Check if a workflow already exists
-pflow workflow discover "generate changelog from git history"
+pflow find "generate changelog from git history"
 
 # Nothing fits — get a step-by-step creation guide
-pflow instructions create
+pflow guide
 
 # Find building blocks for the workflow
-pflow registry discover "analyze git commits, classify with llm, post to slack"
+pflow mcp find "analyze git commits, classify with llm, post to slack"
 
 # Build, run, iterate (validation runs automatically)
 pflow workflow.pflow.md since_tag=v0.5.0
 
 # Save to your library
-pflow workflow save ./workflow.pflow.md --name generate-changelog
+pflow save ./workflow.pflow.md --name generate-changelog
 
 # Publish frequently-used workflows as Skills
 pflow skill save generate-changelog
@@ -171,7 +171,7 @@ pip install pflow-cli
 pflow --version
 ```
 
-Tell your agent to run `pflow instructions usage` — it gets everything it needs to discover, run, and build workflows.
+Tell your agent to run `pflow guide` — it gets everything it needs to discover, run, and build workflows.
 
 Or configure pflow as an MCP server for environments without terminal access:
 

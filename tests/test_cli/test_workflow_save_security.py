@@ -166,7 +166,7 @@ class TestDiscoveryQueryValidation:
 
     def test_empty_query_rejected(self):
         """Empty queries should be rejected by validation helper."""
-        from pflow.cli.commands.workflow import _validate_discovery_query
+        from pflow.cli.commands.find import _validate_discovery_query
 
         # Empty string
         with pytest.raises(SystemExit):
@@ -178,7 +178,7 @@ class TestDiscoveryQueryValidation:
 
     def test_long_query_rejected(self):
         """Queries over 500 characters should be rejected."""
-        from pflow.cli.commands.workflow import _validate_discovery_query
+        from pflow.cli.commands.find import _validate_discovery_query
 
         # 501 characters should fail
         too_long = "a" * 501
@@ -187,7 +187,7 @@ class TestDiscoveryQueryValidation:
 
     def test_valid_query_accepted(self):
         """Valid queries should pass through with whitespace stripped."""
-        from pflow.cli.commands.workflow import _validate_discovery_query
+        from pflow.cli.commands.find import _validate_discovery_query
 
         # Normal query
         result = _validate_discovery_query("I need to analyze pull requests", "test command")

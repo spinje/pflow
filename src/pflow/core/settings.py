@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 logger = logging.getLogger(__name__)
 
 
-# Valid output modes for registry run (used by settings validator and CLI)
+# Valid output modes for probe output (used by settings validator and CLI)
 OUTPUT_MODES: list[str] = ["smart", "structure", "full"]
 
 
@@ -32,7 +32,7 @@ class RegistrySettings(BaseModel):
     nodes: NodeFilterSettings = Field(default_factory=NodeFilterSettings)
     output_mode: str = Field(
         default="smart",
-        description="Output mode for registry run: smart (show values with truncation), "
+        description="Output mode for probe: smart (show values with truncation), "
         "structure (paths only), or full (all values, no filtering)",
     )
 

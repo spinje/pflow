@@ -209,7 +209,7 @@ class TestValidationFailureFormatting:
                 severity=Severity.ERROR,
                 message="Node type 'nonexistent' not found in registry",
                 title="Validation Error",
-                suggestions=["Use 'pflow registry list' to see available nodes"],
+                suggestions=["Use 'pflow mcp list' to see available nodes"],
                 source="validator",
                 context={"category": "validation"},
             ),
@@ -218,7 +218,7 @@ class TestValidationFailureFormatting:
 
         assert "Error 1: Validation Error" in result
         assert "Node type 'nonexistent' not found in registry" in result
-        assert "\u2192 Use 'pflow registry list' to see available nodes" in result
+        assert "\u2192 Use 'pflow mcp list' to see available nodes" in result
 
     def test_failure_with_diagnostic_shows_path_context(self):
         """CORRECTNESS: Diagnostic with path context shows location.

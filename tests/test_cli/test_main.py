@@ -1,5 +1,6 @@
 """Tests for pflow core CLI functionality."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import click.testing
@@ -13,15 +14,13 @@ def test_main_command_help():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "Reusable CLI workflows from shell, LLM, HTTP, code, and MCP nodes" in result.output
-    # Updated help text assertions for Task 119 changes
-    assert "pflow my-workflow input=data.txt" in result.output  # Named workflow example
-    assert "Run workflow from file" in result.output
-    assert "Pipe data to workflow" in result.output
-    assert "Workflows can be specified by name or file path" in result.output
-    # Task 119: skill command should be visible
+    assert "pflow runs workflows" in result.output
+    assert 'pflow find "description"' in result.output
+    assert "Use 'pflow <command> --help' for details on any command." in result.output
+    assert "Commands:" in result.output
     assert "skill" in result.output
-    assert "Publish as AI skill" in result.output
+    assert "guide" in result.output
+    assert "probe" in result.output
 
 
 # REMOVED: Tests for old workflow collection behavior
@@ -33,39 +32,37 @@ def test_empty_arguments():
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [])
 
-    assert result.exit_code != 0
-    # Updated error message from new validation
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
 
 # Tests for stdin input handling
 def test_plain_text_stdin_without_workflow_shows_helpful_error():
-    """Test that plain text via stdin without workflow shows clear error message."""
+    """Test that plain text via stdin without workflow falls back to group help."""
     runner = click.testing.CliRunner()
-    # Plain text stdin is now treated as data, not workflow
     result = runner.invoke(main, [], input="node1 => node2\n")
 
-    assert result.exit_code == 1
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
 
 def test_complex_stdin_data_without_workflow_shows_helpful_error():
-    """Test that complex stdin data without workflow specification shows clear guidance."""
+    """Test that complex stdin data without workflow specification falls back to help."""
     runner = click.testing.CliRunner()
     stdin_input = "read-file --path=input.txt => llm --prompt='Summarize' => write-file"
     result = runner.invoke(main, [], input=stdin_input)
 
-    assert result.exit_code == 1
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
 
 def test_whitespace_padded_stdin_data_without_workflow_shows_error():
-    """Test that stdin data with whitespace padding still requires workflow specification."""
+    """Test that stdin data with whitespace padding still falls back to help."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [], input="\n  node1 => node2  \n\n")
 
-    assert result.exit_code == 1
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
 
 def test_empty_stdin_falls_back_to_argument_workflow():
@@ -78,14 +75,13 @@ def test_empty_stdin_falls_back_to_argument_workflow():
 
 
 def test_json_workflow_via_stdin_requires_workflow_arg():
-    """Test that JSON workflow via stdin still requires a workflow argument."""
+    """Test that stdin alone without args now shows the root help text."""
     runner = click.testing.CliRunner()
     workflow_json = '{"ir_version": "0.1.0", "nodes": []}'
     result = runner.invoke(main, [], input=workflow_json)
 
-    # With Task 22 changes, stdin alone doesn't work - need workflow args
-    assert result.exit_code == 1
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
 
 # Tests for file input handling
@@ -357,8 +353,8 @@ def test_context_storage_verification():
 
     # Test stdin input - plain text is now treated as data, needs workflow
     result = runner.invoke(main, [], input="stdin workflow")
-    assert result.exit_code == 1
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
     # Test file input - unsupported paths fall back to normal workflow lookup errors
     with runner.isolated_filesystem():
@@ -374,8 +370,8 @@ def test_error_empty_stdin_no_args():
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [], input="")
 
-    assert result.exit_code != 0
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
 
 def test_error_empty_pflow_file():
@@ -511,14 +507,14 @@ def test_absolute_path_workflow():
         assert "absolute path test" in result.output or "Workflow executed" in result.output
 
 
-def test_home_directory_expansion():
+def test_home_directory_expansion(monkeypatch, tmp_path: Path):
     """Test that ~ expands to home directory in workflow paths."""
     runner = click.testing.CliRunner()
     from pathlib import Path
 
     from tests.shared.markdown_utils import ir_to_markdown
 
-    # Create a temporary workflow in a known location
+    monkeypatch.setenv("HOME", str(tmp_path))
     home = Path.home()
     test_file = home / ".test_workflow_temp.pflow.md"
     try:

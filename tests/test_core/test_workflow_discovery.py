@@ -3,11 +3,11 @@
 from unittest.mock import MagicMock
 
 from pflow.core.exceptions import WorkflowNotFoundError
-from pflow.core.workflow.discovery import WorkflowDecision, WorkflowMatch, discover_workflow
+from pflow.core.workflow.discovery import WorkflowDecision, WorkflowMatch, find_workflow
 
 
 class TestDiscoverWorkflowNoWorkflows:
-    """When no saved workflows exist, discover_workflow returns immediately without calling the LLM."""
+    """When no saved workflows exist, find_workflow returns immediately without calling the LLM."""
 
     def test_returns_not_found_when_no_workflows_exist(self, mock_llm_calls, monkeypatch):
         """No LLM call should be made when there are no workflows to match against."""
@@ -16,7 +16,7 @@ class TestDiscoverWorkflowNoWorkflows:
             lambda **kwargs: "",
         )
 
-        result = discover_workflow("find a changelog generator")
+        result = find_workflow("find a changelog generator")
 
         assert isinstance(result, WorkflowMatch)
         assert result.found is False
@@ -28,7 +28,7 @@ class TestDiscoverWorkflowNoWorkflows:
 
 
 class TestDiscoverWorkflowLLMFound:
-    """When workflows exist and LLM finds a match, discover_workflow loads the workflow."""
+    """When workflows exist and LLM finds a match, find_workflow loads the workflow."""
 
     def test_returns_loaded_workflow_when_llm_finds_match(self, mock_llm_calls, monkeypatch):
         """LLM says found=True and the workflow loads successfully from disk."""
@@ -52,7 +52,7 @@ class TestDiscoverWorkflowLLMFound:
         mock_manager = MagicMock()
         mock_manager.load.return_value = fake_loaded
 
-        result = discover_workflow("generate a changelog", workflow_manager=mock_manager)
+        result = find_workflow("generate a changelog", workflow_manager=mock_manager)
 
         assert result.found is True
         assert result.workflow_name == "changelog"
@@ -81,7 +81,7 @@ class TestDiscoverWorkflowLLMFound:
         mock_manager = MagicMock()
         mock_manager.load.side_effect = WorkflowNotFoundError("stale-workflow")
 
-        result = discover_workflow("run stale workflow", workflow_manager=mock_manager)
+        result = find_workflow("run stale workflow", workflow_manager=mock_manager)
 
         assert result.found is False
         assert result.workflow is None
@@ -89,7 +89,7 @@ class TestDiscoverWorkflowLLMFound:
 
 
 class TestDiscoverWorkflowLLMNotFound:
-    """When workflows exist but LLM says none match, discover_workflow returns not found."""
+    """When workflows exist but LLM says none match, find_workflow returns not found."""
 
     def test_returns_not_found_when_llm_says_no_match(self, mock_llm_calls, monkeypatch):
         """LLM evaluates workflows and determines none match the query."""
@@ -111,7 +111,7 @@ class TestDiscoverWorkflowLLMNotFound:
 
         mock_manager = MagicMock()
 
-        result = discover_workflow("migrate database tables", workflow_manager=mock_manager)
+        result = find_workflow("migrate database tables", workflow_manager=mock_manager)
 
         assert result.found is False
         assert result.workflow is None
@@ -120,7 +120,7 @@ class TestDiscoverWorkflowLLMNotFound:
 
 
 class TestDiscoverWorkflowModelSelection:
-    """discover_workflow uses the correct LLM model."""
+    """find_workflow uses the correct LLM model."""
 
     def test_uses_get_model_for_feature_as_default(self, mock_llm_calls, monkeypatch):
         """When no model_name is passed, the discovery feature model is used."""
@@ -142,7 +142,7 @@ class TestDiscoverWorkflowModelSelection:
 
         mock_manager = MagicMock()
 
-        discover_workflow("anything", workflow_manager=mock_manager)
+        find_workflow("anything", workflow_manager=mock_manager)
 
         assert captured_model["feature"] == "discovery"
         # The LLM mock call should have been made with the resolved model
@@ -158,7 +158,7 @@ class TestDiscoverWorkflowModelSelection:
 
         mock_manager = MagicMock()
 
-        discover_workflow("anything", model_name="openai/gpt-4o", workflow_manager=mock_manager)
+        find_workflow("anything", model_name="openai/gpt-4o", workflow_manager=mock_manager)
 
         assert len(mock_llm_calls.call_history) == 1
         assert mock_llm_calls.call_history[0]["model"] == "openai/gpt-4o"

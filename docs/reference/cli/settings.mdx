@@ -375,7 +375,7 @@ pflow settings llm set-default gemini-3-flash-preview
 
 ### pflow settings llm set-discovery
 
-Set the model for discovery commands (`pflow registry discover`, `pflow workflow discover`).
+Set the model for discovery commands (`pflow mcp find`, `pflow find`).
 
 ```bash
 pflow settings llm set-discovery <MODEL>
@@ -479,11 +479,11 @@ pflow uses the same resolution order for all LLM usage (discovery, filtering, an
 
 ## Registry settings
 
-Configure how `pflow registry run` displays output.
+Configure how `pflow probe` displays output.
 
 ### pflow settings registry output-mode
 
-Show or set the output display mode for `pflow registry run`.
+Show or set the output display mode for `pflow probe`.
 
 ```bash
 pflow settings registry output-mode [MODE]
@@ -520,7 +520,7 @@ pflow settings registry output-mode full
   Use `structure` mode when working with sensitive data — it shows types and paths without actual values, so your agent can build workflows without ever seeing the data itself. Avoid `full` mode with AI agents — it shows all values without truncation and can consume excessive tokens.
 </Warning>
 
-See [registry run output modes](/reference/cli/registry#output-modes) for detailed examples of each mode.
+See [pflow probe](/reference/cli/probe) for the command that uses these output modes.
 
 ## How node filtering works
 

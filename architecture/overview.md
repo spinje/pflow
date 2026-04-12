@@ -230,8 +230,8 @@ This enables compliance-ready security (sensitive data never enters AI context) 
 Progressive disclosure (load all metadata into context) breaks at ~30-50 items. Beyond that, even metadata becomes noise.
 
 pflow uses search-based discovery:
-- `pflow registry discover "description"` - LLM-powered node search
-- `pflow workflow discover "description"` - LLM-powered workflow search
+- `pflow mcp find "description"` - LLM-powered node search
+- `pflow find "description"` - LLM-powered workflow search
 
 Agents search for what they need rather than loading everything.
 
@@ -278,7 +278,7 @@ pflow has a dual MCP role:
 
 The CLI is recommended for iterative work (building, debugging). The MCP server provides the same capabilities for environments like Claude Desktop where terminal access isn't available.
 
-**Legacy natural-language workflow generation:** This path is not part of the maintained CLI/MCP surface. Discovery commands (`pflow workflow discover`, `pflow registry discover`) remain active.
+**Legacy natural-language workflow generation:** This path is not part of the maintained CLI/MCP surface. Discovery commands (`pflow find`, `pflow mcp find`) remain active.
 
 ### Node Types
 
@@ -380,4 +380,4 @@ The faster a task completes, the less time for context to diverge. A 10-minute t
 - **Node development:** `src/pflow/nodes/CLAUDE.md` (node authoring patterns)
 - **Shared store pattern:** `core-concepts/shared-store.md`
 - **CLI reference:** Run `pflow --help`
-- **Agent instructions:** Run `pflow instructions usage`
+- **Agent instructions:** Run `pflow guide`

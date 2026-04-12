@@ -132,7 +132,7 @@ class TestWorkflowResolutionCLI:
                 "ir_version": "1.0",
             }
 
-            with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
+            with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
                 result = runner.invoke(main, ["my-workflow"])
 
                 assert result.exit_code == 0
@@ -155,7 +155,7 @@ class TestWorkflowResolutionCLI:
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
 
-            with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
+            with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
                 result = runner.invoke(main, ["my-workflow.pflow.md"])
 
                 assert result.exit_code == 0
@@ -179,7 +179,7 @@ class TestWorkflowResolutionCLI:
             f.flush()
 
             try:
-                with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
+                with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
                     result = runner.invoke(main, [f.name])
 
                     assert result.exit_code == 0
@@ -192,7 +192,7 @@ class TestWorkflowResolutionCLI:
         runner = click.testing.CliRunner()
 
         with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
-            with patch("pflow.cli.main.WorkflowManager", MockWM):
+            with patch("pflow.cli.commands.run.WorkflowManager", MockWM):
                 mock_wm = MockWM.return_value
                 mock_wm.exists.return_value = False
                 mock_wm.list_all.return_value = [
@@ -213,7 +213,7 @@ class TestWorkflowResolutionCLI:
         runner = click.testing.CliRunner()
 
         with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
-            with patch("pflow.cli.main.WorkflowManager", MockWM):
+            with patch("pflow.cli.commands.run.WorkflowManager", MockWM):
                 mock_wm = MockWM.return_value
                 mock_wm.exists.return_value = False
                 mock_wm.list_all.return_value = []
@@ -224,7 +224,7 @@ class TestWorkflowResolutionCLI:
             # Unified titled format: "Error: Workflow Not Found"
             assert "Workflow Not Found" in result.output
             assert "Workflow 'unknown-workflow' not found" in result.output
-            assert "pflow workflow list" in result.output
+            assert "pflow list" in result.output
 
     def test_pass_parameters_to_named_workflow(self):
         """Test passing parameters to a named workflow - simplified test."""
@@ -243,7 +243,7 @@ class TestWorkflowResolutionCLI:
                 },
             }
 
-            with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
+            with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
                 result = runner.invoke(main, ["process-data", "file=data.csv", "format=xml"])
 
                 assert result.exit_code == 0
@@ -301,7 +301,7 @@ class TestWorkflowResolutionCLI:
                 },
             }
 
-            with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
+            with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
                 result = runner.invoke(main, ["analyze", "text=Hello world"])
 
                 assert result.exit_code == 0
@@ -322,7 +322,7 @@ class TestWorkflowResolutionCLI:
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
 
-            with patch("pflow.cli.main.execute_json_workflow"):
+            with patch("pflow.cli.commands.run.execute_json_workflow"):
                 result = runner.invoke(main, ["--verbose", "my-workflow", "param=value"])
 
                 assert result.exit_code == 0
@@ -343,7 +343,7 @@ class TestWorkflowResolutionCLI:
             f.flush()
 
             try:
-                with patch("pflow.cli.main.execute_json_workflow"):
+                with patch("pflow.cli.commands.run.execute_json_workflow"):
                     result = runner.invoke(main, ["--verbose", f.name])
 
                     assert result.exit_code == 0
@@ -360,7 +360,7 @@ class TestWorkflowResolutionCLI:
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
 
-            with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
+            with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
                 result = runner.invoke(
                     main,
                     [
@@ -570,7 +570,7 @@ class TestEdgeCases:
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
 
-            with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
+            with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
                 result = runner.invoke(main, ["test", "equation=a=b+c"])
 
                 assert result.exit_code == 0

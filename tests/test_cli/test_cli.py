@@ -13,7 +13,8 @@ def test_cli_help_command():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "Reusable CLI workflows from shell, LLM, HTTP, code, and MCP nodes" in result.output
+    assert "pflow runs workflows" in result.output
+    assert "Commands:" in result.output
     assert "--version" in result.output
 
 
@@ -37,16 +38,15 @@ def test_workflow_arguments():
 
 
 def test_no_arguments():
-    """Test that running with no arguments shows error."""
+    """Test that running with no arguments shows group help."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [])
 
-    # With no arguments, it should show an error
-    assert result.exit_code != 0
-    assert "No workflow" in result.output
+    assert result.exit_code == 0
+    assert "pflow runs workflows" in result.output
 
 
-def test_report_flag_generates_report(tmp_path: Path):
+def test_report_flag_generates_report(tmp_path: Path, monkeypatch):
     """Test that --report flag generates an execution report directory."""
     # Create a minimal workflow
     workflow = tmp_path / "test.pflow.md"
@@ -55,6 +55,7 @@ def test_report_flag_generates_report(tmp_path: Path):
     )
     report_dir = tmp_path / "report"
 
+    monkeypatch.setenv("HOME", str(tmp_path))
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [str(workflow), "--report-dir", str(report_dir)])
 
@@ -66,7 +67,7 @@ def test_report_flag_generates_report(tmp_path: Path):
     assert len(node_files) == 1, f"Expected 1 node file, got {node_files}"
 
 
-def test_report_flag_overrides_no_trace(tmp_path: Path):
+def test_report_flag_overrides_no_trace(tmp_path: Path, monkeypatch):
     """Test that --report overrides --no-trace (report requires trace data)."""
     workflow = tmp_path / "test.pflow.md"
     workflow.write_text(
@@ -74,6 +75,7 @@ def test_report_flag_overrides_no_trace(tmp_path: Path):
     )
     report_dir = tmp_path / "report"
 
+    monkeypatch.setenv("HOME", str(tmp_path))
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [str(workflow), "--report-dir", str(report_dir), "--no-trace"])
 

@@ -15,7 +15,7 @@ The `pflow mcp` command group manages Model Context Protocol (MCP) server connec
 | Command | Description |
 |---------|-------------|
 | `add` | Add MCP servers from config |
-| `list` | List configured servers |
+| `servers` | List configured servers |
 | `remove` | Remove a server |
 | `sync` | Discover and register tools |
 | `tools` | List registered MCP tools |
@@ -101,7 +101,7 @@ HTTP server format:
 List all configured MCP servers.
 
 ```bash
-pflow mcp list [--json]
+pflow mcp servers [--json]
 ```
 
 **Options:**
@@ -192,12 +192,12 @@ Registered tools:
   pflow auto-syncs servers when workflows run. Manual sync is useful for immediate testing or troubleshooting.
 </Tip>
 
-## pflow mcp tools
+## pflow mcp list
 
 List registered MCP tools.
 
 ```bash
-pflow mcp tools [SERVER] [--json]
+pflow mcp list [SERVER] [--json]
 ```
 
 **Arguments:**
@@ -210,13 +210,13 @@ pflow mcp tools [SERVER] [--json]
 
 ```bash
 # List all MCP tools
-pflow mcp tools
+pflow mcp list
 
 # List tools from specific server
-pflow mcp tools github
+pflow mcp list github
 
 # JSON output
-pflow mcp tools --json
+pflow mcp list --json
 ```
 
 **Output:**
@@ -236,12 +236,12 @@ Registered MCP tools:
     ...
 ```
 
-## pflow mcp info
+## pflow mcp describe
 
 Show detailed information about an MCP tool.
 
 ```bash
-pflow mcp info <TOOL>
+pflow mcp describe <TOOL>
 ```
 
 **Arguments:**
@@ -250,7 +250,7 @@ pflow mcp info <TOOL>
 **Example:**
 
 ```bash
-pflow mcp info mcp-github-create-issue
+pflow mcp describe mcp-github-create-issue
 ```
 
 **Output:**
@@ -342,20 +342,20 @@ pflow mcp add github.mcp.json
 pflow mcp sync --all
 
 # Verify tools
-pflow mcp tools
+pflow mcp list
 ```
 
 ### Troubleshooting
 
 ```bash
 # Check configured servers
-pflow mcp list
++pflow mcp servers
 
 # Resync a server
 pflow mcp sync github
 
 # Get tool details
-pflow mcp info mcp-github-create-issue
+pflow mcp describe mcp-github-create-issue
 ```
 
 ## Related

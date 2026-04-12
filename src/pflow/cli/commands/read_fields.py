@@ -48,7 +48,7 @@ def read_fields(execution_id: str, field_paths: tuple[str, ...], output_format: 
         if cache_data is None:
             click.echo(f"❌ Execution '{execution_id}' not found in cache", err=True)
             click.echo("", err=True)
-            click.echo("Run 'pflow registry run <node-type>' to execute a node and cache results.", err=True)
+            click.echo("Run 'pflow probe <node-type>' to execute a node and cache results.", err=True)
             sys.exit(1)
 
         # Extract field values using TemplateResolver

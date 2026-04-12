@@ -119,7 +119,7 @@ pflow skills:
     → Claude Code (project) [broken link]
 
 Broken link: the source workflow 'old-workflow' was deleted.
-  To restore: pflow workflow save <file> --name old-workflow --force
+  To restore: pflow save <file> --name old-workflow --force
   To remove:  pflow skill remove old-workflow
 ```
 
@@ -177,7 +177,7 @@ Before publishing a workflow as a skill, you must save it to the global library:
 
 ```bash
 # First, save the workflow
-pflow workflow save ./my-workflow.pflow.md --name my-workflow
+pflow save ./my-workflow.pflow.md --name my-workflow
 
 # Then publish as a skill
 pflow skill save my-workflow
@@ -191,6 +191,6 @@ pflow skill save my-workflow
 
 ## Related
 
-- [Workflow commands](/reference/cli/workflow) - Save and manage workflows
+- [Workflow commands](/reference/cli/list) - Save and manage workflows
 - [Claude Code integration](/integrations/claude-code) - Set up pflow with Claude Code
 - [Cursor integration](/integrations/cursor) - Set up pflow with Cursor

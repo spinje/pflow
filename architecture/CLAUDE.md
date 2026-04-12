@@ -6,7 +6,7 @@
 
 **Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators. Read when working on pflow node internals.
 
-**Agent usage guide**: Run `pflow instructions usage` for the authoritative CLI guide for AI agents.
+**Agent usage guide**: Run `pflow guide` for the authoritative CLI guide for AI agents.
 
 ## Documentation Structure
 
@@ -86,7 +86,7 @@ Only notes that help you decide whether to read a file. If the filename is self-
 | **Conceptual understanding** | `overview.md` → `architecture.md` |
 | **System implementation** | `architecture.md` → `src/pflow/runtime/CLAUDE.md` |
 | **Writing new nodes** | `src/pflow/nodes/CLAUDE.md` → `features/simple-nodes.md` → `reference/enhanced-interface-format.md` |
-| **Building workflows** | Run `pflow instructions usage` for the authoritative agent guide |
+| **Building workflows** | Run `pflow guide` for the authoritative agent guide |
 | **CLI development** | `pflow --help` → `features/shell-pipes.md` → `reference/template-variables.md` |
 | **JSON/type debugging** | `core-concepts/data-type-coercion.md` |
 

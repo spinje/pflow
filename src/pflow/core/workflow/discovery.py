@@ -43,7 +43,7 @@ class WorkflowMatch:
     workflow: Optional[dict[str, Any]]  # Full metadata from WorkflowManager.load() if found
 
 
-def discover_workflow(
+def find_workflow(
     query: str,
     model_name: Optional[str] = None,
     workflow_manager: Optional[WorkflowManager] = None,
@@ -68,7 +68,7 @@ def discover_workflow(
 
     # Early return if no saved workflows exist
     if not discovery_context:
-        logger.info("discover_workflow: No workflows exist, skipping LLM call")
+        logger.info("find_workflow: No workflows exist, skipping LLM call")
         return WorkflowMatch(
             found=False,
             workflow_name=None,
@@ -87,7 +87,7 @@ def discover_workflow(
     result = parse_structured_response(response, WorkflowDecision)
 
     logger.info(
-        f"discover_workflow: found={result['found']}, "
+        f"find_workflow: found={result['found']}, "
         f"workflow={result.get('workflow_name')}, confidence={result['confidence']}",
     )
 
@@ -103,7 +103,7 @@ def discover_workflow(
                 workflow=loaded_workflow,
             )
         except WorkflowNotFoundError:
-            logger.warning(f"discover_workflow: Workflow '{result['workflow_name']}' not found on disk")
+            logger.warning(f"find_workflow: Workflow '{result['workflow_name']}' not found on disk")
 
     return WorkflowMatch(
         found=False,

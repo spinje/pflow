@@ -252,20 +252,20 @@ pflow --validate-only workflow.pflow.md    # Validate without running
 
 pflow mcp add ./github.mcp.json           # Add MCP server
 pflow mcp serve                            # Run as MCP server (stdio)
-pflow registry list                        # List nodes
-pflow registry run shell command="echo hi" # Run single node
+pflow mcp list                             # List MCP tools
+pflow probe shell command="echo hi"        # Run single node
 pflow read-fields exec-123-abc result[0].title  # Read cached fields
-pflow workflow describe my-workflow        # Show workflow interface
-pflow workflow history my-workflow         # Show execution history
+pflow describe my-workflow        # Show workflow interface
+pflow history my-workflow         # Show execution history
 pflow skill save my-workflow               # Publish as AI skill
 pflow settings set-env ANTHROPIC_API_KEY sk-...  # Store API key
 pflow settings llm show                    # Show LLM model config
-pflow instructions usage                   # Agent guide
+pflow guide                                 # Agent guide
 ```
 
 ## Known Issues
 
-1. **MCP connection cleanup** — handled by `MCPConnectionPool.shutdown()` in `runner.py:_cleanup()`; `pflow registry run` still creates ephemeral connections
+1. **MCP connection cleanup** — handled by `MCPConnectionPool.shutdown()` in `runner.py:_cleanup()`; `pflow probe` still creates ephemeral connections
 2. **Click testing limitation** — `CliRunner` always returns `False` for `isatty()`. Batch-progress tests that exercise `\r` rendering need to patch `sys.stderr.isatty()` to `True`.
 3. **Registry format inconsistency** — two save methods create format confusion, pattern matching checks multiple fields
 

@@ -45,7 +45,7 @@ Registry File → load() → Settings Filter → Filtered Nodes → Consumers
 
 ```bash
 # Denied nodes are hidden
-$ pflow registry list
+$ pflow mcp list
 file.read
 file.write
 # denied nodes not shown

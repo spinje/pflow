@@ -25,8 +25,8 @@ def build_node_not_found_diagnostic(node_type: str, available_nodes: list[str]) 
         message=f"Node '{node_type}' not found in registry.",
         title="Node Not Found",
         suggestions=[
-            "Use 'pflow registry discover' to search for nodes",
-            "Use 'pflow registry list' to see all available nodes",
+            "Use 'pflow mcp find' to search MCP tools by intent",
+            "Use 'pflow mcp list' to see all available MCP tools",
         ],
         source="registry",
         context={"category": "not_found", "similar_names": similar},
@@ -60,10 +60,10 @@ def _registry_run_suggestions(d: Any, node_type: str, exc: Exception) -> list[st
     if isinstance(exc, (FileNotFoundError, PermissionError)):
         return suggestions  # already have good suggestions from _builtin_exception_diagnostic
     if isinstance(exc, ValueError) and "required" in str(exc).lower():
-        suggestions.append(f"Use 'pflow registry describe {node_type}' to see required parameters")
+        suggestions.append(f"Use 'pflow mcp describe {node_type}' to see required parameters")
     elif "timeout" in str(exc).lower():
         suggestions.append("Try increasing timeout if supported")
-        suggestions.append(f"Use 'pflow registry describe {node_type}' to check parameters")
+        suggestions.append(f"Use 'pflow mcp describe {node_type}' to check parameters")
     else:
-        suggestions.append(f"Use 'pflow registry describe {node_type}' to see required parameters")
+        suggestions.append(f"Use 'pflow mcp describe {node_type}' to see required parameters")
     return suggestions

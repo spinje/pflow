@@ -64,7 +64,7 @@ def _create_mcp_error_suggestion(
             "Steps to enable MCP tools:\n"
             "  1. Check configured servers: pflow mcp list\n"
             "  2. Sync tools: pflow mcp sync --all\n"
-            "  3. Verify registration: pflow registry list | grep mcp\n"
+            "  3. Verify registration: pflow mcp list\n"
             "  4. Run your workflow again"
         )
 
@@ -93,7 +93,7 @@ def _create_mcp_error_suggestion(
         f"MCP tool '{node_type}' not found.\n\n"
         f"Available MCP servers: {', '.join(sorted(servers))}\n"
         f"Total MCP tools: {len(mcp_nodes)}\n\n"
-        f"Use 'pflow registry list' to see all available MCP tools."
+        f"Use 'pflow mcp list' to see all available MCP tools."
     )
 
 

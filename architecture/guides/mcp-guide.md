@@ -67,13 +67,13 @@ pflow mcp list --json
 
 ```bash
 # List all registered MCP tools
-pflow mcp tools
+pflow mcp list
 
 # List tools from specific server
-pflow mcp tools filesystem
+pflow mcp list filesystem
 
 # Get detailed info about a tool
-pflow mcp info mcp-filesystem-read_text_file
+pflow mcp describe mcp-filesystem-read_text_file
 ```
 
 ### Remove a Server
@@ -305,7 +305,7 @@ pflow mcp list
 pflow mcp sync <server-name>
 
 # Check registered tools
-pflow mcp tools <server-name>
+pflow mcp servers <server-name>
 ```
 
 ### Environment Variables Not Working

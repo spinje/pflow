@@ -43,7 +43,7 @@ Data transformation → `code` node · External tools/side effects → `shell` n
 
 **This is non-negotiable. Before any other action:**
 ```bash
-pflow workflow discover "user's exact request here"
+pflow find "user's exact request here"
 ```
 
 **Decision tree based on match score:**
@@ -300,7 +300,7 @@ Try `Prefer: wait=60` header in `http` node first (eliminates polling nodes)
 ### Step 2: DISCOVER WORKFLOWS - Detailed Matching
 
 ```bash
-pflow workflow discover "exact user request, including all details"
+pflow find "exact user request, including all details"
 ```
 
 **Match score actions:**
@@ -314,16 +314,16 @@ pflow workflow discover "exact user request, including all details"
 ### Step 3: DISCOVER NODES - Finding Building Blocks
 
 ```bash
-pflow registry discover "[complete description of ALL operations needed]"
+pflow mcp find "[complete description of ALL operations needed]"
 ```
 
 **Effective task descriptions:**
 ```bash
 # ❌ Too vague
-pflow registry discover "process data"
+pflow mcp find "process data"
 
 # ✅ Complete and specific
-pflow registry discover "fetch JSON from REST API, extract specific fields, validate data completeness, transform to CSV format, upload to S3 bucket"
+pflow mcp find "fetch JSON from REST API, extract specific fields, validate data completeness, transform to CSV format, upload to S3 bucket"
 ```
 
 **Interpreting discovered nodes:**
@@ -347,7 +347,7 @@ pflow registry discover "fetch JSON from REST API, extract specific fields, vali
 #### Phase 2: Test Authentication
 ```bash
 # Test with minimal call
-pflow registry run http \
+pflow probe http \
   url="https://api.service.com/health" \
   headers='{"Authorization": "Bearer TOKEN"}'
 ```
@@ -437,7 +437,7 @@ echo "I need to test access to [service]. This will [describe effect]."
 # If has_side_effects: "⚠️ This test will [visible effect]. Should I proceed?"
 
 # 3. Test with structure discovery AND format compatibility
-pflow registry run mcp-{mcp-service-name}-{mcp-tool-name} \
+pflow probe mcp-{mcp-service-name}-{mcp-tool-name} \
   param1="your_actual_format_here"
 
 # 4. Document results
@@ -462,7 +462,7 @@ Server C:  result.Items[]                   # DynamoDB style
 ```
 
 **There are NO patterns. Test every MCP tool:**
-`pflow registry run mcp-service-TOOL param=value`
+`pflow probe mcp-service-TOOL param=value`
 
 ### Step 6: DESIGN - Data Flow Mapping
 
@@ -893,7 +893,7 @@ pflow workflow-name param=value  # ❌ Won't work until you save it!
 **⚡ You MUST use the save command - this is NOT optional:**
 
 ```bash
-pflow workflow save /path/to/your-workflow.pflow.md \
+pflow save /path/to/your-workflow.pflow.md \
   --name workflow-name
 ```
 
@@ -906,7 +906,7 @@ pflow workflow save /path/to/your-workflow.pflow.md \
 **Example:**
 ```bash
 # Save your tested workflow
-pflow workflow save /tmp/api-processor.pflow.md \
+pflow save /tmp/api-processor.pflow.md \
   --name api-data-processor
 
 # Now you can execute by name from anywhere
@@ -976,7 +976,7 @@ Example of using in nodes: `- Authorization: Bearer ${api_token}` (in headers)
 `````markdown
 # Workflow Title
 
-Description of the workflow. This becomes the description shown in `pflow workflow list`.
+Description of the workflow. This becomes the description shown in `pflow list`.
 
 ## Inputs
 
@@ -1355,7 +1355,7 @@ curl -s "https://example.com/api" | head -20
 
 ```bash
 # 1. Find all tools from a service
-pflow registry list "slack"
+pflow mcp list "slack"
 
 # Returns something like:
 # mcp-slack-SEND_MESSAGE
@@ -1364,7 +1364,7 @@ pflow registry list "slack"
 # mcp-slack-GET_CHANNEL_INFO  ← Meta tool!
 
 # 2. Use meta tools to understand
-pflow registry run mcp-slack-GET_CHANNEL_INFO \
+pflow probe mcp-slack-GET_CHANNEL_INFO \
   channel="general"
 
 # 3. Now you know the actual structure for that service
@@ -1377,7 +1377,7 @@ pflow registry run mcp-slack-GET_CHANNEL_INFO \
 ```bash
 # Step 1: Test with minimal real data
 # Example for a service called "example-service" and a tool called "get-data"
-pflow registry run mcp-example-service-get-data query="test_value"
+pflow probe mcp-example-service-get-data query="test_value"
 
 # Step 2: The output shows the actual structure (pre-filtered for agents, you will only see the output structure, not the data)
 # Example output:
@@ -1425,7 +1425,7 @@ pflow workflow.pflow.md param=value
 
 ```bash
 # Test the specific failing node
-pflow registry run failing-node-type \
+pflow probe failing-node-type \
   param="test_value"
 
 # Check its output structure
@@ -1983,11 +1983,11 @@ Convert text to uppercase.
 #### 1. Skipping workflow discovery
 **Impact**: Rebuild existing workflow (30-60 min wasted)
 **Fix**: ALWAYS run first, even if user says "create new"
-**Check**: First action should be `pflow workflow discover`
+**Check**: First action should be `pflow find`
 
 #### 2. Not testing MCP outputs
 **Impact**: Wrong template paths, failed execution
-**Fix**: ALWAYS use `pflow registry run` for MCP
+**Fix**: ALWAYS use `pflow probe` for MCP
 **Example**:
 ```bash
 # Wrong assumption
@@ -2121,19 +2121,19 @@ I need to clarify a few details:
 
 ```bash
 # Discovery & Research
-pflow workflow discover "complete user request"     # Find existing workflows
-pflow registry discover "all operations needed"      # Find nodes for building
-pflow registry describe node1 node2                  # Get node specifications
-pflow registry list "keyword1 keyword2"              # List all available nodes
+pflow find "complete user request"     # Find existing workflows
+pflow mcp find "all operations needed"      # Find nodes for building
+pflow mcp describe node1 node2                  # Get node specifications
+pflow mcp list "keyword1 keyword2"              # List all available nodes
 
 # Testing & Debugging
-pflow registry run node-type param=value             # Test node (output pre-filtered for agents)
+pflow probe node-type param=value             # Test node (output pre-filtered for agents)
 pflow read-fields exec-id field.path                 # Get actual field values if needed
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'          # Inspect trace (for debugging)
 
 # Workflow Operations
 pflow workflow.pflow.md param1=value1                # Run workflow from file (while developing)
-pflow workflow save workflow.pflow.md --name workflow-name  # Save workflow (when finished developing)
+pflow save workflow.pflow.md --name workflow-name  # Save workflow (when finished developing)
 
 # Settings & Auth
 pflow settings set-env KEY_NAME "value"             # Store credential

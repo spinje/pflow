@@ -1,0 +1,22 @@
+---
+title: "pflow list"
+description: "List saved workflows with keyword filtering"
+icon: "list"
+---
+
+## Usage
+
+```bash
+pflow list [KEYWORD...]
+pflow list --json
+```
+
+`pflow list` shows saved workflows. Keywords use AND logic and search both workflow names and descriptions.
+
+## Examples
+
+```bash
+pflow list
+pflow list github pr
+pflow list --json
+```

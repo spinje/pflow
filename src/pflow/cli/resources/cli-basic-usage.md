@@ -9,7 +9,7 @@ If the user is asking you to build a new workflow or wants you to do a complex t
 **Before doing ANYTHING else, you MUST run:**
 
 ```bash
-pflow workflow discover "user's exact request here"
+pflow find "user's exact request here"
 ```
 
 **Why this is non-negotiable:**
@@ -28,7 +28,7 @@ pflow workflow discover "user's exact request here"
 ### No Match (<70%): Execute Directly vs Create Workflow
 
 - **1-2 nodes needed** (e.g., fetch + save) → Ask user: "Execute directly (via `registry run`) or create reusable workflow?"
-- **3+ nodes needed** → Create workflow (don't ask, just proceed with `pflow instructions create --part 1/2/3`)
+- **3+ nodes needed** → Create workflow (don't ask, just proceed with `pflow guide`)
 
 ## Essential Commands
 
@@ -36,10 +36,10 @@ pflow workflow discover "user's exact request here"
 
 ```bash
 # Find existing workflows if the request is complex
-pflow workflow discover "what I want to do"
+pflow find "what I want to do"
 
 # List all saved workflows with a filter keyword if the user is asking for a specific workflow.
-pflow workflow list "<filter-keywords>" # Example: `pflow workflow list "github pr"`
+pflow list "<filter-keywords>" # Example: `pflow list "github pr"`
 ```
 
 ### Execute workflow by name
@@ -92,9 +92,9 @@ pflow visualize ./workflow.pflow.md -o graph.md
 
 ```bash
 # Read all 3 parts IN FULL before building workflows (do not truncate or skip any part):
-pflow instructions create --part 1
-pflow instructions create --part 2
-pflow instructions create --part 3
+pflow guide --part 1
+pflow guide --part 2
+pflow guide --part 3
 ```
 
 **ONLY read these instructions when:**
@@ -111,19 +111,19 @@ The difference between a workflow and a node is that a workflow is a collection 
 
 ```bash
 # Find available nodes if you need to search for a specific capability and you are not sure about what filter-keywords to use to find the node using the list command.
-pflow registry discover "what capability I need"
+pflow mcp find "what capability I need"
 
 # List all available nodes filtered by keywords. This is faster than the registry discover command but less flexible.
-pflow registry list <filter-keywords> # Example: `pflow registry list slack` or `pflow registry list "slack send message"`
+pflow mcp list <filter-keywords> # Example: `pflow mcp list slack` or `pflow mcp list "slack send message"`
 
 # Get node details
-pflow registry describe <node-name>
+pflow mcp describe <node-name>
 
 # Run a node (returns metadata, not actual data)
-pflow registry run <node-name> param1=value1 param2=value2
+pflow probe <node-name> param1=value1 param2=value2
 
 # Example:
-pflow registry run mcp-slack-send-message channel="#general" text="Hello"
+pflow probe mcp-slack-send-message channel="#general" text="Hello"
 
 # Example output:
 # ✓ Node executed successfully
@@ -156,7 +156,7 @@ Is it a complex task or workflow request?
     ↓
     ├─ YES: Complex task/workflow
     │   ↓
-    │   Run: pflow workflow discover "user's request"
+    │   Run: pflow find "user's request"
     │   ↓
     │   ├─ Match ≥90% → Run: pflow workflow-name params → DONE ✓
     │   │
@@ -173,16 +173,16 @@ Is it a complex task or workflow request?
     │       ↓
     │       How many nodes needed?
     │       ├─ 1-2 nodes → Ask: "Execute directly or create workflow?"
-    │       └─ 3+ nodes → Create workflow (pflow instructions create --part 1/2/3)
+    │       └─ 3+ nodes → Create workflow (pflow guide)
     │
     └─ NO: Simple request (specific node/tool)
         ↓
         Does user mention specific tool/capability?
         ↓
-        ├─ YES → pflow registry discover "capability"
-        │        or pflow registry list <keywords>
+        ├─ YES → pflow mcp find "capability"
+        │        or pflow mcp list <keywords>
         │        ↓
-        │        Found node? → pflow registry run <node-name> params
+        │        Found node? → pflow probe <node-name> params
         │        ↓
         │        User needs actual data? → pflow read-fields exec-id result
         │        ↓

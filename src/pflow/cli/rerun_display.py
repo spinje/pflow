@@ -87,4 +87,4 @@ def display_rerun_commands(workflow_name: str, params: dict[str, Any] | None) ->
     click.echo(f"  $ {rerun_command}")
 
     click.echo("\n📖 Learn more:")
-    click.echo(f"  $ pflow workflow describe {workflow_name}")
+    click.echo(f"  $ pflow describe {workflow_name}")

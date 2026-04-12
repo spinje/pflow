@@ -87,7 +87,7 @@ def format_save_success(
 
     # Add tip if workflow has complex parameter types
     if _has_complex_types(workflow_ir):
-        lines.append(f"  💡 For parameter details: pflow workflow describe {name}")
+        lines.append(f"  💡 For parameter details: pflow describe {name}")
 
     # Add keywords if metadata provided
     if metadata:

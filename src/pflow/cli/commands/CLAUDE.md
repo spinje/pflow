@@ -36,11 +36,9 @@ Subcommands: `add`, `list`, `sync`, `remove`, `tools`, `info`, `serve`.
 
 **`serve` is fundamentally different** from the management commands — it launches pflow as an MCP server (stdio transport). It's a separate concern co-located here for CLI organization.
 
-## Registry Commands (registry.py)
+## Probe Command (`probe.py` + `_probe_impl.py`)
 
-Subcommands: `list` (with optional filter pattern), `describe`, `scan`, `discover` (LLM-powered), `run`.
-
-Note: there is no separate `search` subcommand — `pflow registry list <pattern>` handles search with relevance-sorted results.
+`pflow probe <node> params...` executes a single node and returns metadata / template paths rather than dumping raw output by default.
 
 **MCP tool normalization** (`normalize_node_id`, 3-tier matching for `describe`/`run`):
 1. Exact match: `mcp-slack-composio-SLACK_SEND_MESSAGE`
@@ -56,7 +54,7 @@ Ambiguity detected → shows all matching full IDs with guidance.
 ## Execution Caching Pipeline (registry_run.py + read_fields.py)
 
 ```
-pflow registry run <node> params...
+pflow probe <node> params...
     ↓ executes node
     ↓ ExecutionCache.store(execution_id, outputs)
     ↓ displays results with execution_id
@@ -69,9 +67,9 @@ pflow read-fields <execution_id> <field_paths>...
 
 This two-command pipeline allows agents to run a node once, then extract specific fields without re-execution. Output display mode controlled by `settings.registry.output_mode` ("smart"/"structure"/"full").
 
-## Workflow Commands (workflow.py)
+## Workflow Commands
 
-Subcommands: `list` (with optional filter), `describe`, `history`, `discover` (LLM-powered), `save`.
+Top-level commands: `list`, `find`, `describe`, `history`, `save`.
 
 **Workflow save**:
 - Name validation: lowercase, numbers, hyphens only, max 30 chars (shell/URL/git-safe)
@@ -80,9 +78,9 @@ Subcommands: `list` (with optional filter), `describe`, `history`, `discover` (L
 - Validation failures with structured diagnostics are rendered through `format_validation_failure()` for parity with `--validate-only`
 - `--delete-draft` safety check: only works in `.pflow/workflows/`, resolves symlinks, refuses to delete symlinked files
 
-**Workflow history** (`pflow workflow history <name>`): Shows execution history and last used inputs — useful for finding previously used parameter values.
+**Workflow history** (`pflow history <name>`): Shows execution history and last used inputs — useful for finding previously used parameter values.
 
-**Discovery commands use plain functions** — `discover_workflow()` from `core/workflow/discovery` and `discover_components()` from `registry/discovery`. Both return typed dataclasses (`WorkflowMatch`, `ComponentSelection`).
+**Discovery commands use plain functions** — `find_workflow()` from `core/workflow/discovery` and `find_components()` from `registry/discovery`. Both return typed dataclasses (`WorkflowMatch`, `ComponentSelection`).
 
 **Shared formatters**: Uses `workflow_list_formatter`, `workflow_describe_formatter`, `discovery_formatter`, `workflow_save_formatter`, `history_formatter` from `pflow.execution.formatters/`.
 
@@ -100,16 +98,10 @@ Skills are **symlinks** from tool-specific directories to saved workflows in `~/
 
 **Broken link detection**: `list` detects and reports broken symlinks with fix/remove guidance.
 
-## Instructions Commands (instructions.py)
+## Guide Command (`guide.py`)
 
-- `pflow instructions usage` — basic usage guide (~166 lines)
-- `pflow instructions create` — comprehensive workflow creation guide (~1650 lines)
-  - `--part 1` Foundation & Mental Model (~550 lines)
-  - `--part 2` Building Workflows (~550 lines)
-  - `--part 3` Testing & Reference (~550 lines)
-  - Without `--part`: shows full content
-
-AI agents should run `pflow instructions usage` when first connecting to pflow.
+`pflow guide` renders the shared entry content used by `pflow --help`.
+`pflow guide <topics...>` is a placeholder until Task 77 provides composed topic content.
 
 **Resource path**: Uses `Path(__file__).parent.parent / "resources"` to reach `cli/resources/` from `cli/commands/`.
 

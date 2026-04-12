@@ -112,40 +112,14 @@ class WorkflowManager:
             raise
 
     def _validate_workflow_name(self, name: str) -> None:
-        """Validate workflow name format.
+        """Validate workflow names using the shared save-service rules."""
+        from pflow.core.workflow.save_service import validate_workflow_name
 
-        Enforces: lowercase letters, numbers, hyphens only, max 50 chars.
-        Must start/end with alphanumeric. No consecutive hyphens. No reserved names.
-
-        Args:
-            name: Workflow name to validate
-
-        Raises:
-            WorkflowValidationError: If name is invalid
-        """
-        import re
-
-        # Reserved names that could conflict with system functionality
-        RESERVED_NAMES = {"null", "undefined", "none", "test", "settings", "registry", "workflow", "mcp", "skill"}
-
-        if not name:
-            raise WorkflowValidationError("Workflow name cannot be empty")
-
-        if name.lower() in RESERVED_NAMES:
-            reserved_list = ", ".join(sorted(RESERVED_NAMES))
-            raise WorkflowValidationError(f"'{name}' is a reserved workflow name. Reserved names: {reserved_list}")
-
-        if len(name) > 50:
-            raise WorkflowValidationError("Workflow name cannot exceed 50 characters")
-
-        # Stronger regex: must start/end with alphanumeric, single hyphens only
-        if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", name):
-            raise WorkflowValidationError(
-                f"Invalid workflow name '{name}'. "
-                "Must be lowercase letters, numbers, and single hyphens only. "
-                "Must start and end with alphanumeric (no leading/trailing hyphens). "
-                "No consecutive hyphens. Example: 'my-workflow' or 'pr-analyzer-v2'"
-            )
+        is_valid, error = validate_workflow_name(name)
+        if not is_valid and error:
+            if error.startswith("Name must contain only lowercase letters"):
+                raise WorkflowValidationError(f"Invalid workflow name '{name}'. {error}")
+            raise WorkflowValidationError(error)
 
     def _build_frontmatter(self, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """Build frontmatter dict for a new save.

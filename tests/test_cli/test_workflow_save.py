@@ -144,7 +144,7 @@ class TestWorkflowSaveCLI:
             env = prepared_subprocess_env
 
             completed = subprocess.run(  # noqa: S603
-                [sys.executable, "-m", "pflow.cli.main_wrapper", "--output-format", "json", str(workflow_file)],
+                [sys.executable, "-m", "pflow.cli", "--output-format", "json", str(workflow_file)],
                 capture_output=True,
                 text=True,
                 timeout=10,

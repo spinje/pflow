@@ -298,7 +298,7 @@ class TestDisplayRerunCommands:
         assert calls[0][0][0] == "\n✨ Run again with:"
         assert calls[1][0][0] == "  $ pflow my-workflow"
         assert calls[2][0][0] == "\n📖 Learn more:"
-        assert calls[3][0][0] == "  $ pflow workflow describe my-workflow"
+        assert calls[3][0][0] == "  $ pflow describe my-workflow"
 
     @patch("click.echo")
     def test_display_format_with_params(self, mock_echo):
@@ -312,7 +312,7 @@ class TestDisplayRerunCommands:
         assert calls[0][0][0] == "\n✨ Run again with:"
         assert calls[1][0][0] == "  $ pflow greeting name=Alice count=42"
         assert calls[2][0][0] == "\n📖 Learn more:"
-        assert calls[3][0][0] == "  $ pflow workflow describe greeting"
+        assert calls[3][0][0] == "  $ pflow describe greeting"
 
     @patch("click.echo")
     def test_display_with_complex_params(self, mock_echo):

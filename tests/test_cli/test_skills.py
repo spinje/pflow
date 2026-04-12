@@ -72,7 +72,7 @@ class TestSkillSaveCommand:
         # Verify error output
         assert result.exit_code == 1
         assert "Error: Workflow 'nonexistent-workflow' not found." in result.output
-        assert "Save it first with: pflow workflow save" in result.output
+        assert "Save it first with: pflow save" in result.output
         assert "nonexistent-workflow" in result.output
 
     @patch("pflow.cli.commands.skills.create_skill_symlink")
@@ -255,7 +255,7 @@ class TestSkillListCommand:
         # Check broken link is marked and specific fix commands are shown
         assert "[broken link]" in result.output
         assert "source workflow 'missing' was deleted" in result.output
-        assert "To restore: pflow workflow save <file> --name missing --force" in result.output
+        assert "To restore: pflow save <file> --name missing --force" in result.output
         assert "To remove:  pflow skill remove missing --copilot" in result.output
 
     @patch("pflow.cli.commands.skills.find_pflow_skills")

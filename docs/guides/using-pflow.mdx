@@ -60,7 +60,7 @@ Over time, your workflow library grows. Tasks that used to require agent reasoni
 Sometimes you just need to run a single tool - send a Slack message, fetch a file, query an API. Your agent can run individual nodes directly without building a workflow:
 
 ```bash
-pflow registry run mcp-slack-SEND_MESSAGE channel="general" text="Done!"
+pflow probe mcp-slack-SEND_MESSAGE channel="general" text="Done!"
 ```
 
 This is useful for:
@@ -74,16 +74,16 @@ Think of nodes as individual building blocks. Your agent can use them standalone
 To see what workflows have been saved:
 
 ```bash
-pflow workflow list
+pflow list
 ```
 
 To see details about a specific workflow:
 
 ```bash
-pflow workflow describe my-workflow
+pflow describe my-workflow
 ```
 
-See [workflow commands](/reference/cli/workflow) for more options.
+See [workflow commands](/reference/cli/list) for more options.
 
 ## Optional: Running workflows directly
 

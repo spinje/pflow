@@ -91,18 +91,15 @@ class TestDualModeStdinBehavior:
         # Verify workflow executed with stdin data routed to input
         assert "Test stdin data" in result.output or "executed" in result.output.lower()
 
-    def test_json_via_stdin_triggers_planner(self, tmp_path):
-        """Test that JSON input via stdin triggers the planner (no longer direct workflow execution)."""
-        # JSON via stdin is now treated as natural language input for the planner
+    def test_json_via_stdin_without_workflow_shows_root_help(self, tmp_path):
+        """Test that JSON stdin without a workflow falls back to root help."""
         json_input = '{"task": "example"}'
 
         runner = CliRunner()
         result = runner.invoke(main, [], input=json_input)
 
-        # With no workflow specified and stdin containing data, it should fail with clear error
-        assert result.exit_code != 0
-        # The system now expects workflow to be specified via args or file path
-        assert "no workflow specified" in result.output.lower() or "error" in result.output.lower()
+        assert result.exit_code == 0
+        assert "pflow runs workflows" in result.output.lower()
 
     def test_plain_text_stdin_with_args_treats_stdin_as_data(self):
         """Test that plain text stdin with args treats stdin as data.
@@ -133,17 +130,15 @@ class TestDualModeStdinBehavior:
         # Check for some output indicating processing happened
         assert len(result.output) > 0
 
-    def test_json_stdin_with_args_processes_args_as_workflow(self):
-        """Test that unquoted multi-word args show validation error."""
+    def test_json_stdin_with_describe_args_shows_command_usage(self):
+        """Extra args to `describe` should produce a normal Click usage error."""
         json_data = '{"data": "some json"}'
 
         runner = CliRunner()
-        # With planner validation, unquoted multi-word args now error
         result = runner.invoke(main, ["describe", "this", "data"], input=json_data)
 
-        assert result.exit_code == 1
-        # Should show validation error for unquoted multi-word input
-        assert "Invalid input" in result.output or "must be quoted" in result.output
+        assert result.exit_code == 2
+        assert "Got unexpected extra argument" in result.output or "Usage:" in result.output
 
     def test_no_stdin_uses_args_normally(self):
         """Test that unquoted multi-word args show validation error."""
@@ -310,11 +305,12 @@ class TestRealShellIntegration:
         # Create a workflow using shell node
         workflow = {
             "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
             "nodes": [
                 {
                     "id": "test_echo",
                     "type": "shell",
-                    "params": {"command": "echo 'Test content'"},
+                    "params": {"command": "echo '${data}'"},
                 }
             ],
             "edges": [],
@@ -328,7 +324,7 @@ class TestRealShellIntegration:
         env = prepared_subprocess_env
 
         result = subprocess.run(  # noqa: S603
-            [sys.executable, "-m", "pflow.cli.main_wrapper", str(workflow_file)],  # No --file flag
+            [sys.executable, "-m", "pflow.cli", str(workflow_file)],  # No --file flag
             input="Test data from pipe",
             capture_output=True,
             text=True,
@@ -337,7 +333,7 @@ class TestRealShellIntegration:
         )
 
         assert result.returncode == 0
-        # Success is determined by exit code; empty stdout is valid
+        assert "Test data from pipe" in result.stdout or "Test data from pipe" in result.stderr
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
     def test_pipe_json_triggers_planner(self, tmp_path, uv_exe, prepared_subprocess_env):
@@ -346,7 +342,7 @@ class TestRealShellIntegration:
 
         env = prepared_subprocess_env
         result = subprocess.run(  # noqa: S603
-            [sys.executable, "-m", "pflow.cli.main_wrapper"],
+            [sys.executable, "-m", "pflow.cli"],
             input=json_data,
             capture_output=True,
             text=True,
@@ -406,7 +402,7 @@ class TestBinaryAndLargeStdinBehavior:
                     [
                         sys.executable,
                         "-m",
-                        "pflow.cli.main_wrapper",
+                        "pflow.cli",
                         "--verbose",
                         str(workflow_file),
                     ],  # No --file flag, flags first
