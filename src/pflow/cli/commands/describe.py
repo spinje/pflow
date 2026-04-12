@@ -14,6 +14,7 @@ from pflow.core.workflow.manager import WorkflowManager
 def describe_cmd(name: str) -> None:
     """Show workflow interface — inputs, outputs, and example usage.
 
+    \b
     Examples:
       pflow describe my-workflow
       pflow describe fetch-github-prs

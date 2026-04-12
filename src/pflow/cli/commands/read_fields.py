@@ -19,14 +19,14 @@ from pflow.runtime.template_resolver import TemplateResolver
     help="Output format (text or json)",
 )
 def read_fields(execution_id: str, field_paths: tuple[str, ...], output_format: str) -> None:
-    """Read specific fields from cached registry run execution.
+    """Read specific fields from cached probe execution.
 
-    This command retrieves specific field values from a previous registry run
+    This command retrieves specific field values from a previous probe
     execution, enabling efficient data access without re-executing the node.
 
     \b
     Arguments:
-        EXECUTION_ID: The execution ID from a previous registry run command
+        EXECUTION_ID: The execution ID from a previous probe command
         FIELD_PATHS: One or more field paths to retrieve (e.g., result[0].title)
 
     \b

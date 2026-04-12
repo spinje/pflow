@@ -6,6 +6,7 @@ import signal
 import sys
 from contextlib import suppress
 from importlib.metadata import version as pkg_version
+from typing import ClassVar
 
 import click
 
@@ -16,6 +17,14 @@ class PflowCLI(click.Group):
     """Click group with default-command routing for workflow execution."""
 
     ignore_unknown_options = True
+
+    # Commands removed in the CLI restructure (Task 151). Agents with old
+    # instructions will try these — give them a clear migration path.
+    _removed_commands: ClassVar[dict[str, str]] = {
+        "workflow": "Workflow commands are now top-level: pflow list, pflow find, pflow describe, pflow history, pflow save",
+        "registry": "Registry commands replaced: pflow probe (run nodes), pflow mcp list (list nodes), pflow mcp find (discover nodes)",
+        "instructions": "Replaced by: pflow guide",
+    }
 
     def resolve_command(
         self,
@@ -30,10 +39,24 @@ class PflowCLI(click.Group):
         if cmd is not None:
             return cmd_name, cmd, args[1:]
 
+        if cmd_name in self._removed_commands:
+            click.echo(f"Error: '{cmd_name}' command was removed.\n{self._removed_commands[cmd_name]}", err=True)
+            ctx.exit(1)
+
         return "run", self.get_command(ctx, "run"), args
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         formatter.write_usage(ctx.command_path, "[OPTIONS] COMMAND [ARGS]...")
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        self.format_usage(ctx, formatter)
+        formatter.write_paragraph()
+        # Render entry content directly — bypasses Click's paragraph wrapper
+        # so the aligned Quick Start table stays intact.
+        formatter.write(f"  {render_entry_content().strip()}\n")
+        formatter.write("\n")
+        # format_options on Group also calls format_commands internally
+        self.format_options(ctx, formatter)
 
 
 def _setup_signals() -> None:
@@ -56,7 +79,7 @@ def _get_version() -> str:
         return "0.11.0"
 
 
-@click.group(cls=PflowCLI, help=render_entry_content(), invoke_without_command=True)
+@click.group(cls=PflowCLI, invoke_without_command=True)
 @click.version_option(version=_get_version(), prog_name="pflow", message="pflow version %(version)s")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution output")
 @click.pass_context

@@ -20,7 +20,8 @@ def render_entry_content() -> str:
 
 def _placeholder_entry_content() -> str:
     return """\
-pflow runs workflows — sequences of nodes (http, shell, llm, code, file, mcp) that chain together through a shared data store.
+pflow runs workflows — sequences of nodes (http, shell, llm, code, file, mcp) \
+that chain together through a shared data store.
 
 Quick start:
   pflow <workflow-file>       Run a workflow file

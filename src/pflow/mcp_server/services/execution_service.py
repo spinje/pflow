@@ -553,6 +553,6 @@ class ExecutionService(BaseService):
 
         except Exception as e:
             logger.error(f"Failed to run node {node_type}: {e}", exc_info=True)
-            from pflow.execution.formatters.registry_error_helpers import enrich_for_registry_run
+            from pflow.execution.formatters.registry_error_helpers import enrich_for_probe
 
-            return "\n".join(format_diagnostic(d) for d in enrich_for_registry_run(e, node_type))
+            return "\n".join(format_diagnostic(d) for d in enrich_for_probe(e, node_type))

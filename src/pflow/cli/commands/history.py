@@ -14,6 +14,7 @@ from pflow.core.workflow.manager import WorkflowManager
 def history_cmd(workflow_name: str) -> None:
     """Show execution history for a saved workflow.
 
+    \b
     Examples:
       pflow history my-workflow
     """

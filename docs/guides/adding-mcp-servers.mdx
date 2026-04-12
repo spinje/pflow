@@ -73,13 +73,13 @@ pflow mcp list
 See all tools from a specific server:
 
 ```bash
-pflow mcp tools github
+pflow mcp list github
 ```
 
 Or list all tools from all servers:
 
 ```bash
-pflow mcp tools --all
+pflow mcp list
 ```
 
 ### Get tool details
@@ -87,7 +87,7 @@ pflow mcp tools --all
 See detailed information about a specific tool:
 
 ```bash
-pflow mcp info mcp-github-create-issue
+pflow mcp describe mcp-github-create-issue
 ```
 
 ### Remove a server
@@ -272,7 +272,7 @@ Find more MCP servers at the [Official MCP Registry](https://registry.modelconte
 </Accordion>
 
 <Accordion title="Tool execution fails">
-  1. Run `pflow mcp info <tool-name>` to see required parameters
+  1. Run `pflow mcp describe <tool-name>` to see required parameters
   2. Check that required environment variables are set in the server config
   3. Verify the server has access to required resources (network, files, etc.)
 </Accordion>

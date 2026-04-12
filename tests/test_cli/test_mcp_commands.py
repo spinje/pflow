@@ -128,6 +128,8 @@ def test_removed_mcp_tools_and_info_commands_fail() -> None:
     info_result = runner.invoke(mcp, ["info", "whatever"])
 
     assert tools_result.exit_code != 0
-    assert "No such command 'tools'" in tools_result.output
+    assert "'mcp tools' command was removed" in tools_result.output
+    assert "pflow mcp list" in tools_result.output
     assert info_result.exit_code != 0
-    assert "No such command 'info'" in info_result.output
+    assert "'mcp info' command was removed" in info_result.output
+    assert "pflow mcp describe" in info_result.output

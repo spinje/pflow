@@ -247,7 +247,7 @@ Run `pflow mcp list` to see all available nodes.
 
 **Naming Benefits**:
 - **Predictable**: Users can guess node names
-- **Discoverable**: `pflow registry search file` finds all file nodes
+- **Discoverable**: `pflow mcp list file` finds all file nodes
 - **Composable**: Clear single-purpose functions
 
 > **Future**: Namespace and version support (`core/llm@1.0.0`) planned for v2.0. See `.taskmaster/feature-dump/registry-versioning.md` for design notes.
@@ -281,7 +281,7 @@ The registry (`src/pflow/registry/`) discovers and catalogs nodes:
 
 ```bash
 pflow mcp list              # List all nodes
-pflow registry search "http"     # Search nodes
+pflow mcp find "http"            # Search nodes
 pflow mcp describe shell    # Show node details
 pflow probe shell cmd="echo hello"  # Test a node
 ```

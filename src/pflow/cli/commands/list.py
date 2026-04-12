@@ -16,6 +16,7 @@ from pflow.core.workflow.manager import WorkflowManager
 def list_cmd(keywords: tuple[str, ...], output_json: bool) -> None:
     """List saved workflows, optionally filtered by keywords.
 
+    \b
     Examples:
       pflow list
       pflow list github

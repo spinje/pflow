@@ -18,6 +18,7 @@ from pflow.core.exceptions import MarkdownParseError, WorkflowValidationError
 def save_cmd(file_path: str, name: str, delete_draft: bool, force: bool) -> None:
     """Save a workflow file to the library.
 
+    \b
     Examples:
       pflow save workflow.pflow.md --name my-workflow
       pflow save draft.pflow.md --name api-fetcher --delete-draft

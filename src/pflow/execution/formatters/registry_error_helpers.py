@@ -1,4 +1,4 @@
-"""Shared registry-run error construction for CLI and MCP.
+"""Shared probe error construction for CLI and MCP.
 
 Returns Diagnostic objects, not text. Callers render via format_diagnostic().
 """
@@ -33,11 +33,11 @@ def build_node_not_found_diagnostic(node_type: str, available_nodes: list[str]) 
     )
 
 
-def enrich_for_registry_run(
+def enrich_for_probe(
     exc: Exception,
     node_type: str,
 ) -> list[Diagnostic]:
-    """Convert an exception to Diagnostics enriched with registry-run context.
+    """Convert an exception to Diagnostics enriched with probe context.
 
     Adds node_type as location and context-aware suggestions based on
     exception type. The call site has the node_type context that the
@@ -49,13 +49,13 @@ def enrich_for_registry_run(
     enriched = []
     for d in diagnostics:
         node_id = d.node_id or node_type
-        suggestions = _registry_run_suggestions(d, node_type, exc)
+        suggestions = _probe_suggestions(d, node_type, exc)
         enriched.append(replace(d, node_id=node_id, suggestions=suggestions))
     return enriched
 
 
-def _registry_run_suggestions(d: Any, node_type: str, exc: Exception) -> list[str]:
-    """Build context-aware suggestions for registry run errors."""
+def _probe_suggestions(d: Any, node_type: str, exc: Exception) -> list[str]:
+    """Build context-aware suggestions for probe errors."""
     suggestions = list(d.suggestions or [])
     if isinstance(exc, (FileNotFoundError, PermissionError)):
         return suggestions  # already have good suggestions from _builtin_exception_diagnostic

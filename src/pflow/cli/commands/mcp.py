@@ -12,7 +12,7 @@ import json
 import logging
 import sys
 import time
-from typing import Optional
+from typing import ClassVar, Optional
 
 import click
 
@@ -22,7 +22,26 @@ from pflow.mcp import MCPRegistrar, MCPServerManager
 logger = logging.getLogger(__name__)
 
 
-@click.group(name="mcp")
+class MCPGroup(click.Group):
+    """MCP command group with migration hints for removed subcommands."""
+
+    _removed_commands: ClassVar[dict[str, str]] = {
+        "tools": "Replaced by: pflow mcp list [keyword...]",
+        "info": "Replaced by: pflow mcp describe <tool>",
+    }
+
+    def resolve_command(
+        self,
+        ctx: click.Context,
+        args: list[str],
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        if args and args[0] in self._removed_commands:
+            click.echo(f"Error: 'mcp {args[0]}' command was removed.\n{self._removed_commands[args[0]]}", err=True)
+            ctx.exit(1)
+        return super().resolve_command(ctx, args)
+
+
+@click.group(name="mcp", cls=MCPGroup)
 def mcp() -> None:
     """Manage MCP server connections."""
     pass
@@ -416,7 +435,18 @@ def _format_filtered_tools(grouped_entries: dict[str, list[dict]], keywords: tup
 @click.argument("keywords", nargs=-1)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 def list_tools(keywords: tuple[str, ...], output_json: bool) -> None:
-    """List MCP tools, optionally filtered by keywords."""
+    """List MCP tools, optionally filtered by keywords.
+
+    Without keywords, shows a grouped-by-server summary with tool counts
+    and sample tool names. With keywords, shows matching tools with full
+    details (name + description), filtered by AND logic across all keywords.
+
+    \b
+    Examples:
+        pflow mcp list                 # Summary of all servers + tool counts
+        pflow mcp list slack           # Tools matching "slack"
+        pflow mcp list slack send      # Tools matching both "slack" AND "send"
+    """
     registrar = MCPRegistrar()
     manager = MCPServerManager()
 

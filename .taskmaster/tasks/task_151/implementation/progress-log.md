@@ -2,8 +2,8 @@
 
 ## Status
 
-- Current phase: Final verification complete
-- Overall state: completed
+- Current phase: Audit + verification + UX fixes complete
+- Overall state: implementation complete, all fixes applied, real CLI verified, test backfill pending decision
 - Last updated: 2026-04-12
 
 ## Verified Context
@@ -146,8 +146,103 @@
 - Post-check fix: replaced the root CLI `SIGPIPE` `try/except/pass` block with `contextlib.suppress(AttributeError)` to satisfy `ruff` SIM105.
 - Post-check fix: corrected `_probe_impl.py` to call `ExecutionCache.store()` with the full `(execution_id, node_type, params, outputs)` signature. The extracted probe implementation had accidentally collapsed that call during refactoring, which `mypy` caught.
 
+## Post-Implementation Audit (2026-04-12)
+
+Comprehensive audit by a fresh agent after the "implementation completed" commit. Findings and fixes:
+
+### Baseline: Green
+- 4704 tests pass, 0 failures, 0 skips
+- `make check` clean (ruff, mypy 176 files, deptry)
+- MCP server boundary respected (only 2 import renames in `discovery_service.py`)
+
+### Audit Fixes Applied
+
+**A. Stale references in production code (9 hits → 0):**
+- `read_fields.py`: "registry run" → "probe" in docstring/help text (agent-facing)
+- `registry_error_helpers.py`: `enrich_for_registry_run` → `enrich_for_probe`, `_registry_run_suggestions` → `_probe_suggestions` (function renames + docstrings)
+- `smart_filter.py`, `execution_cache.py`: "registry run" → "probe" in docstrings
+- `mcp_server/services/execution_service.py`: import updated for renamed function
+- `test_registry_error_helpers.py`, `test_connection_pool.py`: imports/comments updated
+
+**B. Stale references in docs (9 hits → 0):**
+- `adding-mcp-servers.mdx`: `mcp tools` → `mcp list`, `mcp info` → `mcp describe`
+- `nodes/index.mdx`, `nodes/mcp.mdx`: `mcp tools` → `mcp list`
+- `configuration.mdx`: `pflow registry scan` → auto-regeneration description
+- `roadmap.mdx`: `pflow workflow save` → `pflow save`
+- `probe.mdx`: removed reference to old command name
+
+**C. Stale references in architecture docs (3 hits → 0):**
+- `architecture.md`: `registry search` → `mcp list`/`mcp find`
+- `ir-schema.md`: `pflow registry --help` → `pflow mcp --help`
+
+**D. CLAUDE.md files rewritten:**
+- `src/pflow/cli/CLAUDE.md`: Complete rewrite — new PflowCLI routing architecture, correct file structure (no `main_wrapper.py`/`discovery_errors.py`), correct dependency graph, accurate main.py description (~113 lines entry point), split command flags into group-level vs run-level, updated test mapping with correct mock.patch targets in `commands/run.py`.
+- `src/pflow/cli/commands/CLAUDE.md`: Complete rewrite — flat command table (not groups routed by wrapper), updated MCP subcommands (list/find/describe/servers), updated cross-references, complete test mapping with all current mock.patch targets.
+
+### Verification After Fixes
+- 4704 tests pass, 0 failures
+- `make check` clean
+- All stale-reference greps return zero hits (excluding `architecture/historical/` which is intentionally untouched)
+
+### Outstanding: Test Coverage Gap (not yet addressed)
+
+154 tests were deleted with 22 replacements created. The new tests cover happy paths but drop significant edge case coverage. Key gaps:
+
+| Area | Was | Now | Gap |
+|---|---|---|---|
+| Registry list/describe/search CLI | 51 tests | 6 (mcp_commands) | Grouped display, MCP name resolution depth, error cases |
+| Registry describe | 28 tests | 1 | Format consistency, snippet generation, multi-node, special chars |
+| Node ID normalization | 17 tests | 4 | Invalid IDs, backward compat, mixed case |
+| Probe (was registry run) | 28 tests | 6 | Param type inference, structure mode, verbose, timing, error JSON |
+| Discovery commands | 9 tests | 3 | Empty query, no-workflows edge case |
+| Instructions (now guide) | 21 tests | 3 | Content validation (deferred to Task 77) |
+| Registry scan | 8 tests | 0 | Command deleted, but scan logic still exists |
+| Routing | 3 tests | 0 | New PflowCLI routing tests |
+
+Decision on backfill approach pending user input.
+
+### Real CLI Verification (2026-04-12)
+
+Three parallel verification agents ran 35+ real subprocess tests (`uv run pflow ...`) against the live CLI. No mocks, no CliRunner — real process execution.
+
+**All execution paths verified correct:**
+- Workflow execution: file, saved name, `run` prefix, two-step template chaining
+- Critical routing: `--output-format json` before workflow name passes through `ignore_unknown_options=True` correctly
+- All flags: `-p`, `--verbose`, `--validate-only`, `--no-trace`, `--output-format json`, `--cache/--no-cache`
+- Flags work before and after workflow name (`allow_interspersed_args=True`)
+- Required input validation, empty param rejection, stdin piping error messages
+- `probe`, `list`, `describe`, `history`, `save` + run-by-name lifecycle
+- Reserved names rejected on save
+- `settings output-mode`, `mcp list`, `mcp servers`
+- Exit codes correct throughout (0 success, 1 errors, 2 Click usage errors)
+- stdout/stderr separation clean
+
+**Issues found and fixed:**
+
+**P1 — Root help formatting broken (FIXED):**
+Click's `help=` parameter re-wrapped the Quick Start table. Fix: overrode `format_help()` on `PflowCLI` to render entry content directly via `formatter.write()`, bypassing Click's paragraph wrapper. `help=render_entry_content()` removed from group decorator. The `pflow guide` path already used `click.echo()` directly. Result: `entry.md` (Task 77) is plain text — no Click-specific markers needed.
+
+**P2 — Deleted commands gave no migration guidance (FIXED):**
+`pflow workflow list` produced misleading "Invalid input: workflow list" (suggesting a malformed workflow invocation). Fix: added `_removed_commands` dict to `PflowCLI.resolve_command()` for top-level (`workflow`, `registry`, `instructions`) and `MCPGroup.resolve_command()` for MCP subgroup (`tools`, `info`). Each produces a clear error naming the replacement: `"Error: 'workflow' command was removed. Workflow commands are now top-level: pflow list, pflow find, ..."`. Not aliases, not fallbacks — just better errors. ~20 lines total.
+
+**P3 — `mcp list --help` too terse (FIXED):**
+Added description explaining grouped-by-server summary vs keyword-filtered detail modes, with examples.
+
+**P4 — `probe --help` missing examples (FIXED):**
+Added examples block.
+
+**Per-command `\b` markers for examples blocks:**
+Added `\b` before Examples sections in `list`, `find`, `describe`, `history`, `save`, `probe`, `mcp list` help text. Standard Click pattern to preserve indented formatting.
+
+**Test updates:** 2 tests updated to match new error messages (`test_mcp_commands.py` for mcp migration messages, `test_dual_mode_stdin.py` for a test that used "workflow" as a proxy for multi-word args — changed to "something").
+
+### Verification After All Fixes
+- 4704 tests pass, 0 failures
+- `make check` clean
+- All stale-reference greps return zero hits
+- Real CLI execution verified across 35+ subprocess tests
+
 ## Risks / Notes
 
-- Risk: a large number of tests patch `pflow.cli.main.*` and/or import `main_wrapper.py`; those will break as soon as Phase 1 lands.
-- Risk: help text and command suggestions are duplicated in production code and docs, so stale command strings are likely outside the obvious CLI modules.
 - Note: the task spec requires the progress log to stay live. Update it after every completed phase and when implementation diverges from the written plan.
+- Note: one stale reference remains in `architecture/implementation-details/metadata-extraction.md` (`pflow registry install`) — this command never existed and the doc is a design-time artifact, so it was intentionally left untouched.

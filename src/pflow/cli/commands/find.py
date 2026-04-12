@@ -17,6 +17,7 @@ def find_cmd(query: str) -> None:
     Unlike `list` (keyword matching), `find` uses an LLM to understand
     what you're looking for and match it to saved workflows.
 
+    \b
     Examples:
       pflow find "something that fetches github PRs"
       pflow find "workflow for sending slack notifications"

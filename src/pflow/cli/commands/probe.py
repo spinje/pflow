@@ -15,6 +15,12 @@ def probe_cmd(ctx: click.Context, node_type: str, params: tuple[str, ...], outpu
 
     Returns metadata and template paths, not raw data, so you can inspect
     structure first and then use `read-fields` for specific values.
+
+    \b
+    Examples:
+        pflow probe shell command="echo hello"
+        pflow probe http url="https://api.example.com/data"
+        pflow probe shell command="ls" --output-format json
     """
     from pflow.cli.commands._probe_impl import execute_single_node
 

@@ -143,7 +143,7 @@ class TestDualModeStdinBehavior:
     def test_no_stdin_uses_args_normally(self):
         """Test that unquoted multi-word args show validation error."""
         runner = CliRunner()
-        result = runner.invoke(main, ["workflow", "from", "args"])
+        result = runner.invoke(main, ["something", "from", "args"])
 
         assert result.exit_code == 1
         assert "Invalid input" in result.output or "must be quoted" in result.output
