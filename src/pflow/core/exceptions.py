@@ -73,7 +73,7 @@ class WorkflowNotFoundError(PflowError):
     def to_diagnostics(self) -> list[Diagnostic]:
         # When hint provides specific guidance (e.g., "convert .json to .pflow.md"),
         # don't dilute it with generic "list workflows" suggestion.
-        suggestions = None if self.hint else ["Use 'pflow workflow list' to see all available workflows."]
+        suggestions = None if self.hint else ["Use 'pflow list' to see all available workflows."]
         return [
             Diagnostic(
                 severity=Severity.ERROR,

@@ -193,7 +193,7 @@ No documentation needed - the natural interfaces guide composition.
 ### Discovery and Learning
 ```bash
 # See all available nodes by category
-$ pflow registry list file
+$ pflow mcp list file
 📦 File Nodes:
 - read-file: Read file contents from disk
 - write-file: Write content to a file
@@ -201,7 +201,7 @@ $ pflow registry list file
 - delete-file: Delete a file from disk
 
 # Get detailed interface for specific node
-$ pflow registry describe read-file
+$ pflow mcp describe read-file
 Params: file_path
 Writes: shared["content"]
 ```
@@ -338,8 +338,8 @@ LLM-driven discovery works with simple node selection:
 
 ### Registry System Updates
 Node discovery supports simple node organization:
-- `pflow registry list file` shows related file nodes
-- `pflow registry describe read-file` shows specific node interface
+- `pflow mcp list file` shows related file nodes
+- `pflow mcp describe read-file` shows specific node interface
 - Clear categorization by platform or function
 - Simple interface documentation
 

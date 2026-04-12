@@ -463,7 +463,7 @@ class TestMCPNodePoolIntegration:
     def test_mcp_node_fallback_when_no_pool(self):
         """When no pool in shared store, MCPNode falls back to asyncio.run().
 
-        This path is used by `pflow registry run` (single-node execution).
+        This path is used by `pflow probe` (single-node execution).
         """
         from pflow.nodes.mcp.node import MCPNode
 

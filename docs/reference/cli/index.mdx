@@ -22,14 +22,14 @@ pflow [command] [options] [arguments]
   <Card title="pflow (default)" icon="circle-play" href="#main-command">
     Run workflows by name or file
   </Card>
-  <Card title="pflow workflow" icon="workflow" href="/reference/cli/workflow">
-    List, describe, discover, and save workflows
+  <Card title="pflow list / find / describe" icon="workflow" href="/reference/cli/list">
+    Find and inspect saved workflows
   </Card>
   <Card title="pflow skill" icon="wand-magic-sparkles" href="/reference/cli/skill">
     Publish workflows as AI agent skills
   </Card>
-  <Card title="pflow registry" icon="box" href="/reference/cli/registry">
-    Browse and test available nodes
+  <Card title="pflow guide / probe" icon="box" href="/reference/cli/guide">
+    Learn the surface and test single nodes
   </Card>
   <Card title="pflow mcp" icon="plug" href="/reference/cli/mcp">
     Manage MCP server connections
@@ -40,8 +40,8 @@ pflow [command] [options] [arguments]
   <Card title="pflow visualize" icon="git-graph" href="#visualize-command">
     Generate Mermaid flowchart from a workflow
   </Card>
-  <Card title="pflow instructions" icon="book-open" href="#instructions-command">
-    Get AI agent usage guidance
+  <Card title="pflow guide" icon="book-open" href="/reference/cli/guide">
+    Get AI agent entry guidance
   </Card>
 </Columns>
 
@@ -425,37 +425,21 @@ Workflow inputs and outputs render as dashed-border groups. Batch nodes show as 
 
 </Expandable>
 
-## Instructions command
+## Guide command
 
-The `pflow instructions` command provides guidance for AI agents using pflow.
-
-```bash
-pflow instructions <SUBCOMMAND>
-```
-
-| Subcommand | Description |
-|------------|-------------|
-| `usage` | Basic usage guide for AI agents (~100 lines) |
-| `create` | Comprehensive workflow creation guide (~1600 lines) |
-
-**Example:**
+The `pflow guide` command provides the entry guidance for AI agents using pflow.
 
 ```bash
-# Get usage instructions (AI agents should run this first)
-pflow instructions usage
-
-# Get detailed workflow creation guide
-pflow instructions create
+pflow guide
+pflow guide http llm
 ```
 
-<Note>
-  AI agents should run `pflow instructions usage` when first connecting to pflow. This provides optimized guidance for agent-driven workflow building.
-</Note>
+Without topics it renders the same entry content as `pflow --help`. Topic composition is introduced in Task 77.
 
 ## Related
 
-- [Workflow commands](/reference/cli/workflow) - Manage saved workflows
+- [Workflow commands](/reference/cli/list) - Find and manage saved workflows
 - [Skill commands](/reference/cli/skill) - Publish workflows as AI agent skills
-- [Registry commands](/reference/cli/registry) - Browse available nodes
+- [Guide and probe](/reference/cli/guide) - Learn the surface and test single nodes
 - [MCP commands](/reference/cli/mcp) - Manage MCP servers
 - [Settings commands](/reference/cli/settings) - Configure pflow

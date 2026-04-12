@@ -1,4 +1,4 @@
-"""Tests for `pflow workflow save` command.
+"""Tests for `pflow save` command.
 
 Tests the CLI command that saves draft workflows to the global library.
 Focuses on command-line behavior, not WorkflowManager internals.
@@ -9,12 +9,12 @@ from typing import Any
 import click.testing
 import pytest
 
-from pflow.cli.commands.workflow import workflow as workflow_cmd
+from pflow.cli.commands.save import save_cmd
 from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 
 class TestWorkflowSaveCLI:
-    """Test suite for `pflow workflow save` command."""
+    """Test suite for `pflow save`."""
 
     @pytest.fixture
     def runner(self) -> click.testing.CliRunner:
@@ -41,8 +41,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(sample_workflow_ir, draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "my-workflow"],
+            save_cmd,
+            [str(draft), "--name", "my-workflow"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -72,8 +72,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(workflow, draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "test-workflow"],
+            save_cmd,
+            [str(draft), "--name", "test-workflow"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -93,8 +93,8 @@ class TestWorkflowSaveCLI:
         draft.write_text("# Bad\n\nBad workflow.\n\n## Steps\n\n### node1\n\nA node.\n\n- id: node1\n")
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "bad-workflow"],
+            save_cmd,
+            [str(draft), "--name", "bad-workflow"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -122,8 +122,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(broken_ir, draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "broken-workflow"],
+            save_cmd,
+            [str(draft), "--name", "broken-workflow"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -156,8 +156,8 @@ class TestWorkflowSaveCLI:
 
         for invalid_name in invalid_names:
             result = runner.invoke(
-                workflow_cmd,
-                ["save", str(draft), "--name", invalid_name],
+                save_cmd,
+                [str(draft), "--name", invalid_name],
                 env={"HOME": str(tmp_path)},
             )
 
@@ -168,8 +168,8 @@ class TestWorkflowSaveCLI:
         valid_names = ["myworkflow", "my-workflow", "workflow-123", "test1"]
         for valid_name in valid_names:
             result = runner.invoke(
-                workflow_cmd,
-                ["save", str(draft), "--name", valid_name, "--force"],
+                save_cmd,
+                [str(draft), "--name", valid_name, "--force"],
                 env={"HOME": str(tmp_path)},
             )
 
@@ -189,8 +189,8 @@ class TestWorkflowSaveCLI:
 
         for reserved in reserved_names:
             result = runner.invoke(
-                workflow_cmd,
-                ["save", str(draft), "--name", reserved],
+                save_cmd,
+                [str(draft), "--name", reserved],
                 env={"HOME": str(tmp_path)},
             )
 
@@ -213,8 +213,8 @@ class TestWorkflowSaveCLI:
         assert draft.exists(), "Draft should exist before save"
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "saved-workflow", "--delete-draft"],
+            save_cmd,
+            [str(draft), "--name", "saved-workflow", "--delete-draft"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -237,8 +237,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(sample_workflow_ir, unsafe_draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(unsafe_draft), "--name", "test-workflow", "--delete-draft"],
+            save_cmd,
+            [str(unsafe_draft), "--name", "test-workflow", "--delete-draft"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -275,8 +275,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(new_workflow, draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "my-workflow", "--force"],
+            save_cmd,
+            [str(draft), "--name", "my-workflow", "--force"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -319,8 +319,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(broken_ir, draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "my-workflow", "--force"],
+            save_cmd,
+            [str(draft), "--name", "my-workflow", "--force"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -348,8 +348,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(sample_workflow_ir, draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "my-workflow"],
+            save_cmd,
+            [str(draft), "--name", "my-workflow"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -361,8 +361,8 @@ class TestWorkflowSaveCLI:
     def test_workflow_save_handles_missing_draft(self, runner: click.testing.CliRunner, tmp_path: Any) -> None:
         """Should show helpful error for nonexistent draft file."""
         result = runner.invoke(
-            workflow_cmd,
-            ["save", "/nonexistent/draft.pflow.md", "--name", "test"],
+            save_cmd,
+            ["/nonexistent/draft.pflow.md", "--name", "test"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -384,8 +384,8 @@ class TestWorkflowSaveCLI:
         long_name = "a" * 51
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", long_name],
+            save_cmd,
+            [str(draft), "--name", long_name],
             env={"HOME": str(tmp_path)},
         )
 
@@ -403,8 +403,8 @@ class TestWorkflowSaveCLI:
         write_workflow_file(sample_workflow_ir, draft)
 
         result = runner.invoke(
-            workflow_cmd,
-            ["save", str(draft), "--name", "test-workflow"],
+            save_cmd,
+            [str(draft), "--name", "test-workflow"],
             env={"HOME": str(tmp_path)},
         )
 

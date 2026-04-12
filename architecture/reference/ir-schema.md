@@ -646,7 +646,7 @@ Node purity status determined by `@flow_safe` decorator (see `.taskmaster/featur
 - Optional fields with sensible defaults
 - Clear validation rules for new features
 
-> **Implementation Details**: See `pflow registry --help` for registry commands and [Architecture](../architecture.md#node-naming) for naming conventions
+> **Implementation Details**: See `pflow mcp --help` for node discovery commands and [Architecture](../architecture.md#node-naming) for naming conventions
 
 ---
 

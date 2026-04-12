@@ -76,9 +76,14 @@
             "group": "CLI commands",
             "pages": [
               "reference/cli/index",
-              "reference/cli/workflow",
+              "reference/cli/list",
+              "reference/cli/find",
+              "reference/cli/describe",
+              "reference/cli/history",
+              "reference/cli/save",
+              "reference/cli/guide",
+              "reference/cli/probe",
               "reference/cli/skill",
-              "reference/cli/registry",
               "reference/cli/mcp",
               "reference/cli/settings"
             ]

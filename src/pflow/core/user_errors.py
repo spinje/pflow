@@ -86,7 +86,7 @@ class MCPError(UserFriendlyError):
             suggestions = [
                 "Check your MCP servers: pflow mcp list",
                 "Sync MCP tools: pflow mcp sync --all",
-                "Verify tools are registered: pflow registry list | grep mcp",
+                "Verify tools are registered: pflow mcp list",
                 "Run your workflow again",
             ]
 

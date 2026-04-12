@@ -72,6 +72,6 @@ def _format_empty_list() -> str:
         "",
         "To save a workflow:",
         "  1. Create a .pflow.md workflow file",
-        "  2. Save it: pflow workflow save my-workflow.pflow.md --name my-workflow",
+        "  2. Save it: pflow save my-workflow.pflow.md --name my-workflow",
     ]
     return "\n".join(lines)

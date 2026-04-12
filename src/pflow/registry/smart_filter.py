@@ -93,7 +93,7 @@ def smart_filter_fields(
         Add optional 'context' parameter (e.g., "fraud detection", "payment processing")
         to guide LLM filtering toward domain-specific fields. Would require cache
         invalidation since same field structure + different context = different result.
-        Usage: `registry run http url=... --filter-context="fraud detection"`
+        Usage: `probe http url=... --filter-context="fraud detection"`
 
     Examples:
         >>> fields = [("result[0].id", "int"), ("result[0].title", "str"), ...]  # 200 fields

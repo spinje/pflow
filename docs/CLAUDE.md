@@ -9,7 +9,7 @@ This file provides guidance to AI agents when working on user-facing documentati
 1. **Verify the command exists** - Run `pflow --help` or check `src/pflow/cli/` or `src/pflow/mcp_server/tools/`
 2. **Verify flags exist** - Check the actual Click decorators in the code
 3. **Test examples** - Every command you document must be runnable
-4. **Check current usage patterns** - Run `pflow instructions usage` to see what we tell agents.
+4. **Check current usage patterns** - Run `pflow guide` to see the current entry guidance for agents.
 
 If you cannot verify something, ask the user or mark it as "needs verification" - do not guess.
 
@@ -26,7 +26,7 @@ These docs serve two purposes:
 
 This distinction matters for how you write each type of page. Setup pages are procedural — do this, then this. Reference pages explain what things do and how they work, so users can read and understand the workflows their agent creates.
 
-**Important**: AI agents get their own instructions via `pflow instructions` command or MCP resources, not these docs.
+**Important**: AI agents get their own instructions via `pflow guide` and MCP resources, not these docs.
 
 ---
 
@@ -570,7 +570,7 @@ mint broken-links
 - Use absolute URLs for internal links (use relative paths like `/quickstart`)
 - Include untested code examples
 - Document planner internals or IR schema
-- Write for AI agents (they use `pflow instructions`)
+- Write for AI agents (they use `pflow guide`)
 - Use emoji or decorative formatting
 - Use title case in headings
 

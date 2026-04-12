@@ -126,7 +126,7 @@ def save_skill(workflow_name: str, personal: bool, cursor: bool, codex: bool, co
 
     If the skill already exists, re-enriches the workflow file (idempotent).
 
-    WORKFLOW_NAME is the name of a saved workflow (from 'pflow workflow save').
+    WORKFLOW_NAME is the name of a saved workflow (from 'pflow save').
     """
     scope = "personal" if personal else "project"
     targets = _get_targets_from_flags(cursor, codex, copilot)
@@ -137,7 +137,7 @@ def save_skill(workflow_name: str, personal: bool, cursor: bool, codex: bool, co
     if not manager.exists(workflow_name):
         click.echo(
             f"Error: Workflow '{workflow_name}' not found.\n"
-            f"Save it first with: pflow workflow save <file> --name {workflow_name}",
+            f"Save it first with: pflow save <file> --name {workflow_name}",
             err=True,
         )
         sys.exit(1)
@@ -220,7 +220,7 @@ def _show_broken_link_help(broken: SkillInfo) -> None:
         flags += " --personal"
 
     click.echo(f"Broken link: the source workflow '{workflow_name}' was deleted.")
-    click.echo(f"  To restore: pflow workflow save <file> --name {workflow_name} --force")
+    click.echo(f"  To restore: pflow save <file> --name {workflow_name} --force")
     click.echo(f"  To remove:  pflow skill remove {workflow_name}{flags}")
 
 

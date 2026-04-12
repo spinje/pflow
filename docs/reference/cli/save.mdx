@@ -1,0 +1,19 @@
+---
+title: "pflow save"
+description: "Save a .pflow.md workflow into the library"
+icon: "save"
+---
+
+## Usage
+
+```bash
+pflow save <FILE> --name <NAME> [OPTIONS]
+```
+
+## Examples
+
+```bash
+pflow save ./workflow.pflow.md --name my-workflow
+pflow save ./draft.pflow.md --name finalized-workflow --delete-draft
+pflow save ./workflow.pflow.md --name my-workflow --force
+```

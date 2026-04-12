@@ -16,11 +16,8 @@ from tests.shared.markdown_utils import write_workflow_file
 
 
 def invoke_cli(args: list[str]) -> Any:
-    """Helper to invoke CLI with proper routing through main_wrapper.
-
-    Since main_wrapper manipulates sys.argv directly, we need to simulate that behavior.
-    """
-    from pflow.cli.main_wrapper import cli_main
+    """Helper to invoke the CLI through the real entrypoint."""
+    from pflow.cli.main import cli_main
 
     # Save original sys.argv and streams
     original_argv = sys.argv[:]

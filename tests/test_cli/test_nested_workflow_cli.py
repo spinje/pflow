@@ -83,10 +83,10 @@ Show the final result.
 def invoke_cli(args: list[str]) -> Any:
     """Invoke the pflow CLI by manipulating sys.argv (matches test_validate_only pattern).
 
-    CliRunner cannot be used here because the main_wrapper pre-parses sys.argv
-    for routing, and nested workflow execution needs real file I/O context.
+    CliRunner cannot be used here because nested workflow execution needs
+    real file I/O context.
     """
-    from pflow.cli.main_wrapper import cli_main
+    from pflow.cli.main import cli_main
 
     original_argv = sys.argv[:]
     original_stdout = sys.stdout
@@ -178,7 +178,7 @@ class TestNestedWorkflowCLI:
         with (
             patch("pflow.core.workflow.manager.WorkflowManager", return_value=wm),
             patch("pflow.execution.workflow_resolver.WorkflowManager", return_value=wm),
-            patch("pflow.cli.main.WorkflowManager", return_value=wm),
+            patch("pflow.cli.commands.run.WorkflowManager", return_value=wm),
         ):
             result = invoke_cli(["test-saved-nested", "title=saved"])
 

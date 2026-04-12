@@ -18,17 +18,29 @@ from pflow.core.workflow.manager import WorkflowManager
 logger = logging.getLogger(__name__)
 
 # Reserved names that could conflict with system functionality
-RESERVED_WORKFLOW_NAMES = {
+RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
     "null",
     "undefined",
     "none",
     "test",
-    "settings",
-    "registry",
-    "workflow",
+    "list",
+    "find",
+    "describe",
+    "history",
+    "save",
+    "guide",
+    "probe",
+    "run",
+    "read-fields",
     "mcp",
     "skill",
-}
+    "settings",
+    "trace",
+    "visualize",
+    "registry",
+    "workflow",
+    "instructions",
+})
 
 
 def validate_workflow_name(name: str) -> tuple[bool, Optional[str]]:

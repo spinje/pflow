@@ -29,12 +29,12 @@ class DiscoveryService(BaseService):
         Returns:
             Markdown formatted string with discovery results (same as CLI)
         """
-        from pflow.core.workflow.discovery import discover_workflow
+        from pflow.core.workflow.discovery import find_workflow
         from pflow.core.workflow.manager import WorkflowManager
 
         # Fresh instance (CRITICAL for stateless pattern) — reused for both calls
         workflow_manager = WorkflowManager()
-        result = discover_workflow(query, workflow_manager=workflow_manager)
+        result = find_workflow(query, workflow_manager=workflow_manager)
 
         # Format using shared formatter (same as CLI)
         if result.found and result.workflow:
@@ -65,11 +65,11 @@ class DiscoveryService(BaseService):
         Returns:
             Markdown formatted string with selected components (same as CLI)
         """
-        from pflow.registry.discovery import discover_components
+        from pflow.registry.discovery import find_components
 
         # Run component discovery
         logger.debug(f"Running component discovery for: {task}")
-        result = discover_components(task)
+        result = find_components(task)
 
         logger.info(f"Component discovery completed, selected {len(result.node_ids)} nodes")
 

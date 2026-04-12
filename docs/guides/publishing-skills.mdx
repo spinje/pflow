@@ -4,7 +4,7 @@ description: "Make workflows automatically available to your AI agent"
 icon: "puzzle"
 ---
 
-pflow workflows can be published as [Agent Skills](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills). Skills are loaded automatically when your AI agent starts — no need to run `pflow workflow list` or `pflow workflow discover`. Your agent just knows the skill exists and can use it.
+pflow workflows can be published as [Agent Skills](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills). Skills are loaded automatically when your AI agent starts — no need to run `pflow list` or `pflow find`. Your agent just knows the skill exists and can use it.
 
 When you publish a workflow as a skill, pflow creates a symlink from the tool's skill directory (e.g., `.claude/skills/`) to your saved workflow. Your workflow stays in `~/.pflow/workflows/` as the single source of truth, and updates automatically appear in all linked skills.
 
@@ -14,7 +14,7 @@ When you publish a workflow as a skill, pflow creates a symlink from the tool's 
   <Step title="Save your workflow">
     Make sure your workflow is saved to the library:
     ```bash
-    pflow workflow save ./my-workflow.pflow.md --name my-workflow
+    pflow save ./my-workflow.pflow.md --name my-workflow
     ```
   </Step>
   <Step title="Publish as a skill">
@@ -75,10 +75,10 @@ When you publish a skill, pflow adds a `## Usage` section to your workflow with 
 
 ```
 pflow my-workflow param1=<value>
-pflow workflow history my-workflow
+pflow history my-workflow
 ```
 
-This enrichment is **idempotent** — running `skill save` again just updates the usage section. When you update a workflow with `pflow workflow save --force`, pflow automatically re-enriches it.
+This enrichment is **idempotent** — running `skill save` again just updates the usage section. When you update a workflow with `pflow save --force`, pflow automatically re-enriches it.
 
 <Tip>
   Skills shouldn't be static installs. When your needs change, your agent modifies the workflow and re-publishes — the skill updates automatically because it's a symlink to the source. Over time, your skills evolve with your usage rather than going stale.

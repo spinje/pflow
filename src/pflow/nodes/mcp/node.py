@@ -40,7 +40,7 @@ class MCPNode(Node):
 
     ## Async-to-Sync Wrapper
 
-    When no pool is available (e.g. ``pflow registry run``), the node falls back
+    When no pool is available (e.g. ``pflow probe``), the node falls back
     to ``asyncio.run()`` which creates a new event loop for each execution.
 
     ## Example
@@ -124,7 +124,7 @@ class MCPNode(Node):
                         suggestions=[
                             "Regenerate the workflow using natural language",
                             "Check the workflow file for manual edits",
-                            "Run: pflow registry list | grep mcp",
+                            "Run: pflow mcp list",
                         ],
                         technical_details=f"Debug: server={server}, tool={tool}, registry_count={len(mcp_nodes)}",
                     )
@@ -212,7 +212,7 @@ class MCPNode(Node):
             )
             return {"result": self._extract_result(raw_result)}
 
-        # Fallback: standalone execution (pflow registry run, no pool)
+        # Fallback: standalone execution (pflow probe, no pool)
         result = asyncio.run(self._exec_async(prep_res), debug=False)
         return result
 

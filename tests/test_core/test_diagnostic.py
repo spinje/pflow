@@ -205,7 +205,7 @@ def test_exception_to_diagnostics_runtime_and_user_friendly_errors() -> None:
             WorkflowNotFoundError("my-flow", similar_names=["my-flow-v2"]),
             "runtime",
             "not_found",
-            ["Use 'pflow workflow list' to see all available workflows."],
+            ["Use 'pflow list' to see all available workflows."],
         ),
         (
             MaxNodeVisitsError("loop", visit_count=101, max_visits=100),

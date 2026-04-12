@@ -54,7 +54,7 @@ This is where bare nodes get created and configured. The step order is load-bear
 
 ### Other functions
 
-- `inject_special_parameters()` — public (used by `cli/commands/registry_run.py`). Injects `__registry__` for workflow nodes, `__mcp_server__`/`__mcp_tool__` for MCP nodes.
+- `inject_special_parameters()` — public (used by `cli/commands/_probe_impl.py`). Injects `__registry__` for workflow nodes, `__mcp_server__`/`__mcp_tool__` for MCP nodes.
 - `_wire_nodes()` — supports both `source`/`target` and `from`/`to` edge field names.
 - `_get_start_node()` — uses IR `start_node` field if present, otherwise first node in array.
 - `_coerce_bool/int/float()` — batch config type coercion. **Fail-fast**: invalid values raise `CompilationError` (e.g., `max_concurrent: "abc"` is a compile error, not a silent default).
@@ -134,7 +134,7 @@ All four sibling modules import CompilationError directly from core.exceptions (
 
 | Consumer | Symbols used |
 |----------|-------------|
-| `cli/commands/registry_run.py` | `inject_special_parameters`, `import_node_class` |
+| `cli/commands/_probe_impl.py` | `inject_special_parameters`, `import_node_class` |
 | `execution/runner.py` | `compile_workflow`, `CompilationError` (via `runtime/__init__.py`) |
 | `runtime/workflow_executor.py` | `compile_workflow`, `CompilationError` |
 

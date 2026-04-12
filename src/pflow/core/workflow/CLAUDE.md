@@ -22,7 +22,7 @@ core/workflow/
 ├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
 ├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
 ├── context.py               # Build workflow context for discovery (build_workflows_context)
-├── discovery.py             # LLM-powered workflow discovery (discover_workflow → WorkflowMatch)
+├── discovery.py             # LLM-powered workflow discovery (find_workflow → WorkflowMatch)
 ├── prompts/
 │   └── discovery.md         # Workflow discovery prompt template
 └── CLAUDE.md
@@ -74,7 +74,7 @@ No cycles. All heavy imports are lazy (inside functions).
 | Consumer | Uses |
 |----------|------|
 | `cli/main.py` | `WorkflowManager`, `WorkflowValidator` |
-| `cli/commands/workflow.py` | `WorkflowManager`, save_service functions |
+| `cli/commands/list.py`, `describe.py`, `history.py`, `save.py` | `WorkflowManager`, save_service functions |
 | `cli/commands/skills.py` | Most of skill_service |
 | `execution/` | `WorkflowManager`, `WorkflowValidator`, `WorkflowStatus` |
 | `runtime/` | `WorkflowManager` |
@@ -135,7 +135,7 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 
 ### save_service.py
 
-**Reserved workflow names**: `null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`, `skill`.
+**Reserved workflow names**: `null`, `undefined`, `none`, `test`, `list`, `find`, `describe`, `history`, `save`, `guide`, `probe`, `run`, `read-fields`, `mcp`, `skill`, `settings`, `trace`, `visualize`, `registry`, `workflow`, `instructions`. Single source of truth: `RESERVED_WORKFLOW_NAMES` frozenset in this file.
 
 **`save_workflow_with_options()`** is now the save-time trust boundary: it parses markdown, normalizes IR, runs the full `WorkflowValidator`, then performs dependency bundling and persistence. Callers must pass raw markdown, not pre-validated IR. The return value is `(saved_path, bundled_files, validated_ir)`.
 

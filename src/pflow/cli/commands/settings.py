@@ -1,13 +1,32 @@
 """Settings management CLI commands."""
 
 import json
+from typing import ClassVar
 
 import click
 
 from pflow.core.settings import OUTPUT_MODES, PflowSettings, SettingsManager
 
 
-@click.group()
+class SettingsGroup(click.Group):
+    """Settings group with migration hints for removed subgroups."""
+
+    _removed_commands: ClassVar[dict[str, str]] = {
+        "registry": "Flattened: use 'pflow settings output-mode' directly (was: pflow settings registry output-mode)",
+    }
+
+    def resolve_command(
+        self,
+        ctx: click.Context,
+        args: list[str],
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        if args and args[0] in self._removed_commands:
+            click.echo(f"Error: 'settings {args[0]}' was removed.\n{self._removed_commands[args[0]]}", err=True)
+            ctx.exit(1)
+        return super().resolve_command(ctx, args)
+
+
+@click.group(cls=SettingsGroup)
 def settings() -> None:
     """Manage pflow settings."""
     pass
@@ -345,7 +364,7 @@ def llm() -> None:
 
     Configure which models are used for different pflow features:
     - default: Model for LLM nodes in user workflows
-    - discovery: Model for 'pflow registry discover' and 'pflow workflow discover'
+    - discovery: Model for 'pflow mcp find' and 'pflow find'
     - filtering: Model for smart field filtering (structure-only mode)
     """
     pass
@@ -452,7 +471,7 @@ def llm_set_default(model: str) -> None:
 def llm_set_discovery(model: str) -> None:
     """Set the model for discovery commands.
 
-    Used by 'pflow registry discover' and 'pflow workflow discover'.
+    Used by 'pflow mcp find' and 'pflow find'.
 
     Example:
         pflow settings llm set-discovery anthropic/claude-sonnet-4-5
@@ -535,26 +554,12 @@ def llm_unset(setting: str) -> None:
             click.echo("✓ Removed filtering_model (will use auto-detection)")
 
 
-# ============================================================================
-# Registry Settings Subgroup
-# ============================================================================
-
-
-@settings.group(name="registry")
-def registry_settings() -> None:
-    """Manage registry settings.
-
-    Configure registry behavior including output display mode.
-    """
-    pass
-
-
-@registry_settings.command(name="output-mode")
+@settings.command(name="output-mode")
 @click.argument("mode", required=False, type=click.Choice(OUTPUT_MODES))
 def registry_output_mode(mode: str | None) -> None:
     """Show or set registry output mode.
 
-    Controls how 'pflow registry run' displays node execution results.
+    Controls how 'pflow probe' displays node execution results.
 
     MODES:
       smart     - Show values with truncation, apply smart filtering (default)
@@ -562,10 +567,10 @@ def registry_output_mode(mode: str | None) -> None:
       full      - Show all values, no filtering or truncation
 
     Examples:
-        pflow settings registry output-mode           # Show current mode
-        pflow settings registry output-mode smart     # Set to smart
-        pflow settings registry output-mode structure # Set to structure-only
-        pflow settings registry output-mode full      # Set to full output
+        pflow settings output-mode           # Show current mode
+        pflow settings output-mode smart     # Set to smart
+        pflow settings output-mode structure # Set to structure-only
+        pflow settings output-mode full      # Set to full output
     """
     manager = SettingsManager()
     current_settings = manager.load()
@@ -578,7 +583,7 @@ def registry_output_mode(mode: str | None) -> None:
         click.echo("  smart     - Show values with truncation, apply smart filtering (default)")
         click.echo("  structure - Show template paths only, no values")
         click.echo("  full      - Show all values, no filtering or truncation")
-        click.echo("\nTo change: pflow settings registry output-mode <mode>")
+        click.echo("\nTo change: pflow settings output-mode <mode>")
     else:
         # Set mode
         current_settings.registry.output_mode = mode

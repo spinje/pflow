@@ -1,4 +1,4 @@
-"""Tests for shared registry-run error construction.
+"""Tests for shared probe error construction.
 
 These guard the specific behaviors that regressed during Task 144's baseline
 evaluation: available-nodes fallback and node-type-aware enrichment.
@@ -6,7 +6,7 @@ evaluation: available-nodes fallback and node-type-aware enrichment.
 
 from pflow.execution.formatters.registry_error_helpers import (
     build_node_not_found_diagnostic,
-    enrich_for_registry_run,
+    enrich_for_probe,
 )
 
 
@@ -32,12 +32,12 @@ def test_not_found_prefers_fuzzy_matches_over_full_list() -> None:
 
 
 def test_enrich_adds_node_type_as_location() -> None:
-    """Registry run errors must show the node_type on the At: line.
+    """Probe errors must show the node_type on the At: line.
 
     The generic exception_to_diagnostics() pipeline doesn't know which node
     was being run. The enrichment adds this context.
     """
-    diagnostics = enrich_for_registry_run(RuntimeError("something failed"), "my-node")
+    diagnostics = enrich_for_probe(RuntimeError("something failed"), "my-node")
     assert diagnostics[0].node_id == "my-node"
 
 
@@ -46,14 +46,45 @@ def test_enrich_adds_timeout_specific_suggestions() -> None:
 
     This was missing in the MCP path before the shared helper was extracted.
     """
-    diagnostics = enrich_for_registry_run(RuntimeError("Connection timeout after 30s"), "fetch")
+    diagnostics = enrich_for_probe(RuntimeError("Connection timeout after 30s"), "fetch")
     suggestions = diagnostics[0].suggestions or []
     assert any("timeout" in s.lower() for s in suggestions), f"No timeout suggestion in: {suggestions}"
 
 
 def test_enrich_preserves_builtin_suggestions_for_file_errors() -> None:
     """FileNotFoundError already has a good suggestion — don't add a redundant 'registry describe'."""
-    diagnostics = enrich_for_registry_run(FileNotFoundError("input.txt"), "fetch")
+    diagnostics = enrich_for_probe(FileNotFoundError("input.txt"), "fetch")
     suggestions = diagnostics[0].suggestions or []
     assert any("file path" in s.lower() for s in suggestions)
     assert not any("registry describe" in s for s in suggestions)
+
+
+def test_not_found_suggests_mcp_commands_for_mcp_nodes() -> None:
+    """MCP node not-found should suggest mcp-specific discovery commands."""
+    d = build_node_not_found_diagnostic("mcp-slack-send", ["mcp-slack-send-message"])
+    suggestions = d.suggestions or []
+    assert any("mcp find" in s for s in suggestions)
+    assert any("mcp list" in s for s in suggestions)
+
+
+def test_not_found_suggests_core_types_for_non_mcp_nodes() -> None:
+    """Non-MCP node not-found should list core node types, not only MCP commands."""
+    d = build_node_not_found_diagnostic("shel", ["shell", "http", "llm"])
+    suggestions = d.suggestions or []
+    assert any("shell" in s for s in suggestions)
+    assert not any("mcp find" in s for s in suggestions)
+
+
+def test_enrich_suggests_mcp_describe_for_mcp_nodes() -> None:
+    """MCP probe errors should suggest 'mcp describe', not generic help."""
+    diagnostics = enrich_for_probe(ValueError("param 'repo' required"), "mcp-github-create-issue")
+    suggestions = diagnostics[0].suggestions or []
+    assert any("mcp describe" in s for s in suggestions)
+
+
+def test_enrich_suggests_probe_help_for_core_nodes() -> None:
+    """Core probe errors should suggest 'probe --help', not 'mcp describe'."""
+    diagnostics = enrich_for_probe(ValueError("param 'command' required"), "shell")
+    suggestions = diagnostics[0].suggestions or []
+    assert any("probe" in s for s in suggestions)
+    assert not any("mcp describe" in s for s in suggestions)

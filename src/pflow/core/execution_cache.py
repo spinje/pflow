@@ -99,7 +99,7 @@ class ExecutionCache:
         """Retrieve cached execution results.
 
         Args:
-            execution_id: Execution ID from previous registry run
+            execution_id: Execution ID from previous probe
 
         Returns:
             Cache data dict with decoded binary data, or None if not found

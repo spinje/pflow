@@ -1,4 +1,4 @@
-"""Tests for pflow workflow discovery commands."""
+"""Tests for flattened workflow management commands."""
 
 import json
 import sys
@@ -8,11 +8,8 @@ from unittest.mock import patch
 
 
 def invoke_cli(args: list[str]) -> Any:
-    """Helper to invoke CLI with proper routing through main_wrapper.
-
-    Since main_wrapper manipulates sys.argv directly, we need to simulate that behavior.
-    """
-    from pflow.cli.main_wrapper import cli_main
+    """Helper to invoke the CLI through the real entrypoint."""
+    from pflow.cli.main import cli_main
 
     # Save original sys.argv and streams
     original_argv = sys.argv[:]
@@ -53,7 +50,7 @@ def invoke_cli(args: list[str]) -> Any:
 
 
 class TestWorkflowListCommand:
-    """Tests for the 'pflow workflow list' command."""
+    """Tests for the `pflow list` command."""
 
     def test_list_workflows_with_multiple_workflows(self) -> None:
         """Test listing workflows when multiple workflows exist."""
@@ -76,11 +73,11 @@ class TestWorkflowListCommand:
             },
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
-            result = invoke_cli(["workflow", "list"])
+            result = invoke_cli(["list"])
 
             assert result.exit_code == 0
             assert "Saved Workflows:" in result.output
@@ -101,17 +98,17 @@ class TestWorkflowListCommand:
 
     def test_list_workflows_empty_state(self) -> None:
         """Test listing workflows when no workflows are saved."""
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = []
 
-            result = invoke_cli(["workflow", "list"])
+            result = invoke_cli(["list"])
 
             assert result.exit_code == 0
             assert "No workflows saved yet." in result.output
             assert "To save a workflow:" in result.output
             assert "1. Create a .pflow.md workflow file" in result.output
-            assert "pflow workflow save" in result.output
+            assert "pflow save" in result.output
 
     def test_list_workflows_with_single_keyword_filter(self) -> None:
         """Test filtering workflows with single keyword."""
@@ -133,11 +130,11 @@ class TestWorkflowListCommand:
             },
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
-            result = invoke_cli(["workflow", "list", "slack"])
+            result = invoke_cli(["list", "slack"])
 
             assert result.exit_code == 0
             # Should match both slack workflows
@@ -162,11 +159,11 @@ class TestWorkflowListCommand:
             },
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
-            result = invoke_cli(["workflow", "list", "slack qa"])
+            result = invoke_cli(["list", "slack", "qa"])
 
             assert result.exit_code == 0
             # Should match slack-qa-analyzer (has both "slack" and "qa")
@@ -190,11 +187,11 @@ class TestWorkflowListCommand:
             },
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
-            result = invoke_cli(["workflow", "list", "slack github"])
+            result = invoke_cli(["list", "slack", "github"])
 
             assert result.exit_code == 0
             # Filter no-match messages go to stderr
@@ -221,11 +218,11 @@ class TestWorkflowListCommand:
             }
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
-            result = invoke_cli(["workflow", "list", "--json"])
+            result = invoke_cli(["list", "--json"])
 
             assert result.exit_code == 0
 
@@ -253,11 +250,11 @@ class TestWorkflowListCommand:
             },
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
-            result = invoke_cli(["workflow", "list"])
+            result = invoke_cli(["list"])
 
             assert result.exit_code == 0
             assert "no-desc-workflow" in result.output
@@ -280,18 +277,47 @@ class TestWorkflowListCommand:
             },
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
             # Try lowercase filter
-            result = invoke_cli(["workflow", "list", "github"])
+            result = invoke_cli(["list", "github"])
 
             assert result.exit_code == 0
             # Both should match despite different cases
             assert "GitHub-Analyzer" in result.output
             assert "slack-bot" in result.output
             assert "Total: 2 workflows" in result.output
+
+    def test_list_workflows_smart_case(self) -> None:
+        """Uppercase keywords should trigger case-sensitive matching."""
+        mock_workflows = [
+            {
+                "name": "HTTP-analyzer",
+                "description": "Processes HTTP responses",
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "name": "http-helper",
+                "description": "Lowercase helper",
+                "created_at": "2024-01-02T00:00:00Z",
+            },
+        ]
+
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.list_all.return_value = mock_workflows
+
+            lowercase = invoke_cli(["list", "http"])
+            assert lowercase.exit_code == 0
+            assert "HTTP-analyzer" in lowercase.output
+            assert "http-helper" in lowercase.output
+
+            uppercase = invoke_cli(["list", "HTTP"])
+            assert uppercase.exit_code == 0
+            assert "HTTP-analyzer" in uppercase.output
+            assert "http-helper" not in uppercase.output
 
     def test_list_workflows_filter_no_matches(self) -> None:
         """Test filtering with no matching workflows."""
@@ -308,11 +334,11 @@ class TestWorkflowListCommand:
             },
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = mock_workflows
 
-            result = invoke_cli(["workflow", "list", "github"])
+            result = invoke_cli(["list", "github"])
 
             assert result.exit_code == 0
             # Filter no-match messages go to stderr
@@ -325,7 +351,7 @@ class TestWorkflowListCommand:
 
 
 class TestWorkflowDescribeCommand:
-    """Tests for the 'pflow workflow describe' command."""
+    """Tests for the `pflow describe` command."""
 
     def test_describe_existing_workflow_with_inputs_outputs(self) -> None:
         """Test describing a workflow with inputs and outputs."""
@@ -352,12 +378,12 @@ class TestWorkflowDescribeCommand:
             },
         }
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = True
             mock_wm.load.return_value = mock_metadata
 
-            result = invoke_cli(["workflow", "describe", "data-processor"])
+            result = invoke_cli(["describe", "data-processor"])
 
             assert result.exit_code == 0
 
@@ -391,12 +417,12 @@ class TestWorkflowDescribeCommand:
             },
         }
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = True
             mock_wm.load.return_value = mock_metadata
 
-            result = invoke_cli(["workflow", "describe", "simple-task"])
+            result = invoke_cli(["describe", "simple-task"])
 
             assert result.exit_code == 0
             assert "Workflow: simple-task" in result.output
@@ -427,12 +453,12 @@ class TestWorkflowDescribeCommand:
             },
         }
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = True
             mock_wm.load.return_value = mock_metadata
 
-            result = invoke_cli(["workflow", "describe", "flexible-task"])
+            result = invoke_cli(["describe", "flexible-task"])
 
             assert result.exit_code == 0
             assert "- verbose (optional): Enable verbose output" in result.output
@@ -454,22 +480,18 @@ class TestWorkflowDescribeCommand:
             {"name": "backup-files"},
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
             mock_wm.list_all.return_value = all_workflows
 
-            result = invoke_cli(["workflow", "describe", "process"])
+            result = invoke_cli(["describe", "process"])
 
             assert result.exit_code == 1
             # Error messages go to stderr
-            assert "❌ Workflow 'process' not found." in result.stderr
-            assert "Did you mean:" in result.stderr
-            assert "- process-data" in result.stderr
-            assert "- process-images" in result.stderr
-            assert "- process-text" in result.stderr
-            # Should only show top 3 suggestions
-            assert "- backup-files" not in result.stderr
+            assert "Error: Workflow 'process' not found." in result.stderr
+            assert "Did you mean: process-data, process-images, process-text" in result.stderr
+            assert "backup-files" not in result.stderr
 
     def test_describe_nonexistent_workflow_no_suggestions(self) -> None:
         """Test describing a workflow that doesn't exist with no similar names."""
@@ -478,17 +500,16 @@ class TestWorkflowDescribeCommand:
             {"name": "daily-report"},
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
             mock_wm.list_all.return_value = all_workflows
 
-            result = invoke_cli(["workflow", "describe", "xyz-task"])
+            result = invoke_cli(["describe", "xyz-task"])
 
             assert result.exit_code == 1
             # Error messages go to stderr
-            assert "❌ Workflow 'xyz-task' not found." in result.stderr
-            # No suggestions should be shown
+            assert "Error: Workflow 'xyz-task' not found." in result.stderr
             assert "Did you mean:" not in result.stderr
 
     def test_describe_workflow_case_insensitive_suggestions(self) -> None:
@@ -499,20 +520,16 @@ class TestWorkflowDescribeCommand:
             {"name": "BACKUP-DOCS"},
         ]
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
             mock_wm.list_all.return_value = all_workflows
 
-            result = invoke_cli(["workflow", "describe", "backup"])
+            result = invoke_cli(["describe", "backup"])
 
             assert result.exit_code == 1
             # Error messages go to stderr
-            assert "Did you mean:" in result.stderr
-            # All should match due to case-insensitive search
-            assert "- Backup-Photos" in result.stderr
-            assert "- backup-videos" in result.stderr
-            assert "- BACKUP-DOCS" in result.stderr
+            assert "Did you mean: Backup-Photos, backup-videos, BACKUP-DOCS" in result.stderr
 
     def test_describe_workflow_mixed_required_optional_inputs(self) -> None:
         """Test describing a workflow with both required and optional inputs."""
@@ -540,12 +557,12 @@ class TestWorkflowDescribeCommand:
             },
         }
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = True
             mock_wm.load.return_value = mock_metadata
 
-            result = invoke_cli(["workflow", "describe", "complex-task"])
+            result = invoke_cli(["describe", "complex-task"])
 
             assert result.exit_code == 0
 
@@ -559,28 +576,6 @@ class TestWorkflowDescribeCommand:
             assert "Example Usage:" in result.output
             assert "pflow complex-task source=<value> target=<value>" in result.output
             assert "compression=" not in result.output
-
-
-class TestWorkflowCommandGroup:
-    """Tests for the workflow command group itself."""
-
-    def test_workflow_help(self) -> None:
-        """Test that workflow command group help is accessible."""
-        result = invoke_cli(["workflow", "--help"])
-
-        assert result.exit_code == 0
-        assert "Manage saved workflows" in result.output
-        assert "list" in result.output
-        assert "describe" in result.output
-
-    def test_workflow_without_subcommand(self) -> None:
-        """Test that workflow command without subcommand shows help."""
-        result = invoke_cli(["workflow"])
-
-        # Click exits with code 2 when a required subcommand is missing
-        assert result.exit_code == 2
-        # Help message goes to stderr when there's an error
-        assert "Manage saved workflows" in result.stderr
 
 
 class TestWorkflowCommandIntegration:
@@ -611,22 +606,21 @@ class TestWorkflowCommandIntegration:
             },
         }
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
-            mock_wm = MockWM.return_value
+        with patch("pflow.cli.commands.list.WorkflowManager") as ListWM:
+            mock_list_wm = ListWM.return_value
+            mock_list_wm.list_all.return_value = mock_workflows
 
-            # First, user lists workflows
-            mock_wm.list_all.return_value = mock_workflows
-
-            result = invoke_cli(["workflow", "list"])
+            result = invoke_cli(["list"])
 
             assert result.exit_code == 0
             assert "analyze-logs" in result.output
 
-            # Then, user describes a specific workflow
-            mock_wm.exists.return_value = True
-            mock_wm.load.return_value = mock_metadata
+        with patch("pflow.cli.commands.describe.WorkflowManager") as DescribeWM:
+            mock_describe_wm = DescribeWM.return_value
+            mock_describe_wm.exists.return_value = True
+            mock_describe_wm.load.return_value = mock_metadata
 
-            result = invoke_cli(["workflow", "describe", "analyze-logs"])
+            result = invoke_cli(["describe", "analyze-logs"])
 
             assert result.exit_code == 0
             assert "Workflow: analyze-logs" in result.output
@@ -635,12 +629,11 @@ class TestWorkflowCommandIntegration:
 
     def test_empty_list_to_save_workflow_guidance(self) -> None:
         """Test that empty list guides users to save workflows."""
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.list.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.list_all.return_value = []
 
-            # User tries to list workflows but finds none
-            result = invoke_cli(["workflow", "list"])
+            result = invoke_cli(["list"])
 
             assert result.exit_code == 0
             assert "No workflows saved yet" in result.output
@@ -651,7 +644,7 @@ class TestWorkflowCommandIntegration:
 
 
 class TestWorkflowHistoryCommand:
-    """Tests for the 'pflow workflow history' command."""
+    """Tests for the `pflow history` command."""
 
     def test_history_shows_execution_data_and_inputs(self) -> None:
         """Test history command returns execution data agents need to suggest inputs."""
@@ -668,12 +661,12 @@ class TestWorkflowHistoryCommand:
             "ir": {},
         }
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.history.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = True
             mock_wm.load.return_value = mock_metadata
 
-            result = invoke_cli(["workflow", "history", "release-announcements"])
+            result = invoke_cli(["history", "release-announcements"])
 
             assert result.exit_code == 0
             # Agent needs: name, run count, last timestamp, status, last inputs
@@ -687,24 +680,24 @@ class TestWorkflowHistoryCommand:
         """Test returns actionable message when workflow never executed."""
         mock_metadata = {"execution_count": 0, "ir": {}}
 
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.history.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = True
             mock_wm.load.return_value = mock_metadata
 
-            result = invoke_cli(["workflow", "history", "new-workflow"])
+            result = invoke_cli(["history", "new-workflow"])
 
             assert result.exit_code == 0
             assert "No execution history" in result.output
 
     def test_history_workflow_not_found_errors(self) -> None:
         """Test errors clearly when workflow doesn't exist."""
-        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+        with patch("pflow.cli.commands.history.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
             mock_wm.list_all.return_value = []
 
-            result = invoke_cli(["workflow", "history", "nonexistent"])
+            result = invoke_cli(["history", "nonexistent"])
 
             assert result.exit_code == 1
             assert "not found" in result.stderr

@@ -156,9 +156,9 @@ class TestGenerateUsageSection:
         # Should include standard sections
         assert "## Usage" in usage
         assert "If you are unsure this is exactly what the user wants" in usage
-        assert "pflow instructions create" in usage
+        assert "pflow guide" in usage
         # Should include history command hint
-        assert "pflow workflow history test-workflow" in usage
+        assert "pflow history test-workflow" in usage
 
     def test_generate_usage_with_no_inputs(self):
         """Test usage generation when workflow has no inputs."""
@@ -459,7 +459,7 @@ class TestSkillEndToEnd:
         # Skill has Usage section with execution command
         assert "## Usage" in skill_content
         assert "pflow release-notes" in skill_content
-        assert "pflow workflow history release-notes" in skill_content
+        assert "pflow history release-notes" in skill_content
 
         # Workflow is still valid and executable
         parse_result = parse_markdown(skill_content)

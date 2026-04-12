@@ -36,7 +36,7 @@ def test_something(mock_llm_responses):
     )
 
     # Run code that uses LLM — no actual API calls made
-    result = discover_workflow("find a workflow")
+    result = find_workflow("find a workflow")
     assert result.found
 ```
 

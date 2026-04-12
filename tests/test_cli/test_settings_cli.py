@@ -791,18 +791,18 @@ class TestLLMSettingsPersistence:
 
 
 class TestRegistryOutputModeCommand:
-    """Test pflow settings registry output-mode command."""
+    """Test `pflow settings output-mode`."""
 
     def test_output_mode_show_default(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Show command displays current mode (default: smart)."""
-        result = runner.invoke(settings, ["registry", "output-mode"])
+        result = runner.invoke(settings, ["output-mode"])
         assert result.exit_code == 0
         assert "smart" in result.output
 
     @pytest.mark.parametrize("mode", ["smart", "structure", "full"])
     def test_output_mode_set_and_persist(self, runner: CliRunner, isolated_settings: Path, mode: str) -> None:
         """Set command updates mode and persists to settings."""
-        result = runner.invoke(settings, ["registry", "output-mode", mode])
+        result = runner.invoke(settings, ["output-mode", mode])
         assert result.exit_code == 0
         assert f"✓ Set registry output mode: {mode}" in result.output
 
@@ -812,5 +812,13 @@ class TestRegistryOutputModeCommand:
 
     def test_output_mode_invalid_rejected(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Invalid mode is rejected by Click.Choice."""
-        result = runner.invoke(settings, ["registry", "output-mode", "invalid"])
+        result = runner.invoke(settings, ["output-mode", "invalid"])
         assert result.exit_code != 0
+
+
+def test_removed_settings_registry_subgroup_shows_migration(runner: CliRunner) -> None:
+    """'pflow settings registry' was flattened — show a clear migration message."""
+    result = runner.invoke(settings, ["registry", "output-mode"])
+    assert result.exit_code != 0
+    assert "'settings registry' was removed" in result.output
+    assert "pflow settings output-mode" in result.output

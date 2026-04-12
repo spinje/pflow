@@ -83,13 +83,13 @@ Your agent uses these commands to find the right nodes:
 
 ```bash
 # List all available nodes
-pflow registry list
+pflow mcp list
 
 # Search by capability
-pflow registry discover "read a JSON file"
+pflow mcp find "read a JSON file"
 
 # Get full interface details
-pflow registry describe read-file
+pflow mcp describe read-file
 ```
 
 ## Extending with MCP
@@ -104,7 +104,7 @@ pflow mcp add github.mcp.json
 pflow mcp sync github
 
 # New nodes appear
-pflow mcp tools github
+pflow mcp list github
 # mcp-github-create_issue
 # mcp-github-list_repos
 # ...
@@ -139,4 +139,4 @@ pflow settings deny delete-file
 pflow settings remove shell
 ```
 
-Disabled nodes won't appear in `pflow registry list` and can't be used in workflows. See [settings commands](/reference/cli/settings) for details.
+Disabled nodes won't appear in `pflow mcp list` and can't be used in workflows. See [settings commands](/reference/cli/settings) for details.

@@ -1,7 +1,7 @@
 """Centralized logging configuration for CLI commands.
 
 This module provides a single source of truth for logging configuration
-across all CLI command groups (workflow, registry, mcp, settings, etc.).
+across all CLI commands.
 """
 
 import logging
@@ -18,7 +18,7 @@ def configure_logging(verbose: bool) -> None:
         verbose: If True, show INFO+ logs. If False, show only WARNING+ logs.
 
     Examples:
-        >>> # In main_wrapper.py or command entry point
+        >>> # In CLI entry point (main.py group callback)
         >>> configure_logging(verbose=True)   # Show INFO logs
         >>> configure_logging(verbose=False)  # Only WARNING+ logs
     """

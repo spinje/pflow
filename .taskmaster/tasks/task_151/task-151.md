@@ -134,7 +134,7 @@ This prevents context overload when hundreds of tools are connected while still 
 - **Clean cutover, no aliases.** No deprecation warnings, no fallback routing. pflow has zero users — breaking changes are free.
 - **MCP server is out of scope.** Its tools (`workflow_discover`, `registry_run`, etc.) continue to work unchanged. A follow-up task (see References) brings MCP into parity with the new CLI names.
 - **Guide command exists but content is stubbed.** The full content design is Task 77. This task only needs `pflow guide` to exist in the command routing and return *something* (even minimal placeholder content).
-- **Shared services are NOT renamed.** Functions like `discover_workflow()` in `core/workflow/discovery.py` keep their current names because MCP still calls them. Only CLI-side wrappers change.
+- **Shared service functions ARE renamed** for consistency across layers: `discover_workflow()` → `find_workflow()`, `discover_components()` → `find_components()`. MCP server import sites are updated (internal wiring, not public tool names). This was decided because the naming context is clearest now — retrofitting during Task 152 would be harder and less likely to happen.
 
 ## Dependencies
 
@@ -144,10 +144,13 @@ This prevents context overload when hundreds of tools are connected while still 
 
 ### CLI routing
 
-- `main_wrapper.py` routing table updated: remove `registry`, `workflow`, `instructions`; add `list`, `find`, `describe`, `history`, `save`, `guide`, `probe` as top-level routes
-- Existing catch-all for workflow execution (`pflow my-workflow param=X`) continues to work; new top-level commands take precedence when the first arg matches
-- `pflow run` prefix silently stripped (existing behavior, preserved)
-- Reserved command names documented so workflow save rejects workflows named `list`, `find`, `describe`, `history`, `save`, `guide`, `probe`, `mcp`, `skill`, `settings`, `read-fields`
+- `main_wrapper.py` replaced by Click-native routing: `PflowCLI(click.Group)` subclass using the `click-default-group` pattern (vendored, not a dependency). Unknown first args route to a hidden `run` command for workflow execution. `ignore_unknown_options=True` on the group so run-specific options (`--output-format`, etc.) pass through.
+- `main.py` becomes a small entry point (~60 lines): group definition, command registration, `cli_main()`. Workflow execution logic moves to `commands/run.py`.
+- Existing catch-all for workflow execution (`pflow my-workflow param=X`) continues to work; named commands take precedence when the first arg matches
+- `pflow run` is a registered hidden command — Click handles the prefix naturally (no manual stripping needed)
+- `--verbose` is a group-level option (parsed once, shared via `ctx.obj`). `--version` uses Click's built-in `@click.version_option()`.
+- Reserved command names expanded to ALL top-level commands + `run`: `list`, `find`, `describe`, `history`, `save`, `guide`, `probe`, `run`, `mcp`, `skill`, `settings`, `read-fields`, `trace`, `visualize`. Consolidated to a single `frozenset` source of truth (the current codebase has a duplicated set).
+- `settings registry output-mode` flattened to `settings output-mode` (the `registry` subgroup only contained this one command; the internal Pydantic data model is unchanged)
 
 ### Top-level workflow commands
 
@@ -162,7 +165,7 @@ This prevents context overload when hundreds of tools are connected while still 
 - `pflow guide` (no args) — returns `render_entry_content()` output (same as `pflow --help`); this is the fallback for agents that forgot to pass a topic
 - `pflow guide <topic...>` — accepts positional args; returns placeholder acknowledging the topic(s) until Task 77 ships real content composition. Something like: "pflow guide content for topics [<topics>] is not yet implemented. See Task 77. Meanwhile, read `src/pflow/cli/resources/cli-agent-instructions.md` for the legacy monolithic content."
 - `pflow probe <node-type> key=value...` — functionality ported from `registry run`; output format unchanged (metadata + template paths, not raw data)
-- **Shared `render_entry_content()` helper** — reads from `src/pflow/cli/resources/guide/entry.md` if present; returns a placeholder if the file doesn't exist yet (Task 77 will populate it). This function is wired into both the root Click command's `help=` parameter AND the `pflow guide` no-args path
+- **Shared `render_entry_content()` helper** — lives in `src/pflow/guide/__init__.py`, reads from `src/pflow/guide/entry.md` if present; returns a placeholder if the file doesn't exist yet (Task 77 will populate it). Guide content is a top-level package (`pflow.guide`), not a CLI implementation detail — both CLI and MCP (Task 152) can import from it. This function is wired into both the root Click group's `help=` parameter AND the `pflow guide` no-args path
 
 ### MCP namespace
 
@@ -184,7 +187,7 @@ This prevents context overload when hundreds of tools are connected while still 
 **NOT deleted by this task:**
 - `pflow://instructions` and `pflow://instructions/sandbox` MCP resources — stay functional
 - MCP tools with old names (`workflow_discover`, `registry_run`, etc.) — stay functional
-- Shared service functions — names unchanged, still used by MCP
+- MCP server tool/resource code (`mcp_server/tools/`, `mcp_server/resources/`) — unchanged (MCP import sites for renamed shared functions ARE updated)
 
 ### Tests
 
@@ -202,7 +205,7 @@ The root `pflow --help` output is the first thing any new agent sees. It is lite
 
 **Design: shared entry content between `pflow --help` and `pflow guide` (no args).**
 
-Both paths render the same content — `pflow --help` is the canonical entry, `pflow guide` (no args) is a fallback for agents that forgot to pass a topic. Single source of truth, no drift. The content lives in `src/pflow/cli/resources/guide/entry.md` (created by Task 77).
+Both paths render the same descriptive content — `pflow --help` wraps it in Click's standard help format (with auto-generated Commands section), `pflow guide` (no args) echoes it directly. Single source of truth, no drift. The content lives in `src/pflow/guide/entry.md` (created by Task 77).
 
 **Task 151 responsibility (this task):**
 
@@ -327,15 +330,15 @@ The routing table must check top-level commands BEFORE falling through to the wo
 
 ### Reserved names
 
-`WorkflowManager.save()` should reject attempts to save a workflow with any of the reserved top-level command names. Add the reserved list as a constant in `core/workflow/manager.py` or similar. Error message should be clear: "Cannot save workflow named 'find': this name is reserved for the CLI command. Pick a different name like 'find-github-prs'."
+Reserved names are validated by `validate_workflow_name()` in `core/workflow/save_service.py` — the existing single entry point for both CLI and MCP save paths. The current codebase has a DUPLICATED reserved names set in `manager.py`; consolidate to one source of truth in `save_service.py` and have `manager._validate_workflow_name()` delegate to it. Error message should be clear: "Cannot save workflow named 'find': this name is reserved for the CLI command. Pick a different name like 'find-github-prs'."
 
 ### `mcp list` implementation
 
 The grouped summary view needs:
 - Total tool count
 - Per-server count
-- Per-server description (pulled from MCP server metadata, not the first tool)
-- "Ambient category hints" — the current plan was to show abbreviated tool name fragments ("channels, messages, users..."). Implementation may vary: could be the first N tool names truncated, or extracted noun fragments, or server-provided categories. Pick whatever is simplest that looks readable.
+- Per-server tool name hints (first ~5 tool names from `mcp_metadata.tool`, not the full node names). MCP server configs have NO description field, so tool name hints serve as ambient category indicators.
+- Group by `mcp_metadata.server` from registry entries (NOT by naive name splitting, which breaks for multi-hyphen server names)
 
 The detailed view (with keyword) should highlight matched substrings in the output. ANSI color codes for TTY, plain for pipes/non-TTY.
 
@@ -361,6 +364,10 @@ Topics requested: <topics or "none">
 ```
 
 Or something slightly more useful that points at the current `cli-agent-instructions.md` as a temporary fallback. The important thing is that the command exists, is routed correctly, and has the right argument signature so Task 77 can just fill in content.
+
+### Stale command references in production code
+
+12+ production code files contain hardcoded strings referencing old CLI commands in error messages, suggestions, and enrichment templates. ALL must be updated — agents following stale suggestions like `"pflow workflow list"` would hit "command not found" errors. Key files include `core/exceptions.py`, `core/workflow/skill_service.py`, `cli/commands/skills.py`, `cli/commands/read_fields.py`, `execution/formatters/registry_error_helpers.py`, `runtime/compilation/mcp_resolution.py`, and `nodes/mcp/node.py`. The `skill_service.py` case is critical: stale commands get baked into permanent saved workflow files via enrichment templates.
 
 ### What's NOT in scope
 
@@ -416,39 +423,41 @@ Or something slightly more useful that points at the current `cli-agent-instruct
 
 ## References
 
-### Files to modify (non-exhaustive, CLI-only)
+### Files to modify (non-exhaustive)
 
-- `src/pflow/cli/main_wrapper.py` — routing table
-- `src/pflow/cli/main.py` — workflow execution entrypoint (stays as catch-all)
-- `src/pflow/cli/commands/workflow.py` — split into top-level command files
-- `src/pflow/cli/commands/registry.py` — delete, distribute `probe` to new location
-- `src/pflow/cli/commands/instructions.py` — delete
-- `src/pflow/cli/commands/mcp.py` — rename `list` → `servers`, add `list`/`find`/`describe`, remove `tools`, rename `info` → `describe`
-- `src/pflow/cli/commands/read_fields.py` — unchanged
-- `src/pflow/core/workflow/manager.py` — add reserved-names list to `save()`
-- `src/pflow/cli/CLAUDE.md` — architecture updates
-- `src/pflow/cli/commands/CLAUDE.md` — per-command updates
-- `src/pflow/cli/resources/cli-basic-usage.md` — search-and-replace CLI command names
-- `src/pflow/cli/resources/cli-agent-instructions.md` — search-and-replace CLI command names
-- `tests/test_cli/` — rename + update mock.patch targets
+See `implementation/implementation-plan.md` for the complete file-by-file breakdown. Key areas:
+
+- `src/pflow/cli/main_wrapper.py` — **deleted** (replaced by Click-native routing)
+- `src/pflow/cli/main.py` — **rewritten** to small entry point with `PflowCLI` group
+- `src/pflow/cli/commands/` — workflow.py, registry.py, registry_run.py, instructions.py **deleted**; new files: list.py, find.py, describe.py, history.py, save.py, guide.py, probe.py, run.py
+- `src/pflow/cli/commands/mcp.py` — major restructure
+- `src/pflow/guide/` — **new package** (render_entry_content + entry.md)
+- `src/pflow/core/workflow/discovery.py` — function rename
+- `src/pflow/registry/discovery.py` — function rename + new parameter
+- `src/pflow/core/workflow/save_service.py` — reserved names consolidation
+- 12+ production code files with stale command references in error messages/suggestions
+- `docs/` — 132+ references across 20+ files
+- `tests/test_cli/` — split, rename, update mock.patch targets
 
 ### Files NOT touched by this task
 
-- `src/pflow/mcp_server/**` — all MCP server code stays unchanged
-- `src/pflow/core/**`, `src/pflow/execution/**`, `src/pflow/registry/**` — shared services keep current names
-- `src/pflow/mcp_server/resources/instructions/*.md` — MCP agent instructions stay unchanged
+- `src/pflow/mcp_server/server.py` — Task 152
+- `src/pflow/mcp_server/tools/*.py` — Task 152
+- `src/pflow/mcp_server/resources/instructions/*.md` — Task 152
+- MCP server service files (`mcp_server/services/`) — import paths updated for renamed shared functions, but logic unchanged
 
 ### Related tasks
 
-- **Task 77**: Guide content design and implementation — depends on this task. CLI-only scope: produce the content chunks (`.md` files under `cli/resources/guide/`), including `entry.md` which is the shared source for `pflow --help` and `pflow guide` (no args). Task 151 wires the `render_entry_content()` function; Task 77 fills in the content file.
+- **Task 77**: Guide content design and implementation — depends on this task. CLI-only scope: produce the content chunks (`.md` files under `src/pflow/guide/`), including `entry.md` which is the shared source for `pflow --help` and `pflow guide` (no args). Task 151 wires the `render_entry_content()` function and creates the `pflow.guide` package; Task 77 fills in the content file and adds `compose_guide()`.
 
-- **MCP Parity Follow-up (to be created)**: After Task 151 and Task 77 ship, a follow-up task handles:
+- **Task 152 (MCP Parity Follow-up)**: After Task 151 and Task 77 ship, handles:
   - Renaming all MCP tools to match new CLI verbs (e.g., `workflow_discover` → `workflow_find`, `registry_run` → `probe`)
   - Adding new MCP tools: `guide`, `mcp_list`, `mcp_find`, `mcp_describe`, `workflow_history`
   - Removing old MCP tools: `registry_list`, `registry_discover`, `registry_describe` (for core nodes)
   - Removing `pflow://instructions` and `pflow://instructions/sandbox` resources
   - Rewriting `mcp_server/server.py` instructions string
   - Deciding MCP guide content strategy: separate files, or auto-transform CLI guide content via parser
+  - **Note:** Task 152's spec currently assumes `discover_workflow`/`discover_components` keep their names — needs updating after Task 151's renames land
 
 ### Prior art / context
 

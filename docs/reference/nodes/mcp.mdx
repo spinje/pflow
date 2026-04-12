@@ -22,7 +22,7 @@ MCP (Model Context Protocol) lets you extend pflow with external tools. When you
 pflow mcp add github.mcp.json
 
 # Tools are now available
-pflow mcp tools github
+pflow mcp list github
 # mcp-github-create_issue
 # mcp-github-list_repos
 # mcp-github-search_code
@@ -45,7 +45,7 @@ MCP node parameters come directly from the tool's input schema. Each MCP server 
 To see a tool's parameters:
 
 ```bash
-pflow registry describe mcp-github-create_issue
+pflow mcp describe mcp-github-create_issue
 ```
 
 ## Output

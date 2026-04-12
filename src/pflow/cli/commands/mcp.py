@@ -1,10 +1,7 @@
 """MCP (Model Context Protocol) CLI commands for pflow.
 
-This Click group is invoked by main_wrapper.py when it detects "mcp" as the first
-positional argument. The wrapper manipulates sys.argv to remove "mcp" before calling
-this group, allowing normal Click command processing for the subcommands.
-
-Architecture: main_wrapper.py -> mcp() group -> individual commands (add, list, sync, etc.)
+Registered as a subgroup of the PflowCLI group in main.py via cli.add_command(mcp).
+Click handles subcommand routing natively.
 """
 
 import hashlib
@@ -12,7 +9,7 @@ import json
 import logging
 import sys
 import time
-from typing import Optional
+from typing import ClassVar, Optional
 
 import click
 
@@ -22,7 +19,26 @@ from pflow.mcp import MCPRegistrar, MCPServerManager
 logger = logging.getLogger(__name__)
 
 
-@click.group(name="mcp")
+class MCPGroup(click.Group):
+    """MCP command group with migration hints for removed subcommands."""
+
+    _removed_commands: ClassVar[dict[str, str]] = {
+        "tools": "Replaced by: pflow mcp list [keyword...]",
+        "info": "Replaced by: pflow mcp describe <tool>",
+    }
+
+    def resolve_command(
+        self,
+        ctx: click.Context,
+        args: list[str],
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        if args and args[0] in self._removed_commands:
+            click.echo(f"Error: 'mcp {args[0]}' command was removed.\n{self._removed_commands[args[0]]}", err=True)
+            ctx.exit(1)
+        return super().resolve_command(ctx, args)
+
+
+@click.group(name="mcp", cls=MCPGroup)
 def mcp() -> None:
     """Manage MCP server connections."""
     pass
@@ -282,9 +298,9 @@ def _format_server_output(name: str, config: dict) -> None:
         click.echo(f"    Updated: {config['updated_at']}")
 
 
-@mcp.command(name="list")
+@mcp.command(name="servers")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def list_servers(output_json: bool) -> None:
+def servers(output_json: bool) -> None:
     """List all configured MCP servers."""
     manager = MCPServerManager()
 
@@ -297,7 +313,7 @@ def list_servers(output_json: bool) -> None:
 
         if not servers:
             click.echo("No MCP servers configured.")
-            click.echo("Add one with: pflow mcp add <name> <command>")
+            click.echo("Add one with: pflow mcp add ./server-config.json")
             return
 
         click.echo("Configured MCP servers:")
@@ -306,6 +322,173 @@ def list_servers(output_json: bool) -> None:
 
     except Exception as e:
         click.echo(f"Error: Failed to list servers: {e}", err=True)
+        sys.exit(1)
+
+
+def _load_mcp_registry_entries(registrar: MCPRegistrar) -> dict[str, dict]:
+    nodes = registrar.registry.load()
+    return {
+        node_name: entry
+        for node_name, entry in nodes.items()
+        if node_name.startswith("mcp-") and isinstance(entry.get("interface"), dict)
+    }
+
+
+def _matches_keyword(keyword: str, text: str) -> bool:
+    if keyword == keyword.lower():
+        return keyword in text.lower()
+    return keyword in text
+
+
+def _matches_all_keywords(entry: dict, keywords: tuple[str, ...]) -> bool:
+    interface = entry.get("interface", {})
+    description = str(interface.get("description", ""))
+    metadata = interface.get("mcp_metadata", {})
+    server = str(metadata.get("server", ""))
+    tool = str(metadata.get("tool", ""))
+    return all(
+        any(
+            _matches_keyword(keyword, candidate)
+            for candidate in (tool, description, server, str(entry.get("node_name", "")))
+        )
+        for keyword in keywords
+    )
+
+
+def _highlight_matches(text: str, keywords: tuple[str, ...]) -> str:
+    highlighted = text
+    for keyword in keywords:
+        highlighted = _highlight_keyword(highlighted, keyword)
+    return highlighted
+
+
+def _highlight_keyword(text: str, keyword: str) -> str:
+    if not keyword:
+        return text
+
+    haystack = text if keyword != keyword.lower() else text.lower()
+    needle = keyword if keyword != keyword.lower() else keyword.lower()
+    index = 0
+    parts: list[str] = []
+    while True:
+        match_index = haystack.find(needle, index)
+        if match_index == -1:
+            parts.append(text[index:])
+            break
+        parts.append(text[index:match_index])
+        parts.append(click.style(text[match_index : match_index + len(keyword)], bold=True))
+        index = match_index + len(keyword)
+    return "".join(parts)
+
+
+def _group_entries_by_server(entries: dict[str, dict]) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for node_name, entry in entries.items():
+        interface = entry.get("interface", {})
+        metadata = interface.get("mcp_metadata", {})
+        server = str(metadata.get("server", "unknown"))
+        grouped.setdefault(server, []).append({
+            "node_name": node_name,
+            "description": str(interface.get("description", "")),
+            "tool": str(metadata.get("tool", node_name)),
+        })
+    return grouped
+
+
+def _format_tool_summary(grouped_entries: dict[str, list[dict]], configured_servers: list[str]) -> str:
+    total_tools = sum(len(entries) for entries in grouped_entries.values())
+    server_count = len(configured_servers) if configured_servers else len(grouped_entries)
+    lines = [f"MCP Tools ({total_tools} total across {server_count} servers)"]
+
+    all_servers = sorted(set(configured_servers) | set(grouped_entries))
+    for server in all_servers:
+        server_entries = grouped_entries.get(server, [])
+        lines.append("")
+        lines.append(f"{server} ({len(server_entries)} tools)")
+        if not server_entries:
+            lines.append(f"  No registered tools. Run: pflow mcp sync {server}")
+            continue
+        tool_hints = ", ".join(entry["tool"] for entry in server_entries[:5])
+        if len(server_entries) > 5:
+            tool_hints += "..."
+        lines.append(f"  {tool_hints}")
+    return "\n".join(lines)
+
+
+def _format_filtered_tools(grouped_entries: dict[str, list[dict]], keywords: tuple[str, ...]) -> str:
+    total_matches = sum(len(entries) for entries in grouped_entries.values())
+    lines = [f"Matching MCP tools ({total_matches} results):"]
+    for server, entries in sorted(grouped_entries.items()):
+        lines.append("")
+        lines.append(f"{server}:")
+        for entry in entries:
+            tool_name = _highlight_matches(entry["node_name"], keywords)
+            description = _highlight_matches(entry["description"], keywords)
+            lines.append(f"  {tool_name} — {description}")
+    return "\n".join(lines)
+
+
+@mcp.command(name="list")
+@click.argument("keywords", nargs=-1)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def list_tools(keywords: tuple[str, ...], output_json: bool) -> None:
+    """List MCP tools, optionally filtered by keywords.
+
+    Without keywords, shows a grouped-by-server summary with tool counts
+    and sample tool names. With keywords, shows matching tools with full
+    details (name + description), filtered by AND logic across all keywords.
+
+    \b
+    Examples:
+        pflow mcp list                 # Summary of all servers + tool counts
+        pflow mcp list slack           # Tools matching "slack"
+        pflow mcp list slack send      # Tools matching both "slack" AND "send"
+    """
+    registrar = MCPRegistrar()
+    manager = MCPServerManager()
+
+    try:
+        entries = _load_mcp_registry_entries(registrar)
+        configured_servers = manager.list_servers()
+
+        if output_json:
+            if not keywords:
+                click.echo(
+                    json.dumps(
+                        {
+                            "total_tools": len(entries),
+                            "servers": _group_entries_by_server(entries),
+                        },
+                        indent=2,
+                    )
+                )
+                return
+
+            filtered_entries = {
+                node_name: entry
+                for node_name, entry in entries.items()
+                if _matches_all_keywords({"node_name": node_name, **entry}, keywords)
+            }
+            click.echo(json.dumps(_group_entries_by_server(filtered_entries), indent=2))
+            return
+
+        if not keywords:
+            click.echo(_format_tool_summary(_group_entries_by_server(entries), configured_servers))
+            return
+
+        filtered_entries = {
+            node_name: entry
+            for node_name, entry in entries.items()
+            if _matches_all_keywords({"node_name": node_name, **entry}, keywords)
+        }
+        if not filtered_entries:
+            click.echo("No MCP tools match those keywords.", err=True)
+            click.echo("Try: pflow mcp list", err=True)
+            click.echo('Or: pflow mcp find "what you want to do"', err=True)
+            return
+        click.echo(_format_filtered_tools(_group_entries_by_server(filtered_entries), keywords))
+    except Exception as e:
+        click.echo(f"Error: Failed to list tools: {e}", err=True)
         sys.exit(1)
 
 
@@ -516,105 +699,45 @@ def sync(name: Optional[str], all_servers: bool, verbose: bool) -> None:
         sys.exit(1)
 
 
-def _get_tools_info_as_json(registrar: MCPRegistrar, tool_names: list[str]) -> str:
-    """Get tools info and format as JSON."""
-    tools_info = []
-    for tool_name in tool_names:
-        info = registrar.get_tool_info(tool_name)
-        if info:
-            tools_info.append(info)
-    return json.dumps(tools_info, indent=2)
+@mcp.command(name="find")
+@click.argument("query")
+def find_tools(query: str) -> None:
+    """Search MCP tools by intent using LLM."""
+    from pflow.cli.find_errors import handle_discovery_error, validate_discovery_query
+    from pflow.registry.discovery import find_components
 
-
-def _display_server_tools(registrar: MCPRegistrar, server: str, tool_names: list[str]) -> None:
-    """Display tools for a specific server."""
-    if not tool_names:
-        click.echo(f"No tools registered for server '{server}'")
-        click.echo(f"Run 'pflow mcp sync {server}' to discover tools")
-        return
-
-    click.echo(f"Registered tools for '{server}':")
-    for tool_name in tool_names:
-        info = registrar.get_tool_info(tool_name)
-        if info:
-            click.echo(f"\n  {tool_name}:")
-            click.echo(f"    {info['description']}")
-            if info["params"]:
-                click.echo(f"    Parameters: {', '.join(p['key'] for p in info['params'])}")
-
-
-def _group_tools_by_server(tool_names: list[str]) -> dict[str, list[str]]:
-    """Group tool names by their server prefix."""
-    tools_by_server: dict[str, list[str]] = {}
-    for tool_name in tool_names:
-        parts = tool_name.split("-", 2)
-        if len(parts) >= 3:
-            server_name = parts[1]
-            if server_name not in tools_by_server:
-                tools_by_server[server_name] = []
-            tools_by_server[server_name].append(tool_name)
-    return tools_by_server
-
-
-def _display_all_tools_grouped(registrar: MCPRegistrar, tool_names: list[str]) -> None:
-    """Display all tools grouped by server."""
-    if not tool_names:
-        click.echo("No MCP tools registered")
-        click.echo("Run 'pflow mcp sync --all' to discover tools")
-        return
-
-    tools_by_server = _group_tools_by_server(tool_names)
-    click.echo("Registered MCP tools:")
-
-    for server_name, server_tools in sorted(tools_by_server.items()):
-        click.echo(f"\n  {server_name} ({len(server_tools)} tools):")
-
-        # Show first 5 tools
-        for tool_name in server_tools[:5]:
-            info = registrar.get_tool_info(tool_name)
-            if info:
-                click.echo(f"    - {tool_name}: {info['description'][:60]}...")
-
-        # Show count of remaining tools
-        if len(server_tools) > 5:
-            click.echo(f"    ... and {len(server_tools) - 5} more")
-
-
-@mcp.command(name="tools")
-@click.argument("server", required=False)
-@click.option("--all", "-a", "all_servers", is_flag=True, help="List tools from all servers")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def tools(server: Optional[str], all_servers: bool, output_json: bool) -> None:
-    """List registered MCP tools.
-
-    Examples:
-        pflow mcp tools              # List all MCP tools
-        pflow mcp tools github       # List tools from specific server
-        pflow mcp tools --json       # Output as JSON
-    """
+    validated_query = validate_discovery_query(query, "mcp find")
     registrar = MCPRegistrar()
+    entries = _load_mcp_registry_entries(registrar)
+
+    if not entries:
+        click.echo("No MCP tools are registered yet.")
+        click.echo("Run 'pflow mcp sync --all' to discover tools.")
+        return
 
     try:
-        if server:
-            # List tools from specific server
-            tool_names = registrar.list_registered_tools(server)
-
-            if output_json:
-                click.echo(_get_tools_info_as_json(registrar, tool_names))
-            else:
-                _display_server_tools(registrar, server, tool_names)
-        else:
-            # List all MCP tools
-            tool_names = registrar.list_registered_tools()
-
-            if output_json:
-                click.echo(_get_tools_info_as_json(registrar, tool_names))
-            else:
-                _display_all_tools_grouped(registrar, tool_names)
-
-    except Exception as e:
-        click.echo(f"Error: Failed to list tools: {e}", err=True)
+        result = find_components(validated_query, registry_metadata=entries, include_workflows=False)
+    except Exception as exception:
+        handle_discovery_error(
+            exception,
+            discovery_type="registry",
+            alternative_commands=[
+                ("pflow mcp list", "Browse registered MCP tools"),
+                ("pflow mcp describe <tool>", "Show detailed MCP tool info"),
+            ],
+        )
         sys.exit(1)
+
+    if not result.node_ids:
+        click.echo("No MCP tools matched that description.")
+        click.echo("Try 'pflow mcp list' or a broader description.", err=True)
+        return
+
+    selected_entries = {node_id: entries[node_id] for node_id in result.node_ids if node_id in entries}
+    click.echo(_format_filtered_tools(_group_entries_by_server(selected_entries), ()))
+    if result.reasoning:
+        click.echo("")
+        click.echo(f"Reasoning: {result.reasoning}")
 
 
 def _format_tool_header(tool_info: dict) -> None:
@@ -661,18 +784,39 @@ def _suggest_similar_tools(registrar: MCPRegistrar, tool: str) -> None:
     click.echo(f"\n{message}")
 
 
-@mcp.command(name="info")
-@click.argument("tool")
-def info(tool: str) -> None:
-    """Show detailed information about an MCP tool.
+def _resolve_tool_id(tool: str, registrar: MCPRegistrar) -> str:
+    """Resolve a user-provided tool ID, handling ambiguity."""
+    from pflow.registry.node_id import normalize_node_id
 
-    Example:
-        pflow mcp info mcp-github-create-issue
-    """
+    available_nodes = set(registrar.registry.load().keys())
+    resolved = normalize_node_id(tool, available_nodes)
+
+    if resolved is not None:
+        return resolved
+
+    # normalize_node_id returns None for both not-found and ambiguous.
+    # Check for ambiguity so we can show candidates instead of a generic error.
+    normalized_check = tool.replace("-", "_")
+    matches = [node_id for node_id in available_nodes if node_id.endswith(tool) or node_id.endswith(normalized_check)]
+    if len(matches) > 1:
+        click.echo(f"Error: Ambiguous tool '{tool}'", err=True)
+        click.echo("  Matches:", err=True)
+        for match in sorted(matches):
+            click.echo(f"  - {match}", err=True)
+        sys.exit(1)
+
+    return tool
+
+
+@mcp.command(name="describe")
+@click.argument("tool")
+def describe_tool(tool: str) -> None:
+    """Show detailed information about an MCP tool."""
     registrar = MCPRegistrar()
+    lookup_id = _resolve_tool_id(tool, registrar)
 
     try:
-        tool_info = registrar.get_tool_info(tool)
+        tool_info = registrar.get_tool_info(lookup_id)
 
         if not tool_info:
             click.echo(f"Error: Tool '{tool}' not found", err=True)
