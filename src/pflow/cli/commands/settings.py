@@ -1,13 +1,32 @@
 """Settings management CLI commands."""
 
 import json
+from typing import ClassVar
 
 import click
 
 from pflow.core.settings import OUTPUT_MODES, PflowSettings, SettingsManager
 
 
-@click.group()
+class SettingsGroup(click.Group):
+    """Settings group with migration hints for removed subgroups."""
+
+    _removed_commands: ClassVar[dict[str, str]] = {
+        "registry": "Flattened: use 'pflow settings output-mode' directly (was: pflow settings registry output-mode)",
+    }
+
+    def resolve_command(
+        self,
+        ctx: click.Context,
+        args: list[str],
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        if args and args[0] in self._removed_commands:
+            click.echo(f"Error: 'settings {args[0]}' was removed.\n{self._removed_commands[args[0]]}", err=True)
+            ctx.exit(1)
+        return super().resolve_command(ctx, args)
+
+
+@click.group(cls=SettingsGroup)
 def settings() -> None:
     """Manage pflow settings."""
     pass

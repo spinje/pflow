@@ -12,7 +12,7 @@ registry/
 ├── metadata_extractor.py    # Parse Interface section from node docstrings into structured metadata
 ├── context_builder.py       # Build LLM-optimized node/component context (build_component_context, build_nodes_context)
 ├── smart_filter.py          # LLM-powered field reduction for structure-only mode
-├── discovery.py             # LLM-powered component discovery (discover_components)
+├── discovery.py             # LLM-powered component discovery (find_components)
 └── prompts/
     └── component_browsing.md  # Component browsing prompt template
 ```
@@ -57,7 +57,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 | `runtime/compilation/` | Node class resolution, interface metadata, MCP validation, output validation | Default (filtered) |
 | `mcp/registrar.py` | Register/remove virtual MCP tool entries | **True** (safe) |
 | `cli/main.py` auto-sync | Clean old MCP entries before re-syncing | **True** (safe) |
-| `cli/commands/registry.py` commands | List, search, describe, scan | Mixed — see known bugs |
+| `cli/commands/mcp.py`, `_probe_impl.py` | MCP list/find/describe, probe | Default (filtered) |
 | `core/workflow/validator.py` | Validate node types exist | Default (filtered) |
 | `mcp_server/services/` | Registry service for MCP server | Default (filtered) |
 | `registry/context_builder.py` | Node specs for discovery and planning | Default (filtered) |
@@ -72,7 +72,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 
 The safe pattern: always use `load(include_filtered=True)` before any `save()` call. The MCP registrar does this correctly.
 
-**Known footgun**: `cli/commands/registry.py:_add_nodes_to_registry()` loads with default filtering and saves back — will delete denied nodes when user runs `pflow registry scan`.
+**Historical footgun** (removed): The old `cli/commands/registry.py:_add_nodes_to_registry()` loaded with default filtering and saved back — deleting denied nodes on `pflow registry scan`. Both the file and the `registry scan` command were removed in Task 151.
 
 ### Scanner Executes Code
 

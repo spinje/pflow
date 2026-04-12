@@ -1,10 +1,7 @@
 """MCP (Model Context Protocol) CLI commands for pflow.
 
-This Click group is invoked by main_wrapper.py when it detects "mcp" as the first
-positional argument. The wrapper manipulates sys.argv to remove "mcp" before calling
-this group, allowing normal Click command processing for the subcommands.
-
-Architecture: main_wrapper.py -> mcp() group -> individual commands (add, list, sync, etc.)
+Registered as a subgroup of the PflowCLI group in main.py via cli.add_command(mcp).
+Click handles subcommand routing natively.
 """
 
 import hashlib
@@ -316,7 +313,7 @@ def servers(output_json: bool) -> None:
 
         if not servers:
             click.echo("No MCP servers configured.")
-            click.echo("Add one with: pflow mcp add <name> <command>")
+            click.echo("Add one with: pflow mcp add ./server-config.json")
             return
 
         click.echo("Configured MCP servers:")
@@ -720,7 +717,7 @@ def find_tools(query: str) -> None:
         return
 
     try:
-        result = find_components(validated_query, registry_metadata=entries)
+        result = find_components(validated_query, registry_metadata=entries, include_workflows=False)
     except Exception as exception:
         handle_discovery_error(
             exception,
@@ -792,10 +789,18 @@ def _suggest_similar_tools(registrar: MCPRegistrar, tool: str) -> None:
 @click.argument("tool")
 def describe_tool(tool: str) -> None:
     """Show detailed information about an MCP tool."""
+    from pflow.registry.node_id import normalize_node_id
+
     registrar = MCPRegistrar()
 
+    # Normalize the tool ID (hyphen/underscore, short-form matching)
+    registry = registrar.registry
+    available_nodes = set(registry.load().keys())
+    resolved = normalize_node_id(tool, available_nodes)
+    lookup_id = resolved if resolved else tool
+
     try:
-        tool_info = registrar.get_tool_info(tool)
+        tool_info = registrar.get_tool_info(lookup_id)
 
         if not tool_info:
             click.echo(f"Error: Tool '{tool}' not found", err=True)

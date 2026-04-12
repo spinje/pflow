@@ -570,7 +570,7 @@ mint broken-links
 - Use absolute URLs for internal links (use relative paths like `/quickstart`)
 - Include untested code examples
 - Document planner internals or IR schema
-- Write for AI agents (they use `pflow instructions`)
+- Write for AI agents (they use `pflow guide`)
 - Use emoji or decorative formatting
 - Use title case in headings
 

@@ -23,5 +23,4 @@ def guide_cmd(topics: tuple[str, ...]) -> None:
     click.echo(f"Guide content for topics [{topic_list}] is not yet implemented.")
     click.echo("This will be available after Task 77 ships.")
     click.echo()
-    click.echo("Meanwhile, for full instructions run:")
-    click.echo("  cat src/pflow/cli/resources/cli-agent-instructions.md")
+    click.echo("Meanwhile, run 'pflow --help' for an overview of available commands.")

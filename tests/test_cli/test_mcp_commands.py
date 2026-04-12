@@ -99,18 +99,28 @@ def test_mcp_find_uses_filtered_registry_metadata() -> None:
     assert "registry_metadata" in mock_discover.call_args[1]
 
 
-def test_mcp_describe_shows_tool_details() -> None:
+_TOOL_INFO = {
+    "node_name": "mcp-github-create-issue",
+    "server": "github",
+    "tool": "create-issue",
+    "description": "Create an issue",
+    "params": [{"key": "repo", "type": "str", "required": True}],
+    "outputs": [{"key": "issue", "type": "dict"}],
+    "module": "pflow.nodes.mcp.node",
+    "class_name": "MCPNode",
+}
+
+
+def _make_registrar_mock(tool_info: dict | None = None) -> MagicMock:
+    """Build a registrar mock with registry.load() for normalize_node_id."""
     registrar = MagicMock()
-    registrar.get_tool_info.return_value = {
-        "node_name": "mcp-github-create-issue",
-        "server": "github",
-        "tool": "create-issue",
-        "description": "Create an issue",
-        "params": [{"key": "repo", "type": "str", "required": True}],
-        "outputs": [{"key": "issue", "type": "dict"}],
-        "module": "pflow.nodes.mcp.node",
-        "class_name": "MCPNode",
-    }
+    registrar.get_tool_info.return_value = tool_info or _TOOL_INFO
+    registrar.registry.load.return_value = {"mcp-github-create-issue": {}}
+    return registrar
+
+
+def test_mcp_describe_shows_tool_details() -> None:
+    registrar = _make_registrar_mock()
 
     with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
         result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-github-create-issue"])
@@ -119,6 +129,43 @@ def test_mcp_describe_shows_tool_details() -> None:
     assert "Tool: mcp-github-create-issue" in result.output
     assert "Server: github" in result.output
     assert "Parameters:" in result.output
+
+
+def test_mcp_describe_normalizes_hyphen_to_underscore() -> None:
+    """Hyphenated tool names should resolve via normalize_node_id."""
+    registrar = MagicMock()
+    registrar.registry.load.return_value = {"mcp-slack-SLACK_SEND_MESSAGE": {}}
+    registrar.get_tool_info.return_value = {
+        **_TOOL_INFO,
+        "node_name": "mcp-slack-SLACK_SEND_MESSAGE",
+        "tool": "SLACK_SEND_MESSAGE",
+        "server": "slack",
+    }
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        # User types hyphens instead of underscores
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-slack-SLACK-SEND-MESSAGE"])
+
+    assert result.exit_code == 0
+    assert "SLACK_SEND_MESSAGE" in result.output
+
+
+def test_mcp_describe_resolves_short_form() -> None:
+    """Unique short-form suffix should resolve to the full ID."""
+    registrar = MagicMock()
+    registrar.registry.load.return_value = {"mcp-slack-SLACK_SEND_MESSAGE": {}}
+    registrar.get_tool_info.return_value = {
+        **_TOOL_INFO,
+        "node_name": "mcp-slack-SLACK_SEND_MESSAGE",
+        "tool": "SLACK_SEND_MESSAGE",
+        "server": "slack",
+    }
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "SLACK_SEND_MESSAGE"])
+
+    assert result.exit_code == 0
+    assert "SLACK_SEND_MESSAGE" in result.output
 
 
 def test_removed_mcp_tools_and_info_commands_fail() -> None:

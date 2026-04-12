@@ -57,3 +57,34 @@ def test_enrich_preserves_builtin_suggestions_for_file_errors() -> None:
     suggestions = diagnostics[0].suggestions or []
     assert any("file path" in s.lower() for s in suggestions)
     assert not any("registry describe" in s for s in suggestions)
+
+
+def test_not_found_suggests_mcp_commands_for_mcp_nodes() -> None:
+    """MCP node not-found should suggest mcp-specific discovery commands."""
+    d = build_node_not_found_diagnostic("mcp-slack-send", ["mcp-slack-send-message"])
+    suggestions = d.suggestions or []
+    assert any("mcp find" in s for s in suggestions)
+    assert any("mcp list" in s for s in suggestions)
+
+
+def test_not_found_suggests_core_types_for_non_mcp_nodes() -> None:
+    """Non-MCP node not-found should list core node types, not only MCP commands."""
+    d = build_node_not_found_diagnostic("shel", ["shell", "http", "llm"])
+    suggestions = d.suggestions or []
+    assert any("shell" in s for s in suggestions)
+    assert not any("mcp find" in s for s in suggestions)
+
+
+def test_enrich_suggests_mcp_describe_for_mcp_nodes() -> None:
+    """MCP probe errors should suggest 'mcp describe', not generic help."""
+    diagnostics = enrich_for_probe(ValueError("param 'repo' required"), "mcp-github-create-issue")
+    suggestions = diagnostics[0].suggestions or []
+    assert any("mcp describe" in s for s in suggestions)
+
+
+def test_enrich_suggests_probe_help_for_core_nodes() -> None:
+    """Core probe errors should suggest 'probe --help', not 'mcp describe'."""
+    diagnostics = enrich_for_probe(ValueError("param 'command' required"), "shell")
+    suggestions = diagnostics[0].suggestions or []
+    assert any("probe" in s for s in suggestions)
+    assert not any("mcp describe" in s for s in suggestions)

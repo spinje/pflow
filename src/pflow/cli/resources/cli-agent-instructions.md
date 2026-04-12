@@ -379,7 +379,7 @@ Passing whole `${fetch.result}` = NO TEST NEEDED.
 ```
 Is it an MCP node?
 ├─ YES → Are you unsure what format it accepts OR accessing specific fields?
-│        ├─ YES → Test with `registry run` AND your actual data format
+│        ├─ YES → Test with `pflow probe` AND your actual data format
 │        └─ NO → Skip testing (just pass ${node.result} to next node)
 └─ NO → Is it HTTP with unknown response?
          ├─ YES → Will you extract specific fields?
@@ -2078,7 +2078,7 @@ I need to clarify a few details:
 
 | What Docs Say | What You Get | How to Handle |
 |---------------|--------------|---------------|
-| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test structure with registry run |
+| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test structure with pflow probe |
 | "Optional parameter" | Actually required or fails | Always provide it |
 | "Returns array" | `{"items": [...], "metadata": {...}}` | Access via `.items` |
 | "String parameter" | Needs specific format | Test with examples |
@@ -2166,7 +2166,7 @@ Otherwise → Hardcode
 
 **When to test?**
 ```
-Need specific nested fields? → Test with `registry run`
+Need specific nested fields? → Test with `pflow probe`
 Passing whole result? → Skip testing
 Complex transformation? → Test
 Simple operations? → Skip

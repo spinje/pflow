@@ -22,7 +22,7 @@ core/workflow/
 ├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
 ├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
 ├── context.py               # Build workflow context for discovery (build_workflows_context)
-├── discovery.py             # LLM-powered workflow discovery (discover_workflow → WorkflowMatch)
+├── discovery.py             # LLM-powered workflow discovery (find_workflow → WorkflowMatch)
 ├── prompts/
 │   └── discovery.md         # Workflow discovery prompt template
 └── CLAUDE.md
@@ -74,7 +74,7 @@ No cycles. All heavy imports are lazy (inside functions).
 | Consumer | Uses |
 |----------|------|
 | `cli/main.py` | `WorkflowManager`, `WorkflowValidator` |
-| `cli/commands/workflow.py` | `WorkflowManager`, save_service functions |
+| `cli/commands/list.py`, `describe.py`, `history.py`, `save.py` | `WorkflowManager`, save_service functions |
 | `cli/commands/skills.py` | Most of skill_service |
 | `execution/` | `WorkflowManager`, `WorkflowValidator`, `WorkflowStatus` |
 | `runtime/` | `WorkflowManager` |

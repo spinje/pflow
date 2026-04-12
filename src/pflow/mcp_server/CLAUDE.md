@@ -109,7 +109,7 @@ If none found, returns a fallback message with tool reference and troubleshootin
 All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_stateless` decorator. Every request creates fresh instances of Registry, WorkflowManager, etc.
 
 - **BaseService** — `@ensure_stateless` decorator (logs instance creation), `validate_stateless()` checks
-- **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions for LLM-powered discovery.
+- **DiscoveryService** — Wraps `find_workflow()` and `find_components()` plain functions for LLM-powered discovery.
 - **ExecutionService** — All three execution methods (`execute_workflow`, `validate_workflow`, `run_registry_node`) delegate to `WorkflowRunner` from `pflow.execution.runner`. Save workflow stays self-contained. Each method is ~20 lines: validate params at boundary → call Runner → format result. `run_registry_node` builds synthetic single-node IR, resolves `${ENV_VAR}` from env/settings, routes through Runner with `cache_enabled=False`.
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
 - **RegistryService** — `describe_nodes()` uses `build_component_context()`, `list_all_nodes()` supports filter via Registry.search()

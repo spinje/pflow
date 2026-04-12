@@ -20,14 +20,13 @@ def build_node_not_found_diagnostic(node_type: str, available_nodes: list[str]) 
     similar = find_similar_items(node_type, available_nodes, max_results=5, method="substring")
     if not similar:
         similar = sorted(available_nodes)[:10]
+
+    suggestions = _node_discovery_suggestions(node_type)
     return Diagnostic(
         severity=Severity.ERROR,
         message=f"Node '{node_type}' not found in registry.",
         title="Node Not Found",
-        suggestions=[
-            "Use 'pflow mcp find' to search MCP tools by intent",
-            "Use 'pflow mcp list' to see all available MCP tools",
-        ],
+        suggestions=suggestions,
         source="registry",
         context={"category": "not_found", "similar_names": similar},
     )
@@ -54,16 +53,36 @@ def enrich_for_probe(
     return enriched
 
 
+def _node_discovery_suggestions(node_type: str) -> list[str]:
+    """Build suggestions appropriate for the node type (MCP vs core)."""
+    if node_type.startswith("mcp-"):
+        return [
+            "Use 'pflow mcp find' to search MCP tools by intent",
+            "Use 'pflow mcp list' to see all available MCP tools",
+        ]
+    return [
+        "Core node types: shell, http, llm, code, read-file, write-file",
+        "Use 'pflow mcp list' to see available MCP tools",
+    ]
+
+
+def _describe_suggestion(node_type: str) -> str:
+    """Return the appropriate describe command for the node type."""
+    if node_type.startswith("mcp-"):
+        return f"Use 'pflow mcp describe {node_type}' to see required parameters"
+    return f"Use 'pflow probe {node_type} --help' for usage information"
+
+
 def _probe_suggestions(d: Any, node_type: str, exc: Exception) -> list[str]:
     """Build context-aware suggestions for probe errors."""
     suggestions = list(d.suggestions or [])
     if isinstance(exc, (FileNotFoundError, PermissionError)):
         return suggestions  # already have good suggestions from _builtin_exception_diagnostic
     if isinstance(exc, ValueError) and "required" in str(exc).lower():
-        suggestions.append(f"Use 'pflow mcp describe {node_type}' to see required parameters")
+        suggestions.append(_describe_suggestion(node_type))
     elif "timeout" in str(exc).lower():
         suggestions.append("Try increasing timeout if supported")
-        suggestions.append(f"Use 'pflow mcp describe {node_type}' to check parameters")
+        suggestions.append(_describe_suggestion(node_type))
     else:
-        suggestions.append(f"Use 'pflow mcp describe {node_type}' to see required parameters")
+        suggestions.append(_describe_suggestion(node_type))
     return suggestions

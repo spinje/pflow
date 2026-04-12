@@ -814,3 +814,11 @@ class TestRegistryOutputModeCommand:
         """Invalid mode is rejected by Click.Choice."""
         result = runner.invoke(settings, ["output-mode", "invalid"])
         assert result.exit_code != 0
+
+
+def test_removed_settings_registry_subgroup_shows_migration(runner: CliRunner) -> None:
+    """'pflow settings registry' was flattened — show a clear migration message."""
+    result = runner.invoke(settings, ["registry", "output-mode"])
+    assert result.exit_code != 0
+    assert "'settings registry' was removed" in result.output
+    assert "pflow settings output-mode" in result.output

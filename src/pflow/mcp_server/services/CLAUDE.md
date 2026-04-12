@@ -20,7 +20,7 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 ## Services (7)
 
 - **BaseService** — Pattern enforcement via `@ensure_stateless` decorator
-- **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions
+- **DiscoveryService** — Wraps `find_workflow()` and `find_components()` plain functions
 - **ExecutionService** — Execute, validate, save workflows + run registry nodes (largest service)
 - **FieldService** — Read cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. **Not exported from `__init__.py`** — imported directly in execution_tools.py.
 - **RegistryService** — Node describe, list/search via `build_component_context()` and `Registry.search()`
@@ -32,8 +32,8 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 Discovery services call plain functions that return typed dataclasses:
 
 ```python
-from pflow.core.workflow.discovery import discover_workflow
-result = discover_workflow(query, workflow_manager=WorkflowManager())
+from pflow.core.workflow.discovery import find_workflow
+result = find_workflow(query, workflow_manager=WorkflowManager())
 # result is WorkflowMatch(found, workflow_name, confidence, reasoning, workflow)
 ```
 

@@ -27,7 +27,7 @@ pflow find "user's exact request here"
 
 ### No Match (<70%): Execute Directly vs Create Workflow
 
-- **1-2 nodes needed** (e.g., fetch + save) → Ask user: "Execute directly (via `registry run`) or create reusable workflow?"
+- **1-2 nodes needed** (e.g., fetch + save) → Ask user: "Execute directly (via `pflow probe`) or create reusable workflow?"
 - **3+ nodes needed** → Create workflow (don't ask, just proceed with `pflow guide`)
 
 ## Essential Commands
@@ -91,10 +91,8 @@ pflow visualize ./workflow.pflow.md -o graph.md
 ### Instructions for building workflows
 
 ```bash
-# Read all 3 parts IN FULL before building workflows (do not truncate or skip any part):
-pflow guide --part 1
-pflow guide --part 2
-pflow guide --part 3
+# Read the guide IN FULL before building workflows (do not truncate or skip):
+pflow guide
 ```
 
 **ONLY read these instructions when:**
@@ -133,15 +131,15 @@ pflow probe mcp-slack-send-message channel="#general" text="Hello"
 # Execution time: 2000ms
 ```
 
-> **Note**: `registry run` shows execution metadata and template paths (for use in workflows), **not the actual data**. This is intentional - see below if you need actual values.
+> **Note**: `pflow probe` shows execution metadata and template paths (for use in workflows), **not the actual data**. This is intentional - see below if you need actual values.
 
 ### Inspecting Actual Data (Only When Needed)
 
 ```bash
-# Use the execution ID from registry run output
+# Use the execution ID from probe output
 pflow read-fields exec-1234567890-abcdef result
 
-# Access nested fields (path matches template paths shown by registry run)
+# Access nested fields (path matches template paths shown by probe)
 pflow read-fields exec-1234567890-abcdef result.data.items
 ```
 

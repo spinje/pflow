@@ -2,8 +2,8 @@
 
 ## Status
 
-- Current phase: Audit + verification + UX fixes complete
-- Overall state: implementation complete, all fixes applied, real CLI verified, test backfill pending decision
+- Current phase: Code review fixes complete
+- Overall state: implementation complete, two rounds of code review fixes applied, test backfill pending decision
 - Last updated: 2026-04-12
 
 ## Verified Context
@@ -241,6 +241,81 @@ Added `\b` before Examples sections in `list`, `find`, `describe`, `history`, `s
 - `make check` clean
 - All stale-reference greps return zero hits
 - Real CLI execution verified across 35+ subprocess tests
+
+## Code Review Round 1 (2026-04-12)
+
+4 specialized review agents deployed: review-silent-failures, review-feature-interactions, review-validation-consistency, review-impact-completeness.
+
+### Findings: 5 confirmed, 4 disputed
+
+**Confirmed and fixed:**
+
+1. **Agent instruction files had stale `registry run` references** (all 4 agents flagged)
+   - `cli-basic-usage.md`: 5 `registry run` → `probe`, 1 `guide --part 1/2/3` → `guide`
+   - `cli-agent-instructions.md`: 3 `registry run` → `pflow probe`
+
+2. **Root `CLAUDE.md` referenced removed `pflow instructions`**
+   - Lines 172, 372: `pflow instructions usage` → `pflow guide`
+
+3. **Error suggestions referenced `pflow mcp describe` for ALL node types**
+   - `registry_error_helpers.py`: Added `_node_discovery_suggestions()` and `_describe_suggestion()` — suggests MCP commands for `mcp-*` nodes, core node list + `probe --help` for others
+   - 4 new tests added in `test_registry_error_helpers.py`
+
+4. **`settings registry output-mode` had no migration error**
+   - Added `SettingsGroup(click.Group)` with `_removed_commands` for `registry`
+   - 1 new test in `test_settings_cli.py`
+
+5. **CLAUDE.md files across codebase had stale references** (~25 stale references across 13 files)
+   - `discover_workflow` → `find_workflow`, `discover_components` → `find_components`
+   - `registry_run.py` → `_probe_impl.py`, `commands/registry.py` → updated consumers
+   - `main_wrapper.py` references removed from `mcp.py` docstring, `logging_config.py`
+   - `docs/CLAUDE.md`, `examples/README.md`, `tests/shared/README.md` updated
+
+**Disputed:**
+- `mcp describe` not using `normalize_node_id` — flagged as pre-existing, but later confirmed as a real regression in Review Round 2
+- `_get_version()` broad exception catch — low risk, reasonable for dev environments
+- `ignore_unknown_options=True` swallows typos — known documented tradeoff
+- `logging_config.py` line 21 stale comment — reviewer misread the file
+
+### Verification After Round 1
+- 4709 tests pass (5 new), 0 failures
+- `make check` clean
+- All stale-reference greps return zero hits
+
+## Code Review Round 2 (2026-04-12)
+
+External review document evaluated: `scratchpads/code-review-task151-pr-20260412-142728.md`
+
+### Findings: 4 confirmed, 1 disputed
+
+**Confirmed and fixed:**
+
+1. **`mcp describe` missing `normalize_node_id`** — regression from old `registry describe`
+   - Added `normalize_node_id()` call before `registrar.get_tool_info()` in `mcp.py`
+   - Loads registry via `registrar.registry.load()` to get available node set
+   - 2 new tests: hyphen/underscore normalization, short-form suffix matching
+
+2. **`mcp find` not actually MCP-scoped** — `find_components()` unconditionally injected workflow context
+   - Added `include_workflows: bool = True` parameter to `find_components()` in `registry/discovery.py`
+   - `mcp find` now passes `include_workflows=False`
+   - Existing callers unaffected (default `True`)
+
+3. **`guide` stub pointed to repo-relative path** — `cat src/pflow/cli/resources/cli-agent-instructions.md`
+   - Replaced with `pflow --help` reference
+   - Updated `test_guide.py` assertion to match
+
+4. **`mcp servers` empty-state hint had wrong `add` format** — suggested `<name> <command>`
+   - Changed to `./server-config.json` matching actual `config_sources` argument
+
+**Disputed:**
+- Test coverage is thin — true but already a known tracked gap, not a new finding
+
+**Already fixed (in Round 1):**
+- `mcp.py` module docstring referencing `main_wrapper.py`
+
+### Verification After Round 2
+- 4711 tests pass (7 new total from both rounds), 0 failures
+- `make check` clean
 
 ## Risks / Notes
 

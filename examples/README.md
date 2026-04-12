@@ -70,4 +70,4 @@ Description of what this step does.
 - command: echo "hello"
 ```
 
-For the full format reference, run `uv run pflow instructions create`.
+For the full format reference, run `uv run pflow guide`.

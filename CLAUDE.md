@@ -169,7 +169,7 @@ pflow/
 
 - **Architecture & navigation**: `architecture/CLAUDE.md` — documentation index, reading paths, implementation CLAUDE.md table
 - **Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators
-- **Agent usage guide**: Run `pflow instructions usage`
+- **Agent usage guide**: Run `pflow guide`
 
 Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation and searching for code.
 
@@ -369,5 +369,5 @@ uv run pflow workflow.pflow.md
 uv run pflow my-workflow
 
 # Full agent usage context (only read if needed)
-uv run pflow instructions usage
+uv run pflow guide
 ```

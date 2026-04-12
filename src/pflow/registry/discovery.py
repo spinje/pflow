@@ -44,12 +44,16 @@ def find_components(
     task: str,
     model_name: Optional[str] = None,
     registry_metadata: Optional[dict[str, Any]] = None,
+    include_workflows: bool = True,
 ) -> ComponentSelection:
     """Discover components (nodes) needed for building a workflow.
 
     Args:
         task: Natural language description of what needs to be built
         model_name: LLM model to use (defaults to discovery model from settings)
+        registry_metadata: Pre-filtered registry entries (e.g., MCP-only)
+        include_workflows: Include saved workflows in the LLM context.
+            Set to False for MCP-scoped searches where workflows are irrelevant.
 
     Returns:
         ComponentSelection with selected node IDs and rendered component context
@@ -66,7 +70,7 @@ def find_components(
 
     # Build contexts
     nodes_context = build_nodes_context(registry_metadata=registry_metadata)
-    workflows_context = build_workflows_context()
+    workflows_context = build_workflows_context() if include_workflows else ""
 
     # Load and format prompt
     prompt_template = load_prompt(_PROMPT_PATH)

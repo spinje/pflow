@@ -29,7 +29,7 @@ src/pflow/core/
 ├── validation_utils.py      # Parameter name validation, dummy parameter generation
 ├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
 ├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
-├── execution_cache.py       # Two-phase execution cache for registry run
+├── execution_cache.py       # Two-phase execution cache for probe
 ├── trace_report.py          # Execution report generation (--report flag, per-node .md files)
 ├── file_resolver.py         # External file reference detection and resolution
 ├── workflow/                # Workflow lifecycle subdirectory (see workflow/CLAUDE.md)
@@ -41,7 +41,7 @@ src/pflow/core/
 │   ├── status.py            # SUCCESS/DEGRADED/FAILED tri-state enum
 │   ├── skill_service.py     # Publish workflows as AI agent skills (symlinks)
 │   ├── context.py           # Workflow context for discovery (build_workflows_context)
-│   ├── discovery.py         # LLM-powered workflow discovery (discover_workflow)
+│   ├── discovery.py         # LLM-powered workflow discovery (find_workflow)
 │   └── prompts/
 │       └── discovery.md     # Workflow discovery prompt template
 └── CLAUDE.md
@@ -306,7 +306,7 @@ These modules are NOT in `core/__init__.py` (require direct imports):
 - `llm_config` — used by CLI startup, compiler, registry/smart_filter, discovery
 - `llm_utils` — shared LLM response parsing (used by registry/smart_filter, discovery)
 - `prompt_utils` — prompt loading/formatting (used by discovery functions)
-- `execution_cache` — used by CLI registry run
+- `execution_cache` — used by CLI probe
 
 The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Import from `pflow.core.workflow.manager`, `pflow.core.workflow.validator`, etc.
 
