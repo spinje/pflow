@@ -215,7 +215,9 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 
 ### Planned Features (in order of priority)
 
-**Next**
+**Next — CLI Restructure (agent-first redesign)**
+- Task 151: CLI Surface Restructure
+- Task 77: Pflow Guide — tailored agent instructions
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**
@@ -243,10 +245,10 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 
 **v1.1.0 - MCP Ecosystem:**
 - Task 65: MCP Gateway Integration
-- Task 77: Improve Agent Instructions
 - Task 81: Find/Install Remote MCP Servers
 - Task 86: MCP Server Discovery Automation
 - Task 123: OAuth Authentication for MCP HTTP Servers
+- Task 152: MCP Server Cli surface Parity
 
 **Refactors:**
 - Task 117: Subcommand JSON Error Output
