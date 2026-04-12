@@ -51,6 +51,23 @@ def test_find_calls_discovery_with_workflow_manager() -> None:
     assert "workflow_manager" in mock_fn.call_args[1]
 
 
+def test_find_no_match_shows_guidance() -> None:
+    """When no workflow matches, find should display guidance — not crash."""
+    mock_result = WorkflowMatch(
+        found=False,
+        workflow_name=None,
+        confidence=0.0,
+        reasoning="No workflows match the description",
+        workflow=None,
+    )
+
+    with patch("pflow.core.workflow.discovery.find_workflow", return_value=mock_result):
+        result = click.testing.CliRunner().invoke(find_cmd, ["nonexistent thing"])
+
+    assert result.exit_code == 0
+    assert "no" in result.output.lower() or "match" in result.output.lower()
+
+
 def test_find_handles_discovery_errors() -> None:
     with patch(
         "pflow.core.workflow.discovery.find_workflow",

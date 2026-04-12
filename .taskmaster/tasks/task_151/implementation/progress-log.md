@@ -317,6 +317,59 @@ External review document evaluated: `scratchpads/code-review-task151-pr-20260412
 - 4711 tests pass (7 new total from both rounds), 0 failures
 - `make check` clean
 
+## Test Backfill (2026-04-12)
+
+Thorough investigation of 154 deleted tests across 6 files to identify which behaviors still exist but lost coverage. Cross-referenced every deleted test against existing test suites at all layers (pure function, integration, CLI).
+
+### Methodology
+
+- Read all deleted test files from `main` branch
+- Read all replacement test files and source files
+- Deployed 3 parallel research agents to map existing coverage for every relevant function
+- Filtered for HIGH VALUE tests only — tests that catch real bugs, not coverage padding
+
+### What was already covered (no backfill needed)
+
+| Function | Where tested | Why no backfill |
+|---|---|---|
+| `is_valid_parameter_name` | `test_validation_utils.py` (35+ assertions) | All branches including every shell special char |
+| `coerce_param_for_node` | `test_param_coercion.py` (16 tests) | All branches |
+| `coerce_workflow_input` | `test_param_coercion.py` (29 tests) + `test_prepare_inputs_coercion.py` (16 integration) | Exhaustive |
+| `_validate_discovery_query` | `test_workflow_save_security.py` (5 cases) | All branches |
+| `find_similar_items` + `format_did_you_mean` | `test_suggestion_utils.py` (21 tests) | Exhaustive |
+| `_matches_keyword` smart-case | `test_workflow_commands.py:test_list_workflows_smart_case` | Both branches |
+| `infer_type` + `parse_workflow_params` | `test_direct_execution_helpers.py` (14) + `test_rerun_display.py` (30+) | All type paths |
+
+### Tests written: 8 across 4 files
+
+**`test_node_id_normalization.py` (+3, zero mocks):**
+- `test_normalize_node_id_invalid_returns_none` — guards caller contract (probe/describe branch on None)
+- `test_normalize_node_id_filesystem_mcp_tools` — exercises reverse-hyphen branch with multi-hyphen server names, a real MCP pattern
+- `test_normalize_node_id_case_sensitive` — documents intentional case sensitivity, prevents accidental `.lower()` "fix"
+
+**`test_probe.py` (+2):**
+- `test_probe_rejects_shell_special_chars_in_param_names` — security boundary wiring: verifies probe actually calls validation before execution. Zero mocks.
+- `test_probe_ambiguous_node_shows_candidates` — verifies agents get candidate list (not traceback) for ambiguous node IDs. Uses existing mock fixture.
+
+**`test_mcp_commands.py` (+2, light mocks at MCP boundary):**
+- `test_mcp_describe_unknown_tool_shows_suggestions` — error path that fires when tool not found; no test existed for this branch
+- `test_mcp_list_keyword_no_match_shows_guidance` — error path when keyword filter matches nothing; no test existed
+
+**`test_find.py` (+1, mock only LLM boundary):**
+- `test_find_no_match_shows_guidance` — the most common `find` outcome (nothing matches) was tested in deleted `test_discovery_commands.py` but never replaced. Verifies `format_no_matches_with_suggestions` doesn't crash with empty workflow list.
+
+### Tests NOT written (with reasoning)
+
+- **Probe execution failure** (`_handle_execution_error`): Real core nodes handle errors gracefully (return "error" action), so this path only fires for unexpected crashes — requires mocking `node.run()` to raise, which tests the mock.
+- **MCP list empty state / truncation**: Formatting details, not bug-prone behavior.
+- **MCP find no tools**: Simple early-return branch, unlikely to break.
+- **Param type inference through probe**: `_coerce_params_for_node` is 20 lines of dict traversal delegating to thoroughly-tested `coerce_param_for_node`. No real bug surface.
+
+### Verification
+
+- 4719 tests pass (4718 + 1 find test added in separate run), 0 failures
+- `make check` clean (ruff, mypy 176 files, deptry)
+
 ## Risks / Notes
 
 - Note: the task spec requires the progress log to stay live. Update it after every completed phase and when implementation diverges from the written plan.

@@ -168,6 +168,46 @@ def test_mcp_describe_resolves_short_form() -> None:
     assert "SLACK_SEND_MESSAGE" in result.output
 
 
+def test_mcp_describe_unknown_tool_shows_suggestions() -> None:
+    """When a tool is not found, mcp describe should show similar tools
+    so agents can self-correct."""
+    registrar = MagicMock()
+    registrar.registry.load.return_value = {"mcp-github-create-issue": {}, "mcp-github-list-repos": {}}
+    registrar.get_tool_info.return_value = None
+    registrar.list_registered_tools.return_value = ["mcp-github-create-issue", "mcp-github-list-repos"]
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-github-create-pr"])
+
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
+    # Should suggest similar tools (substring match on "github-create")
+    assert "mcp-github-create-issue" in result.output
+
+
+def test_mcp_list_keyword_no_match_shows_guidance() -> None:
+    """When keyword filter matches nothing, mcp list should tell agents
+    what to try instead."""
+    registrar = MagicMock()
+    registrar.registry.load.return_value = {
+        "mcp-github-create-issue": {
+            "interface": {
+                "description": "Create an issue",
+                "mcp_metadata": {"server": "github", "tool": "create-issue"},
+            }
+        },
+    }
+
+    with (
+        patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar),
+        patch("pflow.cli.commands.mcp.MCPServerManager") as MockManager,
+    ):
+        MockManager.return_value.list_servers.return_value = ["github"]
+        result = click.testing.CliRunner().invoke(mcp, ["list", "nonexistent-tool"])
+
+    assert "No MCP tools match" in result.output
+
+
 def test_removed_mcp_tools_and_info_commands_fail() -> None:
     runner = click.testing.CliRunner()
 

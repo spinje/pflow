@@ -125,3 +125,24 @@ def test_probe_unknown_node_errors(runner: click.testing.CliRunner, mock_registr
 
     assert result.exit_code == 1
     assert "Unknown node" in result.output
+
+
+def test_probe_rejects_shell_special_chars_in_param_names(runner: click.testing.CliRunner) -> None:
+    """Security boundary: shell special characters in parameter names must be
+    rejected before any node execution occurs."""
+    for invalid_param in ["$PWD", "key|value", "test>out", "test&bg", "test;next"]:
+        result = runner.invoke(probe_cmd, ["shell", f"{invalid_param}=value"])
+
+        assert result.exit_code == 1, f"Expected rejection for '{invalid_param}'"
+        assert "Invalid parameter name" in result.output, f"Missing error message for '{invalid_param}'"
+
+
+def test_probe_ambiguous_node_shows_candidates(runner: click.testing.CliRunner, mock_registry) -> None:
+    """When a short-form node ID matches multiple nodes, probe should list
+    the matching candidates so agents can self-correct."""
+    result = runner.invoke(probe_cmd, ["SLACK_SEND_MESSAGE"])
+
+    assert result.exit_code == 1
+    assert "Ambiguous" in result.output
+    assert "mcp-slack-composio-SLACK_SEND_MESSAGE" in result.output
+    assert "mcp-other-SLACK_SEND_MESSAGE" in result.output
