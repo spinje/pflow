@@ -30,8 +30,8 @@ def describe_cmd(name: str) -> None:
 
 
 def _handle_workflow_not_found(name: str, workflow_manager: WorkflowManager) -> None:
-    all_workflows = workflow_manager.list_all()
-    similar = [workflow["name"] for workflow in all_workflows if name.lower() in workflow["name"].lower()][:3]
+    all_names = workflow_manager.list_names()
+    similar = [n for n in all_names if name.lower() in n.lower()][:3]
     click.echo(f"Error: Workflow '{name}' not found.", err=True)
     if similar:
         click.echo(f"  Did you mean: {', '.join(similar)}", err=True)

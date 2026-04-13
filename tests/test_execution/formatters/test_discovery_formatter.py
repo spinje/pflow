@@ -58,197 +58,108 @@ class TestFormatNoMatchesWithSuggestions:
 
     def test_limits_workflows_and_shows_remaining_count(self):
         """NO MATCHES: Limits displayed workflows and shows count of remaining."""
-        workflows = [{"name": f"workflow-{i}"} for i in range(15)]
+        names = [f"workflow-{i}" for i in range(15)]
         query = "test"
 
-        # Use explicit limit to test the behavior
-        formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
+        formatted = format_no_matches_with_suggestions(names, query, max_suggestions=3)
 
-        # Verify header
         assert 'No workflows found matching "test" (minimum 70% confidence).' in formatted
-
-        # First 3 shown
         assert "• workflow-0" in formatted
         assert "• workflow-1" in formatted
         assert "• workflow-2" in formatted
-
-        # 4th not shown
         assert "workflow-3" not in formatted
-
-        # Remaining count displayed
         assert "... and 12 more" in formatted
-
-        # Verify guidance section
         assert "No match" in formatted
         assert "pflow guide core" in formatted
 
     def test_formats_with_few_workflows(self):
         """NO MATCHES: Shows all workflows when less than max_suggestions."""
-        workflows = [
-            {"name": "workflow-a", "description": "First workflow"},
-            {"name": "workflow-b", "description": "Second workflow"},
-            {"name": "workflow-c", "description": "Third workflow"},
-        ]
+        names = ["workflow-a", "workflow-b", "workflow-c"]
         query = "find something"
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
+        formatted = format_no_matches_with_suggestions(names, query)
 
-        # All 3 workflows should be shown
         assert "• workflow-a" in formatted
         assert "• workflow-b" in formatted
         assert "• workflow-c" in formatted
-
-        # No "... and X more" message
         assert "... and" not in formatted
 
     def test_formats_with_empty_workflow_list(self):
-        """NO MATCHES: Empty list shows different message."""
-        workflows = []
-        query = "test query"
+        """NO MATCHES: Empty list shows guidance to build new."""
+        formatted = format_no_matches_with_suggestions([], "test query")
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        # Verify header
         assert 'No workflows found matching "test query"' in formatted
-
-        # No "Available workflows" section
         assert "Available workflows:" not in formatted
-
-        # Guidance to build new
         assert "No match" in formatted
         assert "pflow guide core" in formatted
 
-    def test_shows_names_only(self):
-        """NO MATCHES: Shows only workflow names without descriptions."""
-        workflows = [
-            {
-                "name": "my-workflow",
-                "description": "This description should not appear in output",
-            }
-        ]
-        query = "test"
-
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        # Name should appear
-        assert "• my-workflow" in formatted
-        # Description should not appear
-        assert "This description should not appear" not in formatted
-
-    def test_handles_missing_names(self):
-        """NO MATCHES: Missing names show default text."""
-        workflows = [
-            {"description": "Has description but no name"},  # Missing name
-        ]
-        query = "test"
-
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        assert "• unknown" in formatted
-
     def test_respects_max_suggestions_parameter(self):
         """NO MATCHES: Respects custom max_suggestions limit."""
-        workflows = [{"name": f"workflow-{i}", "description": f"Workflow {i}"} for i in range(10)]
-        query = "test"
+        names = [f"workflow-{i}" for i in range(10)]
 
-        # Custom limit of 3
-        formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
+        formatted = format_no_matches_with_suggestions(names, "test", max_suggestions=3)
 
-        # First 3 workflows shown
         assert "• workflow-0" in formatted
         assert "• workflow-1" in formatted
         assert "• workflow-2" in formatted
-
-        # 4th workflow not shown
         assert "workflow-3" not in formatted
-
-        # Count of remaining
         assert "... and 7 more workflows" in formatted
 
     def test_formats_singular_remaining_count(self):
         """NO MATCHES: Uses singular 'workflow' when 1 remaining."""
-        workflows = [{"name": f"workflow-{i}"} for i in range(4)]
-        query = "test"
+        names = [f"workflow-{i}" for i in range(4)]
 
-        formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
+        formatted = format_no_matches_with_suggestions(names, "test", max_suggestions=3)
 
-        # 4 workflows, showing 3, 1 remaining
-        assert "... and 1 more workflow" in formatted  # Singular
-        assert "... and 1 more workflows" not in formatted  # Not plural
+        assert "... and 1 more workflow" in formatted
+        assert "... and 1 more workflows" not in formatted
 
     def test_formats_plural_remaining_count(self):
         """NO MATCHES: Uses plural 'workflows' when multiple remaining."""
-        workflows = [{"name": f"w-{i}"} for i in range(6)]
-        query = "test"
+        names = [f"w-{i}" for i in range(6)]
 
-        formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
+        formatted = format_no_matches_with_suggestions(names, "test", max_suggestions=3)
 
-        # 6 workflows, showing 3, 3 remaining
-        assert "... and 3 more workflows" in formatted  # Plural
+        assert "... and 3 more workflows" in formatted
 
     def test_handles_special_characters_in_query(self):
         """NO MATCHES: Query with special chars displayed correctly."""
-        workflows = [{"name": "test", "description": "Test workflow"}]
         query = 'test with "quotes" and $special chars'
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
+        formatted = format_no_matches_with_suggestions(["test"], query)
 
-        # Query should be preserved exactly in header
         assert 'No workflows found matching "test with "quotes" and $special chars"' in formatted
 
     def test_handles_special_characters_in_names(self):
         """NO MATCHES: Names with special chars displayed correctly."""
-        workflows = [
-            {
-                "name": "special-workflow-${var}",
-                "description": "Some description",
-            }
-        ]
-        query = "test"
+        formatted = format_no_matches_with_suggestions(["special-workflow-${var}"], "test")
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        # Special characters in name preserved
         assert "• special-workflow-${var}" in formatted
 
     def test_includes_reasoning_when_provided(self):
         """NO MATCHES: Shows LLM reasoning when available."""
-        workflows = [{"name": "test", "description": "Test workflow"}]
-        query = "something random"
         reasoning = "The query is too vague and doesn't match any specific workflow purpose."
 
-        formatted = format_no_matches_with_suggestions(workflows, query, reasoning=reasoning)
+        formatted = format_no_matches_with_suggestions(["test"], "something random", reasoning=reasoning)
 
-        # Reasoning should be displayed
         assert "Why: The query is too vague" in formatted
         assert "doesn't match any specific workflow purpose" in formatted
 
     def test_omits_reasoning_section_when_none(self):
         """NO MATCHES: No 'Why:' section when reasoning is None."""
-        workflows = [{"name": "test", "description": "Test"}]
-        query = "test"
+        formatted = format_no_matches_with_suggestions(["test"], "test", reasoning=None)
 
-        formatted = format_no_matches_with_suggestions(workflows, query, reasoning=None)
-
-        # No 'Why:' section
         assert "Why:" not in formatted
 
     def test_reasoning_appears_before_suggestions(self):
         """NO MATCHES: Reasoning appears after header but before suggestions."""
-        workflows = [{"name": "test", "description": "Test"}]
-        query = "test"
-        reasoning = "Query is too vague."
-
-        formatted = format_no_matches_with_suggestions(workflows, query, reasoning=reasoning)
+        formatted = format_no_matches_with_suggestions(["test"], "test", reasoning="Query is too vague.")
 
         lines = formatted.split("\n")
-
-        # Find line indices
-        header_idx = 0  # First line
+        header_idx = 0
         why_idx = next(i for i, line in enumerate(lines) if line.startswith("Why:"))
         suggestions_idx = next(i for i, line in enumerate(lines) if "Available workflows:" in line)
 
-        # Verify order: header < why < suggestions
         assert header_idx < why_idx < suggestions_idx
 
 
@@ -303,32 +214,9 @@ class TestEdgeCases:
 
     def test_empty_query_displays_correctly(self):
         """EDGE: Empty query string handled gracefully."""
-        workflows = [{"name": "test", "description": "Test"}]
-        query = ""
+        formatted = format_no_matches_with_suggestions(["test"], "")
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        # Empty query should be shown in quotes
         assert 'No workflows found matching ""' in formatted
-
-    def test_workflows_without_name_key(self):
-        """EDGE: Workflows missing 'name' key show 'unknown'."""
-        workflows = [{"description": "No name provided"}]
-        query = "test"
-
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        assert "• unknown" in formatted
-
-    def test_workflows_with_none_values(self):
-        """EDGE: None values handled as missing."""
-        workflows = [{"name": "test", "description": None}]
-        query = "test"
-
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        # Name should appear without description
-        assert "• test" in formatted
 
 
 class TestCLIParity:
@@ -336,37 +224,23 @@ class TestCLIParity:
 
     def test_bullet_character_matches_cli(self):
         """PARITY: Uses bullet character (•) like CLI."""
-        workflows = [{"name": "test", "description": "Test"}]
-        query = "test"
+        formatted = format_no_matches_with_suggestions(["test"], "test")
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        # Verify bullet character
         assert "  • test" in formatted
 
     def test_guidance_format_matches_cli(self):
         """PARITY: Guidance section format matches CLI."""
-        workflows = [{"name": "test", "description": "Test"}]
-        query = "test"
+        formatted = format_no_matches_with_suggestions(["test"], "test")
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
-
-        # Verify actionable guidance
         assert "No match" in formatted
         assert "pflow guide core" in formatted
         assert "pflow find" in formatted
 
     def test_section_spacing_matches_cli(self):
         """PARITY: Blank lines between sections match CLI."""
-        workflows = [{"name": "test", "description": "Test"}]
-        query = "test"
-
-        formatted = format_no_matches_with_suggestions(workflows, query)
+        formatted = format_no_matches_with_suggestions(["test"], "test")
 
         lines = formatted.split("\n")
-
-        # Find key sections
         suggestions_idx = lines.index("Available workflows:")
 
-        # Verify blank lines before sections
         assert lines[suggestions_idx - 1] == ""  # Blank before suggestions

@@ -473,62 +473,50 @@ class TestWorkflowDescribeCommand:
 
     def test_describe_nonexistent_workflow_with_suggestions(self) -> None:
         """Test describing a workflow that doesn't exist with similar suggestions."""
-        all_workflows = [
-            {"name": "process-data"},
-            {"name": "process-images"},
-            {"name": "process-text"},
-            {"name": "backup-files"},
-        ]
-
         with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
-            mock_wm.list_all.return_value = all_workflows
+            mock_wm.list_names.return_value = [
+                "process-data",
+                "process-images",
+                "process-text",
+                "backup-files",
+            ]
 
             result = invoke_cli(["describe", "process"])
 
             assert result.exit_code == 1
-            # Error messages go to stderr
             assert "Error: Workflow 'process' not found." in result.stderr
             assert "Did you mean: process-data, process-images, process-text" in result.stderr
             assert "backup-files" not in result.stderr
 
     def test_describe_nonexistent_workflow_no_suggestions(self) -> None:
         """Test describing a workflow that doesn't exist with no similar names."""
-        all_workflows = [
-            {"name": "backup-photos"},
-            {"name": "daily-report"},
-        ]
-
         with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
-            mock_wm.list_all.return_value = all_workflows
+            mock_wm.list_names.return_value = ["backup-photos", "daily-report"]
 
             result = invoke_cli(["describe", "xyz-task"])
 
             assert result.exit_code == 1
-            # Error messages go to stderr
             assert "Error: Workflow 'xyz-task' not found." in result.stderr
             assert "Did you mean:" not in result.stderr
 
     def test_describe_workflow_case_insensitive_suggestions(self) -> None:
         """Test that suggestions are case-insensitive."""
-        all_workflows = [
-            {"name": "Backup-Photos"},
-            {"name": "backup-videos"},
-            {"name": "BACKUP-DOCS"},
-        ]
-
         with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
-            mock_wm.list_all.return_value = all_workflows
+            mock_wm.list_names.return_value = [
+                "Backup-Photos",
+                "backup-videos",
+                "BACKUP-DOCS",
+            ]
 
             result = invoke_cli(["describe", "backup"])
 
             assert result.exit_code == 1
-            # Error messages go to stderr
             assert "Did you mean: Backup-Photos, backup-videos, BACKUP-DOCS" in result.stderr
 
     def test_describe_workflow_mixed_required_optional_inputs(self) -> None:
@@ -695,7 +683,7 @@ class TestWorkflowHistoryCommand:
         with patch("pflow.cli.commands.history.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
-            mock_wm.list_all.return_value = []
+            mock_wm.list_names.return_value = []
 
             result = invoke_cli(["history", "nonexistent"])
 

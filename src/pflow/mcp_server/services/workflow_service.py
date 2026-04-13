@@ -93,8 +93,7 @@ Found {total_count} total {plural}. Try:
         # Check if workflow exists
         if not manager.exists(name):
             # Get suggestions for similar workflows
-            all_workflows = manager.list_all()
-            all_names = [w["name"] for w in all_workflows]
+            all_names = manager.list_names()
 
             from pflow.core.suggestion_utils import format_did_you_mean
 

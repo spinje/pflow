@@ -54,5 +54,5 @@ def find_cmd(query: str) -> None:
         click.echo(format_discovery_result(result_dict, result.workflow))
         return
 
-    all_workflows = workflow_manager.list_all()
-    click.echo(format_no_matches_with_suggestions(all_workflows, validated_query, reasoning=result.reasoning))
+    all_names = workflow_manager.list_names()
+    click.echo(format_no_matches_with_suggestions(all_names, validated_query, reasoning=result.reasoning))
