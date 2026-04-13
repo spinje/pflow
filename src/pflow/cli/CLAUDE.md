@@ -51,7 +51,7 @@ src/pflow/cli/
 │   ├── list.py, find.py, describe.py, history.py, save.py
 │   ├── guide.py, probe.py, _probe_impl.py
 │   ├── mcp.py, settings.py, skills.py
-│   ├── read_fields.py, trace.py, visualize.py
+│   ├── read_fields.py, report.py, visualize.py
 │   └── CLAUDE.md
 ```
 

@@ -105,11 +105,11 @@ from pflow.cli.commands.list import list_cmd  # noqa: E402
 from pflow.cli.commands.mcp import mcp  # noqa: E402
 from pflow.cli.commands.probe import probe_cmd  # noqa: E402
 from pflow.cli.commands.read_fields import read_fields  # noqa: E402
+from pflow.cli.commands.report import report_cmd  # noqa: E402
 from pflow.cli.commands.run import run  # noqa: E402
 from pflow.cli.commands.save import save_cmd  # noqa: E402
 from pflow.cli.commands.settings import settings  # noqa: E402
 from pflow.cli.commands.skills import skill  # noqa: E402
-from pflow.cli.commands.trace import report_cmd  # noqa: E402
 from pflow.cli.commands.visualize import visualize  # noqa: E402
 
 cli.add_command(run)

@@ -75,7 +75,7 @@ def test_compose_single_topic() -> None:
 
 def test_compose_core_only() -> None:
     result = compose_guide(["core"])
-    assert "# pflow Framework" in result or "pflow" in result.lower()
+    assert "# pflow Framework" in result
 
 
 def test_compose_multiple_topics_preserves_order() -> None:

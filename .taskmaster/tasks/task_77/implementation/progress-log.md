@@ -437,6 +437,17 @@ Help text said "stored credentials are NOT auto-available in workflows" — inco
 - Removed empty `src/pflow/cli/resources/` directory
 - Removed stale `resources/` line from `src/pflow/cli/CLAUDE.md` file structure
 
+### PR Review Fixes
+
+PR #278 review raised 2 warnings + 3 suggestions. Applied 4:
+
+1. **Fixed weak test assertion** (`test_compose_core_only`): Removed `or "pflow" in result.lower()` fallback that always passed. Now asserts `"# pflow Framework" in result` only.
+2. **Added debug logging** (`_get_node_interface`): `except Exception: return None` now logs at DEBUG level with `exc_info=True` so `--verbose` surfaces registry failures.
+3. **Renamed `trace.py` → `report.py`**: File name now matches the command it exports. Updated import in `main.py` and both CLAUDE.md files.
+4. **Added `pflow report` to entry.md error guidance**: "Running into errors → read the error first... For deeper inspection: `pflow report`"
+
+Skipped: `max_concurrent: 50` → `30` in core.md example (user decision to keep as-is).
+
 ### Final State
 
-Tests: 4,756 passed, `make check` clean.
+Tests: 4,759 passed, `make check` clean.

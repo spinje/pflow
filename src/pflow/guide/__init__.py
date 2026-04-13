@@ -236,6 +236,9 @@ def _get_node_interface(topic: str) -> str | None:
         registry = Registry()
         metadata = registry.load()
     except Exception:
+        import logging
+
+        logging.getLogger(__name__).debug("Failed to load registry for guide topic %s", topic, exc_info=True)
         return None
 
     multi = len(node_types) > 1

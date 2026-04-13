@@ -58,6 +58,6 @@ Workflow-scoped: `pflow guide ./workflow.pflow.md` auto-detects relevant topics.
 When to load the guide:
   Building a new workflow           → `pflow guide core` + relevant node/feature topics
   Modifying an existing workflow    → `pflow guide ./workflow.pflow.md` (auto-detects topics)
-  Running into errors               → read the error first (includes fix suggestions)
+  Running into errors               → read the error first (includes fix suggestions). For deeper inspection: `pflow report`
 
 All commands support `--help` for detailed usage.
