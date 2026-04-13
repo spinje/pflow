@@ -99,7 +99,7 @@ class TestDualModeStdinBehavior:
         result = runner.invoke(main, [], input=json_input)
 
         assert result.exit_code == 0
-        assert "pflow runs workflows" in result.output.lower()
+        assert "usage:" in result.output.lower()
 
     def test_plain_text_stdin_with_args_treats_stdin_as_data(self):
         """Test that plain text stdin with args treats stdin as data.

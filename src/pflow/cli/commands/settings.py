@@ -28,7 +28,22 @@ class SettingsGroup(click.Group):
 
 @click.group(cls=SettingsGroup)
 def settings() -> None:
-    """Manage pflow settings."""
+    """Manage pflow settings — credentials, LLM models, and node filtering.
+
+    \b
+    Credentials:
+      pflow settings set-env API_TOKEN "sk-..."    Store API key
+      pflow settings set-env GITHUB_TOKEN "ghp-..."
+      pflow settings show                          Verify stored values
+    \b
+    LLM provider keys (via Simon Willison's llm tool):
+      llm keys set anthropic
+      llm keys set openai
+    \b
+    Stored credentials are available as fallbacks for declared workflow inputs.
+    Precedence: CLI params > shell env > settings env > workflow defaults.
+    Credentials must still be declared as inputs — they are not injected implicitly.
+    """
     pass
 
 

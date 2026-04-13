@@ -14,9 +14,9 @@ def test_main_command_help():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
-    assert 'pflow find "description"' in result.output
-    assert "Use 'pflow <command> --help' for details on any command." in result.output
+    assert "workflow execution system" in result.output
+    assert "pflow find" in result.output
+    assert "Guide Topics" in result.output
     assert "Commands:" in result.output
     assert "skill" in result.output
     assert "guide" in result.output
@@ -28,12 +28,12 @@ def test_main_command_help():
 
 
 def test_empty_arguments():
-    """Test handling of empty arguments."""
+    """Test handling of empty arguments shows help."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [])
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
 
 
 # Tests for stdin input handling
@@ -43,7 +43,7 @@ def test_plain_text_stdin_without_workflow_shows_helpful_error():
     result = runner.invoke(main, [], input="node1 => node2\n")
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
 
 
 def test_complex_stdin_data_without_workflow_shows_helpful_error():
@@ -53,7 +53,7 @@ def test_complex_stdin_data_without_workflow_shows_helpful_error():
     result = runner.invoke(main, [], input=stdin_input)
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
 
 
 def test_whitespace_padded_stdin_data_without_workflow_shows_error():
@@ -62,7 +62,7 @@ def test_whitespace_padded_stdin_data_without_workflow_shows_error():
     result = runner.invoke(main, [], input="\n  node1 => node2  \n\n")
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
 
 
 def test_empty_stdin_falls_back_to_argument_workflow():
@@ -81,7 +81,7 @@ def test_json_workflow_via_stdin_requires_workflow_arg():
     result = runner.invoke(main, [], input=workflow_json)
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
 
 
 # Tests for file input handling
@@ -354,7 +354,7 @@ def test_context_storage_verification():
     # Test stdin input - plain text is now treated as data, needs workflow
     result = runner.invoke(main, [], input="stdin workflow")
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
 
     # Test file input - unsupported paths fall back to normal workflow lookup errors
     with runner.isolated_filesystem():
@@ -371,7 +371,7 @@ def test_error_empty_stdin_no_args():
     result = runner.invoke(main, [], input="")
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
 
 
 def test_error_empty_pflow_file():

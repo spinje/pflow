@@ -13,7 +13,7 @@ def test_cli_help_command():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
     assert "Commands:" in result.output
     assert "--version" in result.output
 
@@ -43,7 +43,37 @@ def test_no_arguments():
     result = runner.invoke(main, [])
 
     assert result.exit_code == 0
-    assert "pflow runs workflows" in result.output
+    assert "Usage:" in result.output
+
+
+def test_report_command_no_traces(tmp_path: Path, monkeypatch):
+    """pflow report with no trace files gives a clear error, not a crash."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = click.testing.CliRunner()
+    result = runner.invoke(main, ["report"])
+
+    assert result.exit_code == 1
+    assert "No trace files found" in result.output
+
+
+def test_report_command_generates_from_trace(tmp_path: Path, monkeypatch):
+    """pflow report reads the latest trace and produces a report directory."""
+    # Run a workflow first to generate a trace
+    workflow = tmp_path / "test.pflow.md"
+    workflow.write_text(
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = click.testing.CliRunner()
+
+    # Generate a trace via workflow execution
+    run_result = runner.invoke(main, [str(workflow)])
+    assert run_result.exit_code == 0, f"Workflow failed: {run_result.output}"
+
+    # Now run pflow report — should pick up the trace and produce a report
+    result = runner.invoke(main, ["report"])
+    assert result.exit_code == 0, f"Report failed: {result.output}"
+    assert "Report generated" in result.output
 
 
 def test_report_flag_generates_report(tmp_path: Path, monkeypatch):

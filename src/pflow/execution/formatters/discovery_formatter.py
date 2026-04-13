@@ -70,15 +70,57 @@ def format_discovery_result(result: dict[str, Any], workflow: dict[str, Any]) ->
     io_lines = format_workflow_inputs_outputs(ir)
     lines.extend(io_lines)
 
-    # Confidence score
+    # Confidence score and reasoning
     confidence = result.get("confidence", 0)
     lines.append(f"**Confidence**: {confidence:.0%}")
 
-    # Reasoning
     if reasoning := result.get("reasoning"):
-        lines.append(f"\n*Match reasoning*: {reasoning}")
+        lines.append(f"*Why*: {reasoning}")
+
+    # Actionable guidance based on confidence
+    lines.append("")
+    lines.append(_format_confidence_guidance(workflow_name, confidence, ir))
 
     return "\n".join(lines)
+
+
+def _format_confidence_guidance(workflow_name: str, confidence: float, ir: dict[str, Any]) -> str:
+    """Return actionable next-step guidance based on confidence level.
+
+    High confidence → run immediately.
+    Medium confidence → show differences, ask user.
+    Low confidence → suggest modifications or building new.
+    """
+    # Build example run command from inputs
+    run_hint = _build_run_hint(workflow_name, ir)
+
+    if confidence >= 0.95:
+        return f"**→ High confidence match.** Run it:\n  {run_hint}"
+
+    if confidence >= 0.80:
+        return (
+            f"**→ Partial match.** Show the user what this workflow does vs what they asked for.\n"
+            f"  Ask: use as-is, modify, or build new?\n"
+            f"  Details: `pflow describe {workflow_name}`"
+        )
+
+    # 70-79% (below 70% is handled by format_no_matches_with_suggestions)
+    return (
+        f"**→ Weak match.** Suggest modifying this workflow to fit.\n"
+        f"  Review: `pflow describe {workflow_name}`\n"
+        f"  Source: `cat ~/.pflow/workflows/{workflow_name}/{workflow_name}.pflow.md`"
+    )
+
+
+def _build_run_hint(workflow_name: str, ir: dict[str, Any]) -> str:
+    """Build an example pflow run command from workflow inputs."""
+    parts = [f"pflow {workflow_name}"]
+    inputs = ir.get("inputs", {})
+    for key, spec in inputs.items():
+        if spec.get("required", True) and not spec.get("stdin"):
+            input_type = spec.get("type", "string")
+            parts.append(f'{key}="<{input_type}>"')
+    return " ".join(parts)
 
 
 def format_workflow_metadata(workflow: dict[str, Any]) -> list[str]:
@@ -233,12 +275,8 @@ def format_no_matches_with_suggestions(
             remaining = len(workflows) - max_suggestions
             lines.append(f"\n... and {remaining} more workflow{'' if remaining == 1 else 's'}")
 
-    lines.append("\nTry:")
-    lines.append('  • More specific query: "workflow for [specific task]"')
-
-    if not workflows:
-        lines.append("  • Recommendation: Create your first workflow")
-    else:
-        lines.append("  • Recommendation: Try building a new workflow")
+    lines.append("\n**→ No match.** Build a new workflow.")
+    lines.append("  Start with: `pflow guide core`")
+    lines.append('  Or try a more specific query: `pflow find "workflow for [specific task]"`')
 
     return "\n".join(lines)
