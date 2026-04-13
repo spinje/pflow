@@ -811,7 +811,20 @@ def _resolve_tool_id(tool: str, registrar: MCPRegistrar) -> str:
 @mcp.command(name="describe")
 @click.argument("tool")
 def describe_tool(tool: str) -> None:
-    """Show detailed information about an MCP tool."""
+    """Show detailed information about an MCP tool.
+
+    \b
+    Shows: parameters (name, type, required/optional), output type,
+    and .pflow.md usage snippet.
+    \b
+    Interpreting results:
+      Parameters with defaults   → usually optional
+      Parameters without defaults → always required
+      Output type "Any"          → probe to discover actual structure
+    \b
+    Example:
+        pflow mcp describe mcp-slack-SEND_MESSAGE
+    """
     registrar = MCPRegistrar()
     lookup_id = _resolve_tool_id(tool, registrar)
 

@@ -49,7 +49,8 @@ class TestFormatDiscoveryResult:
         assert "**Outputs**:" in formatted
         assert "analysis: object - PR analysis" in formatted
         assert "**Confidence**: 85%" in formatted
-        assert "*Match reasoning*: Matches PR analysis requirements" in formatted
+        assert "*Why*: Matches PR analysis requirements" in formatted
+        assert "Partial match" in formatted
 
 
 class TestFormatNoMatchesWithSuggestions:
@@ -78,9 +79,8 @@ class TestFormatNoMatchesWithSuggestions:
         assert "... and 12 more" in formatted
 
         # Verify guidance section
-        assert "Try:" in formatted
-        assert '• More specific query: "workflow for [specific task]"' in formatted
-        assert "• Recommendation: Try building a new workflow" in formatted
+        assert "No match" in formatted
+        assert "pflow guide core" in formatted
 
     def test_formats_with_few_workflows(self):
         """NO MATCHES: Shows all workflows when less than max_suggestions."""
@@ -114,8 +114,9 @@ class TestFormatNoMatchesWithSuggestions:
         # No "Available workflows" section
         assert "Available workflows:" not in formatted
 
-        # Different guidance for empty library
-        assert "• Recommendation: Create your first workflow" in formatted
+        # Guidance to build new
+        assert "No match" in formatted
+        assert "pflow guide core" in formatted
 
     def test_shows_names_only(self):
         """NO MATCHES: Shows only workflow names without descriptions."""
@@ -350,10 +351,10 @@ class TestCLIParity:
 
         formatted = format_no_matches_with_suggestions(workflows, query)
 
-        # Verify guidance format with bullets
-        assert "\nTry:\n" in formatted
-        assert "  • More specific query:" in formatted
-        assert "  • Recommendation:" in formatted
+        # Verify actionable guidance
+        assert "No match" in formatted
+        assert "pflow guide core" in formatted
+        assert "pflow find" in formatted
 
     def test_section_spacing_matches_cli(self):
         """PARITY: Blank lines between sections match CLI."""
@@ -366,8 +367,6 @@ class TestCLIParity:
 
         # Find key sections
         suggestions_idx = lines.index("Available workflows:")
-        try_idx = lines.index("Try:")
 
         # Verify blank lines before sections
         assert lines[suggestions_idx - 1] == ""  # Blank before suggestions
-        assert lines[try_idx - 1] == ""  # Blank before Try section

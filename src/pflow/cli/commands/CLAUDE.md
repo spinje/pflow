@@ -18,7 +18,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | `read_fields.py` | `pflow read-fields <exec> <paths>` | `pflow.core.execution_cache` |
 | `skills.py` | `pflow skill save\|list\|remove` | `pflow.core.workflow.skill_service` |
 | `settings.py` | `pflow settings ...` | `pflow.core.settings` |
-| `trace.py` | `pflow trace report` | `pflow.core.trace_report` |
+| `trace.py` | `pflow report` | `pflow.core.trace_report` |
 | `visualize.py` | `pflow visualize` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
 
 ## Cross-References Within commands/
@@ -103,8 +103,10 @@ Skills are **symlinks** from tool-specific directories to saved workflows in `~/
 
 ## Guide Command (`guide.py`)
 
-`pflow guide` renders the shared entry content (same as `pflow --help` body) via `render_entry_content()` from `pflow.guide`.
-`pflow guide <topics...>` is a placeholder until Task 77 provides composed topic content.
+`pflow guide` (no args) renders entry content (same as `pflow --help` body) via `render_entry_content()`.
+`pflow guide <topics...>` composes topic-scoped content via `compose_guide()`. Both from `pflow.guide`.
+
+Topics resolve to static `.md` files under `src/pflow/guide/` (nodes, features). Node topics also get dynamic interface data (parameters, outputs) injected from the registry at render time. See `src/pflow/guide/CLAUDE.md` for the content layout.
 
 ## Settings Commands (settings.py)
 

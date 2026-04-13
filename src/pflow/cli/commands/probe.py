@@ -13,14 +13,32 @@ import click
 def probe_cmd(ctx: click.Context, node_type: str, params: tuple[str, ...], output_format: str | None) -> None:
     """Test a single node without building a full workflow.
 
-    Returns metadata and template paths, not raw data, so you can inspect
-    structure first and then use `read-fields` for specific values.
+    Output is pre-filtered for AI agents: shows structure and template
+    paths, not raw data values. Don't grep or filter — what's displayed
+    is what matters.
 
     \b
-    Examples:
-        pflow probe shell command="echo hello"
+    Example:
+        pflow probe mcp-slack-GET_CHANNEL channel="general"
+    \b
+        ✓ Node executed successfully
+        Execution ID: exec-1763463202-0cd0c8fe
+        Available template paths (from actual output):
+        ✓ ${result.data.items} (list, 11 items)
+        ✓ ${result.data.items[0].id} (str)
+        ✓ ${result.data.items[0].title} (str)
+
+    Use the template paths in your workflow: ${node.result.data.items}
+
+    To get actual data values, use the Execution ID:
+
+    \b
+        pflow read-fields exec-1763463202-0cd0c8fe result.data.items
+
+    \b
+    More examples:
         pflow probe http url="https://api.example.com/data"
-        pflow probe shell command="ls" --output-format json
+        pflow probe shell command="git log --oneline -5"
     """
     from pflow.cli.commands._probe_impl import execute_single_node
 

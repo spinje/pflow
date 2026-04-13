@@ -53,7 +53,6 @@ src/pflow/cli/
 │   ├── mcp.py, settings.py, skills.py
 │   ├── read_fields.py, trace.py, visualize.py
 │   └── CLAUDE.md
-└── resources/               # Agent instruction markdown files
 ```
 
 ## Dependency Graph

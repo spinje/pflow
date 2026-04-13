@@ -24,6 +24,7 @@ class PflowCLI(click.Group):
         "workflow": "Workflow commands are now top-level: pflow list, pflow find, pflow describe, pflow history, pflow save",
         "registry": "Registry commands replaced: pflow probe (run nodes), pflow mcp list (list nodes), pflow mcp find (discover nodes)",
         "instructions": "Replaced by: pflow guide",
+        "trace": "Replaced by: pflow report",
     }
 
     def resolve_command(
@@ -108,7 +109,7 @@ from pflow.cli.commands.run import run  # noqa: E402
 from pflow.cli.commands.save import save_cmd  # noqa: E402
 from pflow.cli.commands.settings import settings  # noqa: E402
 from pflow.cli.commands.skills import skill  # noqa: E402
-from pflow.cli.commands.trace import trace  # noqa: E402
+from pflow.cli.commands.trace import report_cmd  # noqa: E402
 from pflow.cli.commands.visualize import visualize  # noqa: E402
 
 cli.add_command(run)
@@ -123,7 +124,7 @@ cli.add_command(mcp)
 cli.add_command(settings)
 cli.add_command(read_fields)
 cli.add_command(skill)
-cli.add_command(trace)
+cli.add_command(report_cmd)
 cli.add_command(visualize)
 
 

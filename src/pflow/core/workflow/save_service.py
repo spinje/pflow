@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Reserved names that could conflict with system functionality
 RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
+    # CLI commands
     "null",
     "undefined",
     "none",
@@ -36,10 +37,21 @@ RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
     "skill",
     "settings",
     "trace",
+    "report",
     "visualize",
     "registry",
     "workflow",
     "instructions",
+    # Guide topic names (pflow guide <topic>)
+    "core",
+    "http",
+    "llm",
+    "code",
+    "shell",
+    "file",
+    "batch",
+    "branching",
+    "sub-workflows",
 })
 
 

@@ -1437,7 +1437,7 @@ registry_run(
 ```
 
 **Tip**: For deeper debugging, guide the user to generate an execution report on their machine:
-`pflow trace report` — generates a directory of markdown files (one per node) with rendered prompts, responses, cost data, error summaries, and fix suggestions.
+`pflow report` — generates a directory of markdown files (one per node) with rendered prompts, responses, cost data, error summaries, and fix suggestions.
 
 ## Part 6: Workflow Patterns
 

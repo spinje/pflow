@@ -852,7 +852,7 @@ workflow_execute(
 
 Keep iterating on the `.pflow.md` file until the workflow executes successfully. Do NOT save until it works.
 
-**Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` — saved automatically every run. Use `--report` to generate a readable execution report, or `pflow trace report` post-hoc.
+**Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` — saved automatically every run. Use `--report` to generate a readable execution report, or `pflow report` post-hoc.
 
 ### Step 10: SAVE - Make It Executable by Name (Final Step)
 
@@ -1244,7 +1244,7 @@ mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
 Debug process:
 ```bash
 # 1. Generate an execution report — it includes fix suggestions for template errors
-pflow trace report
+pflow report
 
 # The summary.md Errors section will show:
 #   - **format-output** (LLMNode): Unresolved variables in parameter 'prompt': ${fetch.result.messages}
@@ -1440,7 +1440,7 @@ registry_run(
 pflow workflow.pflow.md --report
 
 # Or generate a report from the most recent trace
-pflow trace report
+pflow report
 
 # The report includes:
 # - summary.md: pipeline table with cost, errors section with fix suggestions, anomaly warnings

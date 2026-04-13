@@ -1,14 +1,56 @@
 ---
 title: "pflow guide"
-description: "Show agent-oriented build guidance"
+description: "Agent-oriented workflow building guidance"
 icon: "book-open"
 ---
 
 ## Usage
 
 ```bash
-pflow guide
-pflow guide <TOPIC...>
+pflow guide                           # Same as pflow --help
+pflow guide <topic...>                # Load specific topics
+pflow guide ./workflow.pflow.md       # Auto-detect topics from a workflow
+pflow guide ./workflow.pflow.md batch # Auto-detect + explicit topic
 ```
 
-Without topics, `pflow guide` shows the same entry content as `pflow --help`. Topic-specific content is stubbed in Task 151 and expanded in Task 77.
+Without arguments, `pflow guide` shows the same entry content as `pflow --help` — a capability map with commands and available topics.
+
+With topics, it returns tailored content for building workflows using those specific nodes or features. Topics and workflow references can mix freely.
+
+## Topics
+
+**Core:**
+- `core` — Framework fundamentals: step order vs templates, input declaration, node selection, development loop
+
+**Nodes:**
+- `http` — HTTP requests to REST APIs
+- `llm` — LLM inference with structured output
+- `code` — Python data transformation
+- `shell` — Shell commands and CLI tools
+- `file` — File read/write
+- `mcp` — MCP service integrations
+
+**Features:**
+- `batch` — Same operation on multiple items (parallel/concurrent)
+- `branching` — Conditional paths via on-error or code routing
+- `sub-workflows` — Reusable sub-workflow composition
+
+## Workflow-scoped mode
+
+When given a workflow file path or saved workflow name, `pflow guide` parses the workflow and auto-loads guide content for every node type and feature it uses:
+
+```bash
+# Auto-detects: http + code topics (because the workflow uses those node types)
+pflow guide ./my-api-pipeline.pflow.md
+
+# Auto-detect + add batch topic explicitly
+pflow guide ./my-api-pipeline.pflow.md batch
+```
+
+This is useful when handed an unfamiliar workflow — run `pflow guide ./it.pflow.md` to get exactly the content needed to understand it.
+
+## Design
+
+`core` is an explicit topic, not auto-included. Agents load it once at the start of a session, then load node/feature topics as needed without duplicating framework fundamentals.
+
+Guide prose lives in static markdown files under `src/pflow/guide/`. Node topics additionally include a dynamic Parameters/Outputs section loaded from the registry at render time, keeping interface documentation in sync with actual node implementations.

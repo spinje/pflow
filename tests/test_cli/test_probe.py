@@ -54,7 +54,7 @@ def test_probe_help_mentions_metadata_contract(runner: click.testing.CliRunner) 
     result = runner.invoke(probe_cmd, ["--help"])
 
     assert result.exit_code == 0
-    assert "Returns metadata and template paths" in result.output
+    assert "shows structure and template paths" in result.output
 
 
 def test_probe_basic_node_execution_with_temp_file(runner: click.testing.CliRunner, tmp_path: Path) -> None:
