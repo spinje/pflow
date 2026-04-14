@@ -309,6 +309,8 @@ class WorkflowManager:
     def list_names(self) -> list[str]:
         """List workflow names (directory names with valid entry points, no parsing).
 
+        Skips hidden directories (starting with '.').
+
         Returns:
             Sorted list of workflow names
         """

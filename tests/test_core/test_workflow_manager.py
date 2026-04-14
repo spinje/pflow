@@ -270,6 +270,11 @@ class TestWorkflowManager:
             assert "updated_at" in workflow
             assert "version" in workflow
 
+    def test_list_names_empty_when_dir_missing(self, tmp_path):
+        """Test list_names returns empty list when workflows_dir doesn't exist."""
+        manager = WorkflowManager(workflows_dir=tmp_path / "nonexistent")
+        assert manager.list_names() == []
+
     def test_list_names_returns_sorted_names(self, workflow_manager, sample_ir):
         """Test list_names returns only names without parsing."""
         for name in ["zz-last", "aa-first", "mm-middle"]:
