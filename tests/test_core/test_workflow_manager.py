@@ -270,8 +270,44 @@ class TestWorkflowManager:
             assert "updated_at" in workflow
             assert "version" in workflow
 
-    def test_list_all_skip_invalid(self, workflow_manager, sample_ir):
-        """Test that invalid files are skipped with warning."""
+    def test_list_names_returns_sorted_names(self, workflow_manager, sample_ir):
+        """Test list_names returns only names without parsing."""
+        for name in ["zz-last", "aa-first", "mm-middle"]:
+            workflow_manager.save(name, ir_to_markdown(sample_ir))
+
+        names = workflow_manager.list_names()
+
+        assert names == ["aa-first", "mm-middle", "zz-last"]
+
+    def test_list_names_skips_dirs_without_entry_point(self, workflow_manager, sample_ir):
+        """Test list_names skips directories missing the entry point file."""
+        workflow_manager.save("valid", ir_to_markdown(sample_ir))
+
+        # Directory without entry point (like 'archived' or 'temp')
+        (workflow_manager.workflows_dir / "no-entry-point").mkdir()
+
+        # Directory with wrong filename
+        bad_dir = workflow_manager.workflows_dir / "wrong-name"
+        bad_dir.mkdir()
+        (bad_dir / "other.pflow.md").write_text("# Wrong")
+
+        names = workflow_manager.list_names()
+
+        assert names == ["valid"]
+
+    def test_list_names_includes_unparseable_workflows(self, workflow_manager):
+        """Test list_names includes workflows that have entry points but fail to parse."""
+        corrupt_dir = workflow_manager.workflows_dir / "corrupt"
+        corrupt_dir.mkdir()
+        (corrupt_dir / "corrupt.pflow.md").write_text("not valid")
+
+        names = workflow_manager.list_names()
+
+        # Entry point exists, so name is included (list_names doesn't parse)
+        assert names == ["corrupt"]
+
+    def test_list_all_skip_invalid(self, workflow_manager, sample_ir, caplog):
+        """Test that invalid files are skipped silently (logged at INFO)."""
         # Save a valid workflow
         markdown_content = ir_to_markdown(sample_ir)
         workflow_manager.save("valid", markdown_content)
@@ -284,12 +320,12 @@ class TestWorkflowManager:
             f.write("not valid markdown workflow")
 
         # List should skip invalid and return only valid
-        with patch("logging.Logger.warning") as mock_warning:
-            workflows = workflow_manager.list_all()
+        caplog.set_level("INFO", logger="pflow.core.workflow.manager")
+        workflows = workflow_manager.list_all()
 
         assert len(workflows) == 1
         assert workflows[0]["name"] == "valid"
-        mock_warning.assert_called_once()
+        assert any("Skipping workflow" in record.message for record in caplog.records)
 
     def test_exists(self, workflow_manager, sample_ir):
         """Test checking if workflow exists."""
@@ -434,11 +470,11 @@ class TestWorkflowManager:
         corrupted_file = corrupted_dir / "corrupted.pflow.md"
         corrupted_file.write_text("# Corrupted\n\n## Steps\n\n### node1\n\nthis is not valid markdown workflow")
 
-        # list_all should skip it with warning
-        with caplog.at_level(logging.WARNING):
+        # list_all should skip it silently (logged at INFO)
+        with caplog.at_level(logging.INFO, logger="pflow.core.workflow.manager"):
             workflows = workflow_manager.list_all()
 
-        assert any("corrupted.pflow.md" in record.message for record in caplog.records)
+        assert any("Skipping workflow 'corrupted'" in record.message for record in caplog.records)
         assert not any(w["name"] == "corrupted" for w in workflows)
 
         # load should fail with clear validation error

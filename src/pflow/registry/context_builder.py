@@ -398,10 +398,13 @@ def build_component_context(
     # Input validation
     _validate_component_context_inputs(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows)
 
-    # Load workflows if not provided
+    # Load workflows only if some are selected
     if saved_workflows is None:
-        manager = workflow_manager if workflow_manager else WorkflowManager()
-        saved_workflows = manager.list_all()
+        if selected_workflow_names:
+            manager = workflow_manager if workflow_manager else WorkflowManager()
+            saved_workflows = manager.list_all()
+        else:
+            saved_workflows = []
 
     # Check for missing components
     error_dict = _check_missing_components(

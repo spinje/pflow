@@ -51,8 +51,8 @@ class DiscoveryService(BaseService):
             from pflow.execution.formatters.discovery_formatter import format_no_matches_with_suggestions
 
             logger.info("Workflow discovery found no matches")
-            all_workflows = workflow_manager.list_all()
-            return format_no_matches_with_suggestions(all_workflows, query, reasoning=result.reasoning)
+            all_names = workflow_manager.list_names()
+            return format_no_matches_with_suggestions(all_names, query, reasoning=result.reasoning)
 
     @classmethod
     @ensure_stateless

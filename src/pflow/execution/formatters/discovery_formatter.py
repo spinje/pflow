@@ -218,7 +218,7 @@ def format_workflow_inputs_outputs(ir: dict[str, Any]) -> list[str]:
 
 
 def format_no_matches_with_suggestions(
-    workflows: list[dict[str, Any]],
+    workflow_names: list[str],
     query: str,
     reasoning: str | None = None,
     max_suggestions: int = 10,
@@ -230,22 +230,17 @@ def format_no_matches_with_suggestions(
     Optionally includes LLM reasoning to explain why no match was found.
 
     Args:
-        workflows: List of workflow metadata dicts with 'name' and 'description'
+        workflow_names: List of workflow names
         query: The user's original search query
         reasoning: Optional LLM reasoning explaining why no match was found
-        max_suggestions: Maximum number of suggestions to show (default: 5)
+        max_suggestions: Maximum number of suggestions to show (default: 10)
 
     Returns:
         Formatted string with suggestions and guidance
 
     Example:
-        >>> workflows = [
-        ...     {"name": "test-workflow", "description": "Test workflow"},
-        ...     {"name": "github-analyzer", "description": "Analyze GitHub PRs"}
-        ... ]
-        >>> result = format_no_matches_with_suggestions(workflows, "test something")
-        >>> "Possibly related workflows:" in result
-        True
+        >>> names = ["test-workflow", "github-analyzer"]
+        >>> result = format_no_matches_with_suggestions(names, "test something")
         >>> "test-workflow" in result
         True
     """
@@ -258,21 +253,15 @@ def format_no_matches_with_suggestions(
     if reasoning:
         lines.append(f"\nWhy: {reasoning}")
 
-    if workflows:
-        # TODO: Change label back to "Possibly related workflows:" after enhancing LLM
-        # to return top 3-5 matches with individual confidence scores instead of just
-        # returning all workflows via list_all(). Current implementation shows ALL
-        # workflows, not LLM-ranked suggestions.
+    if workflow_names:
         lines.append("\nAvailable workflows:")
 
-        # Limit to max_suggestions
-        for workflow in workflows[:max_suggestions]:
-            name = workflow.get("name", "unknown")
+        for name in workflow_names[:max_suggestions]:
             lines.append(f"  • {name}")
 
         # Show count if more workflows exist
-        if len(workflows) > max_suggestions:
-            remaining = len(workflows) - max_suggestions
+        if len(workflow_names) > max_suggestions:
+            remaining = len(workflow_names) - max_suggestions
             lines.append(f"\n... and {remaining} more workflow{'' if remaining == 1 else 's'}")
 
     lines.append("\n**→ No match.** Build a new workflow.")

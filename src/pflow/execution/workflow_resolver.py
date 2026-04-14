@@ -214,8 +214,7 @@ def _check_inline_file_references(workflow_ir: dict[str, Any], source: str) -> N
 
 def _find_suggestions(query: str, wm: WorkflowManager) -> list[str]:
     """Find similar workflow names for error suggestions."""
-    all_workflows = wm.list_all()
-    all_names = [w.get("name", "") for w in all_workflows if w.get("name")]
+    all_names = wm.list_names()
     if not all_names:
         return []
     return find_similar_items(query, all_names, max_results=5, method="substring", sort_by_length=True)

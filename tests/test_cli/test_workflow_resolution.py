@@ -195,10 +195,10 @@ class TestWorkflowResolutionCLI:
             with patch("pflow.cli.commands.run.WorkflowManager", MockWM):
                 mock_wm = MockWM.return_value
                 mock_wm.exists.return_value = False
-                mock_wm.list_all.return_value = [
-                    {"name": "text-analyzer"},
-                    {"name": "text-summary"},
-                    {"name": "analyze-data"},
+                mock_wm.list_names.return_value = [
+                    "text-analyzer",
+                    "text-summary",
+                    "analyze-data",
                 ]
 
                 result = runner.invoke(main, ["text-analyz"])
@@ -216,7 +216,7 @@ class TestWorkflowResolutionCLI:
             with patch("pflow.cli.commands.run.WorkflowManager", MockWM):
                 mock_wm = MockWM.return_value
                 mock_wm.exists.return_value = False
-                mock_wm.list_all.return_value = []
+                mock_wm.list_names.return_value = []
 
                 result = runner.invoke(main, ["unknown-workflow"])
 

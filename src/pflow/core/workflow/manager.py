@@ -306,8 +306,24 @@ class WorkflowManager:
         """
         return str(self._entry_point(name).resolve())
 
+    def list_names(self) -> list[str]:
+        """List workflow names (directory names with valid entry points, no parsing).
+
+        Returns:
+            Sorted list of workflow names
+        """
+        if not self.workflows_dir.exists():
+            return []
+        return sorted(
+            d.name
+            for d in self.workflows_dir.iterdir()
+            if d.is_dir() and not d.name.startswith(".") and (d / f"{d.name}.pflow.md").exists()
+        )
+
     def list_all(self) -> list[dict[str, Any]]:
-        """List all workflows in the directory.
+        """List all workflows in the directory with full metadata.
+
+        Silently skips workflows that fail to parse. Use --verbose to see details.
 
         Returns:
             List of workflow metadata dicts (flat structure), sorted by name
@@ -324,7 +340,7 @@ class WorkflowManager:
             name = workflow_dir.name
             entry_point = workflow_dir / f"{name}.pflow.md"
             if not entry_point.exists():
-                logger.warning(f"Workflow dir '{name}' missing entry point {name}.pflow.md, skipping")
+                logger.info(f"Workflow dir '{name}' missing entry point {name}.pflow.md, skipping")
                 continue
 
             try:
@@ -333,7 +349,8 @@ class WorkflowManager:
                 fm = result.metadata or {}
                 workflows.append(self._build_metadata_dict(name, result, fm))
             except Exception as e:
-                logger.warning(f"Failed to load workflow from {entry_point}: {e}")
+                msg = getattr(e, "raw_message", None) or str(e).split("\n", 1)[0]
+                logger.info(f"Skipping workflow '{name}': {msg}")
                 continue
 
         return workflows
