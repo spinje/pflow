@@ -2,9 +2,14 @@
 
 **Branch**: `fix/silent-drop-undeclared-inputs`
 **Plan file**: `/Users/andfal/.claude/plans/linked-discovering-haven.md`
-**Outcome**: 4643 tests pass, `make check` clean, both motivating bugs fixed end-to-end, GitHub issue #283 filed for visualizer follow-up.
+**Outcome**: three commits (initial implementation + two review-cycle follow-ups); 4763 tests pass, `make check` clean; both motivating bugs fixed; the full parent→child silent-failure surface closed (including non-dict `inputs:` shape); GitHub issue #283 filed for mermaid visualizer follow-up.
 
-This log captures **insights and decisions made during implementation** — not a blow-by-blow diff narrative. The goal: help a future reader (possibly me) understand *why* the final code looks the way it does and what cost-benefit trade-offs were made.
+**Commits on this branch**:
+- `9eedbd1f` — core fix (schema closure, W3, IR cache, migration).
+- `2daee665` — review cycle part 1 (11 silently-passing test sites migrated, 4 cleanups).
+- `80776a24` — review cycle part 2 (non-dict `inputs:` parse-time + runtime diagnostic, stale comment).
+
+This log captures **insights and decisions made during implementation AND the subsequent code-review cycle** — not a blow-by-blow diff narrative. The goal: help a future reader (possibly me) understand *why* the final code looks the way it does and what cost-benefit trade-offs were made.
 
 ---
 
@@ -139,16 +144,77 @@ Post-W3 this label no longer means "inline IR" — it means "saved name with no 
 
 ---
 
+## Post-implementation review cycle
+
+After the initial 5-commit implementation landed, a code-review pass deployed **4 specialist agents** (not the full 7-agent battery): `review-impact-completeness`, `review-feature-interactions`, `review-validation-consistency`, `review-test-fidelity`. Skipped: `review-silent-failures` (this PR IS the silent-failure fix — low marginal signal), `review-agent-ux` (diagnostics already reviewed manually in-conversation), `review-concurrency-safety` (parallel batch covered by explicit regression tests). Choice worked: all four deployed agents produced distinct findings with no redundant coverage, and between them they surfaced issues neither the plan nor the implementer caught.
+
+The review cycle produced **two additional commits** that addressed everything actionable before merge.
+
+### Scope surprise — second wave: 11 more silently-passing test sites
+
+The Commit-3 "33-site miss" (documented under Scope surprises) was real but *incomplete*. The review pass found **11 additional test sites that passed the green suite but no longer exercised what they claimed to test**. Three distinct failure modes:
+
+- **7 sites in `tests/test_runtime/test_template_validation/`** (6 in `test_validator.py`, 1 in `test_batch_item_validation.py`) — same pattern as the 33-site miss (dict literal with `"workflow_ir"` as key), different directory. Post-W3, `_resolve_child_workflow_outputs` returned `None` for `workflow_ir`-only nodes, silently taking the permissive skip-results-structure fallback. Mutation-verified: `${process-all.results[0].BOGUS}` produced 0 errors. Tests claimed to guard child-output field validation; they guarded nothing.
+- **3 sites in `tests/test_integration/test_unused_inputs.py`** — a DIFFERENT failure mode: the tests called `split_validator_diagnostics(...)` *without* the `registry=` argument, which silently skipped Step 7 (`if registry is not None` short-circuit at `validator.py:131`). Tests diverged from production validation. Not a "removed feature" issue — an "optional parameter silently disables a validator step" API issue.
+- **1 site in `tests/test_runtime/test_workflow_executor/test_integration.py::test_file_workflow_execution`** — a THIRD failure mode: bypassed `WorkflowValidator` entirely by calling `compile_workflow` directly. Passed `test_input` as top-level param (silently dropped post-task-153), only assertion was `result == "default"` which passed regardless of whether any input flow occurred. Exact pattern the task-59 retrospective flagged ("tests that only check execution flow, not actual mapping").
+
+**Meta-lesson (deepened from the original Commit-3 lesson)**: test-fidelity audits for a removed feature need to grep **three** shapes, not just the one the initial searcher covered:
+
+1. **Authoring shape** — markdown fixtures referencing the feature.
+2. **Dict-construction shape** — Python dicts using the string key as a test convenience, across **ALL** test directories (runtime-executor + template-validation + any tree touching the same IR shape).
+3. **Bypass-path shape** — tests that skip the validator entirely (via `compile_workflow` directly, OR via optional-parameter omission that silently disables a validator step).
+
+The original audit covered (1) fully and (2) partially. The review cycle caught the remainder of (2) and all of (3). Next time: global-grep the raw string key across every test directory upfront, and additionally audit test-helper call sites for optional-parameter omission that disables validation.
+
+Fix for all 11 sites (commit `2daee665`) was mechanical: file-backed child fixtures with `inputs:` dict form. Mutation re-check confirmed the critical test (`test_workflow_batch_inner_outputs_in_results`) now actually fails on `BOGUS`.
+
+### Judgment call: folded the non-dict `inputs:` diagnostic into this PR
+
+`review-validation-consistency` found three angles (W-2, S-1, S-3) on the same gap: when `inputs:` is set but isn't a dict (literal typo `- inputs: foo`, or `inputs: ${item}` resolving to a list/string/number), today's code silently discards it and downstream fires a misleading "missing required input" error that blames the *child's declarations*, not the *parent's `inputs:` shape*.
+
+Scope discipline argued for deferring — the original bug report didn't ask for this. Folded in anyway (commit `80776a24`) because:
+
+1. **Same surface as Bug A.** Task 153's stated goal is closing silent-failure at the parent→child boundary. This is another silent-failure on the same surface.
+2. **Fix is small**: ~10 lines of code + 4 new tests. Two-tier defense (parse-time for literals, runtime for templates resolving to wrong shape) matches the established PR pattern.
+3. **Splitting to stay "scope-pure" is fake discipline when the in-spirit fix is small and caught by the same review cycle**. A separate PR would mean two review rounds for what one caught.
+
+**Meta-rule (new)**: when a review surfaces a diagnostic gap **in the surface you just fixed**, fold it in unless the fix is big. The anti-pattern is reflexive "defer to follow-up" which creates lost context and duplicate work. Counter-rule (when NOT to fold): if the fix touches a different subsystem, OR depends on a future refactor's shape (see `framework_keys` below), defer is correct.
+
+**Wording divergence between parse-time and runtime is deliberate**: parse-time blames the literal (`"must be a dict, got str"`), runtime hints at the template (`"resolved to str, expected dict"`). Matches the existing parse/runtime wording divergence for missing-required and extras. Future unification belongs in a dedicated runtime-errors-→-structured-Diagnostics sweep, not this task.
+
+### Deferrals — what review surfaced but did NOT land in this PR
+
+- **`framework_keys = frozenset({"inputs"})` at `validator.py:583` is defensive-but-doing-no-work** (validation-consistency W-1). Every node type that uses `inputs:` declares it in its Interface; the safety net never triggers today. Deferred to the planned **schema-declaration refactor task** because fixing it cleanly depends on knowing the refactor's shape (is `inputs` always framework-provided? Always node-declared? Both paths?). Folding in now would likely double-work when the refactor lands. *This is the counter-example to the "fold in diagnostic gaps" meta-rule above — the difference is that this one depends on a future decision.*
+- **Mermaid visualizer fidelity** — GH #283, filed during initial implementation. Visualizer traces templates in top-level string params; doesn't descend into `inputs:` dict values. Structural issue, separate PR.
+- **`"<inline>"` sentinel rename** — progress-log tracked above.
+- **Minor nits** deemed not worth a commit: MCP `workflow` dict-arg vs removed node-param `workflow_ir` distinction (doc nit), `_loaded_ir_cache` attribute probe in tests (reviewer said acceptable as diagnostic-on-failure), pre-warm O(K) compile-budget docstring note (current text already accurate), changelog v0.12.0 entry (release-time).
+
+### Small cognitive-debt cleanups folded into the review-cycle commits
+
+- Regex tightening: `match="undeclared input"` → `match=r"undeclared input\(s\)"` — anchors on the exact token so a wording drift to a *different* error category doesn't still pass.
+- Post-W3 comment drift on `test_inputs_dict_values_forwarded`: "Also reserved" was a pre-task-153 phrasing; updated to describe the post-task-153 semantics (top-level fields never leak into inputs).
+- Pre-existing-debt tests with never-valid param keys (`workflow_ref`, `output_mapping`, `workflow_path`): replaced with canonical `workflow:` references. These keys were never valid; the closed schema made them *stranded*, so fixing them matches the schema-closure direction.
+- Stale `__`-prefix comment on `ALLOWED_PARAMS` rewritten to describe actual behavior (framework keys are compiler-injected into params, not honored via a prefix convention by Step 7).
+- `test_ir_cache_hits_on_same_ref` gets a one-line comment documenting why each `prep()` call uses a fresh `shared` dict (parser-diagnostic double-propagation prevention).
+
+---
+
 ## Verification evidence
 
 ### Automated
-- **4643 tests pass** (4641 baseline + 2 new runtime-extras tests).
+- **4763 tests pass** post-review-cycle (4641 baseline + 9 net new + 11 migrated [not net-new; replacing silently-passing sites with ones that actually test their contract]).
 - `make check` clean (ruff, mypy, deptry).
-- Four new regression tests specifically target the two motivating bugs:
-  - `test_ir_cache_hits_on_same_ref`, `test_ir_cache_miss_on_different_ref` — cache key correctness (Bug B).
-  - `test_heterogeneous_batch_loads_correct_child_ir`, `test_heterogeneous_batch_parallel` — end-to-end Bug B fix.
-  - `TestUndeclaredExtras::test_workflow_extras_top_level_rejected`, `test_workflow_extras_in_inputs_rejected`, `test_workflow_extras_with_template_inputs_deferred` — Bug A parse-time.
-  - `test_undeclared_extras_in_inputs_dict_rejected_at_runtime`, `test_runtime_extras_not_raised_when_all_keys_declared` — Bug A runtime defense-in-depth.
+- Regression-test additions across the three commits:
+  - **Implementation commit** — Bug A + Bug B coverage:
+    - `test_ir_cache_hits_on_same_ref`, `test_ir_cache_miss_on_different_ref` — cache key correctness (Bug B).
+    - `test_heterogeneous_batch_loads_correct_child_ir`, `test_heterogeneous_batch_parallel` — end-to-end Bug B fix.
+    - `TestUndeclaredExtras::test_workflow_extras_top_level_rejected`, `test_workflow_extras_in_inputs_rejected`, `test_workflow_extras_with_template_inputs_deferred` — Bug A parse-time.
+    - `test_undeclared_extras_in_inputs_dict_rejected_at_runtime`, `test_runtime_extras_not_raised_when_all_keys_declared` — Bug A runtime defense-in-depth.
+  - **Review-cycle commit 1 (`2daee665`)** — 11 silently-passing sites migrated to file-backed fixtures + `inputs:` dict form; mutation-verified the critical `test_workflow_batch_inner_outputs_in_results` now actually fails on `BOGUS`.
+  - **Review-cycle commit 2 (`80776a24`)** — 4 new tests for non-dict `inputs:` shape handling:
+    - `TestNonDictInputsShape::test_non_dict_inputs_literal_string_rejected`, `test_non_dict_inputs_list_rejected` — parse-time.
+    - `test_inputs_non_dict_raises_shape_error`, `test_inputs_none_treated_as_no_inputs` — runtime `_extract_child_inputs` behavior.
+    - Plus assertion extension on `test_workflow_extras_with_template_inputs_deferred` to verify opaque template doesn't trigger the new shape diagnostic.
 
 ### Manual end-to-end
 - **Bug A reproduction failed at parse time as expected**:
@@ -170,45 +236,82 @@ Post-W3 this label no longer means "inline IR" — it means "saved name with no 
   ```
   Child A correctly received only `a`; child B correctly received both `a` and `b`.
 
+- **Non-dict `inputs:` parse-time diagnostic fires** (review-cycle commit 2):
+  ```
+  $ uv run pflow /tmp/task153-shape-check/bad-inputs.pflow.md --validate-only
+  ✗ Validation failed (1 error):
+  Step 'call-child': 'inputs:' on workflow node './child.pflow.md' must be a dict of child inputs, got str.
+    At: node 'call-child', nodes[id=call-child].params.inputs
+    → Use a mapping: ``- inputs:\n    key: value``
+  ```
+
+- **Non-dict `inputs:` runtime diagnostic fires** when an opaque template resolves to the wrong shape:
+  ```
+  $ uv run pflow /tmp/task153-shape-check/bad-template.pflow.md
+  Workflow node's 'inputs:' resolved to str, expected dict of child inputs.
+  ```
+
 ---
 
 ## Delta from plan
 
 | Plan estimate | Actual | Reason |
 |---|---|---|
-| ~5 Python test fixture sites to migrate | ~33 test sites | Searcher missed dict-IR-construction sites; see Scope surprises above. |
+| ~5 Python test fixture sites to migrate | ~33 test sites in implementation + 11 more found in review | Searcher's audit covered dict-IR-construction in one test tree but not across all test directories; see Scope surprises (first wave) and Post-implementation review cycle (second wave). |
 | ~150 LoC net changes | Unknown — too many files | Mostly offset by deletions (`RESERVED_PARAMS`, XOR checks, inline-IR branches, `_extract_child_inputs` collapse). |
-| 5 commits | 5 commits delivered | Order preserved. |
-| "One mechanical pass" migration | Mechanical but not trivial per-file | Each test file needed a local helper + per-test conversion. |
-| Mermaid golden updates trivial | Trivial but revealed fidelity regression | Issue #283 filed. |
+| 5 commits | **3 commits** delivered (core + 2 review-cycle follow-ups) | Plan had 5 phased commits; reality squashed the implementation into one coherent commit and added 2 review-cycle commits. Final ordering = `core fix` → `review test-fidelity fixes` → `review diagnostic improvements`. |
+| "One mechanical pass" migration | Mechanical but not trivial per-file | Each test file needed a local helper + per-test conversion; review pass found 11 more sites in the same shape that the initial pass missed. |
+| Mermaid golden updates trivial | Trivial but revealed fidelity regression | Issue #283 filed during implementation. |
+| No post-implementation code review scoped in the plan | Review cycle surfaced a critical test-fidelity cluster (11 silently-passing sites) + a diagnostic-quality gap worth folding in | The plan treated "`make check` + `pytest` green" as sufficient verification. Mutation-resistant code review found issues neither static analysis nor the test suite could surface. Future plans of this size should scope a specialist-agent review pass as a standard phase. |
 
 ---
 
 ## Files touched (summary)
 
-### Code (10 source files)
+### Implementation commit (`9eedbd1f`) — code
+
 - `src/pflow/runtime/workflow_executor.py` — `ALLOWED_PARAMS` declared; `RESERVED_PARAMS` deleted; `_extract_child_inputs` collapsed to one line; runtime extras check added; IR cache keyed by path; `_compile_sub_workflow` cache logic simplified; `workflow_ir` support removed.
 - `src/pflow/core/workflow/validator.py` — Step-7 workflow-node branch reading `ALLOWED_PARAMS`; `_check_required_inputs` grown inverse extras loop with fuzzy suggestions; `workflow_ir` branch in `_load_child_workflow` removed.
 - `src/pflow/core/workflow/sub_workflow_resolver.py` — inline-IR resolution path removed.
 - `src/pflow/runtime/template_validation/validator.py` — `workflow_ir` output-resolution branch removed.
 - `src/pflow/core/workflow/mermaid/_context.py` — `"workflow_ir"` removed from `_RESERVED_PARAMS`.
 - `src/pflow/runtime/engine/batch_executor.py` — pre-warm cache uses new attribute names; docstring updated.
-- Four docs files: `src/pflow/guide/features/sub-workflows.md`, `src/pflow/runtime/CLAUDE.md`, `src/pflow/core/workflow/CLAUDE.md` — new canonical form + heterogeneous-batch named example + Step 7/8 coverage notes.
+- Docs: `src/pflow/guide/features/sub-workflows.md`, `src/pflow/runtime/CLAUDE.md`, `src/pflow/core/workflow/CLAUDE.md` — new canonical form + heterogeneous-batch named example + Step 7/8 coverage notes.
 
-### Migrations (10 nodes across 8 `.pflow.md` + 5 Python fixture sites)
-See `files_touched` in the plan. All `.pflow.md` examples under `examples/nested/`, `examples/bundling/`, and the scratchpad repros rewritten to `inputs:` form.
+### Implementation commit — migrations (10 nodes across 8 `.pflow.md` + 5 Python fixture sites)
 
-### New test files / additions
+All `.pflow.md` examples under `examples/nested/`, `examples/bundling/`, and the scratchpad repros rewritten to `inputs:` form.
+
+### Implementation commit — new test files / additions
+
 - `tests/test_runtime/test_workflow_executor/test_ir_cache.py` (new file) — cache-key correctness + end-to-end heterogeneous batch.
 - `tests/test_core/test_sub_workflow_validation.py::TestUndeclaredExtras` (new class, 3 tests) — Bug A parse-time coverage.
 - `tests/test_runtime/test_workflow_executor/test_workflow_executor_comprehensive.py` — 2 new runtime-extras tests alongside existing `_validate_child_params` tests.
 
-### Deletions
+### Implementation commit — deletions
+
 - `test_integration/test_workflow_manager_integration.py::test_workflow_executor_mutual_exclusivity` — tested removed XOR.
 - `test_core/test_sub_workflow_resolver.py::test_inline_ir` — tested removed feature.
 - `test_runtime/test_workflow_executor/test_workflow_name.py::test_workflow_and_workflow_ir_raises_error` — tested removed XOR.
 - `test_runtime/test_workflow_executor/test_workflow_executor_comprehensive.py::test_workflow_ir_only`, `test_both_parameters_provided`, `test_malformed_child_ir_context` — tested removed inline-IR path.
 - `test_core/test_sub_workflow_validation.py::TestInlineWorkflowIR` (class) — tested removed recursive inline-IR validation.
+
+### Review-cycle commit 1 (`2daee665`) — 11 silently-passing test sites + 4 cleanups
+
+- `tests/test_runtime/test_template_validation/test_validator.py` — 6 sites converted from `workflow_ir`-dict-literal to file-backed fixtures via a new `_write_child_with_outputs` class helper. Mutation-verified `${process-all.results[0].BOGUS}` now caught.
+- `tests/test_runtime/test_template_validation/test_batch_item_validation.py` — 1 site converted (line 526); separate migration at line 598 moved `input:` from top-level to `inputs:` dict.
+- `tests/test_integration/test_unused_inputs.py` — 3 sites migrated to `inputs:` form AND given explicit `registry=Registry()` so Step 7 runs like production.
+- `tests/test_runtime/test_workflow_executor/test_integration.py::test_file_workflow_execution` — converted `test_input` top-level to `inputs: {test_input:}`; added strong assertion on auto-exposed child output (`"Processed: Hello from file"`) that catches regression into silent drop.
+- Cleanups: regex tightening, post-W3 comment drift, pre-existing-debt never-valid-param-key replacements in `tests/test_core/test_workflow_validator.py:186` and `tests/test_runtime/test_compiler_interfaces.py:381`.
+
+### Review-cycle commit 2 (`80776a24`) — non-dict `inputs:` diagnostic + stale comment
+
+- `src/pflow/core/workflow/validator.py::_check_required_inputs` — narrowed the non-dict guard; emits a structured Diagnostic for literal non-dict (string / list / number / bool) while still deferring opaque `${...}` templates to runtime.
+- `src/pflow/runtime/workflow_executor.py::_extract_child_inputs` — replaced silent `{}` fallback with `ValueError` for non-None non-dict, naming the actual type.
+- `tests/test_core/test_sub_workflow_validation.py::TestNonDictInputsShape` (new class, 2 tests) — parse-time rejection with structured-context assertions.
+- `tests/test_runtime/test_workflow_executor/test_workflow_executor_comprehensive.py` — `test_inputs_non_dict_raises_shape_error` (runtime) and `test_inputs_none_treated_as_no_inputs` (null still valid); replaces the old silent-behavior `test_inputs_non_dict_not_forwarded`.
+- Stale comment on `ALLOWED_PARAMS` rewritten to describe actual framework-key handling (`__registry__` is compiler-injected, not user-authored via a prefix convention).
+- `tests/test_runtime/test_workflow_executor/test_ir_cache.py::test_ir_cache_hits_on_same_ref` — one-line comment documenting the fresh-dict-per-call intent.
 
 ### GitHub artifacts
 - [Issue #283](https://github.com/spinje/pflow/issues/283) filed for mermaid visualizer fidelity regression with full root-cause analysis and proposed fix.
@@ -223,6 +326,12 @@ See `files_touched` in the plan. All `.pflow.md` examples under `examples/nested
 
 3. **Check visualizer / tooling output against canonical-shape changes as part of migration, not as an afterthought.** The mermaid regression would have been caught in the plan-review phase if "what downstream tools parse this shape?" had been an explicit planning checkpoint.
 
+4. **Global-grep across ALL test directories, not just the adjacent one.** The initial 33-site audit covered `tests/test_runtime/test_workflow_executor/` but missed `tests/test_runtime/test_template_validation/` — same `workflow_ir` dict-literal pattern, 7 additional sites the review cycle had to catch. Lesson: when removing a feature, grep the raw string key across `tests/`, `examples/`, `docs/`, and `scripts/` as a single pass — don't trust "here's the main test file for this subsystem."
+
+5. **Audit test-helper APIs for silently-disabling-validation optional parameters.** Three sites in `test_unused_inputs.py` called `split_validator_diagnostics(...)` without `registry=`, which silently skipped Step 7. No structural grep would catch this — only mutation testing proves the validator actually ran. Lesson: when a validator has a Step that short-circuits on a missing argument (`if registry is not None`), audit every test call site to confirm full arguments are passed; flag any helper that makes "skip Step N" invisibly trivial.
+
+6. **Scope an explicit specialist-agent review pass into the plan.** The plan treated green CI + green pytest as sufficient verification. Mutation-resistant review found 11 silently-passing test sites and a diagnostic-quality gap. For PRs of this size (30+ files, schema change, migration), a code-review phase with 4 specialist agents is ~15 minutes of wall time and catches issues static analysis can't.
+
 ## What I got right
 
 1. **Per-commit verification gate** contained the scope surprise in Commit 3. Catastrophic if Commits 3+4 had been batched.
@@ -234,3 +343,7 @@ See `files_touched` in the plan. All `.pflow.md` examples under `examples/nested
 4. **Filing issue #283 rather than attempting to also fix the mermaid visualizer.** Scope discipline. Visualizer fidelity is a real UX cost but belongs in its own contained PR with its own tests and its own golden-file regeneration.
 
 5. **Running the "easy wins" pass after the user asked.** The prep_res-key rename and cache-logic simplification were small but real final-state improvements. Without the explicit prompt I would have shipped the code with the cognitive debt.
+
+6. **Deploying 4 targeted review agents, not the full 7.** Choosing `review-impact-completeness`, `review-feature-interactions`, `review-validation-consistency`, `review-test-fidelity` — and skipping `review-silent-failures` (redundant with the PR's theme), `review-agent-ux` (already reviewed in-conversation), `review-concurrency-safety` (covered by explicit parallel tests) — produced no redundant findings and the full cluster of test-fidelity issues no single agent would have caught alone.
+
+7. **Folding the non-dict `inputs:` diagnostic into this PR instead of deferring.** Scope discipline would've split it off; correctness instincts said "same surface as Bug A, small fix, caught by the same review." Folding in avoided two review cycles for one cluster of findings. Counter-example kept honest: `framework_keys` was NOT folded in because it depends on the future refactor's shape — folding in there would have been speculative work.
