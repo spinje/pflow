@@ -805,12 +805,38 @@ class WorkflowValidator:
         """
         from pflow.core.suggestion_utils import find_similar_items
 
-        inputs_value = parent_params.get("inputs")
-        if inputs_value is not None and not isinstance(inputs_value, dict):
-            # Opaque template (e.g. inputs: '${item}') — can't check statically.
-            return []
-
         diagnostics: list[Diagnostic] = []
+        inputs_value = parent_params.get("inputs")
+
+        # Opaque template (e.g. ``inputs: '${item}'``) — keys aren't statically
+        # knowable; defer to runtime ``_extract_child_inputs`` shape check.
+        # Any other non-dict (literal string, list, number, bool) is a shape bug.
+        if inputs_value is not None and not isinstance(inputs_value, dict):
+            if isinstance(inputs_value, str) and "${" in inputs_value:
+                return []
+            type_name = type(inputs_value).__name__
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    node_id=node_id,
+                    message=(
+                        f"Step '{node_id}': 'inputs:' on workflow node '{ref_label}' must be a dict "
+                        f"of child inputs, got {type_name}."
+                    ),
+                    suggestions=["Use a mapping: ``- inputs:\\n    key: value``"],
+                    context={
+                        "category": "validation",
+                        "sub_workflow_path": ref_label,
+                        "sub_workflow_step": node_id,
+                        "path": f"nodes[id={node_id}].params.inputs",
+                        "actual_type": type_name,
+                    },
+                )
+            )
+            return diagnostics
+
         parent_keys: set[str] = set(inputs_value.keys()) if isinstance(inputs_value, dict) else set()
 
         # Missing-required direction.

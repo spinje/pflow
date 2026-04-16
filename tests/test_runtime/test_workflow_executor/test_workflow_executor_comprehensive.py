@@ -1047,16 +1047,31 @@ class TestWorkflowExecutorComprehensive:
         assert "workflow" not in child_inputs  # top-level fields never leak into inputs
         assert child_inputs == {"api_key": "xxx", "name": "alice"}
 
-    def test_inputs_non_dict_not_forwarded(self):
-        """When ``inputs`` resolves to a non-dict (e.g. an opaque template string),
-        nothing is forwarded — the runtime extras check catches the shape error."""
+    def test_inputs_non_dict_raises_shape_error(self):
+        """When ``inputs`` resolves to a non-dict, ``_extract_child_inputs`` raises.
+
+        Catches the "template resolved to the wrong shape" case that parse-time
+        can't see (``inputs: ${item}`` where ``item`` is a list / string / number).
+        Before this fix the extraction silently returned ``{}`` and the child then
+        failed with a misleading "missing required" error that didn't blame the
+        template.
+        """
         executor = WorkflowExecutor()
         executor.params = {
             "workflow": "./child.pflow.md",
-            "inputs": "not-a-dict",
+            "inputs": ["not", "a", "dict"],
         }
-        child_inputs = executor._extract_child_inputs()
-        assert child_inputs == {}
+        with pytest.raises(ValueError, match=r"resolved to list, expected dict"):
+            executor._extract_child_inputs()
+
+    def test_inputs_none_treated_as_no_inputs(self):
+        """``inputs: null`` or missing ``inputs:`` key both mean no-inputs-provided."""
+        executor = WorkflowExecutor()
+        executor.params = {"workflow": "./child.pflow.md"}
+        assert executor._extract_child_inputs() == {}
+
+        executor.params = {"workflow": "./child.pflow.md", "inputs": None}
+        assert executor._extract_child_inputs() == {}
 
     # --- Test 34: required: false with no default is not rejected ---
 

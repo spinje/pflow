@@ -1287,3 +1287,66 @@ class TestUndeclaredExtras:
         assert extras_errors == [], (
             f"Opaque ``inputs: ${{item}}`` template should skip parse-time extras check, got: {extras_errors}"
         )
+        # And no shape error either — a template isn't a literal shape violation.
+        shape_errors = [e for e in errors if "must be a dict" in e.message]
+        assert shape_errors == [], (
+            f"Opaque template should not trigger the non-dict shape diagnostic, got: {shape_errors}"
+        )
+
+
+class TestNonDictInputsShape:
+    """Parse-time rejection of literal non-dict ``inputs:`` values.
+
+    The canonical form is ``inputs:`` as a mapping. A literal string,
+    list, number, or bool in that slot is a shape typo. Before this check,
+    such values silently produced a misleading "missing required" error
+    downstream that blamed the child, not the parent's ``inputs:`` shape.
+    Opaque templates (``inputs: ${item}``) are deferred to runtime because
+    the resolved shape can't be checked statically.
+    """
+
+    def _child_with_one_input(self, path: Path) -> None:
+        write_pflow_md(
+            path,
+            "# Child\n\nA child.\n\n"
+            "## Inputs\n\n### known_field\n\nInput.\n\n- type: string\n- required: true\n\n"
+            "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- command: echo ${known_field}\n",
+        )
+
+    def test_non_dict_inputs_literal_string_rejected(self, tmp_path: Path) -> None:
+        """A plain string in place of the ``inputs:`` dict is a shape error."""
+        child = tmp_path / "child.pflow.md"
+        self._child_with_one_input(child)
+
+        parent_ir = _parent_ir(str(child), provided_params={"inputs": "not-a-dict"})
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        shape_errors = [e for e in errors if "must be a dict" in e.message]
+        assert len(shape_errors) == 1, f"Expected one shape error, got: {[e.message for e in errors]}"
+        diagnostic = shape_errors[0]
+        assert "str" in diagnostic.message, f"Error should name the actual type: {diagnostic.message}"
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("actual_type") == "str"
+
+    def test_non_dict_inputs_list_rejected(self, tmp_path: Path) -> None:
+        """A list in place of the ``inputs:`` dict is a shape error."""
+        child = tmp_path / "child.pflow.md"
+        self._child_with_one_input(child)
+
+        parent_ir = _parent_ir(str(child), provided_params={"inputs": ["a", "b"]})
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        shape_errors = [e for e in errors if "must be a dict" in e.message]
+        assert len(shape_errors) == 1, f"Expected one shape error, got: {[e.message for e in errors]}"
+        assert shape_errors[0].context is not None
+        assert shape_errors[0].context.get("actual_type") == "list"

@@ -51,8 +51,8 @@ class WorkflowExecutor(BaseNode):
     # Closed top-level schema for workflow nodes. The validator (Step 7) reads
     # this attribute to reject unknown top-level fields at parse time, matching
     # the closure Step 7 applies to every other node via Interface docstrings.
-    # Framework-internal keys (``__registry__`` etc.) are allowed via the
-    # ``__``-prefix convention, not listed here.
+    # Framework-internal keys (``__registry__`` etc.) are compiler-injected into
+    # params and never user-authored, so they don't need to appear here.
     ALLOWED_PARAMS: ClassVar[frozenset[str]] = frozenset({
         "workflow",
         "inputs",
@@ -405,9 +405,20 @@ class WorkflowExecutor(BaseNode):
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:
-        """Extract child workflow inputs from the ``inputs`` dict param."""
+        """Extract child workflow inputs from the ``inputs`` dict param.
+
+        Raises ``ValueError`` if ``inputs:`` is set but not a dict — catches
+        the "template resolved to the wrong shape" case that parse-time can't
+        check (e.g. ``inputs: ${item}`` where ``item`` resolves to a list).
+        ``None`` and missing keys are treated as no-inputs-provided.
+        """
         inputs = self.params.get("inputs")
-        return dict(inputs) if isinstance(inputs, dict) else {}
+        if inputs is None:
+            return {}
+        if isinstance(inputs, dict):
+            return dict(inputs)
+        type_name = type(inputs).__name__
+        raise ValueError(f"Workflow node's 'inputs:' resolved to {type_name}, expected dict of child inputs.")
 
     def _load_workflow(
         self, shared: dict[str, Any], execution_stack: list[str]

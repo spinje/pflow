@@ -39,6 +39,9 @@ def test_ir_cache_hits_on_same_ref(tmp_path: Path) -> None:
     node = WorkflowExecutor()
     node.set_params({"workflow": str(child)})
 
+    # Each prep() gets its own disposable ``shared`` dict. ``prep()`` mutates
+    # ``shared["__parser_diagnostics__"]`` via ``_propagate_child_parser_warnings``;
+    # keeping the dicts separate ensures no double-propagation across calls.
     first = node.prep({"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")})
     second = node.prep({"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")})
 
