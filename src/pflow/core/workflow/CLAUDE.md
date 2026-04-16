@@ -118,8 +118,8 @@ Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Ever
 5. Templates (variable resolution) — if params provided
 6. Node types (registry verification) — unless `skip_node_types=True`
 7. Output sources — validates `${node.key}` refs in outputs via `_validate_template_in_source`. Uses `TemplateResolver.extract_root_node_id()` to support bracket syntax like `${data[0].x}`. Provides fuzzy "did you mean?" suggestions.
-8. Unknown param errors — hard errors for params not in node interface metadata, with fuzzy-matched valid keys
-9. Sub-workflow validation — recursive validation of referenced child workflows (file, saved name, inline IR)
+8. Unknown param errors — hard errors for params not in node interface metadata, with fuzzy-matched valid keys. Workflow nodes bypass the registry but declare their allowed top-level fields via `WorkflowExecutor.ALLOWED_PARAMS` (a class attribute); Step 8 reads this and rejects unknown top-level fields the same way it rejects unknown params on any other node.
+9. Sub-workflow validation — recursive validation of referenced child workflows (file or saved name). Checks the parent→child input boundary in both directions: missing required inputs AND undeclared extras in the parent's `inputs:` dict (the silent-drop fix). Opaque template inputs (`inputs: ${item}`) skip the static check — runtime defense-in-depth in `WorkflowExecutor._validate_child_params` catches the mismatch per-item.
 10. Cache lint — warns when shell nodes have no template inputs and no `cache: false` (stale cache risk)
 
 **Pipeline order is load-bearing**: step 5 (templates) runs BEFORE step 6 (node types). Template validation silently skips unknown node types via `_register_node_outputs_from_registry` — step 6 produces the rich "Unknown node type" diagnostic. Reversing the order or making step 5 raise on unknown types produces duplicate diagnostics (one generic wrapper + one rich V6).

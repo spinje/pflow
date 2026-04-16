@@ -2385,11 +2385,12 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
     WorkflowExecutor -> batch _extract_error) with no mocking of the error path.
     """
 
-    def test_batch_workflow_child_error_detected_as_batch_error(self):
+    def test_batch_workflow_child_error_detected_as_batch_error(self, tmp_path):
         """A batch calling a sub-workflow where the child fails should report errors, not success."""
         from pflow.registry.registry import Registry
         from pflow.runtime import compile_workflow
         from pflow.runtime.engine import WorkflowEngine
+        from tests.shared.markdown_utils import write_workflow_file
 
         registry = Registry()
 
@@ -2405,6 +2406,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             ],
             "edges": [],
         }
+        child_path = tmp_path / "fail_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
 
         parent_ir = {
             "ir_version": "0.1.0",
@@ -2413,7 +2416,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                     "id": "batch-call",
                     "type": "workflow",
                     "params": {
-                        "workflow_ir": child_ir,
+                        "workflow": str(child_path),
                     },
                     "batch": {
                         "items": ["a", "b"],
@@ -2432,16 +2435,19 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             engine = WorkflowEngine()
             engine.run(workflow, shared)
 
-    def test_batch_workflow_partial_failure_with_continue(self):
+    def test_batch_workflow_partial_failure_with_continue(self, tmp_path):
         """Partial batch failure: some child sub-workflows succeed, some fail."""
         from pflow.registry.registry import Registry
         from pflow.runtime import compile_workflow
         from pflow.runtime.engine import WorkflowEngine
+        from tests.shared.markdown_utils import write_workflow_file
 
         registry = Registry()
 
+        # Child reads `item` as a declared input, fails when item == "fail-b".
         child_ir = {
             "ir_version": "0.1.0",
+            "inputs": {"item": {"type": "string"}},
             "nodes": [
                 {
                     "id": "check",
@@ -2454,6 +2460,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             ],
             "edges": [],
         }
+        child_path = tmp_path / "partial_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
 
         parent_ir = {
             "ir_version": "0.1.0",
@@ -2462,7 +2470,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                     "id": "batch-call",
                     "type": "workflow",
                     "params": {
-                        "workflow_ir": child_ir,
+                        "workflow": str(child_path),
+                        "inputs": {"item": "${item}"},
                     },
                     "batch": {
                         "items": ["good-a", "fail-b", "good-c"],
@@ -2500,16 +2509,18 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         assert results[1]["item"] == "good-c"
         assert results[1].get("error") is None
 
-    def test_batch_workflow_partial_failure_parallel(self):
+    def test_batch_workflow_partial_failure_parallel(self, tmp_path):
         """Parallel variant of partial-fail: exercises the parallel code path."""
         from pflow.registry.registry import Registry
         from pflow.runtime import compile_workflow
         from pflow.runtime.engine import WorkflowEngine
+        from tests.shared.markdown_utils import write_workflow_file
 
         registry = Registry()
 
         child_ir = {
             "ir_version": "0.1.0",
+            "inputs": {"item": {"type": "string"}},
             "nodes": [
                 {
                     "id": "check",
@@ -2522,6 +2533,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             ],
             "edges": [],
         }
+        child_path = tmp_path / "parallel_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
 
         parent_ir = {
             "ir_version": "0.1.0",
@@ -2530,7 +2543,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                     "id": "batch-call",
                     "type": "workflow",
                     "params": {
-                        "workflow_ir": child_ir,
+                        "workflow": str(child_path),
+                        "inputs": {"item": "${item}"},
                     },
                     "batch": {
                         "items": ["good-a", "fail-b", "good-c"],
@@ -2567,11 +2581,12 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         assert results[1]["item"] == "good-c"
         assert results[1].get("error") is None
 
-    def test_batch_workflow_all_fail_with_continue(self):
+    def test_batch_workflow_all_fail_with_continue(self, tmp_path):
         """All items fail with error_handling: continue -- aborts with RuntimeError."""
         from pflow.registry.registry import Registry
         from pflow.runtime import compile_workflow
         from pflow.runtime.engine import WorkflowEngine
+        from tests.shared.markdown_utils import write_workflow_file
 
         registry = Registry()
 
@@ -2587,6 +2602,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             ],
             "edges": [],
         }
+        child_path = tmp_path / "all_fail_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
 
         parent_ir = {
             "ir_version": "0.1.0",
@@ -2594,7 +2611,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                 {
                     "id": "batch-call",
                     "type": "workflow",
-                    "params": {"workflow_ir": child_ir},
+                    "params": {"workflow": str(child_path)},
                     "batch": {
                         "items": ["a", "b", "c"],
                         "error_handling": "continue",

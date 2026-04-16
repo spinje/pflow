@@ -544,12 +544,6 @@ def _resolve_child_workflow_outputs(
     """
     params = node.get("params", {})
 
-    # Inline workflow_ir — read outputs directly
-    workflow_ir = params.get("workflow_ir")
-    if isinstance(workflow_ir, dict):
-        outputs = workflow_ir.get("outputs", {})
-        return outputs if outputs else None
-
     # File or saved name reference
     workflow_ref = params.get("workflow")
     if not workflow_ref or not isinstance(workflow_ref, str):

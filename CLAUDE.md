@@ -214,6 +214,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 149: Fix Non-Interactive Output Routing + Output Pipeline Consolidation
 - ✅ Task 151: CLI Surface Restructure
 - ✅ Task 77: Pflow Guide — tailored agent instructions
+- ✅ Task 153: Reject Undeclared Sub-Workflow Inputs
 
 ### Planned Features (in order of priority)
 

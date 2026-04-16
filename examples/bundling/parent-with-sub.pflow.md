@@ -19,7 +19,8 @@ Convert input to uppercase using sub-workflow.
 
 - type: workflow
 - workflow: ./sub-echo.pflow.md
-- text: ${input}
+- inputs:
+    text: ${input}
 
 ## Outputs
 

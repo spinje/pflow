@@ -136,8 +136,10 @@ class TestPerNodeCacheOptOut:
             "removing cache:false later would silently return stale data"
         )
 
-    def test_cache_false_in_nested_workflow(self):
+    def test_cache_false_in_nested_workflow(self, tmp_path):
         """A child node with cache: false stays uncached through a parent workflow node."""
+        from tests.shared.markdown_utils import write_workflow_file
+
         child_ir = {
             "nodes": [
                 {
@@ -149,12 +151,15 @@ class TestPerNodeCacheOptOut:
                 }
             ],
         }
+        child_path = tmp_path / "cache_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
+
         parent_ir = {
             "nodes": [
                 {
                     "id": "run-child",
                     "type": "workflow",
-                    "params": {"workflow_ir": child_ir},
+                    "params": {"workflow": str(child_path)},
                     "purpose": "Runs a child workflow containing a cache:false node",
                 }
             ],

@@ -1,12 +1,14 @@
 """Regression tests for compile-once caching in WorkflowExecutor.
 
 WorkflowExecutor._compile_sub_workflow() caches the CompiledWorkflow on the
-instance via _cached_workflow. For both sequential and parallel batch processing,
-compile_workflow should be called EXACTLY ONCE.
+instance via ``_compiled_workflow_cache`` (dict keyed by workflow_path).
+For both sequential and parallel batch processing over a homogeneous child
+workflow, compile_workflow should be called EXACTLY ONCE.
 
-Sequential: the same WorkflowExecutor instance handles all items, caching on first call.
-Parallel: the batch executor pre-warms the compile cache on the original node before
-deep-copying for thread dispatch, so each deep copy inherits _cached_workflow.
+Sequential: the same WorkflowExecutor instance handles all items, caching
+on first call. Parallel: the batch executor pre-warms the compile cache on
+the original node before deep-copying for thread dispatch, so each deep
+copy inherits ``_compiled_workflow_cache``.
 
 These tests verify:
 1. compile_workflow is called once for N sequential batch items
@@ -24,38 +26,38 @@ from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
 
 
-def _make_static_child_ir() -> dict[str, Any]:
-    """A static child workflow IR with no template expressions.
-
-    The shell command is fixed -- per-item differentiation comes from
-    the batch item value being passed as a child param and the child
-    reading it from its shared store at execution time.
-
-    This child workflow is COMPLETELY STATIC from the parent resolver's
-    perspective, which means split_params classifies workflow_ir as a
-    static param, preserving the same dict reference across batch items.
-    """
-    return {
-        "ir_version": "0.1.0",
-        "nodes": [
-            {
-                "id": "step",
-                "type": "shell",
-                "params": {"command": "echo hello"},
-            }
-        ],
-        "edges": [],
-    }
+def _write_static_child(tmp_path: Path) -> Path:
+    """Write a minimal static child workflow file."""
+    child = tmp_path / "static-child.pflow.md"
+    child.write_text(
+        "# Static Child\n\nA static child.\n\n"
+        "## Steps\n\n### step\n\nEcho hello.\n\n- type: shell\n- command: echo hello\n",
+        encoding="utf-8",
+    )
+    return child
 
 
-def _make_parent_ir_static_child() -> dict[str, Any]:
-    """Parent workflow with a batch workflow node using a static child IR.
+def _write_dynamic_child(tmp_path: Path) -> Path:
+    """Write a child workflow that consumes the ${item} input via child-side template."""
+    child = tmp_path / "dynamic-child.pflow.md"
+    child.write_text(
+        "# Dynamic Child\n\nConsumes input text.\n\n"
+        "## Inputs\n\n### text\n\nThe per-item text.\n\n- type: string\n- required: true\n\n"
+        "## Steps\n\n### echo\n\nEcho the text with markers.\n\n"
+        "- type: shell\n- command: echo MARKER_${text}_END\n",
+        encoding="utf-8",
+    )
+    return child
+
+
+def _make_parent_ir_static_child(child_path: Path) -> dict[str, Any]:
+    """Parent workflow with a batch workflow node referencing a file-based child.
 
     Structure:
       source (shell, emits JSON array) -> process (workflow, batch)
 
-    The child workflow_ir is entirely static (no templates), so the
-    compile-once cache works: same dict object reference on each call.
+    The child reference is a static file path, so the compile-once cache
+    hits on item 2+ across sequential batch iterations.
     """
     return {
         "ir_version": "0.1.0",
@@ -72,7 +74,7 @@ def _make_parent_ir_static_child() -> dict[str, Any]:
                 "type": "workflow",
                 "batch": {"items": "${source.stdout}", "as": "item"},
                 "params": {
-                    "workflow_ir": _make_static_child_ir(),
+                    "workflow": str(child_path),
                 },
             },
         ],
@@ -80,15 +82,15 @@ def _make_parent_ir_static_child() -> dict[str, Any]:
     }
 
 
-def _make_parent_ir_dynamic_child() -> dict[str, Any]:
-    """Parent workflow where the child IR contains ${item} templates.
+def _make_parent_ir_dynamic_child(child_path: Path) -> dict[str, Any]:
+    """Parent workflow that passes a per-item ``text`` input to a file-based child.
 
     Structure:
       source (shell, emits JSON array) -> process (workflow, batch)
 
-    The child's shell command uses ${item} which the PARENT resolver
-    resolves per batch iteration (batch executor injects 'item' into shared).
-    This creates a new workflow_ir dict per item, enabling distinct output.
+    Each iteration passes ``inputs: {text: ${item}}``. Since the child itself
+    is static (same file path per iteration), compile-once still applies —
+    per-item differentiation happens inside the child's template resolution.
     """
     return {
         "ir_version": "0.1.0",
@@ -105,17 +107,8 @@ def _make_parent_ir_dynamic_child() -> dict[str, Any]:
                 "type": "workflow",
                 "batch": {"items": "${source.stdout}", "as": "item"},
                 "params": {
-                    "workflow_ir": {
-                        "ir_version": "0.1.0",
-                        "nodes": [
-                            {
-                                "id": "echo",
-                                "type": "shell",
-                                "params": {"command": "echo MARKER_${item}_END"},
-                            }
-                        ],
-                        "edges": [],
-                    },
+                    "workflow": str(child_path),
+                    "inputs": {"text": "${item}"},
                 },
             },
         ],
@@ -123,14 +116,12 @@ def _make_parent_ir_dynamic_child() -> dict[str, Any]:
     }
 
 
-def test_compile_workflow_called_once_for_static_child_ir():
-    """compile_workflow is invoked exactly once for 3 sequential batch items
-    when workflow_ir is a static param (no templates inside it).
+def test_compile_workflow_called_once_for_static_child(tmp_path: Path) -> None:
+    """compile_workflow is invoked exactly once for N sequential batch items
+    when the child workflow is a file reference (static path).
 
-    When workflow_ir has no template expressions, split_params classifies it
-    as a static param. The template resolver preserves the same dict reference
-    across batch iterations, so id(workflow_ir) remains constant and the
-    compile-once cache in _compile_sub_workflow returns the cached result.
+    The ``_compiled_workflow_cache`` keys compiled workflows by resolved path,
+    so a homogeneous batch (same path per iteration) hits the cache on item 2+.
     """
     from pflow.runtime.compilation.compiler import compile_workflow as real_compile_workflow
 
@@ -141,7 +132,8 @@ def test_compile_workflow_called_once_for_static_child_ir():
         call_count += 1
         return real_compile_workflow(*args, **kwargs)
 
-    parent_ir = _make_parent_ir_static_child()
+    child = _write_static_child(tmp_path)
+    parent_ir = _make_parent_ir_static_child(child)
     registry = Registry()
 
     with patch(
@@ -160,12 +152,11 @@ def test_compile_workflow_called_once_for_static_child_ir():
     )
 
     # The sub-workflow should have been compiled exactly once, not 3 times.
-    # This is the core performance improvement: O(1) compilation for batch.
     assert call_count == 1, (
-        f"Expected compile_workflow to be called once (compile-once cache), "
+        f"Expected compile_workflow called once (path-keyed compile cache), "
         f"but it was called {call_count} time(s). "
-        f"This suggests the id()-based cache is not recognizing the same "
-        f"workflow_ir dict across batch iterations."
+        f"This suggests _compiled_workflow_cache is not recognizing the same "
+        f"resolved workflow path across batch iterations."
     )
 
     # Verify all 3 items produced results (compilation was valid)
@@ -179,12 +170,12 @@ def test_compile_workflow_called_once_for_parallel_batch(tmp_path: Path):
 
     The batch executor pre-warms the compile cache on the original node before
     deep-copying for parallel dispatch. Each deep-copied WorkflowExecutor inherits
-    _cached_workflow (via _cached_loaded_ir which signals non-inline source),
-    so no thread recompiles.
+    ``_compiled_workflow_cache`` (populated only when the IR came from a file/name
+    source, as signalled by a non-empty ``_loaded_ir_cache``), so no thread recompiles.
 
     This is the key parallel performance improvement: O(1) compilation instead of O(N).
-    Without pre-warming, each of the N deep-copied threads starts with _cached_workflow=None
-    and independently calls compile_workflow().
+    Without pre-warming, each of the N deep-copied threads starts with an empty
+    compile cache and independently calls compile_workflow().
 
     Uses a file-based child workflow (not inline IR) because pre-warm only works for
     file/name sources. Inline IR can't survive deepcopy's id() change, and inline IR
@@ -262,9 +253,9 @@ def test_parallel_batch_items_produce_distinct_output(tmp_path: Path):
     """Each parallel batch item gets its own resolved params — no cross-thread contamination.
 
     This is the correctness complement to compile-once. The pre-warm deep-copies
-    the WorkflowExecutor (including _cached_workflow) per thread. If the deep copy
-    somehow shares node instances (params dict references, successor references),
-    threads clobber each other's resolved params and items get wrong output.
+    the WorkflowExecutor (including ``_compiled_workflow_cache``) per thread. If
+    the deep copy somehow shares node instances (params dict references, successor
+    references), threads clobber each other's resolved params and items get wrong output.
 
     The failure mode is SILENT: no crash, just item A's text appearing in item B's
     result. This test catches it by verifying each result contains its own unique marker.
@@ -296,7 +287,7 @@ def test_parallel_batch_items_produce_distinct_output(tmp_path: Path):
                 },
                 "params": {
                     "workflow": str(child_md),
-                    "text": "${item}",
+                    "inputs": {"text": "${item}"},
                 },
             },
         ],
@@ -324,15 +315,16 @@ def test_parallel_batch_items_produce_distinct_output(tmp_path: Path):
         )
 
 
-def test_each_batch_item_produces_distinct_output():
+def test_each_batch_item_produces_distinct_output(tmp_path: Path) -> None:
     """Each batch item produces output containing its own text, not stale data.
 
-    This test uses ${item} inside workflow_ir, which the parent resolver
-    resolves per batch iteration. Each child gets a different literal command
-    ("echo MARKER_alpha_END", "echo MARKER_beta_END", "echo MARKER_gamma_END"),
-    producing distinct output per item.
+    This test uses ``inputs: {text: ${item}}`` at the parent node level. The
+    parent resolver resolves ``${item}`` per batch iteration, and the child's
+    template ``${text}`` (inside its shell command) produces distinct output
+    per item — even though the child itself compiles only once (static path).
     """
-    parent_ir = _make_parent_ir_dynamic_child()
+    child = _write_dynamic_child(tmp_path)
+    parent_ir = _make_parent_ir_dynamic_child(child)
     registry = Registry()
     workflow = compile_workflow(parent_ir, registry=registry)
     shared: dict[str, Any] = dict(workflow.resolved_defaults)
@@ -530,7 +522,7 @@ def test_resolved_defaults_do_not_leak_between_batch_items(tmp_path: Path):
                 "batch": {"items": "${source.stdout}", "as": "item"},
                 "params": {
                     "workflow": str(child_md),
-                    "text": "${item}",  # Per-item — must NOT leak between items
+                    "inputs": {"text": "${item}"},  # Per-item — must NOT leak between items
                     # prefix NOT passed — child should use default "DEFAULT"
                 },
             },

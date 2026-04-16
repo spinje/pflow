@@ -317,7 +317,7 @@ class TestWorkflowExecutorIntegration:
                 executor.params = {
                     "workflow": workflow_name,
                     "__registry__": test_registry,
-                    "text": "Executor",
+                    "inputs": {"text": "Executor"},
                 }
 
                 # Prepare (loads workflow)
@@ -325,7 +325,7 @@ class TestWorkflowExecutorIntegration:
                 prep_res = executor.prep(shared)
 
                 # Verify workflow was loaded
-                assert prep_res["workflow_ir"]["nodes"][0]["type"] == "test_echo"
+                assert prep_res["child_ir"]["nodes"][0]["type"] == "test_echo"
                 assert prep_res["workflow_source"] == f"name:{workflow_name}"
                 assert workflow_name in prep_res["workflow_path"]
 
@@ -349,20 +349,6 @@ class TestWorkflowExecutorIntegration:
             shared = {}
             with pytest.raises(WorkflowNotFoundError, match="non-existent"):
                 executor.prep(shared)
-
-    def test_workflow_executor_mutual_exclusivity(self, workflow_manager, sample_markdown, tmp_path):
-        """Test that providing both workflow and workflow_ir raises error."""
-        workflow_manager.save("priority-test", sample_markdown)
-
-        with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
-            executor = WorkflowExecutor()
-            executor.params = {
-                "workflow": "priority-test",
-                "workflow_ir": {"dummy": "ir"},
-            }
-
-            with pytest.raises(ValueError, match="Only one of"):
-                executor.prep({})
 
 
 class TestCLIIntegration:
@@ -435,15 +421,15 @@ class TestFormatCompatibility:
                 executor.params = {
                     "workflow": "raw-ir-test",
                     "__registry__": test_registry,
-                    "text": "test input",
+                    "inputs": {"text": "test input"},
                 }
 
                 prep_res = executor.prep({})
 
                 # Executor should get raw IR, not wrapper
-                assert "nodes" in prep_res["workflow_ir"]
-                assert "name" not in prep_res["workflow_ir"]  # No metadata fields
-                assert "created_at" not in prep_res["workflow_ir"]
+                assert "nodes" in prep_res["child_ir"]
+                assert "name" not in prep_res["child_ir"]  # No metadata fields
+                assert "created_at" not in prep_res["child_ir"]
 
 
 class TestErrorHandling:
@@ -639,7 +625,7 @@ def test_nested_workflow_with_real_nodes(tmp_path):
                 "type": "workflow",
                 "params": {
                     "workflow": "inner-workflow",
-                    "message": "Hello from nested workflow!",
+                    "inputs": {"message": "Hello from nested workflow!"},
                 },
             }
         ],

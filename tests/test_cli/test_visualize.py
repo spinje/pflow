@@ -80,24 +80,23 @@ class TestVisualizeDepthFlag:
 
     def test_depth_zero_produces_no_subgraphs(self, tmp_path: Path) -> None:
         """--depth 0 treats workflow nodes as opaque (no subgraph expansion)."""
+        child_path = tmp_path / "depth_child.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [
+                    {"id": "inner", "type": "shell", "params": {"command": "echo inner"}},
+                ],
+                "edges": [],
+            },
+            child_path,
+        )
         ir = {
             "nodes": [
                 {"id": "step1", "type": "shell", "params": {"command": "echo hi"}},
                 {
                     "id": "sub",
                     "type": "workflow",
-                    "params": {
-                        "workflow_ir": {
-                            "nodes": [
-                                {
-                                    "id": "inner",
-                                    "type": "shell",
-                                    "params": {"command": "echo inner"},
-                                }
-                            ],
-                            "edges": [],
-                        }
-                    },
+                    "params": {"workflow": str(child_path)},
                 },
             ],
             "edges": [{"from": "step1", "to": "sub"}],

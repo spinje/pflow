@@ -927,9 +927,43 @@ class TestFullPipeline:
         assert shared.get("__warnings__", {}) == {}
         assert shared["__execution__"]["failed_node"] is None
 
-    def test_sub_workflow_end_does_not_leak_to_parent(self) -> None:
+    def test_sub_workflow_end_does_not_leak_to_parent(self, tmp_path) -> None:
         """Inner workflow terminating via 'end' must not stop the parent."""
-        markdown = _md("""\
+        child_file = tmp_path / "inner.pflow.md"
+        child_file.write_text(
+            _md(
+                """\
+                # Inner Workflow
+
+                Terminates early via the 'end' action.
+
+                ## Steps
+
+                ### inner-decider
+
+                Decide to terminate the inner workflow.
+
+                - type: code
+                - next: end
+
+                ```python code
+                next: str = "end"
+                result: str = "inner done"
+                ```
+
+                ### inner-after
+
+                Should not run — the decider ends the workflow.
+
+                - type: shell
+                - command: printf '%s' should-not-run
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        parent_md = _md(
+            f"""\
             # Parent Workflow
 
             Outer workflow continues after sub-workflow ends early.
@@ -941,21 +975,7 @@ class TestFullPipeline:
             Sub-workflow that terminates via end.
 
             - type: workflow
-            - workflow_ir:
-                nodes:
-                  - id: inner-decider
-                    type: code
-                    params:
-                      code: |
-                        next: str = "end"
-                        result: str = "inner done"
-                  - id: inner-after
-                    type: shell
-                    params:
-                      command: printf '%s' should-not-run
-                edges:
-                  - from: inner-decider
-                    to: inner-after
+            - workflow: {child_file}
 
             ### outer-after
 
@@ -963,9 +983,10 @@ class TestFullPipeline:
 
             - type: shell
             - command: printf '%s' outer-continued
-        """)
+            """
+        )
 
-        shared = parse_compile_and_run(markdown)
+        shared = parse_compile_and_run(parent_md)
 
         assert _node_ran(shared, "run-inner")
         assert _node_ran(shared, "outer-after")

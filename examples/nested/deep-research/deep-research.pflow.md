@@ -42,8 +42,9 @@ Analyze each prepared document through extraction and scoring.
 
 - type: workflow
 - workflow: ./analyze-source.pflow.md
-- content: ${item.text}
-- focus: ${item.focus}
+- inputs:
+    content: ${item.text}
+    focus: ${item.focus}
 
 ```yaml batch
 items: ${prepare.result}
@@ -70,8 +71,9 @@ Review the combined analysis from five critical perspectives. Each review runs t
 
 - type: workflow
 - workflow: ${item.workflow}
-- summary: ${combine.result}
-- aspect: ${item.aspect}
+- inputs:
+    summary: ${combine.result}
+    aspect: ${item.aspect}
 
 ```yaml batch
 items:

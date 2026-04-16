@@ -32,8 +32,9 @@ Score the extracted sections for quality.
 
 - type: workflow
 - workflow: ./score-section.pflow.md
-- text: ${extract.response}
-- criteria: ${focus}
+- inputs:
+    text: ${extract.response}
+    criteria: ${focus}
 
 ### compile
 

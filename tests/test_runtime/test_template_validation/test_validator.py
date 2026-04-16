@@ -1,5 +1,6 @@
 """Tests for template variable validation."""
 
+from pathlib import Path
 from unittest.mock import Mock
 
 from pflow.core.diagnostic import Severity
@@ -1030,18 +1031,29 @@ class TestBatchWorkflowNodeValidation:
     """Tests for batch processing on workflow nodes (bug: validator blocked batch+workflow)."""
 
     @staticmethod
-    def _child_workflow_ir(output_keys: list[str]) -> dict:
-        """Build a minimal inline child workflow IR with given output keys."""
-        outputs = {key: {"type": "any"} for key in output_keys}
-        return {
-            "nodes": [{"id": "step", "type": "llm", "params": {"prompt": "hi"}}],
-            "edges": [],
-            "outputs": outputs,
-        }
+    def _write_child_with_outputs(tmp_path: Path, name: str, output_keys: list[str]) -> Path:
+        """Write a child workflow file declaring the given output keys.
 
-    def test_workflow_batch_outputs_recognized(self):
+        Used by tests asserting ``${node.results[N].<key>}`` validates. Outputs
+        are declared with simple ``source:`` refs — semantics don't matter;
+        only the names need to match the assertions so the template validator's
+        ``_resolve_child_workflow_outputs`` can see them.
+        """
+        path = tmp_path / f"{name}.pflow.md"
+        outputs_md = "\n".join(f"### {key}\n\nOutput {key}.\n\n- source: ${{step.stdout}}\n" for key in output_keys)
+        path.write_text(
+            f"# Child {name}\n\nChild workflow for template validation tests.\n\n"
+            f"## Inputs\n\n### text\n\nInput text.\n\n- type: string\n- required: true\n\n"
+            f"## Steps\n\n### step\n\nEcho input.\n\n"
+            f"- type: shell\n\n```shell command\necho ${{text}}\n```\n\n"
+            f"## Outputs\n\n{outputs_md}\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_workflow_batch_outputs_recognized(self, tmp_path: Path):
         """${node.results}, ${node.count}, etc. should be valid for batched workflow nodes."""
-        child_ir = self._child_workflow_ir(["content"])
+        child_path = self._write_child_with_outputs(tmp_path, "child", ["content"])
         workflow_ir = {
             "inputs": {"items": {"type": "array", "required": True}},
             "nodes": [
@@ -1049,7 +1061,7 @@ class TestBatchWorkflowNodeValidation:
                     "id": "process-all",
                     "type": "workflow",
                     "batch": {"items": "${items}", "parallel": True},
-                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                    "params": {"workflow": str(child_path), "inputs": {"text": "${item}"}},
                 },
                 {
                     "id": "summarize",
@@ -1064,9 +1076,9 @@ class TestBatchWorkflowNodeValidation:
         errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
-    def test_workflow_batch_all_outputs_available(self):
+    def test_workflow_batch_all_outputs_available(self, tmp_path: Path):
         """All batch outputs should be available on batched workflow nodes."""
-        child_ir = self._child_workflow_ir(["summary"])
+        child_path = self._write_child_with_outputs(tmp_path, "child", ["summary"])
         workflow_ir = {
             "inputs": {"items": {"type": "array", "required": True}},
             "nodes": [
@@ -1074,7 +1086,7 @@ class TestBatchWorkflowNodeValidation:
                     "id": "batch-wf",
                     "type": "workflow",
                     "batch": {"items": "${items}"},
-                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                    "params": {"workflow": str(child_path), "inputs": {"text": "${item}"}},
                 },
                 {
                     "id": "report",
@@ -1098,9 +1110,14 @@ class TestBatchWorkflowNodeValidation:
         errors, _warnings = split_template_diagnostics(workflow_ir, {"items": []}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
-    def test_workflow_batch_inner_outputs_in_results(self):
-        """Child workflow outputs should be accessible inside results array items."""
-        child_ir = self._child_workflow_ir(["content"])
+    def test_workflow_batch_inner_outputs_in_results(self, tmp_path: Path):
+        """Child workflow outputs should be accessible inside results array items.
+
+        Regression guard (post-task-153): the mutation check ``${process-all.results[0].BOGUS}``
+        MUST fail here. Before the file-backed migration this test passed trivially because
+        ``_resolve_child_workflow_outputs`` returned None for ``workflow_ir``-only nodes.
+        """
+        child_path = self._write_child_with_outputs(tmp_path, "child", ["content"])
         workflow_ir = {
             "inputs": {"items": {"type": "array", "required": True}},
             "nodes": [
@@ -1108,7 +1125,7 @@ class TestBatchWorkflowNodeValidation:
                     "id": "process-all",
                     "type": "workflow",
                     "batch": {"items": "${items}"},
-                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                    "params": {"workflow": str(child_path), "inputs": {"text": "${item}"}},
                 },
                 {
                     "id": "use-results",
@@ -1125,9 +1142,9 @@ class TestBatchWorkflowNodeValidation:
         errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
-    def test_workflow_batch_blocks_direct_child_outputs(self):
+    def test_workflow_batch_blocks_direct_child_outputs(self, tmp_path: Path):
         """Direct child output access should fail when batch is configured."""
-        child_ir = self._child_workflow_ir(["content"])
+        child_path = self._write_child_with_outputs(tmp_path, "child", ["content"])
         workflow_ir = {
             "inputs": {"items": {"type": "array", "required": True}},
             "nodes": [
@@ -1135,7 +1152,7 @@ class TestBatchWorkflowNodeValidation:
                     "id": "process-all",
                     "type": "workflow",
                     "batch": {"items": "${items}"},
-                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                    "params": {"workflow": str(child_path), "inputs": {"text": "${item}"}},
                 },
                 {
                     "id": "wrong",
@@ -1152,9 +1169,9 @@ class TestBatchWorkflowNodeValidation:
         assert len(errors) > 0, "Should reject direct child output access on batched workflow"
         assert any("content" in d.message for d in errors), f"Error should mention 'content': {errors}"
 
-    def test_workflow_batch_item_alias_recognized(self):
+    def test_workflow_batch_item_alias_recognized(self, tmp_path: Path):
         """${item} should be valid inside batched workflow node params."""
-        child_ir = self._child_workflow_ir(["content"])
+        child_path = self._write_child_with_outputs(tmp_path, "child", ["content"])
         workflow_ir = {
             "inputs": {"items": {"type": "array", "required": True}},
             "nodes": [
@@ -1162,7 +1179,7 @@ class TestBatchWorkflowNodeValidation:
                     "id": "process-all",
                     "type": "workflow",
                     "batch": {"items": "${items}", "as": "thing"},
-                    "params": {"workflow_ir": child_ir, "text": "${thing}"},
+                    "params": {"workflow": str(child_path), "inputs": {"text": "${thing}"}},
                 },
             ],
             "edges": [],
@@ -1232,16 +1249,22 @@ class TestBatchWorkflowNodeValidation:
         # Should pass — unknown inner outputs should be permissive, not strict
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
-    def test_workflow_without_batch_still_works(self):
-        """Non-batched workflow nodes should still resolve child outputs normally."""
-        child_ir = self._child_workflow_ir(["content"])
+    def test_workflow_without_batch_still_works(self, tmp_path: Path):
+        """Non-batched workflow nodes should still resolve child outputs normally.
+
+        Regression guard (post-task-153): this exercises the non-batch path of
+        ``_resolve_child_workflow_outputs``. Before the file-backed migration the
+        child's outputs were not resolvable (no ``workflow:`` ref), so ``${single.BOGUS}``
+        would pass. File fixture restores proper coverage.
+        """
+        child_path = self._write_child_with_outputs(tmp_path, "child", ["content"])
         workflow_ir = {
             "inputs": {"text": {"type": "string", "required": True}},
             "nodes": [
                 {
                     "id": "single",
                     "type": "workflow",
-                    "params": {"workflow_ir": child_ir, "text": "${text}"},
+                    "params": {"workflow": str(child_path), "inputs": {"text": "${text}"}},
                 },
                 {
                     "id": "use-it",

@@ -241,8 +241,7 @@ class TestWorkflowValidator:
                     "id": "sub",
                     "type": "workflow",
                     "params": {
-                        "workflow_ref": "./child.pflow.md",
-                        "output_mapping": {"result": "sub_result"},
+                        "workflow": "./child.pflow.md",
                     },
                 },
             ],

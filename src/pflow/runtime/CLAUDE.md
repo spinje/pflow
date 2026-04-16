@@ -85,15 +85,16 @@ Pre-execution validation. See `template_validation/CLAUDE.md`.
 
 ### WorkflowExecutor (`workflow_executor.py`)
 
-Runtime node for nested workflow execution. Same syntax as any other node — non-reserved params are child inputs, child outputs auto-expose via namespace.
+Runtime node for nested workflow execution. Child outputs auto-expose via namespace.
 
-- **`workflow` param**: file paths or saved workflow names. **`workflow_ir`**: inline IR dict.
-- **Params-as-inputs**: all non-reserved params become child inputs
+- **`workflow` param**: file path or saved workflow name. The only sub-workflow reference mechanism.
+- **`inputs` param**: dict of values passed to the child's declared `## Inputs`. Every key must be declared; extras rejected at parse time (Step 7 + sub-workflow validator, both directions) and at runtime (`_validate_child_params`).
+- **Closed schema via `ALLOWED_PARAMS`** (`ClassVar[frozenset[str]]`): `workflow`, `inputs`, `error_action`, `storage_mode`, `max_depth`. Validator Step 7 reads this attribute to reject unknown top-level fields — forward-compatible shape for the planned schema-declaration refactor (see task list).
 - **Auto-outputs**: child's `## Outputs` exposed via namespace. No declarations → all non-internal keys exposed.
-- **Storage modes**: `mapped` (default, isolated) and `shared` (parent storage directly)
-- **Compile-once cache**: `_cached_workflow` + `_cached_workflow_ir_id` — compiles once per batch, reuses for sequential items
-- **Circular detection** via `_pflow_stack`, **max depth** via `_pflow_depth` (default 10)
-- **Relative paths** resolve from parent workflow directory via `_pflow_workflow_file`
+- **Storage modes**: `mapped` (default, isolated) and `shared` (parent storage directly).
+- **Compile-once cache**: `_compiled_workflow_cache` (dict keyed by resolved workflow path) + `_loaded_ir_cache` (dict keyed by raw workflow ref) — compiles once per unique child, reuses for sequential batch items. Heterogeneous batches (`${item.workflow}` varies per item) correctly cache each child independently.
+- **Circular detection** via `_pflow_stack`, **max depth** via `_pflow_depth` (default 10).
+- **Relative paths** resolve from parent workflow directory via `_pflow_workflow_file`.
 - **Cross-cutting key propagation**: `_PROPAGATED_KEYS` — `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `_trace_collector`. Per-workflow keys (`__execution__`, `__cache_hits__`, `__template_errors__`, `__failures__`) NOT propagated — child gets its own. Adding `__failures__` here would leak child node IDs into parent state.
 
 ### MemoizationCache (`cache.py`)
@@ -186,5 +187,5 @@ shared["_pflow_workflow_file"] = str
 - **`__` prefixed params are reserved** — never use for user parameters
 - **Don't modify `__execution__` structure** — checkpoint integrity is critical for resume
 - **`_source_line` keys NOT filtered in split_params** — `python_code.py` reads them
-- **Compile-once `id()` check** — only works for static `workflow_ir`
+- **Compile-once cache is keyed by resolved workflow path** (`_compiled_workflow_cache`). Heterogeneous batches with `${item.workflow}` varying per item correctly cache each child separately.
 - **Two validation files** — `compilation/ir_preparation.py` (compiler-time) vs `core/workflow/validator.py` (pre-execution). Don't confuse them.
