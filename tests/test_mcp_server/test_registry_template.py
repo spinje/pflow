@@ -21,7 +21,7 @@ def test_runner_resolves_template_in_single_node_ir() -> None:
     """
     synthetic_ir: dict = {
         "inputs": {
-            "greeting": {"type": "str", "description": "A greeting word"},
+            "greeting": {"type": "string", "description": "A greeting word"},
         },
         "nodes": [
             {

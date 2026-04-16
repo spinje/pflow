@@ -1283,9 +1283,9 @@ class TestBatchWorkflowNodeValidation:
         """Unused-input diagnostics should keep their sorted input list in context."""
         workflow_ir = {
             "inputs": {
-                "used_one": {"type": "str"},
-                "unused_one": {"type": "str"},
-                "unused_two": {"type": "str"},
+                "used_one": {"type": "string"},
+                "unused_one": {"type": "string"},
+                "unused_two": {"type": "string"},
             },
             "nodes": [
                 {

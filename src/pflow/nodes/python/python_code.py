@@ -35,6 +35,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Optional
 
 from pflow.core.node import Node
+from pflow.nodes.file.exceptions import NonRetriableError
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,134 @@ def _get_outer_type(type_str: str) -> type | tuple[type, ...] | None:
 
     base = type_str.split("[")[0].strip()
     return _TYPE_MAP.get(base)
+
+
+# Typing-module names that have a modern lowercase built-in generic (PEP 585).
+# pflow prefers these over the typing-module spellings.
+_MODERN_GENERIC_NAMES = frozenset({"List", "Dict", "Tuple", "Set", "FrozenSet", "Type"})
+
+# Typing-module names that genuinely require explicit import (no modern built-in replacement).
+_REQUIRES_TYPING_IMPORT = frozenset({
+    "Literal",
+    "TypeVar",
+    "Callable",
+    "Final",
+    "ClassVar",
+    "Iterable",
+    "Iterator",
+    "Sequence",
+    "Mapping",
+})
+
+# Union of the three typing-name families pflow proactively rejects inside
+# annotations. Rejecting at AST-walk time (prep) keeps the opinionated guidance
+# reachable across Python versions: PEP 649 (3.14+) defers annotation evaluation,
+# so the NameError fallback in `_format_exec_error` never fires for code like
+# `x: Union[int, str] = 1`. Typing names used as *values* (`x = Union[int, str]`)
+# still hit the NameError path — eager evaluation there is unchanged.
+_REJECTED_ANNOTATION_NAMES = _MODERN_GENERIC_NAMES | {"Union"} | _REQUIRES_TYPING_IMPORT
+
+
+def _suggest_for_nameerror(var_name: str) -> str:
+    """Return an opinionated, canonical fix suggestion for a NameError.
+
+    pflow auto-injects `Any`, `Optional`, and the `typing` module — other
+    typing names produce a NameError. Rather than listing multiple options,
+    this emits ONE canonical fix per case, preferring modern Python (PEP 585
+    lowercase generics, PEP 604 pipe unions) over typing-module spellings.
+    """
+    if var_name in _MODERN_GENERIC_NAMES:
+        lower = var_name.lower()
+        return (
+            f"  - Use '{lower}[...]' instead — Python 3.9+ supports lowercase built-in generics (PEP 585).\n"
+            f"    Example: 'x: {lower}[str]' instead of 'x: {var_name}[str]'."
+        )
+    if var_name == "Union":
+        return (
+            "  - Use pipe syntax instead: 'A | B' (PEP 604, Python 3.10+).\n"
+            "    Example: 'x: int | str' instead of 'x: Union[int, str]'."
+        )
+    if var_name in _REQUIRES_TYPING_IMPORT:
+        return (
+            f"  - Add 'from typing import {var_name}' at the top of your code block.\n"
+            "    (pflow auto-injects 'Any' and 'Optional' — other typing names need explicit import.)"
+        )
+    # Not a known typing name — fall back to the input-variable suggestions.
+    return (
+        f'  - Add \'{var_name}\' to the inputs dict: "inputs": {{"{var_name}": ...}}\n'
+        f"  - Or define '{var_name}' in the code before use\n"
+        "  - Check for typos in variable names"
+    )
+
+
+def _extract_imported_names(code: str) -> frozenset[str]:
+    """Return names bound by top-level ``import`` / ``from ... import`` statements.
+
+    Used by ``_check_annotation_vocabulary`` to avoid rejecting typing names that
+    the user imported explicitly (e.g., ``from typing import Literal``).
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return frozenset()
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                imported.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add(alias.asname or alias.name.split(".")[0])
+    return frozenset(imported)
+
+
+def _check_annotation_vocabulary(code: str, annotations: dict[str, str]) -> None:
+    """Reject lowercase ``any`` and forgotten typing-module imports in annotations.
+
+    Walks each annotation as an AST so nested occurrences
+    (``list[any]``, ``dict[str, any]``, ``int | any``) are caught — not just the
+    outermost token. String literals like ``Literal['any']`` stay as
+    ``ast.Constant`` and are correctly ignored.
+
+    Rejects ``Union`` / ``List`` / ``Literal`` etc. eagerly (at prep) when they
+    aren't imported, because PEP 649 (Python 3.14+) defers annotation evaluation
+    — the NameError fallback in ``_format_exec_error`` only catches these names
+    when used as *values*, not annotations. Users who explicitly
+    ``from typing import X`` are left alone; the nudge targets forgotten imports.
+    """
+    imported = _extract_imported_names(code)
+    for var_name, annotation in annotations.items():
+        try:
+            tree = ast.parse(annotation, mode="eval")
+        except SyntaxError:
+            # Malformed annotations surface via the existing NameError path at exec time.
+            continue
+        # Unwrap string forward-reference annotations (`x: "list[any]"`) so the
+        # inner type is walked, not treated as an opaque ast.Constant. Without this
+        # the outer string hides nested violations — which PEP 649 (3.14+) leaves
+        # uncaught at runtime too, since the annotation is never evaluated.
+        if isinstance(tree.body, ast.Constant) and isinstance(tree.body.value, str):
+            try:
+                tree = ast.parse(tree.body.value, mode="eval")
+            except SyntaxError:
+                continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Name):
+                continue
+            if node.id == "any":
+                raise NonRetriableError(
+                    f"Invalid type annotation for '{var_name}': 'any' (lowercase).\n\n"
+                    "Use 'Any' (capitalized) in Python code blocks. "
+                    "pflow auto-injects `typing.Any` — no import needed.\n"
+                    f"  {var_name}: Any\n\n"
+                    "Note: lowercase 'any' is the legal spelling in `## Inputs` / `## Outputs` "
+                    "sections (e.g., `- type: any`), but Python annotations must use 'Any' (capitalized)."
+                )
+            if node.id in _REJECTED_ANNOTATION_NAMES and node.id not in imported:
+                raise NonRetriableError(
+                    f"Invalid type annotation for '{var_name}': '{node.id}' is not defined.\n\n"
+                    f"{_suggest_for_nameerror(node.id)}"
+                )
 
 
 def extract_optional_input_keys(code: str, input_keys: set[str]) -> set[str]:
@@ -272,6 +401,7 @@ class PythonCodeNode(Node):
 
         # Detect type annotations accidentally written in YAML inputs (#148)
         self._check_input_annotation_syntax(inputs, annotations)
+        _check_annotation_vocabulary(code, annotations)
 
         # Validate result or next annotation exists
         has_result = "result" in annotations
@@ -322,6 +452,7 @@ class PythonCodeNode(Node):
         namespace: dict[str, Any] = {"__builtins__": __builtins__}
         namespace["typing"] = _typing_module
         namespace["Optional"] = _typing_module.Optional
+        namespace["Any"] = _typing_module.Any
         namespace.update(inputs)
 
         # Execute in thread with stdout/stderr capture.
@@ -594,7 +725,8 @@ class PythonCodeNode(Node):
                     f"Input '{var_name}' expects {type_str} but received {actual}\n\n"
                     f"Suggestions:\n"
                     f"  - Change the type annotation to: {var_name}: {actual}\n"
-                    f"  - Or convert the input value to {type_str}"
+                    f"  - Or convert the input value to {type_str}\n"
+                    f"  - Or use `Any` to accept any type: {var_name}: Any"
                 )
 
     @staticmethod
@@ -622,12 +754,8 @@ class PythonCodeNode(Node):
             msg = f"Undefined variable '{var_name}'"
             if location:
                 msg += f"\n{location}"
-            msg += (
-                f"\n\nSuggestions:\n"
-                f'  - Add \'{var_name}\' to the inputs dict: "inputs": {{"{var_name}": ...}}\n'
-                f"  - Or define '{var_name}' in the code before use\n"
-                f"  - Check for typos in variable names"
-            )
+            suggestion = _suggest_for_nameerror(var_name)
+            msg += f"\n\nSuggestions:\n{suggestion}"
             return msg
         if isinstance(exc, ImportError):
             module = getattr(exc, "name", str(exc))

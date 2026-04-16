@@ -18,8 +18,8 @@ def test_find_returns_matching_workflow() -> None:
             "description": "Analyzes GitHub pull requests",
             "version": "1.0.0",
             "ir": {
-                "inputs": {"repo": {"type": "str", "required": True, "description": "Repository name"}},
-                "outputs": {"analysis": {"type": "str", "description": "Analysis result"}},
+                "inputs": {"repo": {"type": "string", "required": True, "description": "Repository name"}},
+                "outputs": {"analysis": {"type": "string", "description": "Analysis result"}},
             },
         },
     )

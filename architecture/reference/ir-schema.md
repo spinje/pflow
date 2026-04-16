@@ -60,12 +60,12 @@ The optional `inputs` field defines the parameters a workflow expects to receive
   "ir_version": "0.1.0",
   "inputs": {
     "url": {
-      "type": "str",
+      "type": "string",
       "required": true,
       "description": "YouTube video URL to process"
     },
     "language": {
-      "type": "str",
+      "type": "string",
       "required": false,
       "default": "en",
       "description": "Language code for transcript extraction"
@@ -80,7 +80,7 @@ The optional `inputs` field defines the parameters a workflow expects to receive
 
 | Field | Type | Description |
 |---|---|---|
-| `type` | string | Data type: `str`, `int`, `float`, `bool`, `dict`, `list`, `any` |
+| `type` | string | Data type: `string`, `number`, `integer`, `boolean`, `array`, `object`, `any` |
 | `required` | boolean | Whether the input must be provided |
 | `default` | any | Default value if not provided (only for optional inputs) |
 | `description` | string | Human-readable description for documentation |
@@ -95,12 +95,12 @@ The optional `outputs` field declares what the workflow produces:
   "ir_version": "0.1.0",
   "outputs": {
     "summary": {
-      "type": "str",
+      "type": "string",
       "description": "Generated summary of the video content",
       "source": "${create-summary.response}"
     },
     "metadata": {
-      "type": "dict",
+      "type": "object",
       "description": "Video metadata including title and duration",
       "source": "${fetch-metadata.video_info}"
     }
@@ -132,12 +132,12 @@ The optional `outputs` field declares what the workflow produces:
   },
   "inputs": {
     "url": {
-      "type": "str",
+      "type": "string",
       "required": true,
       "description": "YouTube video URL"
     },
     "summary_style": {
-      "type": "str",
+      "type": "string",
       "required": false,
       "default": "concise",
       "description": "Summary style: concise, detailed, or bullet-points"
@@ -145,12 +145,12 @@ The optional `outputs` field declares what the workflow produces:
   },
   "outputs": {
     "summary": {
-      "type": "str",
+      "type": "string",
       "description": "Video summary in requested style",
       "source": "${summarize.response}"
     },
     "word_count": {
-      "type": "int",
+      "type": "integer",
       "description": "Word count of original transcript",
       "source": "${analyze.stats.word_count}"
     }
@@ -205,6 +205,8 @@ The optional `outputs` field declares what the workflow produces:
 - **CLI**: The `pflow run` command validates inputs against workflow declarations
 
 > **Note**: While nodes declare their interfaces in docstrings (extracted to metadata), workflows declare their interfaces directly in the IR. This enables workflows to be first-class citizens in the pflow ecosystem, reusable and composable just like nodes.
+
+> **Vocabulary note**: Workflow `inputs` / `outputs` use the canonical workflow vocabulary (`string`, `number`, `integer`, `boolean`, `array`, `object`, `any`). Node metadata `Interface:` docstrings remain Python-named (`str`, `int`, `dict`, `list`, ...). They are separate surfaces with different consumers.
 
 ---
 

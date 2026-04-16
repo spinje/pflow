@@ -39,7 +39,7 @@ result: dict = {}     # required on result too
 ```
 
 <Tip>
-  Use `object` as the type when you don't know or care what the input type is — it skips validation entirely.
+  Use `Any` when you don't know or care what the input type is. pflow auto-injects `Any`, so you don't need `from typing import Any`.
 </Tip>
 
 <Accordion title="Supported types">
@@ -54,7 +54,7 @@ result: dict = {}     # required on result too
   | `set` | `set` | |
   | `tuple` | `tuple` | |
   | `bytes` | `bytes` | |
-  | `object` | — | Skips type validation entirely |
+  | `Any` | — | Auto-injected. Skips type validation entirely |
 
   Only the outer type is checked — `list[dict]` validates that the value is a `list`, but doesn't check whether the elements are dicts.
 </Accordion>
@@ -82,6 +82,20 @@ result: list = [u for u in data if u['active']]
 ````
 
 Templates in the `inputs` dict get resolved before your code runs. By the time Python sees `data`, it's already a native object — no parsing needed.
+
+## Bridge to workflow inputs
+
+Workflow `## Inputs` / `## Outputs` use canonical names. Code blocks use Python annotations.
+
+| Workflow `type:` | Code annotation |
+|---|---|
+| `string` | `str` |
+| `integer` | `int` |
+| `number` | `int \| float` or `float` |
+| `boolean` | `bool` |
+| `array` | `list` |
+| `object` | `dict` |
+| `any` | `Any` |
 
 ## Inputs are native objects
 

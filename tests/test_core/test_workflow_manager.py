@@ -30,8 +30,8 @@ def sample_ir():
     """Sample workflow IR for testing."""
     return {
         "ir_version": "0.1.0",
-        "inputs": {"text": {"type": "str", "description": "Input text"}},
-        "outputs": {"result": {"type": "str", "description": "Processed result"}},
+        "inputs": {"text": {"type": "string", "description": "Input text"}},
+        "outputs": {"result": {"type": "string", "description": "Processed result"}},
         "nodes": [{"id": "node1", "type": "shell", "config": {"message": "Hello"}}],
         "edges": [],
     }

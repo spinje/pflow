@@ -389,3 +389,136 @@ class TestExecErrorActionDetection:
         assert "banana" in msg
         assert "no successor edge matches" in msg
         assert "child.pflow.md" in msg
+
+
+class TestTemplateRefSubWorkflowValidation:
+    """Pin the invariant that every IR reaching compile_workflow has been validated.
+
+    Template-referenced children (``workflow: ${var}``) skip the parent's recursive
+    validation because the resolver can't resolve the reference statically. Previously
+    this meant child IRs with Python aliases (``type: str``) silently normalized via
+    a defense-in-depth map. Now ``_compile_sub_workflow`` runs ``validate_ir`` itself,
+    so the contract ``"Python aliases are hard errors"`` holds on every path.
+    """
+
+    def test_compile_rejects_python_alias_in_child_ir(self):
+        """A child IR declaring ``type: str`` must fail at the validation step.
+
+        ``_compile_sub_workflow`` wraps the underlying ``SchemaValidationError``
+        in ``CompilationError`` so parent-side error handling is consistent
+        regardless of whether the failure is structural, schematic, or
+        compiler-internal.
+        """
+        from pflow.core.exceptions import CompilationError
+
+        node = WorkflowExecutor()
+        node.set_params({})
+
+        child_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}],
+            "inputs": {"x": {"type": "str", "required": True}},
+        }
+
+        with pytest.raises(CompilationError) as exc_info:
+            node._compile_sub_workflow(child_ir, "<inline>", {"x": "hello"})
+
+        assert "Use 'string' instead of 'str'" in str(exc_info.value)
+
+    def test_compile_accepts_canonical_type_in_child_ir(self):
+        """A child IR declaring ``type: string`` compiles successfully."""
+        node = WorkflowExecutor()
+        node.set_params({})
+
+        child_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}],
+            "inputs": {"x": {"type": "string", "required": True}},
+        }
+
+        compiled = node._compile_sub_workflow(child_ir, "<inline>", {"x": "hello"})
+        assert compiled is not None
+
+    def test_template_ref_bypass_close_end_to_end_through_runner(self, tmp_path):
+        """End-to-end: parent with ``workflow: ${child_ref}`` pointing to a child
+        with a Python alias must fail with the canonical suggestion.
+
+        The direct ``_compile_sub_workflow`` tests above prove the function
+        validates. This test proves the full dispatch chain — parent validator
+        skips template refs → runtime resolver loads child → compile path
+        routes through ``_compile_sub_workflow`` → ``normalize_ir`` +
+        ``validate_ir`` reject → ``CompilationError`` propagates.
+
+        Two regressions this catches that the unit tests miss:
+        1. Runtime refactor that bypasses ``_compile_sub_workflow`` (unit
+           tests still pass; real pipeline breaks).
+        2. Removal of ``normalize_ir(workflow_ir)`` call (unit tests use IRs
+           that include ``ir_version`` explicitly; parsed-markdown children
+           don't — the markdown parser does not inject it).
+        """
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
+        from tests.shared.markdown_utils import write_workflow_file
+
+        child_path = tmp_path / "child.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [{"id": "echo", "type": "shell", "params": {"command": "echo ${message}"}}],
+                "inputs": {"message": {"type": "str", "required": True}},
+                "outputs": {"out": {"source": "${echo.stdout}"}},
+            },
+            child_path,
+        )
+
+        parent_ir = {
+            "nodes": [
+                {
+                    "id": "call_child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${child_path}",
+                        "inputs": {"message": "hello"},
+                    },
+                }
+            ],
+            "inputs": {"child_path": {"type": "string", "required": True}},
+        }
+
+        result = WorkflowRunner().run(
+            parent_ir,
+            {"child_path": str(child_path)},
+            RunnerConfig(),
+        )
+
+        assert result.success is False
+
+        # Structured context from SchemaValidationError must survive the
+        # CompilationError wrap (wrapped_diagnostics carries the rich fields),
+        # and sub_workflow_path must be merged in by CompilationError.to_diagnostics.
+        # Without this, a prior regression flattened the structured context into the
+        # exception's string message — passing a substring assertion while losing
+        # the "Did you mean / Available types" rendering blocks agents rely on.
+        vocab_diag = next(
+            (d for d in result.diagnostics if d.context.get("path") == "inputs.message.type"),
+            None,
+        )
+        assert vocab_diag is not None, (
+            "expected a diagnostic for the child IR's inputs.message.type vocab error; "
+            f"got: {[d.context for d in result.diagnostics]}"
+        )
+        # Rich "Available types" rendering block survives.
+        assert vocab_diag.context["available_fields"] == [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "array",
+            "object",
+            "any",
+        ]
+        assert vocab_diag.context["available_fields_label"] == "types"
+        # Container context (sub_workflow_path) is merged in by CompilationError.to_diagnostics.
+        assert vocab_diag.context["sub_workflow_path"] == str(child_path)
+        # Opinionated canonical fix survives as a structured suggestion,
+        # not a flattened substring in .message.
+        assert vocab_diag.suggestions == ["Use 'string' instead of 'str'"]

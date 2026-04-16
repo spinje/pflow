@@ -457,7 +457,7 @@ class TestEntityParsing:
 
             A message.
 
-            - type: str
+            - type: string
 
             ## Inputs
 
@@ -465,7 +465,7 @@ class TestEntityParsing:
 
             A name.
 
-            - type: str
+            - type: string
 
             ## Steps
 
@@ -2165,7 +2165,7 @@ echo step {i}
             ## Inputs
 
             message:
-              type: str
+              type: string
               description: A message
               required: true
 
@@ -2242,7 +2242,7 @@ echo step {i}
 
             A message.
 
-            - type: str
+            - type: string
 
             ## Steps
 
@@ -2272,14 +2272,14 @@ echo step {i}
 
             ```yaml
             message:
-              type: str
+              type: string
             ```
 
             ### actual-input
 
             A real input.
 
-            - type: str
+            - type: string
 
             ## Steps
 
@@ -2333,7 +2333,7 @@ echo step {i}
             ## Inputs
 
             message:
-              type: str
+              type: string
 
             ## Steps
 
@@ -2352,7 +2352,7 @@ echo step {i}
         err = exc_info.value
         assert err.suggestion is not None
         assert "### input-name" in err.suggestion
-        assert "- type: str" in err.suggestion
+        assert "- type: string" in err.suggestion
 
 
 # ===========================================================================

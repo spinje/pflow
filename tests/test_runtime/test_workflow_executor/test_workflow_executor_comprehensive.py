@@ -279,9 +279,9 @@ class TestWorkflowExecutorComprehensive:
         child_workflow_ir = {
             "ir_version": "0.1.0",
             "inputs": {
-                "config": {"type": "dict"},
-                "tags": {"type": "list"},
-                "nested": {"type": "dict"},
+                "config": {"type": "object"},
+                "tags": {"type": "array"},
+                "nested": {"type": "object"},
             },
             "nodes": [{"id": "test", "type": "tests.shared.mock_nodes", "params": {}}],
             "edges": [],
@@ -486,8 +486,10 @@ class TestWorkflowExecutorComprehensive:
             "__registry__": None,
         })
 
+        # Use a valid IR so validate_ir passes; the mocked compile_workflow is what
+        # raises — that's the path this test pins.
         prep_res = {
-            "child_ir": {"invalid": "ir"},
+            "child_ir": simple_workflow_ir,
             "workflow_path": "test.json",
             "child_params": {},
             "storage_mode": "mapped",

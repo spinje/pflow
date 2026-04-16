@@ -14,6 +14,7 @@ src/pflow/core/
 ├── diagnostic.py            # Diagnostic type, exception conversion, dedup
 ├── diagnostic_render.py     # format_diagnostic text renderer
 ├── ir_schema.py             # IR schema definition and validation
+├── types.py                 # TypeSpec, CANONICAL_TYPES, PYTHON_ALIASES_AT_S1 — single source of truth for S1 vocabulary
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection
 ├── markdown_parser.py       # .pflow.md → IR dict parser
@@ -290,11 +291,15 @@ Detects file path references in node params and batch items, reads the files, an
 
 **Provenance**: Records original file paths in `node["_source_files"]` dict for error attribution.
 
+### types.py
+
+Single source of truth for the workflow-IR `type:` vocabulary. `CANONICAL_TYPES` = the 7 valid names (`string | number | integer | boolean | array | object | any`). `TypeSpec.parse(raw)` is the only entry point — raises `TypeVocabularyError` with structured context (fuzzy suggestions, Python-alias replacements) for the diagnostic pipeline. `TypeSpec.accepts(value)` is reserved for Task 120 (strict runtime enforcement); no production callers yet. Python annotations in code blocks use Python names, not these — see the S1↔S2 bridge in `src/pflow/guide/core.md`.
+
 ### param_coercion.py
 
 **Two functions for different pipeline stages** — easy to confuse:
 - `coerce_param_for_node(value, expected_type)`: For node execution. Intentionally narrow — only converts dict/list → JSON string when declared type is `"str"`. All other values pass through unchanged.
-- `coerce_workflow_input(value, declared_type)`: For CLI/env inputs entering a workflow. Full bidirectional coercion via dispatch table (str↔int, str↔bool, str↔JSON). **Lenient**: warns on failure instead of erroring — lets downstream validation catch it with full context.
+- `coerce_workflow_input(value, declared_type)`: For CLI/env inputs entering a workflow. `declared_type` is one of the 7 canonical S1 names; dispatch table maps each to a coercion function (e.g., `"integer"` → parse int from string). **Lenient**: warns on failure instead of erroring — lets downstream validation catch it. Python aliases are rejected upstream by `validate_ir`, so this function never sees them.
 
 ### security_utils.py
 

@@ -63,7 +63,7 @@ class TestTemplateResolutionsInTrace:
                 },
             ],
             "edges": [],
-            "inputs": {"name": {"type": "str", "description": "Name input"}},
+            "inputs": {"name": {"type": "string", "description": "Name input"}},
         }
 
         shared, collector = _run_with_trace(ir, initial_params={"name": "World"})

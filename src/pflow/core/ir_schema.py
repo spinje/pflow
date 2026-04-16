@@ -72,6 +72,7 @@ from jsonschema import Draft7Validator
 from jsonschema import ValidationError as JsonSchemaValidationError
 
 from pflow.core.exceptions import SchemaValidationError as ValidationError
+from pflow.core.types import CANONICAL_TYPES
 
 # JSON Schema for batch configuration on nodes
 # Enables sequential or parallel processing of multiple items through a single node
@@ -232,23 +233,8 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                     "required": {"type": "boolean", "default": True, "description": "Whether input is required"},
                     "type": {
                         "type": "string",
-                        "enum": [
-                            # JSON Schema canonical types
-                            "string",
-                            "number",
-                            "boolean",
-                            "object",
-                            "array",
-                            # Python type aliases
-                            "str",
-                            "int",
-                            "integer",
-                            "float",
-                            "bool",
-                            "dict",
-                            "list",
-                        ],
-                        "description": "Data type hint (accepts JSON Schema or Python type names)",
+                        "enum": list(CANONICAL_TYPES),
+                        "description": f"Data type: one of {', '.join(CANONICAL_TYPES)}",
                     },
                     "default": {"description": "Default value if not provided"},
                     "stdin": {
@@ -270,23 +256,8 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                     "description": {"type": "string", "description": "Human-readable description"},
                     "type": {
                         "type": "string",
-                        "enum": [
-                            # JSON Schema canonical types
-                            "string",
-                            "number",
-                            "boolean",
-                            "object",
-                            "array",
-                            # Python type aliases
-                            "str",
-                            "int",
-                            "integer",
-                            "float",
-                            "bool",
-                            "dict",
-                            "list",
-                        ],
-                        "description": "Data type hint (accepts JSON Schema or Python type names)",
+                        "enum": list(CANONICAL_TYPES),
+                        "description": f"Data type: one of {', '.join(CANONICAL_TYPES)}",
                     },
                     "source": {
                         "type": "string",
@@ -403,29 +374,71 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
             "  - source: ${generate_story.response}"
         )
 
-    # Case 3: Invalid type enum value
-    if error.validator == "enum" and "type" in path_str:
-        valid_types = "string, number, boolean, object, array (or Python aliases: str, int, float, bool, dict, list)"
-        return f"Type must be one of: {valid_types}"
-
     return ""
 
 
-def _get_suggestion(error: JsonSchemaValidationError) -> str:
+def _suggest_for_invalid_type(offending: Any) -> tuple[str, dict[str, Any]]:
+    """Return an actionable suggestion and structured context for invalid S1 types."""
+    from pflow.core.types import TypeSpec, TypeVocabularyError
+
+    # YAML `- type: null` parses to Python None — map to the 'null' string so
+    # TypeSpec.parse produces the actionable "Use 'any' if the value may be None"
+    # suggestion instead of the generic fallback.
+    if offending is None:
+        offending = "null"
+
+    if not isinstance(offending, str):
+        text = f"Type must be one of: {', '.join(CANONICAL_TYPES)}"
+        return text, {
+            "available_fields": list(CANONICAL_TYPES),
+            "available_fields_label": "types",
+        }
+
+    try:
+        TypeSpec.parse(offending)
+    except TypeVocabularyError as exc:
+        context: dict[str, Any] = {
+            "available_fields": exc.available_fields,
+            "available_fields_label": exc.available_fields_label,
+        }
+        if exc.similar_names:
+            context["similar_names"] = exc.similar_names
+        if exc.suggestions_list:
+            context["suggestions_list"] = exc.suggestions_list
+        return str(exc), context
+
+    return (
+        f"Type must be one of: {', '.join(CANONICAL_TYPES)}",
+        {
+            "available_fields": list(CANONICAL_TYPES),
+            "available_fields_label": "types",
+        },
+    )
+
+
+def _get_suggestion(error: JsonSchemaValidationError) -> tuple[str, dict[str, Any]]:
     """Get a helpful suggestion based on the validation error.
 
     Args:
         error: The jsonschema validation error
 
     Returns:
-        Suggestion string for fixing the error
+        Tuple of suggestion string and structured context kwargs
     """
-    # Get path for context-specific suggestions
+    path_list = list(error.absolute_path)
     path_str = str(error.absolute_path)
 
-    # OUTPUT-SPECIFIC ERROR HANDLING
+    # Type-vocabulary errors: any failure at `inputs.<name>.type` or `outputs.<name>.type`
+    # — covers invalid strings (validator='enum', e.g. 'str') AND non-string values
+    # (validator='type', e.g. `- type: null` which YAML parses to Python None).
+    # List-based path check avoids matching `nodes[N].type` via substring.
+    is_type_vocab_path = len(path_list) >= 3 and path_list[0] in ("inputs", "outputs") and path_list[-1] == "type"
+    if is_type_vocab_path:
+        return _suggest_for_invalid_type(error.instance)
+
+    # OUTPUT-SPECIFIC ERROR HANDLING (non-type fields: additionalProperties, shape)
     if "outputs" in path_str:
-        return _get_output_suggestion(error, path_str)
+        return _get_output_suggestion(error, path_str), {}
 
     # GENERAL ERROR HANDLING (existing cases)
     if error.validator == "required":
@@ -433,21 +446,21 @@ def _get_suggestion(error: JsonSchemaValidationError) -> str:
         match = error.message.split("'")
         if len(match) >= 2:
             field_name = match[1]
-            return f"Add the required field '{field_name}'"
-        return "Add the missing required field"
+            return f"Add the required field '{field_name}'", {}
+        return "Add the missing required field", {}
     elif error.validator == "type":
         expected = error.validator_value
         actual = type(error.instance).__name__
-        return f"Change type from '{actual}' to '{expected}'"
+        return f"Change type from '{actual}' to '{expected}'", {}
     elif error.validator == "pattern":
         if "ir_version" in path_str:
-            return "Use semantic versioning format, e.g., '0.1.0'"
+            return "Use semantic versioning format, e.g., '0.1.0'", {}
     elif error.validator == "additionalProperties":
-        return "Remove unknown properties or check field names"
+        return "Remove unknown properties or check field names", {}
     elif error.validator == "minItems":
-        return "Add at least one node to the workflow"
+        return "Add at least one node to the workflow", {}
 
-    return ""
+    return "", {}
 
 
 def validate_ir(data: Union[dict[str, Any], str]) -> None:
@@ -517,9 +530,14 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
     # Format the first error with helpful message
     error = errors[0]
     path = _format_path(list(error.absolute_path))
-    suggestion = _get_suggestion(error)
+    suggestion, context_kwargs = _get_suggestion(error)
 
-    raise ValidationError(message=error.message, path=path, suggestion=suggestion)
+    raise ValidationError(
+        message=error.message,
+        path=path,
+        suggestion=suggestion,
+        **context_kwargs,
+    )
 
 
 def _validate_node_references(data: dict[str, Any]) -> None:

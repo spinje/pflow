@@ -230,7 +230,7 @@ def test_input_used_with_indexed_access(mock_registry, tmp_path):
     output_path = str(tmp_path / "output.txt")
     workflow_ir = {
         "inputs": {
-            "items": {"type": "list", "description": "List of items to process"},
+            "items": {"type": "array", "description": "List of items to process"},
         },
         "nodes": [
             {

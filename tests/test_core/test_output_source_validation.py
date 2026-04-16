@@ -100,7 +100,7 @@ class TestOutputSourceValidation:
             "ir_version": "0.1.0",
             "nodes": [{"id": "node1", "type": "shell", "params": {}}],
             "edges": [],
-            "inputs": {"data": {"type": "dict", "description": "A dict with a field"}},
+            "inputs": {"data": {"type": "object", "description": "A dict with a field"}},
             "outputs": {"result": {"source": "${data.field}"}},
         }
 
@@ -117,7 +117,7 @@ class TestOutputSourceValidation:
             "ir_version": "0.1.0",
             "nodes": [{"id": "node1", "type": "shell", "params": {}}],
             "edges": [],
-            "inputs": {"data": {"type": "dict", "description": "A dict"}},
+            "inputs": {"data": {"type": "object", "description": "A dict"}},
             "outputs": {"result": {"source": "data.field"}},
         }
 

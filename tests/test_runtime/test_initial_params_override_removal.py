@@ -54,7 +54,7 @@ class TestSharedStoreIsOnlyDataSource:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {
-                "greeting": {"type": "str", "default": "hello", "required": False, "description": "A greeting"},
+                "greeting": {"type": "string", "default": "hello", "required": False, "description": "A greeting"},
             },
             "nodes": [
                 {
@@ -89,7 +89,7 @@ class TestSharedStoreIsOnlyDataSource:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {
-                "name": {"type": "str", "required": True},
+                "name": {"type": "string", "required": True},
             },
             "nodes": [
                 {

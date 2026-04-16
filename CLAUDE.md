@@ -215,6 +215,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 151: CLI Surface Restructure
 - ✅ Task 77: Pflow Guide — tailored agent instructions
 - ✅ Task 153: Reject Undeclared Sub-Workflow Inputs
+- ✅ Task 154: Type Vocabulary Coherence
 
 ### Planned Features (in order of priority)
 

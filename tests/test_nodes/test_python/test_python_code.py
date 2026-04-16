@@ -6,6 +6,7 @@ internal implementation structure (prep/exec/post).
 
 import pytest
 
+from pflow.nodes.file.exceptions import NonRetriableError
 from pflow.nodes.python.python_code import (
     PythonCodeNode,
     _extract_error_location,
@@ -321,6 +322,67 @@ class TestSafetyAndErrors:
         )
         assert action == "error"
         assert "undefined_var" in shared["error"]
+
+    def test_union_in_annotation_rejected_with_pipe_syntax_hint(self):
+        """Union in an annotation should be rejected at prep with a PEP 604 hint.
+
+        AST-walk detection runs at validation time, so the opinionated guidance
+        reaches the user consistently — including Python 3.14+ where PEP 649
+        defers annotation evaluation and the runtime NameError never fires.
+        """
+        shared: dict = {}
+        with pytest.raises(NonRetriableError) as exc_info:
+            run_code_node(
+                shared,
+                code="x: Union[int, str] = 1\nresult: int = x",
+                inputs={},
+            )
+        msg = str(exc_info.value)
+        assert "pipe syntax" in msg
+        assert "int | str" in msg
+        # Opinionated: Union does NOT suggest import — modern syntax is the canonical fix.
+        assert "from typing import Union" not in msg
+
+    def test_list_in_annotation_rejected_with_lowercase_generic_hint(self):
+        """List/Dict/Tuple in an annotation should be rejected at prep with a PEP 585 hint."""
+        shared: dict = {}
+        with pytest.raises(NonRetriableError) as exc_info:
+            run_code_node(
+                shared,
+                code="x: List[int] = [1, 2]\nresult: int = len(x)",
+                inputs={},
+            )
+        msg = str(exc_info.value)
+        assert "list[...]" in msg or "list[str]" in msg
+        assert "PEP 585" in msg
+        # Opinionated: List does NOT suggest `from typing import List` — lowercase is canonical.
+        assert "from typing import List" not in msg
+
+    def test_literal_in_annotation_rejected_with_import_hint(self):
+        """Literal (no modern alternative) should be rejected at prep with an import hint."""
+        shared: dict = {}
+        with pytest.raises(NonRetriableError) as exc_info:
+            run_code_node(
+                shared,
+                code='x: Literal["a", "b"] = "a"\nresult: str = x',
+                inputs={},
+            )
+        assert "from typing import Literal" in str(exc_info.value)
+
+    def test_typing_name_in_annotation_accepted_when_imported(self):
+        """Typing names ARE accepted when the user explicitly imports them.
+
+        The AST walker only rejects forgotten imports — it must not block users
+        who follow the `from typing import Literal` suggestion.
+        """
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='from typing import Literal\nx: Literal["a", "b"] = "a"\nresult: str = x',
+            inputs={},
+        )
+        assert action == "default"
+        assert shared["result"] == "a"
 
     def test_import_error_identifies_module(self):
         """ImportError message includes the missing module name."""
@@ -938,3 +1000,147 @@ class TestOptionalTypeSupport:
         code = "x: typing.Optional[str]\nresult: str = x or 'default'"
         result = extract_optional_input_keys(code, {"x"})
         assert result == {"x"}
+
+
+class TestAnyAutoInjection:
+    def test_any_without_import_works(self):
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="x: Any\nresult: int = len(x)",
+            inputs={"x": "hello"},
+        )
+        assert action == "default"
+        assert shared["result"] == 5
+
+    def test_any_in_result_annotation_works(self):
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="result: Any = {'nested': [1, 2, 3]}",
+            inputs={},
+        )
+        assert action == "default"
+        assert shared["result"] == {"nested": [1, 2, 3]}
+
+    def test_typing_any_dotted_form_works(self):
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="x: typing.Any\nresult: int = 1",
+            inputs={"x": "hello"},
+        )
+        assert action == "default"
+        assert shared["result"] == 1
+
+    @pytest.mark.parametrize("value", [{"k": 1}, [1, 2], "text", 4, True, None])
+    def test_any_accepts_all_input_types(self, value):
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="x: Any\nresult: int = 1",
+            inputs={"x": value},
+        )
+        assert action == "default"
+        assert shared["result"] == 1
+
+    def test_any_union_none_works(self):
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="x: Any | None\nresult: int = 1",
+            inputs={"x": None},
+        )
+        assert action == "default"
+        assert shared["result"] == 1
+
+    def test_explicit_typing_import_still_works(self):
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="from typing import Any\nx: Any\nresult: int = len(x)",
+            inputs={"x": "hello"},
+        )
+        assert action == "default"
+        assert shared["result"] == 5
+
+    def test_lowercase_any_rejected(self):
+        shared: dict = {}
+        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+            run_code_node(
+                shared,
+                code="x: any\nresult: int = 1",
+                inputs={"x": "hello"},
+            )
+
+    def test_lowercase_any_in_result_rejected(self):
+        shared: dict = {}
+        with pytest.raises(NonRetriableError, match="## Inputs"):
+            run_code_node(
+                shared,
+                code="result: any = 1",
+                inputs={},
+            )
+
+    def test_lowercase_any_in_list_generic_rejected(self):
+        shared: dict = {}
+        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+            run_code_node(
+                shared,
+                code="x: list[any]\nresult: int = 1",
+                inputs={"x": [1, 2]},
+            )
+
+    def test_lowercase_any_in_forward_reference_rejected(self):
+        """String forward-reference annotations (`x: "list[any]"`) must be unwrapped.
+
+        Without this, `ast.unparse` preserves the quotes, the re-parse sees an
+        ast.Constant (not ast.Name), the check silently passes, and on Python 3.14+
+        PEP 649 leaves the annotation unevaluated at runtime too — the user never
+        learns their 'any' is wrong.
+        """
+        shared: dict = {}
+        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+            run_code_node(
+                shared,
+                code='x: "list[any]" = [1, 2]\nresult: int = len(x)',
+                inputs={"x": [1, 2]},
+            )
+
+    def test_lowercase_any_in_dict_value_rejected(self):
+        shared: dict = {}
+        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+            run_code_node(
+                shared,
+                code="x: dict[str, any]\nresult: int = 1",
+                inputs={"x": {"k": "v"}},
+            )
+
+    def test_lowercase_any_in_pipe_union_rejected(self):
+        shared: dict = {}
+        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+            run_code_node(
+                shared,
+                code="x: int | any\nresult: int = 1",
+                inputs={"x": 5},
+            )
+
+    def test_lowercase_any_in_optional_rejected(self):
+        shared: dict = {}
+        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+            run_code_node(
+                shared,
+                code="x: Optional[any]\nresult: int = 1",
+                inputs={"x": "hello"},
+            )
+
+    def test_literal_string_any_not_rejected(self):
+        """`Literal['any']` is a string constant, not a type name — keep it working."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="from typing import Literal\nx: Literal['any']\nresult: int = 1",
+            inputs={"x": "any"},
+        )
+        assert action == "default"
+        assert shared["result"] == 1

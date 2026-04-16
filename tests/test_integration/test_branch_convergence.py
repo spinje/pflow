@@ -201,7 +201,7 @@ _CONVERGENCE_WORKFLOW_MD = _md("""\
 
     The routing threshold value.
 
-    - type: int
+    - type: integer
 
     ## Steps
 
@@ -305,7 +305,7 @@ class TestBranchConvergenceMarkdown:
 
             The routing threshold value.
 
-            - type: int
+            - type: integer
 
             ## Steps
 

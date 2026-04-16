@@ -151,7 +151,7 @@ class TestOutputTemplateValidation:
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "echo_it", "type": "shell", "params": {}}],
-            "inputs": {"data": {"type": "dict", "description": "A dict with a field"}},
+            "inputs": {"data": {"type": "object", "description": "A dict with a field"}},
             "outputs": {"x": {"source": "${data.field}"}},
         }
 
@@ -169,7 +169,7 @@ class TestOutputTemplateValidation:
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "n1", "type": "shell", "params": {}}],
-            "inputs": {"items": {"type": "list", "description": "A list"}},
+            "inputs": {"items": {"type": "array", "description": "A list"}},
             "outputs": {"first": {"source": "${items[0]}"}},
         }
 

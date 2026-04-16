@@ -144,7 +144,7 @@ _SECTION_SYNTAX_HINTS: dict[_SectionType, str] = {
         "Inputs must use ### heading syntax:\n\n"
         "    ### input-name\n\n"
         "    Description of the input.\n\n"
-        "    - type: str\n"
+        "    - type: string\n"
         "    - required: true"
     ),
     _SectionType.STEPS: (

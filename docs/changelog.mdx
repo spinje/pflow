@@ -5,6 +5,24 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="April 2026" description="v0.12.0" tags={["Breaking changes", "Improvements"]}>
+  ## Type vocabulary coherence
+
+  The `## Inputs` and `## Outputs` `type:` field now accepts exactly 7 values:
+  `string`, `number`, `integer`, `boolean`, `array`, `object`, `any`.
+
+  **Breaking changes**
+  - Python type aliases (`str`, `int`, `float`, `bool`, `dict`, `list`) no longer work in workflow input/output declarations. Validation errors now suggest the canonical replacement.
+  - `object` is now documented as dict-only. Use `any` when the value can be any type.
+  - Parameterized generics such as `list[str]` and `dict[str, int]` are rejected in workflow input/output declarations.
+  - Saved workflows in `~/.pflow/workflows/` that still use Python aliases will fail validation until the file is updated to the canonical names.
+
+  **New**
+  - `any` is the explicit wildcard type for workflow inputs and outputs.
+  - `Any` is auto-injected into code node execution, so `from typing import Any` is optional.
+  - The guides now document the bridge between workflow `type:` declarations and Python code annotations.
+</Update>
+
 <Update label="April 2026" description="v0.11.0" tags={["New releases", "Improvements", "Breaking changes"]}>
   ## Execution core and iteration speed
 

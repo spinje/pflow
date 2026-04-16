@@ -115,7 +115,7 @@ Write like a developer explaining what they built to another developer — at a 
 
 **The register:** Second-person, direct, technical. Confident because you've tested it, not because you're performing confidence. When you state a rule, explain why it exists — a rule with reasoning sticks, a rule without reasoning gets ignored.
 
-- "Use `object` when you don't know the type — it skips validation entirely" — not "You could consider using `object` if the type is uncertain"
+- "Use `Any` in code blocks when you don't want type validation, and `type: any` in workflow inputs when the value can be any shape" — not "You could consider using `object` if the type is uncertain"
 - "Templates go in `inputs`, never in the code block — because the code block is literal Python, and `${var}` isn't valid Python syntax" — not "It is important to note that template variables should be placed in the inputs parameter"
 - "Upstream JSON is auto-parsed before your code runs" — not "The system automatically handles JSON deserialization of upstream data"
 
