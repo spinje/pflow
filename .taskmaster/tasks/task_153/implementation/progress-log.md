@@ -378,3 +378,44 @@ All `.pflow.md` examples under `examples/nested/`, `examples/bundling/`, and the
 7. **Folding the non-dict `inputs:` diagnostic into this PR instead of deferring.** Scope discipline would've split it off; correctness instincts said "same surface as Bug A, small fix, caught by the same review." Folding in avoided two review cycles for one cluster of findings. Counter-example kept honest: `framework_keys` was NOT folded in because it depends on the future refactor's shape — folding in there would have been speculative work.
 
 8. **Accepted the user's "top 10%" pushback and re-verified instead of defending.** When my sweep proposal looked shaky to the user, the defensive move would have been to justify the scope with elaboration. Instead I went back to the code, re-ran the primitives, and discovered I'd misread the parser output + missed that the IR schema already handled the case. Changing my mind out loud — and being honest about the misread — produced the correct narrow fix. The review bot got the right answer; I would have over-engineered without the user's forcing function.
+
+---
+
+## Post-merge adversarial verification session
+
+After the three review-cycle commits landed and both issue follow-ups were filed, a dedicated adversarial-verification pass ran 30 manual probes at `/tmp/task153-verify/` against every documented claim. The brief: *"try to break it; the first 80% is the easy part, the value is in finding the last 20%."*
+
+### What held up
+
+All task-153 core claims survived adversarial probing:
+- Parse-time rejection: unknown top-level, extras-in-inputs, non-dict literals (string/list), fuzzy-suggestion fire, 2-level nested provenance.
+- Runtime defense-in-depth: opaque-template extras, template-resolves-to-non-dict, parallel-batch-per-worker rejection.
+- IR cache: heterogeneous batches (seq + parallel, trace-verified distinct per-child outputs), homogeneous-batch cache reuse.
+- W3 removal: `workflow_ir` at top level rejected by Step 7 with fuzzy "Did you mean 'workflow'".
+- Framework-knob scope discipline: `storage_mode`/`max_depth` INSIDE `inputs:` correctly treated as extras, not absorbed.
+- Programmatic-caller edge cases (T23 Python probes): empty `declared_inputs`+extras, `inputs=None`+extras, `_extract_child_inputs` raising on non-dict — all match the progress-log-documented contracts.
+
+**Trace-level verification**: T09 batch trace JSON inspected directly — each item's `template_resolutions.inputs.resolved` contained exactly the child's declared subset, zero silent forwarding across items.
+
+### Findings that warranted action
+
+Two findings out of thirty warranted action beyond "nothing to do":
+
+- **GH #288** — *Silent drop of undeclared CLI `--input` keys on root workflow (symmetric with #287)*. Task 153 closed the parent→child silent-drop boundary; the CLI→root mirror still silent-accepts. Same failure mode, different surface. Not task 120 territory (that's value-type coercion, not unknown-key rejection). Filed as a standalone issue linking back to task 153 as precedent.
+- **GH #289** — *Runtime `_validate_child_params` short-circuits: missing-required masks undeclared-extras*. Narrow programmatic-caller surface; parse-time emits both, runtime raises only the first. Matches the existing runtime-error short-circuit pattern — natural umbrella is the deferred "runtime-errors → structured-Diagnostics" sweep. Low priority; filed for discoverability.
+
+Everything else that surfaced was either a pre-existing known follow-up (GH #283 mermaid, GH #284 error_action + prep errors, GH #285 diagnostic-label) or tangential to task 153's surface (CLI `--input` silent-accept on zero-declared-input roots became #288).
+
+### One added test — bounded agent-UX render guard
+
+The adversarial session identified a single high-value test gap: **in-memory `TestUndeclaredExtras` locks the `Diagnostic` shape; no test verifies the shared render pipeline surfaces all of that through real stderr.** Given Tasks 143/144/148 actively evolve the renderer, a future `format_diagnostic` refactor could silently drop the fuzzy suggestion, the `available_fields` block, or the `"(passed via inputs: dict)"` qualifier for this specific diagnostic combination — in-memory tests stay green while agent-UX regresses.
+
+Added `tests/test_integration/test_task153_extras_stderr_agent_ux.py` (one subprocess test, ~100 LoC). Runs real `pflow <parent>` via subprocess on a workflow with a typo'd key, asserts stderr contains all four render markers plus nonzero exit code. Per `tests/CLAUDE.md` §10 this is exactly the surface CliRunner masks — subprocess is the right tool.
+
+Mutation-verified by confirming each of the four markers is genuinely present in the stderr output from a fresh fixture run. If the renderer drops any one of them in a future refactor, CI fails.
+
+Explicitly NOT expanded into a cluster of render tests — scope discipline. One test per bug/feature per the tests/CLAUDE.md rule. Value/cost ratio is borderline-high; a second test would be pure coverage padding.
+
+### Meta-lesson — adversarial verification catches different bugs than specialist-agent review
+
+The 4-agent review cycle found 11 test-fidelity sites + 3 diagnostic-quality findings. The 30-probe adversarial session found 0 regressions but identified 2 issue-worthy follow-ups AND 1 render-layer test gap. Different tools, different catches — the manual adversarial pass is not redundant with the specialist-agent review because agents inspect code-level invariants while the manual pass inspects runtime behavior through the actual CLI surface. Future large PRs should scope both phases, not just one.
