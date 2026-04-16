@@ -137,6 +137,38 @@ For workflow chaining, use the `-p` flag to output results for the next workflow
 pflow -p step1 | pflow -p step2 | pflow step3
 ```
 
+## Stdout output
+
+Workflows that declare multiple outputs mark one with `stdout: true` to pick which output lands on process stdout in text mode:
+
+```markdown
+## Outputs
+
+### message
+
+Primary result — streams to stdout on redirect or pipe.
+
+- source: ${emit.stdout}
+- stdout: true
+
+### length
+
+Secondary metadata. Available via `-o length` or `--output-format json`.
+
+- source: ${count.stdout}
+```
+
+Redirecting or piping the CLI in text mode now writes only the marked output to stdout:
+
+```bash
+pflow stdout-result.pflow.md > result.txt       # file contains the message only
+pflow stdout-result.pflow.md | next-step        # message streams to the next command
+pflow stdout-result.pflow.md -o length          # override: emit length instead
+pflow stdout-result.pflow.md --output-format json   # emit all outputs as structured JSON
+```
+
+Single-output workflows don't need the marker — their one output is unambiguous. Workflows with multiple declared outputs and no `stdout: true` stream the first declared output and print a warning on stderr naming the other outputs and the three ways to change the routing: add the marker, pass `-o`, or switch to JSON mode. The validator enforces that at most one output per workflow is marked.
+
 ## Output modes
 
 ### Text mode (default)

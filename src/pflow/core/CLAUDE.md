@@ -168,6 +168,8 @@ Memory limit configurable via `PFLOW_STDIN_MEMORY_LIMIT`.
 
 **Stdin routing**: Stdin routes to workflow input declared with `"stdin": true`. Routing happens in CLI (`_route_stdin_to_params()`) before input validation. CLI params override piped stdin. Only one input per workflow can have `stdin: true`.
 
+**Stdout routing** (symmetric, text mode only): One output may declare `"stdout": true` to pick which declared output streams to process stdout. Precedence: `-o` flag > `stdout: true` marker > single declared output (implicit) > first declared with a stderr warning. JSON mode is immune — it emits all declared outputs regardless of marker. See `cli/CLAUDE.md` for the full precedence table and the TTY-gated header behavior.
+
 ### workflow/
 
 See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeline, data flow algorithm, skill publishing, known issues).

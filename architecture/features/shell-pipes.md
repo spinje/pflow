@@ -132,6 +132,40 @@ pflow summarize --format=json | jq '.summary'
 
 This enables pflow to be a true citizen in Unix pipelines, composing naturally with grep, awk, jq, and other tools.
 
+### Stdout Output Routing
+
+Workflows with multiple declared outputs mark one with `stdout: true` to pick which output lands on process stdout in text mode. This mirrors the stdin input model: a single routing slot, declared at authoring time, enforced by the validator.
+
+```markdown
+## Outputs
+
+### message
+
+Primary result — streams to stdout in text mode.
+
+- source: ${emit.stdout}
+- stdout: true
+
+### length
+
+Secondary metadata. Available via `-o length` or `--output-format json`.
+
+- source: ${count.stdout}
+```
+
+**Precedence (text mode):**
+
+1. `-o <name>` on the command line — caller override always wins.
+2. The output marked `stdout: true` — one per workflow, validator-enforced.
+3. The single declared output — implicit when only one exists (no marker needed).
+4. First declared output, with a stderr warning naming the other outputs and the three ways to change the routing (`stdout: true`, `-o`, `--output-format json`) — when multiple outputs are declared and none are marked. The warning is suppressed under `-p`, matching the auto-detect-warning pattern.
+
+**Label rendering.** When stdout is a TTY, the CLI prefixes the value with a `Workflow output (<description>):` header on stderr so an interactive user sees what they're looking at. When stdout is redirected or piped, the label is suppressed — the `✓ Workflow completed` summary already confirms success and a naked label with the value elsewhere reads as "empty output" to both humans and agents.
+
+**JSON mode is unaffected.** `--output-format json` emits every declared output as a structured JSON object. The `stdout: true` marker is a text-mode-only routing hint.
+
+**Nested workflows.** `stdout: true` only applies when a workflow is the top-level CLI invocation. When a workflow is used as a sub-workflow, its outputs are consumed by the parent node, not stdout.
+
 ## Importance and Benefits to Users
 
 * **Reduced Cognitive Load:** Users intuitively use pflow in shell workflows without additional mental overhead.
@@ -146,4 +180,4 @@ Native integration with Unix shell pipes positions pflow as a highly intuitive, 
 
 - [Shared Store](../core-concepts/shared-store.md) - Node communication patterns
 - [Architecture](../architecture.md) - CLI interface overview
-- [IR Schema](../reference/ir-schema.md) - Workflow input declarations including `stdin: true`
+- [IR Schema](../reference/ir-schema.md) - Workflow input/output declarations including `stdin: true` and `stdout: true`

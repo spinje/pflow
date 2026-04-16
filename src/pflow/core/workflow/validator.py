@@ -79,13 +79,14 @@ class WorkflowValidator:
         Performs multiple validation checks:
         1. Structural validation - IR schema compliance
         2. Stdin input validation - Only one stdin: true allowed
-        3. Data flow validation - Execution order and dependencies
-        4. Template validation - Variable resolution
-        5. Node type validation - Registry verification
-        6. Output source validation - Output node references
-        7. Unknown param errors - Rejects params not in node interface
-        8. Sub-workflow validation - Recursive validation of child workflows
-        9. Cache lint - Warn about input-less shell nodes without cache: false
+        3. Stdout output validation - Only one stdout: true allowed
+        4. Data flow validation - Execution order and dependencies
+        5. Template validation - Variable resolution
+        6. Node type validation - Registry verification
+        7. Output source validation - Output node references
+        8. Unknown param errors - Rejects params not in node interface
+        9. Sub-workflow validation - Recursive validation of child workflows
+        10. Cache lint - Warn about input-less shell nodes without cache: false
 
         Args:
             workflow_ir: Workflow to validate
@@ -108,37 +109,40 @@ class WorkflowValidator:
         # 2. Stdin input validation (ALWAYS run - only one stdin: true allowed)
         diagnostics.extend(WorkflowValidator._validate_stdin_inputs(workflow_ir))
 
-        # 3. Data flow validation (ALWAYS run)
+        # 3. Stdout output validation (ALWAYS run - only one stdout: true allowed)
+        diagnostics.extend(WorkflowValidator._validate_stdout_outputs(workflow_ir))
+
+        # 4. Data flow validation (ALWAYS run)
         diagnostics.extend(WorkflowValidator._validate_data_flow(workflow_ir))
 
-        # 4. Template validation (if params provided)
+        # 5. Template validation (if params provided)
         if extracted_params is not None:
             if registry is None:
                 registry = Registry()
             diagnostics.extend(WorkflowValidator._validate_templates(workflow_ir, extracted_params, registry))
 
-        # 5. Node type validation (if not skipped)
+        # 6. Node type validation (if not skipped)
         if not skip_node_types:
             if registry is None:
                 registry = Registry()
             diagnostics.extend(WorkflowValidator._validate_node_types(workflow_ir, registry))
 
-        # 6. Output source validation (ALWAYS run - validate output references)
+        # 7. Output source validation (ALWAYS run - validate output references)
         diagnostics.extend(WorkflowValidator._validate_output_sources(workflow_ir, registry))
 
-        # 7. Unknown param errors
+        # 8. Unknown param errors
         # Only run if registry available (need interface metadata for param keys)
         if registry is not None:
             diagnostics.extend(WorkflowValidator._validate_unknown_params(workflow_ir, registry))
 
-        # 8. Sub-workflow validation (recursive)
+        # 9. Sub-workflow validation (recursive)
         diagnostics.extend(
             WorkflowValidator._validate_sub_workflows(
                 workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types, workflow_file
             )
         )
 
-        # 9. Cache lint — warn about input-less shell nodes
+        # 10. Cache lint — warn about input-less shell nodes
         diagnostics.extend(WorkflowValidator._warn_inputless_shell_nodes(workflow_ir))
 
         errors = [d for d in diagnostics if d.severity == Severity.ERROR]
@@ -209,6 +213,41 @@ class WorkflowValidator:
                     ),
                     suggestions=["Mark only one workflow input with stdin: true."],
                     context={"category": "validation", "path": "inputs"},
+                )
+            ]
+
+        return []
+
+    @staticmethod
+    def _validate_stdout_outputs(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+        """Validate that at most one output has stdout: true.
+
+        Args:
+            workflow_ir: Workflow to validate
+
+        Returns:
+            Stdout validation diagnostics
+        """
+        outputs = workflow_ir.get("outputs", {})
+        if not outputs:
+            return []
+
+        stdout_outputs = [
+            name for name, spec in outputs.items() if isinstance(spec, dict) and spec.get("stdout") is True
+        ]
+
+        if len(stdout_outputs) > 1:
+            return [
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    message=(
+                        f'Multiple outputs marked with "stdout": true: {", ".join(stdout_outputs)}. '
+                        "Only one output can stream to stdout."
+                    ),
+                    suggestions=["Mark only one workflow output with stdout: true."],
+                    context={"category": "validation", "path": "outputs"},
                 )
             ]
 

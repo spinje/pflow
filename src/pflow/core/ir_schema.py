@@ -292,6 +292,11 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "type": "string",
                         "description": "Template expression specifying where to get the output value from (e.g., '${node_id.output_key}')",
                     },
+                    "stdout": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Whether this output streams to process stdout in text mode (only one output per workflow may set this)",
+                    },
                     "_source_line": {
                         "type": "integer",
                         "description": "Markdown source line for the output source declaration (internal parser metadata)",
@@ -364,7 +369,7 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
                 unexpected_field = match.group(1)
 
         # Build helpful message
-        lines = ["Output definitions can only have: description, type, source (all optional)"]
+        lines = ["Output definitions can only have: description, type, source, stdout (all optional)"]
 
         # Suggest replacement for common mistakes
         if unexpected_field == "value":

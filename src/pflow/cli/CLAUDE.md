@@ -101,12 +101,13 @@ This split is critical: `pflow workflow.pflow.md | jq` works because progress no
 
 ### Output routing (`_output_with_header` in workflow_output.py)
 
-Single rule: data → stdout, diagnostics → stderr. Always — no TTY checks, no mode branching.
+Routing is TTY-agnostic: data always goes to stdout, diagnostics always go to stderr. The stderr header (`Workflow output (<desc>):`) is the only TTY-sensitive element — suppressed when stdout is non-TTY because a naked label with the value elsewhere reads as "empty output" to both humans and agents.
 
 | Mode | When | Header | Data | Summary |
 |------|------|--------|------|---------|
 | `--print` (`-p`) | Explicitly requested | None | stdout | None |
-| Default | Everything else (TTY, non-TTY, agents, CI/CD, pipes) | stderr | stdout | stderr |
+| TTY stdout | Interactive terminal | stderr | stdout | stderr |
+| Non-TTY stdout | Pipe / redirect / CI / agent subprocess | None | stdout | stderr |
 
 `--print` suppresses header, summary, and warnings on stderr. Data still goes to stdout.
 
@@ -232,7 +233,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 
 - **Use lazy imports** in command files and `commands/run.py` to avoid circular dependencies
 - **Don't mix output streams** — errors→stderr, results→stdout. This makes piping work.
-- **Don't mix routing and rendering** — stdout/stderr routing is unified; only TTY-specific cursor rendering (`\r` batch updates) should inspect `isatty()`
+- **Don't mix routing and rendering** — stdout/stderr routing is TTY-agnostic; the stderr header in `_output_with_header` and the `\r` batch counter are the only TTY-sensitive writes
 - **`ignore_unknown_options=True` tradeoff** — typos like `--output-formt` silently pass through. `_validate_workflow_flags` in `commands/run.py` catches common misplaced flags.
 
 ## Test Mapping
