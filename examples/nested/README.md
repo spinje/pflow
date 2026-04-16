@@ -28,12 +28,13 @@ pflow --validate-only examples/nested/document-processor.pflow.md
 ### process_title
 - type: workflow
 - workflow: ./to-uppercase.pflow.md
-- text: ${title}
+- inputs:
+    text: ${title}
 ```
 
 - `type: workflow` tells pflow this is a nested workflow call
 - `workflow:` points to the child workflow file (or a saved workflow name)
-- All other params (`text`) are passed as child inputs
+- Child inputs are passed via the `inputs:` dict — every key must be declared on the child's `## Inputs`
 - Child outputs are available as `${process_title.result}` (via the namespace system)
 
 ## Storage Modes

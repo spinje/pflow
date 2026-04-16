@@ -196,13 +196,13 @@ class TestTemplateTypeInference:
         """Infer type from workflow inputs."""
         workflow_ir = {
             "enable_namespacing": True,
-            "inputs": {"api_key": {"type": "str", "description": "API key"}},
+            "inputs": {"api_key": {"type": "string", "description": "API key"}},
             "nodes": [],
         }
         node_outputs = {}
 
         result = infer_template_type("api_key", workflow_ir, node_outputs)
-        assert result == "str"
+        assert result == "string"
 
     def test_infer_non_traversable_type(self):
         """Non-traversable types return None for nested access."""

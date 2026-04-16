@@ -101,7 +101,7 @@ def test_declared_defaults_applied_without_user_params():
     """
     workflow_ir = {
         "inputs": {
-            "greeting": {"type": "str", "default": "hello-from-default", "description": "A greeting"},
+            "greeting": {"type": "string", "default": "hello-from-default", "description": "A greeting"},
         },
         "nodes": [
             {"id": "greet", "type": "shell", "params": {"command": "echo ${greeting}"}},
@@ -124,7 +124,7 @@ def test_user_params_override_declared_defaults():
     """
     workflow_ir = {
         "inputs": {
-            "greeting": {"type": "str", "default": "hello-from-default", "description": "A greeting"},
+            "greeting": {"type": "string", "default": "hello-from-default", "description": "A greeting"},
         },
         "nodes": [
             {"id": "greet", "type": "shell", "params": {"command": "echo ${greeting}"}},

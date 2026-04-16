@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any, ClassVar, Optional
 
 from pflow.core.diagnostic import Diagnostic, format_child_provenance
+from pflow.core.exceptions import PflowError
 from pflow.core.file_resolver import is_workflow_file_reference
+from pflow.core.ir_schema import normalize_ir, validate_ir
 from pflow.core.node import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_workflow
@@ -194,11 +196,36 @@ class WorkflowExecutor(BaseNode):
         if registry is not None and not isinstance(registry, Registry):
             registry = None
 
+        compiled = self._validate_and_compile_child(workflow_ir, workflow_path, registry, child_params, cacheable)
+        if cacheable:
+            cache[workflow_path] = compiled
+        return compiled
+
+    @staticmethod
+    def _validate_and_compile_child(
+        workflow_ir: dict[str, Any],
+        workflow_path: str,
+        registry: Optional[Registry],
+        child_params: dict[str, Any],
+        cacheable: bool,
+    ) -> Any:
+        """Validate the child IR and compile it, wrapping errors with sub-workflow path.
+
+        Template-referenced children (``workflow: ${var}``) skip parent-time
+        ``validate_ir`` because the resolver returns None for ``${...}``. Running it
+        here closes the bypass so every path to ``compile_workflow`` goes through
+        schema validation — keeping S1 vocabulary enforcement uniform.
+        ``normalize_ir`` mirrors the parent validator path (fills in
+        ``ir_version``/``edges`` often omitted by programmatic and
+        resolved-at-runtime IRs).
+        """
         try:
             params = dict(child_params)  # Copy — don't mutate caller's dict
             if cacheable:
                 params["_pflow_workflow_file"] = str(Path(workflow_path).resolve())
-            compiled = compile_workflow(
+            normalize_ir(workflow_ir)
+            validate_ir(workflow_ir)
+            return compile_workflow(
                 copy.deepcopy(workflow_ir),  # Protect against concurrent mutation in parallel batch
                 registry=registry or Registry(),
                 initial_params=params,
@@ -208,6 +235,18 @@ class WorkflowExecutor(BaseNode):
                 e.details = {}
             e.details["sub_workflow_path"] = str(workflow_path)
             raise
+        except PflowError as e:
+            # Self-describing errors (e.g. SchemaValidationError from validate_ir)
+            # already carry structured context — similar_names, available_fields,
+            # suggestions_list — consumed by the unified renderer. Pass their
+            # diagnostics through verbatim; CompilationError.to_diagnostics will
+            # merge sub_workflow_path into each diagnostic's context.
+            raise CompilationError(
+                f"Failed to compile sub-workflow at {workflow_path}: {e!s}",
+                phase="sub_workflow_compilation",
+                details={"sub_workflow_path": str(workflow_path)},
+                wrapped_diagnostics=e.to_diagnostics(),
+            ) from e
         except Exception as e:
             raise CompilationError(
                 f"Failed to compile sub-workflow at {workflow_path}: {e!s}",
@@ -215,10 +254,6 @@ class WorkflowExecutor(BaseNode):
                 details={"sub_workflow_path": str(workflow_path)},
                 suggestion=getattr(e, "suggestion", None),
             ) from e
-
-        if cacheable:
-            cache[workflow_path] = compiled
-        return compiled
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""

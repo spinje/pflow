@@ -190,7 +190,7 @@ def test_template_input_change_invalidation(tmp_path: Any) -> None:
             {"id": "step-2", "type": "shell", "params": {"command": "printf '%s' fixed"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
-        "inputs": {"input_val": {"type": "str", "description": "Test input"}},
+        "inputs": {"input_val": {"type": "string", "description": "Test input"}},
     }
 
     # First run with input_val=A
@@ -312,7 +312,7 @@ def test_key_value_override_cache_interaction(tmp_path: Any) -> None:
             {"id": "step-2", "type": "shell", "params": {"command": "printf '%s' static"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
-        "inputs": {"input_val": {"type": "str", "description": "Test input"}},
+        "inputs": {"input_val": {"type": "string", "description": "Test input"}},
     }
 
     # Run 1: input_val=A

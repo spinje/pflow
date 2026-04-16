@@ -514,8 +514,8 @@ class TestBatchItemFieldValidation:
             "nodes": [{"id": "step", "type": "llm", "params": {"prompt": "hi"}}],
             "edges": [],
             "outputs": {
-                "content": {"type": "str"},
-                "source_type": {"type": "str"},
+                "content": {"type": "string"},
+                "source_type": {"type": "string"},
             },
         }
         child_path = tmp_path / "fetch_child.pflow.md"
@@ -552,8 +552,8 @@ class TestBatchItemFieldValidation:
             "nodes": [{"id": "step", "type": "llm", "params": {"prompt": "hi"}}],
             "edges": [],
             "outputs": {
-                "content": {"type": "str"},
-                "source_type": {"type": "str"},
+                "content": {"type": "string"},
+                "source_type": {"type": "string"},
             },
         }
         child_path = tmp_path / "fetch_child.pflow.md"
@@ -593,7 +593,7 @@ class TestBatchItemFieldValidation:
         workflow_ir = {
             "inputs": {
                 "sources": {"type": "array", "required": True},
-                "workflow_path": {"type": "str", "required": True},
+                "workflow_path": {"type": "string", "required": True},
             },
             "nodes": [
                 {

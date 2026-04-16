@@ -4,6 +4,7 @@ import pytest
 
 from pflow.core import FLOW_IR_SCHEMA, validate_ir
 from pflow.core.exceptions import SchemaValidationError
+from pflow.core.types import CANONICAL_TYPES
 
 
 class TestSchemaStructure:
@@ -367,11 +368,11 @@ class TestErrorMessages:
 
 
 class TestInputTypeAliases:
-    """Test that input type field accepts both JSON Schema and Python type names."""
+    """Test the canonical workflow input/output type vocabulary."""
 
     def test_json_schema_types_accepted(self):
-        """JSON Schema canonical types should be accepted."""
-        for type_name in ["string", "number", "boolean", "object", "array"]:
+        """Canonical types should be accepted for inputs."""
+        for type_name in CANONICAL_TYPES:
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
@@ -379,13 +380,13 @@ class TestInputTypeAliases:
             }
             validate_ir(ir)  # Should not raise
 
-    def test_python_type_aliases_accepted(self):
-        """Python type aliases should be accepted for user convenience."""
-        for type_name in ["str", "int", "integer", "float", "bool", "dict", "list"]:
+    def test_output_types_accepted(self):
+        """Canonical types should be accepted for outputs."""
+        for type_name in CANONICAL_TYPES:
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
-                "inputs": {"param": {"type": type_name, "required": True}},
+                "outputs": {"result": {"type": type_name, "source": "${n1.result}"}},
             }
             validate_ir(ir)  # Should not raise
 
@@ -399,6 +400,207 @@ class TestInputTypeAliases:
         with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "inputs.param.type" in exc_info.value.path
+        assert "Valid types" in exc_info.value.suggestion
+
+    @pytest.mark.parametrize(
+        ("raw", "canonical"),
+        [
+            ("str", "string"),
+            ("int", "integer"),
+            ("float", "number"),
+            ("bool", "boolean"),
+            ("list", "array"),
+        ],
+    )
+    def test_alias_rejected_with_fix_suggestion(self, raw: str, canonical: str):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": raw, "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert exc_info.value.suggestion == f"Use '{canonical}' instead of '{raw}'"
+
+    def test_dict_alias_rejected_with_wildcard_hint(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "dict", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert exc_info.value.suggestions_list == [
+            "Use 'object' if the value is a dict: - type: object",
+            "Use 'any' if the value can be any type: - type: any",
+        ]
+
+    def test_any_now_accepted(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "any", "required": True}},
+        }
+        validate_ir(ir)
+
+    def test_integer_now_accepted_and_bridges_to_int(self):
+        from pflow.registry import Registry
+        from pflow.runtime import WorkflowEngine, compile_workflow
+
+        ir = {
+            "ir_version": "0.1.0",
+            "edges": [],
+            "nodes": [
+                {
+                    "id": "compute",
+                    "type": "code",
+                    "purpose": "Increment the integer input",
+                    "params": {
+                        "inputs": {"value": "${value}"},
+                        "code": "value: int\nresult: int = value + 1",
+                    },
+                }
+            ],
+            "inputs": {"value": {"type": "integer", "required": True, "description": "Integer input"}},
+        }
+        validate_ir(ir)
+
+        workflow = compile_workflow(ir, registry=Registry(), initial_params={"value": 5})
+        shared = dict(workflow.resolved_defaults)
+        shared["value"] = 5
+        result = WorkflowEngine().run(workflow, shared)
+
+        assert result == "default"
+        assert shared["compute"]["result"] == 6
+
+    def test_null_still_rejected(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "null", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert exc_info.value.suggestion.startswith("Use 'any'")
+
+    def test_null_as_python_none_rejected_with_same_suggestion(self):
+        # YAML `- type: null` parses to Python None, not the string "null".
+        # That path hits jsonschema's `type` validator (not `enum`), but must
+        # reach the same "Use 'any'" suggestion as the string-"null" path.
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": None, "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert exc_info.value.suggestion.startswith("Use 'any'")
+        assert exc_info.value.suggestions_list == ["Use 'any' if the value may be None"]
+
+    def test_parameterized_generic_rejected_list(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "list[str]", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert "Use 'array'" in exc_info.value.suggestion
+
+    def test_parameterized_generic_rejected_dict(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "dict[str, int]", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert "Use 'object'" in exc_info.value.suggestion
+
+    def test_unknown_type_fuzzy_suggestion(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "strin", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert exc_info.value.similar_names == ["string"]
+
+    def test_unknown_type_no_false_positive_fuzzy(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "pool", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert exc_info.value.similar_names == []
+
+    def test_outputs_apply_same_rules(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "outputs": {"result": {"type": "str", "source": "${n1.result}"}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        assert exc_info.value.suggestion == "Use 'string' instead of 'str'"
+
+    def test_json_output_contains_structured_context(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "str", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+
+        diagnostic = exc_info.value.to_diagnostics()[0].to_dict()
+        # Alias errors use suggestions (known-fix channel), not similar_names.
+        assert diagnostic["context"].get("similar_names", []) == []
+        assert diagnostic["context"]["available_fields"] == list(CANONICAL_TYPES)
+        assert diagnostic["context"]["available_fields_label"] == "types"
+        assert diagnostic["suggestions"] == ["Use 'string' instead of 'str'"]
+
+    def test_full_render_pipeline_for_type_vocabulary_error(self):
+        """End-to-end regression guard through the full diagnostic pipeline:
+        ``validate_ir`` → ``SchemaValidationError`` → ``to_diagnostics`` →
+        ``format_diagnostic``.
+
+        Pins Task 154's central user-facing contract — the exact rendered text
+        an agent sees when writing ``- type: str`` in a workflow. Every layer
+        has its own unit test; this one pins the full chain.
+
+        Failure modes this catches:
+        - Renderer refactor drops ``suggestions_list`` preemption so the full
+          prose no longer reaches the rendered output.
+        - Suggestion wording lowercase regression (``Use`` → ``use``) breaking
+          the case-sensitive contract from poll P3.
+        - Available-fields truncation policy revert re-introducing the
+          "5 of 7 ... and 2 more" hostile UX for a 7-item closed set.
+        - Alias suggestion erroneously routed back through ``similar_names``
+          (which says "Did you mean" — the wrong framing for a known canonical).
+        """
+        from pflow.core.diagnostic_render import format_diagnostic
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"x": {"type": "str", "required": True}},
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+
+        rendered = format_diagnostic(exc_info.value.to_diagnostics()[0])
+
+        assert "Use 'string' instead of 'str'" in rendered
+        assert "Available types (showing 7 of 7)" in rendered
+        for canonical_name in CANONICAL_TYPES:
+            assert f"- {canonical_name}" in rendered
+        # Alias errors use the directive "To fix this" / "→ Use ..." channel,
+        # not the "Did you mean" channel (reserved for genuine typos / fuzzy match).
+        assert "Did you mean" not in rendered
 
 
 class TestEdgeCases:

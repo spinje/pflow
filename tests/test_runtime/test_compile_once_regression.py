@@ -263,7 +263,7 @@ def test_parallel_batch_items_produce_distinct_output(tmp_path: Path):
     child_md = tmp_path / "child.pflow.md"
     child_md.write_text(
         "# Child\n\nA child workflow.\n\n"
-        "## Inputs\n\n### text\n\nText input.\n\n- type: str\n- required: true\n\n"
+        "## Inputs\n\n### text\n\nText input.\n\n- type: string\n- required: true\n\n"
         "## Steps\n\n### echo\n\nEcho the text.\n\n- type: shell\n- command: echo MARKER_${text}_END\n",
         encoding="utf-8",
     )
@@ -495,10 +495,10 @@ def test_resolved_defaults_do_not_leak_between_batch_items(tmp_path: Path):
         "# Child\n\nA child workflow.\n\n"
         "## Inputs\n\n"
         "### text\n\nThe text to echo.\n\n"
-        "- type: str\n"
+        "- type: string\n"
         "- required: true\n\n"
         "### prefix\n\nOptional prefix.\n\n"
-        "- type: str\n"
+        "- type: string\n"
         "- required: false\n"
         "- default: DEFAULT\n\n"
         "## Steps\n\n"

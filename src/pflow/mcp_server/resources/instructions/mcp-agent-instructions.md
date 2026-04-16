@@ -833,7 +833,7 @@ metadata:
 - Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
-- Use `object` as type when you don't know the type (skips validation)
+- Type annotations follow modern Python (PEP 585 + PEP 604): lowercase generics (`list[T]`, `dict[K, V]`), pipe unions (`A | B`). `Any`, `Optional`, and the `typing` module are auto-injected; other typing names require `from typing import X`. Do NOT use `List[T]` / `Union[A, B]` — pflow rejects them with a canonical-replacement hint.
 - Single output via `result` variable — use dict for structured output
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
@@ -1003,7 +1003,7 @@ What this output contains.
 - source: ${final_node.output}
 `````
 
-**Input fields**: `type` (string|number|boolean|array|object), `required` (true|false), `default` (only when required: false), `stdin` (true|false -- only one input can have this), description as prose.
+**Input fields**: `type` (string|number|integer|boolean|array|object|any), `required` (true|false), `default` (only when required: false), `stdin` (true|false -- only one input can have this), description as prose.
 
 **Output fields**: `source` (template expression like `${node.key}`), `type` (optional hint), `stdout` (true|false -- at most one output may set this; marks the output that streams to stdout in text mode). Single-output workflows don't need a marker. Multi-output workflows without a marker stream the first declared output and emit a stderr warning.
 
@@ -1263,6 +1263,22 @@ cat ~/.pflow/reports/my-workflow/01-fetch.md
 
 ### Parameter Types - Complete Guide
 
+### Type Vocabulary - Two Surfaces
+
+Workflow `## Inputs` / `## Outputs` use canonical JSON-Schema-style names. Python code blocks use Python annotations. Same meaning, different spelling.
+
+| Workflow `type:` | Python annotation | Notes |
+|---|---|---|
+| `string` | `str` | |
+| `integer` | `int` | Rejects floats |
+| `number` | `int \| float` or `float` | |
+| `boolean` | `bool` | |
+| `array` | `list` | |
+| `object` | `dict` | Dict only, not wildcard |
+| `any` | `Any` | `Any` is auto-injected in code blocks |
+
+Code blocks follow modern Python syntax — use lowercase generics (`list[T]`, `dict[K, V]`) and pipe unions (`int | str`), not `List[T]` / `Union[A, B]`. See `pflow guide code` for the full type annotation syntax table.
+
 ```markdown
 ## Inputs
 
@@ -1275,11 +1291,19 @@ Any text value. String is the most common type.
 
 ### count
 
+Whole number only.
+
+- type: integer
+- required: false
+- default: 10
+
+### ratio
+
 Numeric value — integers or floats.
 
 - type: number
 - required: false
-- default: 10
+- default: 0.5
 
 ### verbose
 
@@ -1299,11 +1323,18 @@ List of tags. Array input.
 
 ### config
 
-Configuration object. Complex structure.
+Configuration object. Must be a dict.
 
 - type: object
 - required: false
 - default: {"key": "value"}
+
+### payload
+
+Explicit wildcard. Use when the value can be any shape, including `null`.
+
+- type: any
+- required: false
 
 ### data
 

@@ -10,7 +10,7 @@ core/workflow/
 ├── manager.py               # WorkflowManager: save/load/list/delete workflows (folder-based)
 ├── save_service.py          # Shared save operations for CLI + MCP (with dependency bundling)
 ├── dependency_discovery.py  # Recursive file dependency scanner for bundling
-├── sub_workflow_resolver.py # Shared sub-workflow resolution (inline IR, file, saved name)
+├── sub_workflow_resolver.py # Shared sub-workflow resolution (file path or saved name)
 ├── validator.py             # Unified 10-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
 ├── mermaid/                 # Mermaid flowchart generation from workflow IR

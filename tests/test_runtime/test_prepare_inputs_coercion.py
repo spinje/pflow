@@ -181,22 +181,6 @@ class TestPrepareInputsCoercionEdgeCases:
         # Original value not in defaults because coercion returned same value
         assert "count" not in defaults
 
-    def test_type_aliases_work(self):
-        """Type aliases like 'str', 'int' should work."""
-        workflow_ir = {
-            "inputs": {
-                "id": {"type": "str", "required": True},  # alias for string
-                "num": {"type": "int", "required": True},  # alias for integer
-            }
-        }
-        provided_params = {"id": 123, "num": "456"}
-
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
-
-        assert errors == []
-        assert defaults["id"] == "123"
-        assert defaults["num"] == 456
-
 
 class TestPrepareInputsIntegrationWithDefaults:
     """Test coercion interacts correctly with default values."""

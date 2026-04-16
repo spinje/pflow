@@ -40,4 +40,4 @@ The LLM response.
 
 A dynamically written key that cannot be traced.
 
-- type: object
+- type: any

@@ -38,6 +38,8 @@ All components support type annotations using Python's built-in types:
 - `list` - List/array structures
 - `any` - Any type (default when not specified)
 
+These names describe node `Interface:` docstrings and stay Python-named. Workflow `## Inputs` / `## Outputs` use a separate canonical vocabulary: `string`, `number`, `integer`, `boolean`, `array`, `object`, `any`.
+
 #### Union Types
 
 Union types allow you to specify that a value can be one of multiple types using the pipe (`|`) operator:

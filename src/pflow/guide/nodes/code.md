@@ -60,7 +60,29 @@ result: dict = {
 - Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
-- Use `object` as type when you don't know the type (skips validation)
+- Use `Any` as the type when you don't want type validation (see syntax table below — auto-injected, no import needed)
 - Single output via `result` variable — use dict for structured output
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
+### Type annotation syntax
+
+Type annotations in code blocks are Python. pflow follows modern Python style (PEP 585 + PEP 604):
+
+| For... | Write | Example |
+|---|---|---|
+| Any type (wildcard) | `Any` | `x: Any` |
+| Built-in scalars | `str`, `int`, `float`, `bool`, `bytes` | `x: str` |
+| List | `list[T]` | `x: list[str]` |
+| Dict | `dict[K, V]` | `x: dict[str, int]` |
+| Tuple | `tuple[T, ...]` | `x: tuple[int, str]` |
+| Set | `set[T]` | `x: set[str]` |
+| Union | `A \| B` (pipe syntax) | `x: int \| str` |
+| Optional | `Optional[T]` or `T \| None` | `x: str \| None` |
+
+**Auto-injected** (no import needed): `Any`, `Optional`, and the `typing` module.
+
+**Requires** `from typing import X` at the top of your code block: `Literal`, `TypeVar`, `Callable`, `Final`, `ClassVar`, `Iterable`, `Iterator`, `Sequence`, `Mapping`.
+
+**Not allowed**: `List[T]`, `Dict[K, V]`, `Union[A, B]`, and other uppercase typing-module generics — use the modern lowercase / pipe forms above. pflow's NameError suggestions point at the canonical replacement.
+
+Only the outer type is enforced at prep time (e.g. `list[dict]` checks `isinstance(x, list)` but not element types).

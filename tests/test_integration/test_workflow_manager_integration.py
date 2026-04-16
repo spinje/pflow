@@ -48,8 +48,8 @@ def workflow_manager(temp_workflows_dir):
 def sample_ir():
     """Sample workflow IR for testing."""
     return {
-        "inputs": {"text": {"type": "str", "description": "Input text"}},
-        "outputs": {"result": {"type": "str", "description": "Processed result"}},
+        "inputs": {"text": {"type": "string", "description": "Input text"}},
+        "outputs": {"result": {"type": "string", "description": "Processed result"}},
         "nodes": [
             {
                 "id": "echo1",
@@ -71,8 +71,8 @@ def sample_markdown(sample_ir):
 def another_ir():
     """Another sample workflow IR for testing multiple workflows."""
     return {
-        "inputs": {"name": {"type": "str", "description": "User name"}},
-        "outputs": {"greeting": {"type": "str", "description": "Greeting message"}},
+        "inputs": {"name": {"type": "string", "description": "User name"}},
+        "outputs": {"greeting": {"type": "string", "description": "Greeting message"}},
         "nodes": [
             {
                 "id": "greet1",

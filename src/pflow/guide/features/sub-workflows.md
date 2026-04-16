@@ -4,7 +4,7 @@
 
 - Child inputs are passed via the top-level `inputs:` dict on the workflow node
 - Child workflow must declare `## Inputs` (for required params) and `## Outputs` (for exposed results)
-- `workflow:` accepts a file path (`./child.pflow.md`) or a saved workflow name (`my-saved-workflow`)
+- `workflow:` accepts a file path (`./child.pflow.md`), a saved workflow name (`my-saved-workflow`), or a template that resolves to one at runtime (see Dynamic Child Selection below)
 - Nesting depth limited to 10 levels (configurable via `max_depth` param)
 - Parent→child boundary is strict — every key in `inputs:` must be declared on the child's `## Inputs`; typos are rejected at parse time
 
@@ -72,6 +72,39 @@ Combine the processed title and body into a single output.
 - type: shell
 - command: printf "Title: %s\nBody: %s" "${process_title.result}" "${process_body.result}"
 ````
+
+### Dynamic Child Selection (Template References)
+
+`workflow:` can be a template (`${var}`) that resolves at runtime — from CLI input, an upstream node's output, or a batch item field. The child is loaded and validated when the parent node executes, not at parent-parse time.
+
+**Use when**: the same parent node needs to dispatch to different children per batch item or per run.
+
+**Example** — fan out over three review aspects, each specifying which child workflow to run:
+
+`````markdown
+### reviews
+
+Review the combined analysis from three critical perspectives. Each batch item picks which child workflow to run.
+
+- type: workflow
+- workflow: ${item.workflow}
+- inputs:
+    summary: ${combine.result}
+    aspect: ${item.aspect}
+
+```yaml batch
+items:
+  - aspect: accuracy
+    workflow: ./review-aspect.pflow.md
+  - aspect: completeness
+    workflow: ./review-aspect.pflow.md
+  - aspect: clarity
+    workflow: ./review-aspect.pflow.md
+parallel: true
+```
+`````
+
+**Trade-off**: invalid children surface as runtime compile errors, not at `--validate-only`. Prefer the static-path form when the child is known at authoring time; reserve the template form for genuine runtime dispatch.
 
 ### Pattern: Heterogeneous Batch over Sub-Workflows
 

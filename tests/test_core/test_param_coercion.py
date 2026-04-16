@@ -201,13 +201,6 @@ class TestInputCoercionIntToString:
 
         assert result is original  # Same object
 
-    def test_type_alias_str_works(self):
-        """Type alias 'str' should work like 'string'."""
-        result = coerce_workflow_input(42, "str")
-
-        assert isinstance(result, str)
-        assert result == "42"
-
 
 class TestInputCoercionStringToInt:
     """Test string → int coercion for workflow inputs."""
@@ -239,13 +232,6 @@ class TestInputCoercionStringToInt:
 
         assert result == "hello"  # Unchanged
 
-    def test_type_alias_int_works(self):
-        """Type alias 'int' should work like 'integer'."""
-        result = coerce_workflow_input("99", "int")
-
-        assert isinstance(result, int)
-        assert result == 99
-
 
 class TestInputCoercionStringToNumber:
     """Test string → float coercion for workflow inputs."""
@@ -263,13 +249,6 @@ class TestInputCoercionStringToNumber:
 
         assert isinstance(result, float)
         assert result == 42.0
-
-    def test_type_alias_float_works(self):
-        """Type alias 'float' should work like 'number'."""
-        result = coerce_workflow_input("2.718", "float")
-
-        assert isinstance(result, float)
-        assert result == 2.718
 
 
 class TestInputCoercionStringToBool:
@@ -297,12 +276,6 @@ class TestInputCoercionStringToBool:
         """Bool stays bool when already correct type."""
         assert coerce_workflow_input(True, "boolean") is True
         assert coerce_workflow_input(False, "boolean") is False
-
-    def test_type_alias_bool_works(self):
-        """Type alias 'bool' should work like 'boolean'."""
-        result = coerce_workflow_input("yes", "bool")
-
-        assert result is True
 
 
 class TestInputCoercionStringToObject:
@@ -341,12 +314,6 @@ class TestInputCoercionStringToObject:
 
         assert result is original
 
-    def test_type_alias_dict_works(self):
-        """Type alias 'dict' should work like 'object'."""
-        result = coerce_workflow_input('{"a": 1}', "dict")
-
-        assert isinstance(result, dict)
-
 
 class TestInputCoercionStringToArray:
     """Test string → list coercion for workflow inputs."""
@@ -378,12 +345,6 @@ class TestInputCoercionStringToArray:
         result = coerce_workflow_input(original, "array")
 
         assert result is original
-
-    def test_type_alias_list_works(self):
-        """Type alias 'list' should work like 'array'."""
-        result = coerce_workflow_input("[4, 5]", "list")
-
-        assert isinstance(result, list)
 
 
 class TestInputCoercionNoType:
@@ -424,3 +385,32 @@ class TestInputCoercionUnknownType:
         result = coerce_workflow_input(42, "")
 
         assert result == 42
+
+
+class TestAnyTypeCoercion:
+    def test_any_accepts_str_unchanged(self):
+        assert coerce_workflow_input("hello", "any") == "hello"
+
+    def test_any_accepts_int_unchanged(self):
+        assert coerce_workflow_input(42, "any") == 42
+
+    def test_any_accepts_float_unchanged(self):
+        assert coerce_workflow_input(3.14, "any") == 3.14
+
+    def test_any_accepts_bool_unchanged(self):
+        assert coerce_workflow_input(True, "any") is True
+
+    def test_any_accepts_dict_unchanged(self):
+        original = {"key": "value"}
+        assert coerce_workflow_input(original, "any") is original
+
+    def test_any_accepts_list_unchanged(self):
+        original = [1, 2, 3]
+        assert coerce_workflow_input(original, "any") is original
+
+    def test_any_accepts_none_unchanged(self):
+        assert coerce_workflow_input(None, "any") is None
+
+    def test_any_accepts_nested_complex(self):
+        original = {"items": [{"id": 1}, {"id": 2}], "meta": {"ok": True}}
+        assert coerce_workflow_input(original, "any") is original

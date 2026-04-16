@@ -508,8 +508,8 @@ Warns if declared inputs are never used:
 ```json
 {
   "inputs": {
-    "user_id": {"type": "str", "required": true},
-    "api_key": {"type": "str", "required": true}
+    "user_id": {"type": "string", "required": true},
+    "api_key": {"type": "string", "required": true}
   },
   "nodes": [
     {
@@ -599,6 +599,8 @@ if unresolved_templates:
 Located: `src/pflow/runtime/template_validation/type_checker.py`
 
 pflow validates that template types match parameter expectations using node interface schemas.
+
+This compatibility layer bridges two vocabularies: workflow-authored `## Inputs` / `## Outputs` use canonical names like `string` and `object`, while node Interface metadata uses Python names like `str` and `dict`.
 
 #### Type Compatibility Matrix
 
@@ -983,9 +985,9 @@ assert resolve_template("Status: ${enabled}", context) == "Status: True"
 ```json
 {
   "inputs": {
-    "source_dir": {"type": "str"},
-    "dest_dir": {"type": "str"},
-    "file_name": {"type": "str"}
+    "source_dir": {"type": "string"},
+    "dest_dir": {"type": "string"},
+    "file_name": {"type": "string"}
   },
   "nodes": [
     {
@@ -1047,10 +1049,10 @@ assert resolve_template("Status: ${enabled}", context) == "Status: True"
 ```json
 {
   "inputs": {
-    "task": {"type": "str"},
-    "model": {"type": "str", "default": "claude-3-5-sonnet-20241022"},
-    "max_tokens": {"type": "int", "default": 1000},
-    "temperature": {"type": "float", "default": 0.7}
+    "task": {"type": "string"},
+    "model": {"type": "string", "default": "claude-3-5-sonnet-20241022"},
+    "max_tokens": {"type": "integer", "default": 1000},
+    "temperature": {"type": "number", "default": 0.7}
   },
   "nodes": [
     {
@@ -1230,12 +1232,12 @@ There is no mechanism to execute code through templates.
   "template_resolution_mode": "strict",
   "inputs": {
     "user_id": {
-      "type": "str",
+      "type": "string",
       "required": true,
       "description": "User identifier"
     },
     "count": {
-      "type": "int",
+      "type": "integer",
       "default": 10,
       "description": "Number of items to process"
     }
@@ -1345,12 +1347,12 @@ export PFLOW_TEMPLATE_RESOLUTION_MODE=permissive
 {
   "inputs": {
     "api_token": {
-      "type": "str",
+      "type": "string",
       "required": true,
       "description": "API authentication token"
     },
     "max_retries": {
-      "type": "int",
+      "type": "integer",
       "default": 3,
       "description": "Maximum retry attempts"
     }
@@ -1629,7 +1631,7 @@ Template variable ${api_token} has no valid source
    ```json
    {
      "inputs": {
-       "api_token": {"type": "str", "required": true}
+       "api_token": {"type": "string", "required": true}
      }
    }
    ```

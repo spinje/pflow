@@ -297,7 +297,7 @@ What this output contains.
 - source: ${final_node.output}
 `````
 
-**Input fields**: `type` (string|number|boolean|array|object), `required` (true|false), `default` (only when required: false), `stdin` (true|false — only one input can have this), description as prose.
+**Input fields**: `type` (string|number|integer|boolean|array|object|any), `required` (true|false), `default` (only when required: false), `stdin` (true|false — only one input can have this), description as prose.
 
 **Output fields**: `source` (template expression like `${node.key}`), `type` (optional hint), `stdout` (true|false — at most one output may set this; marks the output that streams to stdout in text mode), description as prose.
 
@@ -615,6 +615,22 @@ The prompt file uses `${concept_brief}` and `${creative_direction}` — resolved
 
 ### Parameter Types - Complete Guide
 
+### Type Vocabulary - Two Surfaces
+
+Workflow `## Inputs` / `## Outputs` use canonical JSON-Schema-style names. Python code blocks use Python annotations. Same meaning, different spelling.
+
+| Workflow `type:` | Python annotation | Notes |
+|---|---|---|
+| `string` | `str` | |
+| `integer` | `int` | Rejects floats |
+| `number` | `int \| float` or `float` | |
+| `boolean` | `bool` | |
+| `array` | `list` | |
+| `object` | `dict` | Dict only, not wildcard |
+| `any` | `Any` | `Any` is auto-injected in code blocks |
+
+Code blocks follow modern Python syntax — use lowercase generics (`list[T]`, `dict[K, V]`) and pipe unions (`int | str`), not `List[T]` / `Union[A, B]`. See `pflow guide code` for the full type annotation syntax table.
+
 ```markdown
 ## Inputs
 
@@ -627,11 +643,19 @@ Any text value. String is the most common type.
 
 ### count
 
+Whole number only.
+
+- type: integer
+- required: false
+- default: 10
+
+### ratio
+
 Numeric value — integers or floats.
 
 - type: number
 - required: false
-- default: 10
+- default: 0.5
 
 ### verbose
 
@@ -651,11 +675,18 @@ List of tags. Array input.
 
 ### config
 
-Configuration object. Complex structure.
+Configuration object. Must be a dict.
 
 - type: object
 - required: false
 - default: {"key": "value"}
+
+### payload
+
+Explicit wildcard. Use when the value can be any shape, including `null`.
+
+- type: any
+- required: false
 
 ### data
 
@@ -774,4 +805,3 @@ Format: `verb-noun-qualifier`
 - Examples: `fetch-api-data`, `process-csv-files`, `analyze-slack-messages`
 - Max 30 chars, lowercase, hyphens only
 - Specific enough to find, generic enough to reuse
-

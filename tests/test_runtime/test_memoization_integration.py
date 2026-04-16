@@ -137,7 +137,7 @@ def test_memo_cache_miss_on_different_input(tmp_path: Any) -> None:
             {"id": "diff-input", "type": "shell", "params": {"command": "printf '%s' '${input_val}'"}},
         ],
         "edges": [],
-        "inputs": {"input_val": {"type": "str", "description": "Test input"}},
+        "inputs": {"input_val": {"type": "string", "description": "Test input"}},
     }
 
     # First run with input_val="hello"

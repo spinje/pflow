@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -151,12 +152,30 @@ class SchemaValidationError(PflowError):
         message: The validation error message
         path: Dotted path to the invalid field (e.g., "nodes[0].type")
         suggestion: Optional suggestion for fixing the error
+        similar_names: Optional fuzzy-match suggestions
+        available_fields: Optional list of valid alternatives
+        available_fields_label: Optional noun for the alternatives block
+        suggestions_list: Optional multi-suggestion list
     """
 
-    def __init__(self, message: str, path: str = "", suggestion: str = ""):
+    def __init__(
+        self,
+        message: str,
+        path: str = "",
+        suggestion: str = "",
+        *,
+        similar_names: list[str] | None = None,
+        available_fields: list[str] | None = None,
+        available_fields_label: str | None = None,
+        suggestions_list: list[str] | None = None,
+    ):
         self.message = message
         self.path = path
         self.suggestion = suggestion
+        self.similar_names = similar_names or []
+        self.available_fields = available_fields or []
+        self.available_fields_label = available_fields_label
+        self.suggestions_list = suggestions_list or []
 
         full_message = "Validation error"
         if path:
@@ -171,12 +190,26 @@ class SchemaValidationError(PflowError):
         ctx: dict[str, Any] = {"category": "validation"}
         if self.path:
             ctx["path"] = self.path
+        if self.similar_names:
+            ctx["similar_names"] = self.similar_names
+        if self.available_fields:
+            ctx["available_fields"] = self.available_fields
+        if self.available_fields_label:
+            ctx["available_fields_label"] = self.available_fields_label
+
+        if self.suggestions_list:
+            suggestions = self.suggestions_list
+        elif self.suggestion:
+            suggestions = [self.suggestion]
+        else:
+            suggestions = None
+
         return [
             Diagnostic(
                 severity=Severity.ERROR,
                 message=self.message,
                 title="Validation Error",
-                suggestions=[self.suggestion] if self.suggestion else None,
+                suggestions=suggestions,
                 source="validation",
                 context=ctx,
             )
@@ -272,7 +305,21 @@ class CompilationError(PflowError):
 
     def to_diagnostics(self) -> list[Diagnostic]:
         if self.wrapped_diagnostics:
-            return list(self.wrapped_diagnostics)
+            # Wrapped diagnostics carry inner structure (e.g. SchemaValidationError's
+            # similar_names / available_fields). This CompilationError contributes
+            # container context (sub_workflow_path). Merge the latter into each
+            # wrapped diagnostic's context so both render — wrapped context wins
+            # on conflict, mirroring dict.setdefault semantics.
+            sub_workflow_path = self.details.get("sub_workflow_path")
+            if sub_workflow_path is None:
+                return list(self.wrapped_diagnostics)
+            return [
+                replace(
+                    d,
+                    context={"sub_workflow_path": sub_workflow_path, **(d.context or {})},
+                )
+                for d in self.wrapped_diagnostics
+            ]
         return [
             Diagnostic(
                 severity=Severity.ERROR,

@@ -496,7 +496,8 @@ Run a sub-workflow for processing.
 
 - type: workflow
 - workflow: path/to/workflow.pflow.md
-- input_data: ${data}
+- inputs:
+    input_data: ${data}
 ```
 
 **What happens internally**:

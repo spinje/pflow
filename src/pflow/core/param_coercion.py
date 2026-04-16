@@ -11,27 +11,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Type aliases for normalization (consistent with type_checker.py)
-_TYPE_ALIASES = {
-    "str": "string",
-    "int": "integer",
-    "float": "number",
-    "bool": "boolean",
-    "dict": "object",
-    "list": "array",
-}
-
-
-def _normalize_type(type_name: str) -> str:
-    """Normalize type name to canonical form.
-
-    Known type aliases are normalized to their canonical form.
-    Unknown types preserve their original case to support future
-    custom/user-defined types.
-    """
-    normalized = _TYPE_ALIASES.get(type_name.lower())
-    return normalized if normalized else type_name  # Preserve case for unknowns
-
 
 def coerce_param_for_node(
     value: Any,
@@ -47,6 +26,12 @@ def coerce_param_for_node(
     This function does NOT perform general type coercion (e.g., str→int).
     At this pipeline stage, values are already in their intended form from
     template resolution or the shared store.
+
+    Note on vocabulary: ``expected_type`` here is the S3 node-Interface type
+    (Python-aliased — ``"str"``, ``"dict"``), NOT the S1 workflow-IR vocabulary.
+    This is why ``"str"``/``"string"`` are both accepted below, even though
+    ``coerce_workflow_input`` (the S1 entry point) rejects Python aliases. See
+    ``src/pflow/core/types.py`` module docstring for the surface split.
 
     Args:
         value: The resolved value to potentially coerce
@@ -222,6 +207,11 @@ def _coerce_to_array(value: Any, log_context: dict[str, Any]) -> Any:
     return value
 
 
+def _coerce_to_any(value: Any, log_context: dict[str, Any]) -> Any:
+    """Passthrough coercion for `type: any`."""
+    return value
+
+
 # Dispatch table for type coercion
 _COERCION_DISPATCH = {
     "string": _coerce_to_string,
@@ -230,6 +220,7 @@ _COERCION_DISPATCH = {
     "boolean": _coerce_to_boolean,
     "object": _coerce_to_object,
     "array": _coerce_to_array,
+    "any": _coerce_to_any,
 }
 
 
@@ -284,11 +275,10 @@ def coerce_workflow_input(
     if declared_type is None:
         return value
 
-    normalized_type = _normalize_type(declared_type)
     log_context: dict[str, Any] = {"input": input_name} if input_name else {}
 
     # Use dispatch table for coercion
-    coercer = _COERCION_DISPATCH.get(normalized_type)
+    coercer = _COERCION_DISPATCH.get(declared_type)
     if coercer:
         return coercer(value, log_context)
 

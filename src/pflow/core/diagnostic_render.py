@@ -212,6 +212,11 @@ def _format_available_fields_block(context: dict[str, Any]) -> list[str]:
     contains (e.g. "outputs", "nodes", "inputs", "parameters"). The fallback
     ``"fields"`` is deliberately generic so it is never technically wrong —
     producers that want accurate wording must set the label explicitly.
+
+    Truncation policy: for small closed sets (≤10 items) show every entry —
+    truncating hurts agent UX (e.g., hiding 2 of 7 canonical types forces the
+    agent to guess or pivot to JSON output). For larger sets, truncate to 5
+    and note how many more exist.
     """
     available = context.get("available_fields")
     if not available:
@@ -219,14 +224,20 @@ def _format_available_fields_block(context: dict[str, Any]) -> list[str]:
 
     label = context.get("available_fields_label", "fields")
     total = context.get("available_fields_total", len(available))
+
+    # Show all entries for small closed sets; truncate only when the full list
+    # would genuinely overwhelm the error output.
+    show_all = len(available) <= 10
+    shown_count = len(available) if show_all else 5
+
     lines = [
         "",
-        f"  Available {label} (showing {min(len(available), 5)} of {total}):",
+        f"  Available {label} (showing {shown_count} of {total}):",
     ]
-    for field_name in available[:5]:
+    for field_name in available[:shown_count]:
         lines.append(f"    - {field_name}")
-    if len(available) > 5:
-        lines.append(f"    ... and {len(available) - 5} more (in error details)")
+    if not show_all:
+        lines.append(f"    ... and {len(available) - shown_count} more (in error details)")
     return lines
 
 
