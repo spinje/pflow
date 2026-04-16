@@ -906,6 +906,31 @@ class TestWorkflowExecutorComprehensive:
         prep_res2 = node2.prep({})
         assert prep_res2["child_params"] == {}
 
+    def test_workflow_ir_inputs_none_coerced_to_empty_at_runtime_boundary(self, tmp_path):
+        """Programmatic caller with ``workflow_ir["inputs"] = None`` is tolerated.
+
+        Step 1 schema validation rejects ``inputs: null`` for user-authored IR,
+        but bypass callers (MCP server, direct Python API, tests constructing
+        executors) skip validation. The runtime boundary must coerce ``None``
+        to ``{}`` instead of crashing with ``AttributeError: 'NoneType' object
+        has no attribute 'items'``.
+
+        Regression guard: reverting ``_validate_child_params`` to
+        ``workflow_ir.get("inputs", {})`` (without ``or {}``) makes both
+        directions crash — missing-required loop on ``None.items()`` and
+        extras loop on ``None.keys()``.
+        """
+        node = WorkflowExecutor()
+        node.set_params({"workflow": "dummy.pflow.md", "inputs": {"extra_key": "oops"}})
+
+        # Directly invoke the runtime boundary with a crafted IR having inputs=None.
+        # Extras must still be rejected — tolerance at the boundary, strict inside.
+        with pytest.raises(ValueError, match=r"undeclared input\(s\)"):
+            node._validate_child_params({"inputs": None, "nodes": []}, {"extra_key": "oops"}, "dummy")
+
+        # And the no-extras case must succeed without crashing.
+        node._validate_child_params({"inputs": None, "nodes": []}, {}, "dummy")
+
     # --- Test 31: relative path resolves from base_path ---
 
     def test_relative_path_no_base_raises(self):

@@ -189,6 +189,31 @@ Scope discipline argued for deferring — the original bug report didn't ask for
 - **`"<inline>"` sentinel rename** — progress-log tracked above.
 - **Minor nits** deemed not worth a commit: MCP `workflow` dict-arg vs removed node-param `workflow_ir` distinction (doc nit), `_loaded_ir_cache` attribute probe in tests (reviewer said acceptable as diagnostic-on-failure), pre-warm O(K) compile-budget docstring note (current text already accurate), changelog v0.12.0 entry (release-time).
 
+### Third review round — post-rebase PR comment caught a real `None`-handling gap
+
+After the rebase onto main (which added one commit, `a7494d6d`, for stdout routing), the PR's code-review bot commented with a warning: `_validate_child_params` — now that task 153 removed its early-return on empty declarations — crashes with `AttributeError` if `workflow_ir["inputs"] = None`. Reviewer suggested one-line `or {}` hardening matching the defensive pattern at `validator.py:403`.
+
+My first-pass analysis over-engineered it. I pattern-matched into "the WHOLE codebase has this crash class, let's sweep all consumer sites" (mapped 9 crash sites across runtime/template_validation/formatters/mermaid/data_flow). Proposed three options: narrow fix (reviewer's scope), consumer sweep (all 9), or upstream normalization in `normalize_ir`.
+
+The user pushed back: *"we should prioritize simplicity of the final code — what's the right solution that the top 10% of codebases similar to this one would implement, have we considered it yet?"*
+
+That forced a re-verification, which flipped two of my claims:
+
+- **Parser does NOT produce `inputs: None`**. My earlier "empirical test" used `.get("inputs")` without a default, which returned `None` from the missing-default fallback — not from an explicit `None` value. The key is simply ABSENT when `## Inputs` has no declarations, so `.get("inputs", {})` correctly returns `{}`. User-authored markdown is not affected.
+- **The IR schema already rejects `inputs: null` cleanly.** At `ir_schema.py:225`, `inputs` is declared `type: object`. Step 1 of the validation pipeline produces `"Validation error at inputs: None is not of type 'object'. Change type from 'NoneType' to 'object'"` before any downstream consumer sees `None`. This is the top-10% "typed boundary" pattern already in place for user-authored IR.
+
+**The actual gap**: programmatic callers (MCP server, direct Python API, tests constructing executors with crafted IR) bypass `WorkflowValidator.validate` entirely. They reach `_validate_child_params` with whatever `workflow_ir` shape they built. Before task 153 the early-return absorbed the `None` case; after task 153 it crashes.
+
+**Top-10% answer**: boundary coerces, body trusts. The schema is the typed boundary for user-authored IR; the runtime `_validate_child_params` is the typed boundary for bypass callers. Both must coerce `None → {}` at their input, then the body can trust `dict[str, Any]`. The 9 "crash sites" I mapped are downstream of the schema boundary — they're already guaranteed not to see `None` from user-authored paths. Sweeping them would be "every consumer defends against its own type violations," the anti-pattern typed boundaries are supposed to eliminate.
+
+**Fix applied**: two-character `or {}` edits at the runtime boundary (`workflow_executor.py:493`) and its parse-time sibling (`validator.py:769`); one regression test verifying that a crafted `workflow_ir["inputs"] = None` with extras raises `ValueError: undeclared input(s)` (clean diagnostic, not `AttributeError`); mermaid known-regression comment hoisted from above `@parametrize` into the test function docstring so it surfaces in pytest verbose output when goldens next regenerate. Mutation-verified: reverting the runtime fix makes the new test fail with `AttributeError` immediately.
+
+**Meta-lessons from this round**:
+
+- **Distrust your own "empirical" claims. Verify the verification.** My `.get("inputs")` output (`None`) looked like proof the parser produces `None`, but it was proof of nothing — the missing-default fallback returns `None` when the key is absent. One extra line (`"inputs" in ir`) would have caught it. When claiming "I empirically verified X," double-check the primitive actually tests what you think it does.
+- **When pattern-matching into a sweep, check whether the structural boundary already handles it.** IR schema validation + Step 1 was ALREADY the "top 10%" structural fix. I proposed a redundant parallel fix at `normalize_ir` and a 9-site consumer sweep without first checking that the boundary already catches it. The user's "top 10%" question was the forcing function that made me recheck.
+- **"Boundary coerces, body trusts" is the right architectural frame** — the schema boundary and the runtime-bypass boundary BOTH need tolerance at their input edges, but their bodies (and every layer below) can assume a clean `dict[str, Any]`. This is the actual answer to the top-10% question for this class of problem.
+
 ### Small cognitive-debt cleanups folded into the review-cycle commits
 
 - Regex tightening: `match="undeclared input"` → `match=r"undeclared input\(s\)"` — anchors on the exact token so a wording drift to a *different* error category doesn't still pass.
@@ -332,6 +357,10 @@ All `.pflow.md` examples under `examples/nested/`, `examples/bundling/`, and the
 
 6. **Scope an explicit specialist-agent review pass into the plan.** The plan treated green CI + green pytest as sufficient verification. Mutation-resistant review found 11 silently-passing test sites and a diagnostic-quality gap. For PRs of this size (30+ files, schema change, migration), a code-review phase with 4 specialist agents is ~15 minutes of wall time and catches issues static analysis can't.
 
+7. **Verify the verification.** My claim "parser produces `inputs: None`" was "empirically confirmed" by a `.get("inputs")` call that returned `None` from the missing-default fallback, not from an explicit `None`. Two different causes, one output. Next time: when using `.get(k)` to verify a value, follow with `k in d` to disambiguate missing-key from explicit-None. A claim built on an ambiguous primitive is a claim worth nothing.
+
+8. **Before proposing a sweep, check the structural boundary.** I mapped 9 consumer sites as crash candidates and proposed a normalize-upstream fix without first checking whether IR schema validation already rejected the invalid state. It did — cleanly, at Step 1 — meaning my proposed "sweep all consumers" was redundant with an existing top-10% boundary. The user's "top 10% codebase?" pushback was the forcing function; without it I'd have shipped over-engineering.
+
 ## What I got right
 
 1. **Per-commit verification gate** contained the scope surprise in Commit 3. Catastrophic if Commits 3+4 had been batched.
@@ -347,3 +376,5 @@ All `.pflow.md` examples under `examples/nested/`, `examples/bundling/`, and the
 6. **Deploying 4 targeted review agents, not the full 7.** Choosing `review-impact-completeness`, `review-feature-interactions`, `review-validation-consistency`, `review-test-fidelity` — and skipping `review-silent-failures` (redundant with the PR's theme), `review-agent-ux` (already reviewed in-conversation), `review-concurrency-safety` (covered by explicit parallel tests) — produced no redundant findings and the full cluster of test-fidelity issues no single agent would have caught alone.
 
 7. **Folding the non-dict `inputs:` diagnostic into this PR instead of deferring.** Scope discipline would've split it off; correctness instincts said "same surface as Bug A, small fix, caught by the same review." Folding in avoided two review cycles for one cluster of findings. Counter-example kept honest: `framework_keys` was NOT folded in because it depends on the future refactor's shape — folding in there would have been speculative work.
+
+8. **Accepted the user's "top 10%" pushback and re-verified instead of defending.** When my sweep proposal looked shaky to the user, the defensive move would have been to justify the scope with elaboration. Instead I went back to the code, re-ran the primitives, and discovered I'd misread the parser output + missed that the IR schema already handled the case. Changing my mind out loud — and being honest about the misread — produced the correct narrow fix. The review bot got the right answer; I would have over-engineered without the user's forcing function.

@@ -490,7 +490,12 @@ class WorkflowExecutor(BaseNode):
         reopened the silent-drop class of bug for programmatic callers against
         children with no ``## Inputs`` section.
         """
-        declared_inputs = workflow_ir.get("inputs", {})
+        # ``or {}`` defends against programmatic callers that set inputs=None
+        # explicitly. The schema (Step 1) rejects ``inputs: null`` from user-
+        # authored IR cleanly, but bypass callers (MCP server, direct Python
+        # API, tests constructing executors) skip validation — this is the
+        # runtime defense-in-depth boundary that catches the leak.
+        declared_inputs = workflow_ir.get("inputs") or {}
         path_str = workflow_path if workflow_path else "<unknown>"
 
         # Missing-required direction (pre-existing).

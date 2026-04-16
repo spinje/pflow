@@ -41,13 +41,6 @@ def _generate_from_file(
     )
 
 
-# KNOWN REGRESSION: the sub-workflow goldens below (document-processor, deep-research-*)
-# encode a coarsened data-flow compared to pre-task-153 state. The renderer at
-# ``src/pflow/core/workflow/mermaid/_edges.py`` traces templates only in top-level
-# string params; after task 153 made ``inputs:`` the canonical form, per-child-input
-# edges nested inside that dict became invisible. Tracked as GH #283. When #283
-# lands and descends into ``inputs:`` dicts, these goldens will need regeneration
-# to restore the finer-grained edges.
 @pytest.mark.parametrize(
     "workflow_rel,golden_name,direction",
     [
@@ -61,7 +54,17 @@ def _generate_from_file(
     ],
 )
 def test_golden_example_workflow(workflow_rel: str, golden_name: str, direction: str) -> None:
-    """Example workflow mermaid output matches golden file."""
+    """Example workflow mermaid output matches golden file.
+
+    KNOWN REGRESSION (GH #283): sub-workflow goldens (``document-processor``,
+    ``deep-research-*``) encode a coarsened data-flow compared to pre-task-153
+    state. The renderer at ``src/pflow/core/workflow/mermaid/_edges.py``
+    traces templates only in top-level string params; after task 153 made
+    ``inputs:`` the canonical form, per-child-input edges nested inside that
+    dict became invisible. When #283 lands and descends into ``inputs:``
+    dicts, these goldens will need regeneration to restore the finer-grained
+    edges.
+    """
     workflow_path = EXAMPLES_DIR / workflow_rel
     golden_path = GOLDEN_DIR / golden_name
 

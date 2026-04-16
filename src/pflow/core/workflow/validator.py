@@ -766,7 +766,9 @@ class WorkflowValidator:
 
             # Static required-input check — always runs, even for already-seen children,
             # because each parent node may provide different params.
-            child_inputs = child_ir.get("inputs", {})
+            # ``or {}`` mirrors the runtime defense at ``WorkflowExecutor._validate_child_params``;
+            # redundant with Step 1 schema validation but kept for symmetry at this boundary.
+            child_inputs = child_ir.get("inputs") or {}
             diagnostics.extend(WorkflowValidator._check_required_inputs(node_id, ref_label, params, child_inputs))
 
             # Recursive validation — skip if this child was already validated
