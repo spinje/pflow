@@ -1,4 +1,4 @@
-# Task 153: Close Parent→Child Input Boundary + IR Cache Heterogeneous-Batch Fix
+# Task 153: Reject Undeclared Sub-Workflow Inputs
 
 ## Description
 
