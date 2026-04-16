@@ -296,14 +296,15 @@ def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) 
                 "purpose": "Delegates analysis to sub-workflow.",
                 "params": {
                     "workflow": "./sub-workflow.pflow.md",
-                    "content": "${text}",
+                    "inputs": {"content": "${text}"},
                 },
             },
         ],
     }
     write_workflow_file(parent_workflow_ir, tmp_path / "parent-workflow.pflow.md", title="Parent Workflow")
 
-    # 4. Validate the parent workflow (same pipeline as production)
+    # 4. Validate the parent workflow (same pipeline as production — registry included
+    #    so Step 7 enforcement runs, matching the production CLI/MCP paths).
     parent_path = tmp_path / "parent-workflow.pflow.md"
     content = parent_path.read_text()
     result = parse_markdown(content)
@@ -318,6 +319,7 @@ def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) 
     errors, _warnings = split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
+        registry=Registry(),
         skip_node_types=True,
         workflow_file=parent_path,
     )
@@ -379,8 +381,7 @@ def test_genuinely_unused_input_still_caught_alongside_prompt_file_inputs(tmp_pa
                 "purpose": "Delegates to sub-workflow.",
                 "params": {
                     "workflow": "./sub.pflow.md",
-                    "content": "${text}",
-                    "debug_mode": "on",
+                    "inputs": {"content": "${text}", "debug_mode": "on"},
                 },
             },
         ],
@@ -399,6 +400,7 @@ def test_genuinely_unused_input_still_caught_alongside_prompt_file_inputs(tmp_pa
     errors, _warnings = split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
+        registry=Registry(),
         skip_node_types=True,
         workflow_file=parent_path,
     )
@@ -460,7 +462,7 @@ def test_missing_prompt_file_in_sub_workflow_reports_validation_error(tmp_path: 
                 "purpose": "Delegates analysis to sub-workflow.",
                 "params": {
                     "workflow": "./sub-workflow.pflow.md",
-                    "content": "${text}",
+                    "inputs": {"content": "${text}"},
                 },
             },
         ],
@@ -482,6 +484,7 @@ def test_missing_prompt_file_in_sub_workflow_reports_validation_error(tmp_path: 
     errors, _warnings = split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
+        registry=Registry(),
         skip_node_types=True,
         workflow_file=parent_path,
     )

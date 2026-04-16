@@ -207,10 +207,15 @@ class TestWorkflowExecutorIntegration:
             assert result == "default"
 
     def test_file_workflow_execution(self, workflow_file, mock_registry):
-        """When a parent workflow references a child by file path, execution succeeds.
+        """When a parent workflow references a child by file path, execution succeeds
+        AND the child actually receives its declared input via the ``inputs:`` dict.
 
-        Uses the new 'workflow' param (replaces old 'workflow_ref') and direct
-        child input params (replaces old 'param_mapping').
+        Distinct from ``test_parameter_passing_to_child``: this exercises the
+        ``workflow_file`` fixture path (a pre-written on-disk file) rather than
+        an ad-hoc tmp_path write. The ``test_output`` assertion guards against
+        regression into silent-drop: before Bug A was fixed and the schema closed,
+        ``"test_input": "..."`` at top level was silently forwarded; migrating to
+        ``inputs:`` preserves delivery, and this assertion proves it.
         """
         parent_ir = {
             "ir_version": "0.1.0",
@@ -220,7 +225,7 @@ class TestWorkflowExecutorIntegration:
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow": str(workflow_file),
-                        "test_input": "Hello from file",
+                        "inputs": {"test_input": "Hello from file"},
                     },
                 }
             ],
@@ -235,6 +240,16 @@ class TestWorkflowExecutorIntegration:
             result = engine.run(workflow, shared)
 
             assert result == "default"
+            # MockExampleNode reads shared["test_input"] and writes
+            # shared["test_output"] = f"Processed: {prep_res}". The namespaced
+            # shared-store surfaces it under the parent node's id ("sub") and
+            # the child's node id ("test"). If ``test_input`` had been silently
+            # dropped (Bug A), the child would default to "no input" and produce
+            # "Processed: no input".
+            child_output = shared.get("sub", {}).get("test", {}).get("test_output")
+            assert child_output == "Processed: Hello from file", (
+                f"Child did not receive 'test_input' via the inputs: dict — got test_output={child_output!r}"
+            )
 
     def test_nested_workflow_execution(self, nested_workflow_ir, mock_registry):
         """When workflows nest (parent -> child -> inner node), all levels execute."""

@@ -806,7 +806,7 @@ class TestWorkflowExecutorComprehensive:
             },
         })
 
-        with pytest.raises(ValueError, match="undeclared input") as exc_info:
+        with pytest.raises(ValueError, match=r"undeclared input\(s\)") as exc_info:
             node.prep({})
 
         error_msg = str(exc_info.value)
@@ -1031,10 +1031,11 @@ class TestWorkflowExecutorComprehensive:
     # --- Test 33: 'inputs' dict values forwarded as child inputs ---
 
     def test_inputs_dict_values_forwarded_as_child_inputs(self):
-        """Resolved ``inputs`` dict values are forwarded as child inputs.
+        """``_extract_child_inputs`` returns exactly the ``inputs:`` dict contents.
 
-        The ``inputs`` key itself is framework-reserved (consumed by template
-        resolution), but its resolved dict values become the child's inputs.
+        Post-task-153: no top-level child-input forwarding. ``_extract_child_inputs``
+        only reads ``self.params["inputs"]`` and returns a copy of its contents.
+        Other top-level fields (``workflow``, ``error_action``, etc.) never leak.
         """
         executor = WorkflowExecutor()
         executor.params = {
@@ -1042,8 +1043,8 @@ class TestWorkflowExecutorComprehensive:
             "inputs": {"api_key": "xxx", "name": "alice"},
         }
         child_inputs = executor._extract_child_inputs()
-        assert "inputs" not in child_inputs  # The key itself is not forwarded
-        assert "workflow" not in child_inputs  # Also reserved
+        assert "inputs" not in child_inputs  # the key itself never nests inside itself
+        assert "workflow" not in child_inputs  # top-level fields never leak into inputs
         assert child_inputs == {"api_key": "xxx", "name": "alice"}
 
     def test_inputs_non_dict_not_forwarded(self):

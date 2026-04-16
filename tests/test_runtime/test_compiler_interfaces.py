@@ -345,8 +345,14 @@ class TestCompilerInterfaces:
         assert "Invalid output name 'my$output'" in error.message
         assert "shell special characters" in error.message or "template syntax" in error.message
 
-    def test_nested_workflow_outputs_via_output_mapping(self, registry_with_nodes, mock_node_import):
-        """Test that nested workflow outputs are recognized through output_mapping."""
+    def test_nested_workflow_compiles_under_registered_workflow_type(self, registry_with_nodes, mock_node_import):
+        """Test that the workflow node type compiles successfully when registered.
+
+        Narrowed from the pre-task-153 ``output_mapping`` test — that feature
+        was removed in v0.10.0 and the ``workflow_path`` param never existed.
+        This test now verifies only that a canonical ``- workflow:`` file-reference
+        compiles through the registry path.
+        """
         # Add workflow executor to registry with proper interface structure
         registry_with_nodes.load.return_value["workflow"] = {
             "module": "pflow.runtime.workflow_executor",
@@ -376,12 +382,11 @@ class TestCompilerInterfaces:
 
         ir = {
             "ir_version": "0.1.0",
-            "outputs": {"final_result": {"description": "Result from nested workflow", "type": "string"}},
             "nodes": [
                 {
                     "id": "nested",
                     "type": "workflow",
-                    "params": {"workflow_path": "nested.json", "output_mapping": {"nested_output": "final_result"}},
+                    "params": {"workflow": "nested.pflow.md"},
                 }
             ],
             "edges": [],
@@ -391,7 +396,6 @@ class TestCompilerInterfaces:
         from pflow.runtime.workflow_executor import WorkflowExecutor
 
         with patch.object(mock_node_import, "return_value", WorkflowExecutor):
-            # Should compile successfully - output_mapping makes final_result available
             workflow = compile_workflow(ir, registry_with_nodes)
             assert workflow is not None
 

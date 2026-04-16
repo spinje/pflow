@@ -501,13 +501,15 @@ class TestBatchItemFieldValidation:
         errors, _warnings = split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
 
-    def test_workflow_batch_item_fields_validated(self):
+    def test_workflow_batch_item_fields_validated(self, tmp_path):
         """${item.field} on workflow batch results should validate against child outputs.
 
         This is the exact scenario from the batch-output-ux issue: a batched workflow
         node feeds into a downstream batch node. The child workflow's declared outputs
         (e.g., content, source_type) should be the known item fields.
         """
+        from tests.shared.markdown_utils import write_workflow_file
+
         child_ir = {
             "nodes": [{"id": "step", "type": "llm", "params": {"prompt": "hi"}}],
             "edges": [],
@@ -516,6 +518,9 @@ class TestBatchItemFieldValidation:
                 "source_type": {"type": "str"},
             },
         }
+        child_path = tmp_path / "fetch_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
+
         workflow_ir = {
             "inputs": {"sources": {"type": "array", "required": True}},
             "nodes": [
@@ -523,7 +528,7 @@ class TestBatchItemFieldValidation:
                     "id": "fetch-sources",
                     "type": "workflow",
                     "batch": {"items": "${sources}"},
-                    "params": {"workflow_ir": child_ir, "url": "${item}"},
+                    "params": {"workflow": str(child_path), "inputs": {"url": "${item}"}},
                 },
                 {
                     "id": "analyze",
@@ -595,7 +600,7 @@ class TestBatchItemFieldValidation:
                     "id": "fetch-sources",
                     "type": "workflow",
                     "batch": {"items": "${sources}"},
-                    "params": {"workflow": "${workflow_path}", "input": "${item}"},
+                    "params": {"workflow": "${workflow_path}", "inputs": {"input": "${item}"}},
                 },
                 {
                     "id": "analyze",
