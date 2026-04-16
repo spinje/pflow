@@ -142,14 +142,8 @@ class TestWorkflowValidator:
 
         errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
 
-        assert any("stdout" in d.message.lower() for d in errors)
-        assert any("'a'" in d.message or ", a" in d.message or ": a," in d.message for d in errors) or any(
-            "a" in d.message and "b" in d.message for d in errors
-        )
-        # Both offending names present in a single diagnostic message
         stdout_diag = next(d for d in errors if "stdout" in d.message.lower())
-        assert "a" in stdout_diag.message
-        assert "b" in stdout_diag.message
+        assert "a" in stdout_diag.message and "b" in stdout_diag.message
 
     def test_single_stdout_output_valid(self):
         """A single output marked stdout: true is valid."""

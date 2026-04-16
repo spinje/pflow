@@ -228,6 +228,37 @@ class TestMultiOutputAmbiguity:
         assert "ALPHA_SELECTED" in result.stdout
         assert "BETA_IGNORED" not in result.stdout
 
+    def test_o_flag_overrides_stdout_marker(self, tmp_path, prepared_subprocess_env):
+        """``-o`` wins over ``stdout: true`` — regression guard for the top of the precedence chain.
+
+        The documented precedence is ``-o`` > marker > single-implicit > first
+        + warn. A future refactor that moved marker-selection ahead of the
+        ``-o`` check would silently demote caller override. This test locks
+        the ordering so that reordering breaks it loudly.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "alpha": {"description": "Marked", "source": "${a.stdout}", "stdout": True},
+                "beta": {"description": "Unmarked", "source": "${b.stdout}"},
+            },
+            "nodes": [
+                {"id": "a", "type": "shell", "params": {"command": "echo ALPHA_VAL"}},
+                {"id": "b", "type": "shell", "params": {"command": "echo BETA_VAL"}},
+            ],
+        }
+        workflow_file = tmp_path / "wf.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
+
+        result = _run_pflow(["-o", "beta", str(workflow_file)], prepared_subprocess_env)
+        _skip_uv_sandbox_panic(result)
+
+        assert result.returncode == 0, f"stderr: {result.stderr!r}"
+        assert "BETA_VAL" in result.stdout, (
+            "-o beta must win over stdout: true on alpha — caller override is the top of the precedence chain"
+        )
+        assert "ALPHA_VAL" not in result.stdout
+
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
 class TestStdoutValidator:

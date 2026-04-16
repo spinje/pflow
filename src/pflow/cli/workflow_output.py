@@ -63,17 +63,20 @@ def safe_output(value: Any) -> bool:
 def _stdout_is_tty() -> bool:
     """Return whether stdout is a TTY, preferring OutputController's captured state.
 
-    Falls back to ``True`` when no Click context / OutputController is available
-    (preserves the pre-fix "always show label" behavior for direct unit-test
-    callers that bypass the full CLI setup).
+    Falls back to ``sys.stdout.isatty()`` when no Click context / OutputController
+    is available — matches what ``OutputController.__init__`` does itself, so the
+    TTY decision stays consistent for any caller of ``_output_with_header``
+    (including non-CLI entry points that don't thread through ``_initialize_context``).
     """
+    import sys
+
     try:
         ctx = click.get_current_context(silent=True)
     except RuntimeError:
         ctx = None
     if ctx is not None and ctx.obj and "output_controller" in ctx.obj:
         return bool(ctx.obj["output_controller"].stdout_tty)
-    return True
+    return sys.stdout.isatty() if sys.stdout is not None else False
 
 
 def _output_with_header(value: Any, print_flag: bool, description: str | None = None) -> None:
@@ -208,39 +211,49 @@ def _emit_declared_output(
     return False
 
 
-def _select_stdout_target(declared_outputs: dict[str, Any], print_flag: bool = False) -> dict[str, Any]:
+def _select_stdout_target(declared_outputs: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Choose which declared outputs to stream to stdout in text mode.
 
+    Pure selector — returns ``(target, dropped)`` and never writes to stderr.
+    The caller decides whether to emit the multi-output warning (see
+    ``_warn_multi_output_ambiguity``).
+
     Precedence:
-    - Any output marked ``stdout: true`` → emit only that output.
-    - Exactly one declared output → emit it (implicit — the unambiguous case).
-    - Multiple declared outputs with no marker → emit the first declared output
-      and warn on stderr that other outputs are available (suppressed under
-      ``-p``, matching the auto-detect warning pattern from Task 134).
+    - Any output marked ``stdout: true`` → return only that output, no drops.
+      Validator guarantees at most one marker, so this always yields a
+      single-entry dict.
+    - Exactly one declared output → return it (implicit, unambiguous case).
+    - Multiple declared outputs with no marker → return the first, with the
+      remaining names as ``dropped``.
 
-    The validator guarantees at most one output is marked, so "marked"
-    always yields a single-entry dict here.
+    Schema (``additionalProperties: false`` on outputs) guarantees dict
+    values by the time we run, so no defensive type checks.
     """
-    marked = {
-        name: config
-        for name, config in declared_outputs.items()
-        if isinstance(config, dict) and config.get("stdout") is True
-    }
+    marked = {name: config for name, config in declared_outputs.items() if config.get("stdout") is True}
     if marked:
-        return marked
+        return marked, []
     if len(declared_outputs) <= 1:
-        return declared_outputs
+        return declared_outputs, []
 
-    first_name = next(iter(declared_outputs))
-    if not print_flag:
-        names = ", ".join(declared_outputs.keys())
-        click.echo(
-            f"cli: Workflow declares {len(declared_outputs)} outputs ({names}). "
-            f"Streaming '{first_name}' to stdout. Mark one output with `- stdout: true`, "
-            "pass `-o <name>`, or use `--output-format json` to emit all.",
-            err=True,
-        )
-    return {first_name: declared_outputs[first_name]}
+    names = list(declared_outputs.keys())
+    first_name = names[0]
+    return {first_name: declared_outputs[first_name]}, names[1:]
+
+
+def _warn_multi_output_ambiguity(chosen: str, dropped: list[str]) -> None:
+    """Emit the stderr warning when multiple declared outputs have no ``stdout: true``.
+
+    Sibling of ``_warn_missing_declared_outputs``. Named so the selector stays
+    pure; caller gates on ``print_flag``.
+    """
+    total = 1 + len(dropped)
+    names = ", ".join([chosen, *dropped])
+    click.echo(
+        f"cli: Workflow declares {total} outputs ({names}). "
+        f"Streaming '{chosen}' to stdout. Mark one output with `- stdout: true`, "
+        "pass `-o <name>`, or use `--output-format json` to emit all.",
+        err=True,
+    )
 
 
 def _try_declared_outputs(
@@ -263,7 +276,9 @@ def _try_declared_outputs(
         return False
 
     declared_outputs = workflow_ir["outputs"]
-    target = _select_stdout_target(declared_outputs, print_flag=print_flag)
+    target, dropped = _select_stdout_target(declared_outputs)
+    if dropped and not print_flag:
+        _warn_multi_output_ambiguity(next(iter(target)), dropped)
 
     # First attempt: use already-populated outputs (preferred path via compiler wrapper)
     if _emit_declared_output(shared_storage, target, print_flag):
