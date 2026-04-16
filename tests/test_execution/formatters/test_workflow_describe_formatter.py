@@ -230,6 +230,26 @@ class TestFormatInputsSection:
 
         assert "implicit_required (required):" in result
 
+    def test_stdin_input_gets_marker(self):
+        """INPUTS: Input with stdin: True renders the [stdin] badge.
+
+        The describe output surfaces routing slots so agents reading a
+        workflow's interface can see where piped data lands without parsing
+        the full IR.
+        """
+        ir = {
+            "inputs": {
+                "data": {"required": True, "description": "Piped input", "stdin": True},
+                "other": {"required": False, "description": "Regular input"},
+            }
+        }
+
+        result = _format_inputs_section(ir)
+
+        assert "  - data [stdin] (required): Piped input" in result
+        # Unmarked inputs keep their normal rendering — no marker leak
+        assert "other [stdin]" not in result
+
 
 class TestFormatOutputsSection:
     """Test output section formatting."""
@@ -279,6 +299,26 @@ class TestFormatOutputsSection:
         result = _format_outputs_section(ir)
 
         assert result == "\nOutputs: None"
+
+    def test_stdout_output_gets_marker(self):
+        """OUTPUTS: Output with stdout: True renders the [stdout] badge.
+
+        The describe output surfaces routing slots so agents reading a
+        workflow's interface can see which declared output streams to stdout
+        in text mode without parsing the full IR.
+        """
+        ir = {
+            "outputs": {
+                "primary": {"description": "Main result", "stdout": True},
+                "secondary": {"description": "Secondary metadata"},
+            }
+        }
+
+        result = _format_outputs_section(ir)
+
+        assert "  - primary [stdout]: Main result" in result
+        # Unmarked outputs keep their normal rendering — no marker leak
+        assert "secondary [stdout]" not in result
 
 
 class TestFormatExampleUsageSection:

@@ -1349,7 +1349,7 @@ def _build_output_dict(entity: _Entity) -> dict[str, Any]:
     """Build an output definition dict from an entity.
 
     Outputs get flat dicts (no params wrapper).
-    Valid fields: description, type, source.
+    Valid fields: description, type, source, stdout.
     """
     _validate_description(entity)
     _validate_code_blocks(entity)

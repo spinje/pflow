@@ -60,15 +60,36 @@ def safe_output(value: Any) -> bool:
         raise
 
 
+def _stdout_is_tty() -> bool:
+    """Return whether stdout is a TTY, preferring OutputController's captured state.
+
+    Falls back to ``sys.stdout.isatty()`` when no Click context / OutputController
+    is available — matches what ``OutputController.__init__`` does itself, so the
+    TTY decision stays consistent for any caller of ``_output_with_header``
+    (including non-CLI entry points that don't thread through ``_initialize_context``).
+    """
+    import sys
+
+    try:
+        ctx = click.get_current_context(silent=True)
+    except RuntimeError:
+        ctx = None
+    if ctx is not None and ctx.obj and "output_controller" in ctx.obj:
+        return bool(ctx.obj["output_controller"].stdout_tty)
+    return sys.stdout.isatty() if sys.stdout is not None else False
+
+
 def _output_with_header(value: Any, print_flag: bool, description: str | None = None) -> None:
     """Output value with Unix-convention routing.
 
-    - `--print` mode: data to stdout, no header.
-    - Default mode: header to stderr, data to stdout.
-
-    This is intentionally identical for TTY and non-TTY consumers.
+    - ``--print`` mode: data to stdout, no header.
+    - Non-TTY stdout (pipe/redirect): data to stdout, no header — the naked
+      stderr label would otherwise look like empty output when the terminal
+      has nothing to render below it.
+    - TTY stdout: header to stderr, data to stdout — the description is
+      useful interactive context.
     """
-    if print_flag:
+    if print_flag or not _stdout_is_tty():
         safe_output(value)
         return
 
@@ -190,6 +211,51 @@ def _emit_declared_output(
     return False
 
 
+def _select_stdout_target(declared_outputs: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Choose which declared outputs to stream to stdout in text mode.
+
+    Pure selector — returns ``(target, dropped)`` and never writes to stderr.
+    The caller decides whether to emit the multi-output warning (see
+    ``_warn_multi_output_ambiguity``).
+
+    Precedence:
+    - Any output marked ``stdout: true`` → return only that output, no drops.
+      Validator guarantees at most one marker, so this always yields a
+      single-entry dict.
+    - Exactly one declared output → return it (implicit, unambiguous case).
+    - Multiple declared outputs with no marker → return the first, with the
+      remaining names as ``dropped``.
+
+    Schema (``additionalProperties: false`` on outputs) guarantees dict
+    values by the time we run, so no defensive type checks.
+    """
+    marked = {name: config for name, config in declared_outputs.items() if config.get("stdout") is True}
+    if marked:
+        return marked, []
+    if len(declared_outputs) <= 1:
+        return declared_outputs, []
+
+    names = list(declared_outputs.keys())
+    first_name = names[0]
+    return {first_name: declared_outputs[first_name]}, names[1:]
+
+
+def _warn_multi_output_ambiguity(chosen: str, dropped: list[str]) -> None:
+    """Emit the stderr warning when multiple declared outputs have no ``stdout: true``.
+
+    Sibling of ``_warn_missing_declared_outputs``. Named so the selector stays
+    pure; caller gates on ``print_flag``.
+    """
+    total = 1 + len(dropped)
+    names = ", ".join([chosen, *dropped])
+    click.echo(
+        f"cli: Workflow declares {total} outputs ({names}). "
+        f"Streaming '{chosen}' to stdout. Mark one output with `- stdout: true`, "
+        "pass `-o <name>`, or use `--output-format json` to emit all.",
+        err=True,
+    )
+
+
 def _try_declared_outputs(
     shared_storage: dict[str, Any],
     workflow_ir: dict[str, Any] | None,
@@ -210,19 +276,22 @@ def _try_declared_outputs(
         return False
 
     declared_outputs = workflow_ir["outputs"]
+    target, dropped = _select_stdout_target(declared_outputs)
+    if dropped and not print_flag:
+        _warn_multi_output_ambiguity(next(iter(target)), dropped)
 
     # First attempt: use already-populated outputs (preferred path via compiler wrapper)
-    if _emit_declared_output(shared_storage, declared_outputs, print_flag):
+    if _emit_declared_output(shared_storage, target, print_flag):
         return True
 
     # Populate on-demand if not present
     _populate_declared_outputs_best_effort(shared_storage, workflow_ir)
 
     # Second attempt after population
-    if _emit_declared_output(shared_storage, declared_outputs, print_flag):
+    if _emit_declared_output(shared_storage, target, print_flag):
         return True
 
-    _warn_missing_declared_outputs(declared_outputs, verbose)
+    _warn_missing_declared_outputs(target, verbose)
     return False
 
 

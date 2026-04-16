@@ -231,7 +231,11 @@ class TestWorkflowOutputHandling:
             )
             assert "HELLO_STDOUT_CANARY_GH194" in result.stdout
             assert "HELLO_STDOUT_CANARY_GH194" not in result.stderr
-            assert "Workflow output" in result.stderr
+            # The "Workflow output (desc):" label is TTY-gated. CliRunner reports
+            # stdout_tty=False, so the label must be suppressed — this is the
+            # redirect-UX fix. For the gh194 invariant (data stream correctness)
+            # the relevant assertions are the two above.
+            assert "Workflow output" not in result.stderr
         finally:
             Path(workflow_file).unlink()
 
@@ -289,21 +293,26 @@ class TestWorkflowOutputHandling:
     def test_missing_declared_outputs_warning_in_verbose_mode(
         self, mock_registry_instance, mock_compile, mock_validate_ir
     ):
-        """Test that verbose mode warns when declared outputs aren't in shared store."""
+        """Test that verbose mode warns when declared outputs aren't in shared store.
+
+        Uses a single declared output. Multi-declared workflows without a
+        ``stdout: true`` marker now raise an ambiguity error BEFORE missing-
+        output warnings can fire — tested separately in
+        ``test_multi_output_without_marker_raises_ambiguity_error``.
+        """
         runner = click.testing.CliRunner()
 
         workflow = {
             "ir_version": "0.1.0",
             "outputs": {
                 "expected_output": {"description": "This output is expected but missing", "type": "string"},
-                "another_output": {"description": "Also missing", "type": "string"},
             },
             "nodes": [
                 {
                     "id": "test",
                     "type": "test-node",
                     "params": {
-                        # Node doesn't produce the declared outputs
+                        # Node doesn't produce the declared output
                         "output_key": "different_key",
                         "output_value": "Some value",
                     },
@@ -319,23 +328,29 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--verbose", workflow_file])
 
             assert result.exit_code == 0
-            # Should warn about missing declared outputs
-            assert "expected_output, another_output" in result.output
+            # Should warn about the missing declared output
+            assert "expected_output" in result.output
             assert "but none could be resolved" in result.output
             # Should show success message since no output was produced
             assert "Workflow executed successfully" in result.output
         finally:
             Path(workflow_file).unlink()
 
-    def test_multiple_declared_outputs_first_matching(self, mock_registry_instance, mock_compile, mock_validate_ir):
-        """Test that first matching declared output is printed when multiple are declared."""
+    def test_stdout_marked_output_wins_over_unmarked(self, mock_registry_instance, mock_compile, mock_validate_ir):
+        """Multiple declared outputs + one marked ``stdout: true`` → marked wins.
+
+        Replaces the old "first-wins" behavior, which silently dropped every
+        output after the first. The marker makes the author's intent explicit
+        and the routing deterministic.
+        """
         runner = click.testing.CliRunner()
 
         workflow = {
             "ir_version": "0.1.0",
             "outputs": {
                 "primary_output": {"description": "Primary output", "type": "string"},
-                "secondary_output": {"description": "Secondary output", "type": "string"},
+                "stdout_output": {"description": "Marked for stdout", "type": "string", "stdout": True},
+                "trailing_output": {"description": "Trailing output", "type": "string"},
             },
             "nodes": [
                 {
@@ -343,8 +358,9 @@ class TestWorkflowOutputHandling:
                     "type": "test-node",
                     "params": {
                         "add_keys": {
-                            # Only secondary is present
-                            "secondary_output": "Secondary value"
+                            "primary_output": "PRIMARY_VALUE_SHOULD_NOT_APPEAR",
+                            "stdout_output": "STDOUT_MARKED_VALUE",
+                            "trailing_output": "TRAILING_VALUE_SHOULD_NOT_APPEAR",
                         }
                     },
                 }
@@ -358,14 +374,227 @@ class TestWorkflowOutputHandling:
         try:
             result = runner.invoke(main, [workflow_file])
 
-            assert result.exit_code == 0
-            # Should print the first available declared output
-            assert "Secondary value" in result.output
+            assert result.exit_code == 0, f"stderr: {result.stderr!r}"
+            assert "STDOUT_MARKED_VALUE" in result.stdout
+            assert "PRIMARY_VALUE_SHOULD_NOT_APPEAR" not in result.stdout
+            assert "TRAILING_VALUE_SHOULD_NOT_APPEAR" not in result.stdout
         finally:
             Path(workflow_file).unlink()
 
-    def test_verbose_mode_shows_output_descriptions(self, mock_registry_instance, mock_compile, mock_validate_ir):
-        """Test that verbose mode shows descriptions for declared outputs."""
+    def test_multi_output_without_marker_warns_and_emits_first(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """Multiple declared outputs + no ``stdout: true`` + no ``-o`` → warn + emit first.
+
+        The warning names both outputs and the three fixes (`stdout: true`,
+        `-o <name>`, `--output-format json`). The first declared output
+        streams to stdout so existing callers keep working.
+        """
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "alpha": {"description": "First", "type": "string"},
+                "beta": {"description": "Second", "type": "string"},
+            },
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"add_keys": {"alpha": "ALPHA_VAL", "beta": "BETA_VAL"}},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, [workflow_file])
+
+            assert result.exit_code == 0, f"stderr: {result.stderr!r}"
+            # First declared output reaches stdout
+            assert "ALPHA_VAL" in result.stdout
+            assert "BETA_VAL" not in result.stdout
+            # Warning on stderr names both outputs and the three escape hatches
+            assert "Workflow declares 2 outputs" in result.stderr
+            assert "alpha" in result.stderr and "beta" in result.stderr
+            assert "stdout: true" in result.stderr
+            assert "-o" in result.stderr
+            assert "--output-format json" in result.stderr
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_multi_output_warning_suppressed_under_print_flag(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """``-p`` suppresses the multi-output warning, matching Task 134's auto-detect behavior."""
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "alpha": {"description": "First", "type": "string"},
+                "beta": {"description": "Second", "type": "string"},
+            },
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"add_keys": {"alpha": "ALPHA_VAL", "beta": "BETA_VAL"}},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, ["-p", workflow_file])
+
+            assert result.exit_code == 0
+            assert "ALPHA_VAL" in result.stdout
+            assert "Workflow declares" not in result.stderr
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_multi_output_without_marker_json_mode_succeeds(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """Regression: ambiguity error is text-mode-only; JSON emits all outputs."""
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "alpha": {"description": "First", "type": "string"},
+                "beta": {"description": "Second", "type": "string"},
+            },
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"add_keys": {"alpha": "A_VAL", "beta": "B_VAL"}},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
+
+            assert result.exit_code == 0, f"stderr: {result.stderr!r}"
+            payload = json.loads(result.stdout)
+            assert payload["success"] is True
+            assert payload["result"]["alpha"] == "A_VAL"
+            assert payload["result"]["beta"] == "B_VAL"
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_stdout_marker_does_not_filter_json_output(self, mock_registry_instance, mock_compile, mock_validate_ir):
+        """The ``stdout: true`` marker is text-mode routing ONLY — JSON mode must still emit all declared outputs.
+
+        This guards the load-bearing contract that the marker picks which
+        single output streams to process stdout in text mode; it does NOT
+        filter the structured-output surface. A future "consistency" refactor
+        that also applied the marker to JSON mode would silently drop
+        outputs for MCP clients, CI pipelines, and workflow chaining — the
+        exact silent-data-loss shape this feature exists to prevent.
+        """
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "primary": {"description": "Marked", "type": "string", "stdout": True},
+                "secondary": {"description": "Unmarked", "type": "string"},
+            },
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"add_keys": {"primary": "PRIMARY_VAL", "secondary": "SECONDARY_VAL"}},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
+
+            assert result.exit_code == 0, f"stderr: {result.stderr!r}"
+            payload = json.loads(result.stdout)
+            assert payload["success"] is True
+            # BOTH outputs must appear — the marker must not filter JSON
+            assert payload["result"]["primary"] == "PRIMARY_VAL"
+            assert payload["result"]["secondary"] == "SECONDARY_VAL", (
+                "stdout: true marker leaked into JSON output filtering — "
+                "secondary output was silently dropped. The marker is text-mode-only."
+            )
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_tty_mode_shows_output_descriptions(self, mock_registry_instance, mock_compile, mock_validate_ir):
+        """When stdout is a TTY, the output description renders in the stderr header.
+
+        CliRunner reports isatty()=False by default, so this test patches the
+        OutputController at construction to simulate a real interactive terminal
+        where the description label is useful context.
+        """
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {"final_result": {"description": "The final processed result", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"output_key": "final_result", "output_value": "Processing complete"},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        from pflow.core.output_controller import OutputController
+
+        original_init = OutputController.__init__
+
+        def force_tty_init(self, *args, **kwargs):
+            kwargs.setdefault("stdout_tty", True)
+            original_init(self, *args, **kwargs)
+
+        try:
+            with patch.object(OutputController, "__init__", force_tty_init):
+                result = runner.invoke(main, ["--verbose", workflow_file])
+
+            assert result.exit_code == 0
+            # Header appears in TTY mode
+            assert "Workflow output (The final processed result):" in result.output
+            # And the actual output
+            assert "Processing complete" in result.output
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_non_tty_mode_suppresses_output_header(self, mock_registry_instance, mock_compile, mock_validate_ir):
+        """When stdout is not a TTY (pipe/redirect), the label is suppressed.
+
+        A naked ``Workflow output (description):`` header on stderr with the
+        value elsewhere (in the file/pipe) reads as "empty output" to both
+        humans and agents. The fix: skip the label on non-TTY stdout.
+        """
         runner = click.testing.CliRunner()
 
         workflow = {
@@ -385,13 +614,12 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--verbose", workflow_file])
+            # CliRunner already reports isatty()=False — this is the redirect case.
+            result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
-            # Should show the output description in the header
-            assert "Workflow output (The final processed result):" in result.output
-            # And the actual output
-            assert "Processing complete" in result.output
+            assert "Workflow output" not in result.stderr
+            assert "Processing complete" in result.stdout
         finally:
             Path(workflow_file).unlink()
 

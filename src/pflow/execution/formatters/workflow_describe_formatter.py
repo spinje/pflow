@@ -118,8 +118,9 @@ def _format_inputs_section(ir: dict[str, Any]) -> str:
         req_text = "required" if required else "optional"
         desc = config.get("description", "")
         default = config.get("default")
+        stdin_marker = " [stdin]" if config.get("stdin") is True else ""
 
-        lines.append(f"  - {input_name} ({req_text}): {desc}")
+        lines.append(f"  - {input_name}{stdin_marker} ({req_text}): {desc}")
         if default is not None:
             lines.append(f"    Default: {default}")
 
@@ -142,7 +143,8 @@ def _format_outputs_section(ir: dict[str, Any]) -> str:
 
     for output_name, config in ir["outputs"].items():
         desc = config.get("description", "")
-        lines.append(f"  - {output_name}: {desc}")
+        stdout_marker = " [stdout]" if config.get("stdout") is True else ""
+        lines.append(f"  - {output_name}{stdout_marker}: {desc}")
 
     return "\n".join(lines)
 

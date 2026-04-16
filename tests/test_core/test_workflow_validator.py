@@ -124,6 +124,60 @@ class TestWorkflowValidator:
         # Should not have stdin-related errors
         assert not any("stdin" in d.message.lower() for d in errors)
 
+    def test_multiple_stdout_outputs_validation_error(self):
+        """Multiple outputs marked stdout: true → validator error.
+
+        Mirrors the stdin at-most-one invariant. The error message must name
+        all offending outputs so the user knows which ones to fix.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+            "outputs": {
+                "a": {"source": "${n1.out}", "stdout": True},
+                "b": {"source": "${n1.out}", "stdout": True},
+            },
+        }
+
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
+
+        stdout_diag = next(d for d in errors if "stdout" in d.message.lower())
+        assert "a" in stdout_diag.message and "b" in stdout_diag.message
+
+    def test_single_stdout_output_valid(self):
+        """A single output marked stdout: true is valid."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+            "outputs": {
+                "a": {"source": "${n1.out}", "stdout": True},
+                "b": {"source": "${n1.out}"},
+            },
+        }
+
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
+
+        # Should not flag stdout when only one output carries the marker
+        assert not any("stdout" in d.message.lower() and "multiple" in d.message.lower() for d in errors)
+
+    def test_no_stdout_marker_is_valid(self):
+        """Omitting the stdout marker does not fail validation — runtime decides."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+            "outputs": {
+                "a": {"source": "${n1.out}"},
+                "b": {"source": "${n1.out}"},
+            },
+        }
+
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
+
+        assert not any("stdout" in d.message.lower() for d in errors)
+
     def test_template_validation_errors(self, registry_with_nodes):
         """Test that template errors are caught when params provided."""
         workflow = {

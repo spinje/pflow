@@ -1005,6 +1005,8 @@ What this output contains.
 
 **Input fields**: `type` (string|number|boolean|array|object), `required` (true|false), `default` (only when required: false), `stdin` (true|false -- only one input can have this), description as prose.
 
+**Output fields**: `source` (template expression like `${node.key}`), `type` (optional hint), `stdout` (true|false -- at most one output may set this; marks the output that streams to stdout in text mode). Single-output workflows don't need a marker. Multi-output workflows without a marker stream the first declared output and emit a stderr warning.
+
 **Node fields**: `type` (required), all other params as `- key: value`. Code/prompts/batch go in tagged code blocks.
 
 **Execution order**: Top to bottom in `## Steps`. No explicit edges.
