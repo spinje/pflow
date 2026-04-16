@@ -21,7 +21,8 @@ Convert the title to uppercase using a sub-workflow.
 
 - type: workflow
 - workflow: ./to-uppercase.pflow.md
-- text: ${title}
+- inputs:
+    text: ${title}
 
 ### process_body
 
@@ -29,7 +30,8 @@ Convert the body to uppercase using the same sub-workflow.
 
 - type: workflow
 - workflow: ./to-uppercase.pflow.md
-- text: ${body}
+- inputs:
+    text: ${body}
 
 ### combine
 

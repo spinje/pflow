@@ -115,8 +115,13 @@ def _pre_warm_compile_cache(
     For regular nodes, this is a no-op.
 
     Runs prep() + _compile_sub_workflow() on the original node instance without
-    executing the sub-workflow. After this, deepcopy(node) inherits both
-    _cached_loaded_ir (file loading cache) and _cached_workflow (compiled flow).
+    executing the sub-workflow. After this, deepcopy(node) inherits both the
+    IR load cache (``_loaded_ir_cache``) and the compiled-workflow cache
+    (``_compiled_workflow_cache``).
+
+    Defensive bail-out: if prep() leaves ``_loaded_ir_cache`` empty (which
+    today only happens when ``_load_workflow`` itself raised), skip the compile
+    step — pre-warming a broken state would just hide the real error.
     """
     if not hasattr(node, "_compile_sub_workflow"):
         return  # Not a WorkflowExecutor — nothing to pre-warm
@@ -136,19 +141,18 @@ def _pre_warm_compile_cache(
             merged_params, _, _ = resolve_templates(config.template_config, temp_shared, config.node_id)
             node.params = merged_params
 
-        # Run prep() to populate _cached_loaded_ir (file loading cache)
+        # Run prep() to populate _loaded_ir_cache (file/name sources only).
         prep_res = node.prep(temp_shared)
 
-        # Only proceed if the workflow came from a file/name source (_cached_loaded_ir set).
-        # For inline workflows, prep() doesn't set _cached_loaded_ir, so the compile cache
-        # can't survive deepcopy (id() mismatch on the copied IR dict). Inline workflows
-        # with templates (e.g., ${item} in the IR) MUST recompile per item anyway.
-        if getattr(node, "_cached_loaded_ir", None) is None:
+        # Only proceed if the workflow came from a file/name source
+        # (_loaded_ir_cache has an entry). Defensive: if _load_workflow raised,
+        # the cache stays empty and pre-warming would just hide the real error.
+        if not getattr(node, "_loaded_ir_cache", None):
             return
 
-        # Run _compile_sub_workflow() to populate _cached_workflow
+        # Run _compile_sub_workflow() to populate _compiled_workflow_cache
         node._compile_sub_workflow(
-            prep_res["workflow_ir"],
+            prep_res["child_ir"],
             prep_res["workflow_path"],
             prep_res["child_params"],
         )

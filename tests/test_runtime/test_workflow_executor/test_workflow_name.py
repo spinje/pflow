@@ -56,7 +56,7 @@ class TestWorkflowSavedName:
             prep_res = node.prep(shared)
 
             # Verify workflow was loaded correctly
-            loaded_ir = prep_res["workflow_ir"]
+            loaded_ir = prep_res["child_ir"]
             assert loaded_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
             assert loaded_ir["nodes"][0]["type"] == simple_workflow_ir["nodes"][0]["type"]
             assert loaded_ir["nodes"][0]["params"] == simple_workflow_ir["nodes"][0]["params"]
@@ -70,18 +70,6 @@ class TestWorkflowSavedName:
 
         shared = {}
         with pytest.raises(WorkflowNotFoundError, match="non-existent-workflow"):
-            node.prep(shared)
-
-    def test_workflow_and_workflow_ir_raises_error(self, simple_workflow_ir):
-        """When both 'workflow' and 'workflow_ir' are provided, raise ValueError."""
-        node = WorkflowExecutor()
-        node.set_params({
-            "workflow": "test-workflow",
-            "workflow_ir": simple_workflow_ir,
-        })
-
-        shared = {}
-        with pytest.raises(ValueError, match="Only one of"):
             node.prep(shared)
 
     def test_workflow_name_circular_dependency(self, workflow_manager):
@@ -101,15 +89,17 @@ class TestWorkflowSavedName:
                 node.prep(shared)
 
     def test_workflow_name_with_direct_params(self, workflow_manager):
-        """Non-reserved params are passed directly as child inputs (no param_mapping)."""
+        """Child inputs are passed via the ``inputs:`` dict."""
         with patch("pflow.core.workflow.manager.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
             node.set_params({
                 "workflow": "test-workflow",
-                "input_value": "static_value",
-                "dynamic_value": "test123",
+                "inputs": {
+                    "input_value": "static_value",
+                    "dynamic_value": "test123",
+                },
             })
 
             shared = {}
@@ -165,14 +155,14 @@ class TestWorkflowSavedName:
             node.prep(shared)
 
     def test_workflow_name_integration(self, workflow_manager, simple_workflow_ir):
-        """Full prep-exec cycle: saved name loading with direct params, no output_mapping."""
+        """Full prep-exec cycle: saved name loading with inputs: dict, no output_mapping."""
         with patch("pflow.core.workflow.manager.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
             node.set_params({
                 "workflow": "test-workflow",
-                "test_param": "value123",
+                "inputs": {"test_param": "value123"},
             })
 
             # Inject a real Registry for the exec phase
@@ -185,7 +175,7 @@ class TestWorkflowSavedName:
             prep_res = node.prep(shared)
 
             # Verify prep results
-            loaded_ir = prep_res["workflow_ir"]
+            loaded_ir = prep_res["child_ir"]
             assert loaded_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
             assert loaded_ir["nodes"][0]["type"] == simple_workflow_ir["nodes"][0]["type"]
             assert prep_res["child_params"]["test_param"] == "value123"

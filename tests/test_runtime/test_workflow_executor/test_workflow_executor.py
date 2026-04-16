@@ -25,14 +25,9 @@ class TestWorkflowExecutor:
         node = WorkflowExecutor()
         shared: dict = {}
 
-        # No parameters should raise error
+        # No workflow reference should raise error
         node.set_params({})
-        with pytest.raises(ValueError, match="requires either 'workflow' or 'workflow_ir'"):
-            node.prep(shared)
-
-        # Both parameters should raise error
-        node.set_params({"workflow": "test.json", "workflow_ir": {"nodes": []}})
-        with pytest.raises(ValueError, match="Only one of 'workflow' or 'workflow_ir'"):
+        with pytest.raises(ValueError, match="requires a 'workflow' parameter"):
             node.prep(shared)
 
     def test_circular_dependency_detection(self, tmp_path):
@@ -58,29 +53,41 @@ class TestWorkflowExecutor:
         with pytest.raises(ValueError, match="Circular workflow reference"):
             node.prep(shared)
 
-    def test_max_depth_enforcement(self):
+    def test_max_depth_enforcement(self, tmp_path):
         """Test maximum nesting depth."""
+        from tests.shared.markdown_utils import write_workflow_file
+
+        child_file = tmp_path / "max_depth_child.pflow.md"
+        write_workflow_file(
+            {"nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}], "edges": []},
+            child_file,
+        )
+
         node = WorkflowExecutor()
-
-        shared = {
-            "_pflow_depth": 10  # Already at max depth
-        }
-
-        node.set_params({"workflow_ir": {"nodes": []}, "max_depth": 10})
+        shared = {"_pflow_depth": 10}  # Already at max depth
+        node.set_params({"workflow": str(child_file), "max_depth": 10})
 
         with pytest.raises(RecursionError, match="Maximum workflow nesting depth"):
             node.prep(shared)
 
-    def test_parameter_mapping(self):
-        """Test that non-reserved params are extracted as child inputs."""
-        node = WorkflowExecutor()
+    def test_parameter_mapping(self, tmp_path):
+        """Test that values in the ``inputs:`` dict are extracted as child inputs."""
+        from tests.shared.markdown_utils import write_workflow_file
 
-        # Static values only — template resolution is tested via compiled pipeline
+        child_file = tmp_path / "param_map_child.pflow.md"
+        write_workflow_file(
+            {"nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}], "edges": []},
+            child_file,
+        )
+
+        node = WorkflowExecutor()
         node.set_params({
-            "workflow_ir": {"nodes": []},
-            "data": "test_value",
-            "key": "secret",
-            "static": "fixed_value",
+            "workflow": str(child_file),
+            "inputs": {
+                "data": "test_value",
+                "key": "secret",
+                "static": "fixed_value",
+            },
         })
 
         prep_res = node.prep({})
@@ -89,25 +96,33 @@ class TestWorkflowExecutor:
         assert prep_res["child_params"]["key"] == "secret"
         assert prep_res["child_params"]["static"] == "fixed_value"
 
-    def test_reserved_params_excluded_from_child_inputs(self):
-        """Test that reserved params (workflow_ir, storage_mode, etc.) are not passed to child."""
+    def test_reserved_params_excluded_from_child_inputs(self, tmp_path):
+        """Test that reserved params are not passed to child as inputs."""
+        from tests.shared.markdown_utils import write_workflow_file
+
+        child_file = tmp_path / "reserved_excluded_child.pflow.md"
+        write_workflow_file(
+            {"nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}], "edges": []},
+            child_file,
+        )
+
         node = WorkflowExecutor()
         shared: dict = {}
 
         node.set_params({
-            "workflow_ir": {"nodes": []},
+            "workflow": str(child_file),
             "storage_mode": "mapped",
             "max_depth": 5,
             "error_action": "fail",
-            "user_param": "should_pass",
+            "inputs": {"user_param": "should_pass"},
         })
 
         prep_res = node.prep(shared)
 
-        # Only non-reserved params should appear in child_params
+        # Only the value inside `inputs:` should appear in child_params
         assert "user_param" in prep_res["child_params"]
         assert prep_res["child_params"]["user_param"] == "should_pass"
-        assert "workflow_ir" not in prep_res["child_params"]
+        assert "workflow" not in prep_res["child_params"]
         assert "storage_mode" not in prep_res["child_params"]
         assert "max_depth" not in prep_res["child_params"]
         assert "error_action" not in prep_res["child_params"]
@@ -196,7 +211,7 @@ class TestExecErrorActionDetection:
     ) -> dict:
         """Build a minimal prep_res dict for exec()."""
         return {
-            "workflow_ir": {"nodes": [{"id": "step1", "type": "shell"}]},
+            "child_ir": {"nodes": [{"id": "step1", "type": "shell"}]},
             "workflow_path": workflow_path,
             "workflow_source": "ref:child.pflow.md",
             "child_params": child_params or {},
@@ -218,7 +233,7 @@ class TestExecErrorActionDetection:
         MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": []}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         prep_res = self._make_prep_res()
         result = node.exec(prep_res)
@@ -252,7 +267,7 @@ class TestExecErrorActionDetection:
         MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": []}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         prep_res = self._make_prep_res()
         result = node.exec(prep_res)
@@ -273,7 +288,7 @@ class TestExecErrorActionDetection:
         MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": []}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         prep_res = self._make_prep_res()
         result = node.exec(prep_res)
@@ -293,7 +308,7 @@ class TestExecErrorActionDetection:
         MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": []}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         prep_res = self._make_prep_res()
         result = node.exec(prep_res)

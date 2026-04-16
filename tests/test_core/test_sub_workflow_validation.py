@@ -30,7 +30,13 @@ def _parent_ir(child_ref: str, provided_params: dict | None = None) -> dict:
     """
     params: dict = {"workflow": child_ref}
     if provided_params:
-        params.update(provided_params)
+        # If the caller explicitly set an ``inputs`` key (dict or opaque template
+        # string), use it verbatim — otherwise wrap the bare mapping as the
+        # child-input dict.
+        if "inputs" in provided_params:
+            params.update(provided_params)
+        else:
+            params["inputs"] = dict(provided_params)
     return {
         "ir_version": "0.1.0",
         "nodes": [
@@ -344,59 +350,7 @@ class TestTemplateWorkflowRef:
 
 
 # ---------------------------------------------------------------------------
-# 7. Inline workflow_ir validated
-# ---------------------------------------------------------------------------
-
-
-class TestInlineWorkflowIR:
-    def test_inline_workflow_ir_validated(self) -> None:
-        """When a workflow node uses an inline workflow_ir dict, the validator
-        should recurse into it and catch errors (e.g., circular data flow)."""
-        broken_child_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {"id": "a", "type": "test", "params": {"data": "${b.output}"}},
-                {"id": "b", "type": "test", "params": {"data": "${a.output}"}},
-            ],
-            "edges": [
-                {"from": "a", "to": "b"},
-                {"from": "b", "to": "a"},
-            ],
-        }
-
-        parent_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "inline-child",
-                    "type": "workflow",
-                    "params": {
-                        "workflow_ir": broken_child_ir,
-                    },
-                }
-            ],
-            "edges": [],
-        }
-
-        errors, _warnings = split_validator_diagnostics(
-            workflow_ir=parent_ir,
-            extracted_params={},
-            registry=None,
-            skip_node_types=True,
-        )
-
-        # Should catch the circular dependency from the inline IR
-        assert any("circular" in d.message.lower() for d in errors), (
-            f"Expected circular dependency error from inline IR, got: {errors}"
-        )
-        # Error should be attributed to the sub-workflow
-        assert any("sub-workflow" in d.message.lower() for d in errors), (
-            f"Expected sub-workflow attribution, got: {errors}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 8. Saved workflow name validated
+# 7. Saved workflow name validated
 # ---------------------------------------------------------------------------
 
 
@@ -660,12 +614,12 @@ class TestDuplicateSubWorkflowReference:
                 {
                     "id": "step-a",
                     "type": "workflow",
-                    "params": {"workflow": str(child), "text": "hello", "count": "5"},
+                    "params": {"workflow": str(child), "inputs": {"text": "hello", "count": "5"}},
                 },
                 {
                     "id": "step-b",
                     "type": "workflow",
-                    "params": {"workflow": str(child), "text": "world"},
+                    "params": {"workflow": str(child), "inputs": {"text": "world"}},
                     # Missing "count" — should be caught
                 },
             ],
@@ -712,7 +666,7 @@ class TestDuplicateSubWorkflowReference:
             child,
             f"# Child\n\nA child that calls grandchild.\n\n## Steps\n\n"
             f"### delegate\n\nDelegate to grandchild.\n\n"
-            f"- type: workflow\n- workflow: {grandchild}\n- text: hello\n- count: 5\n",
+            f"- type: workflow\n- workflow: {grandchild}\n- inputs:\n    text: hello\n    count: 5\n",
         )
 
         parent_ir = {
@@ -726,7 +680,7 @@ class TestDuplicateSubWorkflowReference:
                 {
                     "id": "direct-grandchild",
                     "type": "workflow",
-                    "params": {"workflow": str(grandchild), "text": "world"},
+                    "params": {"workflow": str(grandchild), "inputs": {"text": "world"}},
                     # Missing "count" — must be caught even though grandchild
                     # was already validated during child's recursion
                 },
@@ -1186,3 +1140,150 @@ Echo the provided input values.
         )
         missing_input_errors = [e for e in errors if "requires input" in e.message]
         assert missing_input_errors == [], f"False-positive missing-input errors: {missing_input_errors}"
+
+
+# ---------------------------------------------------------------------------
+# Bug A — undeclared extras at parent→child boundary (silent-drop fix)
+# ---------------------------------------------------------------------------
+
+
+class TestUndeclaredExtras:
+    """Every value crossing the parent→child boundary must be declared on the child.
+
+    Symmetric with the child-side rule ("Declared input(s) never used as template
+    variable: X"). Before Bug A was fixed, extras were silently dropped —
+    typos like ``lyric:`` vs ``lyrics:`` passed validate, ran, and produced
+    wrong output that the user discovered in production.
+    """
+
+    def _child_with_inputs(self, path: Path, *input_names: str) -> None:
+        """Write a child workflow declaring the given required inputs."""
+        inputs_block = "\n\n".join(
+            f"### {name}\n\nInput {name}.\n\n- type: string\n- required: true" for name in input_names
+        )
+        refs = " ".join(f"${{{name}}}" for name in input_names)
+        write_pflow_md(
+            path,
+            f"# Child\n\nA child declaring {', '.join(input_names)}.\n\n"
+            f"## Inputs\n\n{inputs_block}\n\n"
+            f"## Steps\n\n### echo\n\nUse all declared inputs.\n\n- type: shell\n- command: echo {refs}\n",
+        )
+
+    def test_workflow_extras_top_level_rejected(self, tmp_path: Path) -> None:
+        """Unknown top-level field on a workflow node is rejected by Step 7.
+
+        The workflow node's ALLOWED_PARAMS is {workflow, inputs, error_action,
+        storage_mode, max_depth}. Anything else at the top level → parse error
+        with a "did you mean" suggestion, same as every other node type.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_with_inputs(child, "a")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child),
+                        "inputs": {"a": "hello"},
+                        "random_top_level_field": "oops",
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        extras = [e for e in errors if "random_top_level_field" in e.message]
+        assert len(extras) >= 1, f"Expected Step-7 diagnostic for unknown top-level field, got: {errors}"
+        assert any("Unknown parameter" in e.message and "random_top_level_field" in e.message for e in extras), (
+            f"Expected 'Unknown parameter' wording, got: {[e.message for e in extras]}"
+        )
+        # The diagnostic should name the allowed fields so the agent can recover.
+        first = extras[0]
+        assert first.context is not None
+        available = first.context.get("available_fields", [])
+        assert "inputs" in available and "workflow" in available, (
+            f"ALLOWED_PARAMS should surface as available_fields, got: {available}"
+        )
+
+    def test_workflow_extras_in_inputs_rejected(self, tmp_path: Path) -> None:
+        """Unknown key inside ``inputs:`` is rejected by the sub-workflow validator.
+
+        This is the core Bug A fix: ``lyric:`` when the child declares
+        ``lyrics:`` now fails at parse time with a fuzzy suggestion instead of
+        being silently forwarded and dropped.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_with_inputs(child, "lyrics", "concept_brief")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child),
+                        "inputs": {
+                            "lyrics": "hello world",
+                            "concept_brief": "a brief",
+                            "lyric": "typo",  # typo — child declares `lyrics`
+                        },
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        typo_errors = [e for e in errors if "'lyric'" in e.message and "does not declare input" in e.message]
+        assert len(typo_errors) == 1, (
+            f"Expected exactly one extras diagnostic for 'lyric' typo, got: {[e.message for e in errors]}"
+        )
+        diagnostic = typo_errors[0]
+        # Structured context surfaces declared inputs + fuzzy suggestion for agent recovery.
+        assert diagnostic.suggestions and "lyrics" in diagnostic.suggestions[0], (
+            f"Expected 'Did you mean lyrics' suggestion, got: {diagnostic.suggestions}"
+        )
+        assert diagnostic.context is not None
+        declared = diagnostic.context.get("available_fields", [])
+        assert "lyrics" in declared and "concept_brief" in declared, (
+            f"Diagnostic should list child's declared inputs, got: {declared}"
+        )
+
+    def test_workflow_extras_with_template_inputs_deferred(self, tmp_path: Path) -> None:
+        """When ``inputs:`` is an opaque template (e.g. ``${item}``), parse-time
+        extras check is skipped — keys aren't statically knowable. Runtime
+        defense-in-depth catches mismatches once the template resolves.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_with_inputs(child, "known_field")
+
+        parent_ir = _parent_ir(str(child), provided_params={"inputs": "${item}"})
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        # No parse-time extras errors — opaque template defers to runtime.
+        extras_errors = [e for e in errors if "does not declare input" in e.message]
+        assert extras_errors == [], (
+            f"Opaque ``inputs: ${{item}}`` template should skip parse-time extras check, got: {extras_errors}"
+        )

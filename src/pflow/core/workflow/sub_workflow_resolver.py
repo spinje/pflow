@@ -1,7 +1,7 @@
 """Shared sub-workflow resolution.
 
-Resolves sub-workflow references (inline IR, file path, or saved name)
-to their IR dict. Used by validator, executor, and visualizer.
+Resolves sub-workflow references (file path or saved name) to their IR dict.
+Used by validator, executor, and visualizer.
 """
 
 import logging
@@ -29,10 +29,9 @@ def resolve_sub_workflow(
 ) -> Optional[SubWorkflowResult]:
     """Resolve a sub-workflow reference from node params.
 
-    Handles three resolution modes:
-    1. Inline IR dict (``workflow_ir`` param)
-    2. File reference (``workflow`` param containing path indicators)
-    3. Saved workflow name (``workflow`` param as plain name)
+    Handles two resolution modes:
+    1. File reference (``workflow`` param containing path indicators)
+    2. Saved workflow name (``workflow`` param as plain name)
 
     Returns None for template references (``${...}``) that can't be
     resolved statically, or when no workflow reference is present.
@@ -41,7 +40,7 @@ def resolve_sub_workflow(
     Callers wrap in their own error handling.
 
     Args:
-        params: Node params dict (must contain ``workflow`` or ``workflow_ir``)
+        params: Node params dict (must contain ``workflow``)
         base_path: Directory to resolve relative file paths from.
                    For validator: ``workflow_file.parent``
                    For executor: parent workflow dir or CWD
@@ -49,12 +48,7 @@ def resolve_sub_workflow(
     """
     from pflow.core.file_resolver import is_workflow_file_reference
 
-    inline_ir = params.get("workflow_ir")
     workflow_ref = params.get("workflow")
-
-    # Mode 1: Inline IR dict
-    if isinstance(inline_ir, dict):
-        return SubWorkflowResult(ir=inline_ir, path=None, warnings=())
 
     # No workflow reference
     if not isinstance(workflow_ref, str) or not workflow_ref:
@@ -64,11 +58,11 @@ def resolve_sub_workflow(
     if "${" in workflow_ref:
         return None
 
-    # Mode 2: File reference
+    # Mode 1: File reference
     if is_workflow_file_reference(workflow_ref):
         return _resolve_from_file(workflow_ref, base_path)
 
-    # Mode 3: Saved workflow name
+    # Mode 2: Saved workflow name
     return _resolve_from_saved(workflow_ref)
 
 

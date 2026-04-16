@@ -630,6 +630,12 @@ class WorkflowValidator:
             logger.debug(f"Could not load registry metadata for unknown param validation: {e}")
             return diagnostics
 
+        # Workflow node type bypasses the registry (it lives in runtime/, not nodes/),
+        # so it's not covered by the Interface-docstring path. It declares its
+        # allowed top-level fields via the ``ALLOWED_PARAMS`` class attribute —
+        # the forward-compatible shape for the planned schema-declaration refactor.
+        workflow_node_types = {"workflow", "pflow.runtime.workflow_executor"}
+
         for node in workflow_ir.get("nodes", []):
             node_id = node.get("id", "unknown")
             node_type = node.get("type", "")
@@ -638,8 +644,13 @@ class WorkflowValidator:
             if not params:
                 continue
 
-            interface = nodes_metadata.get(node_type, {}).get("interface", {})
-            known_keys = WorkflowValidator._extract_known_keys(interface)
+            if node_type in workflow_node_types:
+                from pflow.runtime.workflow_executor import WorkflowExecutor
+
+                known_keys = set(WorkflowExecutor.ALLOWED_PARAMS)
+            else:
+                interface = nodes_metadata.get(node_type, {}).get("interface", {})
+                known_keys = WorkflowValidator._extract_known_keys(interface)
 
             if not known_keys:
                 continue
@@ -784,8 +795,15 @@ class WorkflowValidator:
         parent_params: dict[str, Any],
         child_inputs: dict[str, Any],
     ) -> list[Diagnostic]:
-        """Check that all required child inputs are provided by the parent node."""
-        from pflow.runtime.workflow_executor import WorkflowExecutor
+        """Check the parent→child input boundary in both directions.
+
+        * Missing required: every required child input with no default must be
+          provided by the parent.
+        * Undeclared extras: every key in the parent's ``inputs:`` dict must
+          correspond to a declared child input (symmetric to the child-side
+          "declared input never used as template variable" rule).
+        """
+        from pflow.core.suggestion_utils import find_similar_items
 
         inputs_value = parent_params.get("inputs")
         if inputs_value is not None and not isinstance(inputs_value, dict):
@@ -793,9 +811,9 @@ class WorkflowValidator:
             return []
 
         diagnostics: list[Diagnostic] = []
-        parent_keys = {k for k in parent_params if k not in WorkflowExecutor.RESERVED_PARAMS and not k.startswith("__")}
-        if isinstance(inputs_value, dict):
-            parent_keys |= set(inputs_value.keys())
+        parent_keys: set[str] = set(inputs_value.keys()) if isinstance(inputs_value, dict) else set()
+
+        # Missing-required direction.
         for input_name, input_spec in child_inputs.items():
             is_required = input_spec.get("required", True)
             has_default = "default" in input_spec
@@ -821,6 +839,39 @@ class WorkflowValidator:
                         },
                     )
                 )
+
+        # Undeclared-extras direction — closes Bug A: typos like ``lyric:`` vs
+        # ``lyrics:`` are now rejected at parse time instead of silently dropped.
+        declared_names = set(child_inputs.keys())
+        extras = sorted(parent_keys - declared_names)
+        if extras:
+            sorted_declared = sorted(declared_names)
+            for extra in extras:
+                similar = find_similar_items(extra, sorted_declared, max_results=2, method="fuzzy")
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        node_id=node_id,
+                        message=(
+                            f"Step '{node_id}': sub-workflow '{ref_label}' does not declare input "
+                            f"'{extra}' (passed via inputs: dict)."
+                        ),
+                        suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
+                        context={
+                            "category": "validation",
+                            "sub_workflow_path": ref_label,
+                            "sub_workflow_step": node_id,
+                            "path": f"nodes[id={node_id}].params.inputs.{extra}",
+                            "available_fields": sorted_declared,
+                            "available_fields_total": len(sorted_declared),
+                            "available_fields_label": "declared inputs",
+                            "similar_names": similar or None,
+                        },
+                    )
+                )
+
         return diagnostics
 
     @staticmethod
@@ -831,7 +882,7 @@ class WorkflowValidator:
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
         workflow_file: Optional[Path] = None,
     ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[Diagnostic], bool, tuple[Diagnostic, ...]]:
-        """Load a child workflow from inline IR, file reference, or saved name.
+        """Load a child workflow from a file reference or saved name.
 
         Returns:
             (child_ir, child_path, ref_label, errors, already_seen, parser_warnings)
@@ -841,13 +892,7 @@ class WorkflowValidator:
 
         # Determine the reference label for error messages
         workflow_ref = params.get("workflow")
-        inline_ir = params.get("workflow_ir")
-        if isinstance(inline_ir, dict):
-            ref_label = "<inline>"
-        elif isinstance(workflow_ref, str) and workflow_ref:
-            ref_label = workflow_ref
-        else:
-            ref_label = ""
+        ref_label = workflow_ref if isinstance(workflow_ref, str) and workflow_ref else ""
 
         # Resolve using shared resolver
         base_path = workflow_file.parent if workflow_file else None
@@ -891,10 +936,6 @@ class WorkflowValidator:
                     workflow_ref,
                 )
             return None, None, ref_label, [], False, ()
-
-        # Inline IR has no cycle concerns
-        if isinstance(inline_ir, dict):
-            return result.ir, result.path, ref_label, [], False, result.warnings
 
         # Dedup/cycle detection via seen set
         seen_key = str(result.path) if result.path else f"name:{workflow_ref}"

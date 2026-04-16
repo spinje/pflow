@@ -27,7 +27,7 @@ _LABEL_KEYS = ("name", "label", "focus", "lens")
 _SKIP_KEYS = ("workflow", "prompt", "command", "model")
 
 # Reserved workflow params (not child inputs)
-_RESERVED_PARAMS = {"workflow", "workflow_ir", "storage_mode", "type"}
+_RESERVED_PARAMS = {"workflow", "storage_mode", "type"}
 
 # Style declarations
 _CLASSDEF_STYLES: dict[str, str] = {

@@ -47,7 +47,7 @@ def _make_parent_workflow(child_ref: str, pass_text: bool = True) -> str:
         child_ref: Path or name of the child workflow file.
         pass_text: Whether to pass the 'text' input to the child.
     """
-    text_param = "- text: ${title}\n" if pass_text else ""
+    text_param = "- inputs:\n    text: ${title}\n" if pass_text else ""
     # When not passing text, still use ${title} in the show step so
     # the declared input is not flagged as unused by validation.
     show_cmd = "echo ${process.result}" if pass_text else "echo ${title}"
@@ -271,7 +271,8 @@ Call the broken sub-workflow.
 
 - type: workflow
 - workflow: {broken_child}
-- text: ${{expensive-llm.response}}
+- inputs:
+    text: ${{expensive-llm.response}}
 """)
 
         result = invoke_cli([str(parent_file), "query=test"])
@@ -341,7 +342,8 @@ Call the grandchild workflow.
 
 - type: workflow
 - workflow: ./inner/grandchild.pflow.md
-- text: ${text}
+- inputs:
+    text: ${text}
 """)
 
         # Parent: calls child with relative path
@@ -367,7 +369,8 @@ Call the middle workflow.
 
 - type: workflow
 - workflow: ./middle/child.pflow.md
-- text: ${title}
+- inputs:
+    text: ${title}
 
 ### show
 

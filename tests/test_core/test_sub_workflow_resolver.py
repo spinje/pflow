@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from pflow.core.exceptions import MarkdownParseError
-from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
+from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from tests.shared.markdown_utils import write_workflow_file
 
 # ---------------------------------------------------------------------------
@@ -36,24 +36,7 @@ def _write_valid_child(path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 1. Inline IR dict
-# ---------------------------------------------------------------------------
-
-
-def test_inline_ir() -> None:
-    """When params contain workflow_ir dict, return it directly with
-    path=None and empty warnings tuple."""
-    inline_ir = {"nodes": [{"id": "a", "type": "shell", "params": {}}]}
-    result = resolve_sub_workflow({"workflow_ir": inline_ir})
-
-    assert isinstance(result, SubWorkflowResult)
-    assert result.ir is inline_ir
-    assert result.path is None
-    assert result.warnings == ()
-
-
-# ---------------------------------------------------------------------------
-# 2. File reference
+# 1. File reference
 # ---------------------------------------------------------------------------
 
 

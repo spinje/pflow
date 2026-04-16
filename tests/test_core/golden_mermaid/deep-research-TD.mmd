@@ -43,9 +43,8 @@ graph TD
         style analyze-sources__score-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
         analyze-sources__score__normalize --> analyze-sources__score__out_score
         analyze-sources__score__evaluate --> analyze-sources__score__out_reasoning
-        analyze-sources__extract --> analyze-sources__score__in_text
-        analyze-sources__in_focus --> analyze-sources__score__in_criteria
         analyze-sources__compile["compile (code)"]:::code
+        analyze-sources__extract --> analyze-sources__score
         analyze-sources__score__out_score --> analyze-sources__compile
         analyze-sources__score__out_reasoning --> analyze-sources__compile
     end
@@ -57,8 +56,6 @@ graph TD
     style analyze-sources-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     analyze-sources__compile --> analyze-sources__out_analysis
     analyze-sources__score__out_score --> analyze-sources__out_quality_score
-    prepare --> analyze-sources__in_content
-    prepare --> analyze-sources__in_focus
     combine["combine (code)"]:::code
     subgraph reviews ["reviews (parallel x5)"]
         subgraph reviews__accuracy ["accuracy (workflow)"]
@@ -85,8 +82,6 @@ graph TD
         style reviews__dots fill:#FFF2CC,stroke:#D6B656,color:#000
     end
     style reviews fill:#808080,fill-opacity:0.14,stroke:#999
-    combine --> reviews__accuracy__in_summary
-    combine --> reviews__completeness__in_summary
     final-report["final-report (code)"]:::code
     input_sources --> prepare
     input_focus --> prepare
@@ -95,6 +90,7 @@ graph TD
     end
     style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     final-report --> out_report
+    prepare --> analyze-sources
     analyze-sources__out_analysis --> combine
     analyze-sources__out_quality_score --> combine
     combine --> reviews__accuracy

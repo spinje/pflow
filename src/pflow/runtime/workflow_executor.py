@@ -3,7 +3,7 @@
 import copy
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from pflow.core.diagnostic import Diagnostic, format_child_provenance
 from pflow.core.file_resolver import is_workflow_file_reference
@@ -20,27 +20,25 @@ class WorkflowExecutor(BaseNode):
     Enables workflow composition by loading and executing other workflows
     with controlled parameter passing and storage isolation.
 
-    Workflow nodes use the same syntax as any other node — non-reserved
-    params are passed as child inputs, and child outputs are auto-exposed
-    via the namespace system.
+    Child inputs are passed via the ``inputs`` dict on the workflow node.
+    Child outputs are auto-exposed via the namespace system.
 
     Example .pflow.md syntax:
         ### process_title
         - type: workflow
         - workflow: ./child.pflow.md
-        - text: ${document_title}
-        - mode: title
+        - inputs:
+            text: ${document_title}
+            mode: title
 
-    Downstream access: ${process_title.result}
+    Downstream access: ``${process_title.result}``
 
     Parameters:
         - workflow (str): File path (.pflow.md) or saved workflow name
-        - workflow_ir (dict): Inline workflow definition (via yaml code block)
+        - inputs (dict): Values to pass to the child's declared ``## Inputs``
         - storage_mode (str): "mapped" (default) or "shared"
         - max_depth (int): Maximum nesting depth (default: 10)
         - error_action (str): Action to return on error (default: "error")
-
-    All other params are passed as child workflow inputs.
 
     Actions:
         - default: Workflow executed successfully
@@ -50,15 +48,17 @@ class WorkflowExecutor(BaseNode):
     MAX_DEPTH_DEFAULT = 10
     RESERVED_KEY_PREFIX = "_pflow_"
 
-    # Params consumed by WorkflowExecutor itself, NOT passed to child
-    RESERVED_PARAMS = frozenset({
+    # Closed top-level schema for workflow nodes. The validator (Step 7) reads
+    # this attribute to reject unknown top-level fields at parse time, matching
+    # the closure Step 7 applies to every other node via Interface docstrings.
+    # Framework-internal keys (``__registry__`` etc.) are allowed via the
+    # ``__``-prefix convention, not listed here.
+    ALLOWED_PARAMS: ClassVar[frozenset[str]] = frozenset({
         "workflow",
-        "workflow_ir",
+        "inputs",
+        "error_action",
         "storage_mode",
         "max_depth",
-        "error_action",
-        "__registry__",
-        "inputs",  # Framework key consumed by engine's template resolution; resolved dict values forwarded via _extract_child_inputs
     })
 
     # Cross-cutting infrastructure keys propagated from parent to child storage.
@@ -117,31 +117,38 @@ class WorkflowExecutor(BaseNode):
 
         execution_stack = shared.get(f"{self.RESERVED_KEY_PREFIX}stack", [])
 
-        # Cache file/name loaded IR for compile-once: same dict object = same id() = compile cache hit.
-        # First batch item loads and caches. Subsequent items reuse the same IR object.
-        # For parallel batch, each deep-copied instance starts without cache and loads independently.
-        # DON'T cache inline IR — it comes from self.params["workflow_ir"] which may contain
-        # per-item resolved templates (e.g., ${item} inside the child IR), producing a different
-        # dict per item. Caching would freeze the first item's resolved values.
-        cached_ir = getattr(self, "_cached_loaded_ir", None)
-        if cached_ir is not None:
-            workflow_ir, workflow_path, workflow_source, parser_warnings = cached_ir
-        else:
+        # IR load cache, keyed by raw workflow ref string (`self.params["workflow"]`).
+        # Heterogeneous batches (`${item.workflow}` → different per-item refs) naturally
+        # get different keys, so each item loads its own child IR. Homogeneous batches
+        # (same ref across items) hit the cache and reuse the IR.
+        raw_ref = self.params.get("workflow")
+        if not isinstance(raw_ref, str) or not raw_ref:
             workflow_ir, workflow_path, workflow_source, parser_warnings = self._load_workflow(shared, execution_stack)
-            if workflow_source != "inline":
-                self._cached_loaded_ir = (workflow_ir, workflow_path, workflow_source, parser_warnings)
+        else:
+            cache = getattr(self, "_loaded_ir_cache", None)
+            if cache is None:
+                cache = {}
+                self._loaded_ir_cache = cache
+            entry = cache.get(raw_ref)
+            if entry is not None:
+                workflow_ir, workflow_path, workflow_source, parser_warnings = entry
+            else:
+                workflow_ir, workflow_path, workflow_source, parser_warnings = self._load_workflow(
+                    shared, execution_stack
+                )
+                cache[raw_ref] = (workflow_ir, workflow_path, workflow_source, parser_warnings)
         self._child_parser_warnings = list(parser_warnings)
         self._propagate_child_parser_warnings(shared)
 
-        # Extract child inputs: all non-reserved params
-        # Template resolution already handled by engine's _execute_single_node before prep() runs
+        # Extract child inputs from the ``inputs:`` dict param.
+        # Template resolution already handled by engine's _execute_single_node before prep() runs.
         child_params = self._extract_child_inputs()
 
         # Validate child params against declared inputs
         self._validate_child_params(workflow_ir, child_params, workflow_path)
 
         return {
-            "workflow_ir": workflow_ir,
+            "child_ir": workflow_ir,
             "workflow_path": str(workflow_path) if workflow_path else "<inline>",
             "workflow_source": workflow_source,
             "child_params": child_params,
@@ -159,36 +166,28 @@ class WorkflowExecutor(BaseNode):
     ) -> Any:
         """Compile the sub-workflow with compile-once caching.
 
-        First call compiles and caches. Subsequent calls (batch items) reuse
-        the cached CompiledWorkflow. For parallel batch, the batch executor
-        pre-warms this cache before deep-copying, so each thread inherits
-        the compiled workflow.
+        Cache keyed by ``workflow_path`` (resolved file/name string).
+        Heterogeneous batches where ``${item.workflow}`` varies per iteration
+        naturally produce different cache keys per item, so each child compiles
+        exactly once. Homogeneous batches hit the cache on item 2 onward.
 
-        Cache gate:
-        - Non-inline workflows (_cached_loaded_ir exists): return cache unconditionally.
-          After deepcopy, the IR dict has a new id() but the content is identical.
-          _cached_loaded_ir is the signal that the workflow came from a file/name source.
-        - Inline workflows (_cached_loaded_ir absent): check id(workflow_ir) match.
-          Inline IR may contain parent-resolved templates (e.g., ${item}) that produce
-          a different dict per batch item. id() match means the same dict object,
-          which means sequential reuse is safe. Different id() means recompile.
+        If the child has no on-disk path (saved name not backed by a file —
+        an edge case), it is compiled without caching. Compilation is cheap
+        relative to execution; skipping the cache for this rare case keeps
+        the cache-key logic single-source-of-truth.
 
         CompilationError always propagates — it means the workflow definition
         is broken, not the data.
         """
-        from pflow.runtime.engine.types import CompiledWorkflow
+        cache = getattr(self, "_compiled_workflow_cache", None)
+        if cache is None:
+            cache = {}
+            self._compiled_workflow_cache = cache
 
-        # Compile-once cache
-        cached: Optional[CompiledWorkflow] = getattr(self, "_cached_workflow", None)
-        if cached is not None:
-            # Non-inline (file/name): always reuse. _cached_loaded_ir is set only for
-            # non-inline sources. Content is identical across items — only the dict
-            # object identity differs after deepcopy.
-            if getattr(self, "_cached_loaded_ir", None) is not None:
-                return cached
-            # Inline: reuse only if same dict object (id match).
-            cached_ir_id: Optional[int] = getattr(self, "_cached_workflow_ir_id", None)
-            if cached_ir_id is not None and cached_ir_id == id(workflow_ir):
+        cacheable = bool(workflow_path) and workflow_path != "<inline>"
+        if cacheable:
+            cached = cache.get(workflow_path)
+            if cached is not None:
                 return cached
 
         registry = self.params.get("__registry__")
@@ -197,7 +196,7 @@ class WorkflowExecutor(BaseNode):
 
         try:
             params = dict(child_params)  # Copy — don't mutate caller's dict
-            if workflow_path and workflow_path != "<inline>":
+            if cacheable:
                 params["_pflow_workflow_file"] = str(Path(workflow_path).resolve())
             compiled = compile_workflow(
                 copy.deepcopy(workflow_ir),  # Protect against concurrent mutation in parallel batch
@@ -217,16 +216,15 @@ class WorkflowExecutor(BaseNode):
                 suggestion=getattr(e, "suggestion", None),
             ) from e
 
-        # Cache for compile-once
-        self._cached_workflow = compiled
-        self._cached_workflow_ir_id = id(workflow_ir)
+        if cacheable:
+            cache[workflow_path] = compiled
         return compiled
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""
         from pflow.runtime.engine import WorkflowEngine
 
-        workflow_ir = prep_res["workflow_ir"]
+        workflow_ir = prep_res["child_ir"]
         workflow_path = prep_res["workflow_path"]
         workflow_source = prep_res.get("workflow_source", "unknown")
         child_params = prep_res["child_params"]
@@ -365,7 +363,7 @@ class WorkflowExecutor(BaseNode):
             return
 
         child_storage = exec_res.get("child_storage", {})
-        child_ir = prep_res.get("workflow_ir", {})
+        child_ir = prep_res.get("child_ir", {})
         child_declared_outputs = child_ir.get("outputs", {})
 
         if child_declared_outputs:
@@ -407,24 +405,14 @@ class WorkflowExecutor(BaseNode):
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:
-        """Extract child workflow inputs from params.
-
-        Includes non-reserved top-level params AND resolved ``inputs`` dict
-        values.  Top-level params take precedence over ``inputs`` values.
-        """
-        result: dict[str, Any] = {}
+        """Extract child workflow inputs from the ``inputs`` dict param."""
         inputs = self.params.get("inputs")
-        if isinstance(inputs, dict):
-            result.update(inputs)
-        for key, value in self.params.items():
-            if key not in self.RESERVED_PARAMS and not key.startswith("__"):
-                result[key] = value
-        return result
+        return dict(inputs) if isinstance(inputs, dict) else {}
 
     def _load_workflow(
         self, shared: dict[str, Any], execution_stack: list[str]
     ) -> tuple[dict[str, Any], Optional[Path], str, list[Diagnostic]]:
-        """Load the workflow from file, saved name, or inline IR.
+        """Load the workflow from file path or saved name.
 
         Returns:
             (workflow_ir, workflow_path, workflow_source, parser_warnings)
@@ -432,12 +420,9 @@ class WorkflowExecutor(BaseNode):
         from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 
         workflow = self.params.get("workflow")
-        workflow_ir = self.params.get("workflow_ir")
 
-        if not workflow and not workflow_ir:
-            raise ValueError("WorkflowExecutor requires either 'workflow' or 'workflow_ir' parameter")
-        if workflow and workflow_ir:
-            raise ValueError("Only one of 'workflow' or 'workflow_ir' should be provided")
+        if not workflow:
+            raise ValueError("WorkflowExecutor requires a 'workflow' parameter (file path or saved name)")
 
         # Determine base_path for relative file resolution
         parent_file = shared.get(f"{self.RESERVED_KEY_PREFIX}workflow_file")
@@ -450,7 +435,7 @@ class WorkflowExecutor(BaseNode):
             # Template references (${...}) return None from resolver — give a clear error
             if isinstance(workflow, str) and "${" in workflow:
                 raise ValueError(f"Cannot execute sub-workflow with unresolved template reference: '{workflow}'")
-            raise ValueError("WorkflowExecutor requires either 'workflow' or 'workflow_ir' parameter")
+            raise ValueError("WorkflowExecutor requires a 'workflow' parameter (file path or saved name)")
 
         workflow_ir = result.ir
         workflow_path = result.path
@@ -460,9 +445,7 @@ class WorkflowExecutor(BaseNode):
             self._check_workflow_cycle(workflow_path, execution_stack)
 
         # Determine source label for tracing
-        if isinstance(self.params.get("workflow_ir"), dict):
-            workflow_source = "inline"
-        elif workflow_path and is_workflow_file_reference(workflow or ""):
+        if workflow_path and is_workflow_file_reference(workflow or ""):
             workflow_source = f"ref:{workflow}"
         else:
             workflow_source = f"name:{workflow}"
@@ -482,11 +465,20 @@ class WorkflowExecutor(BaseNode):
     def _validate_child_params(
         self, workflow_ir: dict[str, Any], child_params: dict[str, Any], workflow_path: Any
     ) -> None:
-        """Validate provided params against child workflow's declared inputs."""
+        """Validate provided params against child workflow's declared inputs.
+
+        Checks both directions at runtime as defense-in-depth against programmatic
+        callers that bypass the parse-time validator:
+          * Missing required inputs → ``ValueError``.
+          * Undeclared extras inside ``inputs:`` dict → ``ValueError``.
+        """
         declared_inputs = workflow_ir.get("inputs", {})
         if not declared_inputs:
             return
 
+        path_str = workflow_path if workflow_path else "<unknown>"
+
+        # Missing-required direction (pre-existing).
         missing_required = []
         for input_name, input_spec in declared_inputs.items():
             is_required = input_spec.get("required", True)
@@ -500,7 +492,6 @@ class WorkflowExecutor(BaseNode):
 
         if missing_required:
             provided = list(child_params.keys()) if child_params else []
-            path_str = workflow_path if workflow_path else "<inline>"
             msg_parts = [
                 f"Child workflow '{path_str}' is missing required inputs:",
                 *missing_required,
@@ -511,6 +502,18 @@ class WorkflowExecutor(BaseNode):
                 msg_parts.append("You provided no inputs.")
             all_input_names = list(declared_inputs.keys())
             msg_parts.append(f"Available inputs: {', '.join(all_input_names)}")
+            raise ValueError("\n".join(msg_parts))
+
+        # Undeclared-extras direction (symmetric to missing-required).
+        extras = sorted(set(child_params.keys()) - set(declared_inputs.keys()))
+        if extras:
+            declared_names = sorted(declared_inputs.keys())
+            msg_parts = [
+                f"Child workflow '{path_str}' was passed undeclared input(s): {', '.join(extras)}.",
+                f"The child declares: {', '.join(declared_names) if declared_names else '(none)'}.",
+                "Either declare these inputs in the child's ## Inputs section, "
+                "or remove them from this workflow node's inputs: dict.",
+            ]
             raise ValueError("\n".join(msg_parts))
 
     def _create_child_storage(

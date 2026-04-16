@@ -539,8 +539,10 @@ class TestBatchItemFieldValidation:
         errors, _warnings = split_template_diagnostics(workflow_ir, {"sources": ["a"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
-    def test_workflow_batch_item_invalid_field_caught(self):
+    def test_workflow_batch_item_invalid_field_caught(self, tmp_path):
         """Invalid field on workflow batch items should be caught with child output fields shown."""
+        from tests.shared.markdown_utils import write_workflow_file
+
         child_ir = {
             "nodes": [{"id": "step", "type": "llm", "params": {"prompt": "hi"}}],
             "edges": [],
@@ -549,6 +551,9 @@ class TestBatchItemFieldValidation:
                 "source_type": {"type": "str"},
             },
         }
+        child_path = tmp_path / "fetch_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
+
         workflow_ir = {
             "inputs": {"sources": {"type": "array", "required": True}},
             "nodes": [
@@ -556,7 +561,7 @@ class TestBatchItemFieldValidation:
                     "id": "fetch-sources",
                     "type": "workflow",
                     "batch": {"items": "${sources}"},
-                    "params": {"workflow_ir": child_ir, "url": "${item}"},
+                    "params": {"workflow": str(child_path), "inputs": {"url": "${item}"}},
                 },
                 {
                     "id": "analyze",

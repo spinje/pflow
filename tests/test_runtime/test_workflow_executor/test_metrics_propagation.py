@@ -117,7 +117,7 @@ def mock_registry(tmp_path):
                 "outputs": [],
                 "parameters": [
                     {"key": "workflow", "type": "string", "required": False},
-                    {"key": "workflow_ir", "type": "dict", "required": False},
+                    {"key": "inputs", "type": "dict", "required": False},
                     {"key": "storage_mode", "type": "string", "required": False},
                     {"key": "max_depth", "type": "integer", "required": False},
                     {"key": "error_action", "type": "string", "required": False},
@@ -149,14 +149,15 @@ def mock_registry(tmp_path):
 class TestLLMCallsViaTrace:
     """Verify LLM data is captured via trace events across workflow nesting."""
 
-    def test_single_sub_workflow_llm_calls_in_trace(self, mock_registry):
+    def test_single_sub_workflow_llm_calls_in_trace(self, mock_registry, tmp_path):
         """When parent and child each have an LLM node, trace captures both.
 
         Parent runs "direct-llm" (MockLLMNode), then "child-call" (WorkflowExecutor
-        with inline IR containing one MockLLMNode). The trace collector should
-        capture LLM calls from both levels via collect_llm_calls().
+        referencing a file-based child containing one MockLLMNode). The trace
+        collector should capture LLM calls from both levels via collect_llm_calls().
         """
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
+        from tests.shared.markdown_utils import write_workflow_file
 
         child_ir = {
             "ir_version": "0.1.0",
@@ -170,6 +171,8 @@ class TestLLMCallsViaTrace:
             ],
             "edges": [],
         }
+        child_path = tmp_path / "metrics_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
 
         parent_ir = {
             "ir_version": "0.1.0",
@@ -184,7 +187,7 @@ class TestLLMCallsViaTrace:
                     "id": "child-call",
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
-                        "workflow_ir": child_ir,
+                        "workflow": str(child_path),
                     },
                     "purpose": "Execute child workflow with LLM node",
                 },
@@ -214,7 +217,7 @@ class TestLLMCallsViaTrace:
                 assert call["input_tokens"] == 100
                 assert call["output_tokens"] == 50
 
-    def test_batched_sub_workflow_llm_calls_in_trace(self, mock_registry):
+    def test_batched_sub_workflow_llm_calls_in_trace(self, mock_registry, tmp_path):
         """Batch items each running a child workflow with LLM — all costs captured.
 
         This is the highest-risk scenario: batch creates shallow copies of shared,
@@ -226,6 +229,7 @@ class TestLLMCallsViaTrace:
         Expected: 3 LLM calls in collect_llm_calls() (one per batch item's child).
         """
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
+        from tests.shared.markdown_utils import write_workflow_file
 
         child_ir = {
             "ir_version": "0.1.0",
@@ -239,6 +243,8 @@ class TestLLMCallsViaTrace:
             ],
             "edges": [],
         }
+        child_path = tmp_path / "batched_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
 
         parent_ir = {
             "ir_version": "0.1.0",
@@ -253,7 +259,7 @@ class TestLLMCallsViaTrace:
                     "id": "batch-children",
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
-                        "workflow_ir": child_ir,
+                        "workflow": str(child_path),
                     },
                     "batch": {"items": "${source.result}"},
                     "purpose": "Run child workflow for each item in batch",
@@ -282,12 +288,14 @@ class TestLLMCallsViaTrace:
 class TestProgressCallbackPropagation:
     """Verify __progress_callback__ is propagated to child workflows."""
 
-    def test_progress_callback_propagated(self, mock_registry):
+    def test_progress_callback_propagated(self, mock_registry, tmp_path):
         """When parent has a progress callback, child's InstrumentedNodeWrapper invokes it.
 
         The progress callback is used for real-time execution feedback. If it's not
         propagated, nested workflow execution appears silent to the user.
         """
+        from tests.shared.markdown_utils import write_workflow_file
+
         callback = Mock()
 
         child_ir = {
@@ -302,6 +310,8 @@ class TestProgressCallbackPropagation:
             ],
             "edges": [],
         }
+        child_path = tmp_path / "callback_child.pflow.md"
+        write_workflow_file(child_ir, child_path)
 
         parent_ir = {
             "ir_version": "0.1.0",
@@ -310,7 +320,7 @@ class TestProgressCallbackPropagation:
                     "id": "child-call",
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
-                        "workflow_ir": child_ir,
+                        "workflow": str(child_path),
                     },
                     "purpose": "Execute child workflow to test callback propagation",
                 },
@@ -358,7 +368,7 @@ class TestCreateChildStorage:
         (not copies), so that child workflows share resources with the parent.
         """
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": [], "ir_version": "0.1.0"}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         progress_cb = Mock()
         mcp_pool = Mock()
@@ -405,7 +415,7 @@ class TestCreateChildStorage:
         run without the full executor service (e.g., in tests).
         """
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": [], "ir_version": "0.1.0"}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         parent_shared: dict = {
             "_pflow_depth": 0,
@@ -433,7 +443,7 @@ class TestCreateChildStorage:
         Propagation is effectively a no-op because the keys are already there.
         """
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": [], "ir_version": "0.1.0"}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         trace_collector = Mock()
         parent_shared: dict = {
@@ -459,7 +469,7 @@ class TestCreateChildStorage:
         for the presence of _trace_collector in their storage.
         """
         node = WorkflowExecutor()
-        node.set_params({"workflow_ir": {"nodes": [], "ir_version": "0.1.0"}})
+        node.set_params({"workflow": "dummy.pflow.md"})
 
         trace_collector = Mock()
         parent_shared: dict = {
