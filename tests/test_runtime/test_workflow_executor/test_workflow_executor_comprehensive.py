@@ -443,7 +443,8 @@ class TestWorkflowExecutorComprehensive:
 
     def test_storage_mode_mapped(self, simple_workflow_ir, tmp_path):
         """Test mapped storage mode: child sees only mapped params."""
-        child_path = _write_child(tmp_path, simple_workflow_ir, "mapped_storage_child")
+        ir_with_input = {**simple_workflow_ir, "inputs": {"allowed": {"type": "string"}}}
+        child_path = _write_child(tmp_path, ir_with_input, "mapped_storage_child")
         node = WorkflowExecutor()
         node.set_params({
             "workflow": str(child_path),
@@ -723,7 +724,8 @@ class TestWorkflowExecutorComprehensive:
 
     def test_concurrent_execution_independence(self, simple_workflow_ir, tmp_path):
         """Test that concurrent executions are independent."""
-        child_path = _write_child(tmp_path, simple_workflow_ir, "concurrent_child")
+        ir_with_input = {**simple_workflow_ir, "inputs": {"data": {"type": "string"}}}
+        child_path = _write_child(tmp_path, ir_with_input, "concurrent_child")
         node1 = WorkflowExecutor()
         node2 = WorkflowExecutor()
 
@@ -863,10 +865,17 @@ class TestWorkflowExecutorComprehensive:
         prep_res = node.prep({})
         assert prep_res["child_params"]["text"] == "hello"
 
-    # --- Test 30: no declared inputs skips validation ---
+    # --- Test 30: no declared inputs still rejects extras at runtime ---
 
-    def test_no_declared_inputs_skips_validation(self, simple_workflow_ir, tmp_path):
-        """Workflows without declared inputs skip param validation."""
+    def test_no_declared_inputs_still_rejects_extras_at_runtime(self, simple_workflow_ir, tmp_path):
+        """Child with no ``## Inputs`` + parent-provided inputs → runtime raises.
+
+        Regression guard for the silent-drop edge case: before this fix,
+        ``_validate_child_params`` early-returned when declarations were empty,
+        so extras survived silently. Parse-time always caught this; runtime now
+        does too (defense-in-depth for programmatic callers that bypass
+        ``WorkflowValidator``).
+        """
         child_path = _write_child(tmp_path, simple_workflow_ir, "no_decl_child")
         node = WorkflowExecutor()
         node.set_params({
@@ -874,9 +883,28 @@ class TestWorkflowExecutorComprehensive:
             "inputs": {"anything": "goes"},
         })
 
-        # Should not raise — no declared inputs to validate against
+        with pytest.raises(ValueError, match=r"undeclared input\(s\)"):
+            node.prep({})
+
+    def test_no_declared_inputs_and_empty_inputs_dict_succeeds(self, simple_workflow_ir, tmp_path):
+        """Child with no declared inputs + empty/omitted ``inputs:`` → no error.
+
+        Negative control for the regression test above: the extras rejection
+        must not false-positive when the parent legitimately provides nothing.
+        """
+        child_path = _write_child(tmp_path, simple_workflow_ir, "empty_decl_child")
+
+        # Case 1: no inputs: key at all.
+        node = WorkflowExecutor()
+        node.set_params({"workflow": str(child_path)})
         prep_res = node.prep({})
-        assert prep_res["child_params"]["anything"] == "goes"
+        assert prep_res["child_params"] == {}
+
+        # Case 2: explicit empty dict.
+        node2 = WorkflowExecutor()
+        node2.set_params({"workflow": str(child_path), "inputs": {}})
+        prep_res2 = node2.prep({})
+        assert prep_res2["child_params"] == {}
 
     # --- Test 31: relative path resolves from base_path ---
 
@@ -908,7 +936,11 @@ class TestWorkflowExecutorComprehensive:
 
     def test_params_as_inputs_basic(self, simple_workflow_ir, tmp_path):
         """Non-reserved params become child inputs; reserved params are excluded."""
-        child_path = _write_child(tmp_path, simple_workflow_ir, "params_basic_child")
+        ir_with_inputs = {
+            **simple_workflow_ir,
+            "inputs": {"text": {"type": "string"}, "count": {"type": "integer"}},
+        }
+        child_path = _write_child(tmp_path, ir_with_inputs, "params_basic_child")
         node = WorkflowExecutor()
         node.set_params({
             "workflow": str(child_path),
@@ -992,7 +1024,8 @@ class TestWorkflowExecutorComprehensive:
 
     def test_reserved_params_not_passed_as_inputs(self, simple_workflow_ir, tmp_path):
         """Verify reserved params are NOT included in child_params."""
-        child_path = _write_child(tmp_path, simple_workflow_ir, "reserved_params_child")
+        ir_with_input = {**simple_workflow_ir, "inputs": {"user_input": {"type": "string"}}}
+        child_path = _write_child(tmp_path, ir_with_input, "reserved_params_child")
         node = WorkflowExecutor()
         node.set_params({
             "workflow": str(child_path),

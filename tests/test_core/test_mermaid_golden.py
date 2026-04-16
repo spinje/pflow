@@ -41,6 +41,13 @@ def _generate_from_file(
     )
 
 
+# KNOWN REGRESSION: the sub-workflow goldens below (document-processor, deep-research-*)
+# encode a coarsened data-flow compared to pre-task-153 state. The renderer at
+# ``src/pflow/core/workflow/mermaid/_edges.py`` traces templates only in top-level
+# string params; after task 153 made ``inputs:`` the canonical form, per-child-input
+# edges nested inside that dict became invisible. Tracked as GH #283. When #283
+# lands and descends into ``inputs:`` dicts, these goldens will need regeneration
+# to restore the finer-grained edges.
 @pytest.mark.parametrize(
     "workflow_rel,golden_name,direction",
     [

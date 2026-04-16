@@ -482,11 +482,15 @@ class WorkflowExecutor(BaseNode):
         callers that bypass the parse-time validator:
           * Missing required inputs → ``ValueError``.
           * Undeclared extras inside ``inputs:`` dict → ``ValueError``.
+
+        Runs even when the child declares no inputs — in that case the
+        missing-required loop is a natural no-op but the extras loop correctly
+        rejects any provided keys (set(child_params) - set() = set(child_params)).
+        Previously this method early-returned on empty declarations, which
+        reopened the silent-drop class of bug for programmatic callers against
+        children with no ``## Inputs`` section.
         """
         declared_inputs = workflow_ir.get("inputs", {})
-        if not declared_inputs:
-            return
-
         path_str = workflow_path if workflow_path else "<unknown>"
 
         # Missing-required direction (pre-existing).

@@ -162,9 +162,16 @@ class TestWorkflowExecutorIntegration:
 
     @pytest.fixture
     def workflow_file(self, simple_workflow_ir, tmp_path):
-        """Create a temporary .pflow.md workflow file from simple_workflow_ir."""
+        """Create a temporary .pflow.md workflow file that declares ``test_input``.
+
+        Used by ``test_file_workflow_execution`` which passes ``test_input``
+        through the ``inputs:`` dict. Declaring the input is required now that
+        ``_validate_child_params`` rejects extras even when declarations are
+        empty.
+        """
+        declared_ir = {**simple_workflow_ir, "inputs": {"test_input": {"type": "string"}}}
         workflow_path = tmp_path / "test_workflow.pflow.md"
-        write_workflow_file(simple_workflow_ir, workflow_path)
+        write_workflow_file(declared_ir, workflow_path)
         return workflow_path
 
     # ------------------------------------------------------------------ #

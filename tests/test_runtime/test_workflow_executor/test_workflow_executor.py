@@ -76,7 +76,15 @@ class TestWorkflowExecutor:
 
         child_file = tmp_path / "param_map_child.pflow.md"
         write_workflow_file(
-            {"nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}], "edges": []},
+            {
+                "inputs": {
+                    "data": {"type": "string"},
+                    "key": {"type": "string"},
+                    "static": {"type": "string"},
+                },
+                "nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}],
+                "edges": [],
+            },
             child_file,
         )
 
@@ -102,7 +110,11 @@ class TestWorkflowExecutor:
 
         child_file = tmp_path / "reserved_excluded_child.pflow.md"
         write_workflow_file(
-            {"nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}], "edges": []},
+            {
+                "inputs": {"user_param": {"type": "string"}},
+                "nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}],
+                "edges": [],
+            },
             child_file,
         )
 

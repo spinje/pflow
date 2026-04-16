@@ -5,11 +5,6 @@ The cache (``_loaded_ir_cache``) is keyed by the raw workflow reference string
 batches correct: different ``${item.workflow}`` resolutions produce different
 keys, so each child workflow loads independently. Homogeneous batches hit the
 cache from item 2 onward.
-
-The paired compile cache (``_compiled_workflow_cache``) is keyed by resolved
-workflow_path for file/name sources, falling back to ``id(workflow_ir)`` for
-inline IR. That's covered by ``test_compile_once_regression.py``; here we
-focus on the IR-load side of the pair.
 """
 
 from pathlib import Path

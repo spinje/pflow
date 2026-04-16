@@ -20,8 +20,19 @@ class TestWorkflowSavedName:
 
     @pytest.fixture
     def simple_workflow_ir(self):
-        """Basic workflow IR for testing."""
+        """Basic workflow IR for testing.
+
+        Declares the inputs that tests in this class pass through ``inputs:``.
+        Runtime ``_validate_child_params`` now rejects undeclared extras even
+        when a child's ``## Inputs`` section is empty, so tests must declare
+        every key they pass.
+        """
         return {
+            "inputs": {
+                "input_value": {"type": "string", "required": False},
+                "dynamic_value": {"type": "string", "required": False},
+                "test_param": {"type": "string", "required": False},
+            },
             "nodes": [{"id": "test_node", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
