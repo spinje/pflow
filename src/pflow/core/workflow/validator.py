@@ -5,10 +5,11 @@ ensuring consistency between production, tests, and any other consumers.
 """
 
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic, Severity, format_child_provenance
+from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, format_child_provenance
 from pflow.core.exceptions import SchemaValidationError
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
@@ -701,9 +702,6 @@ class WorkflowValidator:
         full validation on it. Catches parse errors, structural errors,
         missing required inputs, and cycles.
         """
-        from pflow.core.file_resolver import resolve_file_references
-        from pflow.core.ir_schema import normalize_ir
-        from pflow.core.validation_utils import generate_dummy_parameters
 
         diagnostics: list[Diagnostic] = []
         seen = _seen if _seen is not None else set()
@@ -718,77 +716,245 @@ class WorkflowValidator:
                 continue
 
             node_id = node.get("id", "unknown")
-            params = node.get("params", {})
 
-            # Load child workflow (file, saved name, or inline IR).
-            # already_seen=True means the child was loaded before — skip recursive
-            # validation (already done) but still check this node's provided inputs.
-            (
-                child_ir,
-                child_path,
-                ref_label,
-                load_errors,
-                already_seen,
-                child_parser_warnings,
-            ) = WorkflowValidator._load_child_workflow(node_id, params, seen, ir_cache, workflow_file)
-            diagnostics.extend(load_errors)
-            diagnostics.extend(_add_child_provenance(child_parser_warnings, node_id, ref_label))
-
-            if child_ir is None or "nodes" not in child_ir:
-                continue
-
-            if not already_seen:
-                # Normalize child IR (adds ir_version, edges) — same as CLI/save paths
-                normalize_ir(child_ir)
-
-                # Resolve file references so template validation sees variables
-                # inside external files (e.g. prompt files referenced in batch items).
-                # Matches the top-level pipeline: resolve → file_refs → validate.
-                if child_path:
-                    try:
-                        resolve_file_references(child_ir, child_path.parent)
-                    except (FileNotFoundError, OSError, UnicodeDecodeError) as e:
-                        diagnostics.append(
-                            Diagnostic(
-                                severity=Severity.ERROR,
-                                source="validator",
-                                title="Validation Error",
-                                node_id=node_id,
-                                message=f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}",
-                                context={
-                                    "category": "validation",
-                                    "sub_workflow_path": ref_label,
-                                    "sub_workflow_step": node_id,
-                                },
-                            )
-                        )
-                        continue
-
-            # Static required-input check — always runs, even for already-seen children,
-            # because each parent node may provide different params.
-            # ``or {}`` mirrors the runtime defense at ``WorkflowExecutor._validate_child_params``;
-            # redundant with Step 1 schema validation but kept for symmetry at this boundary.
-            child_inputs = child_ir.get("inputs") or {}
-            diagnostics.extend(WorkflowValidator._check_required_inputs(node_id, ref_label, params, child_inputs))
-
-            # Recursive validation — skip if this child was already validated
-            if not already_seen:
-                dummy_params = generate_dummy_parameters(child_inputs)
-                if child_path:
-                    dummy_params["_pflow_workflow_file"] = str(child_path)
-
-                child_diagnostics = WorkflowValidator.validate(
-                    child_ir,
-                    extracted_params=dummy_params,
+            # A workflow-type node makes one or more child calls. The enumerator
+            # yields one call per batch item (or a single call for non-batch),
+            # with ``inputs_from_item`` telling us whether per-item inputs vary.
+            inputs_check_done = False
+            for effective_params, batch_item_index, inputs_from_item in WorkflowValidator._enumerate_child_calls(node):
+                # Invariant-inputs batches (literal dict at params level) would
+                # produce N identical input-check diagnostics if we ran the check
+                # per-item. Run once, then skip on subsequent iterations.
+                run_inputs_check = inputs_from_item or not inputs_check_done
+                call_diagnostics = WorkflowValidator._validate_one_child_call(
+                    node_id=node_id,
+                    effective_params=effective_params,
+                    batch_item_index=batch_item_index,
+                    inputs_from_item=inputs_from_item,
+                    run_inputs_check=run_inputs_check,
+                    seen=seen,
+                    ir_cache=ir_cache,
+                    workflow_file=workflow_file,
                     registry=registry,
                     skip_node_types=skip_node_types,
-                    workflow_file=child_path,
-                    _seen=seen,
-                    _ir_cache=ir_cache,
                 )
-                diagnostics.extend(_add_child_provenance(child_diagnostics, node_id, ref_label))
+                diagnostics.extend(call_diagnostics)
+                if run_inputs_check:
+                    inputs_check_done = True
+
+        # Dedup here (not just at the runner) because ``save_service`` and other
+        # callers invoke ``WorkflowValidator.validate()`` directly, bypassing the
+        # runner's dedup step. Per-item diagnostics carry a ``batch.items[N]``
+        # prefix and won't collapse; this is a safety net for truly-identical
+        # diagnostics (e.g. child-side parser warnings wrapped by
+        # ``_add_child_provenance`` from multiple caller sites).
+        return deduplicate_diagnostics(diagnostics)
+
+    @staticmethod
+    def _validate_one_child_call(
+        *,
+        node_id: str,
+        effective_params: dict[str, Any],
+        batch_item_index: Optional[int],
+        inputs_from_item: bool,
+        run_inputs_check: bool,
+        seen: set[str],
+        ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
+        workflow_file: Optional[Path],
+        registry: Optional[Registry],
+        skip_node_types: bool,
+    ) -> list[Diagnostic]:
+        """Validate a single parent→child call: load the child, check input
+        contract, recurse. Extracted from ``_validate_sub_workflows`` to keep
+        the outer loop within the cyclomatic-complexity budget.
+        """
+        from pflow.core.ir_schema import normalize_ir
+        from pflow.core.validation_utils import generate_dummy_parameters
+
+        diagnostics: list[Diagnostic] = []
+
+        child_ir, child_path, ref_label, load_errors, already_seen, child_parser_warnings = (
+            WorkflowValidator._load_child_workflow(
+                node_id, effective_params, seen, ir_cache, workflow_file, batch_item_index
+            )
+        )
+        diagnostics.extend(load_errors)
+        diagnostics.extend(_add_child_provenance(child_parser_warnings, node_id, ref_label))
+
+        if child_ir is None or "nodes" not in child_ir:
+            return diagnostics
+
+        if not already_seen:
+            normalize_ir(child_ir)
+            file_ref_error = WorkflowValidator._resolve_child_file_refs(
+                child_ir, child_path, ref_label, node_id, batch_item_index
+            )
+            if file_ref_error is not None:
+                diagnostics.append(file_ref_error)
+                return diagnostics
+
+        if run_inputs_check:
+            child_inputs = child_ir.get("inputs") or {}
+            inputs_item_idx = batch_item_index if inputs_from_item else None
+            diagnostics.extend(
+                WorkflowValidator._check_required_inputs(
+                    node_id, ref_label, effective_params, child_inputs, inputs_item_idx
+                )
+            )
+
+        if not already_seen:
+            dummy_params = generate_dummy_parameters(child_ir.get("inputs") or {})
+            if child_path:
+                dummy_params["_pflow_workflow_file"] = str(child_path)
+            child_diagnostics = WorkflowValidator.validate(
+                child_ir,
+                extracted_params=dummy_params,
+                registry=registry,
+                skip_node_types=skip_node_types,
+                workflow_file=child_path,
+                _seen=seen,
+                _ir_cache=ir_cache,
+            )
+            diagnostics.extend(_add_child_provenance(child_diagnostics, node_id, ref_label))
 
         return diagnostics
+
+    @staticmethod
+    def _resolve_child_file_refs(
+        child_ir: dict[str, Any],
+        child_path: Optional[Path],
+        ref_label: str,
+        node_id: str,
+        batch_item_index: Optional[int],
+    ) -> Optional[Diagnostic]:
+        """Resolve external ``@./file.ext`` refs inside the child IR so template
+        validation sees their contents. Returns an error diagnostic on failure,
+        ``None`` on success (including when there's no ``child_path``).
+        """
+        from pflow.core.file_resolver import resolve_file_references
+
+        if child_path is None:
+            return None
+        try:
+            resolve_file_references(child_ir, child_path.parent)
+            return None
+        except (FileNotFoundError, OSError, UnicodeDecodeError) as e:
+            item_context = {"batch_item_index": batch_item_index} if batch_item_index is not None else {}
+            return Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                node_id=node_id,
+                message=f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}",
+                context={
+                    "category": "validation",
+                    "sub_workflow_path": ref_label,
+                    "sub_workflow_step": node_id,
+                    **item_context,
+                },
+            )
+
+    @staticmethod
+    def _enumerate_child_calls(
+        node: dict[str, Any],
+    ) -> Iterator[tuple[dict[str, Any], Optional[int], bool]]:
+        """Yield ``(effective_params, batch_item_index, inputs_from_item)`` per
+        child call this node makes.
+
+        A workflow node conceptually makes one child call (non-batch) or N
+        (one per batch item — matches the runtime loop at
+        ``batch_executor._execute_batch_item``). For inline-static batches,
+        per-item template bindings are resolved so downstream helpers see
+        concrete ``workflow:`` paths and ``inputs:`` dicts; for template-items
+        batches, non-dict batches, or missing batches, a single yield returns
+        the raw params and the existing defer-to-runtime paths kick in
+        unchanged.
+
+        When ``params`` don't reference the batch alias at all (neither
+        ``workflow:`` nor ``inputs:`` use ``${<alias>...}``), every iteration
+        would produce an identical check. We short-circuit to a single yield
+        in that case — both to avoid N-1 duplicate diagnostics (which dedup
+        collapses, but with misleading ``items[0]`` provenance) and to validate
+        empty inline batches ``items: []`` the same way as non-batch calls.
+
+        ``inputs_from_item`` is ``True`` iff the raw ``params.inputs`` was a
+        template string (e.g. ``${item.inputs}``). That signal tells callers
+        whether an inputs-contract violation should be blamed on the specific
+        item (``batch.items[N].inputs``) or on the invariant params dict
+        (``params.inputs``).
+
+        Mirrors the runtime binding at ``batch_executor.py:286``
+        (``item_shared[alias] = item`` before per-item template resolution).
+        """
+        params = node.get("params", {})
+        batch = node.get("batch")
+
+        if not isinstance(batch, dict):
+            yield params, None, False
+            return
+
+        items = batch.get("items")
+        # ``items:`` may be a template string per IR schema ``oneOf``. When it's
+        # not a list, we can't statically enumerate — yield the raw params once
+        # and let the existing resolver return ``None`` for the template ref.
+        if not isinstance(items, list):
+            yield params, None, False
+            return
+
+        alias = batch.get("as", "item")
+        if not WorkflowValidator._params_reference_alias(params, alias):
+            # Params are invariant across iterations → single check suffices.
+            # Also covers empty-items batches with static refs, where we'd
+            # otherwise skip validation entirely.
+            yield params, None, False
+            return
+
+        # Note: when ``items == []`` AND params DO reference the alias, the
+        # loop below yields zero times — child validation is silently skipped.
+        # This matches runtime semantics (empty batch runs nothing) but means
+        # authoring errors in a never-executed child file go unreported at
+        # parse time. See ``test_empty_items_list_with_alias_refs_skips_validation``
+        # for the regression pin.
+
+        raw_inputs = params.get("inputs")
+        inputs_from_item = isinstance(raw_inputs, str) and "${" in raw_inputs
+        for idx, item in enumerate(items):
+            # Build a minimal resolution context matching the runtime shape. When
+            # item is a scalar, ``${alias}`` resolves naturally; ``${alias.key}``
+            # stays unresolved → ``_load_child_workflow`` defers.
+            context = {alias: item}
+            effective_params = TemplateResolver.resolve_nested(params, context)
+            yield effective_params, idx, inputs_from_item
+
+    @staticmethod
+    def _params_reference_alias(value: Any, alias: str) -> bool:
+        """Return True iff any ``${<alias>...}`` template reference appears
+        anywhere within ``value`` (strings, dicts, lists). Uses the template
+        extractor's own parse of variable roots rather than a substring needle
+        so single-character aliases (``as: i``) don't match unrelated variables
+        like ``${input.x}``.
+        """
+        if isinstance(value, str):
+            for var in TemplateResolver.extract_variables(value):
+                root = var.split(".", 1)[0].split("[", 1)[0]
+                if root == alias:
+                    return True
+            return False
+        if isinstance(value, dict):
+            return any(WorkflowValidator._params_reference_alias(v, alias) for v in value.values())
+        if isinstance(value, list):
+            return any(WorkflowValidator._params_reference_alias(v, alias) for v in value)
+        return False
+
+    @staticmethod
+    def _step_locator(node_id: str, batch_item_index: Optional[int]) -> str:
+        """Return ``Step 'X' (batch.items[N])`` when ``batch_item_index`` is set,
+        else ``Step 'X'``. This prefix is what makes per-item diagnostics survive
+        ``Diagnostic.__hash__`` dedup (hash includes message, excludes context).
+        """
+        if batch_item_index is not None:
+            return f"Step '{node_id}' (batch.items[{batch_item_index}])"
+        return f"Step '{node_id}'"
 
     @staticmethod
     def _check_required_inputs(
@@ -796,6 +962,7 @@ class WorkflowValidator:
         ref_label: str,
         parent_params: dict[str, Any],
         child_inputs: dict[str, Any],
+        batch_item_index: Optional[int] = None,
     ) -> list[Diagnostic]:
         """Check the parent→child input boundary in both directions.
 
@@ -804,11 +971,29 @@ class WorkflowValidator:
         * Undeclared extras: every key in the parent's ``inputs:`` dict must
           correspond to a declared child input (symmetric to the child-side
           "declared input never used as template variable" rule).
+
+        ``batch_item_index`` is the 0-based index of the batch item when this
+        call was produced by ``_enumerate_child_calls`` from an inline-static
+        batch; diagnostic paths are rooted at ``batch.items[N].inputs`` instead
+        of ``params.inputs`` so they point at the author's actual YAML location.
         """
         from pflow.core.suggestion_utils import find_similar_items
 
         diagnostics: list[Diagnostic] = []
         inputs_value = parent_params.get("inputs")
+
+        inputs_path_root = (
+            f"nodes[id={node_id}].batch.items[{batch_item_index}].inputs"
+            if batch_item_index is not None
+            else f"nodes[id={node_id}].params.inputs"
+        )
+        item_context = {"batch_item_index": batch_item_index} if batch_item_index is not None else {}
+        # Locator prefix survives ``Diagnostic.__hash__`` dedup (hash excludes
+        # ``context``), so two items with the same underlying bug against the
+        # same child produce two distinct user-visible diagnostics — not one
+        # misleadingly tagged to item 0. Same dedup-survival precedent as
+        # ``format_child_provenance`` in ``core/diagnostic.py``.
+        step_locator = WorkflowValidator._step_locator(node_id, batch_item_index)
 
         # Opaque template (e.g. ``inputs: '${item}'``) — keys aren't statically
         # knowable; defer to runtime ``_extract_child_inputs`` shape check.
@@ -824,7 +1009,7 @@ class WorkflowValidator:
                     title="Validation Error",
                     node_id=node_id,
                     message=(
-                        f"Step '{node_id}': 'inputs:' on workflow node '{ref_label}' must be a dict "
+                        f"{step_locator}: 'inputs:' on workflow node '{ref_label}' must be a dict "
                         f"of child inputs, got {type_name}."
                     ),
                     suggestions=["Use a mapping: ``- inputs:\\n    key: value``"],
@@ -832,8 +1017,9 @@ class WorkflowValidator:
                         "category": "validation",
                         "sub_workflow_path": ref_label,
                         "sub_workflow_step": node_id,
-                        "path": f"nodes[id={node_id}].params.inputs",
+                        "path": inputs_path_root,
                         "actual_type": type_name,
+                        **item_context,
                     },
                 )
             )
@@ -854,16 +1040,22 @@ class WorkflowValidator:
                         title="Validation Error",
                         node_id=node_id,
                         message=(
-                            f"Step '{node_id}': sub-workflow '{ref_label}' requires input '{input_name}' "
+                            f"{step_locator}: sub-workflow '{ref_label}' requires input '{input_name}' "
                             "but it is not provided."
                         ),
                         context={
                             "category": "validation",
                             "sub_workflow_path": ref_label,
                             "sub_workflow_step": node_id,
+                            # Path points at the inputs dict (the missing key is named in
+                            # ``message`` and ``available_fields``). For batch items this
+                            # is critical: without it an agent can't tell which of N items
+                            # omitted the required input.
+                            "path": inputs_path_root,
                             "available_fields": sorted_inputs,
                             "available_fields_total": len(sorted_inputs),
                             "available_fields_label": "required inputs",
+                            **item_context,
                         },
                     )
                 )
@@ -883,7 +1075,7 @@ class WorkflowValidator:
                         title="Validation Error",
                         node_id=node_id,
                         message=(
-                            f"Step '{node_id}': sub-workflow '{ref_label}' does not declare input "
+                            f"{step_locator}: sub-workflow '{ref_label}' does not declare input "
                             f"'{extra}' (passed via inputs: dict)."
                         ),
                         suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
@@ -891,11 +1083,12 @@ class WorkflowValidator:
                             "category": "validation",
                             "sub_workflow_path": ref_label,
                             "sub_workflow_step": node_id,
-                            "path": f"nodes[id={node_id}].params.inputs.{extra}",
+                            "path": f"{inputs_path_root}.{extra}",
                             "available_fields": sorted_declared,
                             "available_fields_total": len(sorted_declared),
                             "available_fields_label": "declared inputs",
                             "similar_names": similar or None,
+                            **item_context,
                         },
                     )
                 )
@@ -909,8 +1102,13 @@ class WorkflowValidator:
         seen: set[str],
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
         workflow_file: Optional[Path] = None,
+        batch_item_index: Optional[int] = None,
     ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[Diagnostic], bool, tuple[Diagnostic, ...]]:
         """Load a child workflow from a file reference or saved name.
+
+        ``batch_item_index`` is threaded into load-error diagnostics so per-item
+        resolution failures (e.g. broken child path in ``batch.items[2]``) carry
+        enough provenance for an agent to locate the offending item.
 
         Returns:
             (child_ir, child_path, ref_label, errors, already_seen, parser_warnings)
@@ -928,11 +1126,16 @@ class WorkflowValidator:
             result = resolve_sub_workflow(params, base_path=base_path)
         except Exception as e:
             logger.debug("Failed to load sub-workflow for step '%s'", node_id, exc_info=True)
+            # Batch-item suffix in the message so per-item load failures don't
+            # collapse under ``Diagnostic.__hash__`` dedup when multiple items
+            # reference the same missing file.
+            item_suffix = f", batch.items[{batch_item_index}]" if batch_item_index is not None else ""
             msg = (
-                f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}"
+                f"In sub-workflow '{ref_label}' (step '{node_id}'{item_suffix}): {e}"
                 if ref_label
-                else f"Step '{node_id}': failed to load sub-workflow: {e}"
+                else f"Step '{node_id}'{item_suffix}: failed to load sub-workflow: {e}"
             )
+            item_context = {"batch_item_index": batch_item_index} if batch_item_index is not None else {}
             return (
                 None,
                 None,
@@ -948,6 +1151,7 @@ class WorkflowValidator:
                             "category": "validation",
                             "sub_workflow_path": ref_label or None,
                             "sub_workflow_step": node_id,
+                            **item_context,
                         },
                     )
                 ],
