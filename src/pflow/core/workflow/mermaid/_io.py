@@ -3,12 +3,11 @@
 from typing import Any, Optional
 
 from pflow.core.workflow.mermaid._context import (
-    _SOURCE_NODE_FIELD_RE,
     MermaidContext,
     _escape_label,
-    _refs_input,
     _to_mermaid_id,
 )
+from pflow.core.workflow.mermaid._scope import Scope
 
 # ---------------------------------------------------------------------------
 # Top-level input nodes
@@ -78,30 +77,36 @@ def _connect_input_from_params(
     connected: set[str],
     ctx: MermaidContext,
 ) -> None:
-    """Connect top-level inputs referenced in node params."""
+    """Connect top-level inputs referenced in node params.
+
+    Walks ``params`` and one level of nested dicts (for the ``params["inputs"]``
+    form used by workflow + code nodes).  For each template ref to a declared
+    top-level input, emits an edge to the consumer — routed through the
+    consumer's input wrapper when the ref lives under a matching child-input
+    key (task-146 nearest-consumer heuristic).
+    """
     params = node.get("params", {})
+    # (child_param_name, ref_value) pairs — child_param_name used for in_dict target routing
+    values_to_check: list[tuple[str, str]] = []
     for param_name, param_value in params.items():
-        # Check direct string values
-        values_to_check = []
         if isinstance(param_value, str):
             values_to_check.append((param_name, param_value))
         elif isinstance(param_value, dict):
-            # Nested dicts (e.g., code node inputs: {name: "${ref}"})
             for nested_name, nested_val in param_value.items():
                 if isinstance(nested_val, str):
                     values_to_check.append((nested_name, nested_val))
 
-        for child_param_name, ref_value in values_to_check:
-            for input_name in inputs:
-                if not _refs_input(ref_value, input_name):
-                    continue
-                # Route through input wrapper if the child param name matches
-                target = in_dict.get(child_param_name, in_dict.get(input_name, mermaid_id))
-                source = _to_mermaid_id(f"input_{input_name}")
-                edge_key = f"{source}->{target}"
-                if edge_key not in connected:
-                    ctx.lines.append(f"    {source} --> {target}")
-                    connected.add(edge_key)
+    for child_param_name, ref_value in values_to_check:
+        for root, _field in Scope.refs_in(ref_value):
+            if root not in inputs:
+                continue
+            # Route through input wrapper if the child param name matches
+            target = in_dict.get(child_param_name, in_dict.get(root, mermaid_id))
+            source = _to_mermaid_id(f"input_{root}")
+            edge_key = f"{source}->{target}"
+            if edge_key not in connected:
+                ctx.lines.append(f"    {source} --> {target}")
+                connected.add(edge_key)
 
 
 def _connect_input_from_batch(
@@ -112,16 +117,15 @@ def _connect_input_from_batch(
     connected: set[str],
     ctx: MermaidContext,
 ) -> None:
-    """Connect top-level inputs referenced in batch.items."""
+    """Connect top-level inputs referenced in ``batch.items``."""
     batch = node.get("batch")
     if not batch or not isinstance(batch.get("items"), str):
         return
-    items_ref = batch["items"]
-    for input_name in inputs:
-        if not _refs_input(items_ref, input_name):
+    for root, _field in Scope.refs_in(batch["items"]):
+        if root not in inputs:
             continue
         target = next(iter(in_dict.values())) if in_dict else mermaid_id
-        source = _to_mermaid_id(f"input_{input_name}")
+        source = _to_mermaid_id(f"input_{root}")
         edge_key = f"{source}->{target}"
         if edge_key not in connected:
             ctx.lines.append(f"    {source} --> {target}")
@@ -161,10 +165,13 @@ def _render_top_level_outputs(ir: dict[str, Any], ctx: MermaidContext) -> list[s
     ctx.lines.append("    end")
     ctx.lines.append("    style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4")
 
-    # Connect producing nodes to outputs
+    # Top-level inputs use the ``input_{name}`` convention
+    input_ids = {name: _to_mermaid_id(f"input_{name}") for name in ir.get("inputs", {})}
+
+    # Connect producing nodes (and input-root refs) to outputs
     for name, config in outputs.items():
         source = config.get("source", "") if isinstance(config, dict) else ""
-        _connect_sources_to_output(source, out_name_map[name], node_ids, "", ctx, ctx.outgoing_routes)
+        _connect_sources_to_output(source, out_name_map[name], node_ids, "", input_ids, ctx, ctx.outgoing_routes)
 
     return output_ids
 
@@ -179,31 +186,47 @@ def _connect_sources_to_output(
     out_mid: str,
     node_ids: set[str],
     id_prefix: str,
+    input_ids: dict[str, str],
     ctx: MermaidContext,
     *outgoing_maps: dict[str, dict[str, str]],
 ) -> None:
-    """Connect producing nodes to an output node by parsing a source expression.
+    """Connect producing sources to an output node by parsing a source expression.
 
-    Scans ``source`` for ``${node.field}`` refs and emits edges from each
-    producing node (or its output node, if expanded) to ``out_mid``.
+    Each root ref in ``source`` resolves to exactly one of:
+
+    - A declared **input** at this scope → edge from the input parallelogram.
+    - A **sibling node**, possibly with a specific output field → edge from
+      the node's output (if expanded) or the node box.
+    - Unknown → skipped (stale ref — caught elsewhere at validation time).
+
+    Handles coalesce expressions (``${a.x ?? b.y}``) and bare input refs
+    (``${data}`` without a field).  Both emit their respective edges.
 
     Args:
-        id_prefix: Prepended to source node IDs for mermaid ID lookup.
-        outgoing_maps: One or more outgoing maps, checked in order.
-            First map with a match wins (supports child→parent cascade).
+        node_ids: Declared node IDs in the source scope.
+        id_prefix: Prepended to source node IDs for mermaid ID construction.
+        input_ids: Input name → mermaid ID at this scope (``input_{name}``
+            at top level, ``{prefix}in_{name}`` in a sub-workflow).  Refs
+            matching an input key emit an edge from the input parallelogram.
+        outgoing_maps: Outgoing-routes maps checked in order.  First map with
+            a match wins (supports child→parent output cascade).
     """
-    for src_node, field in _SOURCE_NODE_FIELD_RE.findall(source):
-        if src_node not in node_ids:
+    for root, field in Scope.source_refs_in(source):
+        # Input-root refs (#263 fix): connect from the input parallelogram.
+        if root in input_ids:
+            ctx.lines.append(f"{ctx.indent}{input_ids[root]} --> {out_mid}")
             continue
-        src_mid = _to_mermaid_id(id_prefix + src_node)
-        # Find the first outgoing map that has this source
+
+        if root not in node_ids:
+            continue
+        src_mid = _to_mermaid_id(id_prefix + root)
         child_outputs: dict[str, str] = {}
         for omap in outgoing_maps:
             found = omap.get(src_mid)
             if found:
                 child_outputs = found
                 break
-        if field in child_outputs:
+        if field and field in child_outputs:
             ctx.lines.append(f"{ctx.indent}{child_outputs[field]} --> {out_mid}")
         elif len(child_outputs) == 1:
             ctx.lines.append(f"{ctx.indent}{next(iter(child_outputs.values()))} --> {out_mid}")
@@ -250,6 +273,8 @@ def _render_subworkflow_outputs(ir: dict[str, Any], ctx: MermaidContext) -> list
         return []
 
     node_ids = {n["id"] for n in ir.get("nodes", [])}
+    # Sub-workflow inputs use the ``{prefix}in_{name}`` convention
+    input_ids = {name: _to_mermaid_id(f"{ctx.prefix}in_{name}") for name in ir.get("inputs", {})}
     output_ids: list[str] = []
 
     for name, config in outputs.items():
@@ -259,7 +284,7 @@ def _render_subworkflow_outputs(ir: dict[str, Any], ctx: MermaidContext) -> list
         output_ids.append(out_mid)
 
         source = config.get("source", "") if isinstance(config, dict) else ""
-        _connect_sources_to_output(source, out_mid, node_ids, ctx.prefix, ctx, ctx.outgoing_routes)
+        _connect_sources_to_output(source, out_mid, node_ids, ctx.prefix, input_ids, ctx, ctx.outgoing_routes)
 
     return output_ids
 
@@ -356,10 +381,12 @@ def _render_external_outputs(
     # Check child_outgoing_routes first (nested sub-workflow outputs from
     # the child's own _render_workflow), then fall back to parent outgoing_routes.
     _child_out = child_outgoing_routes or {}
+    # Child-scope inputs use the ``{child_prefix}in_{name}`` convention
+    input_ids = {name: _to_mermaid_id(f"{child_prefix}in_{name}") for name in child_ir.get("inputs", {})}
     for name, config in outputs.items():
         source = config.get("source", "") if isinstance(config, dict) else ""
         _connect_sources_to_output(
-            source, out_name_map[name], node_ids, child_prefix, ctx, _child_out, ctx.outgoing_routes
+            source, out_name_map[name], node_ids, child_prefix, input_ids, ctx, _child_out, ctx.outgoing_routes
         )
 
     # Populate outgoing_routes for structural edge routing

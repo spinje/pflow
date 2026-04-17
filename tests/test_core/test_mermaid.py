@@ -898,7 +898,13 @@ def test_subworkflow_linear_outputs_connected() -> None:
 
 
 def test_data_flow_edges_from_params() -> None:
-    """Param template refs generate data-flow edges to sub-workflow inputs."""
+    """Template refs in ``params["inputs"]`` generate per-input data-flow edges.
+
+    Regression for GH #283: child-input bindings live inside a nested
+    ``inputs:`` dict (canonical form post-task-153).  The edge generator
+    must descend into that dict — iterating top-level params misses every
+    binding.
+    """
     child_ir = _ir(
         nodes=[_node("process", "code")],
         inputs={"data": {"type": "string"}, "config": {"type": "object"}},
@@ -915,8 +921,10 @@ def test_data_flow_edges_from_params() -> None:
                 "type": "workflow",
                 "params": {
                     "workflow": "child",
-                    "data": "${producer.response}",
-                    "config": "${my_input}",
+                    "inputs": {
+                        "data": "${producer.response}",
+                        "config": "${my_input}",
+                    },
                 },
             },
         ],
@@ -927,8 +935,13 @@ def test_data_flow_edges_from_params() -> None:
 
     # Data-flow edge: producer → consumer's data input
     assert "producer --> consumer__in_data" in out
-    # Data-flow edge: parent input → consumer's config input
-    assert "input_my_input --> consumer__in_config" in out
+    # Data-flow edge: parent input → consumer's config input — exactly once.
+    # At depth 0, _connect_top_level_inputs emits this edge.  The data-flow
+    # generator must skip top-level input refs to avoid double emission.
+    assert out.count("input_my_input --> consumer__in_config") == 1, (
+        f"Double-emit: depth-0 input ref should be skipped by data-flow generator "
+        f"(output contains {out.count('input_my_input --> consumer__in_config')} copies)"
+    )
     # Structural edge routes through outputs (consumer has none, so subgraph box)
     assert "producer --> consumer" in out
 
@@ -949,14 +962,17 @@ def test_structural_edge_not_suppressed_when_subwf_inputs_are_only_from_parent()
     def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
-    # prepare → subwf, but subwf's only param references a workflow input (not prepare)
+    # prepare → subwf, but subwf's only input references a workflow input (not prepare)
     parent_ir = _ir(
         nodes=[
             _node("prepare", "code"),
             {
                 "id": "subwf",
                 "type": "workflow",
-                "params": {"workflow": "child", "config": "${my_setting}"},
+                "params": {
+                    "workflow": "child",
+                    "inputs": {"config": "${my_setting}"},
+                },
             },
         ],
         edges=[{"from": "prepare", "to": "subwf"}],
@@ -983,7 +999,10 @@ def test_data_flow_skips_item_refs() -> None:
             {
                 "id": "batch_wf",
                 "type": "workflow",
-                "params": {"workflow": "child", "text": "${item.content}"},
+                "params": {
+                    "workflow": "child",
+                    "inputs": {"text": "${item.content}"},
+                },
                 "batch": {"items": "${sources}", "parallel": True},
             },
         ],
@@ -1218,8 +1237,16 @@ def test_suppression_without_replacement_keeps_structural_edge() -> None:
 
     parent_ir = _ir(
         nodes=[
-            {"id": "sub-a", "type": "workflow", "params": {"workflow": "a.pflow.md", "x": "val"}},
-            {"id": "sub-b", "type": "workflow", "params": {"workflow": "b.pflow.md", "data": "${sub-a.result}"}},
+            {
+                "id": "sub-a",
+                "type": "workflow",
+                "params": {"workflow": "a.pflow.md", "inputs": {"x": "val"}},
+            },
+            {
+                "id": "sub-b",
+                "type": "workflow",
+                "params": {"workflow": "b.pflow.md", "inputs": {"data": "${sub-a.result}"}},
+            },
         ],
         edges=[{"from": "sub-a", "to": "sub-b"}],
     )
@@ -1251,7 +1278,11 @@ def test_external_io_does_not_duplicate_with_internal_io() -> None:
 
     parent_ir = _ir(
         nodes=[
-            {"id": "sub", "type": "workflow", "params": {"workflow": "child", "val": "x"}},
+            {
+                "id": "sub",
+                "type": "workflow",
+                "params": {"workflow": "child", "inputs": {"val": "x"}},
+            },
         ],
     )
     out = generate_mermaid(parent_ir, resolve_child=resolver)
@@ -1290,3 +1321,170 @@ def test_top_level_input_connects_to_actual_consumer() -> None:
     assert "input_settings --> step3" in out
     assert "input_settings --> step1" not in out
     assert "input_settings --> step2" not in out
+
+
+# ===========================================================================
+# GH #283 regression tests (canonical ``inputs:`` dict form)
+# ===========================================================================
+
+
+def test_opaque_template_inputs_fall_through_gracefully() -> None:
+    """Heterogeneous-batch ``inputs: ${item.inputs}`` (whole-dict template) does not crash.
+
+    When the ``inputs`` value is a template string rather than a dict, static
+    analysis cannot enumerate per-input bindings — runtime resolves them per
+    item.  The data-flow edge generator must skip this case without error.
+    """
+    child_ir = _ir(
+        nodes=[_node("step", "code")],
+        inputs={"x": {"type": "string"}},
+    )
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            {
+                "id": "consumer",
+                "type": "workflow",
+                "params": {
+                    "workflow": "child",
+                    "inputs": "${item.inputs}",  # opaque whole-dict template
+                },
+                "batch": {"items": "${sources}", "parallel": False},
+            },
+        ],
+    )
+    # Must not raise
+    out = generate_mermaid(parent_ir, resolve_child=resolver)
+
+    # No per-input data-flow edges emitted (statically unresolvable)
+    assert "consumer__in_x -->" in out or "consumer__in_x[/" in out  # input node still rendered
+    # But no edge INTO consumer__in_x from an external node
+    external_to_input = [
+        line
+        for line in out.splitlines()
+        if "--> consumer__in_x" in line and "consumer-in" not in line  # skip wrapper → input edge
+    ]
+    assert external_to_input == [], f"Unexpected data-flow edges: {external_to_input}"
+
+
+def test_batch_data_flow_with_inputs_dict() -> None:
+    """Heterogeneous batch with per-item inputs in ``params["inputs"]`` dict.
+
+    Regression for GH #283 batch variant.  Parent-param refs in the nested
+    ``inputs:`` dict must emit edges to each expanded item's input node.
+    """
+    child_ir = _ir(
+        nodes=[_node("review", "llm")],
+        inputs={"summary": {"type": "string"}, "aspect": {"type": "string"}},
+    )
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/fake/review.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            _node("combine", "code"),
+            {
+                "id": "reviews",
+                "type": "workflow",
+                "params": {
+                    "workflow": "${item.workflow}",
+                    "inputs": {
+                        "summary": "${combine.result}",
+                        "aspect": "${item.aspect}",
+                    },
+                },
+                "batch": {
+                    "items": [
+                        {"aspect": "accuracy", "workflow": "/fake/review.pflow.md"},
+                        {"aspect": "clarity", "workflow": "/fake/review.pflow.md"},
+                    ],
+                    "parallel": True,
+                },
+            },
+        ],
+        edges=[{"from": "combine", "to": "reviews"}],
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver)
+
+    # Per-item data-flow edge from combine → each item's summary input
+    assert "combine --> reviews__accuracy__in_summary" in out
+    assert "combine --> reviews__clarity__in_summary" in out
+    # aspect is ${item.*} — no external data-flow edge for it
+    assert "combine --> reviews__accuracy__in_aspect" not in out
+
+
+# ===========================================================================
+# GH #263 regression tests (output sources referencing workflow inputs)
+# ===========================================================================
+
+
+def test_output_source_from_declared_input() -> None:
+    """Output ``source: ${data.field}`` where ``data`` is a declared input.
+
+    Regression for GH #263: previously silently dropped (``_connect_sources_to_output``
+    only recognized node IDs as source roots).  The output node rendered
+    disconnected — no incoming edge from the input parallelogram.
+    """
+    ir = _ir(
+        nodes=[_node("process", "shell")],
+        inputs={"data": {"type": "object"}},
+    )
+    ir["outputs"] = {"result": {"source": "${data.field}"}}
+
+    out = generate_mermaid(ir)
+
+    assert "input_data --> out_result" in out
+
+
+def test_output_source_from_bare_input_ref() -> None:
+    """Output ``source: ${data}`` (no field) also resolves to the input.
+
+    Regression for GH #263: the old regex ``_SOURCE_NODE_FIELD_RE`` required
+    ``name.field`` form, so bare input refs didn't match at all and the
+    output silently disconnected.
+    """
+    ir = _ir(
+        nodes=[_node("process", "shell")],
+        inputs={"data": {"type": "string"}},
+    )
+    ir["outputs"] = {"result": {"source": "${data}"}}
+
+    out = generate_mermaid(ir)
+
+    assert "input_data --> out_result" in out
+
+
+def test_output_source_from_input_in_subworkflow() -> None:
+    """Sub-workflow output referencing its declared input also resolves.
+
+    The input at sub-workflow scope uses the ``{prefix}in_{name}`` convention
+    rather than top-level ``input_{name}``.  The fix must construct the right
+    ID at each scope.
+    """
+    child_ir = _ir(
+        nodes=[_node("passthrough", "code")],
+        inputs={"data": {"type": "string"}},
+    )
+    child_ir["outputs"] = {"echo": {"source": "${data}"}}
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            {
+                "id": "sub",
+                "type": "workflow",
+                "params": {"workflow": "child", "inputs": {"data": "val"}},
+            },
+        ],
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver)
+
+    # Within the sub-workflow scope, the input-root ref resolves to the
+    # sub-workflow's input wrapper, not a top-level ``input_*`` node.
+    assert "sub__in_data --> sub__out_echo" in out

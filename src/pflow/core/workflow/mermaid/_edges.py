@@ -3,12 +3,11 @@
 from typing import Any, Optional
 
 from pflow.core.workflow.mermaid._context import (
-    _PARAM_REF_RE,
-    _RESERVED_PARAMS,
     MermaidContext,
     _escape_label,
     _to_mermaid_id,
 )
+from pflow.core.workflow.mermaid._scope import Scope
 
 # ---------------------------------------------------------------------------
 # Edge preprocessing (pure — no ctx)
@@ -91,41 +90,9 @@ def _extract_batch_source(node: dict[str, Any], ctx: MermaidContext) -> Optional
     items = batch.get("items")
     if not isinstance(items, str):
         return None
-    for ref in _PARAM_REF_RE.findall(items):
-        if str(ref) in ctx.sibling_node_ids:
-            return str(ref)
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Reference resolution
-# ---------------------------------------------------------------------------
-
-
-def _resolve_ref_source(
-    ref_name: str,
-    batch_source: Optional[str],
-    ctx: MermaidContext,
-) -> Optional[str]:
-    """Resolve a template ref name to a mermaid source ID."""
-    if ref_name == "item":
-        if not batch_source:
-            return None
-        # Skip if source has outputs — name-matched structural edge handles it
-        if _to_mermaid_id(ctx.prefix + batch_source) in ctx.has_expanded_outputs:
-            return None
-        return _to_mermaid_id(ctx.prefix + batch_source)
-    if ref_name in ctx.sibling_node_ids:
-        mermaid_id = _to_mermaid_id(ctx.prefix + ref_name)
-        # If sibling has outputs, route through them instead of subgraph box
-        out_dict = ctx.outgoing_routes.get(mermaid_id)
-        if out_dict and len(out_dict) == 1:
-            return next(iter(out_dict.values()))
-        return mermaid_id
-    if ref_name in ctx.parent_inputs:
-        if not ctx.prefix:
-            return None  # Depth 0: handled by _connect_top_level_inputs
-        return _to_mermaid_id(f"{ctx.prefix}in_{ref_name}")
+    for root, _field in Scope.refs_in(items):
+        if root in ctx.sibling_node_ids:
+            return root
     return None
 
 
@@ -221,10 +188,13 @@ def _generate_data_flow_edges(
 ) -> bool:
     """Generate edges from upstream nodes to sub-workflow input nodes.
 
-    Parses template refs in the parent node's ``params`` to find which
-    sibling nodes or parent inputs feed each child input.  For example,
-    ``creative_direction: ${creative-direction.response}`` generates an
-    edge from ``creative-direction`` to the child's ``in_creative_direction``.
+    Walks the parent node's ``params["inputs"]`` (the canonical location for
+    child-input bindings post-task-153) and emits one edge per template ref
+    to the matching ``{child_prefix}in_<name>`` node.
+
+    Opaque templates (e.g. ``inputs: ${item.inputs}`` — a whole-dict reference)
+    are skipped: the ``inputs`` key isn't a dict, so no per-input edges can be
+    statically drawn.  Runtime resolves these per batch item.
 
     Returns True if at least one data-flow edge was generated.
     """
@@ -232,19 +202,26 @@ def _generate_data_flow_edges(
     if not child_inputs:
         return False
 
-    params = node.get("params", {})
-    batch_source = _extract_batch_source(node, ctx)
+    inputs_dict = node.get("params", {}).get("inputs")
+    if not isinstance(inputs_dict, dict):
+        return False
+
+    scope = Scope.for_level(ctx, batch_source=_extract_batch_source(node, ctx))
     generated = False
 
-    for param_name, param_value in params.items():
-        if param_name in _RESERVED_PARAMS or param_name not in child_inputs:
+    for input_name, binding in inputs_dict.items():
+        if input_name not in child_inputs:
             continue
-        if not isinstance(param_value, str) or "${" not in param_value:
+        if not isinstance(binding, str) or "${" not in binding:
             continue
 
-        target_mid = _to_mermaid_id(f"{child_prefix}in_{param_name}")
-        for ref_name in _PARAM_REF_RE.findall(param_value):
-            source_mid = _resolve_ref_source(ref_name, batch_source, ctx)
+        target_mid = _to_mermaid_id(f"{child_prefix}in_{input_name}")
+        for root, field in Scope.refs_in(binding):
+            # At depth 0, top-level input refs are handled by _connect_top_level_inputs
+            # (nearest-consumer layout heuristic).  Skip to avoid double emission.
+            if ctx.current_depth == 0 and root in ctx.parent_inputs:
+                continue
+            source_mid = scope.resolve(root, field)
             if source_mid:
                 ctx.lines.append(f"{ctx.indent}{source_mid} --> {target_mid}")
                 generated = True
@@ -257,44 +234,44 @@ def _generate_batch_item_data_flow(
     expanded_items: list[tuple[str, dict[str, Any]]],
     ctx: MermaidContext,
 ) -> set[str]:
-    """Generate data-flow edges from parent params to each expanded batch item's inputs.
+    """Generate data-flow edges from parent inputs to each expanded batch item.
 
-    For a batch workflow node like ``emotional-reviews`` with params
-    ``lyrics: ${write-lyrics.response}``, generates edges from ``write-lyrics``
-    to each item's ``in_lyrics`` node (emotional-architecture, narrative, imagery).
+    Walks the parent node's ``params["inputs"]``.  For each binding that
+    references a sibling node (not a batch item), emits an edge to that input
+    on each expanded item that declares it.
 
-    Skips ``${item.*}`` refs (those come from the batch items themselves).
+    Skips ``${item.*}`` refs (batch item values — these come from the batch
+    items list, not a sibling node).
 
-    Returns set of item mermaid IDs that received data-flow edges (for
-    structural edge suppression in the fork/join).
+    Returns the set of item mermaid IDs that received data-flow edges, so the
+    caller can suppress duplicate structural edges through the fork/join map.
     """
     node_id = node["id"]
-    params = node.get("params", {})
+    inputs_dict = node.get("params", {}).get("inputs")
+    if not isinstance(inputs_dict, dict):
+        return set()
+
     child_prefix_base = ctx.prefix + node_id + "__"
     items_with_data_flow: set[str] = set()
 
-    for param_name, param_value in params.items():
-        if param_name in _RESERVED_PARAMS:
+    for input_name, binding in inputs_dict.items():
+        if not isinstance(binding, str) or "${" not in binding:
             continue
-        if not isinstance(param_value, str) or "${" not in param_value:
-            continue
-        if "${item" in param_value:
-            continue  # Skip batch item refs
+        if "${item" in binding:
+            continue  # Batch item refs come from the items list, not a sibling
 
-        # Find source node from template ref
-        for ref_name in _PARAM_REF_RE.findall(param_value):
-            if ref_name not in ctx.sibling_node_ids:
+        for root, _field in Scope.refs_in(binding):
+            if root not in ctx.sibling_node_ids:
                 continue
-            source_mid = _to_mermaid_id(ctx.prefix + ref_name)
+            source_mid = _to_mermaid_id(ctx.prefix + root)
 
-            # Generate edge to each expanded item's input (if it has this input)
             for item_label, child_ir in expanded_items:
                 child_inputs = child_ir.get("inputs", {})
-                if param_name not in child_inputs:
+                if input_name not in child_inputs:
                     continue
                 item_mermaid_id = _to_mermaid_id(child_prefix_base + item_label)
                 item_prefix = child_prefix_base + item_label + "__"
-                target_mid = _to_mermaid_id(f"{item_prefix}in_{param_name}")
+                target_mid = _to_mermaid_id(f"{item_prefix}in_{input_name}")
                 ctx.lines.append(f"{ctx.indent}{source_mid} --> {target_mid}")
                 items_with_data_flow.add(item_mermaid_id)
 
