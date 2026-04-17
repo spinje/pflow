@@ -78,9 +78,14 @@ The safe pattern: always use `load(include_filtered=True)` before any `save()` c
 
 `scan_for_nodes()` uses `importlib.import_module()` to discover `BaseNode` subclasses. This **executes Python code** in the scanned directories. Only use with trusted source directories.
 
-### Version-Based Core Refresh
+### Core Refresh Triggers
 
-On pflow version change, `load()` detects the mismatch via the stored `version` field and re-scans core nodes. User and MCP nodes are preserved through the refresh.
+`load()` re-scans core nodes when either:
+
+1. **Version mismatch** — stored `version` differs from current pflow version.
+2. **Source mtime newer than `last_core_scan`** — catches docstring changes in editable / from-source installs where the version string hasn't moved. The walk under `Path(pflow.nodes.__file__).parent` costs ~0.3ms on warm cache and fires zero times on non-editable installs (install mtimes never move).
+
+User and MCP nodes are preserved through the refresh via `_refresh_core_nodes()`. Legacy registries without a `last_core_scan` field are treated as stale and self-heal on the next load. Timestamps are written in UTC; naive legacy timestamps are interpreted as local time for backward compatibility.
 
 ### Registry File Format
 

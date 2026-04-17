@@ -3,7 +3,7 @@
 import json
 import logging
 from collections.abc import Collection
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -28,6 +28,7 @@ class Registry:
         # Add caching
         self._cached_nodes: Optional[dict[str, dict[str, Any]]] = None
         self._registry_version: Optional[str] = None
+        self._registry_last_scan: Optional[str] = None
 
         # Lazy load settings manager to avoid circular import
         self._settings_manager: Optional[Any] = None
@@ -58,6 +59,11 @@ class Registry:
         from pflow import get_version
 
         return get_version()
+
+    @staticmethod
+    def _now_iso() -> str:
+        """Current time as UTC ISO string — portable, comparable via .timestamp()."""
+        return datetime.now(timezone.utc).isoformat()
 
     def _read_wrapper(self) -> dict[str, Any]:
         """Read the raw registry file and return the full structured wrapper dict.
@@ -132,6 +138,7 @@ class Registry:
         wrapper = self._read_wrapper()
         if wrapper:
             self._registry_version = wrapper.get("version")
+            self._registry_last_scan = wrapper.get("last_core_scan")
             return wrapper.get("nodes", {})  # type: ignore[no-any-return]
 
         # Fall through to legacy flat format handling
@@ -180,7 +187,7 @@ class Registry:
 
         data = {
             "version": existing.get("version", self._get_version()),
-            "last_core_scan": existing.get("last_core_scan", datetime.now().isoformat()),
+            "last_core_scan": existing.get("last_core_scan", self._now_iso()),
             "metadata": existing.get("metadata", {}),
             "nodes": nodes,
         }
@@ -229,7 +236,7 @@ class Registry:
         if "version" not in wrapper:
             wrapper["version"] = self._get_version()
         if "last_core_scan" not in wrapper:
-            wrapper["last_core_scan"] = datetime.now().isoformat()
+            wrapper["last_core_scan"] = self._now_iso()
 
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -356,7 +363,7 @@ class Registry:
 
         data = {
             "version": self._get_version(),
-            "last_core_scan": datetime.now().isoformat(),
+            "last_core_scan": self._now_iso(),
             "metadata": existing.get("metadata", {}),
             "nodes": nodes,
         }
@@ -367,7 +374,14 @@ class Registry:
         logger.info(f"Saved {len(nodes)} nodes to registry with metadata")
 
     def _core_nodes_outdated(self, nodes: dict[str, dict[str, Any]]) -> bool:
-        """Check if core nodes need refresh due to version change."""
+        """Check if core nodes need refresh.
+
+        Triggers when either:
+        - Stored registry version differs from current pflow version, OR
+        - Any core node source file is newer than the last scan timestamp
+          (catches docstring changes across editable/from-source installs
+          where pflow's version string hasn't moved).
+        """
         if not self._registry_version:
             return False
 
@@ -378,7 +392,51 @@ class Registry:
                 f"pflow version {current_version}, refreshing core nodes"
             )
             return True
+
+        if self._source_newer_than_scan():
+            logger.info("Node source files modified since last scan, refreshing core nodes")
+            return True
+
         return False
+
+    def _source_newer_than_scan(self) -> bool:
+        """Return True if any core node source file is newer than last_core_scan.
+
+        Fails safe: any parse or filesystem error returns False so ``load()``
+        never crashes on a filesystem oddity. A missing ``last_core_scan``
+        is treated as stale so legacy registries self-heal on next load.
+        """
+        if not self._registry_last_scan:
+            return True
+
+        try:
+            last_scan = datetime.fromisoformat(self._registry_last_scan)
+            if last_scan.tzinfo is None:
+                # Legacy naive timestamp — treat as local time for comparison
+                last_scan = last_scan.astimezone()
+            last_scan_ts = last_scan.timestamp()
+
+            import pflow.nodes
+
+            nodes_path = Path(pflow.nodes.__file__).parent
+            if not nodes_path.exists():
+                return False
+
+            for py_file in nodes_path.rglob("*.py"):
+                if "__pycache__" in py_file.parts:
+                    continue
+                try:
+                    if py_file.stat().st_mtime > last_scan_ts:
+                        return True
+                except OSError:
+                    # A single unreadable file shouldn't abort the whole check —
+                    # keep walking in case a reachable file is stale.
+                    continue
+
+            return False
+        except Exception as e:
+            logger.debug(f"Could not check node source mtimes: {e}")
+            return False
 
     def _refresh_core_nodes(self, nodes: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """Refresh core nodes while preserving user and MCP nodes."""
