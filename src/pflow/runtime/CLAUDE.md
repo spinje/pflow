@@ -96,6 +96,7 @@ Runtime node for nested workflow execution. Child outputs auto-expose via namesp
 - **Circular detection** via `_pflow_stack`, **max depth** via `_pflow_depth` (default 10).
 - **Relative paths** resolve from parent workflow directory via `_pflow_workflow_file`.
 - **Cross-cutting key propagation**: `_PROPAGATED_KEYS` — `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `_trace_collector`. Per-workflow keys (`__execution__`, `__cache_hits__`, `__template_errors__`, `__failures__`) NOT propagated — child gets its own. Adding `__failures__` here would leak child node IDs into parent state.
+- **`error_action` covers BOTH prep and exec failures** (GH #284). Prep-time failures (missing required inputs, undeclared extras, non-dict `inputs:`, missing file, circular ref, max depth) are captured into a `_prep_error` marker in `prep_res` so `exec()`/`post()` dispatch them uniformly through `error_action`. The recoverable exception set is `_PREP_RECOVERABLE` — `CompilationError` is explicitly excluded (broken workflow definitions are not routable). One caveat: if the failure text matches `api_warning_detector` patterns (e.g. "not found"), the engine's API warning layer overrides the action back to `"error"` regardless of `error_action` — pre-existing engine behavior, applies to all node types. Tracked as GH #301.
 
 ### MemoizationCache (`cache.py`)
 

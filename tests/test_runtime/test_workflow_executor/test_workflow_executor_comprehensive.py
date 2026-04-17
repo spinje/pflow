@@ -13,7 +13,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from pflow.core.exceptions import MarkdownParseError
 from pflow.core.node import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
@@ -148,30 +147,32 @@ class TestWorkflowExecutorComprehensive:
     # --- Test 3: no workflow reference provided ---
 
     def test_neither_parameter_provided(self):
-        """Test error when no workflow reference provided."""
+        """Missing workflow ref routes through error_action marker (GH #284)."""
         node = WorkflowExecutor()
         node.set_params({})
 
         shared = {}
-        with pytest.raises(ValueError, match="requires a 'workflow' parameter"):
-            node.prep(shared)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "requires a 'workflow' parameter" in prep_res["_prep_error"]
 
     # --- Test 5: depth at max_depth ---
 
     def test_max_depth_exceeded(self, simple_workflow_ir, tmp_path):
-        """Test error when maximum nesting depth exceeded."""
+        """Max depth routes through error_action marker (GH #284)."""
         child_path = _write_child(tmp_path, simple_workflow_ir, "depth_child")
         node = WorkflowExecutor()
         node.set_params({"workflow": str(child_path), "max_depth": 5})
 
         shared = {"_pflow_depth": 5}
-        with pytest.raises(RecursionError, match="Maximum workflow nesting depth"):
-            node.prep(shared)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "Maximum workflow nesting depth" in prep_res["_prep_error"]
 
     # --- Test 6: circular dependency detection ---
 
     def test_circular_dependency_simple(self, simple_workflow_ir, tmp_path):
-        """Test circular dependency detection for file references."""
+        """Circular reference routes through error_action marker (GH #284)."""
         workflow_file = tmp_path / "workflow.pflow.md"
         write_workflow_file(simple_workflow_ir, workflow_file)
 
@@ -180,24 +181,40 @@ class TestWorkflowExecutorComprehensive:
 
         shared = {"_pflow_stack": [str(workflow_file)]}
 
-        with pytest.raises(ValueError, match="Circular workflow reference"):
-            node.prep(shared)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "Circular workflow reference" in prep_res["_prep_error"]
 
     # --- Test 7: workflow file missing ---
 
     def test_workflow_file_missing(self):
-        """Test error when workflow file doesn't exist."""
+        """Missing workflow file routes through error_action marker (GH #284).
+
+        Asserts specific FileNotFoundError content + the offending path so a
+        future change that accidentally substitutes a different
+        _PREP_RECOVERABLE exception (e.g. a ValueError about the ref shape)
+        would be caught. Before tightening, this test passed on any marker.
+        """
         node = WorkflowExecutor()
         node.set_params({"workflow": "/non/existent/file.pflow.md"})
 
         shared = {}
-        with pytest.raises(FileNotFoundError, match="file not found"):
-            node.prep(shared)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        error_msg = prep_res["_prep_error"]
+        # Pin the message to the FileNotFoundError raise site in the resolver:
+        # f"Sub-workflow file not found: '{ref}' (resolved to: {path})"
+        assert "file not found" in error_msg.lower()
+        assert "/non/existent/file.pflow.md" in error_msg, f"Error should name the missing path, got: {error_msg!r}"
 
     # --- Test 8: malformed workflow file ---
 
     def test_malformed_workflow(self, tmp_path):
-        """Test error when workflow file is malformed."""
+        """Malformed workflow markdown routes through error_action marker (GH #284).
+
+        Asserts on parse-failure content to pin the failure class, not just the marker.
+        Without this, any _PREP_RECOVERABLE exception would satisfy the test.
+        """
         workflow_file = tmp_path / "malformed.pflow.md"
         workflow_file.write_text("# Bad Workflow\n\nJust some text, no steps.\n")
 
@@ -205,8 +222,14 @@ class TestWorkflowExecutorComprehensive:
         node.set_params({"workflow": str(workflow_file)})
 
         shared = {}
-        with pytest.raises(MarkdownParseError):
-            node.prep(shared)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        # Error message must identify this as a parse/structure failure,
+        # not e.g. a missing-required error from a different code path.
+        error_msg = prep_res["_prep_error"].lower()
+        assert "steps" in error_msg or "parse" in error_msg, (
+            f"Error should identify parse/steps failure, got: {prep_res['_prep_error']!r}"
+        )
 
     # --- Test 9: template resolution via compiled pipeline ---
 
@@ -701,11 +724,10 @@ class TestWorkflowExecutorComprehensive:
             ]
         }
 
-        with pytest.raises(ValueError) as exc_info:
-            node.prep(shared)
-
-        assert "Circular workflow reference" in str(exc_info.value)
-        assert "/workflow1.pflow.md" in str(exc_info.value)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "Circular workflow reference" in prep_res["_prep_error"]
+        assert "/workflow1.pflow.md" in prep_res["_prep_error"]
 
     # --- Test 26: reserved key isolation ---
 
@@ -768,10 +790,11 @@ class TestWorkflowExecutorComprehensive:
             "inputs": {"wrong_name": "hello"},
         })
 
-        with pytest.raises(ValueError, match="missing required inputs") as exc_info:
-            node.prep({})
-
-        error_msg = str(exc_info.value)
+        # Missing-required routes through error_action marker (GH #284).
+        prep_res = node.prep({})
+        assert "_prep_error" in prep_res
+        error_msg = prep_res["_prep_error"]
+        assert "missing required inputs" in error_msg
         assert "text" in error_msg  # Shows which input is missing
         assert "wrong_name" in error_msg  # Shows what was provided
         # mode has default, should not appear as missing
@@ -810,10 +833,11 @@ class TestWorkflowExecutorComprehensive:
             },
         })
 
-        with pytest.raises(ValueError, match=r"undeclared input\(s\)") as exc_info:
-            node.prep({})
-
-        error_msg = str(exc_info.value)
+        # Undeclared-extras routes through error_action marker (GH #284).
+        prep_res = node.prep({})
+        assert "_prep_error" in prep_res
+        error_msg = prep_res["_prep_error"]
+        assert "undeclared input(s)" in error_msg
         # Diagnostic names the offending key so an agent can recover.
         assert "typo_field" in error_msg, f"Error should name the extra key: {error_msg}"
         # Lists declared inputs so the fix is obvious.
@@ -885,8 +909,10 @@ class TestWorkflowExecutorComprehensive:
             "inputs": {"anything": "goes"},
         })
 
-        with pytest.raises(ValueError, match=r"undeclared input\(s\)"):
-            node.prep({})
+        # Undeclared extras for child with no declared inputs routes through error_action (GH #284).
+        prep_res = node.prep({})
+        assert "_prep_error" in prep_res
+        assert "undeclared input(s)" in prep_res["_prep_error"]
 
     def test_no_declared_inputs_and_empty_inputs_dict_succeeds(self, simple_workflow_ir, tmp_path):
         """Child with no declared inputs + empty/omitted ``inputs:`` → no error.

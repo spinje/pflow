@@ -6,12 +6,29 @@ from pathlib import Path
 from typing import Any, ClassVar, Optional
 
 from pflow.core.diagnostic import Diagnostic, format_child_provenance
-from pflow.core.exceptions import PflowError
+from pflow.core.exceptions import (
+    MarkdownParseError,
+    PflowError,
+    WorkflowNotFoundError,
+)
 from pflow.core.file_resolver import is_workflow_file_reference
 from pflow.core.ir_schema import normalize_ir, validate_ir
 from pflow.core.node import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_workflow
+
+# Exceptions from prep() that should dispatch through error_action rather than
+# propagate. These are "per-child" failures — bad input shape, unresolvable ref,
+# missing file — where one bad item shouldn't kill a batch of otherwise-valid
+# items. CompilationError deliberately NOT included: a broken workflow
+# definition is not recoverable by error routing.
+_PREP_RECOVERABLE = (
+    ValueError,
+    RecursionError,
+    FileNotFoundError,
+    MarkdownParseError,
+    WorkflowNotFoundError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +126,34 @@ class WorkflowExecutor(BaseNode):
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Load the sub-workflow and prepare child inputs."""
+        """Load the sub-workflow and prepare child inputs.
+
+        Per-child recoverable failures (bad input shape, unresolvable ref,
+        missing file, circular ref, max-depth) are captured into a
+        ``_prep_error`` marker so exec()/post() can dispatch them through
+        ``error_action`` instead of raising. This keeps the semantic
+        "any failure in this node routes via error_action" uniform across
+        prep and exec — matching what the feature docstring promises.
+        CompilationError is NOT caught: a broken child definition is not
+        routable by error_action.
+        """
+        try:
+            return self._prep_unsafe(shared)
+        except _PREP_RECOVERABLE as e:
+            # Preserve the exception object alongside str(e). PflowError
+            # subclasses carry structured context (similar_names, line,
+            # suggestions) that downstream diagnostic rendering may want
+            # to surface via exception_to_diagnostics(). No current consumer
+            # reads `_prep_exception`, but leaving the seam open avoids
+            # forcing a str()-based contract on future rendering work.
+            return {
+                "_prep_error": str(e),
+                "_prep_exception": e,
+                "workflow_path": self._best_effort_workflow_path(),
+            }
+
+    def _prep_unsafe(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """The real prep body; raises on failure. Wrapped by prep()."""
         max_depth = self.params.get("max_depth", self.MAX_DEPTH_DEFAULT)
 
         # Check nesting depth
@@ -159,6 +203,17 @@ class WorkflowExecutor(BaseNode):
             "execution_stack": execution_stack,
             "parent_shared": shared,
         }
+
+    def _best_effort_workflow_path(self) -> str:
+        """Path for the error message when prep failed before resolution.
+
+        Used only in the _prep_error marker. Returns the raw workflow ref
+        from params if it's a non-empty string, otherwise "<unresolved>".
+        """
+        ref = self.params.get("workflow")
+        if isinstance(ref, str) and ref:
+            return ref
+        return "<unresolved>"
 
     def _compile_sub_workflow(
         self,
@@ -258,6 +313,17 @@ class WorkflowExecutor(BaseNode):
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""
         from pflow.runtime.engine import WorkflowEngine
+
+        # Prep captured a recoverable failure — surface it through the same
+        # success=False dict shape exec's own failure paths use. post() then
+        # dispatches error_action uniformly.
+        if "_prep_error" in prep_res:
+            return {
+                "success": False,
+                "error": prep_res["_prep_error"],
+                "workflow_path": prep_res.get("workflow_path", "<unresolved>"),
+                "child_storage": {},
+            }
 
         workflow_ir = prep_res["child_ir"]
         workflow_path = prep_res["workflow_path"]

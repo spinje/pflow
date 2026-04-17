@@ -144,6 +144,14 @@ def _pre_warm_compile_cache(
         # Run prep() to populate _loaded_ir_cache (file/name sources only).
         prep_res = node.prep(temp_shared)
 
+        # Prep captured a recoverable failure for item[0] (bad input shape,
+        # circular ref, etc — see WorkflowExecutor._PREP_RECOVERABLE). The
+        # marker prep_res lacks child_ir/child_params so the compile step
+        # would KeyError. Let the per-item batch loop surface the failure
+        # through error_action instead — other items may have valid inputs.
+        if "_prep_error" in prep_res:
+            return
+
         # Only proceed if the workflow came from a file/name source
         # (_loaded_ir_cache has an entry). Defensive: if _load_workflow raised,
         # the cache stays empty and pre-warming would just hide the real error.
