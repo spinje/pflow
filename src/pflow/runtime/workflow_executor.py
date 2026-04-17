@@ -140,15 +140,8 @@ class WorkflowExecutor(BaseNode):
         try:
             return self._prep_unsafe(shared)
         except _PREP_RECOVERABLE as e:
-            # Preserve the exception object alongside str(e). PflowError
-            # subclasses carry structured context (similar_names, line,
-            # suggestions) that downstream diagnostic rendering may want
-            # to surface via exception_to_diagnostics(). No current consumer
-            # reads `_prep_exception`, but leaving the seam open avoids
-            # forcing a str()-based contract on future rendering work.
             return {
                 "_prep_error": str(e),
-                "_prep_exception": e,
                 "workflow_path": self._best_effort_workflow_path(),
             }
 
@@ -314,6 +307,14 @@ class WorkflowExecutor(BaseNode):
         """Compile and execute the sub-workflow."""
         from pflow.runtime.engine import WorkflowEngine
 
+        # Reset per-run trace state BEFORE any early return. Sequential batch
+        # reuses the same WorkflowExecutor instance across items; without this
+        # unconditional reset, a prep-error item inherits the previous item's
+        # child trace events (batch_executor reads `node._child_trace_events`
+        # via getattr at _execute_batch_item). Parallel batch is unaffected
+        # because workers deep-copy the node.
+        self._child_trace_events: list[dict[str, Any]] | None = None
+
         # Prep captured a recoverable failure — surface it through the same
         # success=False dict shape exec's own failure paths use. post() then
         # dispatches error_action uniformly.
@@ -364,9 +365,6 @@ class WorkflowExecutor(BaseNode):
             if k not in child_params:
                 child_storage[k] = v
         child_storage.update(child_params)
-
-        # Initialize _child_trace_events (will be populated after engine runs)
-        self._child_trace_events: list[dict[str, Any]] | None = None
 
         engine = WorkflowEngine(trace_collector=child_trace)
 

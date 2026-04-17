@@ -408,6 +408,94 @@ class TestPrepFailureRoutesThroughErrorAction:
         assert batch_result.get("success_count") == 1
         assert batch_result.get("error_count") == 1
 
+    def test_sequential_batch_prep_error_does_not_inherit_prior_item_trace(self, tmp_path):
+        """Regression guard for `_child_trace_events` stale-state leak.
+
+        Sequential batch reuses the same WorkflowExecutor instance across
+        items. Before fixing this, exec() reset `_child_trace_events = None`
+        AFTER the `_prep_error` early return — so item[0] populating the
+        attribute then item[1] prep-failing meant item[1]'s trace inherited
+        item[0]'s child events via `getattr(node, "_child_trace_events")`.
+        Parallel batch was unaffected (workers deep-copy the node).
+
+        Order matters: the good item must come FIRST so `_child_trace_events`
+        is populated before the prep-failing item runs.
+        """
+        child = _write_child(
+            tmp_path,
+            {
+                "ir_version": "0.1.0",
+                "inputs": {"lyrics": {"type": "string", "required": True}},
+                "nodes": [{"id": "echo", "type": "shell", "params": {"command": "echo ${lyrics}"}}],
+                "edges": [],
+                "outputs": {"out": {"source": "${echo.stdout}"}},
+            },
+            "trace_leak_child",
+        )
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "reviews",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow": str(child),
+                        "inputs": "${item.inputs}",
+                        "error_action": "continue",
+                    },
+                    "batch": {
+                        "items": [
+                            {"inputs": {"lyrics": "first"}},  # good — populates _child_trace_events
+                            {"inputs": {"WRONG_KEY": "oops"}},  # bad — would inherit the leak
+                        ],
+                        "error_handling": "continue",
+                        "parallel": False,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        # Trace collection requires a trace collector in shared before run().
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+        registry = Registry()
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared = dict(workflow.resolved_defaults)
+        shared["__registry__"] = registry
+        trace = WorkflowTraceCollector(workflow_name="parent")
+        shared["_trace_collector"] = trace
+        engine = WorkflowEngine(trace_collector=trace)
+        engine.run(workflow, shared)
+
+        # Find the two batch item trace events. Item 0 should have child
+        # events from the echo shell node; item 1 should have NONE because
+        # prep failed before any child execution ran.
+        reviews_event = next(e for e in trace.events if e.get("node_id") == "reviews")
+        batch_items = reviews_event.get("batch_items") or []
+        assert len(batch_items) == 2
+
+        item_0 = next(b for b in batch_items if b.get("index") == 0)
+        item_1 = next(b for b in batch_items if b.get("index") == 1)
+
+        # Item 0 ran its child workflow successfully — batch_executor stores
+        # child trace events under the "events" key on the batch item (see
+        # batch_executor._capture_item_trace). The echo shell node's execution
+        # should appear there.
+        item_0_events = item_0.get("events") or []
+        assert len(item_0_events) > 0, (
+            f"Item 0 (good) should have child trace events from the echo node. Got keys: {list(item_0.keys())}"
+        )
+
+        # Item 1 failed in prep — no child workflow ever ran. Its trace
+        # must NOT inherit item 0's child events via the stale
+        # `_child_trace_events` instance attribute.
+        item_1_events = item_1.get("events") or []
+        assert len(item_1_events) == 0, (
+            f"Item 1 (prep-failed) inherited item 0's child trace events. "
+            f"Expected no 'events' key (or empty list), got {len(item_1_events)} events."
+        )
+
 
 class TestApiWarningDetectorHijackIsPinned:
     """Pins the pre-existing api_warning_detector hijack behavior (GH #301).

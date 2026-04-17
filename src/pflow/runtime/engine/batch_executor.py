@@ -141,14 +141,19 @@ def _pre_warm_compile_cache(
             merged_params, _, _ = resolve_templates(config.template_config, temp_shared, config.node_id)
             node.params = merged_params
 
-        # Run prep() to populate _loaded_ir_cache (file/name sources only).
+        # Run prep() to populate _loaded_ir_cache. Pre-warm's job is to do
+        # this load-and-compile work ONCE on the original node, so each
+        # parallel worker's deepcopy inherits the cache instead of all
+        # racing to load/compile independently.
         prep_res = node.prep(temp_shared)
 
         # Prep captured a recoverable failure for item[0] (bad input shape,
         # circular ref, etc — see WorkflowExecutor._PREP_RECOVERABLE). The
         # marker prep_res lacks child_ir/child_params so the compile step
-        # would KeyError. Let the per-item batch loop surface the failure
-        # through error_action instead — other items may have valid inputs.
+        # would KeyError. Skip compile and let the per-item batch loop
+        # surface the failure through error_action — other items may have
+        # valid inputs. GH #302 tracks decoupling pre-warm from prep()
+        # internals so this defensive check isn't needed.
         if "_prep_error" in prep_res:
             return
 
