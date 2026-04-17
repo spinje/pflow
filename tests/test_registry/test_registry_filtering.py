@@ -20,6 +20,9 @@ def test_registry_load_respects_settings(tmp_path):
     - Registry version must match current pflow version to prevent
       _core_nodes_outdated() from triggering a refresh that replaces
       the test's fake nodes with real core nodes.
+    - last_core_scan must also be set to a fresh timestamp so the
+      mtime-based refresh path doesn't fire (a missing field is
+      treated as stale for legacy registries).
     """
     import pflow
     from pflow.registry import Registry
@@ -30,6 +33,7 @@ def test_registry_load_respects_settings(tmp_path):
     # Create a test registry file with various node types
     registry_data = {
         "version": current_version,
+        "last_core_scan": Registry._now_iso(),
         "nodes": {
             "shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode", "type": "core"},
             "http": {"module": "pflow.nodes.http.http", "class_name": "HttpNode", "type": "core"},
