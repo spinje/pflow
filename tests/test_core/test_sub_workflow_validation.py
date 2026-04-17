@@ -7,6 +7,8 @@ name resolution.
 
 from pathlib import Path
 
+import pytest
+
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 from tests.shared.diagnostic_helpers import split_validator_diagnostics
@@ -1350,3 +1352,612 @@ class TestNonDictInputsShape:
         assert len(shape_errors) == 1, f"Expected one shape error, got: {[e.message for e in errors]}"
         assert shape_errors[0].context is not None
         assert shape_errors[0].context.get("actual_type") == "list"
+
+
+class TestBatchItemValidation:
+    """Inline-static batch items get the same parent→child boundary check as
+    non-batch static calls.
+
+    Motivating pattern: heterogeneous batch fan-out
+    (``workflow: ${item.workflow}`` + ``inputs: ${item.inputs}`` + inline
+    ``items:`` list with concrete child paths and input dicts). Before this
+    fix, ``resolve_sub_workflow`` saw ``${item.workflow}`` and bailed — the
+    entire batch silently skipped validation even though every per-item
+    workflow ref and input dict was statically knowable from the IR.
+    """
+
+    def _child_declaring(self, path: Path, *input_names: str) -> None:
+        inputs_block = "\n\n".join(
+            f"### {name}\n\nInput {name}.\n\n- type: string\n- required: true" for name in input_names
+        )
+        refs = " ".join(f"${{{name}}}" for name in input_names)
+        write_pflow_md(
+            path,
+            f"# Child\n\nA child declaring {', '.join(input_names)}.\n\n"
+            f"## Inputs\n\n{inputs_block}\n\n"
+            f"## Steps\n\n### echo\n\nEcho inputs.\n\n- type: shell\n- command: echo {refs}\n",
+        )
+
+    def _hetero_batch_ir(self, items: list, alias: str = "item") -> dict:
+        """Parent IR using the guide's heterogeneous-batch pattern."""
+        batch: dict = {"items": items, "parallel": False}
+        if alias != "item":
+            batch["as"] = alias
+        return {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": f"${{{alias}.workflow}}",
+                        "inputs": f"${{{alias}.inputs}}",
+                    },
+                    "batch": batch,
+                }
+            ],
+            "edges": [],
+        }
+
+    def test_inline_item_undeclared_input_rejected(self, tmp_path: Path) -> None:
+        """The motivating bug: ``extra_field`` in a static batch item is caught
+        at parse time with a diagnostic pointing at the specific item.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = self._hetero_batch_ir(
+            items=[
+                {
+                    "workflow": str(child),
+                    "inputs": {"message": "hello", "extra_field": "bad"},
+                }
+            ],
+        )
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        extras = [e for e in errors if "'extra_field'" in e.message and "does not declare input" in e.message]
+        assert len(extras) == 1, f"Expected exactly one extras diagnostic, got: {[e.message for e in errors]}"
+        diag = extras[0]
+        assert diag.context is not None
+        assert diag.context.get("batch_item_index") == 0, (
+            f"Diagnostic must carry batch_item_index for agent recovery, got: {diag.context}"
+        )
+        assert diag.context.get("path") == "nodes[id=call-child].batch.items[0].inputs.extra_field", (
+            f"Path should point at the item, got: {diag.context.get('path')}"
+        )
+
+    def test_inline_item_missing_required_rejected(self, tmp_path: Path) -> None:
+        """Symmetric direction: missing required input in a static batch item."""
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message", "topic")
+
+        parent_ir = self._hetero_batch_ir(
+            items=[
+                {
+                    "workflow": str(child),
+                    "inputs": {"message": "hello"},  # missing `topic`
+                }
+            ],
+        )
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        missing = [e for e in errors if "requires input 'topic'" in e.message]
+        assert len(missing) == 1, f"Expected missing-required diagnostic, got: {[e.message for e in errors]}"
+        assert missing[0].context is not None
+        assert missing[0].context.get("batch_item_index") == 0
+        # Path must point at the specific item's inputs dict, not at params.inputs —
+        # guards a mutation where the batch-path switch is dropped for missing-required.
+        assert missing[0].context.get("path") == "nodes[id=call-child].batch.items[0].inputs"
+
+    def test_heterogeneous_batch_validates_each_child(self, tmp_path: Path) -> None:
+        """Two items, two different children, different violations per item —
+        each item produces its own diagnostic tagged with the right index."""
+        child_a = tmp_path / "child-a.pflow.md"
+        child_b = tmp_path / "child-b.pflow.md"
+        self._child_declaring(child_a, "a_input")
+        self._child_declaring(child_b, "b_input")
+
+        parent_ir = self._hetero_batch_ir(
+            items=[
+                {"workflow": str(child_a), "inputs": {"a_input": "v", "wrong_a": "x"}},
+                {"workflow": str(child_b), "inputs": {"b_input": "v", "wrong_b": "x"}},
+            ],
+        )
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        by_index = {
+            e.context.get("batch_item_index"): e for e in errors if e.context and "does not declare input" in e.message
+        }
+        assert 0 in by_index and 1 in by_index, f"Expected diagnostics for both items, got indexes: {list(by_index)}"
+        assert "'wrong_a'" in by_index[0].message
+        assert "'wrong_b'" in by_index[1].message
+
+    def test_items_template_deferred(self, tmp_path: Path) -> None:
+        """``items:`` as a template string (dynamic items from an upstream node)
+        cannot be statically enumerated — defer the whole batch to runtime.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${item.workflow}",
+                        "inputs": "${item.inputs}",
+                    },
+                    "batch": {"items": "${upstream.files}", "parallel": False},
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        extras_errors = [e for e in errors if "does not declare input" in e.message]
+        assert extras_errors == [], (
+            f"Template-items batch should defer to runtime, got parse-time errors: {extras_errors}"
+        )
+
+    def test_mixed_static_and_template_items(self, tmp_path: Path) -> None:
+        """Item 0 is fully static (bug → caught); item 1 has a template
+        workflow ref (ref unresolvable → defer). Only the static item fires."""
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = self._hetero_batch_ir(
+            items=[
+                {"workflow": str(child), "inputs": {"message": "hi", "bad_key": "x"}},
+                # Item 1: workflow is a template referring outside the item ctx
+                {"workflow": "${upstream.wf}", "inputs": {"message": "hi"}},
+            ],
+        )
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        extras = [e for e in errors if "'bad_key'" in e.message]
+        assert len(extras) == 1
+        assert extras[0].context and extras[0].context.get("batch_item_index") == 0
+
+        # No "does not declare" diagnostic for item 1 — ref unresolvable, deferred.
+        other = [
+            e
+            for e in errors
+            if e.context and e.context.get("batch_item_index") == 1 and "does not declare" in e.message
+        ]
+        assert other == []
+
+    def test_custom_alias_honored(self, tmp_path: Path) -> None:
+        """Custom ``batch.as:`` alias (e.g. ``songitem``) is used as the binding
+        key in ``${alias.*}`` templates, matching runtime behavior."""
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = self._hetero_batch_ir(
+            items=[{"workflow": str(child), "inputs": {"message": "hi", "stray": "x"}}],
+            alias="songitem",
+        )
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        extras = [e for e in errors if "'stray'" in e.message]
+        assert len(extras) == 1, (
+            f"Custom alias should bind ${{songitem.workflow}} → items[i]['workflow'], got: {[e.message for e in errors]}"
+        )
+
+    def test_invariant_inputs_batch_path_points_at_params_not_items(self, tmp_path: Path) -> None:
+        """When ``params.inputs`` is a literal dict (not per-item), the bug is
+        invariant across iterations — the diagnostic path must point at
+        ``params.inputs.X``, not ``batch.items[0].inputs.X``. Otherwise dedup
+        collapses N identical diagnostics into one misleadingly tagged to
+        iteration 0.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${item}",  # item is scalar path
+                        "inputs": {"message": "hi", "bad_key": "typo"},  # literal dict, not ${item.inputs}
+                    },
+                    "batch": {"items": [str(child), str(child)], "parallel": False},
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        extras = [e for e in errors if "'bad_key'" in e.message]
+        assert len(extras) == 1, (
+            f"Invariant-inputs bug repeats across N iterations; dedup collapses to 1, got: {[e.message for e in errors]}"
+        )
+        diag = extras[0]
+        assert diag.context is not None
+        assert diag.context.get("path") == "nodes[id=call-child].params.inputs.bad_key", (
+            f"Path must point at params.inputs (where the author wrote the bug), got: {diag.context.get('path')}"
+        )
+        assert "batch_item_index" not in (diag.context or {}), (
+            f"Invariant-inputs bug shouldn't be tagged to any specific iteration, got: {diag.context}"
+        )
+
+    def test_two_items_same_bug_both_survive_runner_dedup(self, tmp_path: Path) -> None:
+        """Regression for the dedup-collapse trap: two batch items failing in
+        exactly the same way (same child, same undeclared key) must produce
+        two distinct user-visible diagnostics after the runner's
+        ``deduplicate_diagnostics`` pass. Without the per-item ``batch.items[N]``
+        prefix in the message, ``Diagnostic.__hash__`` (which excludes context)
+        collapses them into one — the user fixes item 0, reruns, then discovers
+        item 1 was also broken.
+        """
+        from pflow.execution.runner import WorkflowRunner
+
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent = tmp_path / "parent.pflow.md"
+        parent.write_text(
+            "# Parent\n\n"
+            "## Steps\n\n"
+            "### call-child\n\n"
+            "Call child twice with same undeclared extra.\n\n"
+            "- type: workflow\n"
+            "- workflow: ${item.workflow}\n"
+            "- inputs: ${item.inputs}\n\n"
+            "```yaml batch\n"
+            "items:\n"
+            f"  - workflow: {child}\n"
+            "    inputs:\n"
+            '      message: "hi"\n'
+            '      extra_field: "bad"\n'
+            f"  - workflow: {child}\n"
+            "    inputs:\n"
+            '      message: "hi"\n'
+            '      extra_field: "bad"\n'
+            "parallel: false\n"
+            "```\n\n"
+            "## Outputs\n\n"
+            "### result\n\n"
+            "Output.\n\n"
+            "- source: ${call-child.results[0].echoed}\n",
+            encoding="utf-8",
+        )
+
+        vresult = WorkflowRunner().validate(str(parent), {})
+
+        extras = [e for e in vresult.errors if "'extra_field'" in e.message and "does not declare" in e.message]
+        assert len(extras) == 2, (
+            f"Both items must remain visible after runner dedup; got {len(extras)} "
+            f"extras diagnostic(s). All errors: {[e.message for e in vresult.errors]}"
+        )
+        # Distinct diagnostics tagged to distinct items
+        indices = sorted(e.context.get("batch_item_index") for e in extras if e.context)
+        assert indices == [0, 1], f"Expected batch_item_index 0 and 1, got: {indices}"
+        # Core invariant: two distinct ``Diagnostic.__hash__`` buckets so the
+        # runner's ``deduplicate_diagnostics`` can't collapse them. Assert on
+        # hash identity rather than message substring so the test stays green
+        # across harmless message-format refactors but fails the moment two
+        # items produce the same hash (the bug the reviewer flagged).
+        assert len({hash(e) for e in extras}) == 2, (
+            f"Expected two distinct diagnostic hashes for the two items; got one — "
+            f"dedup would collapse them. Messages: {[e.message for e in extras]}"
+        )
+
+    def test_item_load_error_carries_batch_item_index(self, tmp_path: Path) -> None:
+        """A broken workflow ref inside ``batch.items[N]`` surfaces the index
+        in the diagnostic context so an agent can locate the offending item.
+        """
+        good_child = tmp_path / "good.pflow.md"
+        self._child_declaring(good_child, "message")
+
+        parent_ir = self._hetero_batch_ir(
+            items=[
+                {"workflow": str(good_child), "inputs": {"message": "hi"}},
+                {"workflow": str(tmp_path / "does-not-exist.pflow.md"), "inputs": {"message": "hi"}},
+            ],
+        )
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        load_errors = [e for e in errors if "Sub-workflow file not found" in e.message or "failed to load" in e.message]
+        assert len(load_errors) == 1, (
+            f"Expected one load error for the missing child, got: {[e.message for e in errors]}"
+        )
+        assert load_errors[0].context is not None
+        assert load_errors[0].context.get("batch_item_index") == 1, (
+            f"Load-error diagnostic must carry batch_item_index, got: {load_errors[0].context}"
+        )
+
+    def test_hetero_workflows_with_invariant_inputs_checks_each_child(self, tmp_path: Path) -> None:
+        """Regression for the ``inputs_check_done`` silent-bypass: when
+        ``params.workflow`` varies per item but ``params.inputs`` is a literal
+        dict, the invariant-inputs key set still has to be validated against
+        EACH child — not just the first. Child A may declare exactly those
+        keys while Child B declares something completely different.
+
+        Before the fix, iter 0 validated against child_a (clean), iter 1
+        short-circuited, and child_b's undeclared/missing violations were
+        invisible until runtime.
+        """
+        child_a = tmp_path / "child-a.pflow.md"
+        child_b = tmp_path / "child-b.pflow.md"
+        self._child_declaring(child_a, "x")
+        self._child_declaring(child_b, "y")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${item.workflow}",
+                        "inputs": {"x": "v"},  # literal, invariant across items
+                    },
+                    "batch": {
+                        "items": [
+                            {"workflow": str(child_a)},  # declares x ✓
+                            {"workflow": str(child_b)},  # declares y only — x is extra, y missing
+                        ],
+                        "parallel": False,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        # child_b's contract is violated in both directions — x is extra, y is missing.
+        b_extras = [e for e in errors if "'x'" in e.message and "does not declare" in e.message]
+        b_missing = [e for e in errors if "requires input 'y'" in e.message]
+        assert b_extras, (
+            f"child_b's undeclared-extra 'x' must be caught at parse time — "
+            f"silent bypass would show up as no extras diagnostic. All errors: "
+            f"{[e.message for e in errors]}"
+        )
+        assert b_missing, (
+            f"child_b's missing-required 'y' must be caught at parse time. All errors: {[e.message for e in errors]}"
+        )
+        # child_a is clean (x is exactly its declared input) — no diagnostic for it.
+        a_errors = [e for e in errors if "child-a" in e.message]
+        assert a_errors == [], f"child_a satisfies its contract; expected no errors, got: {a_errors}"
+
+    def test_nested_batch_grandchild_bug_caught_with_provenance(self, tmp_path: Path) -> None:
+        """Parent batch → child batch → grandchild with undeclared-input bug.
+        Validator recurses through both batch layers; the deepest diagnostic
+        carries the grandchild's ``batch.items[N]`` path AND the parent-step
+        provenance (``In step 'X' sub-workflow:`` prefix).
+        """
+        from pflow.execution.runner import WorkflowRunner
+
+        grandchild = tmp_path / "grandchild.pflow.md"
+        self._child_declaring(grandchild, "greeting")
+
+        middle = tmp_path / "middle.pflow.md"
+        middle.write_text(
+            "# Middle\n\nA middle workflow batching the grandchild.\n\n"
+            "## Inputs\n\n### topic\n\nTopic.\n\n- type: string\n- required: true\n\n"
+            "## Steps\n\n### fan-out\n\nFan out to grandchild.\n\n"
+            "- type: workflow\n"
+            "- workflow: ${item.workflow}\n"
+            "- inputs: ${item.inputs}\n\n"
+            "```yaml batch\n"
+            "items:\n"
+            f"  - workflow: {grandchild}\n"
+            "    inputs:\n"
+            '      wrong_grandchild_key: "bad"\n'
+            "parallel: false\n"
+            "```\n\n"
+            "## Outputs\n\n### result\n\nResult.\n\n- source: ${fan-out.results[0].echoed}\n",
+            encoding="utf-8",
+        )
+
+        parent = tmp_path / "parent.pflow.md"
+        parent.write_text(
+            "# Parent\n\n## Steps\n\n### call-middle\n\nCall middle.\n\n"
+            "- type: workflow\n"
+            "- workflow: ${item.workflow}\n"
+            "- inputs: ${item.inputs}\n\n"
+            "```yaml batch\n"
+            "items:\n"
+            f"  - workflow: {middle}\n"
+            '    inputs: {topic: "T"}\n'
+            "parallel: false\n"
+            "```\n\n"
+            "## Outputs\n\n### result\n\nResult.\n\n- source: ${call-middle.results[0].result}\n",
+            encoding="utf-8",
+        )
+
+        vresult = WorkflowRunner().validate(str(parent), {})
+
+        # Grandchild's undeclared-key bug surfaces through 2 levels of batch recursion.
+        grand_errors = [e for e in vresult.errors if "wrong_grandchild_key" in e.message]
+        assert len(grand_errors) == 1, (
+            f"Expected grandchild bug surfaced via nested batch, got: {[e.message for e in vresult.errors]}"
+        )
+        # Provenance includes the deepest step (grandchild caller) wrapped by the
+        # middle step's ``In step 'call-middle' sub-workflow:`` prefix.
+        assert "call-middle" in grand_errors[0].message
+        assert grand_errors[0].context is not None
+        assert grand_errors[0].context.get("batch_item_index") == 0
+
+    def test_custom_alias_via_markdown_round_trip(self, tmp_path: Path) -> None:
+        """Custom ``as: songitem`` written in actual markdown (not raw IR) wires
+        up correctly through the parser → validator pipeline.
+        """
+        from pflow.execution.runner import WorkflowRunner
+
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent = tmp_path / "parent.pflow.md"
+        parent.write_text(
+            "# Parent\n\n## Steps\n\n### call-child\n\nCall child with custom alias.\n\n"
+            "- type: workflow\n"
+            "- workflow: ${songitem.workflow}\n"
+            "- inputs: ${songitem.inputs}\n\n"
+            "```yaml batch\n"
+            "as: songitem\n"
+            "items:\n"
+            f"  - workflow: {child}\n"
+            "    inputs:\n"
+            '      message: "hi"\n'
+            '      stray_field: "bad"\n'
+            "parallel: false\n"
+            "```\n\n"
+            "## Outputs\n\n### result\n\nResult.\n\n- source: ${call-child.results[0].echoed}\n",
+            encoding="utf-8",
+        )
+
+        vresult = WorkflowRunner().validate(str(parent), {})
+        extras = [e for e in vresult.errors if "'stray_field'" in e.message]
+        assert len(extras) == 1, (
+            f"Custom alias via markdown must bind ${{songitem.workflow}} → items[i]['workflow']; "
+            f"got: {[e.message for e in vresult.errors]}"
+        )
+        assert extras[0].context.get("batch_item_index") == 0
+
+    def test_empty_items_list_with_alias_refs_skips_validation(self, tmp_path: Path) -> None:
+        """Documenting intended behavior: when ``items: []`` (empty inline list)
+        AND ``params.workflow``/``inputs`` reference the alias, the enumerator
+        yields zero child calls — matching runtime's "empty batch runs nothing"
+        semantics. No validation fires for the referenced child. If this ever
+        changes (e.g. to surface child-file parse errors proactively), this
+        test should fail and the design decision re-examined.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = self._hetero_batch_ir(items=[])
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+        # No child-related diagnostics — not loaded, not validated.
+        sub_errors = [e for e in errors if e.context and e.context.get("sub_workflow_path")]
+        assert sub_errors == [], (
+            f"Empty items list with alias refs should skip child validation; got: {[e.message for e in sub_errors]}"
+        )
+
+    @pytest.mark.parametrize("alias", ["__index__", "workflow", "inputs", "item", "i"])
+    def test_alias_collision_with_reserved_keys_does_not_crash(self, tmp_path: Path, alias: str) -> None:
+        """Custom ``as:`` aliases that collide with reserved / framework keys
+        (``__index__``, ``workflow``, ``inputs``) or single-character names
+        (``i``) must not crash the validator. Behavioral parity with runtime
+        for these edge cases is out of scope — this test pins "doesn't crash"
+        as the load-bearing invariant so future alias-handling changes don't
+        silently regress it.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = self._hetero_batch_ir(
+            items=[{"workflow": str(child), "inputs": {"message": "hi"}}],
+            alias=alias,
+        )
+
+        # The contract is "this call succeeds and returns a list of diagnostics";
+        # any unhandled exception would be a regression.
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+        assert isinstance(errors, list)
+
+    def test_scalar_items_workflow_template_no_false_positive(self, tmp_path: Path) -> None:
+        """Items that are plain strings (``items: ["./child.pflow.md"]`` with
+        ``workflow: ${item}``) resolve the workflow ref but inputs stays as the
+        raw ``${item.inputs}`` template — opaque → defer, no false extras.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_declaring(child, "message")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${item}",
+                        "inputs": "${item.inputs}",  # won't resolve — scalar item has no .inputs
+                    },
+                    "batch": {"items": [str(child)], "parallel": False},
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        # Opaque inputs → no extras diagnostic; no missing-required (child path
+        # loaded successfully so "failed to load" shouldn't fire either).
+        assert [e for e in errors if "does not declare input" in e.message] == []
+        assert [e for e in errors if "requires input" in e.message] == []
