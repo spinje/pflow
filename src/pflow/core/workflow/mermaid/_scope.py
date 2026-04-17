@@ -23,17 +23,12 @@ from pflow.core.workflow.mermaid._context import (
     _to_mermaid_id,
 )
 
-# Data-flow bindings: each template is one ref.  "${producer.response}" → (producer, response).
-# Matches ``${root}`` (no field group) or ``${root.field}`` (field group captured).
-# Deeper refs like ``${a.b.c}`` capture only the first field segment (a, b) — matches
-# pre-consolidation semantics, which only used the root + first field.
-_DATA_FLOW_REF_PATTERN = re.compile(r"\$\{([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?")
-
-# Output sources: extract refs from INSIDE ``${...}`` blocks only, so literal text
-# (validator-rejected but defensively handled) never produces false positives.
-# Two-stage scan: find each ``${...}`` block, then within each block capture every
-# ``root`` (optionally ``.field``).  Handles coalesce (``${a.x ?? b.y}`` — two refs
-# per block) and bare input refs (``${data}`` — no field).
+# Extract refs from INSIDE ``${...}`` blocks only, so literal text (validator-rejected
+# but defensively handled) never produces false positives.  Two-stage scan: find each
+# ``${...}`` block, then within each block capture every ``root`` (optionally
+# ``.field``).  Handles coalesce (``${a.x ?? b.y}`` — two refs per block) in any
+# template context (bindings and output sources alike — ``??`` is a general-purpose
+# template operator, not output-only).  Handles bare refs (``${data}`` — no field).
 _BRACE_BLOCK_RE = re.compile(r"\$\{([^}]*)\}")
 _REF_IN_BLOCK_RE = re.compile(r"(?:^|[\s?])([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?")
 
@@ -63,6 +58,10 @@ class Scope:
         or when a recognized source intentionally suppresses its edge (batch
         item whose source has expanded outputs — the structural edge routes
         through the outputs instead).
+
+        ``"item"`` is reserved for batch item refs: outside a batch context
+        (``batch_source`` is None) it always returns ``None`` — a sibling
+        node literally named ``item`` is unreachable by design.
         """
         # Batch item
         if root == "item":
@@ -105,22 +104,25 @@ class Scope:
 
     @staticmethod
     def refs_in(value: str) -> list[tuple[str, Optional[str]]]:
-        """Extract ``(root, field)`` pairs from template refs in a binding.
+        """Extract ``(root, field)`` pairs from every template ref in ``value``.
 
-        Use for data-flow bindings where each template expression is one ref
-        (e.g. ``"${producer.response}"``).  Returns ``field=None`` for bare
-        refs like ``"${data}"``.
+        Use for data-flow bindings.  Handles multiple templates, bare refs
+        (``${data}`` — no field), and coalesce expressions
+        (``${a.x ?? b.y}`` — two refs in one block).  Literal text outside
+        ``${...}`` never produces matches.
+
+        Alias for :meth:`source_refs_in` — data-flow bindings and output
+        sources use the same template grammar (``??`` is a general-purpose
+        template operator, not output-only).
         """
-        return [(m.group(1), m.group(2)) for m in _DATA_FLOW_REF_PATTERN.finditer(value)]
+        return Scope.source_refs_in(value)
 
     @staticmethod
     def source_refs_in(source: str) -> list[tuple[str, Optional[str]]]:
-        """Extract ``(root, field)`` pairs from output source expressions.
+        """Extract ``(root, field)`` pairs from a template expression.
 
         Two-stage: find each ``${...}`` block, then capture every ref inside
-        it.  Handles coalesce (``${a.x ?? b.y}`` — two refs in one block) and
-        bare refs (``${data}`` — no field).  Literal text outside ``${...}``
-        never produces matches.
+        it.
         """
         refs: list[tuple[str, Optional[str]]] = []
         for block in _BRACE_BLOCK_RE.finditer(source):

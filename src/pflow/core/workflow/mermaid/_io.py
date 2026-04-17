@@ -213,6 +213,11 @@ def _connect_sources_to_output(
     """
     for root, field in Scope.source_refs_in(source):
         # Input-root refs (#263 fix): connect from the input parallelogram.
+        # Precedence note: inputs checked before nodes.  WorkflowValidator
+        # does NOT enforce name-uniqueness between declared inputs and node
+        # IDs (see validator.py `valid_sources` union at :403), so a rare
+        # same-name collision would resolve to the input here.  Matches
+        # runtime template resolution behavior (shared store lookup).
         if root in input_ids:
             ctx.lines.append(f"{ctx.indent}{input_ids[root]} --> {out_mid}")
             continue

@@ -1359,9 +1359,12 @@ def test_opaque_template_inputs_fall_through_gracefully() -> None:
     # Must not raise
     out = generate_mermaid(parent_ir, resolve_child=resolver)
 
-    # No per-input data-flow edges emitted (statically unresolvable)
-    assert "consumer__in_x -->" in out or "consumer__in_x[/" in out  # input node still rendered
-    # But no edge INTO consumer__in_x from an external node
+    # Input node is still rendered (parallelogram) — opaque template doesn't
+    # prevent child input declaration
+    assert "consumer__in_x[/" in out, "child input node must be rendered"
+
+    # But no data-flow edge INTO consumer__in_x from an external node —
+    # we can't statically enumerate which parent value feeds which child input.
     external_to_input = [
         line
         for line in out.splitlines()
@@ -1415,6 +1418,45 @@ def test_batch_data_flow_with_inputs_dict() -> None:
     assert "combine --> reviews__clarity__in_summary" in out
     # aspect is ${item.*} — no external data-flow edge for it
     assert "combine --> reviews__accuracy__in_aspect" not in out
+
+
+def test_coalesce_in_data_flow_binding() -> None:
+    """Coalesce expressions in data-flow bindings emit edges for both operands.
+
+    Coalesce (``??``) is a general-purpose template operator — valid in any
+    template context, not just output sources.  ``refs_in`` must capture
+    every ref inside ``${...}`` blocks, including both sides of ``??``.
+    A regression where only the first operand is extracted would silently
+    drop half the data-flow edges.
+    """
+    child_ir = _ir(
+        nodes=[_node("step", "code")],
+        inputs={"val": {"type": "string"}},
+    )
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            _node("primary", "llm"),
+            _node("fallback", "llm"),
+            {
+                "id": "consumer",
+                "type": "workflow",
+                "params": {
+                    "workflow": "child",
+                    "inputs": {"val": "${primary.response ?? fallback.response}"},
+                },
+            },
+        ],
+        edges=[{"from": "primary", "to": "consumer"}, {"from": "fallback", "to": "consumer"}],
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver)
+
+    # Both operands of the coalesce must feed the consumer's val input
+    assert "primary --> consumer__in_val" in out, "first coalesce operand missing"
+    assert "fallback --> consumer__in_val" in out, "second coalesce operand missing"
 
 
 # ===========================================================================
