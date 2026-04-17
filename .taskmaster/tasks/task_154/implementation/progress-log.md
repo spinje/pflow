@@ -766,6 +766,130 @@ Changes:
 
 ---
 
+### [2026-04-16 squash + rebase onto post-task-153 main]
+
+What I'm doing: task 153 landed on main (PR #286, commit d3982fdf) while this branch was in progress. Squashed 5 review-pass commits into 1 (`feat: type vocabulary coherence refactor (task 154)`) and rebased onto origin/main.
+
+Two text conflicts, both expected:
+
+1. `src/pflow/guide/features/sub-workflows.md` — 153 added a "Heterogeneous Batch over Sub-Workflows" section, 154 round-2 had added "Dynamic Child Selection (Template References)". Resolution: kept both — 154's conceptual intro first, then 153's advanced pattern. Rewrote 154's example to use post-153 `inputs:` dict form (old form used top-level free-form params, which `ALLOWED_PARAMS` now rejects).
+
+2. `tests/test_runtime/test_workflow_executor/test_workflow_executor_comprehensive.py:491` — 153 renamed `workflow_ir` → `child_ir` in `prep_res`; 154 had changed `{"invalid": "ir"}` → `simple_workflow_ir` (so `validate_ir` passes and the mocked `compile_workflow` is what raises). Synthesized: `"child_ir": simple_workflow_ir` — key from 153, value from 154.
+
+Semantic fix without textual conflict:
+- `tests/test_runtime/test_workflow_executor/test_workflow_executor.py::TestTemplateRefSubWorkflowValidation::test_template_ref_bypass_close_end_to_end_through_runner` — my round-2 regression test used pre-153 parent IR (`"params": {"workflow": ..., "message": "hello"}`). Post-153 rejects top-level `message` via `ALLOWED_PARAMS`. Rewrote to `"params": {"workflow": ..., "inputs": {"message": "hello"}}`.
+- `test_workflow_executor_comprehensive.py::test_template_resolution_dict_and_list_inputs` — added by 153 with pre-154 vocab (`{"type": "dict"}`, `{"type": "list"}`). Now fails at 154's new `validate_ir` in `_compile_sub_workflow`. Migrated to canonical (`object`, `array`).
+
+Verified validate_ir landed in the cache-miss branch of `_compile_sub_workflow` (post-rebase line 208-209, after cache early-return at line 192) — cache hits skip re-validation. 3-way merge placed it correctly; no manual fix needed.
+
+Safety branch `fix/type-vocab-incoherence-pre-rebase` kept at the pre-squash tip for rollback.
+
+Result: 4857 pass (+3 from post-rebase audit fixes, -2 from squash bookkeeping), `make check` clean. Force-pushed.
+
+**Lesson for future rebases**: when two tasks each change a shared API shape (task 153 = child-inputs API, task 154 = vocabulary), the text-conflict count understates work. Auto-merging files can still encode semantic drift (pre-153 test fixtures with post-154 vocab rejection). Grep for API-shape markers from both tasks in every auto-merged file, not just the conflict-marked ones.
+
+---
+
+### [2026-04-16 cross-task audit cycle]
+
+What I'm doing: user asked for a careful review of "potential issues the combination of task 153 and task 154 could cause." Ran 3 review agents in parallel (`review-feature-interactions`, `review-impact-completeness`, `review-silent-failures`). Synthesized findings and triaged.
+
+**Real findings (fixed):**
+- `architecture/architecture.md:497-499` — sub-workflow example taught pre-153 top-level free-form API. Updated to nested `inputs:`.
+- `examples/nested/README.md:28-36` — same pre-153 example + now-false prose ("all other params are passed as child inputs"). Rewrote.
+- `architecture/reference/template-variables.md` — 4 locations (~1052, ~1234, ~1349, ~1634) teaching pre-154 S1 vocab (`str`/`int`/`float`) in workflow-level `inputs:`. Migrated to canonical. Lines 680-685 stay Python-named (they're S3 node output metadata, not S1).
+- `.taskmaster/tasks/task_154/task-review.md` — structurally stale vs round-2. Added Round-2 Addendum prepended at the top, explicitly contradicting the line 249 "Do NOT remove `_TYPE_ALIASES`" pitfall (the code was deleted in round-2). Several sections below (Two duplicated alias maps, drift-guard tests, TypeSpec.python_type extension) are also stale; the addendum calls these out rather than rewriting the whole doc.
+
+**Review-agent findings I initially flagged as follow-ups, then retracted after user pushback**:
+- F1: `error_action: continue` doesn't catch `validate_ir` errors. Not a bug — compilation errors SHOULD fail loud; error_action is for child-ran-and-returned-error semantics.
+- F2: Top-level programmatic callers bypassing `validate_ir` silently skip coercion. Not reachable — all production entry points validate. Theoretical defense-in-depth for a path no caller takes.
+- F3: `_expose_child_outputs` name-collision with `ALLOWED_PARAMS`. Conceptual confusion in the review — shared store keys and node parameter names live in different namespaces.
+
+**User's framing** ("are you sure we should fix any of 5-7 issues?") caught me over-crediting review-agent findings. Lesson: review agents produce findings by design; the triage step is where engineering judgment happens. Don't pass through unchecked.
+
+**CLAUDE.md audit**:
+- `src/pflow/core/workflow/CLAUDE.md:13` — module listing said `sub_workflow_resolver.py # Shared sub-workflow resolution (inline IR, file, saved name)` but task 153 removed inline-IR support. Task 153's own diff updated this CLAUDE.md elsewhere (added `ALLOWED_PARAMS` coverage) but missed this line. Fixed to "file path or saved name".
+- `src/pflow/core/CLAUDE.md:297` — `coerce_workflow_input` description used Python-named shorthand for dispatch (`str↔int, str↔bool`). Ambiguous post-154 since the dispatch keys are now S1 canonical. Rewrote to name the 7 canonical types explicitly and note Python aliases are rejected upstream.
+- `src/pflow/core/CLAUDE.md` — task 154's new `types.py` wasn't in the module-structure listing or "Key Components" section. Added both. Initially over-wrote with 15 lines of S1/S2/S3 rationale; user corrected ("don't overfit to context window") — trimmed to match surrounding 2-3 line entries.
+
+Result: 4857 pass, `make check` clean. Force-pushed.
+
+---
+
+### [2026-04-16 Python 3.14 CI failure — PEP 649 interaction]
+
+What I'm doing: CI reported 3 failures on Python 3.14 only (3.10-3.13 passed):
+- `test_nameerror_for_union_suggests_pipe_syntax`
+- `test_nameerror_for_list_suggests_lowercase_generic`
+- `test_nameerror_for_literal_suggests_import`
+
+All 3 tests wrote code like `x: Union[int, str] = 1` and asserted `action == "error"` with opinionated hint text in `shared["error"]`. On 3.10-3.13 this worked because Python evaluated the annotation eagerly, raising NameError → `_format_exec_error` → `_suggest_for_nameerror` fired.
+
+**Root cause**: PEP 649 lands as default in Python 3.14. Annotations are evaluated lazily (via `__annotate__` function) rather than at statement execution. `x: Union[int, str] = 1` stores the annotation as a deferred expression, assigns 1 to x, and never triggers NameError. Code runs to completion → action="default" → tests fail.
+
+**Trade-off considered**:
+- Option A: Skip tests on 3.14+. Minimal change, ships CI today. But on 3.14 users writing `List[int]` silently succeed with no opinionated hint — UX regression.
+- Option B: Extend `_check_annotation_vocabulary` AST walker to catch typing names proactively at prep time. ~20-30 lines, works across Python versions.
+
+User approved Option B: "carefully implement B".
+
+**Key design refinement during implementation**: initial draft rejected ALL typing names (Union/List/Dict/Literal/etc.) unconditionally. But users who follow `_suggest_for_nameerror`'s own hint ("Add 'from typing import Literal'") would then get rejected by our AST walker — regressing legitimate imported usage. Added `_extract_imported_names(code)` helper; only reject names NOT in the import set. AST-based (`ast.ImportFrom` + `ast.Import` walk). Pattern: walk the whole code for imports, then check each annotation's Name nodes against the import set.
+
+**Why one change, not two (the user's "simplicity of final code" principle)**: initially I thought about duplicating the opinionated-hint suggestion logic in both `_check_annotation_vocabulary` (AST-walk rejection) and `_suggest_for_nameerror` (NameError fallback for value-usage like `x = Union[int, str]`). Ended up reusing `_suggest_for_nameerror` directly in both paths — same canonical fix, different trigger.
+
+Added constant `_REJECTED_ANNOTATION_NAMES = _MODERN_GENERIC_NAMES | {"Union"} | _REQUIRES_TYPING_IMPORT`. Helper `_extract_imported_names` uses AST to collect `ImportFrom` + `Import` bindings.
+
+Tests:
+- Renamed failing tests to `test_{union,list,literal}_in_annotation_rejected_with_*_hint` (accurate after mechanism change).
+- Updated from `assert action == "error"` to `pytest.raises(NonRetriableError, match=...)` (NonRetriableError from prep propagates, doesn't convert to action).
+- Added `test_typing_name_in_annotation_accepted_when_imported` — regression guard against future "simplification" of the import check.
+
+Result: 4858 pass (+1 regression guard), `make check` clean. Force-pushed with `[skip review]` tag on the commit subject (minor review-prompted fix).
+
+---
+
+### [2026-04-17 code-review evaluation — W1/W2/S2 fixes]
+
+What I'm doing: ran `/evaluate-review` on https://github.com/spinje/pflow/pull/290#issuecomment-4263676831. Reviewer produced 2 warnings (W1, W2), 3 suggestions, 2 nits. Triaged each against the code.
+
+**Initial W1 plan (reviewer's proposed fix)**: insert `except PflowError as e: raise CompilationError(..., wrapped_diagnostics=e.to_diagnostics())` between the existing `except CompilationError` and `except Exception` branches. Uses the `wrapped_diagnostics` API to forward `SchemaValidationError`'s structured context (similar_names, available_fields, suggestions_list) through the CompilationError wrap.
+
+**User pushback** ("we should prioritize simplicity of the final code, not how easy it is to get there... what's the right solution the top 10% would implement?"). Stepped back. Dispatched a searcher to map all callers and the CompilationError API surface.
+
+**Key discovery the searcher surfaced**: `CompilationError.to_diagnostics()` has asymmetric behavior — when `wrapped_diagnostics` is set, it returns them verbatim, DISCARDING `details["sub_workflow_path"]`. The reviewer's fix as-stated preserves vocab structure but loses the "Sub-workflow: <path>" rendering line. Would ship a subtle new regression while fixing the old one.
+
+**Revised plan — fix at two layers**:
+
+1. **`CompilationError.to_diagnostics()` composes `wrapped_diagnostics` with `details`**. When both are present, iterate `wrapped_diagnostics` and merge `sub_workflow_path` into each diagnostic's `context` via `dataclasses.replace(d, context={"sub_workflow_path": ..., **(d.context or {})})`. setdefault semantics — inner-diagnostic context wins on key conflict. ~6 lines in `exceptions.py`.
+
+2. **Add `except PflowError` branch in `_compile_sub_workflow`** as reviewer originally suggested. Uses `wrapped_diagnostics=e.to_diagnostics()`. With fix (1) in place, sub_workflow_path now composes correctly.
+
+3. **Extract `_validate_and_compile_child` static helper** — adding the 3rd except branch pushed `_compile_sub_workflow` from 10 → 11 cyclomatic complexity, triggering ruff's C901. Moved the validate+compile+wrap sequence into the helper. User memory: no `# noqa` — fix the structure.
+
+**W1 test update — critical lesson**. The existing `test_template_ref_bypass_close_end_to_end_through_runner` asserted `"Use 'string' instead of 'str'" in diagnostic_messages` (joined `.message` fields). This passed on the OLD flattened code because suggestion text was embedded in the exception's string representation. After fix, `"Use 'string' instead of 'str'"` lives in `.suggestions`, not `.message` — the structurally correct location. Test failed on my first run of the new code.
+
+**The assertion was pinning a symptom of the bug, not the contract**. Rewrote to assert on structured fields directly:
+- `vocab_diag.context["available_fields"]` == the 7 canonical types (rich rendering block preserved)
+- `vocab_diag.context["sub_workflow_path"] == str(child_path)` (container context merged by fix 1)
+- `vocab_diag.suggestions == ["Use 'string' instead of 'str'"]` (opinionated fix in structured field)
+
+This is now the template for future cross-layer rendering tests.
+
+**W2 fix — forward-reference annotation unwrap**. `_extract_annotations` runs `ast.unparse(node.annotation)` which preserves outer quotes, so `x: "list[any]"` becomes the string `"'list[any]'"`. `ast.parse(..., mode="eval")` on that sees `ast.Constant`, no `ast.Name(id="any")`, check silently passes. On 3.14+, PEP 649 means runtime doesn't catch it either. Fix: after initial parse, if `tree.body` is `ast.Constant` with string value, re-parse the inner string before walking. ~4 lines. Preserves existing behavior for inner `Literal['any']` Constants (those stay as-is, correctly ignored). Added regression test `test_lowercase_any_in_forward_reference_rejected`.
+
+**S2 — one-line clarifying comment on `coerce_param_for_node`** about the S3-vs-S1 surface distinction (why it still accepts Python-aliased `"str"`/`"dict"` while `coerce_workflow_input` dropped aliases).
+
+**Findings explicitly disputed/skipped**:
+- S1 (redundant validate_ir for static-path children): reviewer themselves said "leave unless a profile shows it" — the "every path through compile_workflow is validated" invariant is worth more than the micro-redundancy.
+- S3 (tighten message-based tests to assert on structured fields): the structured-field contract is already pinned by the dedicated `TestTypeVocabularyErrorFields` class; tightening the message tests too would test the same contract twice.
+- 2 nits: pure style.
+
+Result: 4859 pass (+1 forward-ref regression), `make check` clean. Force-pushed to `5b5a8cbd`.
+
+**The user's "simplicity of final code" principle applied here**: the reviewer's fix was ~5 lines; my revised fix was ~8 lines. But the revised fix corrects a latent API design bug (`wrapped_diagnostics + details` composition) that benefits every future caller, not just sub-workflow compilation. Net-simpler final state despite slightly more lines.
+
+---
+
 ### Template for future entries
 
 ```markdown
