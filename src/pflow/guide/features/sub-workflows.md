@@ -29,16 +29,25 @@ Convert text to uppercase.
 ## Inputs
 
 ### text
+
+The text to convert.
+
 - type: string
 
 ## Outputs
 
 ### result
+
+The uppercased text.
+
 - source: ${transform.stdout}
 
 ## Steps
 
 ### transform
+
+Uppercase via `tr`.
+
 - type: shell
 - command: echo "${text}" | tr '[:lower:]' '[:upper:]'
 ````
