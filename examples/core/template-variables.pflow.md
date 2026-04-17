@@ -5,6 +5,78 @@ and referencing workflow inputs. Variables appear in file paths, API
 endpoints, email subjects, and multi-line content strings — showing
 how a single workflow adapts to different inputs at runtime.
 
+## Inputs
+
+### input_file
+
+Path to the file to read.
+
+- type: string
+- required: true
+
+### file_encoding
+
+Encoding for the file reader.
+
+- type: string
+- default: utf-8
+
+### api_token
+
+Bearer token for the API call.
+
+- type: string
+- required: true
+
+### api_endpoint
+
+URL of the API to call.
+
+- type: string
+- required: true
+
+### backup_dir
+
+Directory to copy the input file into.
+
+- type: string
+- default: ./backups
+
+### backup_name
+
+Filename to use for the backup copy.
+
+- type: string
+- required: true
+
+### output_dir
+
+Directory for the processed output file.
+
+- type: string
+- default: ./output
+
+### output_file
+
+Filename for the processed output.
+
+- type: string
+- required: true
+
+### timestamp
+
+Timestamp included in the output file. Typically provided by the caller.
+
+- type: string
+- default: "unknown"
+
+### recipient_email
+
+Address used in the notification message.
+
+- type: string
+- required: true
+
 ## Steps
 
 ### reader
@@ -43,7 +115,7 @@ Shows template variables embedded in multi-line content strings.
 
 - type: write-file
 - file_path: ${output_dir}/${output_file}
-- content: "Processed on: ${timestamp}\nOriginal file: ${input_file}\n\n${file_content}"
+- content: "Processed on: ${timestamp}\nOriginal file: ${input_file}\n\n${reader.content}"
 
 ### notifier
 
