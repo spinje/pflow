@@ -31,6 +31,8 @@ find . -maxdepth ${depth} -type f -newer /tmp/marker 2>/dev/null | head -20
 ````markdown
 ### run-pipeline
 
+Creates the output directory, then pulls items from the API into it.
+
 - type: shell
 
 ```shell command

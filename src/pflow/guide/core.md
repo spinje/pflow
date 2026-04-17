@@ -60,16 +60,17 @@ fetch-data → process-data → save-results
 
 ### step1-fetch
 
-Fetch data from the API.
+Fetches the source feed. Downstream assumes `response.items` exists.
 
 - type: http
 - url: ${api_url}
 
 ### step2-timestamp
 
-Capture the current date for the report.
+Captures run time. `cache: false` — this node reads live clock state.
 
 - type: shell
+- cache: false
 
 ```shell command
 date +%Y-%m-%d
@@ -77,7 +78,8 @@ date +%Y-%m-%d
 
 ### step3-transform
 
-Extract and reshape items from the API response.
+Drops incomplete items and flattens each to `{id, name}` for downstream
+consumers.
 
 - type: code
 - inputs:
@@ -91,7 +93,7 @@ result: list = [{'id': i['id'], 'name': i['title']} for i in items]
 
 ### step4-analyze
 
-Analyze the transformed data.
+Summarizes the transformed records — one LLM pass over the whole batch.
 
 - type: llm
 
@@ -101,7 +103,12 @@ Analyze this data from ${step3-transform.result} fetched at ${step2-timestamp.st
 
 ### step5-report
 
-Create a comprehensive report from all previous outputs.
+Assembles the final report. Reads from every upstream step:
+
+* `step1-fetch.response` — raw counts for the footer
+* `step3-transform.result` — cleaned records
+* `step4-analyze.response` — narrative summary
+* `step2-timestamp.stdout` — run time
 
 - type: llm
 
@@ -268,33 +275,29 @@ Description of the workflow. This becomes the description shown in `pflow list`.
 
 ## Inputs
 
-### param_name
+### source_url
 
-What this parameter is for.
+URL of the feed to pull records from.
 
 - type: string
 - required: true
-- default: "value"
-- stdin: true
 
 ## Steps
 
-### descriptive-name
+### fetch-records
 
-What this step does and why.
+Fetches the feed and hands the raw response to downstream nodes.
 
-- type: node-type-from-registry
-- param1: static_value
-- param2: ${input_name}
-- param3: ${other_node.output}
+- type: http
+- url: ${source_url}
 
 ## Outputs
 
-### result_name
+### records
 
-What this output contains.
+Parsed record array from the fetch response.
 
-- source: ${final_node.output}
+- source: ${fetch-records.response.items}
 `````
 
 **Input fields**: `type` (string|number|integer|boolean|array|object|any), `required` (true|false), `default` (only when required: false), `stdin` (true|false — only one input can have this), description as prose.
@@ -309,11 +312,18 @@ What this output contains.
 
 **Key rules:**
 - `## Inputs` and `## Outputs` are optional. `## Steps` is required (at least one node).
-- Every entity (`###` heading) must have a prose description.
+- Every entity (`###` heading) must have a prose description that adds information not derivable from the name, type, or params — the role in the flow, a contract, a constraint, or a rationale.
 - Use `-` for parameters, `*` for documentation bullets.
 - Code blocks require a tag: `shell command`, `python code`, `prompt`, `yaml batch`, `yaml output_schema`
 - Batch config: inline `- batch:` for simple cases, `yaml batch` code block for complex arrays
 - Any code block parameter can reference an external file instead: `- prompt: ./prompts/system.md`, `- code: ./scripts/transform.py`. Paths are relative to the workflow file. Use for long prompts or reusable scripts.
+
+**Description shapes** — match the shape to the content:
+- **One-liner** — role is obvious, one contract sentence is enough.
+- **Two-to-three sentences** — stakes, failure modes, or a downstream contract to surface.
+- **Bulleted enumeration** — input accepts multiple shapes, or output has multiple fields worth naming.
+- **Bolded sub-headings** — multiple design decisions to call out on one entity.
+- **Prose + callout bullet** — operational detail (timeout, error handling, cache) worth pulling out of the paragraph.
 
 **Nesting backticks:** Use 4+ backticks when content contains ```:
 
@@ -496,6 +506,8 @@ Need to interpret meaning?  → LLM
 ```markdown
 ### extract-price
 
+Wrong approach — LLM for deterministic JSON field extraction.
+
 - type: llm
 - prompt: "Extract the price from this JSON: ${data}"
 ```
@@ -503,6 +515,8 @@ Need to interpret meaning?  → LLM
 **❌ WRONG — Using jq for simple path extraction:**
 ```markdown
 ### extract-price
+
+Wrong approach — shell pipeline for a single nested field.
 
 - type: shell
 - stdin: ${data}
@@ -543,6 +557,8 @@ Templates work in any param value — inline `- key:` or code blocks:
 ```markdown
 ### example-node
 
+Demonstrates the template forms that work in any parameter value.
+
 - basic_input: ${username}
 - basic_output: ${fetch.response}
 - nested: ${fetch.data.user.email}
@@ -556,6 +572,8 @@ Templates work in any param value — inline `- key:` or code blocks:
 
 ```markdown
 ### fetch-with-auth
+
+Authenticated POST against the API using the caller's bearer token.
 
 - type: http
 - url: ${api_url}
@@ -572,6 +590,8 @@ Templates work in any param value — inline `- key:` or code blocks:
 
 ````markdown
 ### update-record
+
+Posts a structured update with a multi-line description and nested filter shape.
 
 - type: http
 - url: ${api_url}
@@ -760,6 +780,8 @@ Provide: trend, risk_level, recommendation
 ```
 
 ### format-for-delivery
+
+Shapes the analysis results into a markdown report for the writer.
 
 - type: llm
 - prompt: "Format as markdown report with summary and recommendations:\n${enrich-with-analysis.results}"
