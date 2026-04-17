@@ -328,7 +328,11 @@ class Registry:
 
         logger.info(f"Scanning for core nodes in: {subdirs}")
 
-        # Scan and save
+        # Capture scan-start time BEFORE reading sources. Stamping the registry
+        # with a POST-scan timestamp would lose concurrent edits made during the
+        # scan window (their mtime would sit < stored timestamp, so the next
+        # mtime check wouldn't refresh).
+        scan_start = self._now_iso()
         scan_results = scan_for_nodes(subdirs)
 
         # Convert to registry format with type marking
@@ -347,14 +351,20 @@ class Registry:
 
         logger.info(f"Auto-discovered {len(registry_nodes)} core nodes")
 
-        # Save with metadata
-        self._save_with_metadata(registry_nodes)
+        # Save with metadata, using the pre-scan timestamp
+        self._save_with_metadata(registry_nodes, scan_time=scan_start)
 
-    def _save_with_metadata(self, nodes: dict[str, dict[str, Any]]) -> None:
+    def _save_with_metadata(self, nodes: dict[str, dict[str, Any]], scan_time: Optional[str] = None) -> None:
         """Save nodes with updated version and timestamp.
 
         Unlike save(), this always updates the version and last_core_scan fields
         to reflect the current pflow version and time.
+
+        Args:
+            nodes: The node metadata dict to persist.
+            scan_time: UTC ISO timestamp captured BEFORE reading sources. When
+                omitted, defaults to "now" (safe for merge/post-refresh saves
+                that aren't wrapping a live scan).
         """
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -363,7 +373,7 @@ class Registry:
 
         data = {
             "version": self._get_version(),
-            "last_core_scan": self._now_iso(),
+            "last_core_scan": scan_time or self._now_iso(),
             "metadata": existing.get("metadata", {}),
             "nodes": nodes,
         }
@@ -381,17 +391,23 @@ class Registry:
         - Any core node source file is newer than the last scan timestamp
           (catches docstring changes across editable/from-source installs
           where pflow's version string hasn't moved).
+
+        Without either a stored version OR a scan timestamp there's no basis
+        for comparison, so the check short-circuits to False — matches the
+        pre-mtime defensive behavior and avoids spurious refreshes on
+        partially-written or externally-produced registries.
         """
-        if not self._registry_version:
+        if not self._registry_version and not self._registry_last_scan:
             return False
 
-        current_version = self._get_version()
-        if self._registry_version != current_version:
-            logger.info(
-                f"Registry version {self._registry_version} differs from "
-                f"pflow version {current_version}, refreshing core nodes"
-            )
-            return True
+        if self._registry_version:
+            current_version = self._get_version()
+            if self._registry_version != current_version:
+                logger.info(
+                    f"Registry version {self._registry_version} differs from "
+                    f"pflow version {current_version}, refreshing core nodes"
+                )
+                return True
 
         if self._source_newer_than_scan():
             logger.info("Node source files modified since last scan, refreshing core nodes")
@@ -402,9 +418,14 @@ class Registry:
     def _source_newer_than_scan(self) -> bool:
         """Return True if any core node source file is newer than last_core_scan.
 
-        Fails safe: any parse or filesystem error returns False so ``load()``
-        never crashes on a filesystem oddity. A missing ``last_core_scan``
-        is treated as stale so legacy registries self-heal on next load.
+        Fails safe: any parse or filesystem error returns False (with a warning)
+        so ``load()`` never crashes on a filesystem oddity. A missing
+        ``last_core_scan`` is treated as stale so structured-format registries
+        missing the timestamp self-heal on next load.
+
+        Deletion detection: mtime of surviving files doesn't move when a sibling
+        is removed, so this check won't catch a deleted node source file. Version
+        bump is the heal path for deletions.
         """
         if not self._registry_last_scan:
             return True
@@ -435,7 +456,9 @@ class Registry:
 
             return False
         except Exception as e:
-            logger.debug(f"Could not check node source mtimes: {e}")
+            # Surface to users debugging "my edit isn't picked up" — self-heal
+            # failing is exactly what they need to see without --verbose.
+            logger.warning(f"Could not check node source mtimes (auto-refresh disabled this run): {e}")
             return False
 
     def _refresh_core_nodes(self, nodes: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -443,17 +466,21 @@ class Registry:
         # Preserve non-core nodes
         preserved = {name: data for name, data in nodes.items() if data.get("type") in ("user", "mcp")}
 
-        # Re-discover core nodes
+        # Re-discover core nodes — _auto_discover_core_nodes stamps
+        # last_core_scan with a PRE-scan timestamp (race-safe).
         self._auto_discover_core_nodes()
 
-        # Reload the freshly written core nodes
+        # Reload — populates self._registry_last_scan from the pre-scan stamp.
         refreshed = self._load_from_file()
 
         # Merge preserved nodes back in
         refreshed.update(preserved)
 
-        # Save the merged result
-        self._save_with_metadata(refreshed)
+        # Save the merged result, propagating the pre-scan timestamp so the
+        # race-safety is preserved through the final merge write. Without this,
+        # the merge save would stamp "now" (post-scan) and lose any edit made
+        # during the scan window.
+        self._save_with_metadata(refreshed, scan_time=self._registry_last_scan)
 
         return refreshed
 

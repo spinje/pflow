@@ -666,15 +666,54 @@ class TestRegistrySourceMtimeRefresh:
 
         assert registry._source_newer_than_scan() is True
 
-    def test_naive_legacy_timestamp_handled(self, tmp_path):
-        """A naive local-time ISO (pre-UTC format) must not raise and must return a bool."""
-        registry = Registry(tmp_path / "registry.json")
-        # Naive future timestamp — no files can possibly be newer
-        registry._registry_last_scan = "2099-01-01T00:00:00"
+    def test_outdated_runs_mtime_check_when_version_missing(self, tmp_path):
+        """A wrapper registry with last_core_scan but no version must still mtime-check.
 
-        result = registry._source_newer_than_scan()
-        assert isinstance(result, bool)
-        assert result is False  # Nothing is newer than year 2099
+        Narrow scenario: manually-edited registry, partial write, or external tooling
+        produced a structured wrapper without a `version` field. Early versions of
+        the gate short-circuited on ``not self._registry_version``, hiding the
+        mtime refresh entirely for these registries.
+        """
+        registry = Registry(tmp_path / "registry.json")
+        registry._registry_version = None
+        # Ancient scan timestamp — real pflow.nodes files are all newer
+        registry._registry_last_scan = "2000-01-01T00:00:00+00:00"
+
+        # Must detect staleness via the mtime path, not early-return False
+        assert registry._core_nodes_outdated({}) is True
+
+    def test_outdated_false_when_both_version_and_scan_missing(self, tmp_path):
+        """No version AND no scan timestamp → nothing to compare, don't refresh.
+
+        Preserves pre-mtime defensive behavior for legacy flat-format registries
+        and partially-written wrappers.
+        """
+        registry = Registry(tmp_path / "registry.json")
+        registry._registry_version = None
+        registry._registry_last_scan = None
+
+        assert registry._core_nodes_outdated({}) is False
+
+    def test_naive_legacy_timestamp_handled(self, tmp_path):
+        """Naive local-time ISO must (a) not raise, (b) compare correctly in both directions.
+
+        Guards against a regression that drops the ``.astimezone()`` fallback —
+        without it, ``datetime.fromisoformat(naive).timestamp()`` still works but
+        a future `fromisoformat(aware) vs timestamp()` mix could raise on some
+        paths, and/or the comparison direction could silently invert.
+        """
+        # Naive future: no files can possibly be newer → False
+        registry_future = Registry(tmp_path / "registry-future.json")
+        registry_future._registry_last_scan = "2099-01-01T00:00:00"
+        result_future = registry_future._source_newer_than_scan()
+        assert isinstance(result_future, bool)
+        assert result_future is False
+
+        # Naive past: real source files are newer → True
+        # This half proves the naive comparison direction is correct.
+        registry_past = Registry(tmp_path / "registry-past.json")
+        registry_past._registry_last_scan = "2000-01-01T00:00:00"
+        assert registry_past._source_newer_than_scan() is True
 
     def test_source_check_fails_safe_on_parse_error(self, tmp_path):
         """Malformed stored timestamp must not crash load() — fail-safe returns False."""
@@ -713,11 +752,51 @@ class TestRegistrySourceMtimeRefresh:
 
         assert registry._source_newer_than_scan() is True
 
+    def test_scan_start_timestamp_captured_before_scan(self, tmp_path, monkeypatch):
+        """last_core_scan must be captured BEFORE scan_for_nodes reads sources.
+
+        Guards the race fix: if someone swaps ``scan_time=scan_start`` for the
+        default ``_now_iso()`` call, the stored timestamp would be post-scan and
+        concurrent edits during the scan window would be lost (their mtime sits
+        below the stored timestamp, so the next load's mtime check misses them).
+        """
+        import time as time_mod
+
+        from pflow.registry import scanner
+
+        original_scan = scanner.scan_for_nodes
+
+        def slow_scan(subdirs):
+            # 50ms synthetic scan window — long enough to distinguish pre/post
+            # scan timestamps, well under the tests/CLAUDE.md 0.1s budget.
+            time_mod.sleep(0.05)
+            return original_scan(subdirs)
+
+        monkeypatch.setattr(scanner, "scan_for_nodes", slow_scan)
+
+        registry = Registry(tmp_path / "registry.json")
+        before = time_mod.time()
+        registry._auto_discover_core_nodes()
+        after = time_mod.time()
+
+        stored_iso = json.loads((tmp_path / "registry.json").read_text())["last_core_scan"]
+        stored_ts = datetime.fromisoformat(stored_iso).timestamp()
+
+        # Stored must be at/after invocation start AND at least ~40ms before scan end
+        # (i.e., pre-scan, not post-scan). Uses 40ms rather than the full 50ms to
+        # absorb jitter on slow CI runners.
+        assert stored_ts >= before, f"stored {stored_ts} < before {before}"
+        assert stored_ts < after - 0.04, f"stored {stored_ts} too close to after {after} (post-scan)"
+
     def test_single_unreadable_file_does_not_abort_walk(self, tmp_path, monkeypatch):
         """A stat() failure on one file must not hide a newer file later in the walk.
 
         Regression guard: early versions wrapped the whole loop in a single try
         block, so one OSError aborted the entire check and silently returned False.
+
+        Walk order is pinned via a Path.rglob patch — Path.rglob makes no
+        cross-platform ordering guarantee, and if "good" ever iterates before
+        "bad" the test would pass even against the buggy single-try implementation.
         """
         import os
 
@@ -745,8 +824,17 @@ class TestRegistrySourceMtimeRefresh:
                 raise OSError("simulated permission error")
             return original_stat(self, *args, **kwargs)
 
-        with patch.object(Path, "stat", selective_stat):
-            # Even with a_bad.py unreadable, b_good.py's future mtime must be found
+        # Pin walk order: bad first, good second. This forces the per-file
+        # try/except to handle the OSError before reaching the newer file.
+        def ordered_rglob(self, pattern):
+            if pattern == "*.py":
+                return iter([bad, good])
+            return []
+
+        with (
+            patch.object(Path, "rglob", ordered_rglob),
+            patch.object(Path, "stat", selective_stat),
+        ):
             assert registry._source_newer_than_scan() is True
 
 
