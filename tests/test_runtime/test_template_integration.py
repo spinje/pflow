@@ -107,6 +107,10 @@ class TestCompilerIntegration:
                 }
             ],
             "edges": [],
+            "inputs": {
+                "endpoint": {"type": "string", "description": "API endpoint URL", "required": True},
+                "count": {"type": "integer", "description": "Number of items", "required": True},
+            },
         }
 
         initial_params = {"endpoint": "https://api.example.com", "count": 10}
@@ -197,6 +201,14 @@ class TestCompilerIntegration:
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer"}],
+            "inputs": {
+                "provided_param": {"type": "string", "description": "Provided param", "required": True},
+                "shared_store_var": {
+                    "type": "string",
+                    "description": "Placeholder for producer output",
+                    "required": True,
+                },
+            },
         }
 
         # Provide CLI parameter and shared_store_var as a placeholder to satisfy
@@ -342,6 +354,10 @@ class TestMultiNodeWorkflow:
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer"}],
+            "inputs": {
+                "initial_url": {"type": "string", "description": "Initial URL", "required": True},
+                "video_data": {"type": "string", "description": "Placeholder for producer output", "required": True},
+            },
         }
 
         # video_data is a producer output key (not a node ID). Include it in
@@ -460,6 +476,11 @@ class TestRealWorldWorkflows:
                 },
             ],
             "edges": [{"from": "fetch", "to": "summarize"}, {"from": "summarize", "to": "save"}],
+            "inputs": {
+                "url": {"type": "string", "description": "YouTube URL", "required": True},
+                "transcript_data": {"type": "string", "description": "Placeholder for fetch output", "required": True},
+                "summary": {"type": "string", "description": "Placeholder for summarize output", "required": True},
+            },
         }
 
         # Parameters extracted from natural language by planner.
@@ -522,7 +543,11 @@ class TestEdgeCases:
 
     def test_circular_references(self, mock_registry):
         """Test handling of circular references (last write wins)."""
-        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"value": "${circular}"}}], "edges": []}
+        ir = {
+            "nodes": [{"id": "node1", "type": "mock-node", "params": {"value": "${circular}"}}],
+            "edges": [],
+            "inputs": {"circular": {"type": "string", "description": "Circular ref", "required": True}},
+        }
 
         # Initial params and shared store both have 'circular'
         initial_params = {"circular": "from_params"}
@@ -542,7 +567,11 @@ class TestEdgeCases:
         validator (recognizes 'a' as a valid reference root) and the
         template resolver (traverses the nested path at runtime).
         """
-        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"deep": "${a.b.c.d.e.f.g}"}}], "edges": []}
+        ir = {
+            "nodes": [{"id": "node1", "type": "mock-node", "params": {"deep": "${a.b.c.d.e.f.g}"}}],
+            "edges": [],
+            "inputs": {"a": {"type": "any", "description": "Nested data", "required": True}},
+        }
 
         nested_data = {"b": {"c": {"d": {"e": {"f": {"g": "deeply_nested_value"}}}}}}
         shared = _compile_and_run(ir, mock_registry, initial_params={"a": nested_data})

@@ -174,6 +174,40 @@ def _coerce_provided_input(
     return coerced_value, was_coerced
 
 
+def _check_undeclared_extras(declared_names: set[str], provided_params: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Detect keys in ``provided_params`` that are not declared as workflow inputs.
+
+    Framework-internal keys (starting with ``_``, covering ``_pflow_*`` and
+    ``__*__``) are compiler/runtime-injected and never user-authored, so they
+    are filtered from the extras set. Symmetric with the sub-workflow check in
+    ``WorkflowValidator._check_required_inputs`` (GH #288 / task 153).
+
+    Returns a list of ``(message, path, suggestion)`` tuples consumed by
+    ``_raise_input_validation_errors``.
+    """
+    user_provided = [k for k in provided_params if not k.startswith("_")]
+    extras = sorted(set(user_provided) - declared_names)
+    if not extras:
+        return []
+
+    from pflow.core.suggestion_utils import find_similar_items
+
+    errors: list[tuple[str, str, str]] = []
+    sorted_declared = sorted(declared_names)
+    for extra in extras:
+        if sorted_declared:
+            similar = find_similar_items(extra, sorted_declared, max_results=2, method="fuzzy")
+            message = f"Unknown input '{extra}' — not declared by this workflow."
+            suggestion = (
+                f"Did you mean '{similar[0]}'?" if similar else f"Available inputs: {', '.join(sorted_declared)}"
+            )
+        else:
+            message = f"Unknown input '{extra}' — this workflow declares no inputs."
+            suggestion = "Remove the parameter, or declare it in ## Inputs."
+        errors.append((message, f"inputs.{extra}", suggestion))
+    return errors
+
+
 def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
     """Validate basic IR structure (nodes, edges arrays).
 
@@ -263,7 +297,11 @@ def prepare_inputs(
     # Extract input declarations (backward compatible with workflows without inputs)
     inputs = workflow_ir.get("inputs", {})
 
-    # If no inputs declared, nothing to validate
+    # Reject undeclared extras (GH #288, symmetric with sub-workflow check in
+    # WorkflowValidator._check_required_inputs).
+    errors.extend(_check_undeclared_extras(set(inputs.keys()), provided_params))
+
+    # If no inputs declared, nothing else to validate
     if not inputs:
         logger.debug("No inputs declared for workflow", extra={"phase": "input_validation"})
         return errors, defaults, env_param_names
