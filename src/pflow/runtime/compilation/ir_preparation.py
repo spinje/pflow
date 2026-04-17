@@ -174,18 +174,38 @@ def _coerce_provided_input(
     return coerced_value, was_coerced
 
 
+def _is_framework_param_key(key: str) -> bool:
+    """Whether ``key`` matches the documented framework-key conventions.
+
+    Two patterns are recognized, matching what the Runner / compiler actually
+    inject into ``initial_params`` before ``prepare_inputs`` runs:
+
+    - ``_pflow_*`` — single-underscore framework namespace
+      (e.g. ``_pflow_workflow_file``, ``_pflow_depth``, ``_pflow_stack``).
+    - ``__*__`` — dunder-wrapped metadata keys
+      (e.g. ``__template_resolution_mode__``, ``__registry__``).
+
+    Any other underscore-prefixed name (e.g. ``_foo``) is treated as
+    user-authored. Keeps user typos like ``_foo`` for declared ``foo``
+    visible as extras errors, and catches framework-key typos like
+    ``_pflow_workflo_file`` as unknown inputs instead of silently dropping
+    them. ``is_valid_parameter_name`` already rejects ``__*__`` user names
+    at schema validation, so a user cannot collide with the dunder form.
+    """
+    return key.startswith("_pflow_") or (key.startswith("__") and key.endswith("__"))
+
+
 def _check_undeclared_extras(declared_names: set[str], provided_params: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Detect keys in ``provided_params`` that are not declared as workflow inputs.
 
-    Framework-internal keys (starting with ``_``, covering ``_pflow_*`` and
-    ``__*__``) are compiler/runtime-injected and never user-authored, so they
-    are filtered from the extras set. Symmetric with the sub-workflow check in
+    Framework-internal keys are filtered via :func:`_is_framework_param_key`.
+    Symmetric with the sub-workflow check in
     ``WorkflowValidator._check_required_inputs`` (GH #288 / task 153).
 
     Returns a list of ``(message, path, suggestion)`` tuples consumed by
     ``_raise_input_validation_errors``.
     """
-    user_provided = [k for k in provided_params if not k.startswith("_")]
+    user_provided = [k for k in provided_params if not _is_framework_param_key(k)]
     extras = sorted(set(user_provided) - declared_names)
     if not extras:
         return []
