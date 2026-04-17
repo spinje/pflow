@@ -21,14 +21,17 @@ class TestWorkflowExecutor:
         assert hasattr(node, "post")
 
     def test_parameter_validation(self):
-        """Test parameter validation in prep phase."""
+        """Missing workflow ref: prep() captures the failure into _prep_error
+        marker so exec()/post() dispatch it through error_action (GH #284).
+        """
         node = WorkflowExecutor()
         shared: dict = {}
 
-        # No workflow reference should raise error
+        # No workflow reference — marker returned instead of raising
         node.set_params({})
-        with pytest.raises(ValueError, match="requires a 'workflow' parameter"):
-            node.prep(shared)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "requires a 'workflow' parameter" in prep_res["_prep_error"]
 
     def test_circular_dependency_detection(self, tmp_path):
         """Test circular dependency detection."""
@@ -50,8 +53,10 @@ class TestWorkflowExecutor:
             "workflow": str(workflow_file),  # Already in stack
         })
 
-        with pytest.raises(ValueError, match="Circular workflow reference"):
-            node.prep(shared)
+        # Cycle detection now routes through error_action (GH #284)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "Circular workflow reference" in prep_res["_prep_error"]
 
     def test_max_depth_enforcement(self, tmp_path):
         """Test maximum nesting depth."""
@@ -67,8 +72,10 @@ class TestWorkflowExecutor:
         shared = {"_pflow_depth": 10}  # Already at max depth
         node.set_params({"workflow": str(child_file), "max_depth": 10})
 
-        with pytest.raises(RecursionError, match="Maximum workflow nesting depth"):
-            node.prep(shared)
+        # Max depth routes through error_action (GH #284)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "Maximum workflow nesting depth" in prep_res["_prep_error"]
 
     def test_parameter_mapping(self, tmp_path):
         """Test that values in the ``inputs:`` dict are extracted as child inputs."""
@@ -196,8 +203,11 @@ class TestWorkflowExecutor:
         node.set_params({"workflow": str(child_workflow)})
         shared: dict[str, object] = {"__parser_diagnostics__": []}
 
-        with pytest.raises(ValueError, match="missing required inputs"):
-            node.prep(shared)
+        # Input-shape error routes through error_action marker (GH #284).
+        # Parser warnings must still propagate to shared even on the error path.
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "missing required inputs" in prep_res["_prep_error"]
 
         parser_diagnostics = shared["__parser_diagnostics__"]
         assert isinstance(parser_diagnostics, list)

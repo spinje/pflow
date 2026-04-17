@@ -75,13 +75,14 @@ class TestWorkflowSavedName:
             assert prep_res["workflow_source"] == "name:test-workflow"
 
     def test_workflow_name_not_found(self):
-        """When saved workflow name does not exist, raise WorkflowNotFoundError."""
+        """Missing saved workflow routes through error_action marker (GH #284)."""
         node = WorkflowExecutor()
         node.set_params({"workflow": "non-existent-workflow"})
 
         shared = {}
-        with pytest.raises(WorkflowNotFoundError, match="non-existent-workflow"):
-            node.prep(shared)
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "non-existent-workflow" in prep_res["_prep_error"]
 
     def test_workflow_name_circular_dependency(self, workflow_manager):
         """When saved workflow is already on the execution stack, detect circular reference."""
@@ -96,8 +97,10 @@ class TestWorkflowSavedName:
             # Simulate being called from within the same workflow
             shared = {"_pflow_stack": [workflow_path]}
 
-            with pytest.raises(ValueError, match="Circular workflow reference detected"):
-                node.prep(shared)
+            # Circular reference routes through error_action marker (GH #284).
+            prep_res = node.prep(shared)
+            assert "_prep_error" in prep_res
+            assert "Circular workflow reference detected" in prep_res["_prep_error"]
 
     def test_workflow_name_with_direct_params(self, workflow_manager):
         """Child inputs are passed via the ``inputs:`` dict."""
@@ -162,8 +165,10 @@ class TestWorkflowSavedName:
         node.set_params({"workflow": "test"})
 
         shared = {}
-        with pytest.raises(WorkflowNotFoundError, match="test"):
-            node.prep(shared)
+        # WorkflowManager raises WorkflowNotFoundError → routed via marker (GH #284).
+        prep_res = node.prep(shared)
+        assert "_prep_error" in prep_res
+        assert "test" in prep_res["_prep_error"]
 
     def test_workflow_name_integration(self, workflow_manager, simple_workflow_ir):
         """Full prep-exec cycle: saved name loading with inputs: dict, no output_mapping."""

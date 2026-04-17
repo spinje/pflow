@@ -339,16 +339,15 @@ class TestWorkflowExecutorIntegration:
                 assert action == "default"
 
     def test_workflow_executor_handles_missing_workflow(self, workflow_manager):
-        """Test WorkflowExecutor error handling for missing workflows."""
-        from pflow.core.exceptions import WorkflowNotFoundError
-
+        """Missing saved workflow routes through error_action marker (GH #284)."""
         with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
             executor = WorkflowExecutor()
             executor.params = {"workflow": "non-existent"}
 
             shared = {}
-            with pytest.raises(WorkflowNotFoundError, match="non-existent"):
-                executor.prep(shared)
+            prep_res = executor.prep(shared)
+            assert "_prep_error" in prep_res
+            assert "non-existent" in prep_res["_prep_error"]
 
 
 class TestCLIIntegration:
@@ -441,14 +440,13 @@ class TestErrorHandling:
         workflows = workflow_manager.list_all()
         assert workflows == []  # Empty list, no error
 
-        # WorkflowExecutor should raise error
-        from pflow.core.exceptions import WorkflowNotFoundError
-
+        # Missing saved workflow routes through error_action marker (GH #284).
         with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
             executor = WorkflowExecutor()
             executor.set_params({"workflow": "missing"})
-            with pytest.raises(WorkflowNotFoundError, match="missing"):
-                executor.prep({})
+            prep_res = executor.prep({})
+            assert "_prep_error" in prep_res
+            assert "missing" in prep_res["_prep_error"]
 
     def test_corrupted_workflow_file(self, workflow_manager, sample_markdown):
         """Test handling of corrupted workflow files."""
