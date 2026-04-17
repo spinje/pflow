@@ -274,7 +274,13 @@ class WorkflowManager:
             return loaded
 
         except MarkdownParseError as e:
-            raise WorkflowValidationError(f"Invalid workflow '{name}': {e}") from e
+            # Preserve structured diagnostics — don't flatten to a string.
+            # The CLI boundary (PflowCLI.invoke) renders validation_errors
+            # via format_diagnostic, matching --validate-only output.
+            raise WorkflowValidationError(
+                f"Invalid workflow '{name}'",
+                validation_errors=e.to_diagnostics(),
+            ) from e
         except Exception as e:
             if isinstance(e, WorkflowValidationError):
                 raise

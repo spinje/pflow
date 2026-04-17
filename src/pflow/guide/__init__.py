@@ -215,8 +215,18 @@ def _try_load_saved_workflow(name: str) -> dict | None:
     except WorkflowNotFoundError:
         return None
     except Exception as e:
+        # Preserve structured diagnostics — WorkflowValidationError now carries
+        # validation_errors (task 153 shape), str(e) is just the summary.
+        from pflow.core.exceptions import WorkflowValidationError
+
+        detail = str(e)
+        if isinstance(e, WorkflowValidationError) and e.validation_errors:
+            from pflow.core.diagnostic_render import format_diagnostic
+
+            rendered = "\n".join(format_diagnostic(d) for d in e.validation_errors)
+            detail = f"{e.summary}\n{rendered}"
         raise GuideError(
-            f"Saved workflow '{name}' failed to load: {e}\nUse explicit topics instead: `pflow guide <topics...>`"
+            f"Saved workflow '{name}' failed to load: {detail}\nUse explicit topics instead: `pflow guide <topics...>`"
         ) from e
 
 

@@ -6,10 +6,12 @@ import signal
 import sys
 from contextlib import suppress
 from importlib.metadata import version as pkg_version
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import click
 
+from pflow.cli.error_output import output_error
+from pflow.core.exceptions import PflowError
 from pflow.guide import render_entry_content
 
 
@@ -45,6 +47,25 @@ class PflowCLI(click.Group):
             ctx.exit(1)
 
         return "run", self.get_command(ctx, "run"), args
+
+    def invoke(self, ctx: click.Context) -> Any:
+        # Group-level error boundary: route uncaught PflowError subclasses
+        # through the unified diagnostic pipeline so subcommands (describe,
+        # history, save, etc.) render structured errors instead of raw
+        # Python tracebacks. The `run` command has its own boundary with
+        # full --output-format / metrics parity; it never lets PflowError
+        # escape, so this override is inert for that path.
+        try:
+            return super().invoke(ctx)
+        except PflowError as e:
+            obj = ctx.obj or {}
+            output_error(
+                ctx,
+                exception=e,
+                output_format=obj.get("output_format", "text"),
+                verbose=obj.get("verbose", False),
+            )
+            ctx.exit(1)
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         formatter.write_usage(ctx.command_path, "[OPTIONS] COMMAND [ARGS]...")

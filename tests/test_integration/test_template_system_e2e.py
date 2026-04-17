@@ -80,6 +80,11 @@ def test_template_with_path_traversal():
         # Create workflow that uses path traversal
         workflow_ir = {
             "ir_version": "0.1.0",
+            "inputs": {
+                "paths": {"type": "object", "description": "Path bundle", "required": True},
+                "data": {"type": "object", "description": "Data bundle", "required": True},
+                "config": {"type": "object", "description": "Config bundle", "required": True},
+            },
             "nodes": [
                 {
                     "id": "writer",
@@ -120,6 +125,9 @@ def test_template_fallback_to_shared_store():
         # Workflow that expects content from shared store
         workflow_ir = {
             "ir_version": "0.1.0",
+            "inputs": {
+                "output_path": {"type": "string", "description": "Output path", "required": True},
+            },
             "nodes": [
                 {
                     "id": "writer",
@@ -153,6 +161,9 @@ def test_template_priority_initial_params_over_shared():
     with tempfile.TemporaryDirectory() as tmpdir:
         workflow_ir = {
             "ir_version": "0.1.0",
+            "inputs": {
+                "message": {"type": "string", "description": "Message body", "required": True},
+            },
             "nodes": [
                 {
                     "id": "writer",
@@ -184,6 +195,11 @@ def test_workflow_reusability():
         # Define reusable workflow
         workflow_ir = {
             "ir_version": "0.1.0",
+            "inputs": {
+                "output_file": {"type": "string", "description": "Output file path", "required": True},
+                "user_name": {"type": "string", "description": "User name", "required": True},
+                "task_id": {"type": "string", "description": "Task ID", "required": True},
+            },
             "nodes": [
                 {
                     "id": "writer",
