@@ -10,6 +10,8 @@ from typing import Any, ClassVar
 
 import click
 
+from pflow.cli.error_output import output_error
+from pflow.core.exceptions import PflowError
 from pflow.guide import render_entry_content
 
 
@@ -53,9 +55,6 @@ class PflowCLI(click.Group):
         # Python tracebacks. The `run` command has its own boundary with
         # full --output-format / metrics parity; it never lets PflowError
         # escape, so this override is inert for that path.
-        from pflow.cli.error_output import output_error
-        from pflow.core.exceptions import PflowError
-
         try:
             return super().invoke(ctx)
         except PflowError as e:
