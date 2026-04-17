@@ -3573,6 +3573,221 @@ class TestConditionalBranching:
         with pytest.raises(MarkdownParseError, match=r"'handler'.*routing target.*no.*'- next:'"):
             parse_markdown(content)
 
+    def test_missing_next_fix_snippet_includes_doc_successor(self) -> None:
+        """Regression guard for #308: when a document-order successor exists,
+        the Fix snippet must offer ``- next: <doc_successor>`` as the likely
+        continuation — not only ``- next: end``.
+
+        Before the fix, prose named the successor but the code snippet only
+        showed ``- next: end``. Users who copy-pasted the snippet silently
+        converted a fall-through bug into a terminate bug (dropping the
+        successor from every run of that branch).
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to branch.
+
+            - type: code
+
+            ```python code
+            next: str = "branch"
+            result: int = 0
+            ```
+
+            ### fallback
+
+            Default next.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo fallback
+            ```
+
+            ### branch
+
+            Branch target missing - next:, with doc-order successor.
+
+            - type: shell
+
+            ```shell command
+            echo branch
+            ```
+
+            ### continuation
+
+            Document-order successor of branch.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo continuation
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+
+        msg = str(excinfo.value)
+        # Pins the `heading_lines` plumbing end-to-end: `MarkdownParseError`
+        # prepends "Line N: " when `line=` is populated. If this prefix is
+        # missing, the heading_line was lost somewhere between
+        # `parse_markdown` and the `raise` site.
+        assert msg.startswith("Line "), f"Expected 'Line N:' prefix from heading_lines plumbing. Got:\n{msg}"
+        assert "- next: continuation" in msg, (
+            "Fix snippet must include the document-order successor as the likely "
+            f"continuation (regression guard for #308). Got:\n{msg}"
+        )
+        assert "- next: end" in msg, "Fix snippet must still include '- next: end' as the safe fallback."
+
+    def test_missing_next_omits_doc_successor_when_successor_is_branch_target(self) -> None:
+        """When the document-order successor is itself a branch target, the
+        Fix snippet must NOT suggest it as a continuation.
+
+        Verified via adversarial end-to-end testing: applying such a
+        suggestion cascades into another missing-`- next:` error on the
+        successor, and iterated blind-apply can form runtime cycles
+        (caught by the loop guard but a wasted user iteration).
+
+        Symmetric with ``_infer_convergence_candidate``'s
+        ``cid not in branch_target_routers`` filter — keeps the
+        suggest-what-we-can-safely-infer invariant consistent across both
+        validators.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router-a
+
+            First router.
+
+            - type: code
+
+            ```python code
+            next: str = "handler-a"
+            result: int = 0
+            ```
+
+            ### fallback-a
+
+            Default.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo fa
+            ```
+
+            ### handler-a
+
+            Branch target missing - next:. Doc successor is handler-b (also a branch target).
+
+            - type: shell
+
+            ```shell command
+            echo ha
+            ```
+
+            ### handler-b
+
+            Doc successor of handler-a AND a branch target (of router-b).
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo hb
+            ```
+
+            ### router-b
+
+            Makes handler-b a branch target.
+
+            - type: code
+            - next: end
+
+            ```python code
+            next: str = "handler-b"
+            result: int = 0
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        msg = str(excinfo.value)
+
+        # The fall-through warning in prose should still fire — useful
+        # diagnostic info even when we can't offer handler-b as a fix.
+        assert "fall through to 'handler-b'" in msg, (
+            f"Fall-through warning should still name the doc-order successor "
+            f"in prose even when we don't suggest it as a fix. Got:\n{msg}"
+        )
+        # But the fix snippet must not suggest handler-b as a continuation
+        # (applying it creates a cascade error and potential runtime loop).
+        fix_snippets = [line.strip() for line in msg.split("\n") if line.strip().startswith("- next:")]
+        assert fix_snippets == ["- next: end"], (
+            f"When doc_successor is itself a branch target, fix snippet must "
+            f"be exactly '- next: end' — no suggestion of handler-b. "
+            f"Got: {fix_snippets}\nFull message:\n{msg}"
+        )
+
+    def test_missing_next_annotates_on_error_router(self) -> None:
+        """When the router reaches the target via '- on-error:', the error
+        message annotates the router as '(on-error)'.
+
+        The on-error mechanism is the only routing distinction that's reliably
+        recoverable from edge data. Surfacing it in the message helps agents
+        understand *why* this node is a routing target without re-reading the
+        router.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            Risky step.
+
+            - type: shell
+            - on-error: handler
+            - next: end
+
+            ```shell command
+            echo a
+            ```
+
+            ### handler
+
+            Error handler without - next:.
+
+            - type: shell
+
+            ```shell command
+            echo error
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        msg = str(excinfo.value)
+        assert "(on-error)" in msg, (
+            f"Router reaching target via '- on-error:' should be annotated '(on-error)' in the error. Got:\n{msg}"
+        )
+
     # --- Validation 3: Non-router node falling into branch target ---
 
     def test_non_router_falling_into_branch_target_raises(self) -> None:
@@ -3653,6 +3868,185 @@ class TestConditionalBranching:
         # Should not raise — router IS the source of the error edge to handler
         result = parse_markdown(content)
         assert result.ir is not None
+
+    def test_fallthrough_fix_includes_convergence_when_inferred(self) -> None:
+        """When multiple branch targets explicitly route to the same
+        non-branch-target node, that node is the likely convergence point.
+        The fall-through-into-branch-target error should offer it as the
+        likely-continuation fix alongside '- next: end'.
+
+        Analogous to the #308 fix for the sibling validator: when pflow can
+        infer the probable intent, the fix snippet should name it rather than
+        suggesting only the safe terminator.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First router with error handler.
+
+            - type: shell
+            - on-error: handler-a
+            - next: main-flow
+
+            ```shell command
+            echo a
+            ```
+
+            ### main-flow
+
+            Main flow node that falls through into handler-a.
+
+            - type: shell
+
+            ```shell command
+            echo main
+            ```
+
+            ### handler-a
+
+            First branch target, converges on 'merge'.
+
+            - type: shell
+            - next: merge
+
+            ```shell command
+            echo ha
+            ```
+
+            ### step-b
+
+            Second router with error handler.
+
+            - type: shell
+            - on-error: handler-b
+            - next: merge
+
+            ```shell command
+            echo b
+            ```
+
+            ### handler-b
+
+            Second branch target, also converges on 'merge'.
+
+            - type: shell
+            - next: merge
+
+            ```shell command
+            echo hb
+            ```
+
+            ### merge
+
+            Convergence point (not a branch target).
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo merge
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        msg = str(excinfo.value)
+
+        assert "flows into" in msg, f"Expected the fall-through-into-branch-target error. Got:\n{msg}"
+        assert "- next: merge" in msg, (
+            f"Fix snippet must include the inferred convergence 'merge' as the "
+            f"likely continuation (regression guard: sibling-validator version "
+            f"of #308's trap). Got:\n{msg}"
+        )
+        assert "- next: end" in msg, "Fix snippet must still include '- next: end' as the safe fallback."
+
+    def test_fallthrough_fix_omits_convergence_when_not_inferable(self) -> None:
+        """When convergence evidence is weak (fewer than 2 branch targets
+        route to the same non-branch-target node), the fall-through error's
+        fix snippet must show ONLY '- next: end' — never fabricate a
+        plausible-looking candidate.
+
+        Guards the conservatism contract of ``_infer_convergence_candidate``
+        (docstring: 'false positives would mislead the user worse than the
+        current behavior'). A bug lowering the voter threshold to >=1 or
+        dropping the 'exclude branch targets' filter would pass the positive
+        convergence test but fail this one.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Single router with one handler — not enough voters for
+            convergence inference.
+
+            - type: shell
+            - on-error: handler
+            - next: end
+
+            ```shell command
+            echo route
+            ```
+
+            ### main-flow
+
+            Main flow node that falls through into handler.
+
+            - type: shell
+
+            ```shell command
+            echo main
+            ```
+
+            ### handler
+
+            The only branch target.
+
+            - type: shell
+            - next: tail
+
+            ```shell command
+            echo h
+            ```
+
+            ### tail
+
+            Non-branch-target; only 1 voter (handler), below threshold.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo tail
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        msg = str(excinfo.value)
+
+        assert "flows into" in msg, f"Expected the fall-through error. Got:\n{msg}"
+        # Extract only the code-snippet `- next:` lines and assert the sole
+        # suggestion is `end` — no fabricated candidate like `- next: tail`
+        # or `- next: handler` should leak into the fix block.
+        fix_snippets = [line.strip() for line in msg.split("\n") if line.strip().startswith("- next:")]
+        assert fix_snippets == ["- next: end"], (
+            f"When no convergence is inferable, fix snippet must be exactly "
+            f"'- next: end' with no fabricated candidate. Got: {fix_snippets}\n"
+            f"Full message:\n{msg}"
+        )
+        # Convergence language should not appear when no convergence is inferred.
+        assert "convergence point" not in msg, (
+            f"Convergence language must only appear when an actual convergence node was inferred. Got:\n{msg}"
+        )
 
     def test_next_multi_target_with_end(self) -> None:
         """'- next: step-3, end' creates edges for step-3 only, not for 'end'."""
