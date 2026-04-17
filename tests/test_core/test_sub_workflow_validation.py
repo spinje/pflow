@@ -1720,6 +1720,66 @@ class TestBatchItemValidation:
             f"Load-error diagnostic must carry batch_item_index, got: {load_errors[0].context}"
         )
 
+    def test_hetero_workflows_with_invariant_inputs_checks_each_child(self, tmp_path: Path) -> None:
+        """Regression for the ``inputs_check_done`` silent-bypass: when
+        ``params.workflow`` varies per item but ``params.inputs`` is a literal
+        dict, the invariant-inputs key set still has to be validated against
+        EACH child — not just the first. Child A may declare exactly those
+        keys while Child B declares something completely different.
+
+        Before the fix, iter 0 validated against child_a (clean), iter 1
+        short-circuited, and child_b's undeclared/missing violations were
+        invisible until runtime.
+        """
+        child_a = tmp_path / "child-a.pflow.md"
+        child_b = tmp_path / "child-b.pflow.md"
+        self._child_declaring(child_a, "x")
+        self._child_declaring(child_b, "y")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${item.workflow}",
+                        "inputs": {"x": "v"},  # literal, invariant across items
+                    },
+                    "batch": {
+                        "items": [
+                            {"workflow": str(child_a)},  # declares x ✓
+                            {"workflow": str(child_b)},  # declares y only — x is extra, y missing
+                        ],
+                        "parallel": False,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        # child_b's contract is violated in both directions — x is extra, y is missing.
+        b_extras = [e for e in errors if "'x'" in e.message and "does not declare" in e.message]
+        b_missing = [e for e in errors if "requires input 'y'" in e.message]
+        assert b_extras, (
+            f"child_b's undeclared-extra 'x' must be caught at parse time — "
+            f"silent bypass would show up as no extras diagnostic. All errors: "
+            f"{[e.message for e in errors]}"
+        )
+        assert b_missing, (
+            f"child_b's missing-required 'y' must be caught at parse time. All errors: {[e.message for e in errors]}"
+        )
+        # child_a is clean (x is exactly its declared input) — no diagnostic for it.
+        a_errors = [e for e in errors if "child-a" in e.message]
+        assert a_errors == [], f"child_a satisfies its contract; expected no errors, got: {a_errors}"
+
     def test_nested_batch_grandchild_bug_caught_with_provenance(self, tmp_path: Path) -> None:
         """Parent batch → child batch → grandchild with undeclared-input bug.
         Validator recurses through both batch layers; the deepest diagnostic

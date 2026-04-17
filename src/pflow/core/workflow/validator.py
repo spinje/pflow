@@ -718,20 +718,17 @@ class WorkflowValidator:
             node_id = node.get("id", "unknown")
 
             # A workflow-type node makes one or more child calls. The enumerator
-            # yields one call per batch item (or a single call for non-batch),
-            # with ``inputs_from_item`` telling us whether per-item inputs vary.
-            inputs_check_done = False
+            # yields one call per batch item (or a single call for non-batch).
+            # Every call runs the full input-contract check — a previous iteration
+            # validating against child_a tells us nothing about child_b's contract.
+            # Truly-identical diagnostics (same child, same bug, N items) collapse
+            # at the ``deduplicate_diagnostics`` boundary below.
             for effective_params, batch_item_index, inputs_from_item in WorkflowValidator._enumerate_child_calls(node):
-                # Invariant-inputs batches (literal dict at params level) would
-                # produce N identical input-check diagnostics if we ran the check
-                # per-item. Run once, then skip on subsequent iterations.
-                run_inputs_check = inputs_from_item or not inputs_check_done
                 call_diagnostics = WorkflowValidator._validate_one_child_call(
                     node_id=node_id,
                     effective_params=effective_params,
                     batch_item_index=batch_item_index,
                     inputs_from_item=inputs_from_item,
-                    run_inputs_check=run_inputs_check,
                     seen=seen,
                     ir_cache=ir_cache,
                     workflow_file=workflow_file,
@@ -739,8 +736,6 @@ class WorkflowValidator:
                     skip_node_types=skip_node_types,
                 )
                 diagnostics.extend(call_diagnostics)
-                if run_inputs_check:
-                    inputs_check_done = True
 
         # Dedup here (not just at the runner) because ``save_service`` and other
         # callers invoke ``WorkflowValidator.validate()`` directly, bypassing the
@@ -757,7 +752,6 @@ class WorkflowValidator:
         effective_params: dict[str, Any],
         batch_item_index: Optional[int],
         inputs_from_item: bool,
-        run_inputs_check: bool,
         seen: set[str],
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
         workflow_file: Optional[Path],
@@ -793,14 +787,13 @@ class WorkflowValidator:
                 diagnostics.append(file_ref_error)
                 return diagnostics
 
-        if run_inputs_check:
-            child_inputs = child_ir.get("inputs") or {}
-            inputs_item_idx = batch_item_index if inputs_from_item else None
-            diagnostics.extend(
-                WorkflowValidator._check_required_inputs(
-                    node_id, ref_label, effective_params, child_inputs, inputs_item_idx
-                )
+        child_inputs = child_ir.get("inputs") or {}
+        inputs_item_idx = batch_item_index if inputs_from_item else None
+        diagnostics.extend(
+            WorkflowValidator._check_required_inputs(
+                node_id, ref_label, effective_params, child_inputs, inputs_item_idx
             )
+        )
 
         if not already_seen:
             dummy_params = generate_dummy_parameters(child_ir.get("inputs") or {})
@@ -881,7 +874,10 @@ class WorkflowValidator:
         template string (e.g. ``${item.inputs}``). That signal tells callers
         whether an inputs-contract violation should be blamed on the specific
         item (``batch.items[N].inputs``) or on the invariant params dict
-        (``params.inputs``).
+        (``params.inputs``). A literal dict whose VALUES happen to reference
+        the item (``inputs: {msg: "${item.x}"}``) is NOT ``inputs_from_item`` —
+        only the key set matters for the contract check, and keys in a literal
+        dict are invariant regardless of what values contain.
 
         Mirrors the runtime binding at ``batch_executor.py:286``
         (``item_shared[alias] = item`` before per-item template resolution).
@@ -936,8 +932,7 @@ class WorkflowValidator:
         """
         if isinstance(value, str):
             for var in TemplateResolver.extract_variables(value):
-                root = var.split(".", 1)[0].split("[", 1)[0]
-                if root == alias:
+                if TemplateResolver.extract_root_node_id(var) == alias:
                     return True
             return False
         if isinstance(value, dict):
