@@ -3,6 +3,134 @@
 Migrate files between directories following a manifest, with backup,
 reporting, cleanup, and error logging.
 
+## Inputs
+
+### migration_dir
+
+Directory containing the migration manifest.
+
+- type: string
+- required: true
+
+### destination_dir
+
+Directory that new files are copied into.
+
+- type: string
+- required: true
+
+### backup_dir
+
+Directory used to back up the destination before the migration.
+
+- type: string
+- required: true
+
+### source_dir
+
+Directory containing the new files.
+
+- type: string
+- required: true
+
+### archive_dir
+
+Directory that superseded files are moved into.
+
+- type: string
+- required: true
+
+### temp_dir
+
+Directory holding temporary files that must be cleaned up.
+
+- type: string
+- default: /tmp
+
+### reports_dir
+
+Directory where the migration report is written.
+
+- type: string
+- default: ./reports
+
+### logs_dir
+
+Directory where migration errors are logged.
+
+- type: string
+- default: ./logs
+
+### timestamp
+
+Timestamp used in backup, report, and log filenames.
+
+- type: string
+- default: "unknown"
+
+### timestamp_destination
+
+Timestamp-based directory name used under backup_dir for this run.
+
+- type: string
+- default: "unknown"
+
+### current_file
+
+Filename in source_dir to copy during this run.
+
+- type: string
+- required: true
+
+### old_file
+
+Filename in destination_dir to archive during this run.
+
+- type: string
+- required: true
+
+### temp_file
+
+Filename to remove from temp_dir during cleanup.
+
+- type: string
+- required: true
+
+### copied_count
+
+Number of files copied — typically supplied by an outer pipeline.
+
+- type: integer
+- default: 0
+
+### moved_count
+
+Number of files moved — typically supplied by an outer pipeline.
+
+- type: integer
+- default: 0
+
+### error_count
+
+Number of errors observed — typically supplied by an outer pipeline.
+
+- type: integer
+- default: 0
+
+### error_message
+
+Message recorded by the error handler.
+
+- type: string
+- default: ""
+
+### current_operation
+
+Name of the operation that triggered the error.
+
+- type: string
+- default: ""
+
 ## Steps
 
 ### read_manifest
@@ -58,7 +186,7 @@ Remove temporary files created during the migration.
 Write a summary report of the migration results.
 
 - type: write-file
-- file_path: ${reports_dir}/migration_${timestamp.log}
+- file_path: ${reports_dir}/migration_${timestamp}.log
 - content: "Migration completed at ${timestamp}\nFiles copied: ${copied_count}\nFiles moved: ${moved_count}\nErrors: ${error_count}"
 
 ### handle_error
@@ -66,6 +194,6 @@ Write a summary report of the migration results.
 Log errors that occur during migration for later investigation.
 
 - type: write-file
-- file_path: ${logs_dir}/error_${timestamp.log}
+- file_path: ${logs_dir}/error_${timestamp}.log
 - content: "Error during migration: ${error_message}\nTimestamp: ${timestamp}\nCurrent operation: ${current_operation}"
 - append: true

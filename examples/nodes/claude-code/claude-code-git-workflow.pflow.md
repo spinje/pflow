@@ -32,11 +32,6 @@ Analyze the git changes and commit history to understand what was implemented.
 - type: claude-code
 - max_turns: 3
 
-```yaml context
-diff: ${git_diff.stdout}
-commits: ${git_log.stdout}
-```
-
 ```yaml output_schema
 summary:
   type: str
@@ -55,7 +50,15 @@ testing_suggestions:
   description: Suggested test scenarios
 ```
 
-- prompt: Analyze these git changes and commit history to understand what was implemented
+```prompt
+Analyze these git changes and commit history to understand what was implemented.
+
+Diff:
+${git_diff.stdout}
+
+Recent commits:
+${git_log.stdout}
+```
 
 ### generate_pr
 
@@ -64,12 +67,6 @@ Generate a comprehensive pull request description based on the analysis.
 - type: claude-code
 - max_turns: 2
 - system_prompt: You are a senior developer writing clear, professional PR descriptions. Use markdown formatting and be concise but thorough.
-- prompt: Generate a comprehensive pull request description based on this analysis
-
-```yaml context
-analysis: ${analyze_changes.result}
-diff_stats: ${git_diff.stdout}
-```
 
 ```yaml output_schema
 title:
@@ -81,6 +78,16 @@ description:
 checklist:
   type: list
   description: PR checklist items
+```
+
+```prompt
+Generate a comprehensive pull request description based on this analysis.
+
+Analysis:
+${analyze_changes.result}
+
+Diff stats:
+${git_diff.stdout}
 ```
 
 ### save_pr

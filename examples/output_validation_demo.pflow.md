@@ -19,7 +19,7 @@ Summarize the text content using an LLM.
 - type: llm
 
 ```prompt
-Summarize this text: ${content}
+Summarize this text: ${read.content}
 ```
 
 ## Outputs

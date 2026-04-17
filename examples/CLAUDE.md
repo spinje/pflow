@@ -27,8 +27,14 @@ examples/
 
 ## Test Dependencies
 
-- `tests/test_docs/test_example_validation.py` — validates all `.pflow.md` files in `examples/` parse correctly and `examples/invalid/` fail correctly
+- `tests/test_docs/test_example_validation.py` — runs the full `WorkflowValidator.validate()` 10-step pipeline (same as `pflow --validate-only`) on every `.pflow.md` under `examples/` that isn't in `invalid/` or `legacy/`, plus asserts `examples/invalid/` files fail parsing or schema validation.
 - `tests/test_core/test_ir_examples.py` — similar validation of example files
 - `tests/test_integration/test_failed_node_invariant.py` — executes each fixture in `examples/error-handling/` end-to-end via `WorkflowRunner` and asserts on rendered diagnostic text (source lines, paste-able fixes, structured failure blocks). See `examples/error-handling/README.md` for the per-fixture contract.
 
 **Don't rename/move/delete files in `core/`, `advanced/`, `error-handling/`, or `invalid/` without checking these tests.**
+
+### Environment-dependent examples
+
+`test_example_validation.py` skips workflows whose ONLY unregistered node types match `mcp-*` — MCP tools supplied by user-configured servers (`mcp-filesystem`, `mcp-http/example-workflow`, `real-workflows/*` that reference Slack/Discord MCP tools). Workflows with any non-MCP unregistered type (typo like `wrte-file`, removed node type) still fail so regressions get caught.
+
+Skip logic walks only top-level `node.type`. If a parent workflow references a sub-workflow file whose own nodes include unregistered MCP types, the recursive validator inside `WorkflowValidator._validate_sub_workflows` will still fail — the pre-scan won't see it. No shipped example currently has that shape; add a directory-level skip if it arises.

@@ -1,271 +1,160 @@
 # Claude Code Node Examples
 
-This document provides comprehensive examples for using the Claude Code agentic node in pflow workflows.
+Examples for the `claude-code` node: an agentic super node that integrates with the Claude Agent SDK for AI-assisted development tasks.
 
-## Overview
+Features:
 
-The Claude Code node (`claude-code`) is a powerful "super node" that integrates with Claude's AI-assisted development capabilities. It features:
 - Dynamic schema-driven output for structured responses
-- Comprehensive development task execution
-- Metadata capture (cost, duration, usage)
-- Tool usage (Read, Write, Edit, Bash)
-- Dual authentication support (API key or CLI)
+- Metadata capture (cost, duration, token usage) in `llm_usage`
+- Tool use (Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch)
+- Dual authentication: API key or Claude Pro/Max CLI
 
-## Basic Examples
+## Examples
 
-### 1. Simple Code Generation (`claude-code-basic.json`)
-
-Generate code with cost tracking:
+### 1. Simple code generation — `claude-code-basic.pflow.md`
 
 ```bash
-pflow run examples/nodes/claude-code/claude-code-basic.json
+pflow examples/nodes/claude-code/claude-code-basic.pflow.md
 ```
 
-**Features demonstrated:**
-- Basic task execution
+Demonstrates:
+
+- Basic task execution via the `prompt` parameter
 - Accessing generated text via `${node.result}`
 - Cost tracking via `${node.llm_usage.cost_usd}`
-- Duration and token usage tracking
+- Duration and token usage
 
-### 2. Structured Code Review (`claude-code-schema.json`)
-
-Perform code review with structured JSON output:
+### 2. Structured code review — `claude-code-schema.pflow.md`
 
 ```bash
-pflow run examples/nodes/claude-code/claude-code-schema.json --file_path your_script.py
+pflow examples/nodes/claude-code/claude-code-schema.pflow.md file_path=your_script.py
 ```
 
-**Features demonstrated:**
-- Schema-driven output with specific fields
-- Structured data access via `${node.result.field_name}`
-- Input parameters for dynamic workflows
-- Multiple output files from single analysis
+Demonstrates:
 
-**Schema benefits:**
-- Predictable output structure
-- Type validation
-- Direct field access without parsing
-- Fallback to text if JSON parsing fails
+- `output_schema` for structured outputs
+- Field access via `${node.result.field_name}`
+- Declared workflow inputs referenced as `${file_path}`
+- Multiple output files from a single analysis
 
-### 3. Debugging Assistant (`claude-code-debug.json`)
-
-Analyze errors and get debugging assistance:
+### 3. Debugging assistant — `claude-code-debug.pflow.md`
 
 ```bash
-pflow run examples/nodes/claude-code/claude-code-debug.json --error_message "TypeError: ..."
+pflow examples/nodes/claude-code/claude-code-debug.pflow.md error_message="TypeError: ..."
 ```
 
-**Features demonstrated:**
+Demonstrates:
+
 - Error analysis with structured output
-- Root cause analysis and solutions
-- Confidence scoring
-- Prevention tips
+- Optional inputs (`code_context`, `stack_trace`)
+- Confidence scoring and prevention tips
 
-## Advanced Examples
-
-### 4. Git Workflow Integration (`claude-code-git-workflow.json`)
-
-Analyze git changes and generate PR descriptions:
+### 4. Git workflow integration — `claude-code-git-workflow.pflow.md`
 
 ```bash
-pflow run examples/nodes/claude-code/claude-code-git-workflow.json
+pflow examples/nodes/claude-code/claude-code-git-workflow.pflow.md
 ```
 
-**Features demonstrated:**
-- Integration with git nodes
-- Multi-stage analysis pipeline
-- Context passing between Claude calls
-- Cost aggregation across multiple calls
+Demonstrates:
+
+- Multi-stage analysis pipeline (shell → claude-code → claude-code → write-file)
+- Passing upstream node output into the prompt via `${node_id.field}` interpolation
 - System prompts for specific personas
+- Cost aggregation across multiple calls
 
-## Key Features
+## Schema-driven output
 
-### Schema-Driven Output
+When you provide `output_schema`, the result is parsed into a structured dict:
 
-When you provide an `output_schema`, Claude's response is automatically parsed into a structured dict:
-
-```json
-{
-  "output_schema": {
-    "summary": {"type": "str", "description": "Brief summary"},
-    "score": {"type": "int", "description": "Score from 1-10"},
-    "items": {"type": "list", "description": "List of items"}
-  }
-}
+```yaml output_schema
+summary:
+  type: str
+  description: Brief summary
+score:
+  type: int
+  description: Score from 1-10
+items:
+  type: list
+  description: List of items
 ```
 
-Access values directly:
-- `${node.result.summary}`
-- `${node.result.score}`
-- `${node.result.items}`
+Access fields directly: `${node.result.summary}`, `${node.result.score}`, `${node.result.items}`.
 
-### Metadata Access
+If JSON parsing fails, the raw text is available at `${node.result}` and an error message at `${node._schema_error}`.
 
-Every execution captures valuable metadata in `llm_usage`:
+## Passing context into the prompt
 
-```json
-{
-  "model": "claude-sonnet-4-5",
-  "input_tokens": 1234,
-  "output_tokens": 567,
-  "total_tokens": 1801,
-  "cache_creation_input_tokens": 0,
-  "cache_read_input_tokens": 890,
-  "cost_usd": 0.165,
-  "duration_ms": 4805,
-  "num_turns": 2,
-  "session_id": "..."
-}
+The node has no dedicated `context` parameter. Embed upstream data directly in the prompt using template interpolation:
+
+````markdown
+```prompt
+Analyze these changes.
+
+Diff:
+${git_diff.stdout}
+
+Commits:
+${git_log.stdout}
+```
+````
+
+This works for any template reference: workflow inputs (`${input_name}`), prior node outputs (`${node_id.field}`), and structured results (`${other_node.result.field}`).
+
+## Metadata in `llm_usage`
+
+Every execution captures:
+
+```
+${node.llm_usage.model}                         # Model identifier
+${node.llm_usage.input_tokens}                  # Non-cached input tokens
+${node.llm_usage.output_tokens}                 # Output tokens
+${node.llm_usage.total_tokens}                  # Sum of input + output
+${node.llm_usage.cache_creation_input_tokens}   # Cache-creation tokens
+${node.llm_usage.cache_read_input_tokens}       # Cache-read tokens
+${node.llm_usage.cost_usd}                      # Cost in USD
+${node.llm_usage.duration_ms}                   # Wall-clock duration
+${node.llm_usage.num_turns}                     # Conversation turns used
+${node.llm_usage.session_id}                    # Resumable session ID
 ```
 
-Access in templates:
-- `${node.llm_usage.cost_usd}`
-- `${node.llm_usage.input_tokens}`
+## Authentication
 
-### Context Parameter
+- **API key**: `export ANTHROPIC_API_KEY=sk-ant-...` — billed to your Anthropic Console account.
+- **Claude Pro/Max subscription**: `claude setup-token` (or `claude auth login`) — uses subscription entitlements.
 
-Pass complex context as a dict:
+## Parameters
 
-```json
-{
-  "context": {
-    "code": "${read_file.content}",
-    "config": "${read_config.data}",
-    "history": "${git_log.commits}"
-  }
-}
-```
+| Parameter             | Default             | Description                                                 |
+|-----------------------|---------------------|-------------------------------------------------------------|
+| `prompt`              | required            | Prompt to send to Claude                                    |
+| `output_schema`       | None                | Schema for structured output (see above)                    |
+| `cwd`                 | `os.getcwd()`       | Working directory                                           |
+| `model`               | `claude-sonnet-4-5` | Claude model identifier                                     |
+| `allowed_tools`       | All tools           | Permitted tool names (e.g., `["Read", "Write"]`)            |
+| `disallowed_tools`    | None                | Tool names or patterns to deny (e.g., `"Bash(git:*)"`)      |
+| `max_turns`           | 50                  | Maximum conversation turns                                  |
+| `max_thinking_tokens` | 8000                | Maximum tokens for extended reasoning                       |
+| `timeout`             | 300                 | Execution timeout in seconds (30–3600)                      |
+| `system_prompt`       | None                | System instructions                                         |
+| `resume`              | None                | Session ID to resume a previous conversation                |
+| `sandbox`             | None                | Sandbox configuration (see node docstring for full schema)  |
 
-### Authentication Options
+## Best practices
 
-1. **API Key (Console billing)**:
-   ```bash
-   export ANTHROPIC_API_KEY=sk-ant-...
-   pflow run workflow.json
-   ```
-
-2. **CLI Authentication (Pro/Max subscription)**:
-   ```bash
-   claude auth login
-   pflow run workflow.json
-   ```
-
-### Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `task` | Required | Development task description |
-| `context` | None | Additional context (string or dict) |
-| `output_schema` | None | JSON schema for structured output |
-| `working_directory` | `os.getcwd()` | Project root directory |
-| `model` | `claude-sonnet-4-20250514` | Claude model identifier |
-| `allowed_tools` | `["Read", "Write", "Edit", "Bash"]` | Permitted tools |
-| `max_turns` | 50 | Maximum conversation turns |
-| `max_thinking_tokens` | 8000 | Maximum tokens for reasoning |
-| `system_prompt` | None | System instructions for Claude |
-
-## Best Practices
-
-### 1. Use Schemas for Predictable Output
-When you need specific data fields, always use `output_schema`:
-```json
-{
-  "output_schema": {
-    "field_name": {"type": "type", "description": "What this field contains"}
-  }
-}
-```
-
-### 2. Set Appropriate max_turns
-- Simple tasks: `max_turns: 1`
-- Code review: `max_turns: 2-3`
-- Complex debugging: `max_turns: 5-10`
-
-### 3. Track Costs
-Always log costs for expensive operations:
-```json
-{
-  "type": "shell",
-  "params": {
-    "command": "echo Cost: $${node.llm_usage.cost_usd}"
-  }
-}
-```
-
-### 4. Use Context Wisely
-Pass structured context for complex tasks:
-```json
-{
-  "context": {
-    "requirements": "...",
-    "constraints": "...",
-    "examples": "..."
-  }
-}
-```
-
-### 5. Handle Schema Failures
-Check for `_schema_error` when using schemas:
-```bash
-# In a conditional node (future feature)
-if ${node._schema_error}:
-  echo "Failed to parse JSON, raw text available in ${node.result}"
-```
-
-## Error Handling
-
-The node provides user-friendly error messages for common issues:
-- CLI not installed → Installation instructions
-- Authentication failed → Auth command guidance
-- Rate limits → Retry suggestions
-- Timeouts → Task complexity hints
-
-## Performance Tips
-
-1. **Minimize turns**: Each turn costs money and time
-2. **Use specific prompts**: Clear instructions reduce iterations
-3. **Cache when possible**: Reuse results across workflows
-4. **Monitor costs**: Track `cost_usd` for budget management
-5. **Set timeouts**: Default is 300s, adjust for long tasks
-
-## Integration Patterns
-
-### Code Quality Pipeline
-```
-read-file → claude-code (review) → write-file (report) → git-commit
-```
-
-### Documentation Generation
-```
-git-diff → claude-code (analyze) → claude-code (document) → write-file
-```
-
-### Test Generation
-```
-read-file (code) → claude-code (generate tests) → write-file (tests) → shell (run tests)
-```
-
-### Refactoring Workflow
-```
-read-file → claude-code (analyze) → claude-code (refactor) → write-file → git-diff
-```
+- Use `output_schema` whenever you need specific fields — it eliminates regex parsing.
+- Set `max_turns` proportional to task complexity: 1 for simple generation, 2–3 for review, 5–10 for multi-step debugging.
+- Track `${node.llm_usage.cost_usd}` for budget visibility.
+- Interpolate context directly into the `prompt` — there is no `context` parameter.
+- Check `${node._schema_error}` after structured calls if downstream logic depends on parsed fields.
 
 ## Troubleshooting
 
-**Issue**: "Claude not outputting JSON despite schema"
-- **Solution**: Ensure `max_turns` > 1, as Claude may need multiple turns
+- **"Claude not outputting JSON despite schema"** — increase `max_turns` so Claude has room to refine.
+- **High cost** — reduce `max_turns`, tighten the prompt, or restrict `allowed_tools`.
+- **Timeouts** — break complex tasks into smaller steps or raise `timeout`.
+- **Authentication failed** — run `claude doctor` or verify `ANTHROPIC_API_KEY`.
 
-**Issue**: "High costs"
-- **Solution**: Reduce `max_turns`, use smaller context, batch operations
+## See also
 
-**Issue**: "Timeout errors"
-- **Solution**: Break complex tasks into smaller steps, increase timeout
-
-**Issue**: "Authentication failed"
-- **Solution**: Check `claude doctor` or verify `ANTHROPIC_API_KEY`
-
-## See Also
-
-- [Claude Code SDK Documentation](https://github.com/anthropics/claude-code-sdk)
-- [pflow Documentation](../../README.md)
-- [Other Examples](../../README.md)
+- [Claude Agent SDK documentation](https://docs.anthropic.com/en/api/claude-agent-sdk)
+- `pflow guide` — top-level guide for workflow authoring

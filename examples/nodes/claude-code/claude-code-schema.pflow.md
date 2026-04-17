@@ -20,7 +20,7 @@ Path to the Python file to review.
 Read the Python source file for review.
 
 - type: read-file
-- file_path: ${input.file_path}
+- file_path: ${file_path}
 
 ### review
 
@@ -56,12 +56,12 @@ refactored_code:
 Save the review report as a markdown file.
 
 - type: write-file
-- file_path: ${input.file_path}.review.md
+- file_path: ${file_path}.review.md
 
 ```text content
 # Code Review Report
 
-**File:** ${input.file_path}
+**File:** ${file_path}
 **Date:** $(date)
 
 ## Overall Assessment
@@ -87,5 +87,5 @@ ${review.result.refactored_code}
 Save the improved code to a separate file.
 
 - type: write-file
-- file_path: ${input.file_path}.improved.py
+- file_path: ${file_path}.improved.py
 - content: ${review.result.refactored_code}
