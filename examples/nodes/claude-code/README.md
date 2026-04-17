@@ -131,7 +131,7 @@ ${node.llm_usage.session_id}                    # Resumable session ID
 | `cwd`                 | `os.getcwd()`       | Working directory                                           |
 | `model`               | `claude-sonnet-4-5` | Claude model identifier                                     |
 | `allowed_tools`       | All tools           | Permitted tool names (e.g., `["Read", "Write"]`)            |
-| `disallowed_tools`    | None                | Tool names or patterns to deny (e.g., `"Bash(git:*)"`)      |
+| `disallowed_tools`    | None                | Tool names or patterns to deny (e.g., `["Bash(git:*)"]`)    |
 | `max_turns`           | 50                  | Maximum conversation turns                                  |
 | `max_thinking_tokens` | 8000                | Maximum tokens for extended reasoning                       |
 | `timeout`             | 300                 | Execution timeout in seconds (30–3600)                      |

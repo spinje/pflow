@@ -3,6 +3,14 @@
 Migrate files between directories following a manifest, with backup,
 reporting, cleanup, and error logging.
 
+> **Structural demo, not a runnable pipeline.** Several inputs below
+> (`copied_count`, `moved_count`, `error_count`, `error_message`,
+> `current_operation`) are declared as workflow inputs with defaults
+> so the file validates, but in a real workflow these would flow from
+> earlier node outputs (`${process_files.stdout}`, etc.). Treat this
+> file as a layout reference for multi-step file operations, not a
+> template to copy verbatim.
+
 ## Inputs
 
 ### migration_dir

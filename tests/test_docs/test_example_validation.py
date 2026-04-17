@@ -19,9 +19,11 @@ MCP types, the validator will recurse and fail; the pre-scan won't know to skip.
 No shipped example currently has that shape.
 """
 
+import copy
 from pathlib import Path
 
 import pytest
+import yaml
 
 from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
@@ -95,7 +97,7 @@ class TestExampleValidation:
         registered_types = set(registry.load().keys())
 
         skipped: list[tuple[Path, set[str]]] = []
-        failures: list[str] = []
+        failures: list[tuple[Path, str]] = []
 
         for pflow_file, ir_data in valid_workflow_files:
             used_types = _collect_used_node_types(ir_data)
@@ -104,32 +106,44 @@ class TestExampleValidation:
                 skipped.append((pflow_file, missing_types))
                 continue
 
+            # Deep-copy before mutation: the class-scoped fixture shares IR dicts
+            # across tests, and resolve_file_references writes in place. Copying
+            # isolates each test's view.
+            ir_local = copy.deepcopy(ir_data)
+            rel_path = pflow_file.relative_to(EXAMPLES_DIR)
+
             # Fill declared required inputs with dummy values — mirrors CLI
             # `--validate-only`, which runs structural validation with placeholders
             # rather than real user input.
-            dummy_params = generate_dummy_parameters(ir_data.get("inputs", {}))
+            dummy_params = generate_dummy_parameters(ir_local.get("inputs", {}))
             dummy_params["_pflow_workflow_file"] = str(pflow_file)
 
             # Resolve external file refs (e.g., `- prompt: ./prompts/x.md`) in place
             # so template validation sees the real content, matching CLI behavior.
-            resolve_file_references(ir_data, get_base_dir(dummy_params))
+            # A broken file ref in one example would otherwise crash the whole
+            # test run and mask regressions in every other example.
+            try:
+                resolve_file_references(ir_local, get_base_dir(dummy_params))
+            except (FileNotFoundError, OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+                failures.append((rel_path, f"file resolution failed: {exc}"))
+                continue
 
             diagnostics = WorkflowValidator.validate(
-                ir_data,
+                ir_local,
                 extracted_params=dummy_params,
                 registry=registry,
                 workflow_file=pflow_file,
             )
             errors = [d for d in diagnostics if d.severity == Severity.ERROR]
-            if errors:
-                rel_path = pflow_file.relative_to(EXAMPLES_DIR)
-                for err in errors:
-                    failures.append(f"  {rel_path}: {err.message}")
+            for err in errors:
+                failures.append((rel_path, err.message))
 
         if failures:
+            unique_files = {path for path, _ in failures}
+            rendered = "\n".join(f"  {path}: {msg}" for path, msg in failures)
             pytest.fail(
                 f"Full validation failed for {len(failures)} diagnostic(s) across "
-                f"{len({f.split(':')[0] for f in failures})} file(s):\n" + "\n".join(failures)
+                f"{len(unique_files)} file(s):\n{rendered}"
             )
 
     def test_invalid_examples_fail_parsing_or_validation(self, invalid_workflow_files: list[Path]) -> None:
