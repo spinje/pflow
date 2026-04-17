@@ -126,6 +126,10 @@ ${previous.results[${item.idx}]}      # Access by item field (fail_fast only)
 ```markdown
 ### report
 
+Summarizes the batch. Reads `success_count` and the results array from
+the upstream batched node — not a per-item response, since batch replaces
+the normal output shape.
+
 - type: llm
 - prompt: "Summary of ${process-each.success_count} items:\n${process-each.results}"
 ```
