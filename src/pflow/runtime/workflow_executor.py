@@ -140,9 +140,13 @@ class WorkflowExecutor(BaseNode):
         try:
             return self._prep_unsafe(shared)
         except _PREP_RECOVERABLE as e:
+            # workflow_path: raw ref when present (helps the error message
+            # even if resolution failed), "<unresolved>" otherwise.
+            ref = self.params.get("workflow")
+            path = ref if isinstance(ref, str) and ref else "<unresolved>"
             return {
                 "_prep_error": str(e),
-                "workflow_path": self._best_effort_workflow_path(),
+                "workflow_path": path,
             }
 
     def _prep_unsafe(self, shared: dict[str, Any]) -> dict[str, Any]:
@@ -196,17 +200,6 @@ class WorkflowExecutor(BaseNode):
             "execution_stack": execution_stack,
             "parent_shared": shared,
         }
-
-    def _best_effort_workflow_path(self) -> str:
-        """Path for the error message when prep failed before resolution.
-
-        Used only in the _prep_error marker. Returns the raw workflow ref
-        from params if it's a non-empty string, otherwise "<unresolved>".
-        """
-        ref = self.params.get("workflow")
-        if isinstance(ref, str) and ref:
-            return ref
-        return "<unresolved>"
 
     def _compile_sub_workflow(
         self,
@@ -323,6 +316,11 @@ class WorkflowExecutor(BaseNode):
                 "success": False,
                 "error": prep_res["_prep_error"],
                 "workflow_path": prep_res.get("workflow_path", "<unresolved>"),
+                # No child workflow ever ran — compile/execute was short-circuited
+                # by the prep failure. post()'s _expose_child_outputs() is skipped
+                # on success=False so this empty dict is never consumed, but
+                # keeping the key present preserves shape-compatibility with
+                # exec's other failure return sites.
                 "child_storage": {},
             }
 
