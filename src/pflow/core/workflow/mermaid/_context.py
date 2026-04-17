@@ -26,9 +26,6 @@ _SHAPE_MAP: dict[str, tuple[str, str, str]] = {
 _LABEL_KEYS = ("name", "label", "focus", "lens")
 _SKIP_KEYS = ("workflow", "prompt", "command", "model")
 
-# Reserved workflow params (not child inputs)
-_RESERVED_PARAMS = {"workflow", "storage_mode", "type"}
-
 # Style declarations
 _CLASSDEF_STYLES: dict[str, str] = {
     "code": "fill:#D5E8D4,stroke:#82B366,color:#000",
@@ -41,10 +38,6 @@ _CLASSDEF_STYLES: dict[str, str] = {
     "input": "fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000",
     "output": "fill:#E8E8E8,stroke:#666666,color:#000",
 }
-
-# Regex patterns
-_SOURCE_NODE_FIELD_RE = re.compile(r"(?:^|[\s{?])([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)")
-_PARAM_REF_RE = re.compile(r"\$\{([a-zA-Z0-9_-]+)(?:\.|\})")
 
 # Workflow types eligible for sub-workflow expansion
 _WORKFLOW_TYPES = {"workflow", "pflow.runtime.workflow_executor"}
@@ -255,32 +248,13 @@ def _dynamic_batch_label(batch: Optional[dict[str, Any]]) -> str:
     """
     if not batch or not isinstance(batch.get("items"), str):
         return ""
-    items_ref = batch["items"]
-    # Extract first segment from ${ref.field...}
-    match = _PARAM_REF_RE.search(items_ref)
-    source_name = match.group(1) if match else "N"
+    # Extract the first template ref's root as a display hint
+    from pflow.core.workflow.mermaid._scope import Scope
+
+    refs = Scope.refs_in(batch["items"])
+    source_name = refs[0][0] if refs else "N"
     parallel_prefix = "parallel " if batch.get("parallel", False) else ""
     return f" ({parallel_prefix}x|{source_name}|)"
-
-
-def _refs_input(value: str, input_name: str) -> bool:
-    """Check if a string value references a top-level input by name."""
-    return f"${{{input_name}}}" in value or f"${{{input_name}." in value
-
-
-def _collect_param_refs(params: dict[str, Any]) -> list[str]:
-    """Collect all string values from params, including one level of nested dicts.
-
-    Code nodes store declared inputs at ``params.inputs`` (a nested dict),
-    so we recurse one level to find those refs too.
-    """
-    refs: list[str] = []
-    for value in params.values():
-        if isinstance(value, str):
-            refs.append(value)
-        elif isinstance(value, dict):
-            refs.extend(v for v in value.values() if isinstance(v, str))
-    return refs
 
 
 def _render_classdefs(ctx: MermaidContext) -> None:

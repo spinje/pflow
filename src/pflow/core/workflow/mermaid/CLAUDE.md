@@ -2,6 +2,8 @@
 
 Generates Mermaid flowchart diagrams from workflow IR. Handles sub-workflow expansion (recursive), batch item rendering, data-flow edge inference, and structural edge routing.
 
+Reference resolution (*"given `${x.y}`, what mermaid ID does it point to?"*) goes through a single primitive: `Scope.resolve` in `_scope.py`. Three cases: batch item / sibling node (optionally routed through an output field) / declared input. All ref-consuming sites in the package use it.
+
 ## Public API
 
 ```python
@@ -25,13 +27,14 @@ Consumers: `cli/commands/visualize.py`, `tests/test_core/test_mermaid.py`, `test
 mermaid/
 ├── __init__.py    # Re-exports generate_mermaid + 5 test-visible helpers
 ├── _context.py    # MermaidConfig (frozen), MermaidContext (mutable), constants, pure utilities
+├── _scope.py      # Scope — single primitive for template-ref → mermaid-ID resolution
 ├── _edges.py      # Edge dedup/detection, routing resolution, data-flow edge generation
 ├── _io.py         # Input/output node rendering (top-level, sub-workflow, external wrappers)
 ├── _render.py     # Core pipeline: generate_mermaid → _render_workflow → _render_node
 └── CLAUDE.md
 ```
 
-**Import DAG** (no cycles): `_context` ← `_edges`, `_io` ← `_render` ← `__init__`. No cross-calls between `_edges` and `_io`.
+**Import DAG** (no cycles): `_context` ← `_scope` ← {`_edges`, `_io`} ← `_render` ← `__init__`. No cross-calls between `_edges` and `_io`.
 
 ## Function-to-File Map
 
@@ -53,7 +56,9 @@ mermaid/
 | `_generate_data_flow_edges` | `_edges.py` | Parse `${ref}` in params → edges to sub-workflow inputs |
 | `_generate_batch_item_data_flow` | `_edges.py` | Data-flow edges from parent params to expanded batch items |
 | `_extract_batch_source` | `_edges.py` | Extract source node ID from batch items template ref |
-| `_resolve_ref_source` | `_edges.py` | Resolve a template ref name to a mermaid source ID |
+| `Scope` / `Scope.resolve` | `_scope.py` | Resolve a template ref (root, field) to a mermaid source ID |
+| `Scope.refs_in` | `_scope.py` | Extract (root, field) pairs from a template binding |
+| `Scope.source_refs_in` | `_scope.py` | Extract (root, field) pairs from an output source (handles coalesce) |
 | `_render_inputs` | `_io.py` | Top-level workflow input parallelograms |
 | `_connect_top_level_inputs` | `_io.py` | Connect inputs to actual consuming nodes via param analysis |
 | `_render_top_level_outputs` | `_io.py` | Top-level output wrapper subgraph at bottom |
@@ -64,7 +69,7 @@ mermaid/
 | `_connect_sources_to_output` | `_io.py` | Parse source expression → connect producing nodes to output |
 | `MermaidConfig` | `_context.py` | Frozen config dataclass (resolve_child, max_depth, etc.) |
 | `MermaidContext` | `_context.py` | Mutable per-level state (routing maps, indent, prefix) |
-| Pure utilities (13) | `_context.py` | `_to_mermaid_id`, `_escape_label`, `_get_node_shape`, `_format_label`, `_first_sentence`, `_classdef_to_style`, `_subgraph_style`, `_get_item_label`, `_dynamic_batch_label`, `_format_node_type`, `_refs_input`, `_collect_param_refs`, `_render_classdefs` |
+| Pure utilities (11) | `_context.py` | `_to_mermaid_id`, `_escape_label`, `_get_node_shape`, `_format_label`, `_first_sentence`, `_classdef_to_style`, `_subgraph_style`, `_get_item_label`, `_dynamic_batch_label`, `_format_node_type`, `_render_classdefs` |
 
 ## Two Kinds of Edges
 
@@ -89,8 +94,8 @@ The output has **structural edges** (from the IR's `edges` list — execution or
 
 | Field | Type | Purpose | Readers |
 |-------|------|---------|---------|
-| `outgoing_routes` | `dict[str, dict[str, str]]` | Edge routing — maps mermaid IDs to `{output_name: output_mermaid_id}` | `_resolve_edge_endpoints`, `_render_edge`, `_resolve_ref_source` (routing) |
-| `has_expanded_outputs` | `set[str]` | Skip signal — "this node has expanded outputs, structural edges handle it" | `_resolve_ref_source` (line 115), `_render_edge` (line 186) |
+| `outgoing_routes` | `dict[str, dict[str, str]]` | Edge routing — maps mermaid IDs to `{output_name: output_mermaid_id}` | `_resolve_edge_endpoints`, `_render_edge`, `Scope.resolve` (sibling output routing) |
+| `has_expanded_outputs` | `set[str]` | Skip signal — "this node has expanded outputs, structural edges handle it" | `Scope.resolve` (batch item skip), `_render_edge` |
 
 Exactly **two write sites**: `_render_external_outputs` (`_io.py:348-349`) and `_render_batch_inline` (`_render.py:272-275`).
 
@@ -143,7 +148,7 @@ uv run pflow visualize <workflow> [flags] -o tests/test_core/golden_mermaid/<nam
 
 ## Common Pitfalls
 
-1. **Don't remove routing maps.** They look redundant with external IO. They're not — `has_expanded_outputs` is a shared signal for `_resolve_ref_source`. Removing entries creates cascading failures.
+1. **Don't remove routing maps.** They look redundant with external IO. They're not — `has_expanded_outputs` is a shared signal read by `Scope.resolve`. Removing entries creates cascading failures.
 2. **Don't change the mermaid ID convention.** `{prefix}{node_id}__in_{name}` and `__out_{name}` are referenced by every routing mechanism.
 3. **`suppress_io` and end nodes are coupled.** Changing one without the other causes end node regression.
 4. **`_render_workflow` return value is essential.** Returns `outgoing_routes` for nested output routing. Ignoring it causes edges to connect to subgraph boxes.
