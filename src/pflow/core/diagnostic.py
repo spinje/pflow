@@ -20,7 +20,22 @@ class Severity(Enum):
 class Diagnostic:
     """Single type for pflow diagnostics.
 
-    Identity ignores context, title, and suggestions — these are display data, not identity.
+    Identity ignores context, title, suggestions, and see_also — these are
+    display data, not identity.
+
+    ``see_also`` carries guide-topic pointers (e.g. ``["branching"]``) for
+    rule-class errors whose pattern is explained in ``pflow guide <topic>``.
+    Contract:
+
+    * Elements are topic names only (no ``pflow guide`` prefix). JSON
+      consumers reconstruct the command as ``pflow guide <topics...>``.
+    * Topic names must be slug-safe (no spaces) since the text renderer
+      joins them with spaces to produce a single invocation line.
+    * Empty list and ``None`` behave identically in serialization and
+      rendering (both omit the "See also:" line and the JSON key).
+    * Error-severity diagnostics render the pointer in text; warning-
+      severity diagnostics deliberately skip rendering to stay one-line,
+      but still emit see_also in JSON for programmatic consumers.
     """
 
     severity: Severity
@@ -30,12 +45,18 @@ class Diagnostic:
     node_id: str | None = None
     source: str = ""
     context: dict[str, Any] | None = None
+    see_also: list[str] | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.suggestions, str):
             raise TypeError(
                 f"Diagnostic.suggestions must be list[str] | None, got str: {self.suggestions!r}. "
                 f"Wrap in a list: suggestions=[{self.suggestions!r}]"
+            )
+        if isinstance(self.see_also, str):
+            raise TypeError(
+                f"Diagnostic.see_also must be list[str] | None, got str: {self.see_also!r}. "
+                f"Wrap in a list: see_also=[{self.see_also!r}]"
             )
 
     def __eq__(self, other: object) -> bool:
@@ -78,6 +99,8 @@ class Diagnostic:
             result["node_id"] = self.node_id
         if self.context:
             result["context"] = deepcopy(self.context)
+        if self.see_also:
+            result["see_also"] = list(self.see_also)
         return result
 
     def to_display_dict(self) -> dict[str, Any]:

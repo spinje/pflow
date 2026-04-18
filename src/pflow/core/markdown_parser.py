@@ -1176,7 +1176,8 @@ def _validate_dynamic_next_declarations(
                 f"    ### {node_id}\n"
                 f"    - type: code\n"
                 f"    - next: target-a, target-b\n\n"
-                f"Without '- next:', the flow will silently stop when code sets next at runtime."
+                f"Without '- next:', the flow will silently stop when code sets next at runtime.",
+                see_also=["branching"],
             )
 
 
@@ -1320,6 +1321,7 @@ def _validate_branch_targets_have_next(
             f"Node '{target_id}' is a routing target of {router_list} but has no "
             f"'- next:' directive. {context}\n\n{fix_body}",
             line=heading_lines.get(target_id),
+            see_also=["branching"],
         )
 
 
@@ -1358,6 +1360,7 @@ def _validate_no_fallthrough_into_branch_targets(
                         f"must not silently fall through into branch targets.\n\n"
                         f"{fix_body}",
                         line=heading_lines.get(source),
+                        see_also=["branching"],
                     )
 
 

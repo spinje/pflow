@@ -222,6 +222,9 @@ class MarkdownParseError(PflowError):
     Attributes:
         line: Source line number where the error occurred (1-based).
         suggestion: Optional human-readable fix suggestion.
+        see_also: Optional list of ``pflow guide`` topics that explain the
+            structural pattern behind this error (e.g. ``["branching"]`` for
+            routing-target errors).
     """
 
     def __init__(
@@ -229,10 +232,12 @@ class MarkdownParseError(PflowError):
         message: str,
         line: int | None = None,
         suggestion: str | None = None,
+        see_also: list[str] | None = None,
     ):
         self.raw_message = message
         self.line = line
         self.suggestion = suggestion
+        self.see_also = see_also
         prefix = f"Line {line}: " if line is not None else ""
         full = f"{prefix}{message}"
         if suggestion:
@@ -251,6 +256,7 @@ class MarkdownParseError(PflowError):
                 suggestions=[self.suggestion] if self.suggestion else None,
                 source="parser",
                 context=ctx,
+                see_also=self.see_also,
             )
         ]
 

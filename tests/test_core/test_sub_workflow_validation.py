@@ -1490,6 +1490,10 @@ class TestBatchItemValidation:
         assert 0 in by_index and 1 in by_index, f"Expected diagnostics for both items, got indexes: {list(by_index)}"
         assert "'wrong_a'" in by_index[0].message
         assert "'wrong_b'" in by_index[1].message
+        # see_also must survive batch + sub-workflow composition (dataclasses.replace
+        # inside _add_child_provenance preserves it; regression pin for issue #311).
+        assert by_index[0].see_also == ["sub-workflows"]
+        assert by_index[1].see_also == ["sub-workflows"]
 
     def test_items_template_deferred(self, tmp_path: Path) -> None:
         """``items:`` as a template string (dynamic items from an upstream node)
@@ -1838,6 +1842,9 @@ class TestBatchItemValidation:
         assert "call-middle" in grand_errors[0].message
         assert grand_errors[0].context is not None
         assert grand_errors[0].context.get("batch_item_index") == 0
+        # Three-way interaction: see_also survives both batch-layer wraps via
+        # _add_child_provenance's dataclasses.replace (regression pin for #311).
+        assert grand_errors[0].see_also == ["sub-workflows"]
 
     def test_custom_alias_via_markdown_round_trip(self, tmp_path: Path) -> None:
         """Custom ``as: songitem`` written in actual markdown (not raw IR) wires
@@ -1961,3 +1968,157 @@ class TestBatchItemValidation:
         # loaded successfully so "failed to load" shouldn't fire either).
         assert [e for e in errors if "does not declare input" in e.message] == []
         assert [e for e in errors if "requires input" in e.message] == []
+
+
+class TestSubWorkflowDiagnosticsCarrySeeAlso:
+    """All three rule-class sub-workflow diagnostics point at the sub-workflows guide.
+
+    The parent→child input boundary is the structural pattern the guide explains.
+    These diagnostics teach the pattern, not just the one-off fix, so they earn
+    the ``see_also`` pointer.
+    """
+
+    def _child_with_one_input(self, path: Path) -> None:
+        write_pflow_md(
+            path,
+            "# Child\n\nA child.\n\n"
+            "## Inputs\n\n### known_field\n\nInput.\n\n- type: string\n- required: true\n\n"
+            "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- command: echo ${known_field}\n",
+        )
+
+    def test_non_dict_inputs_diagnostic_see_also_sub_workflows(self, tmp_path: Path) -> None:
+        child = tmp_path / "child.pflow.md"
+        self._child_with_one_input(child)
+
+        parent_ir = _parent_ir(str(child), provided_params={"inputs": "not-a-dict"})
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        shape_errors = [e for e in errors if "must be a dict" in e.message]
+        assert shape_errors and shape_errors[0].see_also == ["sub-workflows"]
+
+    def test_missing_required_input_diagnostic_see_also_sub_workflows(self, tmp_path: Path) -> None:
+        child = tmp_path / "child.pflow.md"
+        self._child_with_one_input(child)
+
+        # Provide inputs dict missing the required 'known_field'
+        parent_ir = _parent_ir(str(child), provided_params={"inputs": {}})
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        missing_errors = [e for e in errors if "requires input" in e.message]
+        assert missing_errors and missing_errors[0].see_also == ["sub-workflows"]
+
+    def test_undeclared_extras_diagnostic_see_also_sub_workflows(self, tmp_path: Path) -> None:
+        child = tmp_path / "child.pflow.md"
+        self._child_with_one_input(child)
+
+        # Provide all required keys plus an extra
+        parent_ir = _parent_ir(
+            str(child),
+            provided_params={"inputs": {"known_field": "ok", "extra_key": "nope"}},
+        )
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        extras = [e for e in errors if "does not declare input" in e.message]
+        assert extras and extras[0].see_also == ["sub-workflows"]
+
+    def test_child_parse_error_preserves_see_also_through_wrap(self, tmp_path: Path) -> None:
+        """Grandchild's MarkdownParseError see_also survives the load-failure wrap.
+
+        Regression guard: _load_child_workflow catches any Exception raised by
+        the child parser, stringifies the error text into a new Diagnostic
+        message, and previously dropped the inner exception's see_also. A
+        grandchild routing error carries ``see_also=['branching']``; the
+        wrapped parent-level diagnostic must carry the same list.
+        """
+        # Grandchild has a routing error (raises MarkdownParseError with
+        # see_also=["branching"])
+        grandchild = tmp_path / "grandchild.pflow.md"
+        write_pflow_md(
+            grandchild,
+            "# GC\n\nA grandchild.\n\n## Steps\n\n"
+            "### router\n\nRoute dynamically.\n\n- type: code\n\n"
+            '```python code\nnext = "a"\nresult: int = 0\n```\n\n'
+            "### a\n\nDownstream.\n\n- type: shell\n\n"
+            "```shell command\necho a\n```\n",
+        )
+
+        parent_ir = _parent_ir(str(grandchild))
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        load_errors = [e for e in errors if "routing target" in e.message]
+        assert load_errors, f"Expected wrapped grandchild routing error, got: {[e.message for e in errors]}"
+        assert load_errors[0].see_also == ["branching"], f"see_also lost through load-failure wrap: {load_errors[0]}"
+
+    def test_saved_name_child_parse_error_preserves_see_also(self) -> None:
+        """Saved-name reference: see_also survives the ``WorkflowValidationError`` wrap.
+
+        Regression guard for the saved-name variant of the load-failure wrap.
+        ``WorkflowManager.load_ir()`` catches ``MarkdownParseError`` and wraps
+        it in ``WorkflowValidationError(validation_errors=e.to_diagnostics())``.
+        The fix in ``_load_child_workflow`` must look inside
+        ``e.validation_errors[0].see_also`` for this path since the outer
+        ``WorkflowValidationError`` has no ``see_also`` attribute of its own.
+        """
+        from pflow.core.workflow.manager import WorkflowManager
+
+        # Save a workflow with a routing error. WorkflowManager.save() only
+        # validates the name, not the content, so this succeeds.
+        md_content = (
+            "# Broken\n\nA saved workflow with a routing error.\n\n## Steps\n\n"
+            "### router\n\nDynamic route.\n\n- type: code\n\n"
+            '```python code\nnext = "a"\nresult: int = 0\n```\n\n'
+            "### a\n\nDownstream.\n\n- type: shell\n\n"
+            "```shell command\necho a\n```\n"
+        )
+
+        wm = WorkflowManager()
+        wm.save("broken-saved-branching", md_content)
+
+        # Parent references it by saved name.
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "saved-ref",
+                    "type": "workflow",
+                    "params": {"workflow": "broken-saved-branching"},
+                }
+            ],
+            "edges": [],
+        }
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            skip_node_types=True,
+        )
+
+        # Note: the WorkflowManager.load_ir() wrap produces
+        # ``str(WorkflowValidationError) == "Invalid workflow '<name>'"`` —
+        # the inner routing detail is NOT embedded in the message (that's
+        # pre-existing, separate from see_also). What MUST survive is the
+        # guide pointer itself, extracted from ``e.validation_errors[0]``.
+        load_errors = [e for e in errors if "Invalid workflow" in e.message and "broken-saved-branching" in e.message]
+        assert load_errors, f"Expected wrapped saved-name error, got: {[e.message for e in errors]}"
+        assert load_errors[0].see_also == ["branching"], (
+            f"see_also lost through WorkflowValidationError wrap: {load_errors[0]}"
+        )

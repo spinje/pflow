@@ -216,6 +216,7 @@ def _build_batch_item_field_diagnostic(
         ),
         suggestions=[f"Use ${{{path}}}" for path, _ in similar] if similar else None,
         context=context,
+        see_also=["batch"],
     )
 
 
@@ -296,4 +297,5 @@ def _build_batch_item_nested_diagnostic(
         ),
         suggestions=suggestions,
         context=context,
+        see_also=["batch"],
     )

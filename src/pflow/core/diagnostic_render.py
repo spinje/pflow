@@ -110,7 +110,12 @@ def _format_error_diagnostic(
             for i, s in enumerate(suggestions, 1):
                 lines.append(f"  {i}. {s}")
 
-    # 6. Verbose hint
+    # 6. See also (guide topic pointer for rule-class errors)
+    if diagnostic.see_also:
+        lines.append("")
+        lines.append(f"See also: pflow guide {' '.join(diagnostic.see_also)}")
+
+    # 7. Verbose hint
     technical_details = context.get("technical_details")
     if verbose and technical_details:
         lines.append("")
