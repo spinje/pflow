@@ -8,6 +8,10 @@ Improve the Mermaid workflow visualization (from Task 145) to surface batch/fan-
 
 done
 
+## Completed
+
+2026-04-06
+
 ## What Was Actually Built
 
 The implementation evolved significantly beyond the original spec through iterative visual review. Key additions not in the original plan:

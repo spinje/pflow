@@ -29,6 +29,17 @@ else
     NC=''
 fi
 
+# Read the value of a ## heading section, tolerant of a blank line between
+# the heading and the value. Returns the first non-blank, non-heading line.
+get_section_value() {
+    local file=$1
+    local heading=$2
+    awk -v h="^## $heading$" '
+        $0 ~ h { found=1; next }
+        found && NF>0 && !/^## / { print; exit }
+    ' "$file" 2>/dev/null | xargs
+}
+
 # Count tasks by status
 count_tasks() {
     local status=$1
@@ -37,7 +48,7 @@ count_tasks() {
         task_num=$(basename "$dir" | sed 's/task_//')
         file="$dir/task-$task_num.md"
         if [ -f "$file" ]; then
-            task_status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
+            task_status=$(get_section_value "$file" "Status")
             if [ "$task_status" = "$status" ]; then
                 ((count++))
             fi
@@ -64,8 +75,8 @@ get_task_info() {
     else
         local title="$raw_title"
     fi
-    local status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
-    local completed=$(grep -A1 "^## Completed" "$file" 2>/dev/null | tail -1 | xargs)
+    local status=$(get_section_value "$file" "Status")
+    local completed=$(get_section_value "$file" "Completed")
     local desc=$(awk '/^## Description/{found=1; next} found && /^##/{exit} found{print}' "$file" | head -5)
 
     echo -e "${BOLD}## $title${NC}"
@@ -105,11 +116,11 @@ list_by_status() {
         file="$dir/task-$task_num.md"
 
         if [ -f "$file" ]; then
-            task_status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
+            task_status=$(get_section_value "$file" "Status")
             if [ "$task_status" = "$filter_status" ]; then
                 if [ "$filter_status" = "done" ]; then
                     # For done tasks, collect with completion date for sorting
-                    completed=$(grep -A1 "^## Completed" "$file" 2>/dev/null | tail -1 | xargs)
+                    completed=$(get_section_value "$file" "Completed")
                     # Use date for sorting, default to 9999-99-99 if unknown
                     sort_key="${completed:-9999-99-99}"
                     task_entries+=("$sort_key|$task_num")
@@ -139,7 +150,7 @@ list_by_status() {
         else
             title="$raw_title"
         fi
-        completed=$(grep -A1 "^## Completed" "$file" 2>/dev/null | tail -1 | xargs)
+        completed=$(get_section_value "$file" "Completed")
 
         # Group by month for done tasks
         if [ "$filter_status" = "done" ] && [ -n "$completed" ] && [ "$completed" != "unknown" ]; then
@@ -195,7 +206,7 @@ search_tasks() {
 
         if [ -f "$file" ]; then
             if grep -qi "$term" "$file" 2>/dev/null; then
-                task_status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
+                task_status=$(get_section_value "$file" "Status")
                 raw_title=$(head -1 "$file" | sed 's/^# //')
                 # Ensure title has "Task N:" prefix
                 if [[ ! "$raw_title" =~ ^Task\ $task_num: ]]; then

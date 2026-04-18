@@ -14,6 +14,10 @@ This task redesigns the diagnostic pipeline end-to-end: one rendering format for
 
 done
 
+## Completed
+
+2026-04-05
+
 ## Priority
 
 medium

@@ -6,7 +6,11 @@ Memoization-based caching for workflow node execution. When an AI agent iterates
 
 ## Status
 
-complete
+done
+
+## Completed
+
+2026-03-26
 
 ## Priority
 

@@ -8,6 +8,10 @@ Move orphaned exception classes into `core/exceptions.py`, rebase them onto `Pfl
 
 done
 
+## Completed
+
+2026-04-01
+
 ## Priority
 
 medium

@@ -10,6 +10,10 @@ Fix the shared store invariant so failed nodes don't leak data into downstream t
 
 done
 
+## Completed
+
+2026-04-09
+
 ## Priority
 
 high

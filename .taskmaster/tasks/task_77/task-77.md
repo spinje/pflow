@@ -10,7 +10,11 @@ This is the **content delivery** task. The CLI surface (Task 151) provides the `
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-04-14
 
 ## Priority
 

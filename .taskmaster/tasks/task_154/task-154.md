@@ -10,7 +10,11 @@ The implementation plan lives at `implementation/implementation-plan.md` in this
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-04-17
 
 ## Priority
 

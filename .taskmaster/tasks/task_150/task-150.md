@@ -6,7 +6,11 @@
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-04-10
 
 ## Priority
 

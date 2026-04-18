@@ -8,7 +8,11 @@ Flatten the pflow CLI surface from nested command groups (`registry`, `workflow`
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-04-12
 
 ## Priority
 

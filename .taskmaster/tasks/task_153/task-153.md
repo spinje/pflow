@@ -6,7 +6,11 @@ Closes the parent→child sub-workflow input boundary so undeclared extras are r
 
 ## Status
 
-completed
+done
+
+## Completed
+
+2026-04-16
 
 ## Priority
 

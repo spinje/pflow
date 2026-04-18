@@ -15,6 +15,10 @@ A workflow producing both `response` and `result` shows different output dependi
 
 done
 
+## Completed
+
+2026-03-29
+
 ## What Was Done
 
 Created a single shared `find_auto_output()` in `execution/formatters/output_utils.py`, used by both consumers.

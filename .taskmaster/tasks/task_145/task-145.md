@@ -8,6 +8,10 @@ Generate mermaid flowchart diagrams from workflow IR, including recursive sub-wo
 
 done
 
+## Completed
+
+2026-04-05
+
 ## Priority
 
 medium

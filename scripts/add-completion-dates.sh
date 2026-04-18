@@ -27,8 +27,8 @@ for dir in "$TASKS_DIR"/task_*/; do
         continue
     fi
 
-    # Check if task is done
-    task_status=$(grep -A1 "^## Status" "$task_file" 2>/dev/null | tail -1 | xargs)
+    # Check if task is done (tolerant of blank line between heading and value)
+    task_status=$(awk '/^## Status/{found=1; next} found && NF>0 && !/^## /{print; exit}' "$task_file" 2>/dev/null | xargs)
     if [ "$task_status" != "done" ]; then
         continue
     fi
@@ -66,18 +66,18 @@ for dir in "$TASKS_DIR"/task_*/; do
     echo "Task $task_num: $completion_date (from $date_source)"
 
     if [ "$DRY_RUN" = false ]; then
-        # Insert ## Completed after ## Status section
-        # Find line number of ## Status, then insert after the status value
-
-        # Create temp file with the new content
+        # Insert ## Completed block after the status value line.
+        # Tolerant of a blank line between ## Status and the value.
         awk -v date="$completion_date" '
-        /^## Status/ {
-            print
-            getline  # print the status value line
-            print
+        /^## Status/ { in_status=1; print; next }
+        in_status && !inserted && NF>0 && !/^## / {
+            print  # the status value
             print ""
             print "## Completed"
+            print ""
             print date
+            in_status=0
+            inserted=1
             next
         }
         { print }

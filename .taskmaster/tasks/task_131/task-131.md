@@ -5,7 +5,12 @@
 Fix multiple interacting issues where batch processing with `output_schema` and `error_handling: continue` fails to be fault-tolerant: the workflow stops despite `continue`, raw LLM responses are lost on parse failure, and stalled LLM API calls hang indefinitely with no timeout.
 
 ## Status
-not started
+
+done
+
+## Completed
+
+2026-03-22
 
 ## Priority
 

@@ -8,6 +8,10 @@ Fix GH issue #194 (workflow data routed to stderr in non-interactive mode) and c
 
 done
 
+## Completed
+
+2026-04-08
+
 ## Priority
 
 high

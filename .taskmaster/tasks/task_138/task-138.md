@@ -10,6 +10,10 @@ Replace the parallel CLI/MCP orchestration layers with a single execution pipeli
 
 done
 
+## Completed
+
+2026-03-30
+
 ## Priority
 
 high
