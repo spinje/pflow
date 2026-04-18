@@ -1246,6 +1246,12 @@ def _infer_convergence_candidate(
     with the most branch-target voters, or ``None`` when evidence is weak
     (fewer than 2 voters). Conservative by design: false negatives are fine,
     false positives would mislead the user worse than the current behavior.
+
+    The threshold is 2 because a single vote is indistinguishable from
+    incidental coincidence — any branch target with a ``- next:`` declaration
+    produces one vote for its target, so a single voter is the baseline, not
+    evidence of convergence. Raising the threshold beyond 2 makes inference
+    rarer; lowering it to 1 crosses from inference into guessing.
     """
     votes: dict[str, set[str]] = {}
     for edge in edges:

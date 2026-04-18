@@ -3637,6 +3637,11 @@ class TestConditionalBranching:
             parse_markdown(content)
 
         msg = str(excinfo.value)
+        # Pins the `heading_lines` plumbing end-to-end: `MarkdownParseError`
+        # prepends "Line N: " when `line=` is populated. If this prefix is
+        # missing, the heading_line was lost somewhere between
+        # `parse_markdown` and the `raise` site.
+        assert msg.startswith("Line "), f"Expected 'Line N:' prefix from heading_lines plumbing. Got:\n{msg}"
         assert "- next: continuation" in msg, (
             "Fix snippet must include the document-order successor as the likely "
             f"continuation (regression guard for #308). Got:\n{msg}"
