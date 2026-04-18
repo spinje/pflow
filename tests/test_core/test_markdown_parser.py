@@ -3643,6 +3643,101 @@ class TestConditionalBranching:
         )
         assert "- next: end" in msg, "Fix snippet must still include '- next: end' as the safe fallback."
 
+    def test_missing_next_omits_doc_successor_when_successor_is_branch_target(self) -> None:
+        """When the document-order successor is itself a branch target, the
+        Fix snippet must NOT suggest it as a continuation.
+
+        Verified via adversarial end-to-end testing: applying such a
+        suggestion cascades into another missing-`- next:` error on the
+        successor, and iterated blind-apply can form runtime cycles
+        (caught by the loop guard but a wasted user iteration).
+
+        Symmetric with ``_infer_convergence_candidate``'s
+        ``cid not in branch_target_routers`` filter — keeps the
+        suggest-what-we-can-safely-infer invariant consistent across both
+        validators.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router-a
+
+            First router.
+
+            - type: code
+
+            ```python code
+            next: str = "handler-a"
+            result: int = 0
+            ```
+
+            ### fallback-a
+
+            Default.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo fa
+            ```
+
+            ### handler-a
+
+            Branch target missing - next:. Doc successor is handler-b (also a branch target).
+
+            - type: shell
+
+            ```shell command
+            echo ha
+            ```
+
+            ### handler-b
+
+            Doc successor of handler-a AND a branch target (of router-b).
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo hb
+            ```
+
+            ### router-b
+
+            Makes handler-b a branch target.
+
+            - type: code
+            - next: end
+
+            ```python code
+            next: str = "handler-b"
+            result: int = 0
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        msg = str(excinfo.value)
+
+        # The fall-through warning in prose should still fire — useful
+        # diagnostic info even when we can't offer handler-b as a fix.
+        assert "fall through to 'handler-b'" in msg, (
+            f"Fall-through warning should still name the doc-order successor "
+            f"in prose even when we don't suggest it as a fix. Got:\n{msg}"
+        )
+        # But the fix snippet must not suggest handler-b as a continuation
+        # (applying it creates a cascade error and potential runtime loop).
+        fix_snippets = [line.strip() for line in msg.split("\n") if line.strip().startswith("- next:")]
+        assert fix_snippets == ["- next: end"], (
+            f"When doc_successor is itself a branch target, fix snippet must "
+            f"be exactly '- next: end' — no suggestion of handler-b. "
+            f"Got: {fix_snippets}\nFull message:\n{msg}"
+        )
+
     def test_missing_next_annotates_on_error_router(self) -> None:
         """When the router reaches the target via '- on-error:', the error
         message annotates the router as '(on-error)'.

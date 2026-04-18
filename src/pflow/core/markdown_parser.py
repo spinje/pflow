@@ -1284,21 +1284,30 @@ def _validate_branch_targets_have_next(
 
         router_list = _format_router_list(routers, target_id, router_actions)
         doc_successor = doc_order_targets.get(target_id)
+        # Only suggest the successor as a continuation if it's not itself a
+        # branch target. Suggesting a branch target as a "next step" creates
+        # a cascade: applying the fix produces a new missing-`- next:` error
+        # on the successor, and iterated suggestions can form runtime cycles.
+        # Symmetric with `_infer_convergence_candidate`'s filter.
+        suggest_successor = doc_successor if doc_successor and doc_successor not in branch_target_routers else None
 
         if doc_successor:
             context = (
                 f"Without it, execution would fall through to '{doc_successor}' "
                 f"via document order — pflow rejects this to prevent silent routing bugs."
             )
+        else:
+            context = "Branch targets must declare their exit explicitly to prevent silent routing bugs."
+
+        if suggest_successor:
             fix_body = (
                 f"Fix — add '- next:' to '### {target_id}'. "
                 f"Either continue to the next step:\n\n"
-                f"    - next: {doc_successor}\n\n"
+                f"    - next: {suggest_successor}\n\n"
                 f"Or terminate the branch:\n\n"
                 f"    - next: end"
             )
         else:
-            context = "Branch targets must declare their exit explicitly to prevent silent routing bugs."
             fix_body = f"Fix — add an explicit terminator to '### {target_id}':\n\n    - next: end"
 
         raise MarkdownParseError(
