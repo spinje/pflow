@@ -517,7 +517,8 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     _validate_routing_targets(ir["edges"], node_id_set)
 
     # Validate branch target routing (prevents silent fall-through)
-    _validate_branch_target_routing(ir["edges"], routing_metadata, ast_has_dynamic)
+    heading_lines = {e.id: e.heading_line for e in step_entities}
+    _validate_branch_target_routing(ir["edges"], routing_metadata, ast_has_dynamic, heading_lines)
 
     # Build outputs
     output_entities = [e for e in entities if e.section_type == _SectionType.OUTPUTS]
@@ -1181,27 +1182,93 @@ def _validate_dynamic_next_declarations(
 
 def _build_branch_target_routers(
     edges: list[dict[str, Any]],
-) -> dict[str, set[str]]:
-    """Build mapping of branch target node IDs to their router source node IDs.
+) -> tuple[dict[str, set[str]], dict[str, dict[str, list[str]]]]:
+    """Build branch-target router maps.
 
-    A "branch target" is any node reached via an edge with action not in {None, "default"}.
+    Returns two parallel structures:
+    - ``branch_target_routers``: target_id → set of router source node IDs.
+    - ``router_actions``: target_id → source_id → list of action values
+      (preserves routing mechanism per (router, target) pair, used for
+      annotating error messages with e.g. ``(on-error)``).
+
+    A "branch target" is any node reached via an edge with action not in
+    ``{None, "default"}``.
     """
     branch_target_routers: dict[str, set[str]] = {}
+    router_actions: dict[str, dict[str, list[str]]] = {}
     for edge in edges:
         action = edge.get("action")
         if action is not None and action != "default":
             target = edge["to"]
             source = edge["from"]
-            if target not in branch_target_routers:
-                branch_target_routers[target] = set()
-            branch_target_routers[target].add(source)
-    return branch_target_routers
+            branch_target_routers.setdefault(target, set()).add(source)
+            router_actions.setdefault(target, {}).setdefault(source, []).append(action)
+    return branch_target_routers, router_actions
+
+
+def _format_router_list(
+    routers: set[str],
+    target_id: str,
+    router_actions: dict[str, dict[str, list[str]]],
+) -> str:
+    """Format a router list with ``(on-error)`` annotation where unambiguous.
+
+    A router is annotated ``(on-error)`` only when all of its actions for this
+    target are ``"error"``. Mixed mechanisms are left unannotated — the edge
+    schema cannot distinguish dynamic-python routing from static multi-target
+    literal routing, so we only surface the distinction that IS reliable.
+    """
+    actions_for_target = router_actions.get(target_id, {})
+    parts = []
+    for r in sorted(routers):
+        actions = actions_for_target.get(r, [])
+        # `actions and` is load-bearing: without it, `all(... for [])` is
+        # vacuously True, so any missing (router, target) pair would
+        # silently annotate as (on-error). Today both maps are populated
+        # in lockstep by `_build_branch_target_routers`; this guard
+        # protects against drift.
+        if actions and all(a == "error" for a in actions):
+            parts.append(f"'{r}' (on-error)")
+        else:
+            parts.append(f"'{r}'")
+    return ", ".join(parts)
+
+
+def _infer_convergence_candidate(
+    edges: list[dict[str, Any]],
+    branch_target_routers: dict[str, set[str]],
+    source: str,
+) -> str | None:
+    """Infer a likely convergence node that a fall-through source should route to.
+
+    A convergence node is one that multiple branch targets explicitly route
+    into via ``- next:`` (edge with ``action="default"``). Returns the candidate
+    with the most branch-target voters, or ``None`` when evidence is weak
+    (fewer than 2 voters). Conservative by design: false negatives are fine,
+    false positives would mislead the user worse than the current behavior.
+    """
+    votes: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.get("action") == "default" and edge["from"] in branch_target_routers:
+            votes.setdefault(edge["to"], set()).add(edge["from"])
+
+    candidates = [
+        (len(voters), cid)
+        for cid, voters in votes.items()
+        if cid not in branch_target_routers and cid != source and len(voters) >= 2
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (-c[0], c[1]))
+    return candidates[0][1]
 
 
 def _validate_branch_targets_have_next(
     edges: list[dict[str, Any]],
     routing_metadata: dict[str, dict[str, Any]],
     branch_target_routers: dict[str, set[str]],
+    router_actions: dict[str, dict[str, list[str]]],
+    heading_lines: dict[str, int],
 ) -> None:
     """Check that branch targets have explicit ``- next:`` directives."""
     doc_order_targets: dict[str, str] = {}
@@ -1212,32 +1279,40 @@ def _validate_branch_targets_have_next(
     for target_id in sorted(branch_target_routers):
         routers = branch_target_routers[target_id]
         routing = routing_metadata.get(target_id, {})
-        if "next" not in routing:
-            router_list = ", ".join(f"'{r}'" for r in sorted(routers))
-            doc_successor = doc_order_targets.get(target_id)
-            if doc_successor:
-                raise MarkdownParseError(
-                    f"Node '{target_id}' is a routing target of {router_list} but has no "
-                    f"'- next:' directive. Without explicit routing, it will fall through "
-                    f"to '{doc_successor}' via document order.\n\n"
-                    f"Fix: Add '- next: end' to terminate the branch, or "
-                    f"'- next: <node-id>' to continue to a specific node:\n\n"
-                    f"    ### {target_id}\n"
-                    f"    - next: end"
-                )
-            else:
-                raise MarkdownParseError(
-                    f"Node '{target_id}' is a routing target of {router_list} but has no "
-                    f"'- next:' directive. Branch targets must have explicit routing.\n\n"
-                    f"Fix: Add '- next: end' to make termination explicit:\n\n"
-                    f"    ### {target_id}\n"
-                    f"    - next: end"
-                )
+        if "next" in routing:
+            continue
+
+        router_list = _format_router_list(routers, target_id, router_actions)
+        doc_successor = doc_order_targets.get(target_id)
+
+        if doc_successor:
+            context = (
+                f"Without it, execution would fall through to '{doc_successor}' "
+                f"via document order — pflow rejects this to prevent silent routing bugs."
+            )
+            fix_body = (
+                f"Fix — add '- next:' to '### {target_id}'. "
+                f"Either continue to the next step:\n\n"
+                f"    - next: {doc_successor}\n\n"
+                f"Or terminate the branch:\n\n"
+                f"    - next: end"
+            )
+        else:
+            context = "Branch targets must declare their exit explicitly to prevent silent routing bugs."
+            fix_body = f"Fix — add an explicit terminator to '### {target_id}':\n\n    - next: end"
+
+        raise MarkdownParseError(
+            f"Node '{target_id}' is a routing target of {router_list} but has no "
+            f"'- next:' directive. {context}\n\n{fix_body}",
+            line=heading_lines.get(target_id),
+        )
 
 
 def _validate_no_fallthrough_into_branch_targets(
     edges: list[dict[str, Any]],
     branch_target_routers: dict[str, set[str]],
+    router_actions: dict[str, dict[str, list[str]]],
+    heading_lines: dict[str, int],
 ) -> None:
     """Check that non-router nodes don't fall through into branch targets."""
     for edge in edges:
@@ -1247,15 +1322,27 @@ def _validate_no_fallthrough_into_branch_targets(
             if target in branch_target_routers:
                 routers = branch_target_routers[target]
                 if source not in routers:
-                    router_list = ", ".join(f"'{r}'" for r in sorted(routers))
+                    router_list = _format_router_list(routers, target, router_actions)
+                    convergence = _infer_convergence_candidate(edges, branch_target_routers, source)
+
+                    if convergence:
+                        fix_body = (
+                            f"Fix — add '- next:' to '### {source}'. "
+                            f"Either continue past the branch section to the convergence point "
+                            f"(inferred: '{convergence}' is where other branch targets route):\n\n"
+                            f"    - next: {convergence}\n\n"
+                            f"Or terminate the flow:\n\n"
+                            f"    - next: end"
+                        )
+                    else:
+                        fix_body = f"Fix — add an explicit '- next:' to '### {source}':\n\n    - next: end"
+
                     raise MarkdownParseError(
                         f"Node '{source}' flows into '{target}' via document order, but "
                         f"'{target}' is a routing target of {router_list}. Main flow nodes "
-                        f"should not fall through into branch targets.\n\n"
-                        f"Fix: Add '- next: end' to terminate the flow before the branch "
-                        f"section:\n\n"
-                        f"    ### {source}\n"
-                        f"    - next: end"
+                        f"must not silently fall through into branch targets.\n\n"
+                        f"{fix_body}",
+                        line=heading_lines.get(source),
                     )
 
 
@@ -1263,6 +1350,7 @@ def _validate_branch_target_routing(
     edges: list[dict[str, Any]],
     routing_metadata: dict[str, dict[str, Any]],
     ast_has_dynamic: set[str],
+    heading_lines: dict[str, int],
 ) -> None:
     """Validate that branch targets have explicit routing to prevent fall-through.
 
@@ -1276,12 +1364,12 @@ def _validate_branch_target_routing(
     """
     _validate_dynamic_next_declarations(routing_metadata, ast_has_dynamic)
 
-    branch_target_routers = _build_branch_target_routers(edges)
+    branch_target_routers, router_actions = _build_branch_target_routers(edges)
     if not branch_target_routers:
         return  # No branch targets — nothing to validate
 
-    _validate_branch_targets_have_next(edges, routing_metadata, branch_target_routers)
-    _validate_no_fallthrough_into_branch_targets(edges, branch_target_routers)
+    _validate_branch_targets_have_next(edges, routing_metadata, branch_target_routers, router_actions, heading_lines)
+    _validate_no_fallthrough_into_branch_targets(edges, branch_target_routers, router_actions, heading_lines)
 
 
 def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
