@@ -1138,10 +1138,13 @@ class WorkflowValidator:
             # on a grandchild's routing error): the wrapped message still embeds
             # the inner rule-class text, so the guide pointer remains relevant.
             # The saved-name path (WorkflowManager.load_ir) wraps MarkdownParseError
-            # in WorkflowValidationError — check the first validation_error too.
+            # in WorkflowValidationError — union across all validation_errors so
+            # aggregate wrappers (today length 1, potentially more in the future)
+            # don't silently drop pointers from errors beyond the first.
             inner_see_also = getattr(e, "see_also", None)
             if inner_see_also is None and isinstance(e, WorkflowValidationError) and e.validation_errors:
-                inner_see_also = e.validation_errors[0].see_also
+                topics = sorted({t for ve in e.validation_errors for t in (ve.see_also or [])})
+                inner_see_also = topics or None
             return (
                 None,
                 None,

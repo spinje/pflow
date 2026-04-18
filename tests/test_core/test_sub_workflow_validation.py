@@ -2122,3 +2122,74 @@ class TestSubWorkflowDiagnosticsCarrySeeAlso:
         assert load_errors[0].see_also == ["branching"], (
             f"see_also lost through WorkflowValidationError wrap: {load_errors[0]}"
         )
+
+    def test_multi_error_wrap_unions_see_also_topics(self) -> None:
+        """When multiple inner validation_errors carry different see_also topics,
+        the wrapped diagnostic must carry the sorted union.
+
+        Today ``WorkflowManager.load_ir()`` only constructs a length-1
+        ``validation_errors`` list (from a single ``MarkdownParseError``), so
+        this scenario is synthetic — we simulate it by monkey-patching the
+        resolver to raise a pre-built multi-error ``WorkflowValidationError``.
+        Pins the union-across-errors contract against future aggregation
+        changes in ``load_ir`` or other callers.
+        """
+        from unittest.mock import patch
+
+        from pflow.core.diagnostic import Diagnostic, Severity
+        from pflow.core.exceptions import WorkflowValidationError
+
+        multi_error = WorkflowValidationError(
+            summary="Invalid workflow 'multi'",
+            validation_errors=[
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="parser",
+                    message="routing error",
+                    title="Parse Error",
+                    see_also=["branching"],
+                ),
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    message="sub-workflow error",
+                    title="Validation Error",
+                    see_also=["sub-workflows"],
+                ),
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    message="no pointer",
+                    title="Validation Error",
+                ),
+            ],
+        )
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "saved-ref",
+                    "type": "workflow",
+                    "params": {"workflow": "some-saved-name"},
+                }
+            ],
+            "edges": [],
+        }
+
+        with patch(
+            "pflow.core.workflow.sub_workflow_resolver.resolve_sub_workflow",
+            side_effect=multi_error,
+        ):
+            errors, _ = split_validator_diagnostics(
+                workflow_ir=parent_ir,
+                extracted_params={},
+                skip_node_types=True,
+            )
+
+        load_errors = [e for e in errors if "Invalid workflow" in e.message]
+        assert load_errors, f"Expected wrapped load error, got: {[e.message for e in errors]}"
+        # Sorted union across all validation_errors (third one's None contributes nothing).
+        assert load_errors[0].see_also == ["branching", "sub-workflows"], (
+            f"see_also should be sorted union across all validation_errors, got: {load_errors[0].see_also}"
+        )

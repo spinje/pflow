@@ -308,6 +308,26 @@ def test_see_also_rejects_bare_string() -> None:
         Diagnostic(severity=Severity.ERROR, message="test", see_also="branching")  # type: ignore[arg-type]
 
 
+def test_see_also_rejects_space_containing_topic() -> None:
+    """Topic names must be slug-safe. A space inside any entry would split
+    into two topics when the renderer joins with spaces for ``pflow guide``.
+    """
+    with pytest.raises(TypeError, match="slug-safe"):
+        Diagnostic(severity=Severity.ERROR, message="test", see_also=["sub workflows"])
+
+
+def test_see_also_rejects_empty_topic_string() -> None:
+    """Empty string topic would render as trailing whitespace in the command."""
+    with pytest.raises(TypeError, match="slug-safe"):
+        Diagnostic(severity=Severity.ERROR, message="test", see_also=[""])
+
+
+def test_see_also_rejects_non_string_entry() -> None:
+    """Non-string entries would format unpredictably via ``' '.join``."""
+    with pytest.raises(TypeError, match="slug-safe"):
+        Diagnostic(severity=Severity.ERROR, message="test", see_also=[123])  # type: ignore[list-item]
+
+
 def test_see_also_excluded_from_identity() -> None:
     """Two Diagnostics differing only in see_also are equal and dedup to one."""
     first = Diagnostic(

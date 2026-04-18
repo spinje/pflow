@@ -58,6 +58,13 @@ class Diagnostic:
                 f"Diagnostic.see_also must be list[str] | None, got str: {self.see_also!r}. "
                 f"Wrap in a list: see_also=[{self.see_also!r}]"
             )
+        if self.see_also:
+            # Topic names must be slug-safe: the renderer joins with spaces to
+            # produce ``pflow guide <t1> <t2>``, so a space inside any entry
+            # splits it into two topics when the agent runs the command.
+            for topic in self.see_also:
+                if not isinstance(topic, str) or not topic or " " in topic:
+                    raise TypeError(f"Diagnostic.see_also entries must be non-empty slug-safe strings, got {topic!r}")
 
     def __eq__(self, other: object) -> bool:
         # Identity is (severity, source, node_id, message) — context, title, and
