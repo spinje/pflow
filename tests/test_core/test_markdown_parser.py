@@ -4116,6 +4116,133 @@ class TestConditionalBranching:
         with pytest.raises(MarkdownParseError, match="reserved keyword"):
             parse_markdown(content)
 
+    # --- Routing errors carry see_also=["branching"] ---
+
+    def test_dynamic_next_without_declaration_sets_see_also_branching(self) -> None:
+        """Dynamic-routing errors point at the branching guide."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route dynamically.
+
+            - type: code
+
+            ```python code
+            data: str
+            next = "b"
+            result: int = 0
+            ```
+
+            ### b
+
+            Next step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        assert excinfo.value.see_also == ["branching"]
+
+    def test_branch_target_without_next_sets_see_also_branching(self) -> None:
+        """Branch-target-missing-next errors point at the branching guide."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to branch.
+
+            - type: code
+
+            ```python code
+            next: str = "branch"
+            result: int = 0
+            ```
+
+            ### fallback
+
+            Default next.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo fallback
+            ```
+
+            ### branch
+
+            Branch target without - next:.
+
+            - type: shell
+
+            ```shell command
+            echo branch
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        assert excinfo.value.see_also == ["branching"]
+
+    def test_non_router_fallthrough_sets_see_also_branching(self) -> None:
+        """Fall-through-into-branch-target errors point at the branching guide."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to handler on error.
+
+            - type: shell
+            - on-error: handler
+
+            ```shell command
+            echo route
+            ```
+
+            ### main-flow
+
+            Continues main flow, falls through to handler.
+
+            - type: shell
+
+            ```shell command
+            echo main
+            ```
+
+            ### handler
+
+            Error handler.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo error
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as excinfo:
+            parse_markdown(content)
+        assert excinfo.value.see_also == ["branching"]
+
 
 # ===========================================================================
 # 18. YAML colon-in-value error enhancement

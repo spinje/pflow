@@ -272,6 +272,9 @@ class TestBatchResultsIndexAccessGate:
             gate_errors = [e for e in errors if "Index-based access" in e.message]
             assert len(gate_errors) == 1
             assert "error_handling: continue" in gate_errors[0].message
+            # Rule-class error — points at the batch guide to teach the self-contained
+            # results contract (issue #311).
+            assert gate_errors[0].see_also == ["batch"]
 
     def test_index_access_allowed_with_fail_fast(self):
         """${batch.results[0].stdout} passes when batch uses fail_fast (default)."""

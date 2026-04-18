@@ -149,6 +149,7 @@ def _batch_results_index_error(
                 "template": template if template.startswith("${") else f"${{{template}}}",
                 "category": "validation",
             },
+            see_also=["batch"],
         ),
     )
 

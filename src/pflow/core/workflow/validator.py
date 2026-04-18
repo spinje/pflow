@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, format_child_provenance
-from pflow.core.exceptions import SchemaValidationError
+from pflow.core.exceptions import SchemaValidationError, WorkflowValidationError
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 
@@ -1016,6 +1016,7 @@ class WorkflowValidator:
                         "actual_type": type_name,
                         **item_context,
                     },
+                    see_also=["sub-workflows"],
                 )
             )
             return diagnostics
@@ -1052,6 +1053,7 @@ class WorkflowValidator:
                             "available_fields_label": "required inputs",
                             **item_context,
                         },
+                        see_also=["sub-workflows"],
                     )
                 )
 
@@ -1085,6 +1087,7 @@ class WorkflowValidator:
                             "similar_names": similar or None,
                             **item_context,
                         },
+                        see_also=["sub-workflows"],
                     )
                 )
 
@@ -1131,6 +1134,17 @@ class WorkflowValidator:
                 else f"Step '{node_id}'{item_suffix}: failed to load sub-workflow: {e}"
             )
             item_context = {"batch_item_index": batch_item_index} if batch_item_index is not None else {}
+            # Preserve see_also from the inner exception (e.g. MarkdownParseError
+            # on a grandchild's routing error): the wrapped message still embeds
+            # the inner rule-class text, so the guide pointer remains relevant.
+            # The saved-name path (WorkflowManager.load_ir) wraps MarkdownParseError
+            # in WorkflowValidationError — union across all validation_errors so
+            # aggregate wrappers (today length 1, potentially more in the future)
+            # don't silently drop pointers from errors beyond the first.
+            inner_see_also = getattr(e, "see_also", None)
+            if inner_see_also is None and isinstance(e, WorkflowValidationError) and e.validation_errors:
+                topics = sorted({t for ve in e.validation_errors for t in (ve.see_also or [])})
+                inner_see_also = topics or None
             return (
                 None,
                 None,
@@ -1148,6 +1162,7 @@ class WorkflowValidator:
                             "sub_workflow_step": node_id,
                             **item_context,
                         },
+                        see_also=inner_see_also,
                     )
                 ],
                 False,

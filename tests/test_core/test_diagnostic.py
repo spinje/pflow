@@ -300,3 +300,211 @@ def test_format_diagnostic_renders_rich_error_context() -> None:
     assert "Fix the shell command." in rendered
     assert "npm run build" in rendered
     assert "Missing dependency" in rendered
+
+
+def test_see_also_rejects_bare_string() -> None:
+    """Passing a bare string to see_also raises TypeError (defense-in-depth)."""
+    with pytest.raises(TypeError, match="must be list"):
+        Diagnostic(severity=Severity.ERROR, message="test", see_also="branching")  # type: ignore[arg-type]
+
+
+def test_see_also_rejects_space_containing_topic() -> None:
+    """Topic names must be slug-safe. A space inside any entry would split
+    into two topics when the renderer joins with spaces for ``pflow guide``.
+    """
+    with pytest.raises(TypeError, match="slug-safe"):
+        Diagnostic(severity=Severity.ERROR, message="test", see_also=["sub workflows"])
+
+
+def test_see_also_rejects_empty_topic_string() -> None:
+    """Empty string topic would render as trailing whitespace in the command."""
+    with pytest.raises(TypeError, match="slug-safe"):
+        Diagnostic(severity=Severity.ERROR, message="test", see_also=[""])
+
+
+def test_see_also_rejects_non_string_entry() -> None:
+    """Non-string entries would format unpredictably via ``' '.join``."""
+    with pytest.raises(TypeError, match="slug-safe"):
+        Diagnostic(severity=Severity.ERROR, message="test", see_also=[123])  # type: ignore[list-item]
+
+
+def test_see_also_excluded_from_identity() -> None:
+    """Two Diagnostics differing only in see_also are equal and dedup to one."""
+    first = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        node_id="n1",
+        message="same message",
+        see_also=["branching"],
+    )
+    second = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        node_id="n1",
+        message="same message",
+        see_also=None,
+    )
+
+    assert first == second
+    assert hash(first) == hash(second)
+    assert deduplicate_diagnostics([first, second]) == [first]
+
+
+def test_to_dict_emits_see_also_when_present() -> None:
+    """Serialized dict includes see_also when populated, omits it when None OR empty."""
+    with_link = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        message="rule-class error",
+        see_also=["branching", "sub-workflows"],
+    )
+    without_link = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        message="slip error",
+    )
+    # Empty list must be omitted (symmetric with renderer, which skips empty)
+    # so JSON consumers don't see a useless ``"see_also": []`` key.
+    empty_link = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        message="defensively empty",
+        see_also=[],
+    )
+
+    assert with_link.to_dict()["see_also"] == ["branching", "sub-workflows"]
+    assert "see_also" not in without_link.to_dict()
+    assert "see_also" not in empty_link.to_dict()
+
+
+def test_to_dict_does_not_leak_see_also_reference() -> None:
+    """Mutating the serialized see_also list must not corrupt the source."""
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        message="m",
+        see_also=["branching"],
+        source="validator",
+    )
+    payload = diagnostic.to_dict()
+    payload["see_also"].append("injected")
+    assert diagnostic.see_also == ["branching"], "to_dict() leaked see_also by reference"
+
+
+def test_format_diagnostic_renders_see_also_line_single_topic() -> None:
+    """Error diagnostic with one see_also topic renders 'See also: pflow guide X'."""
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="parser",
+        message="Node 'x' is a routing target of 'r' but has no '- next:' directive.",
+        title="Parse Error",
+        suggestions=["Add '- next: end'."],
+        see_also=["branching"],
+        context={"category": "parse_error"},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "See also: pflow guide branching" in rendered
+
+
+def test_format_diagnostic_renders_see_also_line_multi_topic() -> None:
+    """Multiple see_also topics render space-separated (matching pflow guide invocation)."""
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        message="cross-cutting rule error",
+        title="Validation Error",
+        see_also=["branching", "sub-workflows"],
+        context={"category": "validation"},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "See also: pflow guide branching sub-workflows" in rendered
+
+
+def test_format_diagnostic_omits_see_also_line_when_none() -> None:
+    """Diagnostic without see_also does not render the 'See also:' line."""
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        message="slip error",
+        title="Validation Error",
+        context={"category": "validation"},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "See also" not in rendered
+
+
+def test_warning_rendering_ignores_see_also() -> None:
+    """Warnings render as one-liners — see_also is deliberately unused on the warning path."""
+    diagnostic = Diagnostic(
+        severity=Severity.WARNING,
+        source="validator",
+        message="A warning with a guide pointer attached.",
+        see_also=["core"],
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "See also" not in rendered
+
+
+def test_markdown_parse_error_threads_see_also_through_to_diagnostics() -> None:
+    """MarkdownParseError(see_also=...) produces a Diagnostic carrying the same list."""
+    err = MarkdownParseError("Bad routing", suggestion="Add '- next:'", see_also=["branching"])
+
+    diagnostic = err.to_diagnostics()[0]
+
+    assert diagnostic.see_also == ["branching"]
+    assert diagnostic.source == "parser"
+    assert diagnostic.suggestions == ["Add '- next:'"]
+
+
+def test_markdown_parse_error_without_see_also_produces_none() -> None:
+    """MarkdownParseError without see_also produces a Diagnostic with see_also=None."""
+    err = MarkdownParseError("Bad heading", line=42)
+
+    diagnostic = err.to_diagnostics()[0]
+
+    assert diagnostic.see_also is None
+
+
+def test_all_see_also_literals_resolve_to_real_guide_topics() -> None:
+    """Every ``see_also=[...]`` literal in src/pflow/ must name a real guide topic.
+
+    Guards against typos in future annotations. Rendering a bogus topic would
+    produce a ``pflow guide <typo>`` line that fails with "Unknown topic" when
+    the agent runs it — loud failure, but erodes trust in the pointer.
+    """
+    import re
+    from pathlib import Path
+
+    from pflow.guide import list_topics
+
+    known_topics = set(list_topics())
+    src_root = Path(__file__).resolve().parents[2] / "src" / "pflow"
+    assert src_root.is_dir(), f"src dir not found at {src_root}"
+
+    # Match `see_also=["topic1", "topic2"]` — handles single/double quotes,
+    # whitespace variations. We only care about literal lists at producer sites.
+    pattern = re.compile(r"see_also\s*=\s*\[([^\]]*)\]")
+    topic_re = re.compile(r'["\']([a-zA-Z0-9_-]+)["\']')
+
+    found_any = False
+    for py_file in src_root.rglob("*.py"):
+        for match in pattern.finditer(py_file.read_text(encoding="utf-8")):
+            found_any = True
+            for topic_match in topic_re.finditer(match.group(1)):
+                topic = topic_match.group(1)
+                assert topic in known_topics, (
+                    f"see_also literal references unknown topic {topic!r} in "
+                    f"{py_file.relative_to(src_root)}; known topics: {sorted(known_topics)}"
+                )
+
+    assert found_any, (
+        "No see_also=[...] literals found in src/pflow — regex drift or feature regressed. "
+        "Expected at least the 8 annotated sites from Issue #311."
+    )

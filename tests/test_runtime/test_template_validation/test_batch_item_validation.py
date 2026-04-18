@@ -792,3 +792,64 @@ class TestBatchItemFieldValidation:
         assert diagnostic.context.get("parent_path") == "item.llm_usage"
         assert diagnostic.context.get("parent_type") == "dict"
         assert diagnostic.context.get("available_fields_label") == "nested fields"
+
+
+class TestBatchItemDiagnosticsCarrySeeAlso:
+    """Batch item field/nested-path errors point at the batch guide.
+
+    The batch item contract (items source structure, self-contained results
+    under ``error_handling: continue``) is the structural pattern the guide
+    teaches.
+    """
+
+    def test_batch_item_field_miss_sets_see_also_batch(self):
+        """Top-level ${item.BAD} references carry see_also=['batch']."""
+        workflow_ir = {
+            "inputs": {"data": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${data}"},
+                    "params": {"prompt": "Process: ${item}"},
+                },
+                {
+                    "id": "analyze",
+                    "type": "llm",
+                    "batch": {"items": "${process.results}"},
+                    "params": {"prompt": "Bad: ${item.nonexistent}"},
+                },
+            ],
+            "edges": [{"from": "process", "to": "analyze"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, create_mock_registry())
+
+        assert errors
+        assert errors[0].see_also == ["batch"]
+
+    def test_batch_item_nested_miss_sets_see_also_batch(self):
+        """Nested ${item.llm_usage.BAD} references carry see_also=['batch']."""
+        workflow_ir = {
+            "inputs": {"data": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${data}"},
+                    "params": {"prompt": "Process: ${item}"},
+                },
+                {
+                    "id": "analyze",
+                    "type": "llm",
+                    "batch": {"items": "${process.results}"},
+                    "params": {"prompt": "Bad: ${item.llm_usage.nope}"},
+                },
+            ],
+            "edges": [{"from": "process", "to": "analyze"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, create_mock_registry())
+
+        assert errors
+        assert errors[0].see_also == ["batch"]
