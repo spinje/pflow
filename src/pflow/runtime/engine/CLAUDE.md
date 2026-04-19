@@ -104,7 +104,11 @@ It owns config hashing, non-batch template resolution, memo-cache lookup, and in
 - `apply_memo_hit()`
 - `in_process_cache_lookup()`
 
-Parity is enforced by `tests/test_execution/test_plan_drift.py`.
+**Engine vs planner consumers diverge only in how they consume `NodePlan`**:
+- Engine dispatches on `NodePlan.status` → cached path (`apply_memo_hit` + `handle_cached_execution`) or miss path (proceed to step 9).
+- Planner dispatches on `NodePlan.status` via five named entry builders (`_template_error_entry` / `_cache_disabled_entry` / `_cached_memo_entry` / `_cached_in_process_entry` / `_miss_entry`), then runs `_classify` to decide the walker's `Transition`. See `execution/CLAUDE.md` → "Dry-Run Planner" for the walker state machine.
+
+Parity is enforced by `tests/test_execution/test_plan_drift.py`. State-machine semantics are unit-tested at `tests/test_execution/test_plan_classify.py`.
 
 ### `_execute_single_node(node, config, shared) → (action, last_resolutions, template_errors)`
 

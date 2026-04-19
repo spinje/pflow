@@ -85,12 +85,14 @@ Pre-execution validation. See `template_validation/CLAUDE.md`.
 
 Dry-run planning is split across two files:
 
-- `runtime/engine/plan_node.py` — shared per-node decision primitive
-- `execution/plan.py` — graph walker that builds typed `Plan` results
+- `runtime/engine/plan_node.py` — shared per-node decision primitive (`plan_node(node, config, shared) -> NodePlan`)
+- `execution/plan.py` — graph walker that builds typed `Plan` results via an explicit `Transition` state machine
 
 **Load-bearing invariant**: `plan_node()` is the single authoritative source for cache-hit semantics. Both the engine and the planner call it. Changes to cache-key computation, template resolution, or cache-enable rules MUST live in `plan_node()`, not in `engine._execute_node()` or `execution/plan.py`.
 
-Parity is enforced by `tests/test_execution/test_plan_drift.py`. If that test fails, fix the divergence instead of weakening the test.
+**Walker shape** (`execution/plan.py`): transitions are a discriminated union — `Transition.FOLLOW` / `STOP` / `BOUNDARY` / `ROUTING_ERROR`. `_classify(entry, curr) -> Decision` is the one authoritative mapping from `PlanEntry.status` to transition; `_advance(...)` is a `match` dispatch that acts on the decision. Extending the planner with a new status means: add a `PlanEntry.status` literal, add an entry builder in `_plan_standard_node`, add a `_classify` case, add the `match` arm in `_advance`. In that order. See `execution/CLAUDE.md` → "Dry-Run Planner" for the full walker documentation.
+
+Parity is enforced by `tests/test_execution/test_plan_drift.py`. State-machine transitions are unit-tested in `tests/test_execution/test_plan_classify.py`. If either test fails, fix the divergence instead of weakening the test.
 
 ## Other Components
 

@@ -12,13 +12,53 @@ src/pflow/execution/
 ├── workflow_resolver.py     # Unified workflow resolution (file, library, markdown, dict → ResolvedWorkflow)
 ├── executor_service.py      # Internal utility: error extraction helpers (_build_error_list, etc.)
 ├── execution_state.py       # Per-node execution state building (shared CLI/MCP)
+├── plan.py                  # Dry-run planner — graph walker with explicit `Transition` state machine
 └── formatters/              # Shared output formatters (return strings/dicts, NEVER print)
     ├── error_formatter.py
     ├── success_formatter.py
     ├── node_output_formatter.py
     ├── validation_formatter.py
-    └── ... (13 formatters total, see formatters/CLAUDE.md)
+    ├── plan_formatter.py
+    └── ... (14 formatters total, see formatters/CLAUDE.md)
 ```
+
+## Dry-Run Planner (`plan.py`)
+
+`build_plan(compiled, params, cache, registry, ...) -> Plan` walks a compiled workflow and produces a typed `Plan` describing what would happen at runtime — cached vs would-execute per node, historical cost for LLM nodes, sub-workflow recursion — without invoking any node side effects. Called by `WorkflowRunner.plan()` and the MCP `plan_workflow` tool.
+
+### State machine (the walker's shape)
+
+The walker is an explicit discriminated-union state machine, not a set of ad-hoc branches:
+
+```python
+class Transition(Enum):
+    FOLLOW         # advance to successor on `action`
+    STOP           # clean termination (end / all-error successors / revisit)
+    BOUNDARY       # first would-execute node → BFS downstream, then stop
+    ROUTING_ERROR  # cached action has no matching successor → emit + stop
+
+def _classify(entry: PlanEntry, curr) -> Decision  # pure mapping
+def _advance(decision, ..., state: _WalkerState) -> Any | None  # dispatches via match
+```
+
+`build_plan`'s main loop does exactly three things per iteration: plan one node, classify its transition, apply the decision. `_classify` is the one authoritative mapping from `PlanEntry.status` to `Transition` — extending the planner means adding an enum variant plus a `match` arm plus a `_classify` case, in that order. Unit tests pin the mapping at `tests/test_execution/test_plan_classify.py`.
+
+### Load-bearing invariants (documented at top of `plan.py`)
+
+- The scratch `shared` the planner constructs is planner-owned; `apply_memo_hit` mutates it on memo hits so downstream template resolution matches the engine's cache-key computation. Skipping the mutation looks purer but causes silent drift.
+- `node_visit_counts` bumps BEFORE each `plan_node()` call, mirroring the engine's `enforce_loop_guard`. Without it, loop iteration 2+ hits memo cache differently between engine and planner.
+- Post-first-miss: BFS over ALL non-"error" successors. Following only `default` underestimates cost for conditional workflows, the wrong failure mode for a cost gate.
+- A cached entry whose action has no matching successor = runtime routing error. Surface as a plan entry and stop.
+
+Parity with runtime is pinned by `tests/test_execution/test_plan_drift.py`.
+
+### Entry-builder taxonomy
+
+`_plan_standard_node` dispatches on `NodePlan.status` to one of five named builders: `_template_error_entry` / `_cache_disabled_entry` / `_cached_memo_entry` / `_cached_in_process_entry` / `_miss_entry`. Adding a new status means adding a builder plus one dispatch branch — no scattered edits. `_sub_workflow_error_entry` is shared by every sub-workflow failure path (depth exceeded, resolve failure, cycle, bad inputs).
+
+### Sub-workflow compile failures
+
+`_compile_child` raises `_ChildCompileFailed(entry=...)` when the child fails a recoverable compile check. The caller unwraps it in one line (`except _ChildCompileFailed as failure: return failure.entry`), avoiding a `CompiledWorkflow | PlanEntry` sum type and the isinstance plumbing that would come with it.
 
 ## WorkflowRunner — Primary Entry Point
 

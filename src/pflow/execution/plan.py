@@ -1,12 +1,38 @@
-"""Execution planner for --dry-run."""
+"""Execution planner for --dry-run.
+
+Walks a compiled workflow graph and produces a typed `Plan` describing what
+would happen at runtime — which nodes serve from cache, which would execute,
+historical cost for LLM nodes, sub-workflow recursion — without invoking any
+node side effects.
+
+Paired with `runtime/engine/plan_node.py`: the engine and the planner both
+call `plan_node()` so cache-key / template-resolution semantics cannot drift.
+Parity is pinned by `tests/test_execution/test_plan_drift.py`.
+
+INVARIANTS (non-obvious — read before modifying):
+- The scratch `shared` dict the planner constructs is planner-owned.
+  `apply_memo_hit` must mutate it on memo hits so downstream template
+  resolution matches the engine's cache-key computation. Skipping the
+  mutation looks "purer" but causes silent drift.
+- `node_visit_counts` must bump BEFORE each `plan_node()` call, mirroring
+  the engine's `enforce_loop_guard`. Without it, loop iteration 2+ hits
+  memo cache differently between engine and planner.
+- Post-first-miss: BFS over ALL non-"error" successors. Following only
+  `default` underestimates cost for conditional workflows, which is the
+  wrong failure mode for a cost gate.
+- A cached entry whose action has no matching successor = runtime routing
+  error. Surface as a plan entry and stop — the engine would fail here too.
+"""
 
 from __future__ import annotations
 
 import logging
 from collections import deque
+from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 from time import time
-from typing import Any
+from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError
@@ -15,7 +41,7 @@ from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.instrumentation import apply_memo_hit
-from pflow.runtime.engine.plan_node import plan_node
+from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
 
 logger = logging.getLogger(__name__)
@@ -23,8 +49,108 @@ logger = logging.getLogger(__name__)
 _LLM_NODE_CLASSES: frozenset[str] = frozenset({"LLMNode", "ClaudeCodeNode"})
 _MAX_SUB_WORKFLOW_DEPTH = 10
 
+_CostBasis = Literal["upper_bound", "exact"]
 
-def build_plan(  # noqa: C901
+
+@dataclass
+class _WalkerState:
+    """Mutable state threaded through the walker's per-iteration dispatch.
+
+    Pass-by-reference replaces the 10-arg `_advance` signature. Every
+    field is planner-owned; mutating them is the walker's job.
+    """
+
+    entries: list[PlanEntry]
+    diagnostics: list[Diagnostic]
+    visited_edges: set[tuple[str, str]]
+    only_node: str | None
+    cost_basis: _CostBasis = "exact"
+
+
+class _ChildCompileFailed(Exception):
+    """Internal signal: child workflow failed to compile at plan time.
+
+    Carries the pre-built PlanEntry the caller should return. Used instead
+    of a `CompiledWorkflow | PlanEntry` sum type so callers don't need
+    `isinstance` checks. Never raised across the public boundary.
+    """
+
+    def __init__(self, entry: PlanEntry) -> None:
+        super().__init__()
+        self.entry = entry
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Walker state machine
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class Transition(Enum):
+    """Walker's next move after planning a single node."""
+
+    FOLLOW = auto()  # advance to the successor on `action`
+    STOP = auto()  # clean termination (end / all-error / revisited edge)
+    BOUNDARY = auto()  # first would-execute node; BFS downstream then stop
+    ROUTING_ERROR = auto()  # cached action has no matching successor; emit + stop
+
+
+@dataclass(frozen=True)
+class Decision:
+    """Walker's decision for one planned entry."""
+
+    kind: Transition
+    action: str = "default"
+
+
+def _classify(entry: PlanEntry, curr: Any) -> Decision:
+    """Map a planned entry + current graph node to a walker transition.
+
+    Single exhaustive mapping. Both the engine (runtime) and the planner
+    rely on the same set of status values on `PlanEntry`, so this function
+    is the one place where status → transition is expressed.
+    """
+    if entry.status == "routing_error":
+        return Decision(Transition.STOP)
+
+    action = entry.action if entry.status == "cached" and entry.action else "default"
+
+    # Cached action that names no matching successor = runtime routing error.
+    if entry.status == "cached" and action != "default" and action not in curr.successors:
+        return Decision(Transition.ROUTING_ERROR, action)
+
+    # Clean termination: explicit end, no successors, or only error handlers.
+    if action == "end":
+        return Decision(Transition.STOP, action)
+    if not curr.successors or all(name == "error" for name in curr.successors):
+        return Decision(Transition.STOP, action)
+
+    # First entry that represents runtime work = cache boundary.
+    if _represents_work(entry):
+        return Decision(Transition.BOUNDARY, action)
+
+    return Decision(Transition.FOLLOW, action)
+
+
+def _represents_work(entry: PlanEntry) -> bool:
+    """Whether an entry means the engine would actually execute something.
+
+    Shared by `_classify` (for boundary detection) and `_summarize`
+    (for execute_count / cache_boundary). Single source of truth.
+    """
+    if entry.status in ("execute", "opaque"):
+        return True
+    if entry.status == "sub_workflow" and entry.sub_plan is not None:
+        child = entry.sub_plan.summary
+        return child.execute_count > 0 or (child.execute_including_nested or 0) > 0
+    return False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main walker
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def build_plan(
     compiled: CompiledWorkflow,
     params: dict[str, Any],
     cache: MemoizationCache,
@@ -37,45 +163,25 @@ def build_plan(  # noqa: C901
     _parent_workflow_file: str | None = None,
 ) -> Plan:
     """Build an execution plan for a compiled workflow."""
-    if only_node is not None and _depth == 0 and only_node not in compiled.node_configs:
-        available = sorted(compiled.node_configs.keys())
-        raise CompilationError(
-            f"Node '{only_node}' not found",
-            phase="only_node_resolution",
-            details={"available_nodes": available},
-            suggestion=f"Available nodes: {', '.join(available)}",
-        )
+    _validate_only_target(compiled, only_node, _depth)
 
+    shared = _create_planner_shared(compiled, params, cache, _parent_workflow_file)
     visited_paths = list(_visited_paths) if _visited_paths else []
-
-    shared: dict[str, Any] = {**params}
-    shared.update(compiled.resolved_defaults)
-    shared["__memoization_cache__"] = cache
-    shared["__execution__"] = {
-        "completed_nodes": [],
-        "node_actions": {},
-        "node_hashes": {},
-        "failed_node": None,
-        "node_visit_counts": {},
-    }
-    shared["__cache_hits__"] = []
-    if _parent_workflow_file:
-        shared["_pflow_workflow_file"] = _parent_workflow_file
-
-    entries: list[PlanEntry] = []
-    diagnostics: list[Diagnostic] = []
-    visited_edges: set[tuple[str, str]] = set()
-    first_miss_node_id: str | None = None
-    cost_basis = "exact"
+    state = _WalkerState(
+        entries=[],
+        diagnostics=[],
+        visited_edges=set(),
+        only_node=only_node,
+    )
 
     curr = compiled.start_node
     while curr is not None:
         node_id = getattr(curr, "node_id", None)
-        if node_id is None or node_id not in compiled.node_configs:
+        if not isinstance(node_id, str) or node_id not in compiled.node_configs:
             logger.debug("Skipping node with missing node_id or config in plan walk")
             break
-
         config = compiled.node_configs[node_id]
+
         visit_counts = shared["__execution__"]["node_visit_counts"]
         visit_counts[node_id] = visit_counts.get(node_id, 0) + 1
 
@@ -89,95 +195,173 @@ def build_plan(  # noqa: C901
             depth=_depth,
             parent_workflow_file=_parent_workflow_file,
         )
-
+        state.entries.append(entry)
         if entry.sub_plan is not None:
-            diagnostics.extend(entry.sub_plan.diagnostics)
+            state.diagnostics.extend(entry.sub_plan.diagnostics)
         if entry.diagnostic is not None:
-            diagnostics.append(entry.diagnostic)
+            state.diagnostics.append(entry.diagnostic)
 
-        entries.append(entry)
+        curr = _advance(
+            decision=_classify(entry, curr),
+            curr=curr,
+            node_id=node_id,
+            config=config,
+            compiled=compiled,
+            state=state,
+        )
 
-        if entry.status == "cached":
-            action = entry.action or "default"
-        elif entry.status == "sub_workflow" and entry.sub_plan is not None:
-            child_summary = entry.sub_plan.summary
-            child_has_work = child_summary.execute_count > 0 or (child_summary.execute_including_nested or 0) > 0
-            if child_has_work:
-                first_miss_node_id = node_id
-            action = "default"
-        elif entry.status == "opaque":
-            first_miss_node_id = node_id
-            action = "default"
-        elif entry.status == "routing_error":
-            break
-        else:
-            first_miss_node_id = node_id
-            action = "default"
-
-        if action == "end":
-            break
-        if curr.successors and all(name == "error" for name in curr.successors):
-            break
-
-        if entry.status == "cached" and action != "default" and action not in curr.successors:
-            routing_diag = Diagnostic(
-                severity=Severity.WARNING,
-                message=(
-                    f"Node '{node_id}' cached action '{action}' has no matching successor. "
-                    f"Available: {list(curr.successors)}. At runtime the engine would fail "
-                    "with a routing error — fix the workflow edges."
-                ),
-                node_id=node_id,
-                source="planner",
-                context={"category": "routing_error"},
-            )
-            entries.append(
-                PlanEntry(
-                    node_id=node_id,
-                    node_type=_node_type_name(config),
-                    status="routing_error",
-                    cause="routing_error",
-                    diagnostic=routing_diag,
-                )
-            )
-            diagnostics.append(routing_diag)
-            break
-
-        if only_node is not None and first_miss_node_id == only_node:
-            break
-
-        if first_miss_node_id is not None:
-            bfs_entries, bfs_flipped_basis = _bfs_downstream(
-                boundary_node=curr,
-                compiled=compiled,
-                visited_nodes={entry.node_id for entry in entries if entry.sub_plan is None},
-                visited_edges=visited_edges,
-                only_node=only_node,
-            )
-            entries.extend(bfs_entries)
-            if bfs_flipped_basis:
-                cost_basis = "upper_bound"
-            break
-
-        edge = (node_id, action)
-        if edge in visited_edges:
-            break
-        visited_edges.add(edge)
-        curr = curr.successors.get(action)
-
-        if only_node is not None and node_id == only_node:
-            break
-
-    summary = _summarize(entries, diagnostics, cost_basis=cost_basis)
     return Plan(
         workflow=workflow_name,
-        entries=entries,
-        summary=summary,
-        diagnostics=diagnostics,
+        entries=state.entries,
+        summary=_summarize(state.entries, cost_basis=state.cost_basis),
+        diagnostics=state.diagnostics,
     )
 
 
-def _bfs_downstream(  # noqa: C901
+def _advance(
+    *,
+    decision: Decision,
+    curr: Any,
+    node_id: str,
+    config: NodeConfig,
+    compiled: CompiledWorkflow,
+    state: _WalkerState,
+) -> Any | None:
+    """Apply the walker decision by mutating `state`; return the next node or None.
+
+    `None` means the walker should stop. This is the ONLY place where walker
+    transitions are acted on — the main loop in `build_plan` never branches
+    on `Transition` itself.
+    """
+    match decision.kind:
+        case Transition.STOP:
+            return None
+        case Transition.ROUTING_ERROR:
+            routing_entry, routing_diag = _routing_error_entry(node_id, config, decision.action, curr.successors)
+            state.entries.append(routing_entry)
+            state.diagnostics.append(routing_diag)
+            return None
+        case Transition.BOUNDARY:
+            _apply_boundary(curr, compiled, node_id, state)
+            return None
+        case Transition.FOLLOW:
+            return _apply_follow(curr, node_id, decision.action, state)
+        case _:
+            raise AssertionError(f"unhandled walker transition: {decision.kind!r}")
+
+
+def _apply_boundary(
+    curr: Any,
+    compiled: CompiledWorkflow,
+    node_id: str,
+    state: _WalkerState,
+) -> None:
+    """Run BFS downstream from the boundary node; update `state` in place."""
+    if state.only_node is not None and node_id == state.only_node:
+        return
+    bfs_entries, branched = _bfs_downstream(
+        boundary_node=curr,
+        compiled=compiled,
+        visited_nodes={e.node_id for e in state.entries if e.sub_plan is None},
+        visited_edges=state.visited_edges,
+        only_node=state.only_node,
+    )
+    state.entries.extend(bfs_entries)
+    if branched:
+        state.cost_basis = "upper_bound"
+
+
+def _apply_follow(
+    curr: Any,
+    node_id: str,
+    action: str,
+    state: _WalkerState,
+) -> Any | None:
+    """Return the next node to walk, or None to stop (only-target / revisit)."""
+    if state.only_node is not None and node_id == state.only_node:
+        return None
+    edge = (node_id, action)
+    if edge in state.visited_edges:
+        return None
+    state.visited_edges.add(edge)
+    return curr.successors.get(action)
+
+
+def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None, depth: int) -> None:
+    """Hard-error when --only names a node that doesn't exist (top level only)."""
+    if only_node is None or depth != 0 or only_node in compiled.node_configs:
+        return
+    available = sorted(compiled.node_configs.keys())
+    raise CompilationError(
+        f"Node '{only_node}' not found",
+        phase="only_node_resolution",
+        details={"available_nodes": available},
+        suggestion=f"Available nodes: {', '.join(available)}",
+    )
+
+
+def _create_planner_shared(
+    compiled: CompiledWorkflow,
+    params: dict[str, Any],
+    cache: MemoizationCache,
+    parent_workflow_file: str | None,
+) -> dict[str, Any]:
+    """Build the planner-owned scratch shared store.
+
+    Matches the shape the engine expects under `__execution__`, so
+    `plan_node()` and `apply_memo_hit()` can operate on it without
+    special-casing.
+    """
+    shared: dict[str, Any] = {**params}
+    shared.update(compiled.resolved_defaults)
+    shared["__memoization_cache__"] = cache
+    shared["__execution__"] = {
+        "completed_nodes": [],
+        "node_actions": {},
+        "node_hashes": {},
+        "failed_node": None,
+        "node_visit_counts": {},
+    }
+    shared["__cache_hits__"] = []
+    if parent_workflow_file:
+        shared["_pflow_workflow_file"] = parent_workflow_file
+    return shared
+
+
+def _routing_error_entry(
+    node_id: str,
+    config: NodeConfig,
+    action: str,
+    successors: dict[str, Any],
+) -> tuple[PlanEntry, Diagnostic]:
+    """Build the entry + diagnostic pair for a cached-action/no-successor mismatch."""
+    diag = Diagnostic(
+        severity=Severity.WARNING,
+        message=(
+            f"Node '{node_id}' cached action '{action}' has no matching successor. "
+            f"Available: {list(successors)}. At runtime the engine would fail "
+            "with a routing error — fix the workflow edges."
+        ),
+        node_id=node_id,
+        source="planner",
+        context={"category": "routing_error"},
+    )
+    entry = PlanEntry(
+        node_id=node_id,
+        node_type=config.node_type_name,
+        status="routing_error",
+        cause="routing_error",
+        diagnostic=diag,
+    )
+    return entry, diag
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Post-boundary BFS
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _bfs_downstream(
     *,
     boundary_node: Any,
     compiled: CompiledWorkflow,
@@ -185,63 +369,97 @@ def _bfs_downstream(  # noqa: C901
     visited_edges: set[tuple[str, str]],
     only_node: str | None,
 ) -> tuple[list[PlanEntry], bool]:
-    """BFS over non-error successors starting from the boundary node."""
+    """Enumerate reachable would-execute nodes after the first cache miss.
+
+    Walks non-"error" outgoing edges breadth-first. Returns the discovered
+    entries plus a `branched` flag — true when any traversed node had more
+    than one non-error successor, which flips the plan's cost_basis to
+    upper_bound (conservative for cost gating).
+    """
     entries: list[PlanEntry] = []
-    flipped_basis = False
     queue: deque[Any] = deque()
+    branched = _seed_bfs(boundary_node, queue, visited_edges)
 
-    boundary_non_error = [(action, succ) for action, succ in boundary_node.successors.items() if action != "error"]
-    if len(boundary_non_error) > 1:
-        flipped_basis = True
+    while queue:
+        node = queue.popleft()
+        entry = _make_downstream_entry(node, compiled, visited_nodes)
+        if entry is None:
+            continue
+        entries.append(entry)
+        if only_node is not None and entry.node_id == only_node:
+            break
+        if _enqueue_non_error_successors(node, queue, visited_edges):
+            branched = True
 
+    return entries, branched
+
+
+def _seed_bfs(
+    boundary_node: Any,
+    queue: deque[Any],
+    visited_edges: set[tuple[str, str]],
+) -> bool:
+    """Push boundary's non-error successors onto the BFS queue; return branched flag."""
+    successors = _non_error_successors(boundary_node)
     boundary_id = getattr(boundary_node, "node_id", None)
-    for action, succ in boundary_non_error:
-        if boundary_id is not None:
+    for action, successor in successors:
+        if isinstance(boundary_id, str):
             edge = (boundary_id, action)
             if edge in visited_edges:
                 continue
             visited_edges.add(edge)
-        queue.append(succ)
+        queue.append(successor)
+    return len(successors) > 1
 
-    while queue:
-        node = queue.popleft()
-        node_id = getattr(node, "node_id", None)
-        if node_id is None or node_id in visited_nodes:
+
+def _make_downstream_entry(
+    node: Any,
+    compiled: CompiledWorkflow,
+    visited_nodes: set[str],
+) -> PlanEntry | None:
+    """Build a downstream PlanEntry for a BFS-discovered node, or None to skip it."""
+    node_id = getattr(node, "node_id", None)
+    if not isinstance(node_id, str) or node_id in visited_nodes:
+        return None
+    if node_id not in compiled.node_configs:
+        return None
+    visited_nodes.add(node_id)
+    config = compiled.node_configs[node_id]
+    return PlanEntry(
+        node_id=node_id,
+        node_type=config.node_type_name,
+        status="execute",
+        cause="downstream",
+    )
+
+
+def _enqueue_non_error_successors(
+    node: Any,
+    queue: deque[Any],
+    visited_edges: set[tuple[str, str]],
+) -> bool:
+    """Enqueue a node's non-error successors; return True when it branched (>1)."""
+    successors = _non_error_successors(node)
+    node_id = getattr(node, "node_id", None)
+    if not isinstance(node_id, str):
+        return len(successors) > 1
+    for action, successor in successors:
+        edge = (node_id, action)
+        if edge in visited_edges:
             continue
-        visited_nodes.add(node_id)
-
-        if node_id not in compiled.node_configs:
-            continue
-        config = compiled.node_configs[node_id]
-        entries.append(
-            PlanEntry(
-                node_id=node_id,
-                node_type=_node_type_name(config),
-                status="execute",
-                cause="downstream",
-            )
-        )
-
-        if only_node is not None and node_id == only_node:
-            break
-
-        non_error_successors = [(action, succ) for action, succ in node.successors.items() if action != "error"]
-        if len(non_error_successors) > 1:
-            flipped_basis = True
-
-        for action, succ in non_error_successors:
-            edge = (node_id, action)
-            if edge in visited_edges:
-                continue
-            visited_edges.add(edge)
-            queue.append(succ)
-
-    return entries, flipped_basis
+        visited_edges.add(edge)
+        queue.append(successor)
+    return len(successors) > 1
 
 
-def _node_type_name(config: NodeConfig) -> str:
-    """Get the user-facing node type for display and aggregation."""
-    return config.node_type_name
+def _non_error_successors(node: Any) -> list[tuple[str, Any]]:
+    """Return a node's successors excluding on-error handlers."""
+    return [(action, successor) for action, successor in node.successors.items() if action != "error"]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-node planning dispatch
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 def _plan_one_node(
@@ -255,7 +473,7 @@ def _plan_one_node(
     depth: int,
     parent_workflow_file: str | None,
 ) -> PlanEntry:
-    """Plan a single node."""
+    """Plan a single node, dispatching on WorkflowExecutor vs standard."""
     if config.node_type_name == "WorkflowExecutor":
         return _plan_sub_workflow(
             curr,
@@ -270,87 +488,105 @@ def _plan_one_node(
     return _plan_standard_node(curr, config, shared, cache)
 
 
-def _plan_standard_node(  # noqa: C901
+def _plan_standard_node(
     curr: Any,
     config: NodeConfig,
     shared: dict[str, Any],
     cache: MemoizationCache,
 ) -> PlanEntry:
-    """Plan a non-WorkflowExecutor node."""
-    plan = plan_node(curr, config, shared)
+    """Plan a non-sub-workflow node via the shared `plan_node` primitive."""
+    planned = plan_node(curr, config, shared)
 
-    if plan.template_exception is not None:
-        attached_diag = getattr(plan.template_exception, "_pflow_template_diagnostic", None)
-        if not isinstance(attached_diag, Diagnostic):
-            attached_diag = Diagnostic(
-                severity=Severity.WARNING,
-                message=str(plan.template_exception),
-                node_id=config.node_id,
-                source="planner",
-                context={"category": "template_error"},
-            )
-        return PlanEntry(
+    if planned.template_exception is not None:
+        return _template_error_entry(config, planned.template_exception)
+    if planned.status == "cache_disabled":
+        return _cache_disabled_entry(config)
+    if planned.status == "cached_memo":
+        return _cached_memo_entry(config, planned, shared, cache)
+    if planned.status == "cached_in_process":
+        return _cached_in_process_entry(config, planned)
+    return _miss_entry(config, planned, cache)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PlanEntry builders (one per status)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _template_error_entry(config: NodeConfig, exc: BaseException) -> PlanEntry:
+    """Entry for a strict-mode template resolution failure at planning time."""
+    attached = getattr(exc, "_pflow_template_diagnostic", None)
+    if not isinstance(attached, Diagnostic):
+        attached = Diagnostic(
+            severity=Severity.WARNING,
+            message=str(exc),
             node_id=config.node_id,
-            node_type=_node_type_name(config),
-            status="execute",
-            cause="template_error",
-            diagnostic=attached_diag,
+            source="planner",
+            context={"category": "template_error"},
         )
-
-    if plan.status == "cache_disabled":
-        return PlanEntry(
-            node_id=config.node_id,
-            node_type=_node_type_name(config),
-            status="execute",
-            cause="cache_disabled",
-        )
-
-    if plan.status == "cached_memo":
-        if plan.cached_output is not None and plan.cached_action is not None:
-            apply_memo_hit(
-                config.node_id,
-                shared,
-                plan.cached_action,
-                plan.cached_output,
-                plan.config_hash,
-            )
-
-        age_sec: float | None = None
-        if plan.cache_key is not None:
-            with_age = cache.get_with_age(plan.cache_key)
-            if with_age is not None:
-                age_sec = time() - with_age[2]
-
-        return PlanEntry(
-            node_id=config.node_id,
-            node_type=_node_type_name(config),
-            status="cached",
-            cause="hash_match",
-            action=plan.cached_action or "default",
-            age_sec=age_sec,
-        )
-
-    if plan.status == "cached_in_process":
-        return PlanEntry(
-            node_id=config.node_id,
-            node_type=_node_type_name(config),
-            status="cached",
-            cause="hash_match",
-            action=plan.cached_action or "default",
-            age_sec=None,
-        )
-
-    last_cost, last_age = _lookup_last_cost(config, cache)
-    permissive_diag: Diagnostic | None = None
-    if plan.template_errors:
-        last_err = plan.template_errors[-1]
-        attached = last_err.get("diagnostic") if isinstance(last_err, dict) else None
-        if isinstance(attached, Diagnostic):
-            permissive_diag = attached
-
     return PlanEntry(
         node_id=config.node_id,
-        node_type=_node_type_name(config),
+        node_type=config.node_type_name,
+        status="execute",
+        cause="template_error",
+        diagnostic=attached,
+    )
+
+
+def _cache_disabled_entry(config: NodeConfig) -> PlanEntry:
+    """Entry for a node with `cache: false` — always runs."""
+    return PlanEntry(
+        node_id=config.node_id,
+        node_type=config.node_type_name,
+        status="execute",
+        cause="cache_disabled",
+    )
+
+
+def _cached_memo_entry(
+    config: NodeConfig,
+    planned: NodePlan,
+    shared: dict[str, Any],
+    cache: MemoizationCache,
+) -> PlanEntry:
+    """Entry for a memo-cache hit; applies the engine's on-hit shared mutations."""
+    if planned.cached_output is not None and planned.cached_action is not None:
+        apply_memo_hit(
+            config.node_id,
+            shared,
+            planned.cached_action,
+            planned.cached_output,
+            planned.config_hash,
+        )
+    return PlanEntry(
+        node_id=config.node_id,
+        node_type=config.node_type_name,
+        status="cached",
+        cause="hash_match",
+        action=planned.cached_action or "default",
+        age_sec=_cache_age(planned.cache_key, cache),
+    )
+
+
+def _cached_in_process_entry(config: NodeConfig, planned: NodePlan) -> PlanEntry:
+    """Entry for an in-process cache hit (node already succeeded this run)."""
+    return PlanEntry(
+        node_id=config.node_id,
+        node_type=config.node_type_name,
+        status="cached",
+        cause="hash_match",
+        action=planned.cached_action or "default",
+        age_sec=None,
+    )
+
+
+def _miss_entry(config: NodeConfig, planned: NodePlan, cache: MemoizationCache) -> PlanEntry:
+    """Entry for a cache miss — the node would execute."""
+    last_cost, last_age = _lookup_last_cost(config, cache)
+    permissive_diag = _permissive_template_diagnostic(planned)
+    return PlanEntry(
+        node_id=config.node_id,
+        node_type=config.node_type_name,
         status="execute",
         cause="template_error" if permissive_diag is not None else "no_cache_match",
         last_cost_usd=last_cost,
@@ -359,7 +595,31 @@ def _plan_standard_node(  # noqa: C901
     )
 
 
-def _plan_sub_workflow(  # noqa: C901
+def _cache_age(cache_key: str | None, cache: MemoizationCache) -> float | None:
+    """Look up the age of a cached memo entry, if still present."""
+    if cache_key is None:
+        return None
+    with_age = cache.get_with_age(cache_key)
+    if with_age is None:
+        return None
+    return time() - with_age[2]
+
+
+def _permissive_template_diagnostic(planned: NodePlan) -> Diagnostic | None:
+    """Last structured permissive-mode template error, if any."""
+    if not planned.template_errors:
+        return None
+    last = planned.template_errors[-1]
+    attached = last.get("diagnostic") if isinstance(last, dict) else None
+    return attached if isinstance(attached, Diagnostic) else None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sub-workflow planning
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _plan_sub_workflow(
     curr: Any,
     config: NodeConfig,
     shared: dict[str, Any],
@@ -370,170 +630,73 @@ def _plan_sub_workflow(  # noqa: C901
     depth: int,
     parent_workflow_file: str | None,
 ) -> PlanEntry:
-    """Compile and recursively plan a sub-workflow."""
+    """Compile and recursively plan a nested workflow.
+
+    Flat early-return ladder — each check either short-circuits with a
+    descriptive PlanEntry or passes its value through to the next stage.
+    """
     node_id = config.node_id
-    node_type = _node_type_name(config)
+    node_type = config.node_type_name
 
     if depth >= _MAX_SUB_WORKFLOW_DEPTH:
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="execute",
-            cause="template_error",
-            diagnostic=Diagnostic(
-                severity=Severity.WARNING,
-                message=f"Max sub-workflow depth {_MAX_SUB_WORKFLOW_DEPTH} exceeded at '{node_id}'",
-                node_id=node_id,
-                source="planner",
-                context={"category": "sub_workflow"},
-            ),
+        return _sub_workflow_error_entry(
+            node_id,
+            node_type,
+            f"Max sub-workflow depth {_MAX_SUB_WORKFLOW_DEPTH} exceeded at '{node_id}'",
         )
 
-    workflow_ref = None
-    if config.template_config:
-        workflow_ref = config.template_config.template_params.get("workflow")
-        if workflow_ref is None:
-            workflow_ref = config.template_config.static_params.get("workflow")
-    if workflow_ref is None:
-        workflow_ref = curr.params.get("workflow") if hasattr(curr, "params") else None
-
+    # Opaque pre-check: `workflow: ${...}` can't be planned; don't run plan_node.
+    workflow_ref = _raw_workflow_ref(curr, config)
     if isinstance(workflow_ref, str) and "${" in workflow_ref:
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="opaque",
-            cause="dynamic",
-        )
+        return _opaque_sub_workflow_entry(node_id, node_type)
 
-    plan = plan_node(curr, config, shared)
-    if plan.template_exception is not None:
-        attached_diag = getattr(plan.template_exception, "_pflow_template_diagnostic", None)
-        if not isinstance(attached_diag, Diagnostic):
-            attached_diag = Diagnostic(
-                severity=Severity.WARNING,
-                message=str(plan.template_exception),
-                node_id=node_id,
-                source="planner",
-                context={"category": "template_error"},
-            )
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="execute",
-            cause="template_error",
-            diagnostic=attached_diag,
-        )
+    planned = plan_node(curr, config, shared)
+    if planned.template_exception is not None:
+        return _template_error_entry(config, planned.template_exception)
 
-    merged: dict[str, Any] = {}
-    if config.template_config:
-        merged.update(config.template_config.static_params or {})
-    if plan.resolved_params:
-        merged.update(plan.resolved_params)
+    merged = _merged_sub_workflow_params(curr, config, planned)
 
     base_path = Path(parent_workflow_file).parent if parent_workflow_file else None
     try:
         resolved = resolve_sub_workflow(merged, base_path=base_path)
     except _SUB_WORKFLOW_RESOLVE_EXCEPTIONS as exc:
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="execute",
-            cause="template_error",
-            diagnostic=Diagnostic(
-                severity=Severity.WARNING,
-                message=f"Sub-workflow resolve failed: {exc}",
-                node_id=node_id,
-                source="planner",
-                context={"category": "sub_workflow"},
-            ),
-        )
-
+        return _sub_workflow_error_entry(node_id, node_type, f"Sub-workflow resolve failed: {exc}")
     if resolved is None:
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="opaque",
-            cause="dynamic",
-        )
+        return _opaque_sub_workflow_entry(node_id, node_type)
 
     resolved_path_str = str(resolved.path.resolve()) if resolved.path else None
-    if resolved_path_str and resolved_path_str in visited_paths:
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="execute",
-            cause="template_error",
-            diagnostic=Diagnostic(
-                severity=Severity.WARNING,
-                message=f"Circular sub-workflow reference: {resolved_path_str}",
-                node_id=node_id,
-                source="planner",
-                context={"category": "sub_workflow"},
-            ),
+
+    if resolved_path_str is not None and resolved_path_str in visited_paths:
+        return _sub_workflow_error_entry(
+            node_id,
+            node_type,
+            f"Circular sub-workflow reference: {resolved_path_str}",
         )
 
     raw_inputs = merged.get("inputs")
     if raw_inputs is not None and not isinstance(raw_inputs, dict):
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="execute",
-            cause="template_error",
-            diagnostic=Diagnostic(
-                severity=Severity.WARNING,
-                message=f"Workflow node 'inputs:' resolved to {type(raw_inputs).__name__}, expected dict",
-                node_id=node_id,
-                source="planner",
-                context={"category": "sub_workflow"},
-            ),
+        return _sub_workflow_error_entry(
+            node_id,
+            node_type,
+            f"Workflow node 'inputs:' resolved to {type(raw_inputs).__name__}, expected dict",
         )
-    child_inputs = dict(raw_inputs) if raw_inputs else {}
-
-    child_initial_params = dict(child_inputs)
-    if resolved.path:
-        child_initial_params["_pflow_workflow_file"] = resolved_path_str
+    child_inputs: dict[str, Any] = dict(raw_inputs) if raw_inputs else {}
 
     try:
-        from pflow.runtime.compilation.compiler import compile_workflow
+        compiled_child = _compile_child(resolved.ir, resolved_path_str, child_inputs, registry, node_id, node_type)
+    except _ChildCompileFailed as failure:
+        return failure.entry
 
-        compiled_child = compile_workflow(
-            resolved.ir,
-            registry=registry,
-            initial_params=child_initial_params,
-        )
-    except _CHILD_COMPILE_EXCEPTIONS as exc:
-        child_diags = _safe_to_diagnostics(exc)
-        primary = (
-            child_diags[0]
-            if child_diags
-            else Diagnostic(
-                severity=Severity.ERROR,
-                message=f"Sub-workflow compile failed: {exc}",
-                node_id=node_id,
-                source="planner",
-                context={"category": "compilation"},
-            )
-        )
-        return PlanEntry(
-            node_id=node_id,
-            node_type=node_type,
-            status="execute",
-            cause="template_error",
-            diagnostic=primary,
-        )
-
-    workflow_ref_for_name = merged.get("workflow") or "<sub-workflow>"
     child_plan = build_plan(
         compiled_child,
         child_inputs,
         cache,
         registry,
-        workflow_name=str(workflow_ref_for_name),
+        workflow_name=str(merged.get("workflow") or "<sub-workflow>"),
         _visited_paths=[*visited_paths, resolved_path_str] if resolved_path_str else visited_paths,
         _depth=depth + 1,
         _parent_workflow_file=resolved_path_str,
     )
-
     if resolved.warnings:
         child_plan = Plan(
             workflow=child_plan.workflow,
@@ -551,8 +714,109 @@ def _plan_sub_workflow(  # noqa: C901
     )
 
 
+def _raw_workflow_ref(curr: Any, config: NodeConfig) -> Any:
+    """Extract the raw `workflow:` param pre-resolution (may still be a template)."""
+    if config.template_config:
+        ref = config.template_config.template_params.get("workflow")
+        if ref is not None:
+            return ref
+        return config.template_config.static_params.get("workflow")
+    if hasattr(curr, "params"):
+        return curr.params.get("workflow")
+    return None
+
+
+def _merged_sub_workflow_params(curr: Any, config: NodeConfig, planned: NodePlan) -> dict[str, Any]:
+    """Merge raw node params + static template params + resolved template params.
+
+    Seeding from `curr.params` first catches param keys that aren't tracked
+    in `template_config.static_params` (some sub-workflow refs fall here).
+    """
+    merged: dict[str, Any] = dict(getattr(curr, "params", {}) or {})
+    if config.template_config:
+        merged.update(config.template_config.static_params or {})
+    if planned.resolved_params:
+        merged.update(planned.resolved_params)
+    return merged
+
+
+def _opaque_sub_workflow_entry(node_id: str, node_type: str) -> PlanEntry:
+    """Entry for a sub-workflow we can't resolve at plan time."""
+    return PlanEntry(
+        node_id=node_id,
+        node_type=node_type,
+        status="opaque",
+        cause="dynamic",
+    )
+
+
+def _sub_workflow_error_entry(node_id: str, node_type: str, message: str) -> PlanEntry:
+    """Entry for a sub-workflow that failed at resolve / validate / cycle check."""
+    return PlanEntry(
+        node_id=node_id,
+        node_type=node_type,
+        status="execute",
+        cause="template_error",
+        diagnostic=Diagnostic(
+            severity=Severity.WARNING,
+            message=message,
+            node_id=node_id,
+            source="planner",
+            context={"category": "sub_workflow"},
+        ),
+    )
+
+
+def _compile_child(
+    child_ir: dict[str, Any],
+    resolved_path_str: str | None,
+    child_inputs: dict[str, Any],
+    registry: Registry,
+    node_id: str,
+    node_type: str,
+) -> CompiledWorkflow:
+    """Compile a resolved child workflow.
+
+    Raises `_ChildCompileFailed` (carrying a ready-to-return PlanEntry) when
+    the child fails any recoverable compile-time check. Any other exception
+    propagates — only `_CHILD_COMPILE_EXCEPTIONS` is swallowed here.
+    """
+    from pflow.runtime.compilation.compiler import compile_workflow
+
+    child_initial_params = dict(child_inputs)
+    if resolved_path_str is not None:
+        child_initial_params["_pflow_workflow_file"] = resolved_path_str
+    try:
+        return compile_workflow(child_ir, registry=registry, initial_params=child_initial_params)
+    except _CHILD_COMPILE_EXCEPTIONS as exc:
+        raise _ChildCompileFailed(_compile_error_entry(exc, node_id, node_type)) from exc
+
+
+def _compile_error_entry(exc: BaseException, node_id: str, node_type: str) -> PlanEntry:
+    """Build the plan entry for a sub-workflow compile failure."""
+    child_diags = _safe_to_diagnostics(exc)
+    diag = (
+        child_diags[0]
+        if child_diags
+        else Diagnostic(
+            severity=Severity.ERROR,
+            message=f"Sub-workflow compile failed: {exc}",
+            node_id=node_id,
+            source="planner",
+            context={"category": "compilation"},
+        )
+    )
+    return PlanEntry(
+        node_id=node_id,
+        node_type=node_type,
+        status="execute",
+        cause="template_error",
+        diagnostic=diag,
+    )
+
+
 def _build_sub_workflow_exception_tuples() -> tuple[tuple[type[BaseException], ...], tuple[type[BaseException], ...]]:
-    """Build the exception tuples used by _plan_sub_workflow."""
+    """Exceptions treated as recoverable at the planner's sub-workflow boundary."""
     from pflow.core.exceptions import (
         CompilationError as CoreCompilationError,
     )
@@ -577,116 +841,144 @@ _SUB_WORKFLOW_RESOLVE_EXCEPTIONS, _CHILD_COMPILE_EXCEPTIONS = _build_sub_workflo
 
 
 def _safe_to_diagnostics(exc: BaseException) -> list[Diagnostic]:
-    """Safely extract Diagnostics from an exception with to_diagnostics()."""
+    """Best-effort extraction of Diagnostics from an exception object."""
     if not hasattr(exc, "to_diagnostics"):
         return []
     try:
         diagnostics = exc.to_diagnostics()
     except Exception:
         return []
-    return [diagnostic for diagnostic in diagnostics if isinstance(diagnostic, Diagnostic)]
+    return [d for d in diagnostics if isinstance(d, Diagnostic)]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Historical cost lookup for LLM-family nodes
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 def _lookup_last_cost(config: NodeConfig, cache: MemoizationCache) -> tuple[float | None, float | None]:
-    """Look up the most recent historical cost for an LLM-family node."""
+    """Most recent historical `cost_usd` + age for this LLM node, if any."""
     if config.node_type_name not in _LLM_NODE_CLASSES:
         return None, None
-
     latest = cache.get_latest_for_node(config.node_id)
     if latest is None:
         return None, None
-
     output, created_at = latest
     llm_usage = output.get("llm_usage") if isinstance(output, dict) else None
     if not isinstance(llm_usage, dict):
         return None, None
-
     cost = llm_usage.get("cost_usd")
     if not isinstance(cost, (int, float)):
         return None, None
-
     return float(cost), time() - created_at
 
 
-def _summarize(  # noqa: C901
-    entries: list[PlanEntry],
-    diagnostics: list[Diagnostic],
-    *,
-    cost_basis: str = "exact",
-) -> PlanSummary:
-    """Aggregate per-level counts plus nested aggregation if needed."""
-    del diagnostics
+# ──────────────────────────────────────────────────────────────────────────────
+# Summary aggregation
+# ──────────────────────────────────────────────────────────────────────────────
 
-    total = len(entries)
-    cached_count = sum(1 for entry in entries if entry.status == "cached")
 
-    def _is_executing(entry: PlanEntry) -> bool:
-        if entry.status in ("execute", "opaque"):
-            return True
-        if entry.status == "sub_workflow" and entry.sub_plan is not None:
-            summary = entry.sub_plan.summary
-            return summary.execute_count > 0 or (summary.execute_including_nested or 0) > 0
-        return False
+@dataclass(frozen=True)
+class _Totals:
+    """Typed intermediate totals for summary aggregation."""
 
-    execute_count = sum(1 for entry in entries if _is_executing(entry))
+    total: int
+    cached_count: int
+    execute_count: int
+    cache_boundary: str | None
+    execute_by_type: dict[str, int]
+    estimated_cost_usd: float
+    nodes_without_history: int
 
-    cache_boundary: str | None = None
-    for entry in entries:
-        if _is_executing(entry) and entry.cause != "downstream":
-            cache_boundary = entry.node_id
-            break
 
-    execute_by_type: dict[str, int] = {}
-    for entry in entries:
-        if _is_executing(entry):
-            execute_by_type[entry.node_type] = execute_by_type.get(entry.node_type, 0) + 1
-
-    estimated_cost_usd = sum(entry.last_cost_usd for entry in entries if entry.last_cost_usd is not None)
-    nodes_without_history = sum(
-        1
-        for entry in entries
-        if entry.status == "execute" and entry.node_type in _LLM_NODE_CLASSES and entry.last_cost_usd is None
-    )
-
+def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") -> PlanSummary:
+    """Aggregate per-level counts plus nested rollup when sub-plans exist."""
+    totals = _compute_totals(entries)
     has_nested = any(entry.sub_plan is not None for entry in entries)
-    total_nested: int | None = None
-    cached_nested: int | None = None
-    execute_nested: int | None = None
-    cost_nested: float | None = None
-    nwh_nested: int | None = None
-    effective_cost_basis = cost_basis
 
-    if has_nested:
-        total_nested = total
-        cached_nested = cached_count
-        execute_nested = execute_count
-        cost_nested = estimated_cost_usd
-        nwh_nested = nodes_without_history
-        for entry in entries:
-            if entry.sub_plan is None:
-                continue
-            child = entry.sub_plan.summary
-            total_nested += child.total_including_nested if child.total_including_nested is not None else child.total
-            cached_nested += (
-                child.cached_including_nested if child.cached_including_nested is not None else child.cached_count
-            )
-            execute_nested += (
-                child.execute_including_nested if child.execute_including_nested is not None else child.execute_count
-            )
-            cost_nested += (
-                child.estimated_cost_usd_including_nested
-                if child.estimated_cost_usd_including_nested is not None
-                else child.estimated_cost_usd
-            )
-            nwh_nested += (
-                child.nodes_without_history_including_nested
-                if child.nodes_without_history_including_nested is not None
-                else child.nodes_without_history
-            )
-            if child.cost_basis == "upper_bound":
-                effective_cost_basis = "upper_bound"
+    if not has_nested:
+        return PlanSummary(
+            total=totals.total,
+            cached_count=totals.cached_count,
+            execute_count=totals.execute_count,
+            cache_boundary=totals.cache_boundary,
+            execute_by_type=totals.execute_by_type,
+            estimated_cost_usd=totals.estimated_cost_usd,
+            nodes_without_history=totals.nodes_without_history,
+            cost_basis=cost_basis,
+        )
+
+    nested_total = totals.total
+    nested_cached = totals.cached_count
+    nested_execute = totals.execute_count
+    nested_cost = totals.estimated_cost_usd
+    nested_nwh = totals.nodes_without_history
+    effective_basis = cost_basis
+
+    for entry in entries:
+        if entry.sub_plan is None:
+            continue
+        child = entry.sub_plan.summary
+        nested_total += child.total_including_nested or child.total
+        nested_cached += child.cached_including_nested or child.cached_count
+        nested_execute += child.execute_including_nested or child.execute_count
+        nested_cost += (
+            child.estimated_cost_usd_including_nested
+            if child.estimated_cost_usd_including_nested is not None
+            else child.estimated_cost_usd
+        )
+        nested_nwh += (
+            child.nodes_without_history_including_nested
+            if child.nodes_without_history_including_nested is not None
+            else child.nodes_without_history
+        )
+        if child.cost_basis == "upper_bound":
+            effective_basis = "upper_bound"
 
     return PlanSummary(
+        total=totals.total,
+        cached_count=totals.cached_count,
+        execute_count=totals.execute_count,
+        cache_boundary=totals.cache_boundary,
+        execute_by_type=totals.execute_by_type,
+        estimated_cost_usd=totals.estimated_cost_usd,
+        nodes_without_history=totals.nodes_without_history,
+        cost_basis=effective_basis,
+        total_including_nested=nested_total,
+        cached_including_nested=nested_cached,
+        execute_including_nested=nested_execute,
+        estimated_cost_usd_including_nested=nested_cost,
+        nodes_without_history_including_nested=nested_nwh,
+    )
+
+
+def _compute_totals(entries: list[PlanEntry]) -> _Totals:
+    """One pass over entries computing all per-level aggregates."""
+    total = len(entries)
+    cached_count = 0
+    execute_count = 0
+    cache_boundary: str | None = None
+    execute_by_type: dict[str, int] = {}
+    estimated_cost_usd = 0.0
+    nodes_without_history = 0
+
+    for entry in entries:
+        if entry.status == "cached":
+            cached_count += 1
+
+        if _represents_work(entry):
+            execute_count += 1
+            execute_by_type[entry.node_type] = execute_by_type.get(entry.node_type, 0) + 1
+            if cache_boundary is None and entry.cause != "downstream":
+                cache_boundary = entry.node_id
+
+        if entry.last_cost_usd is not None:
+            estimated_cost_usd += entry.last_cost_usd
+
+        if entry.status == "execute" and entry.node_type in _LLM_NODE_CLASSES and entry.last_cost_usd is None:
+            nodes_without_history += 1
+
+    return _Totals(
         total=total,
         cached_count=cached_count,
         execute_count=execute_count,
@@ -694,10 +986,4 @@ def _summarize(  # noqa: C901
         execute_by_type=execute_by_type,
         estimated_cost_usd=estimated_cost_usd,
         nodes_without_history=nodes_without_history,
-        cost_basis=effective_cost_basis,
-        total_including_nested=total_nested,
-        cached_including_nested=cached_nested,
-        execute_including_nested=execute_nested,
-        estimated_cost_usd_including_nested=cost_nested,
-        nodes_without_history_including_nested=nwh_nested,
     )
