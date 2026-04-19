@@ -263,7 +263,18 @@ def extract_code_load_references(code: str) -> set[str]:
 # Reverse of _PYTHON_TO_S1_CANONICAL for display in code-node diagnostics.
 # Code-block annotations speak Python, so diagnostic messages and suggestions
 # must too — otherwise a user copy-pasting "x: array" gets a NameError.
+#
+# The reverse mapping requires PYTHON_ALIASES_AT_S1 to be injective — if a
+# future edit maps two Python names to the same S1 name (e.g. both ``int32``
+# and ``int`` to ``integer``), the reverse dict silently keeps only one and
+# display diverges. The module-load assertion catches this drift at import
+# time rather than at the point of a confusing error message.
 _S1_TO_PYTHON_DISPLAY: dict[str, str] = {v: k for k, v in _PYTHON_TO_S1_CANONICAL.items()}
+if len(_S1_TO_PYTHON_DISPLAY) != len(_PYTHON_TO_S1_CANONICAL):
+    raise RuntimeError(
+        "PYTHON_ALIASES_AT_S1 must be injective — two Python names map to the same S1 type. "
+        "The reverse map used for diagnostic display would silently drop entries."
+    )
 
 
 def s1_type_to_python_display(type_str: str) -> str:

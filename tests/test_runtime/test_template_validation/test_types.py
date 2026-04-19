@@ -1686,8 +1686,13 @@ class TestCodeNodeInputAnnotationValidation:
                 {
                     "id": "batch_producer",
                     "type": "code",
+                    # `item: Any` (capitalized) — pflow auto-injects typing.Any.
+                    # Lowercase `any` is the builtin function, not a type; it
+                    # passes validation here only because _get_outer_type_name
+                    # returns None for unknown names, which is a readability
+                    # footgun for future readers.
                     "params": {
-                        "code": "item: any\nresult: list = [item]",
+                        "code": "item: Any\nresult: list = [item]",
                         "inputs": {"item": "${item}"},
                     },
                     "batch": {"items": ["a", "b"], "error_handling": "fail_fast"},
@@ -1830,6 +1835,40 @@ class TestCodeNodeInputAnnotationValidation:
         assert len(ann_errors) == 1, [d.message for d in errors]
         suggestions = ann_errors[0].suggestions or []
         assert any("row: ${row}" in s for s in suggestions), suggestions
+
+    def test_batch_alias_wins_over_fuzzy_match(self, test_registry):
+        """When the orphan key matches batch.as AND fuzzy-matches an input, alias wins.
+
+        Fuzzy match of `item` against `['items']` passes with difflib ratio ~0.89,
+        producing "Rename to 'items'" — which would break valid code that reads
+        the per-iteration `item`. The batch-alias branch is deterministic metadata
+        and must take precedence over the heuristic.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batched",
+                    "type": "code",
+                    "params": {
+                        # Code uses `item` (the batch iteration variable).
+                        # `items` is separately bound as a list-typed input.
+                        "code": "items: list\nitem: int\nresult: int = item * 2",
+                        "inputs": {"items": "${items}"},
+                    },
+                    "batch": {"items": [1, 2, 3]},  # default alias = "item"
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "Annotation 'item: int'" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+        suggestions = ann_errors[0].suggestions or []
+        # Must suggest binding `item: ${item}`, NOT renaming to `items`.
+        assert any("item: ${item}" in s for s in suggestions), suggestions
+        assert not any("Rename" in s for s in suggestions), suggestions
+        # similar_names context key must be absent (fuzzy path was skipped).
+        assert "similar_names" not in ann_errors[0].context
 
     def test_complex_template_bypass_caught(self, test_registry):
         """Complex templates coerce to str at runtime — Pass 9 must enforce the str contract.

@@ -510,11 +510,11 @@ def _build_orphan_code_annotation_diagnostics(
         }
 
         if is_used:
-            similar = find_similar_items(key, sorted(input_keys), method="fuzzy", cutoff=0.6, max_results=3)
-            if similar:
-                fix = f"Rename the annotation to '{similar[0]}' to match the existing input binding."
-                context["similar_names"] = similar
-            elif batch_alias and key == batch_alias:
+            # Batch alias is deterministic metadata and must win over fuzzy
+            # matching. Otherwise a near-miss between `item` (the alias) and
+            # a user input like `items` produces "Rename to 'items'", which
+            # would break code that correctly reads the per-iteration `item`.
+            if batch_alias and key == batch_alias:
                 # The engine injects the batch alias into template resolution
                 # only — code-exec requires an explicit binding. The canonical
                 # fix is to route the alias through `inputs:` verbatim.
@@ -523,7 +523,12 @@ def _build_orphan_code_annotation_diagnostics(
                     f"(binds the batch alias into the code block)"
                 )
             else:
-                fix = f"Add '{key}' to the inputs dict (in params.inputs): {key}: ${{<source>}}"
+                similar = find_similar_items(key, sorted(input_keys), method="fuzzy", cutoff=0.6, max_results=3)
+                if similar:
+                    fix = f"Rename the annotation to '{similar[0]}' to match the existing input binding."
+                    context["similar_names"] = similar
+                else:
+                    fix = f"Add '{key}' to the inputs dict (in params.inputs): {key}: ${{<source>}}"
         else:
             fix = f"Remove the annotation '{key}: {annotation_str}' — it is never read in the code."
 

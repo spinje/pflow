@@ -523,6 +523,23 @@ x: dict
     def test_top_level_annotations_malformed_returns_empty(self):
         assert extract_top_level_annotations("x: dict =") == {}
 
+    def test_python_to_s1_canonical_is_injective(self):
+        """Reverse mapping from S1 to Python requires injectivity.
+
+        `_S1_TO_PYTHON_DISPLAY` is built by reversing `_PYTHON_TO_S1_CANONICAL`.
+        A future edit that maps two Python names to the same S1 name would
+        silently drop one on the reverse. The module-load assertion guards
+        against this; this test pins the invariant for explicit coverage.
+        """
+        from pflow.nodes.python import python_code
+
+        forward = python_code._PYTHON_TO_S1_CANONICAL
+        reverse = python_code._S1_TO_PYTHON_DISPLAY
+        assert len(reverse) == len(forward), (
+            f"Forward map has {len(forward)} entries, reverse has {len(reverse)} — "
+            "PYTHON_ALIASES_AT_S1 must be injective for diagnostic display to round-trip"
+        )
+
     def test_literal_in_annotation_rejected_with_import_hint(self):
         """Literal (no modern alternative) should be rejected at prep with an import hint."""
         shared: dict = {}
