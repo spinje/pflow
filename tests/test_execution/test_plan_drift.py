@@ -594,9 +594,10 @@ def _seed_cache_entry(
 def test_plan_walker_bumps_visit_counts_before_plan_node(monkeypatch, tmp_path) -> None:
     """Walker must bump `node_visit_counts` BEFORE each `plan_node` call.
 
-    Load-bearing invariant #2 from `plan.py`'s module docstring. Mirrors the
-    engine's `enforce_loop_guard`. Without the pre-bump, a node revisited
-    after a cycle would still show `visit_counts[nid] == 1` on the second
+    Load-bearing invariant from `plan.py`'s module docstring. The walker
+    calls the shared `enforce_loop_guard` primitive (same as the engine),
+    which bumps visit_counts. Without the pre-bump, a node revisited after
+    a cycle would still show `visit_counts[nid] == 1` on the second
     `plan_node` call, so `memo_cache_lookup`'s `visit_counts > 1` gate
     never trips — silent divergence from the engine.
 
@@ -604,9 +605,10 @@ def test_plan_walker_bumps_visit_counts_before_plan_node(monkeypatch, tmp_path) 
     don't change between visits, so we pin the contract directly: on the
     walker's second visit to `a`, `plan_node` must see `visit_counts[a] == 2`.
 
-    Mutation: remove the `visit_counts[node_id] = ... + 1` line in
-    `build_plan`'s main loop → the second recorded value stays at 1 and
-    this assertion fails.
+    Mutation: remove the `enforce_loop_guard(node_id, shared)` call in
+    `build_plan`'s main loop → the second recorded value stays at 0 and
+    this assertion fails. (See also: `test_plan_cached_loop_visit_two_reports_execute`
+    which pins the invalidation half of `enforce_loop_guard`.)
     """
     from pflow.execution import plan as plan_module
 
@@ -1009,6 +1011,98 @@ printf "body-from-%s" "${seed}"
     assert combine.cause == "hash_match"
 
 
+def test_plan_sub_workflow_plain_format_source_resolves(tmp_path) -> None:
+    """Declared-output sources written in plain `node.key` form must resolve.
+
+    pflow accepts three source formats for declared outputs: `${node.key}`,
+    `$node.key`, and plain `node.key` (normalized to `${node.key}` by
+    `_normalize_source`). Before this fix, the planner called
+    `TemplateResolver.resolve_template` directly without normalization, so
+    `node.key` and `$node.key` returned the literal string unchanged —
+    parent_shared[sub_wf_id][output_name] held a string like `"pick.stdout"`
+    instead of the resolved value. Downstream parent nodes then computed
+    cache keys against that literal string, causing their plan entries to
+    show as `execute` (fresh hash) when the engine would compute the same
+    key as runtime and find them cached.
+
+    Mutation: replace `resolve_output_source(source, child_shared)` in
+    `_resolve_declared_outputs` with `TemplateResolver.resolve_template(
+    source, child_shared)` → the plain-format source returns unchanged as
+    a literal string, `combine`'s cache key mismatches the engine's, and
+    the plan reports `execute` instead of `cached`.
+    """
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    # Note: `- source: pick.stdout` (plain form, no `${}`). Runtime's
+    # `populate_declared_outputs` normalizes this via `_normalize_source`.
+    child_path.write_text(
+        """# Child
+
+Computes one value.
+
+## Inputs
+
+### seed
+
+Seed text.
+
+- type: string
+
+## Outputs
+
+### topic
+
+Selected topic.
+
+- source: pick.stdout
+
+## Steps
+
+### pick
+
+Pick a topic.
+
+- type: shell
+
+```shell command
+printf "topic-from-%s" "${seed}"
+```
+""",
+        encoding="utf-8",
+    )
+    write_workflow_file(
+        {
+            "inputs": {"input_text": {"type": "string"}},
+            "nodes": [
+                {
+                    "id": "analyze",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${input_text}"}},
+                },
+                {
+                    "id": "combine",
+                    "type": "shell",
+                    "params": {"command": 'printf "result=%s" "${analyze.topic}"'},
+                },
+            ],
+            "edges": [{"from": "analyze", "to": "combine"}],
+        },
+        parent_path,
+    )
+
+    first = _runner_run(parent_path, {"input_text": "hello"})
+    assert first.success
+
+    plan = _runner_plan(parent_path, {"input_text": "hello"})
+
+    combine = next(e for e in plan.entries if e.node_id == "combine")
+    assert combine.status == "cached", (
+        f"plain-format declared-output source must normalize correctly; "
+        f"got combine status={combine.status} cause={combine.cause}"
+    )
+
+
 def test_plan_sub_workflow_undeclared_outputs_fallback(tmp_path) -> None:
     """Sub-workflows without declared `## Outputs` must still expose their
     child node outputs for parent-level template resolution.
@@ -1142,3 +1236,187 @@ def test_plan_direct_ir_null_workflow_path_historical_stats(tmp_path) -> None:
     # NULL-path fallback must surface the historical duration; if the guard
     # is mutated away, this would be None (scoped query with NULL matches 0 rows).
     assert work.last_duration_ms == 42.5
+
+
+def test_plan_inline_workflow_relative_sub_workflow_resolves_via_cwd(monkeypatch, tmp_path) -> None:
+    """Inline (non-file) parent with a relative sub-workflow ref resolves via CWD.
+
+    MCP-inline / dict-input / content-string submissions have no parent file
+    path. Runtime's `WorkflowExecutor._load_workflow` reads
+    `shared["_pflow_workflow_file"]` (which is the synthetic `"ir-hash:..."`
+    identifier after the L2 scoping fix) and derives `base_path` — for the
+    ir-hash identifier this gives `Path(".")`, so relative child refs resolve
+    against CWD. Planner previously derived base_path from a separate
+    `parent_workflow_file` parameter sourced from `resolved.file_path`
+    (literally None for inline), so it passed None to `resolve_sub_workflow`
+    which raised ValueError on any relative child path.
+
+    Mutation: change the planner's new line to
+    `base_path = Path(parent_file).parent if False else None` (forces the
+    None branch) → the sub-workflow resolve raises, entry shows
+    `cause != "no_cache_match"` with a diagnostic about relative paths.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    child_path = tmp_path / "child.pflow.md"
+    child_path.write_text(
+        """# Child
+
+Minimal child workflow.
+
+## Steps
+
+### only
+
+Just echoes.
+
+- type: shell
+- command: printf done
+""",
+        encoding="utf-8",
+    )
+
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "run-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md"},
+            },
+        ],
+        "edges": [],
+    }
+
+    plan = WorkflowRunner().plan(parent_ir, {}, RunnerConfig())
+
+    run_child = next(e for e in plan.entries if e.node_id == "run-child")
+    assert run_child.status == "sub_workflow", (
+        f"inline parent's relative sub-workflow ref must resolve via CWD; "
+        f"got status={run_child.status} cause={run_child.cause}"
+    )
+    assert run_child.sub_plan is not None, "child workflow must have been planned"
+
+
+def test_plan_cached_loop_visit_two_reports_execute(tmp_path) -> None:
+    """In an all-cached success-action loop, visit 2 of a node must be execute.
+
+    The engine's `enforce_loop_guard` invalidates `completed_nodes`/
+    `node_actions`/`node_hashes` for any revisited node before `plan_node`
+    runs, so visit 2 falls through both memo (visit_counts > 1 guard) and
+    in-process (node removed from completed_nodes) caches and re-executes.
+
+    Without the invalidation, the planner's in_process_cache_lookup sees
+    the visit-1 entries still in `completed_nodes` (populated by
+    `apply_memo_hit` on visit 1's cached_memo hit), reports visit 2 as
+    `cached_in_process`, and under-reports work.
+
+    Mutation: replace `enforce_loop_guard(node_id, shared)` in the walker
+    with `shared["__execution__"]["node_visit_counts"][node_id] += 1`
+    (the old manual bump that lacks invalidation) → the third entry's
+    status flips to "cached" and this assertion fails.
+    """
+    ir = {
+        "nodes": [
+            {"id": "a", "type": "shell", "params": {"command": "echo a"}},
+            {"id": "b", "type": "shell", "params": {"command": "echo b"}},
+        ],
+        "edges": [
+            {"from": "a", "to": "b", "action": "go"},
+            {"from": "b", "to": "a", "action": "back"},
+        ],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    _seed_cache_entry(cache, compiled, "a", "go", {"stdout": "a", "exit_code": 0})
+    _seed_cache_entry(cache, compiled, "b", "back", {"stdout": "b", "exit_code": 0})
+
+    plan = build_plan(compiled, {}, cache, registry, workflow_name="loop")
+
+    # Walker trace: a(v1 cached) → b(v1 cached) → a(v2, must be execute).
+    # The walker then terminates via visited_edges on (a, "go").
+    assert [entry.node_id for entry in plan.entries] == ["a", "b", "a"]
+    assert [entry.status for entry in plan.entries] == ["cached", "cached", "execute"]
+
+
+def test_plan_cache_disabled_node_carries_historical_stats(tmp_path) -> None:
+    """A `cache: false` node with prior memo history must surface duration.
+
+    `cache: false` means "don't reuse the cache for hit decisions" — not
+    "hide history from the agent". If a prior run (under `cache: true`, or
+    before the flag was added) wrote stats to the memo cache for this
+    node_id, the planner must look them up — `get_latest_for_node` queries
+    by node_id, not by cache_key.
+
+    Guards against `_cache_disabled_entry` bypassing `_execute_entry` and
+    losing the stats lookup. This is the exact scenario the feature-interactions
+    review flagged: user runs the workflow once to see cost, then marks
+    `cache: false`. Without this fix they see `$0` on the dry-run plan.
+    """
+    ir = {
+        "nodes": [
+            {
+                "id": "uncached",
+                "type": "shell",
+                "cache": False,
+                "params": {"command": "printf uncached"},
+            },
+        ],
+        "edges": [],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    # Seed a prior-run entry for this node_id (simulates: user ran the
+    # workflow once with cache enabled, then flipped to cache: false).
+    cache.put(
+        "any-key",
+        "uncached",
+        None,
+        "default",
+        {"stdout": "uncached", "exit_code": 0, "__pflow_stats__": {"duration_ms": 77.0}},
+    )
+
+    plan = build_plan(compiled, {}, cache, registry, workflow_name="cache-false-stats")
+
+    entry = plan.entries[0]
+    assert entry.cause == "cache_disabled"
+    assert entry.last_duration_ms == 77.0, (
+        "cache_disabled entries must flow through _execute_entry so historical "
+        f"duration is attached; got {entry.last_duration_ms}"
+    )
+
+
+def test_plan_cached_end_action_terminates_cleanly(tmp_path) -> None:
+    """Cached action="end" must STOP cleanly, not emit a routing_error entry.
+
+    Guards against a `_classify` check-order regression where the routing_error
+    check fires before the "end" sentinel check. Real pflow graphs never have
+    "end" as a successors key — it's a runtime termination sentinel — so any
+    node cached with action="end" would trip the routing_error branch.
+    """
+    log_file = tmp_path / "end.log"
+    ir = {
+        "nodes": [
+            {
+                "id": "a",
+                "type": "shell",
+                "params": {"command": f"echo a >> {log_file}; printf a"},
+            },
+            {
+                "id": "b",
+                "type": "code",
+                "params": {"code": 'next: str = "end"\nresult: str = "done"'},
+            },
+        ],
+        "edges": [{"from": "a", "to": "b"}],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    _run(compiled, cache)
+    plan = build_plan(compiled, {}, cache, registry, workflow_name="end-action")
+
+    statuses = [entry.status for entry in plan.entries]
+    causes = [entry.cause for entry in plan.entries]
+    assert statuses == ["cached", "cached"]
+    assert "routing_error" not in causes

@@ -10,7 +10,12 @@ from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
-from pflow.core.exceptions import MarkdownParseError, WorkflowNotFoundError, WorkflowValidationError
+from pflow.core.exceptions import (
+    CompilationError,
+    MarkdownParseError,
+    WorkflowNotFoundError,
+    WorkflowValidationError,
+)
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.workflow_resolver import resolve_workflow as _unified_resolve
 from pflow.registry import Registry
@@ -223,20 +228,13 @@ class ExecutionService(BaseService):
         except Exception as e:
             raise ValueError(str(e)) from e
 
-        # Inject file path for sub-workflow relative path resolution.
-        # Why this is needed: We pass resolved.ir (a dict) to the Runner to avoid
-        # double-resolution. The Runner's _resolve() sees a dict → returns
-        # ResolvedWorkflow(source="direct", file_path=None). So the Runner can't
-        # derive file_path from resolution — we must inject it into params here.
-        if resolved.file_path:
-            validated_params["_pflow_workflow_file"] = resolved.file_path
-
         workflow_name = str(workflow) if resolved.source == "library" else None
         wm = WorkflowManager()
 
-        # Pass resolved.ir (dict) to avoid double-resolution. The Runner sees a
-        # dict and skips its own resolve_workflow() call. normalize_ir() runs
-        # twice (harmless, idempotent) but resolution hits the filesystem only once.
+        # Pass the full ResolvedWorkflow so the Runner's `_resolve` short-circuits
+        # (no double-resolution). `_prepare_workflow` then injects
+        # `_pflow_workflow_file` into params via `setdefault` against
+        # `resolved.file_path` — no need to pre-inject here.
         runner = WorkflowRunner()
         result = runner.run(
             resolved,
@@ -327,12 +325,28 @@ class ExecutionService(BaseService):
         except Exception as e:
             raise ValueError(str(e)) from e
 
-        if resolved.file_path:
-            validated_params["_pflow_workflow_file"] = resolved.file_path
-
+        # Runner's `_prepare_workflow` injects `_pflow_workflow_file` via
+        # `setdefault` against `resolved.file_path` — no pre-injection needed.
         runner = WorkflowRunner()
         try:
             plan = runner.plan(resolved, validated_params, RunnerConfig())
+        except WorkflowValidationError as e:
+            # Preserve structured validation diagnostics (titles, paths,
+            # suggestions, similar_names) so the agent sees the rich error
+            # instead of a flattened `str(e)`. Matches save_workflow's pattern.
+            from pflow.execution.formatters.validation_formatter import format_validation_failure
+
+            rendered = (
+                format_validation_failure(e.validation_errors) if e.validation_errors else f"Invalid workflow: {e}"
+            )
+            raise ValueError(rendered) from e
+        except (CompilationError, MarkdownParseError) as e:
+            # PflowError subclasses with `to_diagnostics()` — render via the
+            # shared pipeline so per-error `suggestion`/`path` survive.
+            from pflow.core.diagnostic import exception_to_diagnostics
+
+            rendered = "\n\n".join(format_diagnostic(d) for d in exception_to_diagnostics(e))
+            raise ValueError(f"Workflow planning failed:\n\n{rendered}") from e
         except Exception as e:
             logger.error("Workflow planning failed: %s", e, exc_info=True)
             raise RuntimeError(f"❌ Workflow planning failed: {e}") from e

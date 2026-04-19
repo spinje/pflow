@@ -89,9 +89,36 @@ def test_classify_cached_named_action_without_successor_is_routing_error() -> No
 
 
 def test_classify_end_action_stops() -> None:
+    # Real pflow graphs never have "end" as a successor key — it's a runtime
+    # termination sentinel. A cached node returning action="end" must STOP
+    # regardless of what successors exist (mirrors engine `_handle_no_successor`).
     decision = _classify(
         _entry("cached", cause="hash_match", action="end"),
-        _StubNode({"end": object()}),
+        _StubNode({"default": object()}),
+    )
+    assert decision.kind is Transition.STOP
+
+
+def test_classify_cached_error_action_follows_error_successor() -> None:
+    # Cached action="error" with a matching "error" successor must FOLLOW
+    # the on-error handler, not STOP. Engine does `successors.get("error")`
+    # and walks into the handler.
+    handler = object()
+    decision = _classify(
+        _entry("cached", cause="hash_match", action="error"),
+        _StubNode({"error": handler}),
+    )
+    assert decision.kind is Transition.FOLLOW
+    assert decision.action == "error"
+
+
+def test_classify_cached_named_action_with_only_error_successors_stops() -> None:
+    # Cached action="success" with only an error handler: engine's
+    # `all(k == "error" for k in successors)` check clean-terminates.
+    # Not a routing error — planner must match.
+    decision = _classify(
+        _entry("cached", cause="hash_match", action="success"),
+        _StubNode({"error": object()}),
     )
     assert decision.kind is Transition.STOP
 

@@ -200,9 +200,11 @@ def execute_json_workflow(  # noqa: C901
     if stdin_data:
         _route_stdin_to_params(ctx, stdin_data, ir_data, params)
 
-    source_file_path = ctx.obj.get("source_file_path")
-    if source_file_path:
-        params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
+    # `_pflow_workflow_file` is injected by `WorkflowRunner._prepare_workflow`
+    # via `setdefault` against the runner's own resolved file_path (canonical
+    # absolute path for file/library workflows, or the synthetic `ir-hash:...`
+    # identifier for inline workflows). Validate() receives the path
+    # explicitly through its `source_file_path` kwarg below.
 
     if ctx.obj.get("dry_run"):
         _display_plan_result(ctx, workflow, params, output_format)
@@ -372,7 +374,12 @@ def _display_plan_result(
     params: dict[str, Any],
     output_format: str,
 ) -> None:
-    """Display dry-run plan result and exit."""
+    """Display dry-run plan result and exit.
+
+    Exit code mirrors `_display_validation_result`'s severity-based convention:
+    any ERROR-severity diagnostic (e.g. unresolvable strict-mode template)
+    exits 1. Plans that build with only WARNINGs exit 0.
+    """
     from pflow.execution.formatters.plan_formatter import format_plan_json, format_plan_text
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
@@ -394,7 +401,8 @@ def _display_plan_result(
     else:
         click.echo(format_plan_text(plan))
 
-    ctx.exit(0)
+    has_error = any(d.severity == Severity.ERROR for d in plan.diagnostics)
+    ctx.exit(1 if has_error else 0)
 
 
 def _initialize_context(

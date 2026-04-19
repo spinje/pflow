@@ -294,3 +294,24 @@ def test_plan_no_cross_pollution_between_distinct_inline_workflows() -> None:
     assert output_b.get("stdout", "").strip() == "B", (
         f"Workflow B's scoped lookup polluted by A: stdout={output_b.get('stdout')!r}"
     )
+
+
+def test_extract_cost_rejects_non_finite_floats() -> None:
+    """Cost extraction must reject NaN and Inf.
+
+    `json.dumps` emits non-standard `NaN` / `Infinity` literals (invalid per
+    RFC 8259), which strict parsers like `jq` reject. Silently propagating
+    such values into `summary.estimated_cost_usd` breaks agent cost-gating
+    scripts (`jq '.summary.estimated_cost_usd > 1'`).
+
+    Mutation: remove `and math.isfinite(raw)` in `_extract_cost_from_llm_usage`
+    → this assertion fails (NaN / Inf leak through as finite floats).
+    """
+    from pflow.execution.plan import _extract_cost_from_llm_usage
+
+    assert _extract_cost_from_llm_usage({"cost_usd": float("nan")}) is None
+    assert _extract_cost_from_llm_usage({"cost_usd": float("inf")}) is None
+    assert _extract_cost_from_llm_usage({"cost_usd": float("-inf")}) is None
+    # Valid finite floats still pass through.
+    assert _extract_cost_from_llm_usage({"cost_usd": 0.05}) == 0.05
+    assert _extract_cost_from_llm_usage({"cost_usd": 0}) == 0.0

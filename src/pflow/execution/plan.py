@@ -14,9 +14,11 @@ INVARIANTS (non-obvious — read before modifying):
   `apply_memo_hit` must mutate it on memo hits so downstream template
   resolution matches the engine's cache-key computation. Skipping the
   mutation looks "purer" but causes silent drift.
-- `node_visit_counts` must bump BEFORE each `plan_node()` call, mirroring
-  the engine's `enforce_loop_guard`. Without it, loop iteration 2+ hits
-  memo cache differently between engine and planner.
+- `enforce_loop_guard()` must run BEFORE each `plan_node()` call — same
+  primitive the engine uses. It bumps visit_counts AND invalidates
+  `completed_nodes`/`node_actions`/`node_hashes` for a revisited node.
+  Without the invalidation, visit 2 of a successfully-cached node in a
+  loop is reported as `cached_in_process` when the engine would re-execute.
 - Post-first-miss: BFS over ALL non-"error" successors. Following only
   `default` underestimates cost for conditional workflows, which is the
   wrong failure mode for a cost gate.
@@ -27,6 +29,7 @@ INVARIANTS (non-obvious — read before modifying):
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -40,7 +43,7 @@ from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
-from pflow.runtime.engine.instrumentation import apply_memo_hit
+from pflow.runtime.engine.instrumentation import apply_memo_hit, enforce_loop_guard
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
 
@@ -106,30 +109,39 @@ class Decision:
 def _classify(entry: PlanEntry, curr: Any) -> Decision:
     """Map a planned entry + current graph node to a walker transition.
 
-    Single exhaustive mapping. Both the engine (runtime) and the planner
-    rely on the same set of status values on `PlanEntry`, so this function
-    is the one place where status → transition is expressed.
+    Mirrors engine semantics from `engine.run()` / `_handle_no_successor`:
+    the engine does `successors.get(action)` without fallback, then treats
+    `"end"` and all-error-successors as clean termination and any other
+    no-match as a routing failure. This function is the one place where
+    status → transition is expressed.
     """
     if entry.status == "routing_error":
         return Decision(Transition.STOP)
 
     action = entry.action if entry.status == "cached" and entry.action else "default"
 
-    # Cached action that names no matching successor = runtime routing error.
-    if entry.status == "cached" and action != "default" and action not in curr.successors:
+    # Action matches a successor → walker advances through that edge.
+    if action in curr.successors:
+        if _represents_work(entry):
+            return Decision(Transition.BOUNDARY, action)
+        return Decision(Transition.FOLLOW, action)
+
+    # No matching successor. Mirror engine's `_handle_no_successor`:
+    # "end" sentinel and all-error-successors are clean termination.
+    if action == "end" or all(name == "error" for name in curr.successors):
+        return Decision(Transition.STOP, action)
+
+    # Cached node routed an action that doesn't name any successor →
+    # engine would mark_node_failed(FAILURE_CATEGORY_ROUTING) at runtime.
+    if entry.status == "cached":
         return Decision(Transition.ROUTING_ERROR, action)
 
-    # Clean termination: explicit end, no successors, or only error handlers.
-    if action == "end":
-        return Decision(Transition.STOP, action)
-    if not curr.successors or all(name == "error" for name in curr.successors):
-        return Decision(Transition.STOP, action)
-
-    # First entry that represents runtime work = cache boundary.
+    # Execute with no matching successor — still a boundary so BFS
+    # enumerates the reachable non-error successors (if any).
     if _represents_work(entry):
         return Decision(Transition.BOUNDARY, action)
 
-    return Decision(Transition.FOLLOW, action)
+    return Decision(Transition.STOP, action)
 
 
 def _represents_work(entry: PlanEntry) -> bool:
@@ -217,8 +229,7 @@ def _build_plan_with_shared(
             break
         config = compiled.node_configs[node_id]
 
-        visit_counts = shared["__execution__"]["node_visit_counts"]
-        visit_counts[node_id] = visit_counts.get(node_id, 0) + 1
+        enforce_loop_guard(node_id, shared)
 
         entry = _plan_one_node(
             curr,
@@ -228,7 +239,6 @@ def _build_plan_with_shared(
             registry,
             visited_paths=visited_paths,
             depth=_depth,
-            parent_workflow_file=_parent_workflow_file,
         )
         state.entries.append(entry)
         if entry.sub_plan is not None:
@@ -518,7 +528,6 @@ def _plan_one_node(
     *,
     visited_paths: list[str],
     depth: int,
-    parent_workflow_file: str | None,
 ) -> PlanEntry:
     """Plan a single node, dispatching on WorkflowExecutor vs standard."""
     if config.node_type_name == "WorkflowExecutor":
@@ -530,7 +539,6 @@ def _plan_one_node(
             registry,
             visited_paths=visited_paths,
             depth=depth,
-            parent_workflow_file=parent_workflow_file,
         )
     return _plan_standard_node(curr, config, shared, cache)
 
@@ -544,15 +552,16 @@ def _plan_standard_node(
     """Plan a non-sub-workflow node via the shared `plan_node` primitive."""
     planned = plan_node(curr, config, shared)
 
+    workflow_path = shared.get("_pflow_workflow_file")
     if planned.template_exception is not None:
         return _template_error_entry(config, planned.template_exception)
     if planned.status == "cache_disabled":
-        return _cache_disabled_entry(config)
+        return _cache_disabled_entry(config, cache, workflow_path)
     if planned.status == "cached_memo":
         return _cached_memo_entry(config, planned, shared, cache)
     if planned.status == "cached_in_process":
         return _cached_in_process_entry(config, planned)
-    return _miss_entry(config, planned, cache, workflow_path=shared.get("_pflow_workflow_file"))
+    return _miss_entry(config, planned, cache, workflow_path=workflow_path)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -561,11 +570,16 @@ def _plan_standard_node(
 
 
 def _template_error_entry(config: NodeConfig, exc: BaseException) -> PlanEntry:
-    """Entry for a strict-mode template resolution failure at planning time."""
+    """Entry for a strict-mode template resolution failure at planning time.
+
+    Severity is ERROR: the runtime would raise here. `_display_plan_result`
+    uses diagnostic severity to decide the CLI exit code — matching
+    `validate()`'s `len(errors) == 0` convention.
+    """
     attached = getattr(exc, "_pflow_template_diagnostic", None)
     if not isinstance(attached, Diagnostic):
         attached = Diagnostic(
-            severity=Severity.WARNING,
+            severity=Severity.ERROR,
             message=str(exc),
             node_id=config.node_id,
             source="planner",
@@ -580,14 +594,18 @@ def _template_error_entry(config: NodeConfig, exc: BaseException) -> PlanEntry:
     )
 
 
-def _cache_disabled_entry(config: NodeConfig) -> PlanEntry:
-    """Entry for a node with `cache: false` — always runs."""
-    return PlanEntry(
-        node_id=config.node_id,
-        node_type=config.node_type_name,
-        status="execute",
-        cause="cache_disabled",
-    )
+def _cache_disabled_entry(
+    config: NodeConfig,
+    cache: MemoizationCache,
+    workflow_path: str | None,
+) -> PlanEntry:
+    """Entry for a node with `cache: false` — always runs.
+
+    Routes through `_execute_entry` so historical cost/duration estimates
+    from prior runs are attached. `cache: false` means "don't use the cache
+    for hit decisions"; it does NOT mean "hide history from the agent".
+    """
+    return _execute_entry(config, cache, cause="cache_disabled", workflow_path=workflow_path)
 
 
 def _cached_memo_entry(
@@ -631,7 +649,7 @@ def _execute_entry(
     config: NodeConfig,
     cache: MemoizationCache,
     *,
-    cause: Literal["no_cache_match", "downstream", "template_error"],
+    cause: Literal["no_cache_match", "downstream", "template_error", "cache_disabled"],
     diagnostic: Diagnostic | None = None,
     workflow_path: str | None = None,
 ) -> PlanEntry:
@@ -672,13 +690,18 @@ def _miss_entry(
 
 
 def _cache_age(cache_key: str | None, cache: MemoizationCache) -> float | None:
-    """Look up the age of a cached memo entry, if still present."""
+    """Look up the age of a cached memo entry, if still present.
+
+    Clamps to zero — a negative age (clock moved backward between cache
+    write and read, e.g. NTP adjustment) should never surface as "-1s ago"
+    in the plan output.
+    """
     if cache_key is None:
         return None
     with_age = cache.get_with_age(cache_key)
     if with_age is None:
         return None
-    return time() - with_age[2]
+    return max(0.0, time() - with_age[2])
 
 
 def _permissive_template_diagnostic(planned: NodePlan) -> Diagnostic | None:
@@ -704,7 +727,6 @@ def _plan_sub_workflow(
     *,
     visited_paths: list[str],
     depth: int,
-    parent_workflow_file: str | None,
 ) -> PlanEntry:
     """Compile and recursively plan a nested workflow.
 
@@ -732,7 +754,13 @@ def _plan_sub_workflow(
 
     merged = _merged_sub_workflow_params(curr, config, planned)
 
-    base_path = Path(parent_workflow_file).parent if parent_workflow_file else None
+    # Resolve relative child refs against the parent's dir, or CWD for inline
+    # (non-file) workflows. Mirrors `WorkflowExecutor._load_workflow` exactly:
+    # `shared["_pflow_workflow_file"]` is the parent's absolute path for file
+    # runs, the synthetic `"ir-hash:..."` identifier for inline runs (whose
+    # `Path(...).parent` is `Path(".")` → CWD-relative), or absent.
+    parent_file = shared.get("_pflow_workflow_file")
+    base_path = Path(parent_file).parent if parent_file else Path.cwd()
     try:
         resolved = resolve_sub_workflow(merged, base_path=base_path)
     except _SUB_WORKFLOW_RESOLVE_EXCEPTIONS as exc:
@@ -829,7 +857,7 @@ def _populate_sub_workflow_outputs(
     declared = getattr(compiled_child, "outputs", None)
 
     if isinstance(declared, dict) and declared:
-        parent_shared[node_id] = _resolve_declared_outputs(declared, child_shared, node_id)
+        parent_shared[node_id] = _resolve_declared_outputs(declared, child_shared)
         return
 
     parent_shared[node_id] = _mirror_child_shared(child_shared, child_inputs)
@@ -838,10 +866,21 @@ def _populate_sub_workflow_outputs(
 def _resolve_declared_outputs(
     declared: dict[str, Any],
     child_shared: dict[str, Any],
-    node_id: str,
 ) -> dict[str, Any]:
-    """Resolve each `## Outputs` declaration against the child's scratch shared."""
-    from pflow.runtime.template_resolver import TemplateResolver
+    """Resolve each `## Outputs` declaration against the child's scratch shared.
+
+    Delegates to runtime's `resolve_output_source`, which handles:
+    - Source normalization (`node.key` / `$node.key` / `${node.key}` forms
+      all accepted — matches the three formats pflow's output syntax allows).
+    - Unresolved-detection (returns None when the template can't resolve).
+
+    Unresolved sources (and sources that resolve to None) are silently
+    dropped from the resulting dict. Downstream parent nodes that template
+    against a missing key surface a `template_error` plan entry — honest
+    about the fact that the runtime would also fail here via
+    `populate_declared_outputs`.
+    """
+    from pflow.runtime.output_resolver import resolve_output_source
 
     resolved: dict[str, Any] = {}
     for output_name, decl in declared.items():
@@ -850,15 +889,9 @@ def _resolve_declared_outputs(
         source = decl.get("source")
         if not isinstance(source, str):
             continue
-        try:
-            resolved[output_name] = TemplateResolver.resolve_template(source, child_shared)
-        except Exception:
-            logger.debug(
-                "Sub-workflow output '%s.%s' couldn't resolve source %r at plan time",
-                node_id,
-                output_name,
-                source,
-            )
+        value = resolve_output_source(source, child_shared)
+        if value is not None:
+            resolved[output_name] = value
     return resolved
 
 
@@ -1043,18 +1076,23 @@ def _read_stats_from_output(output: Any) -> tuple[float | None, float | None]:
     stats = output.get("__pflow_stats__")
     if isinstance(stats, dict):
         raw_duration = stats.get("duration_ms")
-        if isinstance(raw_duration, (int, float)):
+        if isinstance(raw_duration, (int, float)) and math.isfinite(raw_duration):
             duration = float(raw_duration)
 
     return cost, duration
 
 
 def _extract_cost_from_llm_usage(llm_usage: Any) -> float | None:
-    """Read `cost_usd` out of an `llm_usage` dict (if that's its shape)."""
+    """Read `cost_usd` out of an `llm_usage` dict (if that's its shape).
+
+    Filters out `NaN`/`Inf` — those emit non-standard JSON (`NaN`,
+    `Infinity`) that strict parsers like `jq` reject, silently breaking
+    agent cost-gating scripts.
+    """
     if not isinstance(llm_usage, dict):
         return None
     raw = llm_usage.get("cost_usd")
-    if isinstance(raw, (int, float)):
+    if isinstance(raw, (int, float)) and math.isfinite(raw):
         return float(raw)
     return None
 

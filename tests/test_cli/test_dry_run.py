@@ -85,6 +85,60 @@ def test_dry_run_exits_one_on_missing_required_input(tmp_path) -> None:
     assert result.exit_code == 1
 
 
+def test_dry_run_exits_one_when_plan_contains_error_diagnostic(tmp_path) -> None:
+    """Plans that build but carry an ERROR-severity diagnostic must exit 1.
+
+    Mirrors `validate()`'s `len(errors) == 0` convention — any ERROR-severity
+    diagnostic (template_error, sub-workflow compile failure, etc.) is
+    surfaced via CLI exit code, not silently folded into a "successful" plan.
+
+    Strict-mode template failures are caught by validation upstream today,
+    so this contract is exercised by patching `WorkflowRunner.plan()` to
+    return a Plan with an injected ERROR diagnostic. That pins the CLI
+    exit-code contract independently of which planner path produced the
+    error — if a future planner emits an ERROR-severity diagnostic, this
+    test guarantees the CLI honors it.
+    """
+    from pflow.core.diagnostic import Diagnostic, Severity
+    from pflow.execution.result import Plan, PlanSummary
+
+    workflow_path = tmp_path / "dry-run-error-diag.pflow.md"
+    write_workflow_file(
+        {
+            "nodes": [{"id": "echo", "type": "shell", "params": {"command": "printf hi"}}],
+            "edges": [],
+        },
+        workflow_path,
+    )
+
+    error_plan = Plan(
+        workflow=str(workflow_path),
+        entries=[],
+        summary=PlanSummary(
+            total=0,
+            cached_count=0,
+            execute_count=0,
+            cache_boundary=None,
+            execute_by_type={},
+            estimated_cost_usd=0.0,
+            nodes_without_history=0,
+        ),
+        diagnostics=[
+            Diagnostic(
+                severity=Severity.ERROR,
+                message="Synthetic template error",
+                source="planner",
+                context={"category": "template_error"},
+            )
+        ],
+    )
+
+    with patch("pflow.execution.runner.WorkflowRunner.plan", return_value=error_plan):
+        result = invoke_cli(["--dry-run", str(workflow_path)])
+
+    assert result.exit_code == 1
+
+
 def test_dry_run_text_output_contains_boundary_divider(tmp_path) -> None:
     """Fresh dry-run text output should include a cache divider."""
     workflow_path = tmp_path / "dry-run-text.pflow.md"
@@ -119,7 +173,10 @@ def test_dry_run_plus_validate_only_exits_one_with_clear_error(tmp_path) -> None
     result = invoke_cli(["--dry-run", "--validate-only", str(workflow_path)])
 
     assert result.exit_code == 1
-    assert "Cannot combine --dry-run and --validate-only" in (result.output + result.stderr)
+    # Error messages go to stderr per pflow's convention — tightening the
+    # assertion to stderr-only catches regressions where the message
+    # accidentally lands on stdout (would break `pflow ... -f json 2>/dev/null`).
+    assert "Cannot combine --dry-run and --validate-only" in result.stderr
 
 
 def test_dry_run_plus_report_exits_one_with_clear_error(tmp_path) -> None:
@@ -136,7 +193,7 @@ def test_dry_run_plus_report_exits_one_with_clear_error(tmp_path) -> None:
     result = invoke_cli(["--dry-run", "--report", str(workflow_path)])
 
     assert result.exit_code == 1
-    assert "Cannot combine --dry-run and --report" in (result.output + result.stderr)
+    assert "Cannot combine --dry-run and --report" in result.stderr
 
 
 def test_dry_run_plus_no_trace_is_silent_accept(tmp_path) -> None:

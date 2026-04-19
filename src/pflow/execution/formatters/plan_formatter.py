@@ -154,7 +154,7 @@ def _has_any_cached_above(entries: list[PlanEntry], target: PlanEntry) -> bool:
 def _render_entry_line(entry: PlanEntry, indent: str) -> str:
     """Render one plan entry."""
     if entry.status == "cached":
-        age = f"  ({_format_age(entry.age_sec)} ago)" if entry.age_sec else ""
+        age = f"  ({_format_age(entry.age_sec)} ago)" if entry.age_sec is not None else ""
         return f"{indent}{click.style('↻', fg='blue', dim=True)} {entry.node_id}{age}"
 
     tag = f"  [{_tag_from_entry(entry)}]"
