@@ -1889,3 +1889,77 @@ Lesson (reinforces D11 from the prior session): when an agent's claim conflicts 
 14. **MCP `plan_workflow` mirrors `save_workflow`'s error-handling pattern** now — catches structured exceptions (`WorkflowValidationError` → `format_validation_failure`; `CompilationError` / `MarkdownParseError` → `format_diagnostic`). If `execute_workflow` is later touched for similar reasons, match this pattern for consistency (it still flattens to `RuntimeError`, which is a separate scope).
 
 15. **`_pflow_workflow_file` pre-injection is NOT needed in callers.** `WorkflowRunner._prepare_workflow`'s `setdefault` is the single write site. If you see a caller setting the key manually, it's redundant (except for `runner.validate()` which has a distinct code path).
+
+---
+
+## 2026-04-19 — Sub-workflow recursion in post-boundary BFS + summary polish
+
+User found the #1 iteration UX bug during manual test: a parent workflow with an upstream edit → BFS reaches the sub-workflow → sub-workflow rendered as a flat leaf with no `sub_plan`, hiding every nested LLM cost. For agents cost-gating after an upstream edit (the common iteration pattern), the summary silently under-reports. Fixed in this session.
+
+### The fix — one sub-workflow recursion path, parameterized by `cause`
+
+Earlier design explorations (first-draft in this session) proposed a second recursion helper specifically for BFS mode. Rejected — "simplest diff, not simplest final code" applies. Top-10% answer: make `_plan_sub_workflow` take `cause: Literal["no_cache_match", "downstream"]`, have the state-machine walker use the default and `_make_downstream_entry` use `cause="downstream"`. Single recursion path, no drift surface.
+
+Implementation:
+- `_plan_sub_workflow(..., cause=...)` — skips `plan_node` and `_populate_sub_workflow_outputs` in downstream mode (parent's upstream is dirty, outputs won't be templated against).
+- `_build_plan_with_shared(..., _force_downstream=True)` — skips the state machine, calls `_bfs_from_start` over the entire child graph.
+- `_bfs_from_start` + `_bfs_downstream` share their loop body via new `_bfs_walk(queue, ...)` primitive — different seeding, identical per-node dispatch.
+- `_make_downstream_entry(WorkflowExecutor node)` — dispatches to `_plan_sub_workflow(cause="downstream")` instead of a flat `_execute_entry`.
+- `_WalkerState` gains `shared`, `registry`, `visited_paths`, `depth` (required fields) so BFS path can reach recursion.
+
+### Placeholder child inputs — new design seam
+
+In downstream mode, parent's upstream is dirty, so real `inputs: ${upstream.x}` templates can't resolve. But `compile_workflow` rejects missing required child inputs. Bridge: `_placeholder_child_inputs(child_ir)` synthesizes type-appropriate non-empty values (`[None]`, `"<dry-run-downstream-placeholder>"`, `1`, etc.). Used only in downstream mode; the child's BFS walk never reads inputs (no template resolution, no `_run()`), so placeholders are never observed. `_effective_child_inputs` is the one-liner dispatcher that picks placeholders vs caller-provided inputs based on `downstream` flag.
+
+Constraint discovered empirically: `""` fails the child's "required input must be non-empty" validator. Placeholder strings must be non-empty, placeholder numbers must be `> 0` for `minimum: 1` constraints, etc. `_TYPE_PLACEHOLDERS` uses sensible non-trivial defaults.
+
+### Summary polish (user-driven)
+
+Four UX fixes during the same session, all user-flagged:
+
+1. **`execute_by_type` in summary showed raw class names** (`1 LLMNode`, `1 WorkflowExecutor`) while per-entry labels already had pretty tags (`[LLM]`, `[workflow]`). Fix: formatter routes summary types through the existing `_NODE_TYPE_TAGS` map.
+
+2. **"(including nested)" label but per-level numbers.** The formatter checked `total_including_nested is not None` to decide the label but still showed `cached_count` / `execute_count` / `execute_by_type` — all per-level. Added `execute_by_type_including_nested: dict[str, int] | None` to `PlanSummary`, extended `_summarize` to aggregate child types, updated formatter to prefer `*_including_nested` when present.
+
+3. **"(upper bound across all branches, historical)" label firing for linear graphs.** My initial `_force_downstream` branch hardcoded `cost_basis="upper_bound"`. User noticed the label was wrong for their linear sub-workflow — real runtime cost IS the historical sum, not an upper bound, when topology has no branching. Fix: `cost_basis="upper_bound" if branched else "exact"` — honor the BFS `branched` flag from `_bfs_from_start`.
+
+4. **Header noise: `Plan for /Users/andfal/.../main.pflow.md (4 nodes, 1 sub-workflow):`.** User: "do we need to repeat the path? Why 'Plan'?" Fix: text header becomes `Dry-run for main.pflow.md: 4 nodes, 1 sub-workflow` (basename + user-facing term). JSON `plan.workflow` keeps the full absolute path as a stable agent contract.
+
+5. **Redundant `"No side effects performed."` trailer.** `--dry-run` flag IS the contract — restating it on every output is noise. Dropped. The behavioral guarantee is pinned by the canary-file test (`test_dry_run.py::test_dry_run_does_not_create_file`).
+
+6. **"Nothing cached" divider edge case.** Pre-fix: check was `all_execute and not any_cached` (top level). My initial fix relaxed to `not any_cached`, but that still misses the nested case: a plan whose top-level entries are all `sub_workflow` with fully-cached children would render "nothing cached" while children IS cached. Fix: `_has_any_cached_recursive(entries)` walks sub_plans too.
+
+### Load-bearing decisions (DON'T simplify away)
+
+**LB1. `_plan_sub_workflow` takes `cause`, not two separate functions.** Future agents will see the `if downstream: ...` branches inside and want to factor them out. Doing so re-introduces duplication between the pre-boundary and post-boundary recursion paths — exactly the drift surface Option E was designed to eliminate. The `cause` parameter IS the final shape.
+
+**LB2. Placeholders are non-empty by type, not `None` universally.** String inputs with emptiness validators, numeric inputs with `minimum: 1`, etc. all fail compile if given empty/zero values. `_TYPE_PLACEHOLDERS` is tuned for the validators that actually exist; extend when new validator types are added.
+
+**LB3. `_populate_sub_workflow_outputs` skipped in downstream mode.** The child was never walked through the state machine; its scratch shared has no `apply_memo_hit`-populated outputs. Populating parent's `shared[node_id]` with undefined values would cause downstream template resolution to resolve to garbage. Skipping is the right default because parent's own downstream successors are all downstream themselves and won't be templating.
+
+**LB4. `execute_by_type_including_nested` keeps raw class names in JSON, translates in text.** Agents use class names as stable contract; humans see pretty tags. Do NOT translate class names in the PlanSummary itself — translate at the formatter boundary only.
+
+**LB5. `_force_downstream` doesn't imply `upper_bound`.** Linear downstream graphs are exact (every node WILL run). Only branching makes cost an upper bound. The label says "upper bound across all branches" — if there's no branching, that phrasing is misleading.
+
+### Mutation-verified tests added
+
+- `test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats` — dispatch on `WorkflowExecutor` in `_make_downstream_entry`. Mutation: fall through to `_execute_entry` → sub_plan missing, nested rollup drops.
+- `test_plan_downstream_linear_subworkflow_reports_exact_cost_basis` — cost_basis flip based on `branched`. Mutation: hardcode `upper_bound` → label misleading.
+- `test_plan_downstream_subworkflow_placeholders_satisfy_required_inputs` — placeholder synthesis. Mutation: `return {}` → child compile fails.
+- `test_plan_summary_execute_by_type_aggregates_across_nested` — nested types rollup. Mutation: skip merge loop → child types absent from parent summary.
+
+New formatter test file `tests/test_execution/formatters/test_plan_formatter.py` — 8 unit tests pinning: basename header, class-name translation, nested-count preference, "No side effects" absence, recursive "nothing cached" divider (both true-empty and sub_workflow-children-cached cases), JSON shape.
+
+### Final state
+
+- `make check` clean (ruff + format + mypy + deptry).
+- `make test`: 5144 passed (5132 + 4 drift + 8 formatter). 9 skipped.
+- CLAUDE.md: `execution/CLAUDE.md` extended with "Sub-workflow recursion", "Force-downstream mode", "Placeholder child inputs", "Nested type aggregation", "Formatter" sections. `runtime/CLAUDE.md` Planner section updated to reflect parameterized sub-workflow recursion.
+
+### For the next agent (updated)
+
+16. **Sub-workflow recursion is parameterized by `cause`, not by a separate function.** `_plan_sub_workflow` handles both pre-boundary (`cause="no_cache_match"`) and post-boundary BFS (`cause="downstream"`). The `downstream` branch skips `plan_node` + output population — these are side effects the BFS path can't afford. Don't try to "simplify" by splitting into two functions; that re-introduces the drift surface.
+
+17. **Placeholder child inputs are the bridge between compile-time validation and BFS recursion.** `_placeholder_child_inputs` and `_effective_child_inputs` exist so `compile_workflow`'s required-input check passes when parent's upstream is dirty. Never observed by the child (no `_run()` in BFS mode), so the values don't need semantic meaning — just type-appropriate presence.
+
+18. **`cost_basis` is a semantic signal, not a mode flag.** Honor the BFS `branched` signal: linear = exact, branching = upper_bound. Hardcoding either side produces misleading output for the OTHER scenario. The formatter's label is tied to this signal.

@@ -61,12 +61,23 @@ class _WalkerState:
 
     Pass-by-reference replaces the 10-arg `_advance` signature. Every
     field is planner-owned; mutating them is the walker's job.
+
+    `shared`, `registry`, `visited_paths`, `depth` are the four pieces
+    needed by sub-workflow recursion — they flow through `_apply_boundary`
+    and `_bfs_downstream` so BFS can dispatch `WorkflowExecutor` nodes to
+    `_plan_sub_workflow(cause="downstream")` and produce nested sub_plans
+    for cost/duration rollup, instead of flat leaf entries that lose the
+    nested signal.
     """
 
     entries: list[PlanEntry]
     diagnostics: list[Diagnostic]
     visited_edges: set[tuple[str, str]]
     only_node: str | None
+    shared: dict[str, Any]
+    registry: Registry
+    visited_paths: list[str]
+    depth: int
     workflow_path: str | None = None
     cost_basis: _CostBasis = "exact"
 
@@ -201,6 +212,7 @@ def _build_plan_with_shared(
     _visited_paths: list[str] | None = None,
     _depth: int = 0,
     _parent_workflow_file: str | None = None,
+    _force_downstream: bool = False,
 ) -> tuple[Plan, dict[str, Any]]:
     """Internal variant of `build_plan` that also exposes the scratch shared.
 
@@ -208,17 +220,61 @@ def _build_plan_with_shared(
     state, which has cached outputs populated via `apply_memo_hit`. Those
     values drive exact resolution of the child's declared `## Outputs`
     templates — matching what runtime does when a sub-workflow completes.
+
+    `_force_downstream=True` is used when planning a sub-workflow reached
+    post-first-miss in a parent: the entire child graph is downstream by
+    construction (parent's upstream has changed, so we can't reason about
+    individual child cache-state). Skips the state machine and BFSes from
+    the start node, marking every entry `cause="downstream"` with
+    historical cost/duration estimates scoped to the child's workflow_path.
+    Cost basis is always `upper_bound` — conservative for cost-gating.
     """
     _validate_only_target(compiled, only_node, _depth)
 
     shared = _create_planner_shared(compiled, params, cache, _parent_workflow_file)
     visited_paths = list(_visited_paths) if _visited_paths else []
+    workflow_path = shared.get("_pflow_workflow_file")
+
+    if _force_downstream:
+        entries, branched = _bfs_from_start(
+            start_node=compiled.start_node,
+            compiled=compiled,
+            cache=cache,
+            registry=registry,
+            shared=shared,
+            visited_paths=visited_paths,
+            depth=_depth,
+            workflow_path=workflow_path,
+            only_node=only_node,
+        )
+        diagnostics: list[Diagnostic] = []
+        for entry in entries:
+            if entry.sub_plan is not None:
+                diagnostics.extend(entry.sub_plan.diagnostics)
+            if entry.diagnostic is not None:
+                diagnostics.append(entry.diagnostic)
+        # Only flip to upper_bound if BFS actually encountered branching.
+        # Linear downstream graphs have an exact topology — every node WILL
+        # run at runtime. The historical-cost hedge is separate, carried by
+        # the formatter's default "historical, actual may vary" suffix.
+        plan = Plan(
+            workflow=workflow_name,
+            entries=entries,
+            summary=_summarize(entries, cost_basis="upper_bound" if branched else "exact"),
+            diagnostics=diagnostics,
+        )
+        return plan, shared
+
     state = _WalkerState(
         entries=[],
         diagnostics=[],
         visited_edges=set(),
         only_node=only_node,
-        workflow_path=shared.get("_pflow_workflow_file"),
+        workflow_path=workflow_path,
+        shared=shared,
+        registry=registry,
+        visited_paths=visited_paths,
+        depth=_depth,
     )
 
     curr = compiled.start_node
@@ -316,8 +372,17 @@ def _apply_boundary(
         visited_edges=state.visited_edges,
         only_node=state.only_node,
         workflow_path=state.workflow_path,
+        shared=state.shared,
+        registry=state.registry,
+        visited_paths=state.visited_paths,
+        depth=state.depth,
     )
     state.entries.extend(bfs_entries)
+    for entry in bfs_entries:
+        if entry.sub_plan is not None:
+            state.diagnostics.extend(entry.sub_plan.diagnostics)
+        if entry.diagnostic is not None:
+            state.diagnostics.append(entry.diagnostic)
     if branched:
         state.cost_basis = "upper_bound"
 
@@ -421,21 +486,111 @@ def _bfs_downstream(
     visited_edges: set[tuple[str, str]],
     only_node: str | None,
     workflow_path: str | None = None,
+    shared: dict[str, Any],
+    registry: Registry,
+    visited_paths: list[str],
+    depth: int,
 ) -> tuple[list[PlanEntry], bool]:
     """Enumerate reachable would-execute nodes after the first cache miss.
 
-    Walks non-"error" outgoing edges breadth-first. Returns the discovered
-    entries plus a `branched` flag — true when any traversed node had more
-    than one non-error successor, which flips the plan's cost_basis to
-    upper_bound (conservative for cost gating).
+    Walks non-"error" outgoing edges breadth-first from `boundary_node`'s
+    successors (the boundary node itself is already an entry). Returns the
+    discovered entries plus a `branched` flag — true when any traversed node
+    had more than one non-error successor, which flips the plan's cost_basis
+    to upper_bound (conservative for cost gating).
+
+    `WorkflowExecutor` nodes dispatch to `_plan_sub_workflow(cause="downstream")`
+    so nested cost/duration rolls up through the standard sub_plan path.
+    """
+    queue: deque[Any] = deque()
+    branched_seed = _seed_bfs(boundary_node, queue, visited_edges)
+    entries, branched_walk = _bfs_walk(
+        queue=queue,
+        compiled=compiled,
+        cache=cache,
+        visited_nodes=visited_nodes,
+        visited_edges=visited_edges,
+        only_node=only_node,
+        workflow_path=workflow_path,
+        shared=shared,
+        registry=registry,
+        visited_paths=visited_paths,
+        depth=depth,
+    )
+    return entries, branched_seed or branched_walk
+
+
+def _bfs_from_start(
+    *,
+    start_node: Any,
+    compiled: CompiledWorkflow,
+    cache: MemoizationCache,
+    registry: Registry,
+    shared: dict[str, Any],
+    visited_paths: list[str],
+    depth: int,
+    workflow_path: str | None,
+    only_node: str | None,
+) -> tuple[list[PlanEntry], bool]:
+    """BFS over the entire graph from the start node, every entry downstream.
+
+    Used by `_build_plan_with_shared(force_downstream=True)` when a sub-workflow
+    is reached post-first-miss in a parent — the whole child graph inherits
+    downstream status regardless of individual cache state. Unlike
+    `_bfs_downstream`, the start node is INCLUDED in the output because it
+    isn't an entry yet.
+    """
+    queue: deque[Any] = deque([start_node])
+    return _bfs_walk(
+        queue=queue,
+        compiled=compiled,
+        cache=cache,
+        visited_nodes=set(),
+        visited_edges=set(),
+        only_node=only_node,
+        workflow_path=workflow_path,
+        shared=shared,
+        registry=registry,
+        visited_paths=visited_paths,
+        depth=depth,
+    )
+
+
+def _bfs_walk(
+    *,
+    queue: deque[Any],
+    compiled: CompiledWorkflow,
+    cache: MemoizationCache,
+    visited_nodes: set[str],
+    visited_edges: set[tuple[str, str]],
+    only_node: str | None,
+    workflow_path: str | None,
+    shared: dict[str, Any],
+    registry: Registry,
+    visited_paths: list[str],
+    depth: int,
+) -> tuple[list[PlanEntry], bool]:
+    """Shared BFS loop used by both downstream-after-boundary and force-downstream.
+
+    Callers seed the queue differently (successors vs start node) but the
+    loop body — dequeue, build entry, enqueue successors — is identical.
     """
     entries: list[PlanEntry] = []
-    queue: deque[Any] = deque()
-    branched = _seed_bfs(boundary_node, queue, visited_edges)
+    branched = False
 
     while queue:
         node = queue.popleft()
-        entry = _make_downstream_entry(node, compiled, cache, visited_nodes, workflow_path=workflow_path)
+        entry = _make_downstream_entry(
+            node,
+            compiled,
+            cache,
+            visited_nodes,
+            workflow_path=workflow_path,
+            shared=shared,
+            registry=registry,
+            visited_paths=visited_paths,
+            depth=depth,
+        )
         if entry is None:
             continue
         entries.append(entry)
@@ -472,6 +627,10 @@ def _make_downstream_entry(
     visited_nodes: set[str],
     *,
     workflow_path: str | None = None,
+    shared: dict[str, Any],
+    registry: Registry,
+    visited_paths: list[str],
+    depth: int,
 ) -> PlanEntry | None:
     """Build a downstream PlanEntry for a BFS-discovered node, or None to skip it.
 
@@ -479,6 +638,12 @@ def _make_downstream_entry(
     + duration) are attached by construction. Skipping the stats lookup here
     was a real bug — agents cost-gating on an LLM node that happened to sit
     downstream of a non-LLM miss saw `$0` even when history existed.
+
+    `WorkflowExecutor` nodes dispatch to `_plan_sub_workflow(cause="downstream")`
+    so nested child plans are produced and nested cost/duration rolls up via
+    the existing `estimated_cost_usd_including_nested` machinery. Without
+    this, sub-workflows reached via BFS became opaque leaves hiding every
+    internal LLM cost — the #1 cost-gating blind spot for iteration edits.
     """
     node_id = getattr(node, "node_id", None)
     if not isinstance(node_id, str) or node_id in visited_nodes:
@@ -487,6 +652,19 @@ def _make_downstream_entry(
         return None
     visited_nodes.add(node_id)
     config = compiled.node_configs[node_id]
+
+    if config.node_type_name == "WorkflowExecutor":
+        return _plan_sub_workflow(
+            node,
+            config,
+            shared,
+            cache,
+            registry,
+            visited_paths=visited_paths,
+            depth=depth,
+            cause="downstream",
+        )
+
     return _execute_entry(config, cache, cause="downstream", workflow_path=workflow_path)
 
 
@@ -727,14 +905,23 @@ def _plan_sub_workflow(
     *,
     visited_paths: list[str],
     depth: int,
+    cause: Literal["no_cache_match", "downstream"] = "no_cache_match",
 ) -> PlanEntry:
     """Compile and recursively plan a nested workflow.
 
     Flat early-return ladder — each check either short-circuits with a
     descriptive PlanEntry or passes its value through to the next stage.
+
+    `cause="downstream"` — used when this sub-workflow is reached via BFS
+    post-first-miss in the parent. In that mode we skip template-driven
+    param resolution (parent's upstream state is dirty, inputs can't
+    resolve reliably) and recurse with `_force_downstream=True` so the
+    child's entire graph inherits downstream status with historical
+    stats scoped to the child's workflow_path.
     """
     node_id = config.node_id
     node_type = config.node_type_name
+    downstream = cause == "downstream"
 
     if depth >= _MAX_SUB_WORKFLOW_DEPTH:
         return _sub_workflow_error_entry(
@@ -748,11 +935,10 @@ def _plan_sub_workflow(
     if isinstance(workflow_ref, str) and "${" in workflow_ref:
         return _opaque_sub_workflow_entry(node_id, node_type)
 
-    planned = plan_node(curr, config, shared)
-    if planned.template_exception is not None:
-        return _template_error_entry(config, planned.template_exception)
-
-    merged = _merged_sub_workflow_params(curr, config, planned)
+    params_or_entry = _resolve_sub_workflow_params(curr, config, shared, downstream=downstream)
+    if isinstance(params_or_entry, PlanEntry):
+        return params_or_entry
+    merged, child_inputs = params_or_entry
 
     # Resolve relative child refs against the parent's dir, or CWD for inline
     # (non-file) workflows. Mirrors `WorkflowExecutor._load_workflow` exactly:
@@ -777,14 +963,7 @@ def _plan_sub_workflow(
             f"Circular sub-workflow reference: {resolved_path_str}",
         )
 
-    raw_inputs = merged.get("inputs")
-    if raw_inputs is not None and not isinstance(raw_inputs, dict):
-        return _sub_workflow_error_entry(
-            node_id,
-            node_type,
-            f"Workflow node 'inputs:' resolved to {type(raw_inputs).__name__}, expected dict",
-        )
-    child_inputs: dict[str, Any] = dict(raw_inputs) if raw_inputs else {}
+    child_inputs = _effective_child_inputs(resolved.ir, child_inputs, downstream=downstream)
 
     try:
         compiled_child = _compile_child(resolved.ir, resolved_path_str, child_inputs, registry, node_id, node_type)
@@ -800,6 +979,7 @@ def _plan_sub_workflow(
         _visited_paths=[*visited_paths, resolved_path_str] if resolved_path_str else visited_paths,
         _depth=depth + 1,
         _parent_workflow_file=resolved_path_str,
+        _force_downstream=downstream,
     )
     if resolved.warnings:
         child_plan = Plan(
@@ -813,16 +993,18 @@ def _plan_sub_workflow(
     # nodes that template against ${<node_id>.<key>} can resolve at plan time.
     # Mirrors the runtime path: engine wraps the WorkflowExecutor node with a
     # NamespacedSharedStore → child outputs land at shared[node_id][key].
-    # Partial failure (a declared source references an execute-marked child
-    # node) silently skips that key — honest: the downstream templating it
-    # will fail at plan time too, matching what would happen at runtime.
-    _populate_sub_workflow_outputs(shared, node_id, compiled_child, child_shared, child_inputs)
+    # Skipped in downstream mode: the child wasn't walked through the state
+    # machine, so its scratch shared has no apply_memo_hit-populated outputs
+    # to resolve from. Parent's downstream successors won't template against
+    # this sub_plan anyway (they're all downstream too).
+    if not downstream:
+        _populate_sub_workflow_outputs(shared, node_id, compiled_child, child_shared, child_inputs)
 
     return PlanEntry(
         node_id=node_id,
         node_type=node_type,
         status="sub_workflow",
-        cause="no_cache_match",
+        cause=cause,
         sub_plan=child_plan,
     )
 
@@ -911,6 +1093,99 @@ def _mirror_child_shared(
             continue
         mirrored[key] = value
     return mirrored
+
+
+def _resolve_sub_workflow_params(
+    curr: Any,
+    config: NodeConfig,
+    shared: dict[str, Any],
+    *,
+    downstream: bool,
+) -> tuple[dict[str, Any], dict[str, Any]] | PlanEntry:
+    """Return `(merged_params, child_inputs)` or a PlanEntry on failure.
+
+    Splits the two behaviors of `_plan_sub_workflow` that vary by `cause`:
+    - `downstream=True`: parent is in BFS mode, so parent's upstream state
+      is dirty. `plan_node` would hit template_exception on any
+      `inputs: ${upstream.x}`. Bypass template resolution entirely — use
+      the raw workflow ref and empty inputs. The child's BFS-from-start
+      walk doesn't consume inputs.
+    - `downstream=False`: normal state-machine mode. Run `plan_node` for
+      template resolution, surface template errors, validate inputs shape.
+    """
+    if downstream:
+        return {"workflow": _raw_workflow_ref(curr, config)}, {}
+
+    planned = plan_node(curr, config, shared)
+    if planned.template_exception is not None:
+        return _template_error_entry(config, planned.template_exception)
+    merged = _merged_sub_workflow_params(curr, config, planned)
+    raw_inputs = merged.get("inputs")
+    if raw_inputs is not None and not isinstance(raw_inputs, dict):
+        return _sub_workflow_error_entry(
+            config.node_id,
+            config.node_type_name,
+            f"Workflow node 'inputs:' resolved to {type(raw_inputs).__name__}, expected dict",
+        )
+    child_inputs: dict[str, Any] = dict(raw_inputs) if raw_inputs else {}
+    return merged, child_inputs
+
+
+_PLACEHOLDER_STRING = "<dry-run-downstream-placeholder>"
+
+_TYPE_PLACEHOLDERS: dict[str, Any] = {
+    "array": [None],
+    "list": [None],
+    "object": {"_placeholder": True},
+    "dict": {"_placeholder": True},
+    "string": _PLACEHOLDER_STRING,
+    "str": _PLACEHOLDER_STRING,
+    "integer": 1,
+    "int": 1,
+    "number": 1,
+    "float": 1.0,
+    "boolean": False,
+    "bool": False,
+}
+
+
+def _placeholder_child_inputs(child_ir: dict[str, Any]) -> dict[str, Any]:
+    """Synthesize placeholder values for every declared child input.
+
+    Used only in downstream mode: the parent is in BFS-post-miss, so the
+    real upstream-resolved inputs aren't available. The child's BFS walk
+    never reads inputs (no template resolution, no node execution — just
+    topology + historical-stats lookup), so the placeholder values are
+    never observed. We just need compile_workflow's required-input check
+    to pass.
+    """
+    declared = child_ir.get("inputs") or {}
+    if not isinstance(declared, dict):
+        return {}
+    placeholders: dict[str, Any] = {}
+    for name, spec in declared.items():
+        type_name = spec.get("type") if isinstance(spec, dict) else None
+        placeholders[name] = _TYPE_PLACEHOLDERS.get(str(type_name), None)
+    return placeholders
+
+
+def _effective_child_inputs(
+    child_ir: dict[str, Any],
+    child_inputs: dict[str, Any],
+    *,
+    downstream: bool,
+) -> dict[str, Any]:
+    """Return the inputs dict to pass to the child compiler.
+
+    In downstream mode, substitute placeholder values so compile-time
+    required-input checks pass (parent's upstream is dirty, real values
+    aren't available, BFS-from-start never reads them). In normal mode,
+    pass the caller-provided inputs through untouched — missing required
+    inputs SHOULD fail loudly there.
+    """
+    if downstream:
+        return _placeholder_child_inputs(child_ir)
+    return child_inputs
 
 
 def _raw_workflow_ref(curr: Any, config: NodeConfig) -> Any:
@@ -1186,6 +1461,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
     nested_total = totals.total
     nested_cached = totals.cached_count
     nested_execute = totals.execute_count
+    nested_by_type: dict[str, int] = dict(totals.execute_by_type)
     nested_cost = totals.estimated_cost_usd
     nested_nwh = totals.nodes_without_history
     nested_duration = totals.estimated_duration_ms
@@ -1199,6 +1475,9 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
         nested_total += child.total_including_nested or child.total
         nested_cached += child.cached_including_nested or child.cached_count
         nested_execute += child.execute_including_nested or child.execute_count
+        child_types = child.execute_by_type_including_nested or child.execute_by_type
+        for node_type, count in child_types.items():
+            nested_by_type[node_type] = nested_by_type.get(node_type, 0) + count
         nested_cost += (
             child.estimated_cost_usd_including_nested
             if child.estimated_cost_usd_including_nested is not None
@@ -1236,6 +1515,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
         total_including_nested=nested_total,
         cached_including_nested=nested_cached,
         execute_including_nested=nested_execute,
+        execute_by_type_including_nested=nested_by_type,
         estimated_cost_usd_including_nested=nested_cost,
         nodes_without_history_including_nested=nested_nwh,
         estimated_duration_ms_including_nested=nested_duration,

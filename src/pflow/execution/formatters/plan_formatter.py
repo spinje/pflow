@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -51,22 +52,40 @@ def format_plan_text(plan: Plan) -> str:
     sub_count = sum(1 for entry in plan.entries if entry.status == "sub_workflow")
     if sub_count:
         header_bits.append(f"{sub_count} sub-workflow{'s' if sub_count != 1 else ''}")
-    lines.append(f"Plan for {plan.workflow} ({', '.join(header_bits)}):")
+    # Base name only for readability — JSON keeps the full `plan.workflow` value
+    # as a stable agent contract.
+    workflow_label = Path(plan.workflow).name if plan.workflow else plan.workflow
+    lines.append(f"Dry-run for {workflow_label}: {', '.join(header_bits)}")
     lines.append("")
 
     lines.extend(_render_entries(plan.entries, indent_level=0, boundary_shown=[False]))
 
     lines.append("")
-    summary_parts = [f"{plan.summary.cached_count} cached", f"{plan.summary.execute_count} would execute"]
-    if plan.summary.execute_by_type:
+    has_nested = plan.summary.total_including_nested is not None
+    cached = (
+        plan.summary.cached_including_nested
+        if has_nested and plan.summary.cached_including_nested is not None
+        else plan.summary.cached_count
+    )
+    execute = (
+        plan.summary.execute_including_nested
+        if has_nested and plan.summary.execute_including_nested is not None
+        else plan.summary.execute_count
+    )
+    type_breakdown = (
+        plan.summary.execute_by_type_including_nested
+        if has_nested and plan.summary.execute_by_type_including_nested is not None
+        else plan.summary.execute_by_type
+    )
+    summary_parts = [f"{cached} cached", f"{execute} would execute"]
+    if type_breakdown:
         types_str = ", ".join(
-            f"{count} {node_type}" for node_type, count in sorted(plan.summary.execute_by_type.items())
+            f"{count} {_NODE_TYPE_TAGS.get(node_type, node_type)}"
+            for node_type, count in sorted(type_breakdown.items())
         )
         summary_parts[-1] += f" ({types_str})"
-    if plan.summary.total_including_nested is not None:
-        lines.append(f"Summary (including nested): {' · '.join(summary_parts)}")
-    else:
-        lines.append(f"Summary: {' · '.join(summary_parts)}")
+    label = "Summary (including nested)" if has_nested else "Summary"
+    lines.append(f"{label}: {' · '.join(summary_parts)}")
 
     effective_cost = (
         plan.summary.estimated_cost_usd_including_nested
@@ -103,8 +122,6 @@ def format_plan_text(plan: Plan) -> str:
     if effective_nwdh > 0:
         lines.append(f"  ({effective_nwdh} node{'s' if effective_nwdh != 1 else ''} without duration history)")
 
-    lines.append("No side effects performed.")
-
     if plan.diagnostics:
         lines.append("")
         for diagnostic in plan.diagnostics:
@@ -117,10 +134,9 @@ def _render_entries(entries: list[PlanEntry], indent_level: int, boundary_shown:
     """Render one plan level with boundary dividers."""
     lines: list[str] = []
     indent = "  " + "    " * indent_level
-    all_execute = entries and all(entry.status in ("execute", "opaque") for entry in entries)
     any_cached = any(entry.status == "cached" for entry in entries)
 
-    if all_execute and not any_cached and indent_level == 0:
+    if entries and indent_level == 0 and not _has_any_cached_recursive(entries):
         lines.append(f"{indent}─── nothing cached — full run ───")
 
     for entry in entries:
@@ -147,6 +163,22 @@ def _has_any_cached_above(entries: list[PlanEntry], target: PlanEntry) -> bool:
         if entry is target:
             return False
         if entry.status == "cached":
+            return True
+    return False
+
+
+def _has_any_cached_recursive(entries: list[PlanEntry]) -> bool:
+    """Whether any entry at this level or in any sub_plan is cached.
+
+    Required for the "nothing cached — full run" divider: a plan where every
+    top-level entry is a `sub_workflow` whose children are fully cached
+    should NOT render "nothing cached" at the top. The divider promises a
+    full run with zero cache hits anywhere.
+    """
+    for entry in entries:
+        if entry.status == "cached":
+            return True
+        if entry.sub_plan is not None and _has_any_cached_recursive(entry.sub_plan.entries):
             return True
     return False
 
@@ -286,6 +318,8 @@ def _summary_to_dict(summary: Any) -> dict[str, Any]:
         result["total_including_nested"] = summary.total_including_nested
         result["cached_including_nested"] = summary.cached_including_nested
         result["execute_including_nested"] = summary.execute_including_nested
+        if summary.execute_by_type_including_nested is not None:
+            result["execute_by_type_including_nested"] = dict(summary.execute_by_type_including_nested)
     if summary.estimated_cost_usd_including_nested is not None:
         result["estimated_cost_usd_including_nested"] = summary.estimated_cost_usd_including_nested
         result["nodes_without_history_including_nested"] = summary.nodes_without_history_including_nested

@@ -130,6 +130,7 @@ class PlanSummary:
     total_including_nested: int | None = None
     cached_including_nested: int | None = None
     execute_including_nested: int | None = None
+    execute_by_type_including_nested: dict[str, int] | None = None
     estimated_cost_usd_including_nested: float | None = None
     nodes_without_history_including_nested: int | None = None
     estimated_duration_ms_including_nested: float | None = None

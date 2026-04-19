@@ -1386,6 +1386,457 @@ def test_plan_cache_disabled_node_carries_historical_stats(tmp_path) -> None:
     )
 
 
+def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> None:
+    """Sub-workflows reached via BFS post-boundary must recurse and roll up child stats.
+
+    Motivating scenario: parent workflow has an upstream node, a sub-workflow
+    in the middle (with its own LLM/work), and a downstream node. Agent edits
+    the upstream node to iterate — the parent's first-miss fires at upstream,
+    BFS enumerates downstream. Before this fix, the sub-workflow became a flat
+    leaf entry with no `sub_plan` and no rollup of its children's historical
+    cost/duration. Agents cost-gating after an upstream edit silently lost
+    every nested LLM cost in the summary — exactly the #1 iteration pattern.
+
+    After the fix:
+    - Parent plan shows `[execute, sub_workflow, execute]` with causes
+      `[no_cache_match, downstream, downstream]`.
+    - The `sub_workflow` entry's `sub_plan` exists and contains every child
+      node with `cause="downstream"`.
+    - Child entries carry `last_duration_ms` populated from the child's
+      workflow-path-scoped cache (the `_execute_entry` chokepoint).
+    - `estimated_duration_ms_including_nested` on the parent sums the parent
+      and child durations.
+
+    Mutation: revert `_make_downstream_entry`'s `WorkflowExecutor` branch to
+    fall through to `_execute_entry` → sub_plan becomes None, nested rollup
+    drops to zero, these assertions fail.
+    """
+    log_file = tmp_path / "bfs-sub.log"
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"seed": {"type": "string", "description": "upstream value"}},
+            "nodes": [
+                {
+                    "id": "child-work",
+                    "type": "shell",
+                    "params": {"command": f"echo child-work >> {log_file}; printf 'child-${{seed}}'"},
+                },
+            ],
+            "edges": [],
+            "outputs": {"out": {"source": "${child-work.stdout}", "description": "child output"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "nodes": [
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "params": {"command": f"echo upstream-v1 >> {log_file}; printf v1"},
+                },
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${upstream.stdout}"}},
+                },
+                {
+                    "id": "downstream",
+                    "type": "shell",
+                    "params": {"command": f"echo downstream >> {log_file}; printf end"},
+                },
+            ],
+            "edges": [
+                {"from": "upstream", "to": "middle"},
+                {"from": "middle", "to": "downstream"},
+            ],
+        },
+        parent_path,
+    )
+
+    # First real run populates child's cache entry with duration history.
+    first_result = _runner_run(parent_path)
+    assert first_result.success
+
+    # Edit upstream to invalidate — parent walker will boundary at upstream,
+    # BFS will reach `middle` (the sub-workflow) and MUST recurse.
+    write_workflow_file(
+        {
+            "nodes": [
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "params": {"command": f"echo upstream-v2 >> {log_file}; printf v2"},
+                },
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${upstream.stdout}"}},
+                },
+                {
+                    "id": "downstream",
+                    "type": "shell",
+                    "params": {"command": f"echo downstream >> {log_file}; printf end"},
+                },
+            ],
+            "edges": [
+                {"from": "upstream", "to": "middle"},
+                {"from": "middle", "to": "downstream"},
+            ],
+        },
+        parent_path,
+    )
+
+    plan = _runner_plan(parent_path)
+
+    assert [e.status for e in plan.entries] == ["execute", "sub_workflow", "execute"]
+    assert [e.cause for e in plan.entries] == ["no_cache_match", "downstream", "downstream"]
+
+    sub_plan = plan.entries[1].sub_plan
+    assert sub_plan is not None, "BFS must produce a nested sub_plan for the sub-workflow"
+    assert [e.status for e in sub_plan.entries] == ["execute"]
+    assert [e.cause for e in sub_plan.entries] == ["downstream"]
+
+    child_entry = sub_plan.entries[0]
+    assert child_entry.last_duration_ms is not None and child_entry.last_duration_ms > 0, (
+        "Child entry must carry duration from child-workflow-scoped cache via "
+        f"_execute_entry; got {child_entry.last_duration_ms}"
+    )
+
+    # Rollup: nested duration must be present and >= child's duration.
+    nested = plan.summary.estimated_duration_ms_including_nested
+    assert nested is not None and nested >= child_entry.last_duration_ms, (
+        f"estimated_duration_ms_including_nested ({nested}) must include the child's {child_entry.last_duration_ms}ms"
+    )
+
+
+def test_plan_downstream_linear_subworkflow_reports_exact_cost_basis(tmp_path) -> None:
+    """Force-downstream recursion on a LINEAR child must keep cost_basis='exact'.
+
+    Before this assertion landed, `_build_plan_with_shared(force_downstream=True)`
+    hardcoded `cost_basis="upper_bound"`, which made the summary label promise
+    "upper bound across all branches" even for workflows with zero branching.
+    Misleading for cost-gating: agents think the estimate is pessimistic when
+    actually the topology is exact — it's only the historical number that varies.
+
+    Now the flag follows the BFS `branched` signal. Mutation: re-hardcode
+    `cost_basis="upper_bound"` in the `_force_downstream` block → this test
+    fails because the linear child produces `exact` but would see `upper_bound`.
+    """
+    log_file = tmp_path / "linear-sub.log"
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"seed": {"type": "string", "description": "upstream value"}},
+            "nodes": [
+                {
+                    "id": "child-a",
+                    "type": "shell",
+                    "params": {"command": f"echo a >> {log_file}; printf 'a-${{seed}}'"},
+                },
+                {
+                    "id": "child-b",
+                    "type": "shell",
+                    "params": {"command": f"echo b >> {log_file}; printf '${{child-a.stdout}}-b'"},
+                },
+            ],
+            "edges": [{"from": "child-a", "to": "child-b"}],
+            "outputs": {"out": {"source": "${child-b.stdout}", "description": "out"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "upstream", "type": "shell", "params": {"command": f"echo up >> {log_file}; printf up"}},
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${upstream.stdout}"}},
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "middle"}],
+        },
+        parent_path,
+    )
+
+    _runner_run(parent_path)
+
+    # Edit upstream so parent's walker enters BFS at `upstream`. BFS reaches
+    # `middle` and force-downstream-recurses into the linear child.
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "upstream", "type": "shell", "params": {"command": f"echo up2 >> {log_file}; printf up2"}},
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${upstream.stdout}"}},
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "middle"}],
+        },
+        parent_path,
+    )
+
+    plan = _runner_plan(parent_path)
+    sub_plan = plan.entries[1].sub_plan
+    assert sub_plan is not None
+    assert sub_plan.summary.cost_basis == "exact", (
+        f"linear child in force_downstream mode must report exact basis, got {sub_plan.summary.cost_basis}"
+    )
+
+
+def test_plan_downstream_subworkflow_placeholders_satisfy_required_inputs(tmp_path) -> None:
+    """BFS recursion into a sub-workflow with required inputs must compile cleanly.
+
+    Parent's upstream is dirty, so real inputs can't be resolved. The child
+    declares required inputs — without placeholder synthesis, `compile_workflow`
+    rejects empty/missing values. Mutation: make `_placeholder_child_inputs`
+    return `{}` → the child compile fails, the plan's sub_plan is replaced
+    with a compile-error entry, and no child entries are produced.
+    """
+    log_file = tmp_path / "placeholder.log"
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {
+                "seed": {"type": "string", "description": "required seed"},
+                "count": {"type": "integer", "description": "required count"},
+                "items": {"type": "array", "description": "required list"},
+            },
+            "nodes": [
+                {
+                    "id": "consume",
+                    "type": "code",
+                    "params": {
+                        "inputs": {
+                            "seed": "${seed}",
+                            "count": "${count}",
+                            "items": "${items}",
+                        },
+                        "code": "seed: str\ncount: int\nitems: list\nresult: str = f'{seed}-{count}-{len(items)}'",
+                    },
+                },
+            ],
+            "edges": [],
+            "outputs": {"result": {"source": "${consume.result}", "description": "out"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "upstream", "type": "shell", "params": {"command": f"echo up >> {log_file}; printf up"}},
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child_path),
+                        "inputs": {
+                            "seed": "${upstream.stdout}",
+                            "count": 1,
+                            "items": ["x"],
+                        },
+                    },
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "middle"}],
+        },
+        parent_path,
+    )
+
+    # First real run populates child's cache entry.
+    first = _runner_run(parent_path)
+    assert first.success
+
+    # Invalidate upstream — forces BFS at `middle`.
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "upstream", "type": "shell", "params": {"command": f"echo up2 >> {log_file}; printf up2"}},
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child_path),
+                        "inputs": {
+                            "seed": "${upstream.stdout}",
+                            "count": 1,
+                            "items": ["x"],
+                        },
+                    },
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "middle"}],
+        },
+        parent_path,
+    )
+
+    plan = _runner_plan(parent_path)
+
+    # The sub-workflow must have recursed into a fully-formed child plan.
+    assert plan.entries[1].status == "sub_workflow"
+    sub_plan = plan.entries[1].sub_plan
+    assert sub_plan is not None, "placeholder inputs must satisfy compile; got no sub_plan"
+    assert [e.cause for e in sub_plan.entries] == ["downstream"]
+    # No ERROR diagnostics — the compile succeeded with placeholders.
+    error_diags = [d for d in plan.diagnostics if getattr(d.severity, "value", "") == "error"]
+    assert not error_diags, f"placeholder synthesis must avoid compile errors; got {error_diags}"
+
+
+def test_plan_summary_execute_by_type_aggregates_across_nested(tmp_path) -> None:
+    """`execute_by_type_including_nested` must sum per-level types + child types.
+
+    Parent has 1 shell + 1 workflow. Child has 1 shell. Including nested
+    should report {shell: 2, workflow: 1}. Mutation: remove the
+    `nested_by_type[t] += count` loop in `_summarize` → child shell
+    disappears from the parent summary.
+    """
+    log_file = tmp_path / "agg.log"
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"seed": {"type": "string", "description": "seed"}},
+            "nodes": [
+                {
+                    "id": "child-shell",
+                    "type": "shell",
+                    "params": {"command": f"echo s >> {log_file}; printf '${{seed}}'"},
+                },
+            ],
+            "edges": [],
+            "outputs": {"out": {"source": "${child-shell.stdout}", "description": "out"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "parent-shell", "type": "shell", "params": {"command": f"echo p >> {log_file}; printf p"}},
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${parent-shell.stdout}"}},
+                },
+            ],
+            "edges": [{"from": "parent-shell", "to": "middle"}],
+        },
+        parent_path,
+    )
+
+    # Prime cache so BFS path exercises recursion.
+    _runner_run(parent_path)
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "parent-shell", "type": "shell", "params": {"command": f"echo p2 >> {log_file}; printf p2"}},
+                {
+                    "id": "middle",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${parent-shell.stdout}"}},
+                },
+            ],
+            "edges": [{"from": "parent-shell", "to": "middle"}],
+        },
+        parent_path,
+    )
+
+    plan = _runner_plan(parent_path)
+    nested_types = plan.summary.execute_by_type_including_nested
+    assert nested_types is not None
+    # 2 shells (parent-shell + child-shell) + 1 WorkflowExecutor frame.
+    assert nested_types.get("ShellNode") == 2, f"nested type rollup must include child's shell; got {nested_types}"
+    assert nested_types.get("WorkflowExecutor") == 1
+
+
+def test_plan_downstream_bfs_detects_sub_workflow_cycle(tmp_path) -> None:
+    """Cycle detection must survive the BFS → force-downstream → BFS threading.
+
+    `visited_paths` flows through four hops to reach the recursive
+    `_plan_sub_workflow` call: `_apply_boundary` → `_bfs_downstream` → `_bfs_walk`
+    → `_make_downstream_entry` → `_plan_sub_workflow(cause="downstream")`. If any
+    hop drops `visited_paths`, a mutual sub-workflow cycle would silently
+    bottom out at `_MAX_SUB_WORKFLOW_DEPTH=10` (producing 10 identical sub_plans)
+    instead of surfacing as a proper "Circular sub-workflow reference"
+    diagnostic at the second visit.
+
+    Mutation: replace the `_visited_paths` arg in `_plan_sub_workflow`'s
+    recursive `_build_plan_with_shared` call with `_visited_paths=[]` → cycle
+    detection never fires, max-depth surfaces instead.
+    """
+    log_file = tmp_path / "cycle.log"
+    parent_path = tmp_path / "parent.pflow.md"
+    child_a_path = tmp_path / "child-a.pflow.md"
+
+    # child_a references parent in a back-edge — creates a cycle.
+    write_workflow_file(
+        {
+            "inputs": {"seed": {"type": "string", "description": "seed"}},
+            "nodes": [
+                {
+                    "id": "back-to-parent",
+                    "type": "workflow",
+                    "params": {"workflow": str(parent_path), "inputs": {"seed": "${seed}"}},
+                },
+            ],
+            "edges": [],
+            "outputs": {"out": {"source": "${back-to-parent.out}", "description": "out"}},
+        },
+        child_a_path,
+    )
+    write_workflow_file(
+        {
+            "inputs": {"seed": {"type": "string", "description": "seed"}},
+            "nodes": [
+                {"id": "upstream", "type": "shell", "params": {"command": f"echo u >> {log_file}; printf '${{seed}}'"}},
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_a_path), "inputs": {"seed": "${upstream.stdout}"}},
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "call-child"}],
+            "outputs": {"final": {"source": "${call-child.out}", "description": "final"}},
+        },
+        parent_path,
+    )
+
+    # Prime the cache so BFS has a reason to traverse post-boundary. A real run
+    # would fail with a cycle error, so seed only the upstream cache entry.
+    # Actually: the cycle is only detected by the PLANNER via visited_paths;
+    # runtime detects it through `_pflow_stack`. We can't pre-run this workflow
+    # to populate cache. Instead, run a stripped-down version first.
+    # Simpler: just plan the cyclic workflow cold — visited_paths check runs
+    # during the first BFS pass whether or not the cache is populated.
+
+    plan = _runner_plan(parent_path, params={"seed": "x"})
+
+    def _collect_messages(entries):
+        for entry in entries:
+            if entry.diagnostic is not None:
+                yield entry.diagnostic.message
+            if entry.sub_plan is not None:
+                yield from _collect_messages(entry.sub_plan.entries)
+
+    messages = list(_collect_messages(plan.entries))
+    assert any("Circular sub-workflow reference" in m for m in messages), (
+        f"visited_paths threading broken — expected cycle diagnostic, got: {messages}"
+    )
+    assert not any("Max sub-workflow depth" in m for m in messages), (
+        f"max-depth fired instead of cycle detection — threading drift: {messages}"
+    )
+
+
 def test_plan_cached_end_action_terminates_cleanly(tmp_path) -> None:
     """Cached action="end" must STOP cleanly, not emit a routing_error entry.
 
