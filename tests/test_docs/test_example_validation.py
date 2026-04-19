@@ -151,6 +151,7 @@ class TestExampleValidation:
         if not invalid_workflow_files:
             pytest.skip("No invalid example files found")
 
+        registry = Registry()
         unexpected_passes = []
         for pflow_file in invalid_workflow_files:
             try:
@@ -159,8 +160,20 @@ class TestExampleValidation:
                 ir_data = result.ir
                 normalize_ir(ir_data)
                 validate_ir(ir_data)
-                # If we get here, the file unexpectedly passed
-                unexpected_passes.append(pflow_file.name)
+
+                dummy_params = generate_dummy_parameters(ir_data.get("inputs", {}))
+                dummy_params["_pflow_workflow_file"] = str(pflow_file)
+                resolve_file_references(ir_data, get_base_dir(dummy_params))
+
+                diagnostics = WorkflowValidator.validate(
+                    ir_data,
+                    extracted_params=dummy_params,
+                    registry=registry,
+                    workflow_file=pflow_file,
+                )
+                errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+                if not errors:
+                    unexpected_passes.append(pflow_file.name)
             except (MarkdownParseError, SchemaValidationError, ValueError):
                 pass  # Expected - invalid examples should fail
 

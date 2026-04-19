@@ -98,6 +98,22 @@ def test_registry(tmp_path):
                 ],
             },
         },
+        "code": {
+            "class_name": "PythonCodeNode",
+            "module": "pflow.nodes.python.python_code",
+            "interface": {
+                "outputs": [
+                    {"key": "result", "type": "any", "description": "Value of result variable after execution"},
+                    {"key": "stdout", "type": "str", "description": "Captured print output"},
+                    {"key": "stderr", "type": "str", "description": "Captured stderr output"},
+                ],
+                "params": [
+                    {"key": "code", "type": "str", "description": "Python code to execute"},
+                    {"key": "inputs", "type": "dict", "description": "Variable name to value mapping"},
+                    {"key": "timeout", "type": "int", "description": "Execution timeout in seconds"},
+                ],
+            },
+        },
         "list-producer": {
             "class_name": "ListProducer",
             "module": "test",
@@ -1264,3 +1280,607 @@ def test_shell_blocks_multiple_structured_templates_preserves_structure(test_reg
     assert len(diagnostic.suggestions) == 4
     assert any("stdin" in suggestion for suggestion in diagnostic.suggestions)
     assert any("temp files" in suggestion for suggestion in diagnostic.suggestions)
+
+
+class TestCodeNodeInputAnnotationValidation:
+    """Pass 9 validates code-node inputs against code-block annotations."""
+
+    def test_dict_annotation_rejects_list_upstream(self, test_registry):
+        """Annotation `x: dict` with upstream `list` fires a type-mismatch error."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict\nresult: str = str(x)",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "expects dict" in d.message]
+        assert len(annotation_errors) == 1, [d.message for d in errors]
+
+        diagnostic = annotation_errors[0]
+        assert diagnostic.node_id == "consumer"
+        assert diagnostic.context["path"] == "nodes[id=consumer].params.inputs.x"
+        assert diagnostic.context["annotation"] == "dict"
+        # Both inferred and expected types are Python vocabulary for consistency:
+        # agents consuming JSON can compare them directly without crossing the
+        # S1/Python bridge.
+        assert diagnostic.context["inferred_type"] == "list"
+        assert diagnostic.context["expected_type"] == "dict"
+        assert diagnostic.context["template"] == "${producer.items}"
+        assert diagnostic.suggestions is not None
+        assert len(diagnostic.suggestions) == 3
+        # Locality hints tell the agent which file/section each fix applies to.
+        assert any("params.code" in s and "x: list" in s for s in diagnostic.suggestions), diagnostic.suggestions
+        assert any("${producer.items}" in s for s in diagnostic.suggestions), diagnostic.suggestions
+        assert any("params.code" in s and "x: Any" in s for s in diagnostic.suggestions), diagnostic.suggestions
+
+    def test_compatible_types_pass(self, test_registry):
+        """Matching annotation and upstream type produces no diagnostic."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: list\nresult: int = len(x)",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "expects" in d.message and "receives" in d.message]
+        assert annotation_errors == []
+
+    def test_missing_annotation_fires_and_infers_type(self, test_registry):
+        """Input bound but no annotation — suggestion includes the inferred upstream type."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "result: str = 'hi'",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "missing a type annotation" in d.message]
+        assert len(annotation_errors) == 1
+        diagnostic = annotation_errors[0]
+        assert diagnostic.context["input_key"] == "x"
+        # The upstream is a typed list — suggestion should offer the concrete
+        # annotation instead of a `<type>` placeholder so agents can copy-paste.
+        assert diagnostic.context["inferred_type"] == "list"
+        assert diagnostic.suggestions is not None
+        assert any("x: list" in s and "inferred from" in s for s in diagnostic.suggestions), diagnostic.suggestions
+        assert not any("<type>" in s for s in diagnostic.suggestions)
+
+    def test_missing_annotation_falls_back_when_type_unknown(self, test_registry):
+        """When upstream type can't be inferred (literal value), suggestion keeps <type> placeholder."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "result: str = 'hi'",
+                        "inputs": {"x": "literal-value"},  # no template, no source to infer from
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "missing a type annotation" in d.message]
+        assert len(annotation_errors) == 1
+        diagnostic = annotation_errors[0]
+        assert "inferred_type" not in diagnostic.context
+        assert any("<type>" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
+
+    def test_missing_annotation_complex_template_infers_str(self, test_registry):
+        """Complex template (text + ref) coerces to str at runtime — infer str, not the source type.
+
+        Runtime concatenates ``"prefix ${source}"`` into a string regardless of
+        what ``source`` declares. The suggestion must reflect the runtime
+        contract: ``x: str``, not ``x: list``.
+        """
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "result: str = x",
+                        "inputs": {"x": "prefix ${producer.items}"},  # complex — coerces to str
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "missing a type annotation" in d.message]
+        assert len(annotation_errors) == 1
+        diagnostic = annotation_errors[0]
+        assert diagnostic.context["inferred_type"] == "str"
+        assert any("x: str" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
+        # Must NOT suggest the source type (list) — that's wrong for complex templates.
+        assert not any("x: list" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
+
+    def test_orphan_annotation_unused_suggests_removal(self, test_registry):
+        """Orphan annotation with no Load reference is dead code — canonical fix is remove."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        # y is annotated but never read in the body — pure dead code.
+                        "code": "x: dict\ny: list\nresult: str = 'hi'",
+                        "inputs": {"x": "literal_value"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "has no corresponding entry in 'inputs'" in d.message]
+        assert len(annotation_errors) == 1
+        diagnostic = annotation_errors[0]
+        assert diagnostic.context["annotation_key"] == "y"
+        assert diagnostic.suggestions is not None
+        # Opinionated one-fix-per-case — "Remove" is the canonical answer here.
+        assert any("Remove" in s and "never read" in s for s in diagnostic.suggestions), diagnostic.suggestions
+        assert not any("Add" in s for s in diagnostic.suggestions), diagnostic.suggestions
+
+    def test_orphan_annotation_used_suggests_adding_to_inputs(self, test_registry):
+        """Orphan annotation read in the body signals missing binding — canonical fix is add."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        # y has annotation AND is read later — author expected it bound.
+                        "code": "x: dict\ny: list\nresult: int = len(y)",
+                        "inputs": {"x": "literal_value"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "has no corresponding entry in 'inputs'" in d.message]
+        assert len(annotation_errors) == 1
+        diagnostic = annotation_errors[0]
+        assert any("Add 'y' to the inputs dict" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
+        assert not any("Remove" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
+
+    def test_orphan_annotation_typo_surfaces_fuzzy_match(self, test_registry):
+        """Typo'd orphan (read in body) surfaces fuzzy-matched input key via similar_names."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        # Annotation is `item` (typo); input binding is `items`.
+                        # Body reads `item` so it's a used-orphan; fuzzy match finds `items`.
+                        "code": "items: list\nitem: dict\nresult: int = len(item)",
+                        "inputs": {"items": "literal_value"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "has no corresponding entry in 'inputs'" in d.message]
+        assert len(annotation_errors) == 1
+        diagnostic = annotation_errors[0]
+        assert diagnostic.context.get("similar_names") == ["items"]
+        assert any("Rename" in s and "items" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
+
+    def test_result_and_next_are_not_flagged_as_orphan(self, test_registry):
+        """`result` and `next` are routing/output annotations, not input orphans."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "router",
+                    "type": "code",
+                    "params": {
+                        "code": "next: str = 'target'\nresult: str = 'done'",
+                        "inputs": {},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("no corresponding entry" in d.message for d in errors)
+
+    def test_any_annotation_skips_check(self, test_registry):
+        """`x: Any` accepts any upstream type."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: Any\nresult: str = str(x)",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("expects" in d.message and "receives" in d.message for d in errors)
+
+    def test_optional_annotation_decomposes_correctly(self, test_registry):
+        """`x: list | None` is compatible with upstream `list`."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: list | None\nresult: str = str(x)",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("expects" in d.message and "receives" in d.message for d in errors)
+
+    def test_user_defined_class_skips_check(self, test_registry):
+        """Unknown/user-defined annotations skip validate-time type checking."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: DataFrame\nresult: str = str(x)",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("expects DataFrame" in d.message for d in errors)
+
+    def test_code_to_code_chain_catches_mismatch(self, test_registry):
+        """Code -> code mismatch is visible once upstream result typing is enriched."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "upstream",
+                    "type": "code",
+                    "params": {"code": "result: list = [1, 2, 3]"},
+                },
+                {
+                    "id": "downstream",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict\nresult: str = str(x)",
+                        "inputs": {"x": "${upstream.result}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "downstream"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "Input 'x' expects dict" in d.message]
+        assert len(annotation_errors) == 1, [d.message for d in errors]
+
+        # Code-block annotations are Python — display must speak Python too.
+        # "x: array" is invalid Python; a user copy-pasting it gets a NameError.
+        diagnostic = annotation_errors[0]
+        assert "receives list" in diagnostic.message, diagnostic.message
+        assert "array" not in diagnostic.message
+        assert diagnostic.context["inferred_type"] == "list"
+        assert diagnostic.suggestions is not None
+        assert any("x: list" in s for s in diagnostic.suggestions), diagnostic.suggestions
+        assert not any("x: array" in s for s in diagnostic.suggestions)
+
+    def test_malformed_code_skips_pass(self, test_registry):
+        """SyntaxError in code skips Pass 9 entirely — runtime surfaces the error.
+
+        Pass 9 must not crash or emit spurious Class 1/2/3 errors on unparseable
+        code; the SyntaxError is the user's primary concern and runtime will
+        report it with a clean line number. Validate-time emitting additional
+        diagnostics here would obscure the real issue.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict =",  # SyntaxError — no RHS
+                        "inputs": {"x": "literal"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        # Pass 9 must not emit its three error classes on unparseable code.
+        pass_9_markers = (
+            "expects",
+            "missing a type annotation",
+            "has no corresponding entry",
+        )
+        pass_9_errors = [d for d in errors if any(marker in d.message for marker in pass_9_markers)]
+        assert pass_9_errors == [], [d.message for d in pass_9_errors]
+
+    def test_literal_values_skipped(self, test_registry):
+        """Literal string values stay out of Pass 9 scope."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict\nresult: str = str(x)",
+                        "inputs": {"x": "hello"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("expects dict" in d.message and "receives" in d.message for d in errors)
+
+    def test_batch_code_node_result_enrichment_catches_downstream_mismatch(self, test_registry):
+        """Batch code-node `result:` annotation enriches inner output type.
+
+        Exercises `_register_batch_outputs`'s enrichment path: a batch code node
+        with `result: list` should produce `results[*].result` with enriched type
+        `array`, so a downstream consumer declaring `x: dict` bound to the
+        indexed path fails validation with the correct type mismatch.
+
+        The batch producer uses the canonical pattern ``inputs: {item: ${item}}``
+        — the engine only injects the batch alias into template resolution,
+        not into code exec, so the binding is required for the `item` load
+        reference inside the code body.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch_producer",
+                    "type": "code",
+                    "params": {
+                        "code": "item: any\nresult: list = [item]",
+                        "inputs": {"item": "${item}"},
+                    },
+                    "batch": {"items": ["a", "b"], "error_handling": "fail_fast"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict\nresult: str = str(x)",
+                        "inputs": {"x": "${batch_producer.results[0].result}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "batch_producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [d for d in errors if "Input 'x' expects dict" in d.message]
+        assert len(annotation_errors) == 1, [d.message for d in errors]
+        diagnostic = annotation_errors[0]
+        # Batch enrichment produces S1 `array` internally → displayed as `list`.
+        assert "receives list" in diagnostic.message, diagnostic.message
+        assert any("x: list" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
+
+    def test_workflow_input_source_suggestion_wording(self, test_registry):
+        """Workflow-input templates shouldn't suggest 'change X to return Y' — X isn't returned by anything.
+
+        Points the agent at the declared input's type instead.
+        """
+        workflow_ir = {
+            "inputs": {
+                "data": {"type": "array", "required": True},
+            },
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict\nresult: str = str(x)",
+                        "inputs": {"x": "${data}"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "Input 'x' expects dict" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+        suggestions = ann_errors[0].suggestions or []
+        # Must reference the workflow input declaration, not "change to return".
+        assert any("workflow input declaration for 'data'" in s and "- type: dict" in s for s in suggestions), (
+            suggestions
+        )
+        assert not any("return dict" in s for s in suggestions), suggestions
+
+    def test_optional_annotation_preserved_in_suggestion(self, test_registry):
+        """`x: dict | None` mismatch must suggest `x: list | None`, not strip the `| None`."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict | None\nresult: str = str(x)",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "Input 'x'" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+        suggestions = ann_errors[0].suggestions or []
+        # Preserves the user's Optional semantics.
+        assert any("x: list | None" in s for s in suggestions), suggestions
+        # Must NOT suggest bare `x: list` (would silently drop None-tolerance).
+        assert not any(s.endswith("x: list") or s.endswith("x: list\n") for s in suggestions), suggestions
+
+    def test_optional_typing_form_also_preserved(self, test_registry):
+        """`x: Optional[dict]` mismatch suggests `x: list | None` (modernized)."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "x: Optional[dict]\nresult: str = str(x)",
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "Input 'x'" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+        suggestions = ann_errors[0].suggestions or []
+        assert any("x: list | None" in s for s in suggestions), suggestions
+
+    def test_batch_orphan_suggests_alias_not_placeholder(self, test_registry):
+        """Missing-inputs.item binding for a batch code node suggests `${item}` literally, not `${<source>}`."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batched",
+                    "type": "code",
+                    "params": {"code": "item: int\nresult: int = item * 2"},
+                    "batch": {"items": [1, 2, 3]},
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "no corresponding entry" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+        suggestions = ann_errors[0].suggestions or []
+        # Tells the agent the exact binding, not `${<source>}`.
+        assert any("item: ${item}" in s for s in suggestions), suggestions
+        assert not any("${<source>}" in s for s in suggestions), suggestions
+
+    def test_batch_orphan_with_custom_alias_uses_that_alias(self, test_registry):
+        """Custom batch.as='row' produces 'row: ${row}' in the suggestion."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batched",
+                    "type": "code",
+                    "params": {"code": "row: int\nresult: int = row * 2"},
+                    "batch": {"items": [1, 2, 3], "as": "row"},
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "no corresponding entry" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+        suggestions = ann_errors[0].suggestions or []
+        assert any("row: ${row}" in s for s in suggestions), suggestions
+
+    def test_forward_reference_annotation_type_checked(self, test_registry):
+        """Forward-ref `x: "dict"` must be unwrapped so Pass 9 sees the inner type.
+
+        Pre-fix: ast.unparse preserves quotes, the lookup missed, and the
+        mismatch silently passed validation AND runtime. Both layers now see
+        through the quotes.
+        """
+        workflow_ir = {
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": 'x: "dict"\nresult: str = str(x)',
+                        "inputs": {"x": "${producer.items}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "Input 'x' expects" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+
+    def test_batch_code_without_item_input_flags_orphan(self, test_registry):
+        """Batch code node referencing `item` without `inputs.item` is a real runtime bug.
+
+        Runtime doesn't auto-inject the batch alias into code exec — only
+        template resolution. Pass 9 must flag the missing binding as an orphan
+        annotation so the user gets the fix at validate-time rather than
+        "Undefined variable 'item'" at runtime.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batched",
+                    "type": "code",
+                    "params": {"code": "item: int\nresult: int = item * 2"},
+                    "batch": {"items": [1, 2, 3]},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        orphan_errors = [d for d in errors if "has no corresponding entry in 'inputs'" in d.message]
+        assert len(orphan_errors) == 1, [d.message for d in errors]
+        diagnostic = orphan_errors[0]
+        assert diagnostic.context["annotation_key"] == "item"
+        # `item` is read in the body → canonical fix is "Add to the inputs dict".
+        assert any("Add 'item' to the inputs dict" in s for s in diagnostic.suggestions or []), diagnostic.suggestions

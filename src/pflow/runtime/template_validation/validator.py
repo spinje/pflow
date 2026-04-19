@@ -5,7 +5,7 @@ validation passes in sequence and aggregates errors/warnings.
 
 Validation passes are split by concern into separate modules:
 - path_validation: Pass 5 (path existence)
-- type_validation: Passes 6+7 (type matching, shell command types)
+- type_validation: Passes 6+7+9 (type matching, shell command types, code-node annotations)
 - batch_item_validation: Pass 8 (${item.field} validation)
 - utils: Shared infrastructure
 
@@ -26,6 +26,7 @@ from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
 from pflow.runtime.template_validation.path_validation import validate_template_paths
 from pflow.runtime.template_validation.type_validation import (
+    validate_code_node_input_annotations,
     validate_shell_command_types,
     validate_template_types,
 )
@@ -104,8 +105,12 @@ def validate_workflow_templates(
     unused_input_diagnostics = _validate_unused_inputs(workflow_ir, all_templates)
     diagnostics.extend(unused_input_diagnostics)
 
-    # If no templates, we can return early (after checking for unused inputs)
+    # If no templates exist anywhere in the workflow, most template passes can
+    # return early. Code-node annotation boundary checks still need to run,
+    # because "input missing annotation" / "orphan annotation" are meaningful
+    # even when inputs are literals or empty.
     if not all_templates:
+        diagnostics.extend(validate_code_node_input_annotations(workflow_ir, {}))
         return diagnostics
 
     # Get full output structure from nodes
@@ -126,6 +131,9 @@ def validate_workflow_templates(
 
     # Pass 8: Validate batch item field access (${item.field} against inferred structure)
     diagnostics.extend(validate_batch_item_fields(workflow_ir, node_outputs))
+
+    # Pass 9: Validate code-node input annotations against upstream template types
+    diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
 
     errors = [d for d in diagnostics if d.severity == Severity.ERROR]
     warnings = [d for d in diagnostics if d.severity != Severity.ERROR]
@@ -401,6 +409,19 @@ def extract_node_outputs(
         # Check for batch configuration
         batch_config = node.get("batch")
 
+        # Pre-compute code-node annotations so both batch and non-batch output
+        # registration can enrich the `result` type uniformly.
+        code_annotations: Optional[dict[str, str]] = None
+        if node_type == "code":
+            code_param = node.get("params", {}).get("code")
+            if isinstance(code_param, str):
+                from pflow.nodes.python.python_code import _extract_annotations
+
+                try:
+                    code_annotations = _extract_annotations(code_param)
+                except SyntaxError:
+                    code_annotations = None
+
         if batch_config:
             # Batch node: register batch outputs instead of normal outputs
             _register_batch_outputs(
@@ -410,11 +431,19 @@ def extract_node_outputs(
                 enable_namespacing,
                 registry,
                 error_handling=batch_config.get("error_handling", "fail_fast"),
+                code_annotations=code_annotations,
             )
             _register_batch_item_variables(node_outputs, node_id, node_type, batch_config)
         else:
             # Non-batch node: extract outputs from registry interface
-            _register_node_outputs_from_registry(node_outputs, node_id, node_type, enable_namespacing, registry)
+            _register_node_outputs_from_registry(
+                node_outputs,
+                node_id,
+                node_type,
+                enable_namespacing,
+                registry,
+                code_annotations=code_annotations,
+            )
 
     return node_outputs
 
@@ -618,6 +647,28 @@ def _get_inner_outputs_from_registry(node_type: str, registry: Registry) -> dict
     return inner_outputs
 
 
+def _enrich_code_result_output_type(
+    output_key: str,
+    output_info: dict[str, Any],
+    code_annotations: Optional[dict[str, str]],
+) -> dict[str, Any]:
+    """Override code-node `result` output type from its annotation when known."""
+    if not code_annotations or output_key != "result" or output_info.get("type") != "any":
+        return output_info
+
+    from pflow.nodes.python.python_code import _get_outer_type_name
+
+    annotation_str = code_annotations.get("result")
+    if not annotation_str:
+        return output_info
+
+    enriched_type = _get_outer_type_name(annotation_str)
+    if enriched_type is None:
+        return output_info
+
+    return {**output_info, "type": enriched_type}
+
+
 def _register_batch_outputs(
     node_outputs: dict[str, Any],
     node_id: str,
@@ -627,6 +678,7 @@ def _register_batch_outputs(
     inner_outputs_override: Optional[dict[str, Any]] = None,
     skip_results_structure: bool = False,
     error_handling: str = "fail_fast",
+    code_annotations: Optional[dict[str, str]] = None,
 ) -> None:
     """Register batch-specific outputs for a node with batch configuration.
 
@@ -653,6 +705,12 @@ def _register_batch_outputs(
         inner_outputs_structure = inner_outputs_override
     else:
         inner_outputs_structure = _get_inner_outputs_from_registry(node_type, registry)
+
+    if code_annotations and node_type == "code" and "result" in inner_outputs_structure:
+        inner_outputs_structure = {
+            **inner_outputs_structure,
+            "result": _enrich_code_result_output_type("result", inner_outputs_structure["result"], code_annotations),
+        }
 
     for output in BATCH_OUTPUTS:
         key = output["key"]
@@ -697,6 +755,7 @@ def _register_node_outputs_from_registry(
     node_type: str,
     enable_namespacing: bool,
     registry: Registry,
+    code_annotations: Optional[dict[str, str]] = None,
 ) -> None:
     """Register outputs from registry interface metadata for non-batch nodes.
 
@@ -719,18 +778,9 @@ def _register_node_outputs_from_registry(
     # Extract outputs with full structure
     for output in interface["outputs"]:
         if isinstance(output, str):
-            # Simple format: just the key, no structure
-            output_info = {"type": "any", "node_id": node_id, "node_type": node_type}
-
-            # Register under original key for backward compatibility
-            node_outputs[output] = output_info
-
-            # If namespacing is enabled, also register under node_id.output
-            if enable_namespacing:
-                namespaced_key = f"{node_id}.{output}"
-                node_outputs[namespaced_key] = output_info
+            key = output
+            output_info: dict[str, Any] = {"type": "any", "node_id": node_id, "node_type": node_type}
         else:
-            # Rich format: includes type and structure
             key = output["key"]
             output_info = {
                 "type": output.get("type", "any"),
@@ -739,10 +789,10 @@ def _register_node_outputs_from_registry(
                 "node_type": node_type,
             }
 
-            # Register under original key for backward compatibility
-            node_outputs[key] = output_info
+        output_info = _enrich_code_result_output_type(key, output_info, code_annotations)
 
-            # If namespacing is enabled, also register under node_id.output
-            if enable_namespacing:
-                namespaced_key = f"{node_id}.{key}"
-                node_outputs[namespaced_key] = output_info
+        node_outputs[key] = output_info
+
+        if enable_namespacing:
+            namespaced_key = f"{node_id}.{key}"
+            node_outputs[namespaced_key] = output_info
