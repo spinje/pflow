@@ -46,7 +46,9 @@ def _advance(decision, ..., state: _WalkerState) -> Any | None  # dispatches via
 ### Load-bearing invariants (documented at top of `plan.py`)
 
 - The scratch `shared` the planner constructs is planner-owned; `apply_memo_hit` mutates it on memo hits so downstream template resolution matches the engine's cache-key computation. Skipping the mutation looks purer but causes silent drift.
-- `node_visit_counts` bumps BEFORE each `plan_node()` call, mirroring the engine's `enforce_loop_guard`. Without it, loop iteration 2+ hits memo cache differently between engine and planner.
+- `enforce_loop_guard()` (shared with the engine) runs BEFORE each `plan_node()` call. It bumps `node_visit_counts` AND invalidates `completed_nodes`/`node_actions`/`node_hashes` for revisited nodes. Without the invalidation, visit 2 of a successfully-cached node in a loop is reported as `cached_in_process` when the engine would re-execute.
+- Sub-workflow base_path derivation reads `shared["_pflow_workflow_file"]` (same source runtime uses). For inline workflows the synthetic `"ir-hash:..."` identifier's `Path(...).parent` is `Path(".")` — relative child refs resolve against CWD, matching runtime. Falls back to `Path.cwd()` when the key is absent.
+- Declared sub-workflow outputs delegate to `output_resolver.resolve_output_source` — accepts `${node.key}` / `$node.key` / plain `node.key` formats, returns None on unresolved. The planner skips both unresolved and resolved-to-None values; downstream templating of the missing key surfaces as a plan-time `template_error`, which matches how runtime would fail at `populate_declared_outputs`.
 - Post-first-miss: BFS over ALL non-"error" successors. Following only `default` underestimates cost for conditional workflows, the wrong failure mode for a cost gate.
 - A cached entry whose action has no matching successor = runtime routing error. Surface as a plan entry and stop.
 
@@ -97,7 +99,7 @@ class WorkflowRunner:
 
 `plan()` reuses the same resolve → file-ref → validation → compile pipeline, then delegates to `execution/plan.py::build_plan()` instead of running the engine. No trace collector, metrics collector, MCP pool, or progress callback is created on the plan path.
 
-**Inline-workflow cache scoping** (load-bearing): `_prepare_workflow` injects `params["_pflow_workflow_file"]` for every run — file/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline submissions) get a synthetic `ir-hash:<md5>` identifier from `_synthesize_inline_workflow_id(resolved.ir)`. Without this, inline writers pass `workflow_path=NULL` to the memo cache, and SQL's NULL semantics (`WHERE workflow_path = NULL` matches zero rows) cause scoped `get_latest_for_node` lookups to fall back to unscoped — pooling cost/duration history across unrelated inline workflows that happen to share node IDs. Uses `setdefault` so pre-injecting callers (historical MCP/CLI pattern) still win.
+**Inline-workflow cache scoping** (load-bearing): `_prepare_workflow` injects `params["_pflow_workflow_file"]` for every run — file/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline submissions) get a synthetic `ir-hash:<md5>` identifier from `_synthesize_inline_workflow_id(resolved.ir)`. Without this, inline writers pass `workflow_path=NULL` to the memo cache, and SQL's NULL semantics (`WHERE workflow_path = NULL` matches zero rows) cause scoped `get_latest_for_node` lookups to fall back to unscoped — pooling cost/duration history across unrelated inline workflows that happen to share node IDs. Uses `setdefault` so callers that pre-inject survive (only `runner.validate()`'s own write path does today — CLI and MCP no longer pre-inject).
 
 **Exception boundary**: `run()` catches ALL exceptions, wraps into `ExecutionResult`. Only `KeyboardInterrupt`/`SystemExit` propagate.
 

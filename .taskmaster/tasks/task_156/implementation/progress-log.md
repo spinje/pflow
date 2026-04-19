@@ -1820,3 +1820,72 @@ Current state, as of end of this task:
 
 Read lines 1517, 1672, 1711, and 1741 with this correction in mind.
 
+
+---
+
+## 2026-04-19 — Post-merge code-review pass
+
+After the core 7 fixes landed, a 5-agent code-review pass (validation-consistency, silent-failures, feature-interactions, impact-completeness, test-fidelity) surfaced ~25 additional warnings/suggestions. An honest assessment narrowed these to 8 real items worth fixing in this PR and 1 design decision to defer.
+
+### 7 critical findings closed (previous session)
+
+Already captured in progress log entries above; summary for reference:
+
+1. `_classify` check-order: cached `"end"` action misclassified → **fixed** (mirror engine's decision tree, also closes a cached-"error"-action defensive gap).
+2. Same `_classify` rewrite covered the cached-error-action case (structurally correct but physically unreachable — error actions aren't cached).
+3. Exit code on ERROR-severity diagnostic → **fixed** (severity-based, mirrors `_display_validation_result`).
+4. `_cache_disabled_entry` bypassed `_execute_entry` → **fixed** (single chokepoint invariant now enforced structurally).
+5. Retry-loop invalidation drift → **fixed** (walker now calls shared `enforce_loop_guard` directly).
+6. `_resolve_declared_outputs` source-format divergence → **fixed** (delegates to `resolve_output_source`).
+7. Inline + relative sub-workflow ref fails → **fixed** (mirrors runtime by reading `_pflow_workflow_file` from shared).
+
+### 7 warnings/quality issues closed (this session)
+
+| Tag | Issue | Fix |
+|---|---|---|
+| B1 | `NaN`/`Inf` cost values propagate as valid | `math.isfinite` guard in `_extract_cost_from_llm_usage` + `duration_ms` check |
+| Q2 | `(result.output + result.stderr)` concatenation masked stream-routing bugs | Tightened to `result.stderr` only |
+| E1 | `if entry.age_sec` truthiness trap (0.0 falsy) | `is not None` |
+| E2 | `_cache_age` negative on clock skew | `max(0.0, ...)` clamp |
+| Q1 | 3 redundant `_pflow_workflow_file` pre-injection sites | Removed CLI + 2 MCP pre-injections; runner's `setdefault` is the single write site |
+| B2 | MCP `plan_workflow` flattened structured exceptions to `RuntimeError` | Catches `WorkflowValidationError` / `CompilationError` / `MarkdownParseError` separately; renders via `format_validation_failure` / `format_diagnostic` (matches `save_workflow` pattern) |
+| Q3 + Q4 | Test fidelity: MCP/CLI parity checked only key sets; no subprocess test for JSON stderr silence | Deep-compare parity on summary scalars + per-entry status/cause; new `test_dry_run_subprocess.py` pins stderr-silence contract at OS level |
+
+### Review finding that turned out to be wrong
+
+**B3 (CLI vs MCP `workflow_path` normalization)** — the reviewer claimed `resolved.file_path` was not `.resolve()`-ed. Empirically disproven: `workflow_resolver._try_load_from_file` does `Path(identifier).expanduser().resolve()` at line 98 and stores `str(path)` at line 132. Both CLI and MCP receive canonical absolute paths. **No drift exists. No fix needed.**
+
+Lesson (reinforces D11 from the prior session): when an agent's claim conflicts with what the code does, verify empirically before acting on the claim. One quick script can refute a confidently-stated review finding.
+
+### Deferred — `D1: --dry-run --no-cache suppresses historical cost estimates`
+
+**The issue**: `--no-cache` sets `MemoizationCache(read_enabled=False)`. All reads short-circuit to None — including `get_latest_for_node` for historical stats. A user flipping `--no-cache` to force a fresh run loses cost visibility on that run. Current behavior is technically spec-compliant (spec says "skip all memo-cache lookups") but arguably wrong UX.
+
+**Preferred resolution (agreed in discussion)**: `--no-cache` should mean "don't use cache for hit decisions" — historical estimates are display/reasoning data, not correctness data, and should still be shown. Implementation would split the two gates in `MemoizationCache` (or have the planner bypass `read_enabled` for `get_latest_for_node` specifically).
+
+**Why deferred**: No user or agent has reported this. The motivating use case (force a fresh run but still see expected cost) is hypothetical. Shipping a redesign of `--no-cache` semantics deserves a real demand signal rather than anticipatory engineering.
+
+**Re-open criteria** (when to pick this up):
+- An agent or user explicitly asks why `--no-cache` shows `$0` / `no history` for nodes that clearly have prior runs.
+- A cost-gating workflow breaks because `--no-cache` was combined with a cost threshold check.
+- Task 111 (batch limit) or a related feature makes the combination more common.
+
+**When re-opened**: the cleanest split is probably adding a `stats_read_enabled` flag to `MemoizationCache.__init__` (defaults True), and having `get_latest_for_node` / `get_with_age` consult `stats_read_enabled` instead of `read_enabled`. Planner never sets `stats_read_enabled=False`; execution engine doesn't care (doesn't call those methods). One-line behavior change, ~10 LOC including test.
+
+### Final state after this session
+
+- `make check`: clean (ruff + format + mypy + deptry).
+- `make test`: 5076 passed.
+- ~45 prod LOC changed / ~10 LOC removed (net simpler code).
+- All fixes mutation-verified where applicable.
+- 2 new tests: NaN/Inf cost guard (unit), subprocess JSON stderr silence (real subprocess).
+
+### For the next agent (updated)
+
+12. **Before acting on a review finding, verify empirically if it conflicts with observed code.** B3 in this session was a confidently-stated drift claim that a 15-line script disproved. Agent summaries of code can miss subtle but important detail; the actual file + a quick test script is ground truth.
+
+13. **`--no-cache` currently also gates historical stats lookup** — this is the deferred D1 above. If you're touching `MemoizationCache` for any reason and the re-open criteria have been met, revisit.
+
+14. **MCP `plan_workflow` mirrors `save_workflow`'s error-handling pattern** now — catches structured exceptions (`WorkflowValidationError` → `format_validation_failure`; `CompilationError` / `MarkdownParseError` → `format_diagnostic`). If `execute_workflow` is later touched for similar reasons, match this pattern for consistency (it still flattens to `RuntimeError`, which is a separate scope).
+
+15. **`_pflow_workflow_file` pre-injection is NOT needed in callers.** `WorkflowRunner._prepare_workflow`'s `setdefault` is the single write site. If you see a caller setting the key manually, it's redundant (except for `runner.validate()` which has a distinct code path).
