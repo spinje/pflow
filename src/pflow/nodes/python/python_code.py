@@ -194,18 +194,52 @@ def extract_code_annotation_type(code: str, key: str) -> Optional[str]:
     """Return the S1 canonical type name for ``key`` in a code block, or None.
 
     Returns None as a skip-check signal when the code is malformed, the key is
-    not annotated, or the annotation resolves to an unknown/non-S1 type.
+    not annotated at module scope, or the annotation resolves to an
+    unknown/non-S1 type. Uses top-level extraction — a function-local
+    ``y: int`` does not shadow a missing or different top-level ``y`` binding.
     """
-    try:
-        annotations = _extract_annotations(code)
-    except SyntaxError:
-        return None
-
+    annotations = extract_top_level_annotations(code)
     type_str = annotations.get(key)
     if type_str is None:
         return None
 
     return _get_outer_type_name(type_str)
+
+
+def extract_top_level_annotations(code: str) -> dict[str, str]:
+    """Like ``_extract_annotations`` but scoped to module-level names only.
+
+    ``_extract_annotations`` uses ``ast.walk`` which descends into function
+    and class bodies. For Pass 9's boundary checks (missing-input, orphan
+    annotation) we want ONLY the module-level annotations — a helper function
+    like ``def helper(): y: int = 1`` is a legitimate local variable, not a
+    candidate code-node input. Treating it as one produces spurious orphan
+    errors that block valid workflows.
+
+    Scope boundaries (skipped, not descended into):
+    ``FunctionDef``, ``AsyncFunctionDef``, ``ClassDef``, ``Lambda``.
+
+    Non-scope structures (descended into) include ``If``, ``For``, ``While``,
+    ``With``, ``Try`` — annotations inside these are still module-scoped per
+    Python's scoping rules (only the four types above introduce new scopes).
+
+    Returns an empty dict on SyntaxError (matches ``_extract_annotations``).
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {}
+    annotations: dict[str, str] = {}
+    _SCOPE_BOUNDARIES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _SCOPE_BOUNDARIES):
+            continue  # Don't descend into new scopes.
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            annotations[node.target.id] = ast.unparse(node.annotation)
+        stack.extend(ast.iter_child_nodes(node))
+    return annotations
 
 
 def extract_code_load_references(code: str) -> set[str]:

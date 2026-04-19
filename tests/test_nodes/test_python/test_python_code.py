@@ -17,6 +17,7 @@ from pflow.nodes.python.python_code import (
     extract_code_annotation_type,
     extract_code_load_references,
     extract_optional_input_keys,
+    extract_top_level_annotations,
     s1_type_to_python_display,
 )
 
@@ -473,6 +474,54 @@ class TestAnnotationExtractionHelper:
         assert _get_outer_type("'list'") is list
         assert _get_outer_type('"dict"') is dict
         assert _get_outer_type("'list[dict]'") is list
+
+    def test_top_level_annotations_excludes_function_locals(self):
+        """Function-local annotations must not surface at module scope."""
+        code = """
+def helper():
+    y: int = 1
+    return y
+
+x: dict
+result: int = helper()
+"""
+        annotations = extract_top_level_annotations(code)
+        assert annotations == {"x": "dict", "result": "int"}
+        assert "y" not in annotations
+
+    def test_top_level_annotations_excludes_class_body(self):
+        """Class body annotations must not surface at module scope."""
+        code = """
+class Config:
+    timeout: int
+    name: str
+
+x: dict
+"""
+        annotations = extract_top_level_annotations(code)
+        assert annotations == {"x": "dict"}
+        assert "timeout" not in annotations
+        assert "name" not in annotations
+
+    def test_top_level_annotations_includes_if_scoped(self):
+        """Non-scope structures (if/for/while) don't hide module-level annotations."""
+        code = """
+import os
+if os.environ.get("FLAG"):
+    y: int = 1
+else:
+    y: str = "2"
+
+x: dict
+"""
+        annotations = extract_top_level_annotations(code)
+        # `y` appears twice at module scope (one branch of `if`); last-write wins.
+        # The important fact: `y` is included because `if` is not a scope boundary.
+        assert "x" in annotations
+        assert "y" in annotations
+
+    def test_top_level_annotations_malformed_returns_empty(self):
+        assert extract_top_level_annotations("x: dict =") == {}
 
     def test_literal_in_annotation_rejected_with_import_hint(self):
         """Literal (no modern alternative) should be rejected at prep with an import hint."""

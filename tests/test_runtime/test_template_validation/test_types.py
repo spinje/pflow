@@ -1831,6 +1831,114 @@ class TestCodeNodeInputAnnotationValidation:
         suggestions = ann_errors[0].suggestions or []
         assert any("row: ${row}" in s for s in suggestions), suggestions
 
+    def test_complex_template_bypass_caught(self, test_registry):
+        """Complex templates coerce to str at runtime — Pass 9 must enforce the str contract.
+
+        Pre-fix: Class 3 validated each embedded ``${ref}`` source type
+        independently. When an embedded source type happened to match the
+        target (e.g. upstream dict → annotation dict), Pass 9 accepted
+        ``"prefix ${x}"`` even though runtime would coerce the whole value
+        to str and TypeError on the isinstance check.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "produce",
+                    "type": "code",
+                    "params": {"code": "result: dict = {'a': 1}"},
+                },
+                {
+                    "id": "consume",
+                    "type": "code",
+                    "params": {
+                        "code": "x: dict\nresult: str = str(x)",
+                        # Complex template: prefix + ${produce.result}. Embedded
+                        # source type is dict (matches annotation), but runtime
+                        # coerces the whole string → str.
+                        "inputs": {"x": "prefix ${produce.result}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "produce", "to": "consume"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "Input 'x'" in d.message and "complex templates" in d.message]
+        assert len(ann_errors) == 1, [d.message for d in errors]
+        diagnostic = ann_errors[0]
+        # Exactly one diagnostic — not one-per-embedded-ref.
+        assert "receives str" in diagnostic.message
+        # References the full value, not the embedded ref alone.
+        assert diagnostic.context["inferred_type"] == "str"
+        assert diagnostic.context["expected_type"] == "dict"
+        assert diagnostic.suggestions is not None
+        assert any("x: str" in s for s in diagnostic.suggestions), diagnostic.suggestions
+
+    def test_complex_template_with_compatible_str_target_passes(self, test_registry):
+        """Complex template + `x: str` annotation is valid — no error."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "produce",
+                    "type": "code",
+                    "params": {"code": "result: dict = {'a': 1}"},
+                },
+                {
+                    "id": "consume",
+                    "type": "code",
+                    "params": {
+                        "code": "x: str\nresult: str = x",
+                        "inputs": {"x": "prefix ${produce.result}"},
+                    },
+                },
+            ],
+            "edges": [{"from": "produce", "to": "consume"}],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann_errors = [d for d in errors if "Input 'x' expects" in d.message]
+        assert ann_errors == [], [d.message for d in ann_errors]
+
+    def test_function_local_annotation_not_flagged_as_orphan(self, test_registry):
+        """Function-local `y: int` inside `def helper()` must not trip Pass 9's orphan check."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "node",
+                    "type": "code",
+                    "params": {
+                        "code": ("def helper():\n    y: int = 1\n    return y\n\nx: dict\nresult: int = helper()"),
+                        "inputs": {"x": "literal_dict_binding"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        orphan_errors = [d for d in errors if "no corresponding entry" in d.message]
+        # `y` must NOT be flagged — it's a function-local, not a code-node input.
+        assert not any("'y:" in d.message for d in orphan_errors), [d.message for d in orphan_errors]
+
+    def test_class_body_annotation_not_flagged_as_orphan(self, test_registry):
+        """Class body annotations (`class Config: timeout: int`) must not be orphans."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "node",
+                    "type": "code",
+                    "params": {
+                        "code": ("class Config:\n    timeout: int\n    name: str\n\nx: dict\nresult: int = 1"),
+                        "inputs": {"x": "literal_dict_binding"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        orphan_errors = [d for d in errors if "no corresponding entry" in d.message]
+        assert not any("timeout" in d.message or "name" in d.message for d in orphan_errors), [
+            d.message for d in orphan_errors
+        ]
+
     def test_forward_reference_annotation_type_checked(self, test_registry):
         """Forward-ref `x: "dict"` must be unwrapped so Pass 9 sees the inner type.
 
