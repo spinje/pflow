@@ -228,3 +228,69 @@ def test_build_plan_visited_edges_prevents_loop_hang(tmp_path) -> None:
     plan = build_plan(compiled, {}, cache, registry, workflow_name="loop")
 
     assert len(plan.entries) == 1
+
+
+def test_plan_no_cross_pollution_between_distinct_inline_workflows() -> None:
+    """Two distinct inline workflows with overlapping node IDs must not pool cache history.
+
+    Before the L2 fix, both inline workflows wrote cache rows with
+    `workflow_path = NULL`. SQL `WHERE workflow_path = NULL` matches zero
+    rows, so scoped `get_latest_for_node` calls fell back to unscoped
+    lookup — matching every NULL row regardless of source workflow. Two
+    workflows sharing a node ID (common idiom: `classify`, `summarize`)
+    would pool their histories, giving agents polluted cost/duration
+    estimates in `--dry-run`.
+
+    After the fix, each inline run writes with an IR-content synthetic
+    `_pflow_workflow_file` (`ir-hash:...`), keeping lookups scoped.
+
+    This test runs BOTH workflows through the real `WorkflowRunner().run()`
+    pipeline against the shared isolated cache (via `isolate_pflow_config`),
+    so it catches regressions at the synthesis site — removing the
+    `_synthesize_inline_workflow_id(...)` call from `_prepare_workflow`
+    makes this test fail: scoped lookups match whichever NULL row was
+    written last, and the assertions on per-workflow stdout differ.
+    """
+    ir_a = {
+        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo A"}}],
+        "edges": [],
+    }
+    ir_b = {
+        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo B"}}],
+        "edges": [],
+    }
+
+    # Run both through the full runner pipeline. `isolate_pflow_config`
+    # redirects both to the same isolated cache.db.
+    result_a = WorkflowRunner().run(ir_a, {}, RunnerConfig())
+    result_b = WorkflowRunner().run(ir_b, {}, RunnerConfig())
+
+    assert result_a.success and result_b.success, (
+        f"Prereq — both runs must succeed. A={result_a.errors} B={result_b.errors}"
+    )
+
+    path_a = result_a.shared_after["_pflow_workflow_file"]
+    path_b = result_b.shared_after["_pflow_workflow_file"]
+    assert path_a != path_b, (
+        "Distinct IRs must produce distinct synthetic paths. Mutation-check: "
+        "removing `_synthesize_inline_workflow_id` in _prepare_workflow makes both None."
+    )
+
+    # Open a fresh handle to the same cache (isolated via Path.home redirect).
+    cache = MemoizationCache()
+
+    entry_a = cache.get_latest_for_node("classify", workflow_path=path_a)
+    entry_b = cache.get_latest_for_node("classify", workflow_path=path_b)
+
+    assert entry_a is not None, "Workflow A cache entry missing after execution"
+    assert entry_b is not None, "Workflow B cache entry missing after execution"
+
+    output_a, _ = entry_a
+    output_b, _ = entry_b
+
+    assert output_a.get("stdout", "").strip() == "A", (
+        f"Workflow A's scoped lookup polluted by B: stdout={output_a.get('stdout')!r}"
+    )
+    assert output_b.get("stdout", "").strip() == "B", (
+        f"Workflow B's scoped lookup polluted by A: stdout={output_b.get('stdout')!r}"
+    )

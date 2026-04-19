@@ -11,7 +11,7 @@ from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.result import ExecutionResult, RunnerConfig
-from pflow.execution.runner import WorkflowRunner
+from pflow.execution.runner import WorkflowRunner, _synthesize_inline_workflow_id
 
 
 def test_validation_error_prevents_compilation():
@@ -605,3 +605,83 @@ def test_exception_annotations_survive_full_pipeline():
     assert any(r.get("root") == "producer" and r.get("status") == "path_error" for r in refs), (
         f"Expected path_error reference to 'producer' in unresolved_references, got: {refs}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Inline workflow cache scoping (L2 fix)
+#
+# Inline runs (dict, content-string, MCP-inline) historically wrote rows with
+# `workflow_path = NULL` to the memo cache. SQL `WHERE workflow_path = NULL`
+# matches zero rows, so `get_latest_for_node` would fall back to unscoped
+# lookup and pool history across unrelated inline workflows that happened to
+# share node IDs. `_synthesize_inline_workflow_id` gives each distinct inline
+# IR its own scope without requiring a filesystem path.
+# ---------------------------------------------------------------------------
+
+
+def test_synthesize_inline_workflow_id_is_stable_for_same_ir():
+    """Same IR → same synthetic id. Cache reads must resolve deterministically."""
+    ir = {
+        "nodes": [{"id": "a", "type": "shell", "params": {"command": "echo a"}}],
+        "edges": [],
+    }
+    assert _synthesize_inline_workflow_id(ir) == _synthesize_inline_workflow_id(ir)
+
+
+def test_synthesize_inline_workflow_id_differs_across_distinct_ir():
+    """Distinct IRs → distinct ids. Prevents cross-workflow pollution."""
+    ir_a = {"nodes": [{"id": "x", "type": "shell", "params": {"command": "echo a"}}], "edges": []}
+    ir_b = {"nodes": [{"id": "x", "type": "shell", "params": {"command": "echo b"}}], "edges": []}
+    assert _synthesize_inline_workflow_id(ir_a) != _synthesize_inline_workflow_id(ir_b)
+
+
+def test_synthesize_inline_workflow_id_uses_ir_hash_prefix():
+    """Identifier format is stable-contract: 'ir-hash:<hex>'. Agents may parse it."""
+    ir = {"nodes": [], "edges": []}
+    assert _synthesize_inline_workflow_id(ir).startswith("ir-hash:")
+
+
+def test_inline_dict_run_scopes_cache_to_ir_hash():
+    """Running a dict IR injects a synthetic `ir-hash:` scope into the shared store.
+
+    This is the load-bearing integration test for the L2 fix: without the
+    synthesis, `_pflow_workflow_file` would be absent and the memo cache
+    would write NULL → downstream `get_latest_for_node` scoped lookups
+    silently pool across unrelated inline workflows.
+
+    The exact hash bytes depend on IR normalization (which adds ir_version,
+    normalizes edges, etc.), so the test asserts on structure rather than a
+    pre-computed value — stability and distinctness are covered by the
+    helper's direct unit tests above.
+    """
+    ir = {
+        "nodes": [{"id": "only", "type": "shell", "params": {"command": "echo hello"}}],
+        "edges": [],
+    }
+    result = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert result.success, f"Fresh inline run failed: {result.errors}"
+
+    workflow_file = result.shared_after.get("_pflow_workflow_file")
+    assert workflow_file is not None, "Inline run must inject _pflow_workflow_file"
+    assert workflow_file.startswith("ir-hash:"), f"Inline run must use synthetic ir-hash id, got: {workflow_file!r}"
+    # md5 hex is 32 chars; full identifier is 'ir-hash:' (8) + 32 = 40
+    assert len(workflow_file) == 40, f"Unexpected id length: {workflow_file!r}"
+
+
+def test_caller_injected_workflow_file_preserved():
+    """Callers pre-injecting _pflow_workflow_file keep their value — runner uses setdefault.
+
+    MCP server and CLI pre-inject file paths today. The runner must not
+    overwrite. Without `setdefault`, the runner would clobber the caller's
+    value with an IR hash even on file/library runs that flow through MCP.
+    """
+    ir = {
+        "nodes": [{"id": "only", "type": "shell", "params": {"command": "echo hello"}}],
+        "edges": [],
+    }
+    caller_path = "/absolute/path/caller/injected.pflow.md"
+    params = {"_pflow_workflow_file": caller_path}
+
+    result = WorkflowRunner().run(ir, params, RunnerConfig())
+    assert result.success, f"Run failed: {result.errors}"
+    assert result.shared_after["_pflow_workflow_file"] == caller_path

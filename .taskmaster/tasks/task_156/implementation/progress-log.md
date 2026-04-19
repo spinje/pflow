@@ -1750,3 +1750,73 @@ Prior "for the next agent" list still applies. Additions from this round:
 
 9. **The `workflow_path is not None` guard in `get_latest_for_node` is a silent-failure trap.** SQL NULL doesn't match with `=`. Test `test_plan_direct_ir_null_workflow_path_historical_stats` will fail loudly if the guard is removed. Don't silence the test — fix the guard.
 
+---
+
+## 2026-04-19 — L2: Inline-workflow cache scoping
+
+User pushed back on deferring L2 (NULL workflow_path pollution between inline workflows) because the primary use case for `--dry-run` is MCP agents iterating on inline markdown — exactly the code path that writes NULL. Agreed and bundled into this PR.
+
+### What landed
+
+- `src/pflow/execution/runner.py` — new `_synthesize_inline_workflow_id(ir)` helper; `_prepare_workflow` uses it when `resolved.file_path is None`, via `setdefault` for back-compat with pre-injecting callers. Uses `hashlib.md5(..., usedforsecurity=False)` (modern non-cryptographic pattern, not a `# noqa` suppression).
+- Identifier format: `"ir-hash:<md5-hex>"` — opaque to SQL, distinct from any filesystem path, stable contract for parsing.
+- Hashes the RAW parsed IR (pre `_resolve_file_references` / `_fill_declared_defaults`) so the identifier represents what the caller submitted. File-content changes are handled by the separate `resolved_params` cache-key axis.
+- Both `run()` and `plan()` paths go through `_prepare_workflow`, so inline-scoping covers execution AND dry-run planning via a single point of injection.
+
+### Tests added (6 total, 1 mutation-verified)
+
+- `test_synthesize_inline_workflow_id_is_stable_for_same_ir` — same IR → same hash.
+- `test_synthesize_inline_workflow_id_differs_across_distinct_ir` — distinctness precondition.
+- `test_synthesize_inline_workflow_id_uses_ir_hash_prefix` — stable contract.
+- `test_inline_dict_run_scopes_cache_to_ir_hash` — E2E through `WorkflowRunner().run()`: inline dict input → shared_after contains `ir-hash:` identifier of expected length.
+- `test_caller_injected_workflow_file_preserved` — `setdefault` semantics: pre-injected caller value not overwritten.
+- `test_plan_no_cross_pollution_between_distinct_inline_workflows` — full integration via `WorkflowRunner().run()` for both workflows against the isolated cache; assert each workflow's scoped `get_latest_for_node` returns ONLY its own entry.
+
+**Mutation verification**: disabled the `_synthesize_inline_workflow_id` call in `_prepare_workflow`; `test_inline_dict_run_scopes_cache_to_ir_hash` and `test_plan_no_cross_pollution_between_distinct_inline_workflows` both failed loudly (KeyError on missing `_pflow_workflow_file`, polluted stdout on the cross-pollution path). Restored the fix — all 6 green.
+
+### Why E2E integration through `WorkflowRunner().run()` matters
+
+Initial pollution test used `_run_compiled` with manual `_pflow_workflow_file` pre-injection — that bypassed the synthesis site entirely. The test passed under mutation, which meant it wasn't testing the production code path. Rewrote to route both workflows through `WorkflowRunner().run()` against the isolated cache (`isolate_pflow_config` auto-applied), then asserted on scoped `get_latest_for_node` results. That's the real mutation check.
+
+### Documentation updates
+
+- `src/pflow/execution/CLAUDE.md` → WorkflowRunner section now documents inline-workflow cache scoping and its load-bearing rationale (setdefault for back-compat, why NULL would silently break scoping).
+- `src/pflow/runtime/CLAUDE.md` → MemoizationCache section now documents `workflow_path` scoping: file paths for file/library runs, synthetic `ir-hash:` for inline runs. Explicit "never write NULL from new code paths" guidance.
+
+### Final state
+
+- `make check`: clean (ruff + format + mypy + deptry)
+- `make test`: 5066 passed (5060 → +6 L2 tests), 9 skipped
+- Branch has 3 commits + uncommitted L2 changes
+
+### Known limitation now fully owned by synthesis
+
+Previously: agents using `--dry-run` via MCP inline markdown (the primary use case) saw polluted cost/duration estimates across unrelated workflows. Now: every `--dry-run` read is scoped correctly regardless of entry point (file, library, dict, content-string, MCP-inline).
+
+### Remaining out-of-scope item
+
+L1 (batch-of-sub-workflow cost aggregation) filed as GitHub issue #318 with both candidate approaches documented. Implementing agent instructed to discuss options before committing to an approach.
+
+### For the next agent (updated)
+
+10. **`_synthesize_inline_workflow_id` is the sole write-site for inline workflow scoping.** If you add a new inline entry path (e.g., a new CLI mode that takes IR on stdin), it MUST flow through `runner._prepare_workflow` to get the synthesis. Bypassing the runner = NULL `workflow_path` = pollution. Test `test_plan_no_cross_pollution_between_distinct_inline_workflows` is the regression guard.
+
+11. **The MD5 `usedforsecurity=False` pattern is intentional.** Non-cryptographic content identifier. Matches `registry/smart_filter.py:70`. Don't swap to `hashlib.sha256` or similar — cache rows written by older versions with md5 hashes would be invalidated. Don't convert to `# noqa: S324` either; the `usedforsecurity=False` kwarg is the modern idiom.
+
+---
+
+## Status note (supersedes earlier out-of-scope claims)
+
+Earlier log entries describe both limitations as deferred:
+
+- Line 1517, 1672, 1711: batch-of-sub-workflow cost aggregation framed as a `child_trace_events` read issue (incomplete model — see L1 investigation below).
+- Line 1741: "Two documented out-of-scope items (batch-of-sub-workflow, direct-IR cross-pollution)."
+
+Current state, as of end of this task:
+
+- **L2 (direct-IR / inline-workflow cross-pollution)** → **FIXED** in this session via `_synthesize_inline_workflow_id` in `runner._prepare_workflow`. See the "L2: Inline-workflow cache scoping" section above for the full shape of the fix.
+- **L1 (batch-of-sub-workflow cost aggregation)** → filed as **GitHub issue [#318](https://github.com/spinje/pflow/issues/318)** with both candidate approaches documented (full per-item recursion ~450 LOC vs. representative-item recursion ~200 LOC). Implementing agent is instructed to discuss options before committing.
+- **L1's actual root cause** (superseding the earlier "trace events" model): batch-of-sub-workflow outer nodes are never memoized at all — the `node_type_name == "WorkflowExecutor"` skip at `runtime/engine/instrumentation.py:196-197` fires before the batch branch. The child's individual LLM nodes ARE memoized (under the child's `node_id` scoped to the child's `workflow_path`), but invisible to the parent planner's `get_latest_for_node(batch_id)` lookup. Fix requires per-item sub-workflow recursion at plan time — a new planner capability that doesn't exist today.
+
+Read lines 1517, 1672, 1711, and 1741 with this correction in mind.
+

@@ -1,6 +1,8 @@
 """Shared workflow execution runner for CLI and MCP entry points."""
 
 import contextlib
+import hashlib
+import json
 import logging
 import time
 from dataclasses import replace
@@ -22,6 +24,26 @@ from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, Valid
 from .workflow_resolver import resolve_workflow
 
 logger = logging.getLogger(__name__)
+
+
+def _synthesize_inline_workflow_id(ir: dict[str, Any]) -> str:
+    """Produce a stable synthetic `_pflow_workflow_file` for inline runs.
+
+    SQL `WHERE workflow_path = NULL` matches zero rows (NULL semantics), so
+    writing NULL falls back to the unscoped read path — pooling cache
+    history across unrelated inline workflows. A content hash gives each
+    distinct inline IR its own scope without requiring a real filesystem
+    path.
+
+    Hashes the RAW parsed IR (pre file-reference resolution, pre defaults
+    fill) so the identifier represents what the caller submitted, not what
+    the runner derived. Cache-key invalidation already handles file-content
+    changes via `resolved_params` hashing; the `workflow_path` scope just
+    needs to partition across distinct inline submissions.
+    """
+    canonical = json.dumps(ir, sort_keys=True, default=str, separators=(",", ":"))
+    digest = hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return f"ir-hash:{digest}"
 
 
 class WorkflowRunner:
@@ -135,11 +157,17 @@ class WorkflowRunner:
         resolved = self._resolve(workflow)
         diagnostics.extend(resolved.diagnostics)
 
-        # For dict inputs (pre-resolved IR), file_path is always None here.
-        # Callers who pre-resolve must inject _pflow_workflow_file into params
-        # before calling run(). See MCP execute_workflow() and CLI execute_json_workflow().
+        # `_pflow_workflow_file` scopes memo-cache reads to the originating
+        # workflow. File/library runs use the resolved absolute path; inline
+        # runs (dict, content-string, MCP-inline) use a synthetic IR-content
+        # hash so unrelated inline workflows with overlapping node IDs don't
+        # pollute each other's cost/duration history. `setdefault` preserves
+        # any value a caller pre-injected (back-compat with existing MCP/CLI
+        # pre-injection sites).
         if resolved.file_path:
-            params["_pflow_workflow_file"] = resolved.file_path
+            params.setdefault("_pflow_workflow_file", resolved.file_path)
+        else:
+            params.setdefault("_pflow_workflow_file", _synthesize_inline_workflow_id(resolved.ir))
 
         self._resolve_file_references(resolved.ir, params)
 

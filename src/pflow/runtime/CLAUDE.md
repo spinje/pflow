@@ -120,6 +120,7 @@ Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, 
 - **Side-effecting nodes ARE cached** — intentional for iteration loop. `--no-cache` escape hatch.
 - **Test isolation**: `conftest.py::isolate_pflow_config` monkey-patches to temp paths.
 - **Integration**: Created by Runner, stored as `shared["__memoization_cache__"]`, consumed by `engine/instrumentation.py`.
+- **Workflow scoping**: `workflow_path` column scopes `get_latest_for_node` lookups so unrelated workflows with overlapping node IDs don't pool cost/duration history. File/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline) use a synthetic `ir-hash:<md5>` identifier injected by `runner._prepare_workflow`. Never write NULL `workflow_path` from new code paths — `WHERE workflow_path = NULL` matches zero rows in SQL and the scoped lookup silently falls back to unscoped, pooling history across distinct submissions. `get_latest_for_node` guards against NULL input with an unscoped fallback, which is load-bearing for pre-synthesis legacy rows.
 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 

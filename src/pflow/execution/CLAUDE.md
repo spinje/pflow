@@ -24,7 +24,7 @@ src/pflow/execution/
 
 ## Dry-Run Planner (`plan.py`)
 
-`build_plan(compiled, params, cache, registry, ...) -> Plan` walks a compiled workflow and produces a typed `Plan` describing what would happen at runtime — cached vs would-execute per node, historical cost for LLM nodes, sub-workflow recursion — without invoking any node side effects. Called by `WorkflowRunner.plan()` and the MCP `plan_workflow` tool.
+`build_plan(compiled, params, cache, registry, ...) -> Plan` walks a compiled workflow and produces a typed `Plan` describing what would happen at runtime — cached vs would-execute per node, historical cost (LLM nodes) and duration (all nodes), sub-workflow recursion — without invoking any node side effects. Called by `WorkflowRunner.plan()` and the MCP `plan_workflow` tool.
 
 ### State machine (the walker's shape)
 
@@ -96,6 +96,8 @@ class WorkflowRunner:
 8. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
 
 `plan()` reuses the same resolve → file-ref → validation → compile pipeline, then delegates to `execution/plan.py::build_plan()` instead of running the engine. No trace collector, metrics collector, MCP pool, or progress callback is created on the plan path.
+
+**Inline-workflow cache scoping** (load-bearing): `_prepare_workflow` injects `params["_pflow_workflow_file"]` for every run — file/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline submissions) get a synthetic `ir-hash:<md5>` identifier from `_synthesize_inline_workflow_id(resolved.ir)`. Without this, inline writers pass `workflow_path=NULL` to the memo cache, and SQL's NULL semantics (`WHERE workflow_path = NULL` matches zero rows) cause scoped `get_latest_for_node` lookups to fall back to unscoped — pooling cost/duration history across unrelated inline workflows that happen to share node IDs. Uses `setdefault` so pre-injecting callers (historical MCP/CLI pattern) still win.
 
 **Exception boundary**: `run()` catches ALL exceptions, wraps into `ExecutionResult`. Only `KeyboardInterrupt`/`SystemExit` propagate.
 
