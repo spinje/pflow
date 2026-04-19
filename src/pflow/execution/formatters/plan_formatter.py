@@ -7,9 +7,16 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.core.duration_format import format_duration
 
 if TYPE_CHECKING:
     from pflow.execution.result import Plan, PlanEntry
+
+# Per-entry duration is only rendered in text when >= this threshold. Agents
+# parsing JSON always see `last_duration_ms` in full fidelity regardless.
+# Rationale: sub-second numbers on 20+ fast nodes pad the view without adding
+# signal; the summary total still reflects them.
+_TEXT_DURATION_THRESHOLD_MS = 1000.0
 
 _NODE_TYPE_TAGS: dict[str, str] = {
     "LLMNode": "LLM",
@@ -79,7 +86,22 @@ def format_plan_text(plan: Plan) -> str:
         )
         lines.append(f"Estimated cost: ≈ {_format_cost(effective_cost)}  ({basis_label})")
     if effective_nwh > 0:
-        lines.append(f"  ({effective_nwh} LLM node{'s' if effective_nwh != 1 else ''} without history)")
+        lines.append(f"  ({effective_nwh} LLM node{'s' if effective_nwh != 1 else ''} without cost history)")
+
+    effective_duration = (
+        plan.summary.estimated_duration_ms_including_nested
+        if plan.summary.estimated_duration_ms_including_nested is not None
+        else plan.summary.estimated_duration_ms
+    )
+    effective_nwdh = (
+        plan.summary.nodes_without_duration_history_including_nested
+        if plan.summary.nodes_without_duration_history_including_nested is not None
+        else plan.summary.nodes_without_duration_history
+    )
+    if effective_duration > 0:
+        lines.append(f"Estimated duration: ~{format_duration(effective_duration)}  (historical, actual may vary)")
+    if effective_nwdh > 0:
+        lines.append(f"  ({effective_nwdh} node{'s' if effective_nwdh != 1 else ''} without duration history)")
 
     lines.append("No side effects performed.")
 
@@ -148,13 +170,44 @@ def _render_entry_line(entry: PlanEntry, indent: str) -> str:
     if entry.status == "routing_error":
         return f"{indent}▸ {entry.node_id}{tag}  [routing error]"
 
-    cost_str = ""
-    if entry.last_cost_usd is not None and entry.last_run_age_sec is not None:
-        cost_str = f"   ≈ {_format_cost(entry.last_cost_usd)} (last run {_format_age(entry.last_run_age_sec)} ago)"
-    elif _is_llm_entry(entry) and entry.last_cost_usd is None:
-        cost_str = "   ≈ $? (no history)"
+    annotation = _format_stats_annotation(entry)
+    suffix = f"   {annotation}" if annotation else ""
+    return f"{indent}▸ {entry.node_id}{tag}{suffix}"
 
-    return f"{indent}▸ {entry.node_id}{tag}{cost_str}"
+
+def _format_stats_annotation(entry: PlanEntry) -> str | None:
+    """Build the cost + duration + age annotation for an execute-status entry.
+
+    Returns `None` when nothing would render — caller elides the whitespace.
+    Centralizes threshold + precision rules so the policy lives in one place.
+    """
+    is_llm = _is_llm_entry(entry)
+    has_cost = entry.last_cost_usd is not None
+    duration_ms = entry.last_duration_ms
+    show_duration = duration_ms is not None and duration_ms >= _TEXT_DURATION_THRESHOLD_MS
+
+    # No-history fallback for LLM nodes — preserves the pre-duration contract
+    # ("≈ $? (no history)") so agents iterating on a fresh LLM node still see
+    # the LLM-specific cost hint. Non-LLM sub-second nodes render blank.
+    if not has_cost and not show_duration:
+        return "≈ $? (no history)" if is_llm else None
+
+    parts: list[str] = []
+    if is_llm:
+        if has_cost and entry.last_cost_usd is not None:
+            parts.append(f"≈ {_format_cost(entry.last_cost_usd)}")
+        else:
+            parts.append("≈ $?")
+    if show_duration and duration_ms is not None:
+        parts.append(f"~{format_duration(duration_ms)}")
+
+    body = " · ".join(parts) if parts else None
+    if body is None:
+        return None
+
+    if entry.last_run_age_sec is not None:
+        body += f" (last run {_format_age(entry.last_run_age_sec)} ago)"
+    return body
 
 
 def _is_llm_entry(entry: PlanEntry) -> bool:
@@ -204,6 +257,8 @@ def _entry_to_dict(entry: PlanEntry) -> dict[str, Any]:
         result["age_sec"] = entry.age_sec
     if entry.last_cost_usd is not None:
         result["last_cost_usd"] = entry.last_cost_usd
+    if entry.last_duration_ms is not None:
+        result["last_duration_ms"] = entry.last_duration_ms
     if entry.last_run_age_sec is not None:
         result["last_run_age_sec"] = entry.last_run_age_sec
     if entry.sub_plan is not None:
@@ -223,6 +278,8 @@ def _summary_to_dict(summary: Any) -> dict[str, Any]:
         "execute_by_type": dict(summary.execute_by_type),
         "estimated_cost_usd": summary.estimated_cost_usd,
         "nodes_without_history": summary.nodes_without_history,
+        "estimated_duration_ms": summary.estimated_duration_ms,
+        "nodes_without_duration_history": summary.nodes_without_duration_history,
         "cost_basis": summary.cost_basis,
     }
     if summary.total_including_nested is not None:
@@ -232,4 +289,9 @@ def _summary_to_dict(summary: Any) -> dict[str, Any]:
     if summary.estimated_cost_usd_including_nested is not None:
         result["estimated_cost_usd_including_nested"] = summary.estimated_cost_usd_including_nested
         result["nodes_without_history_including_nested"] = summary.nodes_without_history_including_nested
+    if summary.estimated_duration_ms_including_nested is not None:
+        result["estimated_duration_ms_including_nested"] = summary.estimated_duration_ms_including_nested
+        result["nodes_without_duration_history_including_nested"] = (
+            summary.nodes_without_duration_history_including_nested
+        )
     return result

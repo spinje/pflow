@@ -98,6 +98,7 @@ class PlanEntry:
     action: str | None = None
     age_sec: float | None = None
     last_cost_usd: float | None = None
+    last_duration_ms: float | None = None
     last_run_age_sec: float | None = None
     sub_plan: Plan | None = None
     diagnostic: Diagnostic | None = None
@@ -105,7 +106,16 @@ class PlanEntry:
 
 @dataclass(frozen=True)
 class PlanSummary:
-    """Aggregate counts for a single plan level."""
+    """Aggregate counts for a single plan level.
+
+    `estimated_cost_usd` is LLM-only (matches the domain: only LLM-family
+    nodes have `cost_usd`). `estimated_duration_ms` is all-node (any node
+    with prior execution has a recorded duration in its cache entry). The
+    two `nodes_without_*_history` counters reflect the same distinction —
+    `nodes_without_history` counts LLM would-execute with no cost data,
+    `nodes_without_duration_history` counts any would-execute with no
+    duration data.
+    """
 
     total: int
     cached_count: int
@@ -114,12 +124,16 @@ class PlanSummary:
     execute_by_type: dict[str, int]
     estimated_cost_usd: float
     nodes_without_history: int
+    estimated_duration_ms: float = 0.0
+    nodes_without_duration_history: int = 0
     cost_basis: Literal["upper_bound", "exact"] = "upper_bound"
     total_including_nested: int | None = None
     cached_including_nested: int | None = None
     execute_including_nested: int | None = None
     estimated_cost_usd_including_nested: float | None = None
     nodes_without_history_including_nested: int | None = None
+    estimated_duration_ms_including_nested: float | None = None
+    nodes_without_duration_history_including_nested: int | None = None
 
 
 @dataclass(frozen=True)

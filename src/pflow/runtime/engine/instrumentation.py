@@ -246,13 +246,24 @@ def apply_memo_hit(
     cached_output: dict,
     config_hash: str,
 ) -> None:
-    """Apply a memoization cache hit to shared state."""
+    """Apply a memoization cache hit to shared state.
+
+    `__pflow_stats__` is engine-injected metadata (duration, etc.) that lives
+    in the stored blob for --dry-run historical estimates but must NOT leak
+    into the live `shared` dict — a fresh execution would never produce that
+    key, so restoring it would make cached and fresh paths observably differ
+    (template resolution, equality checks, trace output).
+    """
     execution = shared.setdefault("__execution__", {})
     completed_nodes = execution.setdefault("completed_nodes", [])
     node_actions = execution.setdefault("node_actions", {})
     node_hashes = execution.setdefault("node_hashes", {})
 
-    shared[node_id] = cached_output
+    if "__pflow_stats__" in cached_output:
+        restored = {k: v for k, v in cached_output.items() if k != "__pflow_stats__"}
+    else:
+        restored = cached_output
+    shared[node_id] = restored
     completed_nodes.append(node_id)
     node_actions[node_id] = cached_action
     node_hashes[node_id] = config_hash
@@ -284,8 +295,25 @@ def check_memo_cache(
     return False, None, cache_key
 
 
-def write_memo_cache(node_id: str, shared: dict, cache_key: Optional[str], action: str = "default") -> None:
-    """Write to SQLite cache after successful execution. Skips error results."""
+def write_memo_cache(
+    node_id: str,
+    shared: dict,
+    cache_key: Optional[str],
+    action: str = "default",
+    *,
+    duration_ms: Optional[float] = None,
+) -> None:
+    """Write to SQLite cache after successful execution. Skips error results.
+
+    Optionally records execution metadata (currently `duration_ms`) under the
+    reserved output key `__pflow_stats__` so `--dry-run` can surface historical
+    duration estimates via `MemoizationCache.get_latest_for_node`.
+
+    Dunder naming is load-bearing: `cache.py::_make_serializable` collapses
+    dunder-keyed values to their type name for deterministic hashing, so
+    stats deltas don't invalidate cache identity. A single-underscore key
+    would feed stats into the hash — silent cache-breakage bug.
+    """
     if not cache_key or str(action).startswith("error"):
         return
     memo_cache = shared.get("__memoization_cache__")
@@ -295,6 +323,8 @@ def write_memo_cache(node_id: str, shared: dict, cache_key: Optional[str], actio
     if node_output is not None:
         workflow_path = shared.get("_pflow_workflow_file")
         output_dict = dict(node_output) if isinstance(node_output, dict) else {"value": node_output}
+        if duration_ms is not None:
+            output_dict["__pflow_stats__"] = {"duration_ms": float(duration_ms)}
         memo_cache.put(cache_key, node_id, workflow_path, action or "default", output_dict)
 
 

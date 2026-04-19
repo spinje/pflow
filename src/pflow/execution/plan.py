@@ -64,6 +64,7 @@ class _WalkerState:
     diagnostics: list[Diagnostic]
     visited_edges: set[tuple[str, str]]
     only_node: str | None
+    workflow_path: str | None = None
     cost_basis: _CostBasis = "exact"
 
 
@@ -163,6 +164,39 @@ def build_plan(
     _parent_workflow_file: str | None = None,
 ) -> Plan:
     """Build an execution plan for a compiled workflow."""
+    plan, _shared = _build_plan_with_shared(
+        compiled,
+        params,
+        cache,
+        registry,
+        workflow_name=workflow_name,
+        only_node=only_node,
+        _visited_paths=_visited_paths,
+        _depth=_depth,
+        _parent_workflow_file=_parent_workflow_file,
+    )
+    return plan
+
+
+def _build_plan_with_shared(
+    compiled: CompiledWorkflow,
+    params: dict[str, Any],
+    cache: MemoizationCache,
+    registry: Registry,
+    *,
+    workflow_name: str = "<unnamed>",
+    only_node: str | None = None,
+    _visited_paths: list[str] | None = None,
+    _depth: int = 0,
+    _parent_workflow_file: str | None = None,
+) -> tuple[Plan, dict[str, Any]]:
+    """Internal variant of `build_plan` that also exposes the scratch shared.
+
+    `_plan_sub_workflow` calls this to access the child's post-walk shared
+    state, which has cached outputs populated via `apply_memo_hit`. Those
+    values drive exact resolution of the child's declared `## Outputs`
+    templates — matching what runtime does when a sub-workflow completes.
+    """
     _validate_only_target(compiled, only_node, _depth)
 
     shared = _create_planner_shared(compiled, params, cache, _parent_workflow_file)
@@ -172,6 +206,7 @@ def build_plan(
         diagnostics=[],
         visited_edges=set(),
         only_node=only_node,
+        workflow_path=shared.get("_pflow_workflow_file"),
     )
 
     curr = compiled.start_node
@@ -207,15 +242,17 @@ def build_plan(
             node_id=node_id,
             config=config,
             compiled=compiled,
+            cache=cache,
             state=state,
         )
 
-    return Plan(
+    plan = Plan(
         workflow=workflow_name,
         entries=state.entries,
         summary=_summarize(state.entries, cost_basis=state.cost_basis),
         diagnostics=state.diagnostics,
     )
+    return plan, shared
 
 
 def _advance(
@@ -225,6 +262,7 @@ def _advance(
     node_id: str,
     config: NodeConfig,
     compiled: CompiledWorkflow,
+    cache: MemoizationCache,
     state: _WalkerState,
 ) -> Any | None:
     """Apply the walker decision by mutating `state`; return the next node or None.
@@ -242,7 +280,7 @@ def _advance(
             state.diagnostics.append(routing_diag)
             return None
         case Transition.BOUNDARY:
-            _apply_boundary(curr, compiled, node_id, state)
+            _apply_boundary(curr, compiled, cache, node_id, state)
             return None
         case Transition.FOLLOW:
             return _apply_follow(curr, node_id, decision.action, state)
@@ -253,6 +291,7 @@ def _advance(
 def _apply_boundary(
     curr: Any,
     compiled: CompiledWorkflow,
+    cache: MemoizationCache,
     node_id: str,
     state: _WalkerState,
 ) -> None:
@@ -262,9 +301,11 @@ def _apply_boundary(
     bfs_entries, branched = _bfs_downstream(
         boundary_node=curr,
         compiled=compiled,
+        cache=cache,
         visited_nodes={e.node_id for e in state.entries if e.sub_plan is None},
         visited_edges=state.visited_edges,
         only_node=state.only_node,
+        workflow_path=state.workflow_path,
     )
     state.entries.extend(bfs_entries)
     if branched:
@@ -365,9 +406,11 @@ def _bfs_downstream(
     *,
     boundary_node: Any,
     compiled: CompiledWorkflow,
+    cache: MemoizationCache,
     visited_nodes: set[str],
     visited_edges: set[tuple[str, str]],
     only_node: str | None,
+    workflow_path: str | None = None,
 ) -> tuple[list[PlanEntry], bool]:
     """Enumerate reachable would-execute nodes after the first cache miss.
 
@@ -382,7 +425,7 @@ def _bfs_downstream(
 
     while queue:
         node = queue.popleft()
-        entry = _make_downstream_entry(node, compiled, visited_nodes)
+        entry = _make_downstream_entry(node, compiled, cache, visited_nodes, workflow_path=workflow_path)
         if entry is None:
             continue
         entries.append(entry)
@@ -415,9 +458,18 @@ def _seed_bfs(
 def _make_downstream_entry(
     node: Any,
     compiled: CompiledWorkflow,
+    cache: MemoizationCache,
     visited_nodes: set[str],
+    *,
+    workflow_path: str | None = None,
 ) -> PlanEntry | None:
-    """Build a downstream PlanEntry for a BFS-discovered node, or None to skip it."""
+    """Build a downstream PlanEntry for a BFS-discovered node, or None to skip it.
+
+    Downstream entries go through `_execute_entry` so historical stats (cost
+    + duration) are attached by construction. Skipping the stats lookup here
+    was a real bug — agents cost-gating on an LLM node that happened to sit
+    downstream of a non-LLM miss saw `$0` even when history existed.
+    """
     node_id = getattr(node, "node_id", None)
     if not isinstance(node_id, str) or node_id in visited_nodes:
         return None
@@ -425,12 +477,7 @@ def _make_downstream_entry(
         return None
     visited_nodes.add(node_id)
     config = compiled.node_configs[node_id]
-    return PlanEntry(
-        node_id=node_id,
-        node_type=config.node_type_name,
-        status="execute",
-        cause="downstream",
-    )
+    return _execute_entry(config, cache, cause="downstream", workflow_path=workflow_path)
 
 
 def _enqueue_non_error_successors(
@@ -505,7 +552,7 @@ def _plan_standard_node(
         return _cached_memo_entry(config, planned, shared, cache)
     if planned.status == "cached_in_process":
         return _cached_in_process_entry(config, planned)
-    return _miss_entry(config, planned, cache)
+    return _miss_entry(config, planned, cache, workflow_path=shared.get("_pflow_workflow_file"))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -580,19 +627,48 @@ def _cached_in_process_entry(config: NodeConfig, planned: NodePlan) -> PlanEntry
     )
 
 
-def _miss_entry(config: NodeConfig, planned: NodePlan, cache: MemoizationCache) -> PlanEntry:
-    """Entry for a cache miss — the node would execute."""
-    last_cost, last_age = _lookup_last_cost(config, cache)
-    permissive_diag = _permissive_template_diagnostic(planned)
+def _execute_entry(
+    config: NodeConfig,
+    cache: MemoizationCache,
+    *,
+    cause: Literal["no_cache_match", "downstream", "template_error"],
+    diagnostic: Diagnostic | None = None,
+    workflow_path: str | None = None,
+) -> PlanEntry:
+    """Single source of truth for `status="execute"` PlanEntry construction.
+
+    Every would-execute entry — first-miss OR BFS-downstream — flows through
+    here, so historical stats lookup is guaranteed by construction. Callers
+    used to diverge (only `_miss_entry` attached cost; `_make_downstream_entry`
+    did not), causing agents cost-gating on downstream LLM nodes to see `$0`.
+    This primitive eliminates the drift surface.
+    """
+    last_cost, last_duration, last_age = _lookup_last_run_stats(config, cache, workflow_path=workflow_path)
     return PlanEntry(
         node_id=config.node_id,
         node_type=config.node_type_name,
         status="execute",
-        cause="template_error" if permissive_diag is not None else "no_cache_match",
+        cause=cause,
         last_cost_usd=last_cost,
+        last_duration_ms=last_duration,
         last_run_age_sec=last_age,
-        diagnostic=permissive_diag,
+        diagnostic=diagnostic,
     )
+
+
+def _miss_entry(
+    config: NodeConfig,
+    planned: NodePlan,
+    cache: MemoizationCache,
+    *,
+    workflow_path: str | None = None,
+) -> PlanEntry:
+    """Entry for a cache miss — the node would execute."""
+    permissive_diag = _permissive_template_diagnostic(planned)
+    cause: Literal["no_cache_match", "template_error"] = (
+        "template_error" if permissive_diag is not None else "no_cache_match"
+    )
+    return _execute_entry(config, cache, cause=cause, diagnostic=permissive_diag, workflow_path=workflow_path)
 
 
 def _cache_age(cache_key: str | None, cache: MemoizationCache) -> float | None:
@@ -687,7 +763,7 @@ def _plan_sub_workflow(
     except _ChildCompileFailed as failure:
         return failure.entry
 
-    child_plan = build_plan(
+    child_plan, child_shared = _build_plan_with_shared(
         compiled_child,
         child_inputs,
         cache,
@@ -705,6 +781,15 @@ def _plan_sub_workflow(
             diagnostics=[*child_plan.diagnostics, *resolved.warnings],
         )
 
+    # Populate parent's shared[node_id] with the child's outputs so downstream
+    # nodes that template against ${<node_id>.<key>} can resolve at plan time.
+    # Mirrors the runtime path: engine wraps the WorkflowExecutor node with a
+    # NamespacedSharedStore → child outputs land at shared[node_id][key].
+    # Partial failure (a declared source references an execute-marked child
+    # node) silently skips that key — honest: the downstream templating it
+    # will fail at plan time too, matching what would happen at runtime.
+    _populate_sub_workflow_outputs(shared, node_id, compiled_child, child_shared, child_inputs)
+
     return PlanEntry(
         node_id=node_id,
         node_type=node_type,
@@ -712,6 +797,87 @@ def _plan_sub_workflow(
         cause="no_cache_match",
         sub_plan=child_plan,
     )
+
+
+def _populate_sub_workflow_outputs(
+    parent_shared: dict[str, Any],
+    node_id: str,
+    compiled_child: CompiledWorkflow,
+    child_shared: dict[str, Any],
+    child_inputs: dict[str, Any],
+) -> None:
+    """Expose the child sub-workflow's outputs into parent's `shared[node_id]`.
+
+    Mirrors the runtime path in `WorkflowExecutor._expose_child_outputs`:
+
+    - **Declared path**: when the child has `## Outputs`, resolve each
+      declaration's `source:` template against the child's scratch shared
+      (populated by `apply_memo_hit` for cached children). Unresolvable
+      sources — declared keys whose `source:` references an execute-marked
+      child node — are silently skipped; downstream parent nodes templating
+      the missing key will surface a `template_error` plan entry, which is
+      honest (runtime would fail the same way at plan time).
+
+    - **Undeclared fallback**: when the child has NO declared outputs, copy
+      every non-internal, non-input key from child_shared to parent's
+      namespace. Matches runtime's fallback at `workflow_executor.py:472-478`.
+      Agents referencing `${<node_id>.<child_node_id>.<field>}` can resolve
+      the same way at plan time as at runtime.
+
+    Writes `parent_shared[node_id]` to the resulting dict in either path.
+    """
+    declared = getattr(compiled_child, "outputs", None)
+
+    if isinstance(declared, dict) and declared:
+        parent_shared[node_id] = _resolve_declared_outputs(declared, child_shared, node_id)
+        return
+
+    parent_shared[node_id] = _mirror_child_shared(child_shared, child_inputs)
+
+
+def _resolve_declared_outputs(
+    declared: dict[str, Any],
+    child_shared: dict[str, Any],
+    node_id: str,
+) -> dict[str, Any]:
+    """Resolve each `## Outputs` declaration against the child's scratch shared."""
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    resolved: dict[str, Any] = {}
+    for output_name, decl in declared.items():
+        if not isinstance(decl, dict):
+            continue
+        source = decl.get("source")
+        if not isinstance(source, str):
+            continue
+        try:
+            resolved[output_name] = TemplateResolver.resolve_template(source, child_shared)
+        except Exception:
+            logger.debug(
+                "Sub-workflow output '%s.%s' couldn't resolve source %r at plan time",
+                node_id,
+                output_name,
+                source,
+            )
+    return resolved
+
+
+def _mirror_child_shared(
+    child_shared: dict[str, Any],
+    child_inputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Copy non-internal, non-input child_shared keys — runtime fallback parity."""
+    input_keys = set(child_inputs.keys())
+    mirrored: dict[str, Any] = {}
+    for key, value in child_shared.items():
+        if not isinstance(key, str):
+            continue
+        if key.startswith(("_pflow_", "__")):
+            continue
+        if key in input_keys:
+            continue
+        mirrored[key] = value
+    return mirrored
 
 
 def _raw_workflow_ref(curr: Any, config: NodeConfig) -> Any:
@@ -856,21 +1022,88 @@ def _safe_to_diagnostics(exc: BaseException) -> list[Diagnostic]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _lookup_last_cost(config: NodeConfig, cache: MemoizationCache) -> tuple[float | None, float | None]:
-    """Most recent historical `cost_usd` + age for this LLM node, if any."""
-    if config.node_type_name not in _LLM_NODE_CLASSES:
+def _read_stats_from_output(output: Any) -> tuple[float | None, float | None]:
+    """Extract `(cost_usd, duration_ms)` from a cached output dict.
+
+    Symmetric with `instrumentation.py::write_memo_cache`, which injects
+    `__pflow_stats__` into the output blob at write time. Cost lives
+    inside `llm_usage` (node-owned, LLM-only). Duration lives inside
+    `__pflow_stats__` (engine-injected, all-node). Returns `(None, None)`
+    for keys absent or malformed — tolerant of pre-migration cache
+    entries that predate duration recording.
+    """
+    if not isinstance(output, dict):
         return None, None
-    latest = cache.get_latest_for_node(config.node_id)
-    if latest is None:
-        return None, None
-    output, created_at = latest
-    llm_usage = output.get("llm_usage") if isinstance(output, dict) else None
+
+    cost = _extract_cost_from_llm_usage(output.get("llm_usage"))
+    if cost is None:
+        cost = _extract_batch_cost_from_results(output.get("results"))
+
+    duration: float | None = None
+    stats = output.get("__pflow_stats__")
+    if isinstance(stats, dict):
+        raw_duration = stats.get("duration_ms")
+        if isinstance(raw_duration, (int, float)):
+            duration = float(raw_duration)
+
+    return cost, duration
+
+
+def _extract_cost_from_llm_usage(llm_usage: Any) -> float | None:
+    """Read `cost_usd` out of an `llm_usage` dict (if that's its shape)."""
     if not isinstance(llm_usage, dict):
-        return None, None
-    cost = llm_usage.get("cost_usd")
-    if not isinstance(cost, (int, float)):
-        return None, None
-    return float(cost), time() - created_at
+        return None
+    raw = llm_usage.get("cost_usd")
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    return None
+
+
+def _extract_batch_cost_from_results(results: Any) -> float | None:
+    """Sum `cost_usd` across batch `results[i].llm_usage` entries.
+
+    Returns None when `results` isn't a list (non-batch output) or when no
+    item had a usable cost field (non-LLM batch, or LLM items that skipped
+    pricing). Missing items are silently skipped — matches `results` being
+    a "successes-only" list (failures live in `errors[]`, not in cache).
+    """
+    if not isinstance(results, list):
+        return None
+    total = 0.0
+    found_any = False
+    for item in results:
+        item_cost = _extract_cost_from_llm_usage(item.get("llm_usage") if isinstance(item, dict) else None)
+        if item_cost is not None:
+            total += item_cost
+            found_any = True
+    return total if found_any else None
+
+
+def _lookup_last_run_stats(
+    config: NodeConfig, cache: MemoizationCache, *, workflow_path: str | None = None
+) -> tuple[float | None, float | None, float | None]:
+    """Historical `(cost_usd, duration_ms, age_sec)` for this node, if any.
+
+    Cost is populated only for LLM-family nodes (matches the `_execute_entry`
+    contract — non-LLM nodes have no cost dimension). Duration is populated
+    for any node with a prior cache entry that recorded `duration_ms`. Age
+    is the seconds since the most recent cache entry for `config.node_id`.
+    Returns `(None, None, None)` when no prior entry exists.
+
+    When `workflow_path` is provided, lookup is scoped to entries written by
+    the same workflow — prevents cross-workflow pollution for common node
+    names like "classify" or "fetch". Passing None falls back to unscoped
+    lookup (necessary for direct-IR / content-string runs with NULL paths).
+    """
+    latest = cache.get_latest_for_node(config.node_id, workflow_path=workflow_path)
+    if latest is None:
+        return None, None, None
+    output, created_at = latest
+    cost, duration = _read_stats_from_output(output)
+    if config.node_type_name not in _LLM_NODE_CLASSES:
+        cost = None
+    age = time() - created_at
+    return cost, duration, age
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -889,6 +1122,8 @@ class _Totals:
     execute_by_type: dict[str, int]
     estimated_cost_usd: float
     nodes_without_history: int
+    estimated_duration_ms: float
+    nodes_without_duration_history: int
 
 
 def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") -> PlanSummary:
@@ -905,6 +1140,8 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
             execute_by_type=totals.execute_by_type,
             estimated_cost_usd=totals.estimated_cost_usd,
             nodes_without_history=totals.nodes_without_history,
+            estimated_duration_ms=totals.estimated_duration_ms,
+            nodes_without_duration_history=totals.nodes_without_duration_history,
             cost_basis=cost_basis,
         )
 
@@ -913,6 +1150,8 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
     nested_execute = totals.execute_count
     nested_cost = totals.estimated_cost_usd
     nested_nwh = totals.nodes_without_history
+    nested_duration = totals.estimated_duration_ms
+    nested_nwdh = totals.nodes_without_duration_history
     effective_basis = cost_basis
 
     for entry in entries:
@@ -932,6 +1171,16 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
             if child.nodes_without_history_including_nested is not None
             else child.nodes_without_history
         )
+        nested_duration += (
+            child.estimated_duration_ms_including_nested
+            if child.estimated_duration_ms_including_nested is not None
+            else child.estimated_duration_ms
+        )
+        nested_nwdh += (
+            child.nodes_without_duration_history_including_nested
+            if child.nodes_without_duration_history_including_nested is not None
+            else child.nodes_without_duration_history
+        )
         if child.cost_basis == "upper_bound":
             effective_basis = "upper_bound"
 
@@ -943,12 +1192,16 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
         execute_by_type=totals.execute_by_type,
         estimated_cost_usd=totals.estimated_cost_usd,
         nodes_without_history=totals.nodes_without_history,
+        estimated_duration_ms=totals.estimated_duration_ms,
+        nodes_without_duration_history=totals.nodes_without_duration_history,
         cost_basis=effective_basis,
         total_including_nested=nested_total,
         cached_including_nested=nested_cached,
         execute_including_nested=nested_execute,
         estimated_cost_usd_including_nested=nested_cost,
         nodes_without_history_including_nested=nested_nwh,
+        estimated_duration_ms_including_nested=nested_duration,
+        nodes_without_duration_history_including_nested=nested_nwdh,
     )
 
 
@@ -961,6 +1214,8 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
     execute_by_type: dict[str, int] = {}
     estimated_cost_usd = 0.0
     nodes_without_history = 0
+    estimated_duration_ms = 0.0
+    nodes_without_duration_history = 0
 
     for entry in entries:
         if entry.status == "cached":
@@ -978,6 +1233,12 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
         if entry.status == "execute" and entry.node_type in _LLM_NODE_CLASSES and entry.last_cost_usd is None:
             nodes_without_history += 1
 
+        if entry.last_duration_ms is not None:
+            estimated_duration_ms += entry.last_duration_ms
+
+        if entry.status == "execute" and entry.last_duration_ms is None:
+            nodes_without_duration_history += 1
+
     return _Totals(
         total=total,
         cached_count=cached_count,
@@ -986,4 +1247,6 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
         execute_by_type=execute_by_type,
         estimated_cost_usd=estimated_cost_usd,
         nodes_without_history=nodes_without_history,
+        estimated_duration_ms=estimated_duration_ms,
+        nodes_without_duration_history=nodes_without_duration_history,
     )

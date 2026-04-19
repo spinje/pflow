@@ -110,6 +110,23 @@ It owns config hashing, non-batch template resolution, memo-cache lookup, and in
 
 Parity is enforced by `tests/test_execution/test_plan_drift.py`. State-machine semantics are unit-tested at `tests/test_execution/test_plan_classify.py`.
 
+### Engine-injected output metadata: `__pflow_stats__`
+
+`write_memo_cache()` injects a reserved key `__pflow_stats__` into the output blob before calling `MemoizationCache.put()`:
+
+```python
+output_dict["__pflow_stats__"] = {"duration_ms": duration_ms}
+```
+
+This carries engine-owned execution metadata (currently duration; extendable to memory/tokens later) so `--dry-run` can surface historical estimates via `MemoizationCache.get_latest_for_node()` without a parallel storage system.
+
+**Convention — load-bearing:**
+- **Name must be double-underscore dunder**. `_make_serializable` in `cache.py` collapses dunder-keyed values to `"<dict>"` for deterministic cache-key hashing, so stats deltas never invalidate cache identity. A single-underscore key (e.g., `_pflow_stats`) would feed stats INTO the hash — every run would produce a new cache_key, silently breaking caching.
+- **Node authors must not write this key.** It's engine-owned; conflicts are a user-code smell.
+- **Readers must be absent-tolerant.** Pre-existing cache entries (from before this feature) don't have the key. Code that consumes it (e.g. `plan.py::_read_stats_from_output`) returns `None` cleanly.
+- **`apply_memo_hit` strips the key when restoring to `shared[node_id]`.** A fresh execution would never produce the key in live shared state, so restoring it would make cached vs fresh paths observably differ (template resolution, equality, trace output).
+- **Display-site filtering**: `node_output_formatter.py` and `trace_report.py` filter `_`-prefixed keys when iterating output dicts so reserved keys don't leak into agent-visible output (`-p/--print`, `--structure`, `--report`, MCP node-run text).
+
 ### `_execute_single_node(node, config, shared) → (action, last_resolutions, template_errors)`
 
 Used in two contexts:

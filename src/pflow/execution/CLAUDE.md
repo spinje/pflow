@@ -56,6 +56,20 @@ Parity with runtime is pinned by `tests/test_execution/test_plan_drift.py`.
 
 `_plan_standard_node` dispatches on `NodePlan.status` to one of five named builders: `_template_error_entry` / `_cache_disabled_entry` / `_cached_memo_entry` / `_cached_in_process_entry` / `_miss_entry`. Adding a new status means adding a builder plus one dispatch branch — no scattered edits. `_sub_workflow_error_entry` is shared by every sub-workflow failure path (depth exceeded, resolve failure, cycle, bad inputs).
 
+### `_execute_entry` — single source of truth for `status="execute"` entries
+
+Every would-execute entry — first-miss (`_miss_entry`) AND BFS-downstream (`_make_downstream_entry`) — flows through `_execute_entry(config, cache, *, cause, diagnostic=None)`. It calls `_lookup_last_run_stats` and attaches `last_cost_usd` + `last_duration_ms` + `last_run_age_sec` by construction. Previously the downstream path built a bare `PlanEntry` without stats, so agents cost-gating on an LLM downstream of a non-LLM miss saw `$0` even when history existed. Funneling both paths through the same primitive eliminates the drift surface. Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_bfs_downstream_attaches_historical_stats`.
+
+### Historical stats (`_read_stats_from_output`, `_lookup_last_run_stats`)
+
+Cost (`llm_usage.cost_usd`, LLM-only) and duration (`__pflow_stats__.duration_ms`, all-node) both ride inside the cached output blob — no schema change to `cache_entries`. `_read_stats_from_output` is the symmetric reader for the key `instrumentation.py::write_memo_cache` injects. See `runtime/engine/CLAUDE.md` → "Engine-injected output metadata" for the convention and its load-bearing dunder-naming rationale.
+
+`PlanSummary` carries parallel aggregates: `estimated_cost_usd` + `nodes_without_history` (LLM cost domain), `estimated_duration_ms` + `nodes_without_duration_history` (all-node duration domain), each with an `_including_nested` variant that rolls sub-workflow totals up to the parent level. Agents cost- or time-gating should read the `_including_nested` value when present; formatters do the same.
+
+### Text vs JSON per-entry rendering
+
+Per-entry `last_duration_ms` is only rendered in text when ≥ 1s (`_TEXT_DURATION_THRESHOLD_MS`) — see `plan_formatter.py::_format_stats_annotation`. Sub-second durations still contribute to the summary aggregate and always appear in JSON at full precision. Rationale: twenty 50ms code nodes in a row pads text output without signal; the summary's total still reflects them; agents parse JSON for exact numbers.
+
 ### Sub-workflow compile failures
 
 `_compile_child` raises `_ChildCompileFailed(entry=...)` when the child fails a recoverable compile check. The caller unwraps it in one line (`except _ChildCompileFailed as failure: return failure.entry`), avoiding a `CompiledWorkflow | PlanEntry` sum type and the isinstance plumbing that would come with it.

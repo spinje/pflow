@@ -276,12 +276,13 @@ class WorkflowEngine:
             # 11. Cache result (in-process only — not gated by cache_enabled)
             cache_result(config.node_id, config_hash, action, shared)
 
-            # 12. Memo cache write (skip for nodes with cache: false)
-            if config.cache_enabled:
-                write_memo_cache(config.node_id, shared, cache_key, action)
-
-            # 13. Duration
+            # 12. Duration (computed here so the memo cache write can record it
+            # for --dry-run historical estimates — see plan_formatter.py).
             duration_ms = (time.perf_counter() - start_time) * 1000
+
+            # 13. Memo cache write (skip for nodes with cache: false)
+            if config.cache_enabled:
+                write_memo_cache(config.node_id, shared, cache_key, action, duration_ms=duration_ms)
 
             # 14. Metrics
             if self.metrics:

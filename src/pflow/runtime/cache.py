@@ -261,15 +261,24 @@ class MemoizationCache:
             logger.debug("Memoization cache get_with_age failed", exc_info=True)
             return None
 
-    def get_latest_for_node(self, node_id: str) -> Optional[tuple[dict[str, Any], float]]:
+    def get_latest_for_node(
+        self, node_id: str, *, workflow_path: Optional[str] = None
+    ) -> Optional[tuple[dict[str, Any], float]]:
         """Look up the newest cache entry for a node_id.
 
         Args:
-            node_id: Node identifier to search for
+            node_id: Node identifier to search for.
+            workflow_path: When provided, scope the lookup to entries written
+                by this workflow. Prevents cross-workflow pollution for common
+                node names (e.g., two workflows both with a "classify" node).
+                When None, falls back to unscoped lookup — required for
+                direct-IR / content-string runs where `_pflow_workflow_file`
+                is never set and rows are written with a NULL `workflow_path`
+                column (SQL `= NULL` matches zero rows).
 
         Returns:
             Tuple of (output, created_at_epoch_seconds) or None if not found,
-            expired, or reads disabled
+            expired, or reads disabled.
         """
         if not self.read_enabled:
             return None
@@ -277,11 +286,19 @@ class MemoizationCache:
         try:
             conn = self._connect()
             try:
-                cursor = conn.execute(
-                    "SELECT cache_key, output, created_at FROM cache_entries "
-                    "WHERE node_id = ? ORDER BY created_at DESC LIMIT 1",
-                    (node_id,),
-                )
+                if workflow_path is not None:
+                    cursor = conn.execute(
+                        "SELECT cache_key, output, created_at FROM cache_entries "
+                        "WHERE node_id = ? AND workflow_path = ? "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (node_id, workflow_path),
+                    )
+                else:
+                    cursor = conn.execute(
+                        "SELECT cache_key, output, created_at FROM cache_entries "
+                        "WHERE node_id = ? ORDER BY created_at DESC LIMIT 1",
+                        (node_id,),
+                    )
                 row = cursor.fetchone()
                 if row is None:
                     return None

@@ -727,7 +727,9 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
             "llm_usage",
             "response",
         }
-        remaining = {k: v for k, v in output.items() if k not in shown_keys}
+        remaining = {
+            k: v for k, v in output.items() if k not in shown_keys and not (isinstance(k, str) and k.startswith("_"))
+        }
         if remaining:
             lines.append("## Output")
             lines.append("")

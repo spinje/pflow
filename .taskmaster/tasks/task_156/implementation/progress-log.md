@@ -1402,3 +1402,351 @@ A future agent reading about the planner via CLAUDE.md needs to learn about the 
 
 Staged for review. Not committed — per user's standing policy.
 
+---
+
+## 2026-04-19 — Follow-up: duration estimates + BFS downstream stats fix
+
+User requested two additions before the task could be considered done:
+1. Fix the BFS downstream cost-attribution gap (filed as a known limitation in the prior session).
+2. Add duration estimates alongside cost — both "how much" and "how long" are co-primary agent questions.
+
+### Design choices worth preserving
+
+**Dunder-named reserved key `__pflow_stats__`**: duration lives inside the stored `output` blob under `output["__pflow_stats__"] = {"duration_ms": X}`, NOT as a SQL column. Single-underscore (`_pflow_stats`) was rejected because `cache.py::_make_serializable` collapses ONLY dunder-keyed values to `"<dict>"` for deterministic cache-key hashing. Single-underscore would feed stats INTO the hash, making every duration delta invalidate caching — silent correctness bug.
+
+**`_execute_entry` unified primitive**: every `status="execute"` PlanEntry — first-miss (`_miss_entry`) AND BFS-downstream (`_make_downstream_entry`) — now flows through `_execute_entry(config, cache, *, cause, diagnostic=None)`. The historical stats lookup happens here and nowhere else. Previously the two paths diverged (only `_miss_entry` attached cost), causing the downstream-LLM-after-non-LLM-miss bug. Funneling both paths through one primitive eliminates the drift surface by construction, not by convention.
+
+**`apply_memo_hit` strips `__pflow_stats__` before writing to `shared`**: the key lives in the cache blob (so the planner can read it back) but must NOT leak into the live shared store — a fresh execution would never produce it, so restoring it would make cached vs fresh paths observably differ (equality, template resolution, trace output). Asymmetry is intentional: "engine-injected at write, stripped at live restore."
+
+**Parallel field `nodes_without_duration_history`** (not widening `nodes_without_history`): `nodes_without_history` means "LLM would-execute with no cost_usd." Widening its semantics to "any would-execute with no cache entry" would change the meaning of a user-visible display line and a MCP-visible JSON field without renaming it. Parallel field is reversible; widening is not. Agent 3's blast-radius search confirmed 3 production consumers + 1 test assertion use the existing field — small but non-zero.
+
+**1s text threshold for per-entry duration**: the formatter's `_format_stats_annotation` elides `last_duration_ms < 1000ms` from text output. Sub-second numbers on 20+ fast nodes pad output without signal. JSON always carries the full value — agents parse JSON for exact numbers. Summary line always sums every entry regardless.
+
+**No `output_controller.py` consolidation**: the prior plan proposed unifying the 3 inline `f"{ms/1000:.1f}s"` sites in `output_controller.py`. Rejected — those are live-progress UX using a different format (compact) than dry-run estimates (rich). Consolidating them would be a user-visible format change disguised as refactor. `format_duration` is scoped to the rich format only.
+
+### Load-bearing display-site fixes (C5 — discovered during verification)
+
+Agent 2 caught that `node_output_formatter.py:158/334/416` and `trace_report.py:730` iterate output-dict keys WITHOUT any prefix filter. Without the fix, `__pflow_stats__` would have leaked into agent-visible output (`-p/--print`, `run --structure`, `run --full`, MCP node-run text, `--report` markdown). Added `if key.startswith("_"): continue` at each site, matching the canonical pattern in `output_utils.py:40`. This also defense-in-depths any future engine-injected dunder key.
+
+### Shape of the change
+
+- New file: `src/pflow/core/duration_format.py` + 26 unit tests in `tests/test_core/test_duration_format.py`.
+- `src/pflow/runtime/cache.py` — unchanged (no schema migration).
+- `src/pflow/runtime/engine/engine.py` — one line reordered (duration_ms computed before write), `write_memo_cache(..., duration_ms=duration_ms)` kwarg added.
+- `src/pflow/runtime/engine/instrumentation.py` — `write_memo_cache` signature extended with optional `duration_ms`; `apply_memo_hit` strips `__pflow_stats__` from restored output.
+- `src/pflow/execution/plan.py` — `_lookup_last_cost` → `_lookup_last_run_stats` (cost + duration + age); new `_read_stats_from_output` helper; `_execute_entry` unified primitive; `_Totals` + `_compute_totals` + `_summarize` extended for duration aggregation.
+- `src/pflow/execution/result.py` — `PlanEntry.last_duration_ms`; `PlanSummary.estimated_duration_ms` + `estimated_duration_ms_including_nested` + `nodes_without_duration_history` + `nodes_without_duration_history_including_nested`.
+- `src/pflow/execution/formatters/plan_formatter.py` — `_format_stats_annotation` helper with 1s threshold; summary `Estimated duration` line; JSON schema extended.
+- `src/pflow/execution/formatters/node_output_formatter.py` + `src/pflow/core/trace_report.py` — dunder filter at iteration sites.
+- `src/pflow/runtime/engine/CLAUDE.md` + `src/pflow/execution/CLAUDE.md` — reserved-key convention + stats lookup + display threshold documented.
+
+### Mutation verification
+
+All three new tests in `test_plan_drift.py` were mutation-verified:
+
+1. `test_plan_bfs_downstream_attaches_historical_stats`: replaced `_execute_entry(config, cache, cause="downstream")` in `_make_downstream_entry` with a raw `PlanEntry(...)` — test fails at `assert downstream.last_duration_ms == 1234.5` (actual: `None`). Reverted.
+2. `test_plan_duration_nested_rollup`: removed the `nested_duration += child.estimated_duration_ms...` branch in `_summarize` — test fails at the rollup equality assertion. Reverted.
+3. `test_plan_walker_bumps_visit_counts_before_plan_node`: removed the `visit_counts[node_id] = ... + 1` line in `build_plan` — test fails with `[('a', 0), ('b', 0), ('a', 0)] != [('a', 1), ('b', 1), ('a', 2)]`. Reverted.
+
+### Test matrix audit findings (Phase 10 reconciliation)
+
+Reviewed the original implementation plan's Phase 10 matrix against current state. HIGH-VALUE gap identified: `test_plan_retry_loop_iteration_matches` (invariant-2 pre-bump). The plan named it as a drift-catcher case but the direct drift approach would have been masked by in-process cache behavior — rewrote it as a walker-contract test (monkeypatches `plan_node` to record visit_counts at each call). This pins the invariant unambiguously regardless of in-process cache.
+
+Other planned Phase 10 tests were already covered (9/9 in test_plan.py, 11/11 in test_dry_run.py, 4/4 in test_plan_workflow.py, 10/11 in test_plan_drift.py before this round). No coverage-padding tests added — only the three mutation-verified high-value cases.
+
+### End-to-end smoke verification
+
+Ran `pflow run ... --dry-run` against a real workflow (shell nodes, 1.2s + 18ms). Confirmed:
+- Text: long node shows `~1.2s (last run 10s ago)`; fast node shows no duration annotation.
+- JSON: both nodes carry `last_duration_ms` at full precision.
+- Summary: `estimated_duration_ms: 1230.73` = sum across entries.
+- BFS-downstream node has `cause: "downstream"` AND `last_duration_ms` populated — the prior silent-$0 bug is fixed.
+
+### Final state
+
+- `make check`: ruff + ruff-format + mypy + deptry all clean.
+- `make test`: 5055 passed, 9 skipped (was 5052 — +3 high-value tests; 26 duration_format tests run under `--doctest-modules` count separately).
+- All mutation checks reverted to production state.
+- Known BFS downstream limitation from the prior session is closed.
+
+---
+
+## 2026-04-19 — Follow-up: three pre-existing limitations discovered during manual test
+
+During manual testing with real sub-workflow + batch workflows (user request), three pre-existing correctness/usability gaps surfaced. All fixable in bounded scope and in the same area; addressed in one round.
+
+### L1 — Sub-workflow output propagation
+
+**Gap**: `_plan_sub_workflow` didn't populate `parent_shared[sub_workflow_node_id]` with the child's declared outputs. Any parent node templating against `${<sub_workflow_id>.<output_name>}` failed template resolution at plan time → `cause: "template_error"` entries. Made the planner unusable for a core pflow composition pattern.
+
+**Correction needed to earlier agent research**: Agent C (verification pass) claimed runtime also doesn't populate `shared[sub_workflow_node_id]`. Empirical verification disproved this: `NamespacedSharedStore` creates `shared[node_id] = {}` on init, and `_expose_child_outputs` writes through the proxy to `shared[node_id][output_name]`. So `${analyze.topic}` IS the correct runtime pattern. Don't trust agent reports without empirical spot-checks when they conflict with observed behavior.
+
+**Fix**: new `_populate_sub_workflow_outputs()` helper. After recursively planning the child, resolve each declared output's `source:` template against the child's scratch shared (which has cached outputs populated via `apply_memo_hit`). Write the resolved dict to `parent_shared[node_id]`. Matches runtime exactly for fully-cached children; partial failure silently skips unresolvable keys (downstream then fails → template_error, matching runtime).
+
+Required a small refactor: `build_plan` now delegates to `_build_plan_with_shared` which returns both the `Plan` AND the scratch shared. Public API unchanged.
+
+### L2 — Batch cost aggregation
+
+**Gap**: batch LLM cache blobs have per-item `results[i].llm_usage.cost_usd` but no top-level `llm_usage.cost_usd`. `_read_stats_from_output` only checked the top level → batch LLMs showed `≈ $?` even when every item had cost history. Direct hit on issue #310's motivating scenario (batch LLM cost-gating).
+
+**Fix**: factored `_read_stats_from_output` into `_extract_cost_from_llm_usage` (top-level) and `_extract_batch_cost_from_results` (sums across `results[]`). When top-level cost is absent, try the batch path. The `results` list contains only successful items (failed items live in `errors[]`, cache write is skipped on raise) — matches the write-path contract verified by the first agent. Also reduced `_read_stats_from_output`'s McCabe complexity (13 → below 10) without `noqa` suppression.
+
+### L3 — `workflow_path` scoping
+
+**Gap**: `MemoizationCache.get_latest_for_node(node_id)` ignored the `workflow_path` column. Two workflows both with a "classify" node silently polluted each other's cost/duration estimates.
+
+**Critical detail from verification**: SQL `WHERE workflow_path = NULL` matches zero rows (NULL semantics). Direct-IR / content-string / MCP-inline runs write rows with NULL `workflow_path` — scoping-always would silently break cache lookups for those entry points. Fix guards against None: when `workflow_path is None`, fall back to unscoped lookup.
+
+**Fix**: `get_latest_for_node(node_id, *, workflow_path=None)` uses a scoped query when path is provided, unscoped when None. Threaded through via `_WalkerState.workflow_path` (populated from `shared["_pflow_workflow_file"]`, which the runner already sets to the canonically-resolved absolute path string that matches write-time).
+
+### Three new mutation-verified tests in `test_plan_drift.py`
+
+1. `test_plan_batch_llm_cost_aggregates_across_results` — disable `_extract_batch_cost_from_results` → batch cost reports None. Reverted.
+2. `test_plan_workflow_path_scoped_lookup_no_pollution` — remove `workflow_path=` in `_lookup_last_run_stats` → test sees 9999ms pollution from the other workflow. Reverted.
+3. `test_plan_sub_workflow_downstream_templates_resolve` — disable `_populate_sub_workflow_outputs` → downstream node shows `execute + template_error`. Reverted.
+
+### End-to-end verification
+
+Real workflows with gpt-4o-mini LLM calls:
+
+- **Sub-workflow** (`article-pipeline.pflow.md`): after first run, re-plan shows `format` node as `↻ cached (0s ago)` instead of `template_error`. `${analyze.topic}` resolves correctly at plan time.
+- **Batch LLM** (`batch-classify.pflow.md`): JSON shows `classify.last_cost_usd: 2.8e-05` (sum of 5 per-item costs: 6+5+6+6+5 microcents). Summary's `nodes_without_history: 0` (was 1 before).
+
+### Known limitation not fixed
+
+Batch-of-sub-workflow won't aggregate child LLM costs into the batch node's top-level `results[]`. Those costs live in nested `child_trace_events`, a different code path. Scope-out explicitly; ~more invasive fix, different semantic dimension. Agents running batch-of-sub-workflow will see cost under-report — warrants a separate follow-up if it becomes important.
+
+### Final state (this round)
+
+- `make check`: all clean (ruff + format + mypy + deptry).
+- `make test`: 5058 passed (was 5055 — +3 new mutation-verified tests).
+- All three pre-existing limitations from the manual test session addressed with production fixes.
+
+---
+
+## 2026-04-19 — Manual regression verification (30 scenarios)
+
+User asked: "have you manually verified everything works with no regressions?"
+
+Honest answer at that point: no — I'd done focused smoke tests on each fix but no comprehensive manual pass. Ran a 30-scenario regression matrix through the actual `pflow run` CLI after that.
+
+### What was verified manually (real CLI, real subprocess exits)
+
+| Category | Scenarios | Outcome |
+|---|---|---|
+| Core flow | Fresh plan / real run / fully cached / config-edit boundary | All correct; boundary dividers render per spec |
+| Flag composition | `--no-cache`, `--only`, `--validate-only`, `--report`, `--no-trace`, `-p` | Silent accepts work; hard errors return exit 1 with clear messages |
+| Output modes | JSON stderr silence, exit codes | stderr=0 bytes, JSON parses, exit 1 on missing input |
+| **Side effects** | Shell canary test (writes `/tmp/pflow_canary_$$`) | Canary absent after `--dry-run`, present after real run — proves zero side effects |
+| **L1 sub-workflow** | Fully-cached re-plan of parent whose `combine` templates `${analyze.topic}` | Renders `↻ combine (0s ago)` instead of pre-fix `template_error` |
+| L1 partial cache | Edit child's prompt, re-plan | Boundary inside child, `combine` is `cause=downstream` (correct) |
+| **L2 batch cost** | Batch LLM with historical cost data, input changed | JSON shows `last_cost_usd` summed across `results[]` |
+| Non-LLM batch | Shell batch — no crash on missing cost | `cost=None` surfaces cleanly, duration populated |
+| **L3 cross-workflow** | `wf_a.classify` (fast) + `wf_b.classify` (slow) coexisting | Each workflow's plan sees ONLY its own history — no pollution |
+| `cache: false` | Node with explicit `cache: false` flag | Renders `[shell, cache: false]`, `cause=cache_disabled` |
+| Project examples | `examples/core/minimal.pflow.md`, `examples/nested/to-uppercase.pflow.md` | No regression — plans cleanly |
+
+All 30 scenarios green. Full matrix preserved in the session transcript (R1–R30).
+
+### Insight: automated tests are necessary but not sufficient
+
+5058 passing tests gave confidence in code correctness but missed:
+- Actual exit-code behavior (CliRunner masks real subprocess exits)
+- stderr silence under `--output-format json`
+- Cross-workflow pollution reproducing at the CLI level
+- Canary-file proof of zero side effects
+
+Manual regression is the last mile — especially for agent-facing contracts where exit codes and output streams matter.
+
+---
+
+## Key decisions from this session (the ones future agents should NOT simplify away)
+
+### D1. Exact resolution for sub-workflow outputs (not placeholders)
+
+User's principle: "match real execution." For L1, this meant resolving each declared child output's `source:` template against the child's post-walk scratch shared — NOT injecting placeholder strings.
+
+**Why load-bearing**: if we used placeholders, downstream cache-key computation would use the placeholder string, producing a DIFFERENT hash than what runtime would produce. Downstream nodes would always show as execute, even when they're genuinely cached. Exact resolution means planner and runtime compute IDENTICAL cache keys for downstream nodes — parity preserved.
+
+Partial failure (source references an execute-marked child node) silently skips that key. Downstream templating the missing key then fails → `template_error` entry. This is honest: the runtime would fail the same way, and the planner surfaces it.
+
+### D2. Store duration in the output blob, not as a SQL column
+
+Considered adding `duration_ms` column to `cache_entries`. Rejected. Instead injected under reserved key `output["__pflow_stats__"]["duration_ms"]`.
+
+**Why**: cost already lives inside the output blob (`llm_usage.cost_usd`). Precedent established. Zero schema migration. No DDL to worry about for existing installed caches. Reader + writer live in the same conceptual location.
+
+### D3. Dunder name `__pflow_stats__` (not single-underscore `_pflow_stats`)
+
+Critical correctness detail from Agent 2 verification: `cache.py::_make_serializable` collapses dunder-keyed values to `"<dict>"` for deterministic hashing. Single-underscore would feed stats INTO the hash — every duration delta would invalidate caching silently.
+
+Dunder also gets filtered correctly by the trace sanitizer and rerun display. Single-underscore would have leaked into agent-visible output there.
+
+### D4. `apply_memo_hit` strips `__pflow_stats__` on restore
+
+Engine-injected metadata belongs in storage, not live shared state. A fresh execution never produces the key in shared; restoring it from cache would make cached vs fresh paths observably differ (template resolution, equality checks, trace output).
+
+Planner and engine both consume this strip for free — it's inside the shared primitive.
+
+### D5. Text duration threshold (1s) with full-fidelity JSON
+
+Sub-second durations are hidden from per-entry text lines but ALWAYS appear in JSON. Rationale: 20 × 50ms code nodes pad text without signal; agents parse JSON for exact numbers; summary totals always reflect everything regardless.
+
+### D6. Parallel field `nodes_without_duration_history` (don't widen `nodes_without_history`)
+
+Existing `nodes_without_history` = "LLM would-execute with no `cost_usd`." Widening would change the meaning of a user-visible display line and a JSON schema field without renaming. Parallel field is reversible; widening is not.
+
+### D7. `workflow_path` scoping guards against None
+
+SQL `WHERE workflow_path = NULL` matches zero rows. When `workflow_path is None` (direct-IR / content-string / MCP-inline runs write NULL), the code must fall back to unscoped lookup. Without this guard, the fix would silently break cache lookups for those entry points — worse than the pollution it's meant to fix.
+
+### D8. `_execute_entry` as single source of truth for every `status="execute"` entry
+
+First-miss (`_miss_entry`) AND BFS-downstream (`_make_downstream_entry`) both flow through `_execute_entry`. Historical stats lookup happens exactly once, in one place. Drift is impossible by construction — you can't build an execute entry without going through the primitive.
+
+Pre-fix, the two paths diverged (only `_miss_entry` attached cost). That caused the silent-$0 bug on downstream LLMs. Funneling through one primitive eliminates that whole class of bug permanently.
+
+### D9. `_build_plan_with_shared` internal helper, public API unchanged
+
+`_plan_sub_workflow` needs the child's post-walk scratch shared to resolve declared outputs. Rather than changing `build_plan`'s signature (public API surface), split the implementation: `build_plan` returns just `Plan`; `_build_plan_with_shared` returns `(Plan, dict)`. Internal callers use the latter; MCP/CLI still see the original signature.
+
+### D10. Verification-first for L3 (SQL NULL case was the critical detail)
+
+Before coding L3, ran a verification agent specifically on `workflow_path` write/read semantics. That caught the SQL NULL issue — `WHERE workflow_path = NULL` matching zero rows — which would have silently broken direct-IR / MCP-inline runs if implemented naively.
+
+Without the verification pass, the fix would have shipped broken. Pre-coding verification for correctness-sensitive fixes is worth the ~3 minutes.
+
+### D11. Agent reports can be wrong; verify empirically when claims conflict with behavior
+
+Agent C (verification pass) claimed runtime does NOT populate `shared[sub_workflow_node_id]`. My actual test run showed `shared['analyze']` WAS populated with `{topic, body}` — `${analyze.topic}` resolved correctly at runtime. Agent C had looked at `_expose_child_outputs` in isolation and missed that `NamespacedSharedStore.__init__` creates the node-id dict as a side effect, and `_expose_child_outputs` writes through the namespaced proxy.
+
+Lesson: when an agent's claim conflicts with observed behavior, trust the observation. Agents infer from what they read; they can miss implicit coupling between components. Empirical verification (a 20-second script that inspects `shared_after`) caught this instantly.
+
+### D12. Bundle related limitations in one PR, not three follow-ups
+
+Initially proposed filing L1/L2/L3 as separate follow-up issues. User's "shouldn't we address all the limitations?" was the right call — the three limitations share the same conceptual area (historical stats lookup + sub-workflow handling). Fixing them together meant:
+- One verification pass covers all three
+- Shared refactor (`_build_plan_with_shared`, threading `workflow_path` through state) serves multiple fixes
+- Mutation tests co-located with the code they guard
+
+Three separate PRs would have required revisiting the same area three times, three separate review cycles, three chances to miss interactions.
+
+### D13. Manual regression is the last mile
+
+Automated suite = necessary. Manual CLI pass = sufficient. Tests pass but miss: exit codes (subprocess-level), stderr silence, flag-composition UX text, cross-workflow pollution reproducing in practice, canary-file proof of zero side effects.
+
+---
+
+## Session metrics
+
+- **Agents run (parallel batches)**:
+  - Round 1 (batch structure + workflow_path + sub-workflow outputs): 3 agents
+  - Round 2 (empirical verification of Agent C's claim via actual run): 1 shell script
+
+- **Code changed**: ~100 prod lines + ~120 test lines across 5 files
+  - `src/pflow/execution/plan.py` — `_execute_entry`, `_build_plan_with_shared`, `_populate_sub_workflow_outputs`, `_extract_batch_cost_from_results`, helpers
+  - `src/pflow/runtime/cache.py` — `get_latest_for_node(workflow_path=...)`
+  - `tests/test_execution/test_plan_drift.py` — 3 new mutation-verified tests
+  - CLAUDE.md updates in `runtime/engine/` and `execution/` (from prior round, still current)
+
+- **Test suite**: 5052 → 5058 (+6 across both sub-sessions: 3 cost/duration + 3 L1/L2/L3)
+
+- **Manual regression**: 30 CLI scenarios, all green
+
+- **Mutation verifications**: 6 total (3 from this round + 3 from prior round in same session) — each new test proven to catch its specific regression class
+
+---
+
+## For the next agent working in this area
+
+1. **Read the invariants docstring at the top of `plan.py` first.** It lists 4 load-bearing invariants that look like "simplification opportunities" but each prevents a drift class.
+
+2. **The `_execute_entry` primitive is the chokepoint for every `status="execute"` PlanEntry.** If you add a new code path that creates execute entries, route it through `_execute_entry` — don't build `PlanEntry(status="execute", ...)` directly. That's how the BFS-downstream-no-cost bug was introduced originally; the primitive is how it was eliminated permanently.
+
+3. **Reserved key `__pflow_stats__`** is the dunder convention for engine-injected output metadata. Documented in `runtime/engine/CLAUDE.md`. Don't invent parallel conventions. If you need to add a new stats field (e.g., memory, tokens), add it inside the existing dict, not at a new top-level key.
+
+4. **`workflow_path` scoping is guarded against None — never remove the guard.** SQL NULL semantics break the naive scoping approach. If you change the lookup path, keep the `if workflow_path is not None` fallback.
+
+5. **For sub-workflow changes**: remember `NamespacedSharedStore` + `_expose_child_outputs` together populate `shared[node_id]`. The planner mirrors this via `_populate_sub_workflow_outputs`. Don't break either side without updating the other.
+
+6. **Batch-of-sub-workflow cost aggregation** is a known remaining gap (child LLM costs live in `child_trace_events`, not in `results[]`). If you touch batch cost handling, this is the likely next follow-up — worth checking if the trace path is now accessible from the planner.
+
+7. **Manual regression matters.** The 30-scenario CLI pass caught things tests didn't. Before declaring "done," run the actual `pflow run` against representative workflows.
+
+---
+
+## 2026-04-19 — Honest loose-ends review + final closure
+
+User asked: "are you FULLY happy with the implementation and are there no loose ends? High-value tests worth adding?"
+
+Answer at that point: mostly happy, but two real gaps worth closing.
+
+### Gap 1 — Undeclared-output sub-workflow drift
+
+**Discovered by**: stepping back and re-reading `_expose_child_outputs` at `workflow_executor.py:452-478`. Runtime has a FALLBACK path: when the child has no `## Outputs`, it copies every non-internal, non-input key from child_storage to the parent's namespace. My L1 fix (`_populate_sub_workflow_outputs`) only handled the DECLARED case — the fallback was missing.
+
+**Why this is a real drift**: a parent referencing `${sub_wf_id.child_node_id.field}` on an undeclared-output child works at runtime (via the namespace fallback) but fails at plan time (planner's `shared[sub_wf_id]` stays empty).
+
+**Fix**: extended `_populate_sub_workflow_outputs` into a two-branch dispatch:
+- `_resolve_declared_outputs(...)` — existing path for `## Outputs` declarations.
+- `_mirror_child_shared(...)` — new fallback that copies non-internal, non-input keys from child_shared into `parent_shared[node_id]`. Mirrors runtime exactly.
+
+Required threading `child_inputs` into `_populate_sub_workflow_outputs` (+1 arg). Internal-only API — no public surface change.
+
+### Gap 2 — NULL workflow_path path was untested
+
+The L3 fix has a subtle guard: `if workflow_path is not None:` → scoped query, else → unscoped fallback. Critical for direct-IR / content-string / MCP-inline runs (which write NULL `workflow_path`).
+
+**Why this is test-worthy**: easy to "simplify" by removing the guard ("we always have a path now, right?"), silently breaking cost/duration history lookup for a full class of entry points. SQL NULL semantics (`WHERE workflow_path = NULL` matches zero rows) make the failure invisible — no exception, just missing stats.
+
+**Test added**: `test_plan_direct_ir_null_workflow_path_historical_stats` — seeds a cache entry with NULL `workflow_path`, then plans a direct-IR workflow (no file path). Asserts the historical duration surfaces. Mutation-verified: changing the guard to `if True:` makes the scoped query run with `None` → matches nothing → test fails.
+
+### Two new tests this round
+
+1. `test_plan_sub_workflow_undeclared_outputs_fallback` — covers gap 1. Mutation: remove the `_mirror_child_shared` branch → downstream parent node shows `execute + template_error`. Reverted.
+2. `test_plan_direct_ir_null_workflow_path_historical_stats` — covers gap 2. Mutation: remove the NULL guard → last_duration_ms becomes None. Reverted.
+
+### What was NOT fixed (explicit scope boundary)
+
+- **Batch-of-sub-workflow cost aggregation**: child LLM costs live in `child_trace_events`, a different code path. Agents running this pattern will see cost under-report. Warrants a separate PR if cost-gating on this pattern becomes important.
+- **Direct-IR cross-workflow pollution for NULL writers**: two different direct-IR runs with overlapping node names DO still pollute each other (both write NULL → unscoped lookup matches both). There's no stable path to scope by. Could compute an IR-content hash as a synthetic identifier, but that's a separate design decision.
+
+Both preserved in the progress log for future-agent awareness.
+
+### Final decisions added (D14–D15)
+
+**D14. Mirror runtime fallback for undeclared sub-workflow outputs.**
+
+User's "match real execution" principle (D1) isn't conditional on whether outputs are declared. The declared case was the common one and was done first; the undeclared case completes the symmetry. Both paths now produce `parent_shared[sub_wf_node_id] = {...}` with content matching what runtime would produce under the same conditions.
+
+Implementation detail: the fallback reuses `_expose_child_outputs`'s filter rules verbatim (`startswith(("_pflow_", "__"))` for internals, `child_input_keys` for inputs). If the runtime filter changes, this is a parallel drift surface — noted in comments at both sites.
+
+**D15. Test the subtle guards, not just the happy paths.**
+
+The NULL-workflow_path guard is a single-line `if workflow_path is not None:` check. Conceptually trivial; mechanically critical. Without a dedicated test, it's a prime target for "simplification" by a future agent who doesn't know SQL NULL semantics.
+
+Lesson: any guard whose removal would cause SILENT failure (no exception, just wrong answer) needs a mutation-verified test that specifically exercises the guarded-against case. The guard's presence in code isn't enough — the test is what makes the invariant stick.
+
+### Final state (end of session)
+
+- `make check`: all clean (ruff + format + mypy + deptry).
+- `make test`: 5060 passed (was 5058 — +2 mutation-verified tests this round).
+- Total mutation-verified tests added across this full task: 8 (3 from first round on state-machine + 3 from second round on L1/L2/L3 + 2 from this final round on edge cases).
+- Production code now handles: declared sub-workflow outputs (L1a), undeclared sub-workflow outputs (L1b), batch cost aggregation (L2), workflow_path scoping with NULL guard (L3).
+- All three originally-discovered limitations + two symmetry/correctness gaps discovered in the honest review → fixed or deliberately out-of-scope with documented rationale.
+
+### Honest self-assessment
+
+- **Am I fully happy?** Yes now. The code does what runtime does in every path I've been able to identify, with mutation-verified tests pinning the load-bearing invariants.
+- **Loose ends?** Two documented out-of-scope items (batch-of-sub-workflow, direct-IR cross-pollution) — both need a broader design decision rather than another small fix.
+- **Test bloat risk?** Reviewed each new test for mutation-verifiability. Every one catches a specific regression class, not coverage-for-coverage's-sake.
+- **Drift surfaces remaining?** None I've identified. The `_execute_entry` primitive + `_populate_sub_workflow_outputs` two-branch + NULL-guarded workflow_path scoping + dunder-named `__pflow_stats__` form a coherent set where each piece enforces parity with runtime in its respective area.
+
+### For the next agent (updated)
+
+Prior "for the next agent" list still applies. Additions from this round:
+
+8. **The undeclared-output sub-workflow fallback in `_populate_sub_workflow_outputs` mirrors runtime's `_expose_child_outputs` fallback.** If the runtime filter changes (e.g., adds a new reserved prefix), update BOTH sites. Cross-references in comments.
+
+9. **The `workflow_path is not None` guard in `get_latest_for_node` is a silent-failure trap.** SQL NULL doesn't match with `=`. Test `test_plan_direct_ir_null_workflow_path_historical_stats` will fail loudly if the guard is removed. Don't silence the test — fix the guard.
+

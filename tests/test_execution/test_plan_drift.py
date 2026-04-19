@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pflow.execution.plan import build_plan
 from pflow.execution.result import RunnerConfig
@@ -436,7 +437,7 @@ def test_plan_cost_nested_rollup(tmp_path) -> None:
     assert plan.summary.nodes_without_history == 0
 
     # Child plan: the LLM is the first miss → `_miss_entry` attaches its
-    # historical cost via `_lookup_last_cost(config, cache)`.
+    # historical cost via `_lookup_last_run_stats(config, cache)`.
     child_plan = plan.entries[0].sub_plan
     assert child_plan is not None
     llm_entries = [e for e in child_plan.entries if e.node_type == "LLMNode"]
@@ -532,3 +533,612 @@ printf right
 
     # Parent is linear, but its rollup must reflect the child's uncertainty.
     assert plan.summary.cost_basis == "upper_bound"
+
+
+def _seed_cache_entry(
+    cache: MemoizationCache,
+    compiled: Any,
+    node_id: str,
+    action: str,
+    output: dict,
+    duration_ms: float | None = None,
+    shared_extras: dict | None = None,
+) -> None:
+    """Write a cache entry for `node_id` keyed exactly as `plan_node` derives it.
+
+    Uses `plan_node` itself to compute the cache key — this is the only way
+    to guarantee the seeded key matches what the planner will look up on its
+    next call (otherwise resolved_params differ and the lookup misses).
+
+    Pass `shared_extras` for nodes that reference inputs (e.g., batch's
+    `items` template needs the array in shared to compute a batch cache key).
+
+    Used by the visit_counts drift test to stage a cyclic-cache state the
+    live engine can't produce (infinite loop) but the planner can walk.
+    """
+    from pflow.runtime.engine.plan_node import plan_node
+
+    # Locate the node object in the compiled graph (breadth-first).
+    target = None
+    queue = [compiled.start_node]
+    seen: set[str] = set()
+    while queue:
+        n = queue.pop(0)
+        nid = getattr(n, "node_id", None)
+        if not isinstance(nid, str) or nid in seen:
+            continue
+        seen.add(nid)
+        if nid == node_id:
+            target = n
+            break
+        queue.extend(n.successors.values())
+    assert target is not None, f"node {node_id!r} not found in compiled graph"
+
+    config = compiled.node_configs[node_id]
+    shared: dict[str, Any] = {
+        "__execution__": {"node_visit_counts": {}},
+        "__memoization_cache__": cache,
+    }
+    if shared_extras:
+        shared.update(shared_extras)
+    planned = plan_node(target, config, shared)
+    cache_key = planned.cache_key
+    assert cache_key is not None, f"plan_node returned no cache_key for {node_id!r}"
+
+    blob = dict(output)
+    if duration_ms is not None:
+        blob["__pflow_stats__"] = {"duration_ms": duration_ms}
+    cache.put(cache_key, node_id, None, action, blob)
+
+
+def test_plan_walker_bumps_visit_counts_before_plan_node(monkeypatch, tmp_path) -> None:
+    """Walker must bump `node_visit_counts` BEFORE each `plan_node` call.
+
+    Load-bearing invariant #2 from `plan.py`'s module docstring. Mirrors the
+    engine's `enforce_loop_guard`. Without the pre-bump, a node revisited
+    after a cycle would still show `visit_counts[nid] == 1` on the second
+    `plan_node` call, so `memo_cache_lookup`'s `visit_counts > 1` gate
+    never trips — silent divergence from the engine.
+
+    The observable effect can be masked by the in-process cache when inputs
+    don't change between visits, so we pin the contract directly: on the
+    walker's second visit to `a`, `plan_node` must see `visit_counts[a] == 2`.
+
+    Mutation: remove the `visit_counts[node_id] = ... + 1` line in
+    `build_plan`'s main loop → the second recorded value stays at 1 and
+    this assertion fails.
+    """
+    from pflow.execution import plan as plan_module
+
+    ir = {
+        "nodes": [
+            {"id": "a", "type": "shell", "params": {"command": "echo a"}},
+            {"id": "b", "type": "shell", "params": {"command": "echo b"}},
+        ],
+        "edges": [
+            {"from": "a", "to": "b", "action": "go"},
+            {"from": "b", "to": "a", "action": "back"},
+        ],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    _seed_cache_entry(cache, compiled, "a", "go", {"stdout": "a", "exit_code": 0})
+    _seed_cache_entry(cache, compiled, "b", "back", {"stdout": "b", "exit_code": 0})
+
+    recorded: list[tuple[str, int]] = []
+    real_plan_node = plan_module.plan_node
+
+    def spy(node, config, shared):
+        visit_counts = shared.get("__execution__", {}).get("node_visit_counts", {})
+        recorded.append((config.node_id, visit_counts.get(config.node_id, 0)))
+        return real_plan_node(node, config, shared)
+
+    monkeypatch.setattr(plan_module, "plan_node", spy)
+
+    build_plan(compiled, {}, cache, registry, workflow_name="cycle")
+
+    # Walker visits: a → b → a (revisit, edge (b,"back") advanced us back).
+    # Each call records the visit_counts state plan_node observed.
+    assert recorded == [("a", 1), ("b", 1), ("a", 2)]
+
+
+def test_plan_bfs_downstream_attaches_historical_stats(tmp_path) -> None:
+    """BFS-discovered downstream entries must carry historical cost + duration.
+
+    Previously `_make_downstream_entry` built a bare PlanEntry without a
+    stats lookup, so a downstream LLM node after a non-LLM miss showed $0
+    even when its cost + duration history was in the cache. Agents cost-
+    or time-gating against the aggregate saw silent underestimates.
+
+    `_execute_entry` is now the single path every `status="execute"` entry
+    flows through — the downstream BFS call site inherits the stats lookup
+    by construction. Mutation: revert `_make_downstream_entry` to build a
+    raw PlanEntry without `_execute_entry` → this assertion fails.
+    """
+    ir = {
+        "nodes": [
+            {"id": "seed", "type": "shell", "params": {"command": "printf seed"}},
+            {
+                "id": "downstream",
+                "type": "shell",
+                "params": {"command": "printf down"},
+            },
+        ],
+        "edges": [{"from": "seed", "to": "downstream"}],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    # Seed only `downstream`'s history — `seed` is the first miss, so the
+    # boundary triggers BFS which discovers `downstream`.
+    _seed_cache_entry(
+        cache,
+        compiled,
+        "downstream",
+        "default",
+        {"stdout": "down", "exit_code": 0},
+        duration_ms=1234.5,
+    )
+
+    plan = build_plan(compiled, {}, cache, registry, workflow_name="bfs-stats")
+
+    by_id = {e.node_id: e for e in plan.entries}
+    downstream = by_id["downstream"]
+    assert downstream.status == "execute"
+    assert downstream.cause == "downstream"
+    # Duration from the cache entry's `__pflow_stats__` must reach the
+    # downstream entry via `_execute_entry`.
+    assert downstream.last_duration_ms == 1234.5
+    assert downstream.last_run_age_sec is not None
+
+
+def test_plan_duration_nested_rollup(tmp_path) -> None:
+    """Nested duration must roll up into the parent's `_including_nested`.
+
+    Parallel to `test_plan_cost_nested_rollup`. Parent has no execute nodes
+    directly; child has one execute node with a known historical duration.
+    Agent time-gating reads `estimated_duration_ms_including_nested`, so
+    nested durations must aggregate correctly across the sub-workflow
+    boundary. Mutation: remove the `nested_duration += ...` branch in
+    `_summarize` → this assertion fails.
+    """
+    child_path = tmp_path / "child-duration.pflow.md"
+    parent_path = tmp_path / "parent-duration.pflow.md"
+
+    write_workflow_file(
+        {
+            "nodes": [
+                {
+                    "id": "work",
+                    "type": "shell",
+                    "params": {"command": "printf work"},
+                },
+            ],
+            "edges": [],
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {}},
+                },
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+
+    first = _runner_run(parent_path)
+    assert first.success
+
+    # Edit child to invalidate the cache → `work` becomes a miss → historical
+    # duration from the first run surfaces on the plan entry + summary.
+    write_workflow_file(
+        {
+            "nodes": [
+                {
+                    "id": "work",
+                    "type": "shell",
+                    "params": {"command": "printf work-edited"},
+                },
+            ],
+            "edges": [],
+        },
+        child_path,
+    )
+    plan = _runner_plan(parent_path)
+
+    # Parent level: only a sub_workflow entry — no direct duration.
+    assert plan.summary.estimated_duration_ms == 0.0
+
+    child_plan = plan.entries[0].sub_plan
+    assert child_plan is not None
+    work = next(e for e in child_plan.entries if e.node_id == "work")
+    assert work.status == "execute"
+    assert work.last_duration_ms is not None
+    assert work.last_duration_ms > 0
+
+    # Nested rollup: parent's _including_nested equals the child's aggregate.
+    rollup = plan.summary.estimated_duration_ms_including_nested
+    assert rollup is not None
+    assert rollup == child_plan.summary.estimated_duration_ms
+    assert rollup > 0
+
+
+def test_plan_batch_llm_cost_aggregates_across_results(tmp_path) -> None:
+    """Batch LLM cost must sum across `results[i].llm_usage.cost_usd`.
+
+    The batch node's cached blob has no top-level `llm_usage` — cost lives
+    per-item inside `results[]`. Before this fix, `_read_stats_from_output`
+    only checked the top level and reported batch LLMs as `≈ $?` even when
+    every item had cost history. Issue #310's motivating example is a batch
+    LLM pipeline — showing `$?` there defeats the feature.
+
+    Mutation: remove the `_extract_batch_cost_from_results` call in
+    `_read_stats_from_output` → this assertion fails.
+    """
+    ir = {
+        "inputs": {"items": {"type": "array"}},
+        "nodes": [
+            {
+                "id": "classify",
+                "type": "llm",
+                "params": {"model": "gpt-4o-mini", "prompt": "Classify: ${item}"},
+                "batch": {"items": "${items}", "parallel": False, "max_concurrent": 1},
+            },
+        ],
+        "edges": [],
+    }
+
+    # Directly seed the cache with a batch entry shape matching what the
+    # engine would write — no real LLM call needed.
+    compiled, registry = _compile(ir, params={"items": ["a", "b", "c"]})
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    batch_output = {
+        "results": [
+            {"item": "a", "llm_usage": {"cost_usd": 0.0012, "model": "gpt-4o-mini"}, "response": "x"},
+            {"item": "b", "llm_usage": {"cost_usd": 0.0034, "model": "gpt-4o-mini"}, "response": "y"},
+            {"item": "c", "llm_usage": {"cost_usd": 0.0056, "model": "gpt-4o-mini"}, "response": "z"},
+        ],
+        "count": 3,
+        "success_count": 3,
+        "error_count": 0,
+        "errors": [],
+    }
+    _seed_cache_entry(
+        cache,
+        compiled,
+        "classify",
+        "default",
+        batch_output,
+        duration_ms=1500.0,
+        shared_extras={"items": ["a", "b", "c"]},
+    )
+
+    # Plan with DIFFERENT items — classify becomes a miss, historical cost
+    # (summed across results) must surface.
+    compiled2, registry2 = _compile(ir, params={"items": ["a", "b", "c", "d"]})
+    plan = build_plan(compiled2, {"items": ["a", "b", "c", "d"]}, cache, registry2, workflow_name="batch")
+
+    classify = next(e for e in plan.entries if e.node_id == "classify")
+    assert classify.status == "execute"
+    assert classify.cause == "no_cache_match"
+    # Sum of 0.0012 + 0.0034 + 0.0056 = 0.0102 (allow tiny float tolerance).
+    assert classify.last_cost_usd is not None
+    assert abs(classify.last_cost_usd - 0.0102) < 1e-9
+
+
+def test_plan_workflow_path_scoped_lookup_no_pollution(tmp_path) -> None:
+    """Historical stats lookup must scope by workflow_path to prevent pollution.
+
+    Before this fix, `get_latest_for_node("classify")` returned the most
+    recent entry regardless of which workflow wrote it. Two workflows sharing
+    a common node name (like "classify") silently polluted each other's
+    cost/duration estimates.
+
+    Mutation: remove the `workflow_path=` filter in `get_latest_for_node`
+    (or in `_lookup_last_run_stats`) → this assertion fails because the
+    other workflow's duration (the WRONG value) leaks in.
+    """
+    # Two workflows, both with a node named "classify" but DIFFERENT workflow_path.
+    ir_a = {
+        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo a"}}],
+        "edges": [],
+    }
+    ir_b = {
+        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo b"}}],
+        "edges": [],
+    }
+    compiled_a, registry_a = _compile(ir_a)
+    compiled_b, registry_b = _compile(ir_b)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    # Write each entry with its own workflow_path, different durations.
+    # Use the real put() with workflow_path explicitly (bypass the seed helper
+    # since it writes with workflow_path=None).
+    from pflow.runtime.engine.plan_node import plan_node
+
+    for compiled, workflow_path, output, duration in [
+        (
+            compiled_a,
+            "/fake/workflow_a.pflow.md",
+            {"stdout": "a", "exit_code": 0},
+            100.0,
+        ),
+        (
+            compiled_b,
+            "/fake/workflow_b.pflow.md",
+            {"stdout": "b", "exit_code": 0},
+            9999.0,  # Very different — if pollution occurs, this leaks into A's lookup.
+        ),
+    ]:
+        target = next(iter(compiled.node_configs.values()))
+        planned = plan_node(
+            compiled.start_node,
+            target,
+            {"__execution__": {"node_visit_counts": {}}, "__memoization_cache__": cache},
+        )
+        blob = dict(output)
+        blob["__pflow_stats__"] = {"duration_ms": duration}
+        cache.put(planned.cache_key, "classify", workflow_path, "default", blob)
+
+    # Plan workflow A with its own workflow_path. The planner's scoped
+    # lookup must NOT leak workflow B's 9999ms duration.
+    params_a = {"_pflow_workflow_file": "/fake/workflow_a.pflow.md"}
+    # Edit the workflow so A's own entry is a miss — historical stats surface.
+    compiled_a_edited, _ = _compile({
+        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo a-edited"}}],
+        "edges": [],
+    })
+    plan = build_plan(compiled_a_edited, params_a, cache, registry_a, workflow_name="workflow_a.pflow.md")
+
+    classify = next(e for e in plan.entries if e.node_id == "classify")
+    assert classify.status == "execute"
+    # Should see A's own 100ms duration, NOT B's 9999ms.
+    assert classify.last_duration_ms is not None
+    assert classify.last_duration_ms == 100.0
+
+
+def test_plan_sub_workflow_downstream_templates_resolve(tmp_path) -> None:
+    """Parent's `shared[sub_workflow_node_id]` must be populated with
+    declared child outputs so downstream nodes can template against them.
+
+    Before this fix, `_plan_sub_workflow` returned without populating parent
+    shared, so `${analyze.topic}` in downstream nodes failed template
+    resolution → plan emitted `cause: "template_error"` entries for any
+    parent node that used sub-workflow outputs. This made the planner
+    unusable for a core pflow pattern (sub-workflow composition).
+
+    Mutation: remove the `_populate_sub_workflow_outputs(...)` call in
+    `_plan_sub_workflow` → this assertion fails (downstream shows
+    `template_error` with "Unresolved variables").
+    """
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    # Child declares two outputs sourcing from its internal nodes.
+    child_path.write_text(
+        """# Child
+
+Computes two values.
+
+## Inputs
+
+### seed
+
+Seed text.
+
+- type: string
+
+## Outputs
+
+### topic
+
+Selected topic.
+
+- source: ${pick.stdout}
+
+### body
+
+Computed body.
+
+- source: ${make.stdout}
+
+## Steps
+
+### pick
+
+Pick a topic.
+
+- type: shell
+
+```shell command
+printf "topic-from-%s" "${seed}"
+```
+
+### make
+
+Make a body.
+
+- type: shell
+
+```shell command
+printf "body-from-%s" "${seed}"
+```
+""",
+        encoding="utf-8",
+    )
+    # Parent uses `${analyze.topic}` and `${analyze.body}` downstream.
+    write_workflow_file(
+        {
+            "inputs": {"input_text": {"type": "string"}},
+            "nodes": [
+                {
+                    "id": "analyze",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${input_text}"}},
+                },
+                {
+                    "id": "combine",
+                    "type": "shell",
+                    "params": {"command": 'printf "%s|%s" "${analyze.topic}" "${analyze.body}"'},
+                },
+            ],
+            "edges": [{"from": "analyze", "to": "combine"}],
+        },
+        parent_path,
+    )
+
+    # First: real run to populate cache so child outputs are cached.
+    first = _runner_run(parent_path, {"input_text": "hello"})
+    assert first.success
+
+    # Second: dry-run. Child is fully cached → exact resolution of declared
+    # outputs → parent's shared[analyze] has {topic, body} → combine can
+    # template-resolve → planner predicts cached (not template_error).
+    plan = _runner_plan(parent_path, {"input_text": "hello"})
+
+    combine = next(e for e in plan.entries if e.node_id == "combine")
+    assert combine.status == "cached", (
+        f"expected combine to be cached (child outputs resolved), got status={combine.status} cause={combine.cause}"
+    )
+    assert combine.cause == "hash_match"
+
+
+def test_plan_sub_workflow_undeclared_outputs_fallback(tmp_path) -> None:
+    """Sub-workflows without declared `## Outputs` must still expose their
+    child node outputs for parent-level template resolution.
+
+    Runtime's `WorkflowExecutor._expose_child_outputs` has a fallback: when
+    the child has no declared outputs, it copies all non-internal, non-input
+    keys from child_storage to the parent's namespace. This lets parent nodes
+    template `${sub_wf_id.child_node_id.field}`.
+
+    Before this fix, the planner's `_populate_sub_workflow_outputs` only
+    handled the declared case — the undeclared-fallback path was missing.
+    Downstream parent nodes referencing undeclared child outputs failed
+    template resolution at plan time, even when runtime would succeed.
+
+    Mutation: remove the `_mirror_child_shared` branch in
+    `_populate_sub_workflow_outputs` → downstream becomes `template_error`.
+    """
+    child_path = tmp_path / "undeclared_child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    # Child with NO `## Outputs` section.
+    child_path.write_text(
+        """# Undeclared Child
+
+Computes an intermediate value; exposes it via fallback, not via declared outputs.
+
+## Inputs
+
+### seed
+
+Seed text.
+
+- type: string
+
+## Steps
+
+### compute
+
+Do the work.
+
+- type: shell
+
+```shell command
+printf "computed-from-%s" "${seed}"
+```
+""",
+        encoding="utf-8",
+    )
+    # Parent references `${analyze.compute.stdout}` — undeclared child output.
+    write_workflow_file(
+        {
+            "inputs": {"input_text": {"type": "string"}},
+            "nodes": [
+                {
+                    "id": "analyze",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"seed": "${input_text}"}},
+                },
+                {
+                    "id": "use",
+                    "type": "shell",
+                    "params": {"command": 'printf "got %s" "${analyze.compute.stdout}"'},
+                },
+            ],
+            "edges": [{"from": "analyze", "to": "use"}],
+        },
+        parent_path,
+    )
+
+    first = _runner_run(parent_path, {"input_text": "hello"})
+    assert first.success
+
+    # Plan: child fully cached, declared-outputs fallback should expose
+    # child's `compute` key under analyze namespace → parent's `use` can
+    # template-resolve `${analyze.compute.stdout}` → cached.
+    plan = _runner_plan(parent_path, {"input_text": "hello"})
+    use = next(e for e in plan.entries if e.node_id == "use")
+    assert use.status == "cached", (
+        f"expected use to be cached (undeclared outputs mirrored), got status={use.status} cause={use.cause}"
+    )
+
+
+def test_plan_direct_ir_null_workflow_path_historical_stats(tmp_path) -> None:
+    """Direct-IR / content-string runs write NULL `workflow_path`; planner
+    must fall back to UNSCOPED lookup when `workflow_path is None`.
+
+    SQL NULL semantics: `WHERE workflow_path = NULL` matches zero rows. If a
+    future refactor removes the `if workflow_path is not None:` guard in
+    `_lookup_last_run_stats` (thinking "we always have a path now"), all
+    direct-IR cache lookups silently return None — agent cost-gating on
+    dict-based workflows loses history completely.
+
+    Mutation: change the guard to `if True:` in `_lookup_last_run_stats` →
+    the scoped query runs with `workflow_path=None` → matches nothing →
+    test fails because `last_duration_ms` is None instead of the seeded value.
+    """
+    # Build an IR dict (no file path) and compile it — matches a direct-IR run.
+    ir = {
+        "nodes": [{"id": "work", "type": "shell", "params": {"command": "printf result"}}],
+        "edges": [],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    # Seed a cache entry with NULL workflow_path (matches what the engine
+    # writes for direct-IR runs where `_pflow_workflow_file` is never set).
+    from pflow.runtime.engine.plan_node import plan_node
+
+    config = compiled.node_configs["work"]
+    planned = plan_node(
+        compiled.start_node,
+        config,
+        {"__execution__": {"node_visit_counts": {}}, "__memoization_cache__": cache},
+    )
+    assert planned.cache_key is not None
+    blob = {"stdout": "result", "exit_code": 0, "__pflow_stats__": {"duration_ms": 42.5}}
+    cache.put(planned.cache_key, "work", None, "default", blob)  # workflow_path=None
+
+    # Plan the same IR with no `_pflow_workflow_file` in params — _WalkerState.workflow_path
+    # will also be None → _lookup_last_run_stats falls back to unscoped lookup.
+    # Edit the command so plan sees a miss → _execute_entry attaches historical stats.
+    ir_edited = {
+        "nodes": [{"id": "work", "type": "shell", "params": {"command": "printf result-edited"}}],
+        "edges": [],
+    }
+    compiled_edited, registry_edited = _compile(ir_edited)
+    plan = build_plan(compiled_edited, {}, cache, registry_edited, workflow_name="direct-ir")
+
+    work = next(e for e in plan.entries if e.node_id == "work")
+    assert work.status == "execute"
+    # NULL-path fallback must surface the historical duration; if the guard
+    # is mutated away, this would be None (scoped query with NULL matches 0 rows).
+    assert work.last_duration_ms == 42.5
