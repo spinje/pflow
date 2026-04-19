@@ -300,6 +300,47 @@ class ExecutionService(BaseService):
 
     @classmethod
     @ensure_stateless
+    def plan_workflow(
+        cls,
+        workflow: Any,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build workflow execution plan without invoking side effects."""
+        from pflow.execution.formatters.plan_formatter import format_plan_json
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
+
+        validated_params: dict[str, Any] = {}
+        if parameters:
+            is_valid, error = validate_execution_parameters(parameters)
+            if not is_valid:
+                raise ValueError(f"Invalid parameters: {error}")
+            validated_params = dict(parameters)
+
+        try:
+            resolved = _unified_resolve(workflow)
+        except WorkflowNotFoundError as e:
+            hint = str(e)
+            if e.similar_names:
+                hint += f"\nDid you mean: {', '.join(e.similar_names[:5])}"
+            raise ValueError(hint) from e
+        except Exception as e:
+            raise ValueError(str(e)) from e
+
+        if resolved.file_path:
+            validated_params["_pflow_workflow_file"] = resolved.file_path
+
+        runner = WorkflowRunner()
+        try:
+            plan = runner.plan(resolved, validated_params, RunnerConfig())
+        except Exception as e:
+            logger.error("Workflow planning failed: %s", e, exc_info=True)
+            raise RuntimeError(f"❌ Workflow planning failed: {e}") from e
+
+        return format_plan_json(plan)
+
+    @classmethod
+    @ensure_stateless
     def save_workflow(cls, workflow: str, name: str, force: bool = False) -> str:
         """Save workflow to global library.
 

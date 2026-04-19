@@ -28,12 +28,9 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │  1. setup_llm_interception
         │  2. initialize_execution_state
         │  3. enforce_loop_guard       (clears stale __failures__ on revisit)
-        │  4. compute_config_hash       (doesn't need resolved params)
         │
         ├─ INSIDE try (template errors get trace recording):
-        │  5. resolve_templates         (SKIP for batch nodes — per-item in callback)
-        │  6. check_memo_cache → early return (SKIP when cache_enabled=False)
-        │  7. check_cache_validity → early return via handle_cached_execution
+        │  4-7. plan_node() → decides cached/miss and returns NodePlan
         │  8. call_start_callback
         │  9. execute: batch → execute_batch() | single → node._run(namespaced_store)
         │  10. detect_api_warning → handle_api_warning if found (returns "error")
@@ -91,6 +88,23 @@ Happy path: steps 1-17.5, returns action string. Error path: catches exception, 
 - `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution `ValueError` (via `_pflow_partial_resolutions` presence) as `template_error`, otherwise `exception`
 - `e._pflow_node_id = config.node_id` — the Runner's `_exception_to_result` reads this to annotate diagnostics
 - The Runner additionally attaches `e._pflow_shared_store = shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after`. Without this, exception-path failures have empty `shared_after` and CLI/MCP formatters lose all per-node detail.
+
+### `plan_node.py` — The Shared Decision Primitive
+
+`plan_node(node, config, shared) -> NodePlan` is called by both:
+
+- `engine.py::_execute_node()`
+- `execution/plan.py::build_plan()`
+
+It owns config hashing, non-batch template resolution, memo-cache lookup, and in-process cache lookup. It does **not** execute the node, call the loop guard, emit progress, or mutate `shared`.
+
+`check_memo_cache()` and `check_cache_validity()` remain as thin compatibility wrappers. The new lower-level primitives are:
+
+- `memo_cache_lookup()`
+- `apply_memo_hit()`
+- `in_process_cache_lookup()`
+
+Parity is enforced by `tests/test_execution/test_plan_drift.py`.
 
 ### `_execute_single_node(node, config, shared) → (action, last_resolutions, template_errors)`
 

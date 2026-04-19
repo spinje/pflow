@@ -446,6 +446,7 @@ class TestLLMNode:
                 "total_tokens": 225,
                 "cache_creation_input_tokens": 10,
                 "cache_read_input_tokens": 20,
+                "cost_usd": 0.00966,
             }
 
     # Test Criteria 22: response.usage() returns None → empty dict {} stored in shared["llm_usage"]

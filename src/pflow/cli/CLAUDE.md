@@ -21,9 +21,11 @@ PflowCLI.resolve_command (Click-native routing)
                     ↓ parse_workflow_params (param_parsing.py)
                     ↓ _route_stdin_to_params
                 ↓ execute_json_workflow
-                    ↓ WorkflowRunner().run() (from pflow.execution.runner)
-                    ├─→ success: _handle_workflow_success → _handle_workflow_output (workflow_output.py)
-                    └─→ error: output_error() (error_output.py) → JSON or text
+                    ├─→ dry-run: WorkflowRunner().plan() → plan_formatter
+                    ├─→ validate-only: WorkflowRunner().validate()
+                    └─→ execute: WorkflowRunner().run() (from pflow.execution.runner)
+                            ├─→ success: _handle_workflow_success → _handle_workflow_output (workflow_output.py)
+                            └─→ error: output_error() (error_output.py) → JSON or text
 ```
 
 **How routing works**: `PflowCLI` sets `ignore_unknown_options = True` so that `run`-specific options (`--output-format`, `--no-trace`, etc.) pass through the group parser without error. `resolve_command()` checks if the first arg matches a registered command; if not, it routes everything to the hidden `run` command. This is the standard `click-default-group` pattern, vendored inline (~20 lines).
@@ -142,6 +144,7 @@ Error output is unified: `output_error()` in `error_output.py` handles JSON/text
 --cache/--no-cache     # Enable/disable memoization cache reads (default: --cache). Writes always happen.
 --only <node>          # Execute up to and including this node, then stop. Upstream from cache.
 --validate-only        # Validate without executing (exit 0/1), auto-normalizes IR
+--dry-run              # Build execution plan without side effects
 --report               # Generate execution report
 --report-dir           # Custom output directory for report (implies --report)
 workflow (nargs=-1)    # Catch-all: file path, saved name, key=value params
@@ -159,6 +162,7 @@ Most keys are straightforward (`verbose`, `output_format`, `print_flag`, `trace`
 | `workflow_metadata` | Action field: `"reused"` (library) or `"unsaved"` (file) — drives execution summary display |
 | `cache` | Boolean from `--cache/--no-cache` (default True). Flows to `RunnerConfig.cache_enabled` |
 | `only_node` | String from `--only` (default None). Flows to `RunnerConfig.only_node` → `WorkflowEngine(only_node=...)` |
+| `dry_run` | Boolean from `--dry-run`. Routes `execute_json_workflow()` to `WorkflowRunner.plan()` + `plan_formatter` |
 | `total_nodes` | Total node count from IR (set before Runner call). Used by `--report` to show `N/M (--only, K skipped)` |
 
 Full list readable in `_initialize_context` and `_setup_workflow_execution` in `commands/run.py`.
@@ -241,7 +245,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 | Source file | Primary test file(s) |
 |------------|---------------------|
 | `main.py` | `test_cli.py`, `test_main.py` |
-| `commands/run.py` | `test_workflow_resolution.py`, `test_dual_mode_stdin.py`, `test_parse_error_handling.py`, `test_workflow_output_handling.py`, `test_validate_only.py`, `test_validation_before_execution.py` |
+| `commands/run.py` | `test_workflow_resolution.py`, `test_dual_mode_stdin.py`, `test_parse_error_handling.py`, `test_workflow_output_handling.py`, `test_validate_only.py`, `test_validation_before_execution.py`, `test_dry_run.py` |
 | `error_output.py` | `test_unified_error_output.py`, `test_enhanced_error_output.py` |
 | `workflow_output.py` | `test_shell_stderr_warnings.py`, `test_direct_execution_helpers.py`, `test_workflow_output_source_simple.py` |
 | `workflow_resolution.py` | `test_workflow_resolution.py` |

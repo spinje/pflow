@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 import llm
 
+from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 from pflow.core.node import Node
 
 logger = logging.getLogger(__name__)
@@ -389,7 +390,7 @@ class LLMNode(Node):
             input_tokens = input_tokens or 0
             output_tokens = output_tokens or 0
 
-            shared["llm_usage"] = {
+            llm_usage = {
                 "model": exec_res.get("model", "unknown"),
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
@@ -397,6 +398,8 @@ class LLMNode(Node):
                 "cache_creation_input_tokens": cache_creation,
                 "cache_read_input_tokens": cache_read,
             }
+            enrich_llm_usage_with_cost(llm_usage)
+            shared["llm_usage"] = llm_usage
         else:
             # Empty dict per spec when usage unavailable
             shared["llm_usage"] = {}

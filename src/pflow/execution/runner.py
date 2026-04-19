@@ -3,6 +3,7 @@
 import contextlib
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -17,7 +18,7 @@ from pflow.core.exceptions import (
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
 
-from .result import ExecutionResult, ResolvedWorkflow, RunnerConfig, ValidationResult
+from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
 
 logger = logging.getLogger(__name__)
@@ -338,6 +339,47 @@ class WorkflowRunner:
                 )
             # Unexpected errors (programming bugs) — let them propagate.
             raise
+
+    def plan(
+        self,
+        workflow: str | dict[str, Any] | ResolvedWorkflow,
+        params: dict[str, Any],
+        config: RunnerConfig,
+    ) -> Plan:
+        """Build an execution plan without invoking any node."""
+        from pflow.execution.plan import build_plan
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.cache import MemoizationCache
+
+        params = dict(params)
+
+        validation_diags: list[Diagnostic] = []
+        resolved = self._prepare_workflow(workflow, params, validation_diags)
+
+        cache = MemoizationCache(read_enabled=config.cache_enabled)
+        registry = Registry()
+
+        self._strip_placeholders(params)
+        compiled = compile_workflow(resolved.ir, registry=registry, initial_params=params)
+
+        workflow_name = (
+            resolved.file_path if resolved.file_path else (str(workflow) if isinstance(workflow, str) else "<workflow>")
+        )
+        plan = build_plan(
+            compiled,
+            params,
+            cache,
+            registry,
+            workflow_name=workflow_name,
+            only_node=config.only_node,
+            _parent_workflow_file=resolved.file_path,
+        )
+
+        if validation_diags:
+            plan = replace(plan, diagnostics=[*plan.diagnostics, *validation_diags])
+
+        return plan
 
     # --- Internal helpers ---
 

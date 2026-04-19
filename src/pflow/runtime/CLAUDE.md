@@ -81,6 +81,17 @@ All 5 engine failure paths funnel through `mark_node_failed`: `cache_result` (ac
 
 Pre-execution validation. See `template_validation/CLAUDE.md`.
 
+## Planner (Dry-Run)
+
+Dry-run planning is split across two files:
+
+- `runtime/engine/plan_node.py` — shared per-node decision primitive
+- `execution/plan.py` — graph walker that builds typed `Plan` results
+
+**Load-bearing invariant**: `plan_node()` is the single authoritative source for cache-hit semantics. Both the engine and the planner call it. Changes to cache-key computation, template resolution, or cache-enable rules MUST live in `plan_node()`, not in `engine._execute_node()` or `execution/plan.py`.
+
+Parity is enforced by `tests/test_execution/test_plan_drift.py`. If that test fails, fix the divergence instead of weakening the test.
+
 ## Other Components
 
 ### WorkflowExecutor (`workflow_executor.py`)

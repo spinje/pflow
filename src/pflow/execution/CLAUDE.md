@@ -26,6 +26,7 @@ src/pflow/execution/
 class WorkflowRunner:
     def run(workflow, params, config, *, progress_callback=None, workflow_manager=None, workflow_name=None) -> ExecutionResult
     def validate(workflow, params, *, source_file_path=None) -> ValidationResult
+    def plan(workflow, params, config) -> Plan
 ```
 
 **Stateless**: fresh instance per call. No mutable state on instance.
@@ -39,6 +40,8 @@ class WorkflowRunner:
 6. `_compile_and_execute()` — `compile_workflow()` + `WorkflowEngine.run()`. On exception: annotates `e._pflow_node_id` (skipped for `OutputResolutionError`) and `e._pflow_shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after` with the full failure state.
 7. `_build_errors()` + `_extract_runtime_warnings()` — converts shared store + action result into `Diagnostic` list. Permissive-mode template warnings pass through the structured `Diagnostic` already built by `runtime/engine/template_errors.py` (preserves `unresolved_references`); api warnings still build a basic Diagnostic from `__warnings__[id]`.
 8. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
+
+`plan()` reuses the same resolve → file-ref → validation → compile pipeline, then delegates to `execution/plan.py::build_plan()` instead of running the engine. No trace collector, metrics collector, MCP pool, or progress callback is created on the plan path.
 
 **Exception boundary**: `run()` catches ALL exceptions, wraps into `ExecutionResult`. Only `KeyboardInterrupt`/`SystemExit` propagate.
 
@@ -92,6 +95,19 @@ class ExecutionResult:
 
     @property
     def warnings(self) -> list[Diagnostic]: ...
+
+@dataclass(frozen=True)
+class PlanEntry: ...
+
+@dataclass(frozen=True)
+class PlanSummary: ...
+
+@dataclass(frozen=True)
+class Plan:
+    workflow: str
+    entries: list[PlanEntry]
+    summary: PlanSummary
+    diagnostics: list[Diagnostic] = field(default_factory=list)
 ```
 
 ## Unified Resolver (workflow_resolver.py)

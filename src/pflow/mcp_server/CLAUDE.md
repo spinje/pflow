@@ -8,7 +8,7 @@ Exposes pflow's workflow building and execution capabilities as MCP tools for AI
 
 ```
 ┌─────────────────────────────────────────┐
-│         MCP Tools (11 enabled)          │  ← FastMCP decorators, async wrappers
+│         MCP Tools (12 enabled)          │  ← FastMCP decorators, async wrappers
 │         asyncio.to_thread bridge        │
 ├─────────────────────────────────────────┤
 │      Services Layer (7 services)        │  ← Business logic, stateless pattern
@@ -29,7 +29,7 @@ src/pflow/mcp_server/
 ├── tools/
 │   ├── __init__.py          - Imports enabled tool modules (triggers decorator registration)
 │   ├── discovery_tools.py   - workflow_discover, registry_discover
-│   ├── execution_tools.py   - workflow_execute, validate, save, registry_run, read_fields
+│   ├── execution_tools.py   - workflow_execute, validate, plan, save, registry_run, read_fields
 │   ├── registry_tools.py    - registry_describe, registry_list
 │   ├── workflow_tools.py    - workflow_list, workflow_describe
 │   ├── settings_tools.py    - DISABLED (4 tools, code kept for future use)
@@ -75,9 +75,10 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 - `workflow_discover(query)` — Find workflows via LLM matching. Pass full user request, not abbreviated.
 - `registry_discover(task)` — Find nodes via LLM selection. Pass full task description.
 
-**execution_tools.py** (5 tools):
+**execution_tools.py** (6 tools):
 - `workflow_execute(workflow, parameters)` — Execute with agent defaults (no repair, silent, traces saved)
 - `workflow_validate(workflow)` — Static validation without execution (10 checks including sub-workflow validation and cache lint)
+- `plan_workflow(workflow, parameters)` — Build execution plan JSON without side effects
 - `workflow_save(workflow, name, force)` — Save to library (accepts raw markdown or file path)
 - `registry_run(node_type, parameters)` — Test node to discover output structure + template paths
 - `read_fields(execution_id, field_paths)` — Read specific fields from cached `registry_run` execution
@@ -110,7 +111,7 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 
 - **BaseService** — `@ensure_stateless` decorator (logs instance creation), `validate_stateless()` checks
 - **DiscoveryService** — Wraps `find_workflow()` and `find_components()` plain functions for LLM-powered discovery.
-- **ExecutionService** — All three execution methods (`execute_workflow`, `validate_workflow`, `run_registry_node`) delegate to `WorkflowRunner` from `pflow.execution.runner`. Save workflow stays self-contained. Each method is ~20 lines: validate params at boundary → call Runner → format result. `run_registry_node` builds synthetic single-node IR, resolves `${ENV_VAR}` from env/settings, routes through Runner with `cache_enabled=False`.
+- **ExecutionService** — Execution/validation/planning methods delegate to `WorkflowRunner` from `pflow.execution.runner`. `plan_workflow()` returns the same JSON shape as CLI `--dry-run --output-format json` via `format_plan_json(plan)`. `run_registry_node` builds synthetic single-node IR, resolves `${ENV_VAR}` from env/settings, routes through Runner with `cache_enabled=False`.
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
 - **RegistryService** — `describe_nodes()` uses `build_component_context()`, `list_all_nodes()` supports filter via Registry.search()
 - **WorkflowService** — List/describe with shared formatters, raises ValueError with "did you mean" suggestions
@@ -162,8 +163,9 @@ Intended usage flow for agents:
 1. `workflow_discover(query)` → Check for existing workflows (avoid rebuilding)
 2. `registry_discover(task)` → Find nodes for building (LLM selection)
 3. `registry_run(node_type)` → Test node to reveal output structure (critical for MCP/HTTP nodes)
-4. `workflow_execute()` → Execute built workflow
-5. `workflow_save()` → Save to library for reuse
+4. `plan_workflow()` → Preview cached vs would-execute nodes and cost before running
+5. `workflow_execute()` → Execute built workflow
+6. `workflow_save()` → Save to library for reuse
 
 ### Workflow Resolution
 

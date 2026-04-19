@@ -31,13 +31,10 @@ from pflow.runtime.node_state import (
 from .api_warning_detector import detect_api_warning
 from .batch_executor import execute_batch
 from .instrumentation import (
+    apply_memo_hit,
     cache_result,
     call_completion_callback,
     call_start_callback,
-    check_cache_validity,
-    check_memo_cache,
-    compute_config_hash,
-    compute_node_config,
     enforce_loop_guard,
     enrich_llm_cost,
     handle_api_warning,
@@ -49,6 +46,7 @@ from .instrumentation import (
     write_memo_cache,
 )
 from .namespaced_store import NamespacedSharedStore
+from .plan_node import plan_node
 from .template_resolution import resolve_templates
 from .types import CompiledWorkflow, NodeConfig
 
@@ -190,17 +188,7 @@ class WorkflowEngine:
         initialize_execution_state(shared)
 
         # 3. Loop guard
-        visit_counts = enforce_loop_guard(config.node_id, shared)
-
-        # 4. Compute config hash (for both cache checks — doesn't need resolved params)
-        config_hash = compute_config_hash(
-            compute_node_config(
-                config.node_type_name,
-                config.template_config.static_params if config.template_config else node.params,
-                config.template_config.template_params if config.template_config else {},
-                config.batch_config,
-            )
-        )
+        enforce_loop_guard(config.node_id, shared)
 
         # Steps 5-11 are inside try so template errors get recorded in trace
         last_resolutions: dict = {}
@@ -210,53 +198,42 @@ class WorkflowEngine:
         child_trace_events: Optional[list] = None
 
         try:
-            # 5. Resolve templates — needed for both cache key and execution.
-            #    Inside try so strict-mode ValueError gets trace recording.
-            #    SKIP for batch nodes: templates are resolved per-item in _execute_single_node
-            if config.template_config and not config.batch_config:
-                resolved_params, last_resolutions, template_errors = resolve_templates(
-                    config.template_config, shared, config.node_id
-                )
+            plan = plan_node(node, config, shared)
 
-            # 6. Memoization cache check (skip for nodes with cache: false)
-            cache_key: Optional[str] = None
-            if config.cache_enabled:
-                hit, result, cache_key = check_memo_cache(
-                    config.node_id,
-                    config.node_type_name,
-                    config_hash,
-                    config.batch_config,
-                    shared,
-                    visit_counts,
-                    resolved_params=resolved_params,
-                )
-                if hit:
-                    return str(
-                        handle_cached_execution(
-                            config.node_id,
-                            shared,
-                            result,
-                            shared_keys_before,
-                            config.node_type_name,
-                            node.params,
-                            self.trace,
-                        )
+            if plan.template_exception is not None:
+                raise plan.template_exception
+
+            if plan.status in ("cached_memo", "cached_in_process"):
+                if plan.status == "cached_memo" and plan.cached_output is not None and plan.cached_action is not None:
+                    apply_memo_hit(
+                        config.node_id,
+                        shared,
+                        plan.cached_action,
+                        plan.cached_output,
+                        plan.config_hash,
                     )
-
-            # 7. In-process cache check (always runs — scoped to this traversal, not cross-run)
-            cached, cached_action = check_cache_validity(config.node_id, config_hash, shared)
-            if cached:
                 return str(
                     handle_cached_execution(
                         config.node_id,
                         shared,
-                        cached_action,
+                        plan.cached_action,
                         shared_keys_before,
                         config.node_type_name,
                         node.params,
                         self.trace,
                     )
                 )
+
+            last_resolutions = plan.last_resolutions
+            template_errors = plan.template_errors
+            resolved_params = plan.resolved_params
+            cache_key = plan.cache_key
+            config_hash = plan.config_hash
+
+            if config.node_id in shared["__execution__"]["completed_nodes"]:
+                cached_hash = shared["__execution__"]["node_hashes"].get(config.node_id)
+                if cached_hash != plan.config_hash:
+                    invalidate_cache(config.node_id, shared)
 
             # 8. Progress callback (node_start)
             call_start_callback(config.node_id, shared)

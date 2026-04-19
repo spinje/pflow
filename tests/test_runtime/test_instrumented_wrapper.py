@@ -16,6 +16,7 @@ from unittest.mock import Mock
 import pytest
 
 from pflow.core.node import Node
+from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.instrumentation import (
     call_completion_callback,
     call_start_callback,
@@ -344,6 +345,25 @@ class TestLLMUsageTracking:
         assert "cost_usd" in event["llm_call"]
         assert isinstance(event["llm_call"]["cost_usd"], float)
         assert event["llm_call"]["cost_usd"] == 0.06
+
+    def test_llmnode_post_enriches_cost_before_memo_write(self, tmp_path):
+        """LLMNode memoized output must include cost_usd, not just live shared state."""
+        cache = MemoizationCache(db_path=tmp_path / "cache.db")
+        shared, action = _run_single_node_workflow(
+            "llm",
+            {"prompt": "say hello", "model": "gpt-4"},
+            shared={"__memoization_cache__": cache},
+        )
+
+        assert action == "default"
+        live_usage = shared.get("llm_usage")
+        if not isinstance(live_usage, dict):
+            live_usage = shared["test"]["llm_usage"]
+        assert "cost_usd" in live_usage
+        cached = cache.get_latest_for_node("test")
+        assert cached is not None
+        output, _created_at = cached
+        assert output["llm_usage"]["cost_usd"] == live_usage["cost_usd"]
 
 
 # ===========================================================================
