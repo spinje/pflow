@@ -35,6 +35,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Optional
 
 from pflow.core.node import Node
+from pflow.core.types import PYTHON_ALIASES_AT_S1
 from pflow.nodes.file.exceptions import NonRetriableError
 
 logger = logging.getLogger(__name__)
@@ -123,13 +124,31 @@ def _get_inner_optional_type(type_str: str) -> Optional[str]:
     return None
 
 
+def _annotation_outer_base(type_str: str) -> str:
+    """Return the outer base-name from an annotation string.
+
+    Strips generic parameters (``list[dict]`` → ``list``) and unwraps
+    forward-reference quotes (``'list'`` / ``"list"`` → ``list``). Forward
+    refs come through ``_extract_annotations`` as ``"'T'"`` because
+    ``ast.unparse`` preserves the quotes; mirror ``_check_annotation_vocabulary``'s
+    unwrap so the isinstance check and validate-time type inference both see
+    the inner type instead of silently skipping.
+    """
+    stripped = type_str.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in ("'", '"'):
+        stripped = stripped[1:-1].strip()
+    return stripped.split("[")[0].strip()
+
+
 def _get_outer_type(type_str: str) -> type | tuple[type, ...] | None:
     """Resolve a type annotation string to a Python type for isinstance() checks.
 
     Strips generic parameters so ``list[dict[str, Any]]`` resolves to ``list``.
     Decomposes optional types: ``str | None`` resolves to ``(str, type(None))``.
-    Returns None for types not in ``_TYPE_MAP`` (e.g. user-defined classes),
-    which skips the isinstance check.
+    Unwraps forward-reference annotations (``x: "list"``) so the isinstance
+    check sees the inner type instead of silently skipping. Returns None for
+    types not in ``_TYPE_MAP`` (e.g. user-defined classes), which skips the
+    isinstance check.
     """
     # Handle optional types: extract inner type and add NoneType
     inner = _get_inner_optional_type(type_str)
@@ -141,8 +160,138 @@ def _get_outer_type(type_str: str) -> type | tuple[type, ...] | None:
             return (*inner_type, type(None))
         return (inner_type, type(None))
 
-    base = type_str.split("[")[0].strip()
-    return _TYPE_MAP.get(base)
+    return _TYPE_MAP.get(_annotation_outer_base(type_str))
+
+
+# S1 canonical type names for Python annotation base types that have a
+# workflow-vocabulary equivalent. Derived from the shared S1 alias mapping so
+# code-node validation stays aligned with the rest of the type system.
+_PYTHON_TO_S1_CANONICAL: dict[str, str] = dict(PYTHON_ALIASES_AT_S1)
+
+
+def _get_outer_type_name(type_str: str) -> Optional[str]:
+    """Resolve a type annotation string to its S1 canonical name, or None.
+
+    Returns None for types without an S1 equivalent: ``Any``, typing-module
+    names, user-defined classes, and the three Python primitives with no
+    workflow-vocabulary mapping (``set``, ``tuple``, ``bytes``). Runtime's
+    ``_check_input_types`` catches ``set``/``tuple``/``bytes`` via
+    ``_TYPE_MAP`` as defense-in-depth; validate-time skips them because S1
+    has no canonical name to compare against.
+
+    Strips generics (``list[dict]`` -> ``"array"``). Unwraps forward-ref
+    annotations (``"'list'"`` -> ``"array"``). Decomposes ``Optional[T]`` /
+    ``T | None`` to the inner type's name.
+    """
+    inner = _get_inner_optional_type(type_str)
+    if inner is not None:
+        return _get_outer_type_name(inner)
+
+    return _PYTHON_TO_S1_CANONICAL.get(_annotation_outer_base(type_str))
+
+
+def extract_code_annotation_type(code: str, key: str) -> Optional[str]:
+    """Return the S1 canonical type name for ``key`` in a code block, or None.
+
+    Returns None as a skip-check signal when the code is malformed, the key is
+    not annotated at module scope, or the annotation resolves to an
+    unknown/non-S1 type. Uses top-level extraction — a function-local
+    ``y: int`` does not shadow a missing or different top-level ``y`` binding.
+    """
+    annotations = extract_top_level_annotations(code)
+    type_str = annotations.get(key)
+    if type_str is None:
+        return None
+
+    return _get_outer_type_name(type_str)
+
+
+def extract_top_level_annotations(code: str) -> dict[str, str]:
+    """Like ``_extract_annotations`` but scoped to module-level names only.
+
+    ``_extract_annotations`` uses ``ast.walk`` which descends into function
+    and class bodies. For Pass 9's boundary checks (missing-input, orphan
+    annotation) we want ONLY the module-level annotations — a helper function
+    like ``def helper(): y: int = 1`` is a legitimate local variable, not a
+    candidate code-node input. Treating it as one produces spurious orphan
+    errors that block valid workflows.
+
+    Scope boundaries (skipped, not descended into):
+    ``FunctionDef``, ``AsyncFunctionDef``, ``ClassDef``, ``Lambda``.
+
+    Non-scope structures (descended into) include ``If``, ``For``, ``While``,
+    ``With``, ``Try`` — annotations inside these are still module-scoped per
+    Python's scoping rules (only the four types above introduce new scopes).
+
+    Returns an empty dict on SyntaxError (matches ``_extract_annotations``).
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {}
+    annotations: dict[str, str] = {}
+    _SCOPE_BOUNDARIES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _SCOPE_BOUNDARIES):
+            continue  # Don't descend into new scopes.
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            annotations[node.target.id] = ast.unparse(node.annotation)
+        stack.extend(ast.iter_child_nodes(node))
+    return annotations
+
+
+def extract_code_load_references(code: str) -> set[str]:
+    """Return the set of variable names read (``ast.Load`` context) in ``code``.
+
+    Used by validate-time orphan-annotation checks to distinguish an unused
+    annotation (remove it) from a missing input binding (add it). An annotation
+    ``y: list`` paired with a later ``return y`` means the code author expected
+    ``y`` to be bound — the fix is to add ``y`` to the ``inputs`` dict. An
+    annotation with no Load reference is dead code; the fix is to remove it.
+
+    Returns an empty set on SyntaxError so callers fail-open at validate time.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+
+
+# Reverse of _PYTHON_TO_S1_CANONICAL for display in code-node diagnostics.
+# Code-block annotations speak Python, so diagnostic messages and suggestions
+# must too — otherwise a user copy-pasting "x: array" gets a NameError.
+#
+# The reverse mapping requires PYTHON_ALIASES_AT_S1 to be injective — if a
+# future edit maps two Python names to the same S1 name (e.g. both ``int32``
+# and ``int`` to ``integer``), the reverse dict silently keeps only one and
+# display diverges. The module-load assertion catches this drift at import
+# time rather than at the point of a confusing error message.
+_S1_TO_PYTHON_DISPLAY: dict[str, str] = {v: k for k, v in _PYTHON_TO_S1_CANONICAL.items()}
+if len(_S1_TO_PYTHON_DISPLAY) != len(_PYTHON_TO_S1_CANONICAL):
+    raise RuntimeError(
+        "PYTHON_ALIASES_AT_S1 must be injective — two Python names map to the same S1 type. "
+        "The reverse map used for diagnostic display would silently drop entries."
+    )
+
+
+def s1_type_to_python_display(type_str: str) -> str:
+    """Map an S1 canonical type name to its Python annotation name for display.
+
+    Used when rendering code-node diagnostic messages and suggestions — users
+    write Python annotations (``list``, ``dict``), so inferred S1 names
+    (``array``, ``object``) from enriched upstream code-node outputs must be
+    translated before display. Pass-through for names already in Python
+    vocabulary (e.g. ``"str"`` from shell.stdout, ``"dict|str"`` unions).
+
+    Handles pipe-unions element-wise so ``"array|string"`` renders as
+    ``"list|str"``. Whitespace around ``|`` is preserved.
+    """
+    if "|" in type_str:
+        return "|".join(_S1_TO_PYTHON_DISPLAY.get(t.strip(), t.strip()) for t in type_str.split("|"))
+    return _S1_TO_PYTHON_DISPLAY.get(type_str, type_str)
 
 
 # Typing-module names that have a modern lowercase built-in generic (PEP 585).

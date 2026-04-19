@@ -1,7 +1,8 @@
-"""Template type validation (Passes 6 and 7).
+"""Template type validation (Passes 6, 7, and 9).
 
 Pass 6: Validates template variable types match parameter expectations.
 Pass 7: Blocks structured data (dict/list) in shell command parameters.
+Pass 9: Validates code-node input annotations against template source types.
 """
 
 import re
@@ -389,6 +390,446 @@ def _generate_type_fix_suggestions(
         available_fields = [f"${{{template}.{field}}}" for field in matching_fields]
         return (suggestions, available_fields)
     return (["Access a nested field or serialize the value to JSON."], [])
+
+
+def _infer_missing_annotation_type(
+    key: str,
+    inputs: dict[str, Any],
+    workflow_ir: dict[str, Any],
+    node_outputs: dict[str, Any],
+) -> Optional[str]:
+    """Infer a Python-display type for a missing code-node input annotation.
+
+    Returns the inferred Python name (``"list"``, ``"dict"``, ``"str"``, …)
+    when ``inputs[key]`` is a **simple** template (``"${ref}"`` with nothing
+    else). Complex templates (``"prefix ${ref}"``) coerce to ``str`` at
+    runtime regardless of the source type, so the inferred runtime type is
+    always ``"str"`` in that case.
+
+    Returns ``None`` when the type can't be inferred — caller falls back to
+    the ``<type>`` placeholder in the suggestion.
+    """
+    from pflow.nodes.python.python_code import s1_type_to_python_display
+
+    value = inputs.get(key)
+    if not isinstance(value, str) or not TemplateResolver.has_templates(value):
+        return None
+
+    # Complex templates (text surrounding the template, or multiple templates)
+    # resolve to strings at runtime — preserve that contract in the suggestion.
+    if not TemplateResolver.is_simple_template(value):
+        return "str"
+
+    templates = TemplateResolver.extract_variables(value)
+    if not templates:
+        return None
+    for template in templates:
+        inferred = infer_template_type(template, workflow_ir, node_outputs)
+        if inferred and inferred != "any":
+            return s1_type_to_python_display(inferred)
+    return None
+
+
+def _build_missing_code_annotation_diagnostics(
+    node_id: str,
+    input_keys: set[str],
+    annotation_keys: set[str],
+    inputs: dict[str, Any],
+    workflow_ir: dict[str, Any],
+    node_outputs: dict[str, Any],
+) -> list[Diagnostic]:
+    """Build diagnostics for inputs that are missing code annotations.
+
+    When the upstream type can be inferred from the template binding, the
+    suggestion names a concrete annotation (``x: list``) instead of the
+    generic ``<type>`` placeholder — so agents can copy-paste the fix.
+    """
+    diagnostics: list[Diagnostic] = []
+    for key in sorted(input_keys - annotation_keys):
+        inferred_name = _infer_missing_annotation_type(key, inputs, workflow_ir, node_outputs)
+        if inferred_name is not None:
+            suggestion = f"Add an annotation (in params.code): {key}: {inferred_name}  (inferred from {inputs[key]})"
+        else:
+            suggestion = f"Add an annotation (in params.code): {key}: <type>"
+        context: dict[str, Any] = {
+            "category": "validation",
+            "path": f"nodes[id={node_id}].params.inputs.{key}",
+            "node_type": "code",
+            "input_key": key,
+        }
+        if inferred_name is not None:
+            context["inferred_type"] = inferred_name
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                node_id=node_id,
+                message=f"Input '{key}' is missing a type annotation in the code block.",
+                suggestions=[suggestion],
+                context=context,
+            )
+        )
+    return diagnostics
+
+
+def _build_orphan_code_annotation_diagnostics(
+    node_id: str,
+    input_keys: set[str],
+    annotation_keys: set[str],
+    annotations: dict[str, str],
+    load_refs: set[str],
+    batch_alias: Optional[str],
+) -> list[Diagnostic]:
+    """Build diagnostics for annotations with no matching input binding.
+
+    Chooses a canonical single-fix suggestion per orphan (Task 154 pattern):
+
+    - Orphan key appears as ``ast.Name(ctx=Load())`` in the code body → the
+      author expected the variable to be bound at runtime. Canonical fix is
+      "Add to the inputs dict". Typo-level fuzzy matches against existing
+      input keys are surfaced via ``similar_names``.
+    - Orphan key has no Load reference → dead annotation. Canonical fix is
+      "Remove the annotation".
+
+    ``batch_alias`` (when present) narrows the "add to inputs" suggestion to
+    the exact source template (``${item}``) for the common batch-code pattern,
+    skipping the ``${<source>}`` placeholder.
+    """
+    from pflow.core.suggestion_utils import find_similar_items
+
+    diagnostics: list[Diagnostic] = []
+    for key in sorted(annotation_keys - input_keys):
+        annotation_str = annotations[key]
+        is_used = key in load_refs
+        context: dict[str, Any] = {
+            "category": "validation",
+            "path": f"nodes[id={node_id}].params.code",
+            "node_type": "code",
+            "annotation_key": key,
+        }
+
+        if is_used:
+            # Batch alias is deterministic metadata and must win over fuzzy
+            # matching. Otherwise a near-miss between `item` (the alias) and
+            # a user input like `items` produces "Rename to 'items'", which
+            # would break code that correctly reads the per-iteration `item`.
+            if batch_alias and key == batch_alias:
+                # The engine injects the batch alias into template resolution
+                # only — code-exec requires an explicit binding. The canonical
+                # fix is to route the alias through `inputs:` verbatim.
+                fix = (
+                    f"Add '{key}' to the inputs dict (in params.inputs): {key}: ${{{key}}} "
+                    f"(binds the batch alias into the code block)"
+                )
+            else:
+                similar = find_similar_items(key, sorted(input_keys), method="fuzzy", cutoff=0.6, max_results=3)
+                if similar:
+                    fix = f"Rename the annotation to '{similar[0]}' to match the existing input binding."
+                    context["similar_names"] = similar
+                else:
+                    fix = f"Add '{key}' to the inputs dict (in params.inputs): {key}: ${{<source>}}"
+        else:
+            fix = f"Remove the annotation '{key}: {annotation_str}' — it is never read in the code."
+
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                node_id=node_id,
+                message=f"Annotation '{key}: {annotation_str}' has no corresponding entry in 'inputs'.",
+                suggestions=[fix],
+                context=context,
+            )
+        )
+    return diagnostics
+
+
+def _build_simple_template_mismatch_diagnostic(
+    node_id: str,
+    key: str,
+    template: str,
+    annotation_str: str,
+    expected_canonical: str,
+    inferred_type: str,
+    annotation_is_optional: bool,
+    workflow_inputs: dict[str, Any],
+) -> Diagnostic:
+    """Build a Class 3 mismatch diagnostic for a single simple-template binding."""
+    from pflow.nodes.python.python_code import s1_type_to_python_display
+
+    display_inferred = s1_type_to_python_display(inferred_type)
+    display_expected = s1_type_to_python_display(expected_canonical)
+    suggested_annotation = f"{display_inferred} | None" if annotation_is_optional else display_inferred
+
+    # Tailor the "change the source" wording to the template's origin.
+    # Workflow inputs aren't "returned" by anything — telling the agent
+    # to change a non-existent upstream node wastes cycles.
+    root = TemplateResolver.extract_root_node_id(template) or template.split(".")[0]
+    if root in workflow_inputs:
+        source_fix = (
+            f"Or change the workflow input declaration for '{root}' "
+            f"to '- type: {display_expected}' (currently {display_inferred})"
+        )
+    else:
+        source_fix = f"Or change ${{{template}}} to return {annotation_str}"
+
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(f"Input '{key}' expects {annotation_str} but receives {display_inferred} from ${{{template}}}."),
+        suggestions=[
+            f"Change the type annotation (in params.code): {key}: {suggested_annotation}",
+            source_fix,
+            f"Or accept any type (in params.code): {key}: Any",
+        ],
+        context={
+            "category": "validation",
+            "path": f"nodes[id={node_id}].params.inputs.{key}",
+            "node_type": "code",
+            "template": f"${{{template}}}",
+            "input_key": key,
+            "annotation": annotation_str,
+            "inferred_type": display_inferred,
+            "expected_type": display_expected,
+        },
+    )
+
+
+def _build_complex_template_str_coercion_diagnostic(
+    node_id: str,
+    key: str,
+    value: str,
+    annotation_str: str,
+    expected_canonical: str,
+    annotation_is_optional: bool,
+) -> Optional[Diagnostic]:
+    """Emit a diagnostic when a complex template resolves to str and violates a non-str target.
+
+    Runtime coerces ``"prefix ${x}"`` / ``"${a} ${b}"`` to str unconditionally
+    (no JSON auto-parse for multi-fragment templates). This check is stricter
+    than ``is_type_compatible("str", target)`` because the matrix treats
+    ``str → dict/list`` as compatible for the simple-template path; the
+    auto-parse doesn't apply here.
+
+    Returns None when the target (``string`` / ``any``) accepts the coerced
+    string — caller skips emission in that case.
+    """
+    from pflow.nodes.python.python_code import s1_type_to_python_display
+
+    if expected_canonical in ("string", "any"):
+        return None
+
+    display_inferred = "str"
+    display_expected = s1_type_to_python_display(expected_canonical)
+    suggested_annotation = f"{display_inferred} | None" if annotation_is_optional else display_inferred
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Input '{key}' expects {annotation_str} but receives str from {value!r} "
+            f"(complex templates are coerced to string at runtime)."
+        ),
+        suggestions=[
+            f"Change the type annotation (in params.code): {key}: {suggested_annotation}",
+            "Or drop the surrounding text so only a single template remains in the value",
+            f"Or accept any type (in params.code): {key}: Any",
+        ],
+        context={
+            "category": "validation",
+            "path": f"nodes[id={node_id}].params.inputs.{key}",
+            "node_type": "code",
+            "template": value,
+            "input_key": key,
+            "annotation": annotation_str,
+            "inferred_type": display_inferred,
+            "expected_type": display_expected,
+        },
+    )
+
+
+def _check_one_code_input_binding(
+    node_id: str,
+    workflow_ir: dict[str, Any],
+    node_outputs: dict[str, Any],
+    code: str,
+    key: str,
+    value: Any,
+    annotation_str: str,
+    workflow_inputs: dict[str, Any],
+) -> list[Diagnostic]:
+    """Produce Class 3 diagnostics for one code-node input binding.
+
+    Splits the per-input analysis out of the main builder to keep the
+    orchestrator loop simple (below the cyclomatic-complexity limit).
+    Returns an empty list for bindings that should skip the check
+    (non-template values, Any targets, or compatible types).
+    """
+    from pflow.nodes.python.python_code import (
+        _is_optional_type,
+        extract_code_annotation_type,
+    )
+
+    if not isinstance(value, str) or not TemplateResolver.has_templates(value):
+        return []
+
+    expected_canonical = extract_code_annotation_type(code, key)
+    if expected_canonical is None:
+        return []
+    annotation_is_optional = _is_optional_type(annotation_str)
+
+    # Complex templates coerce to str at runtime — handle at the value level
+    # rather than per embedded ref.
+    if not TemplateResolver.is_simple_template(value):
+        diag = _build_complex_template_str_coercion_diagnostic(
+            node_id, key, value, annotation_str, expected_canonical, annotation_is_optional
+        )
+        return [diag] if diag is not None else []
+
+    out: list[Diagnostic] = []
+    for template in TemplateResolver.extract_variables(value):
+        inferred_type = infer_template_type(template, workflow_ir, node_outputs)
+        if not inferred_type or inferred_type == "any":
+            continue
+        if is_type_compatible(inferred_type, expected_canonical):
+            continue
+        out.append(
+            _build_simple_template_mismatch_diagnostic(
+                node_id,
+                key,
+                template,
+                annotation_str,
+                expected_canonical,
+                inferred_type,
+                annotation_is_optional,
+                workflow_inputs,
+            )
+        )
+    return out
+
+
+def _build_code_annotation_type_diagnostics(
+    node_id: str,
+    workflow_ir: dict[str, Any],
+    node_outputs: dict[str, Any],
+    code: str,
+    inputs: dict[str, Any],
+    annotations: dict[str, str],
+    annotation_keys: set[str],
+) -> list[Diagnostic]:
+    """Build diagnostics for incompatible template source types."""
+    diagnostics: list[Diagnostic] = []
+    workflow_inputs = workflow_ir.get("inputs", {}) or {}
+
+    for key, value in inputs.items():
+        if key not in annotation_keys:
+            continue
+        diagnostics.extend(
+            _check_one_code_input_binding(
+                node_id, workflow_ir, node_outputs, code, key, value, annotations[key], workflow_inputs
+            )
+        )
+    return diagnostics
+
+
+# ---------------------------------------------------------------------------
+# Pass 9: Code-node input annotation type matching
+# ---------------------------------------------------------------------------
+
+
+def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
+    """Validate code-node input annotations against their template source types.
+
+    Closes the boundary between a code node's ``inputs`` mapping and its Python
+    code-block annotations:
+
+    1. Input bound but annotation missing
+    2. Annotation declared but no input bound
+    3. Annotation type incompatible with inferred template source type
+
+    Skip semantics intentionally mirror the runtime checks in
+    ``python_code.py``: unknown types and ``any`` silently skip validation.
+    """
+    # Lazy import follows the existing runtime -> nodes pattern used by the
+    # compiler for code-node annotation introspection.
+    import ast as _ast
+
+    from pflow.nodes.python.python_code import extract_code_load_references, extract_top_level_annotations
+
+    diagnostics: list[Diagnostic] = []
+
+    for node in workflow_ir.get("nodes", []):
+        if node.get("type") != "code":
+            continue
+
+        node_id = node.get("id", "unknown")
+        params = node.get("params", {})
+        code = params.get("code")
+        inputs = params.get("inputs", {})
+
+        if not isinstance(code, str) or not isinstance(inputs, dict):
+            continue
+
+        # Skip Pass 9 entirely when the code has a SyntaxError — runtime
+        # surfaces a clean line-numbered error and Pass 9 emitting extra
+        # "missing annotation" / "orphan" diagnostics on top only obscures
+        # the real issue. `extract_top_level_annotations` fails open with
+        # `{}`, so without this check Pass 9 would proceed and over-report.
+        try:
+            _ast.parse(code)
+        except SyntaxError:
+            continue
+
+        # Module-level annotations only — function/class locals are not
+        # candidate code-node inputs. Using ``_extract_annotations`` here
+        # would flag every ``def helper(): y: int = 1`` as an orphan.
+        annotations = extract_top_level_annotations(code)
+
+        input_keys = set(inputs.keys())
+        # `result` / `next` are outputs / routing declarations, not inputs.
+        # The batch alias (default "item") is NOT excluded here: the engine only
+        # injects it into template resolution, not into code exec. Code nodes
+        # using batch must explicitly bind `inputs: {item: ${item}}` or runtime
+        # fails with "Undefined variable 'item'". Pass 9 correctly flags the
+        # missing binding as Class 2 (orphan annotation with Load reference →
+        # "Add 'item' to the inputs dict").
+        annotation_keys = {key for key in annotations if key not in {"result", "next"}}
+        # Load references disambiguate orphan annotations: a name read in the
+        # body signals "add to inputs"; an unused annotation is dead code.
+        load_refs = extract_code_load_references(code)
+        # Batch alias is used to produce a specific `${alias}` suggestion when
+        # the orphan is the batch iteration variable.
+        batch_cfg = node.get("batch")
+        batch_alias: Optional[str] = (batch_cfg.get("as") or "item") if isinstance(batch_cfg, dict) else None
+
+        diagnostics.extend(
+            _build_missing_code_annotation_diagnostics(
+                node_id, input_keys, annotation_keys, inputs, workflow_ir, node_outputs
+            )
+        )
+        diagnostics.extend(
+            _build_orphan_code_annotation_diagnostics(
+                node_id, input_keys, annotation_keys, annotations, load_refs, batch_alias
+            )
+        )
+        diagnostics.extend(
+            _build_code_annotation_type_diagnostics(
+                node_id,
+                workflow_ir,
+                node_outputs,
+                code,
+                inputs,
+                annotations,
+                annotation_keys,
+            )
+        )
+
+    return diagnostics
 
 
 def _traverse_to_structure(structure: dict[str, Any], path: str) -> Optional[dict[str, Any]]:

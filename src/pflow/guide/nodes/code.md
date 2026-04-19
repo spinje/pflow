@@ -64,6 +64,38 @@ result: dict = {
 - Single output via `result` variable — use dict for structured output
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
+## Validate-Time Type Checking
+
+Three code-node input errors are now caught at validate time (`pflow
+--validate-only`) instead of runtime:
+
+1. **Input bound, annotation missing** — `inputs: {x: ${ref}}` with no `x:
+   <type>` in code. The suggestion uses the upstream's declared type when
+   known (`Add an annotation (in params.code): x: str  (inferred from ...)`).
+2. **Annotation declared, no input bound** — opinionated one-fix-per-case:
+   `Remove the annotation 'y: list' — it is never read in the code` for dead
+   annotations, `Add 'y' to the inputs dict` when the name is read in the
+   body, `Rename the annotation to 'items'` when a fuzzy-matched input key
+   exists (typo case).
+3. **Type mismatch** — `x: dict` bound to `${upstream.result}` that declares
+   `list`:
+
+    ```text
+    Input 'x' expects dict but receives list from ${upstream.result}.
+
+    To fix this:
+      1. Change the type annotation (in params.code): x: list
+      2. Or change ${upstream.result} to return dict
+      3. Or accept any type (in params.code): x: Any
+    ```
+
+Suggestions include locality hints (`in params.code` vs `in params.inputs`) so
+agents know which section to edit. Upstream type is read from the registry
+interface for standard nodes and from the code-block `result:` annotation for
+upstream code nodes (including batch code nodes — enrichment flows through
+`results[0].result` access paths). Use `Any` when you want to accept any
+upstream type deliberately.
+
 ### Type annotation syntax
 
 Type annotations in code blocks are Python. pflow follows modern Python style (PEP 585 + PEP 604):

@@ -12,8 +12,13 @@ from pflow.nodes.python.python_code import (
     _extract_error_location,
     _get_inner_optional_type,
     _get_outer_type,
+    _get_outer_type_name,
     _is_optional_type,
+    extract_code_annotation_type,
+    extract_code_load_references,
     extract_optional_input_keys,
+    extract_top_level_annotations,
+    s1_type_to_python_display,
 )
 
 
@@ -177,6 +182,22 @@ class TestTypeAnnotationContract:
         error = str(exc_info.value)
         assert "Suggestions:" in error
         assert "data: list" in error
+
+    def test_forward_reference_annotation_enforced_at_runtime(self):
+        """Forward-ref `x: "dict"` must enforce isinstance, not silently accept.
+
+        Pre-fix: `_get_outer_type("'dict'")` returned None (lookup miss on
+        quoted string), runtime skipped the isinstance check, wrong-typed
+        values passed through. Post-fix: forward refs are unwrapped and
+        enforced identically to bare annotations.
+        """
+        shared: dict = {}
+        with pytest.raises(TypeError, match=r"x.*expects .*dict.*received list"):
+            run_code_node(
+                shared,
+                code='x: "dict"\nresult: str = str(x)',
+                inputs={"x": [1, 2, 3]},
+            )
 
     def test_generic_type_validates_outer_only(self):
         """list[dict] checks isinstance(value, list), ignores element types.
@@ -357,6 +378,167 @@ class TestSafetyAndErrors:
         assert "PEP 585" in msg
         # Opinionated: List does NOT suggest `from typing import List` — lowercase is canonical.
         assert "from typing import List" not in msg
+
+
+class TestAnnotationExtractionHelper:
+    """Validate the shared helper used by validate-time type checking."""
+
+    def test_get_outer_type_name_returns_s1_canonical(self):
+        assert _get_outer_type_name("list") == "array"
+        assert _get_outer_type_name("dict") == "object"
+        assert _get_outer_type_name("str") == "string"
+        assert _get_outer_type_name("int") == "integer"
+        assert _get_outer_type_name("float") == "number"
+        assert _get_outer_type_name("bool") == "boolean"
+
+    def test_get_outer_type_name_strips_generics(self):
+        assert _get_outer_type_name("list[dict]") == "array"
+        assert _get_outer_type_name("dict[str, int]") == "object"
+
+    def test_get_outer_type_name_decomposes_optional(self):
+        assert _get_outer_type_name("str | None") == "string"
+        assert _get_outer_type_name("None | list") == "array"
+        assert _get_outer_type_name("Optional[dict]") == "object"
+
+    def test_get_outer_type_name_unknown_returns_none(self):
+        assert _get_outer_type_name("Any") is None
+        assert _get_outer_type_name("DataFrame") is None
+        assert _get_outer_type_name("set") is None
+        assert _get_outer_type_name("tuple") is None
+        assert _get_outer_type_name("bytes") is None
+
+    def test_extract_code_annotation_type_happy_path(self):
+        code = "x: list\ny: dict\nresult: str = str(x)"
+        assert extract_code_annotation_type(code, "x") == "array"
+        assert extract_code_annotation_type(code, "y") == "object"
+
+    def test_extract_code_annotation_type_missing_key(self):
+        assert extract_code_annotation_type("x: list", "missing") is None
+
+    def test_extract_code_annotation_type_malformed_code(self):
+        assert extract_code_annotation_type("x: dict =", "x") is None
+
+    def test_s1_to_python_display_reverses_canonical(self):
+        assert s1_type_to_python_display("array") == "list"
+        assert s1_type_to_python_display("object") == "dict"
+        assert s1_type_to_python_display("string") == "str"
+        assert s1_type_to_python_display("integer") == "int"
+        assert s1_type_to_python_display("number") == "float"
+        assert s1_type_to_python_display("boolean") == "bool"
+
+    def test_s1_to_python_display_passes_through_python_names(self):
+        """Already-Python names (e.g. registry-declared 'str') pass through."""
+        assert s1_type_to_python_display("str") == "str"
+        assert s1_type_to_python_display("list") == "list"
+        assert s1_type_to_python_display("any") == "any"
+
+    def test_s1_to_python_display_handles_unions(self):
+        assert s1_type_to_python_display("array|string") == "list|str"
+        assert s1_type_to_python_display("dict|str") == "dict|str"
+
+    def test_load_references_finds_reads_in_body(self):
+        code = "x: list\ny: dict\nresult: int = len(x)"
+        refs = extract_code_load_references(code)
+        # `x` is read; `y` is only annotated; `len` is a builtin read; `result` is Store.
+        assert "x" in refs
+        assert "y" not in refs
+        assert "len" in refs
+        assert "result" not in refs
+
+    def test_load_references_handles_nested_scopes(self):
+        code = "x: list\ndef inner():\n    return x\nresult: int = inner()"
+        refs = extract_code_load_references(code)
+        assert "x" in refs
+        assert "inner" in refs
+
+    def test_load_references_malformed_code_returns_empty(self):
+        assert extract_code_load_references("x: dict =") == set()
+
+    def test_get_outer_type_name_unwraps_forward_ref(self):
+        """Forward-ref annotations (`x: "list"`) come through as `"'list'"` via ast.unparse.
+
+        Without unwrap, validate-time silently skips — hiding real type mismatches.
+        """
+        assert _get_outer_type_name("'list'") == "array"
+        assert _get_outer_type_name('"dict"') == "object"
+        assert _get_outer_type_name("'list[dict]'") == "array"
+        # Still returns None for unknown types inside quotes.
+        assert _get_outer_type_name("'DataFrame'") is None
+
+    def test_get_outer_type_unwraps_forward_ref(self):
+        """Runtime isinstance check must also see through forward-ref quotes.
+
+        Pre-fix: `x: "dict" = [1,2,3]` silently accepted the list.
+        Post-fix: runtime raises TypeError, matching the bare-annotation behavior.
+        """
+        assert _get_outer_type("'list'") is list
+        assert _get_outer_type('"dict"') is dict
+        assert _get_outer_type("'list[dict]'") is list
+
+    def test_top_level_annotations_excludes_function_locals(self):
+        """Function-local annotations must not surface at module scope."""
+        code = """
+def helper():
+    y: int = 1
+    return y
+
+x: dict
+result: int = helper()
+"""
+        annotations = extract_top_level_annotations(code)
+        assert annotations == {"x": "dict", "result": "int"}
+        assert "y" not in annotations
+
+    def test_top_level_annotations_excludes_class_body(self):
+        """Class body annotations must not surface at module scope."""
+        code = """
+class Config:
+    timeout: int
+    name: str
+
+x: dict
+"""
+        annotations = extract_top_level_annotations(code)
+        assert annotations == {"x": "dict"}
+        assert "timeout" not in annotations
+        assert "name" not in annotations
+
+    def test_top_level_annotations_includes_if_scoped(self):
+        """Non-scope structures (if/for/while) don't hide module-level annotations."""
+        code = """
+import os
+if os.environ.get("FLAG"):
+    y: int = 1
+else:
+    y: str = "2"
+
+x: dict
+"""
+        annotations = extract_top_level_annotations(code)
+        # `y` appears twice at module scope (one branch of `if`); last-write wins.
+        # The important fact: `y` is included because `if` is not a scope boundary.
+        assert "x" in annotations
+        assert "y" in annotations
+
+    def test_top_level_annotations_malformed_returns_empty(self):
+        assert extract_top_level_annotations("x: dict =") == {}
+
+    def test_python_to_s1_canonical_is_injective(self):
+        """Reverse mapping from S1 to Python requires injectivity.
+
+        `_S1_TO_PYTHON_DISPLAY` is built by reversing `_PYTHON_TO_S1_CANONICAL`.
+        A future edit that maps two Python names to the same S1 name would
+        silently drop one on the reverse. The module-load assertion guards
+        against this; this test pins the invariant for explicit coverage.
+        """
+        from pflow.nodes.python import python_code
+
+        forward = python_code._PYTHON_TO_S1_CANONICAL
+        reverse = python_code._S1_TO_PYTHON_DISPLAY
+        assert len(reverse) == len(forward), (
+            f"Forward map has {len(forward)} entries, reverse has {len(reverse)} — "
+            "PYTHON_ALIASES_AT_S1 must be injective for diagnostic display to round-trip"
+        )
 
     def test_literal_in_annotation_rejected_with_import_hint(self):
         """Literal (no modern alternative) should be rejected at prep with an import hint."""

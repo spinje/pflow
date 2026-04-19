@@ -299,3 +299,47 @@ class TestParameterTypeLookup:
 
         param_type = get_parameter_type("no-type-node", "value", mock_registry)
         assert param_type == "any"
+
+
+class TestInferTemplateTypeBatchIndexedAccess:
+    """Verify infer_template_type descends into batch item structure on indexed paths.
+
+    Pre-fix behavior: ``${node.results[0].field}`` returned ``None`` — Pass 6/9
+    silently skipped type checking through batch outputs. Post-fix: traversal
+    mirrors path_validation.py::_validate_array_access, using
+    ``output_info["items"]`` as the structure source for indexed base parts.
+    """
+
+    @pytest.fixture
+    def batch_node_outputs(self):
+        """Build node_outputs with a batch output carrying a typed inner result."""
+        return {
+            "batch_node.results": {
+                "type": "array",
+                "node_id": "batch_node",
+                "node_type": "code",
+                "is_batch_output": True,
+                "items": {
+                    "type": "dict",
+                    "structure": {
+                        "item": {"type": "any", "description": "Original batch input"},
+                        "result": {"type": "array", "structure": {}},
+                        "stdout": {"type": "str", "structure": {}},
+                    },
+                },
+            },
+        }
+
+    def test_indexed_access_returns_inner_type(self, batch_node_outputs):
+        workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}
+        assert infer_template_type("batch_node.results[0].result", workflow_ir, batch_node_outputs) == "array"
+        assert infer_template_type("batch_node.results[0].stdout", workflow_ir, batch_node_outputs) == "str"
+
+    def test_indexed_access_unknown_field_returns_none(self, batch_node_outputs):
+        workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}
+        assert infer_template_type("batch_node.results[0].nonexistent", workflow_ir, batch_node_outputs) is None
+
+    def test_non_indexed_access_still_returns_array_type(self, batch_node_outputs):
+        """Access to the `.results` array itself (no index) returns the top-level `array` type."""
+        workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}
+        assert infer_template_type("batch_node.results", workflow_ir, batch_node_outputs) == "array"

@@ -161,6 +161,14 @@ def infer_template_type(  # noqa: C901
                 output_type = output_info.get("type", "any")
                 return str(output_type)
 
+            # Indexed base access (e.g. `results[0].field`) descends into the
+            # item structure, not the top-level array structure. Mirrors the
+            # equivalent traversal in path_validation.py::_validate_array_access
+            # so that batch outputs get the same type visibility they already
+            # have for path existence checks.
+            if parts[1] != output_key_part and isinstance(output_info.get("items"), dict):
+                return _infer_nested_type(parts[2:], output_info["items"])
+
             # Nested path - traverse structure
             return _infer_nested_type(parts[2:], output_info)
 

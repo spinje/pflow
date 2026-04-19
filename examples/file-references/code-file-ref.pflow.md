@@ -19,3 +19,5 @@ Transform input using external Python script.
 
 - type: code
 - code: ./scripts/transform.py
+- inputs:
+    text: ${input}
