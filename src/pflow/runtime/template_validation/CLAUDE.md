@@ -105,7 +105,7 @@ Passes use `is_batch_output` to branch behavior (path_validation uses it to dete
 - Shell validation has a single-quote escape hatch: `'${var}'` signals user accepts JSON coercion
 - `flatten_output_structure` shows array access patterns: `result.messages[0].text`
 - `Diagnostic(severity=WARNING, source="validator")` emitted when str-type output needs JSON auto-parsing at runtime
-- `_register_node_outputs_from_registry` (`validator.py`) **silently skips unknown node types** — the outer `WorkflowValidator._validate_node_types` step produces the rich "Unknown node type" diagnostic; raising here would double-report via the defensive `except Exception` wrapper
+- `_register_node_outputs_from_registry` (`validator.py`) **silently skips unknown node types** — the outer `WorkflowValidator._validate_node_types` step produces the rich "Unknown node type" diagnostic. Raising here would crash the whole validator: issue #237 removed the defensive `except Exception` wrapper in `_validate_templates` that previously would have absorbed it. Any exception from this pass now propagates to the outer CLI/MCP exception boundary.
 
 ## Producer context conventions
 

@@ -65,6 +65,45 @@ class TestWorkflowValidator:
         assert len(errors) > 0
         assert any("ir_version" in d.message for d in errors)
 
+    def test_unresolved_batch_template_produces_only_schema_error(self, registry_with_nodes):
+        """Regression guard for issue #237.
+
+        ``batch: ${items}`` is a schema violation (``batch`` must be an object,
+        not a string). Before the short-circuit, the data-flow and template
+        validators crashed on the malformed IR and their defensive wrappers
+        produced two additional misleading errors alongside the real schema
+        error — three errors for one root cause.
+
+        After #237: structural validation fails, pipeline short-circuits,
+        exactly one actionable error reaches the user.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "params": {"command": "echo ${item.name}"},
+                    "batch": "${items}",
+                }
+            ],
+            "edges": [],
+            "inputs": {"items": {"type": "array", "default": [{"name": "a"}]}},
+        }
+
+        errors, _warnings = split_validator_diagnostics(
+            workflow,
+            extracted_params={"items": [{"name": "a"}]},
+            registry=registry_with_nodes,
+        )
+
+        assert len(errors) == 1, (
+            f"Expected exactly 1 schema error (short-circuit), got {len(errors)}: {[e.message for e in errors]}"
+        )
+        diagnostic = errors[0]
+        assert "object" in diagnostic.message.lower()
+        assert (diagnostic.context or {}).get("path") == "nodes[0].batch"
+
     def test_data_flow_validation_errors(self):
         """Test that data flow errors are caught."""
         workflow = {
@@ -455,15 +494,17 @@ Do something.
         assert errors == []
 
 
-class TestDefensiveWrapperDiagnostics:
-    """Defensive ``except Exception`` wrappers in the validator must not set
-    ``context['exception_type']``.
+class TestStructuralWrapperDiagnostic:
+    """The lone surviving defensive ``except Exception`` wrapper lives in
+    ``_validate_structure`` because ``validate_ir`` calls the third-party
+    ``jsonschema`` library. Downstream validators ran on our own code and
+    their wrappers were deleted (issue #237) — producer bugs there now
+    propagate to the outer CLI/MCP exception boundary, which converts them
+    to structured Diagnostics via ``exception_to_diagnostics``.
 
-    Reason: the Task 147 renderer treats ``exception_type`` as a runtime-only
-    context key — it renders as ``Type: X`` which makes a validation error look
-    like an unhandled runtime crash. Producers are explicitly forbidden from
-    populating it. The message prefix (``"Data flow validation error:"`` etc.)
-    is enough provenance to identify that the wrapper fired.
+    The structural wrapper must NOT set ``context['exception_type']`` —
+    that key is runtime-only and would render as ``Type: X`` (making a
+    validation error look like an unhandled runtime crash).
     """
 
     def test_structural_wrapper_diagnostic_has_no_exception_type(self) -> None:
@@ -475,52 +516,6 @@ class TestDefensiveWrapperDiagnostics:
         assert diagnostic.severity == Severity.ERROR
         assert "Unexpected error during structural validation" in diagnostic.message
         assert "boom" in diagnostic.message
-        assert "exception_type" not in (diagnostic.context or {})
-
-    def test_data_flow_wrapper_diagnostic_has_no_exception_type(self) -> None:
-        with patch(
-            "pflow.core.workflow.data_flow.validate_data_flow",
-            side_effect=AttributeError("'str' object has no attribute 'get'"),
-        ):
-            diagnostics = WorkflowValidator._validate_data_flow({"ir_version": "0.1.0", "nodes": []})
-
-        assert len(diagnostics) == 1
-        diagnostic = diagnostics[0]
-        assert diagnostic.severity == Severity.ERROR
-        assert diagnostic.message.startswith("Data flow validation error:")
-        assert "exception_type" not in (diagnostic.context or {})
-
-    def test_template_wrapper_diagnostic_has_no_exception_type(self, registry_with_nodes) -> None:
-        with patch(
-            "pflow.runtime.template_validation.validate_workflow_templates",
-            side_effect=AttributeError("'str' object has no attribute 'get'"),
-        ):
-            diagnostics = WorkflowValidator._validate_templates(
-                {"ir_version": "0.1.0", "nodes": []}, {}, registry_with_nodes
-            )
-
-        assert len(diagnostics) == 1
-        diagnostic = diagnostics[0]
-        assert diagnostic.severity == Severity.ERROR
-        assert diagnostic.title == "Template Error"
-        assert diagnostic.message.startswith("Template validation error:")
-        assert "exception_type" not in (diagnostic.context or {})
-
-    def test_node_types_wrapper_diagnostic_has_no_exception_type(self, registry_with_nodes) -> None:
-        with patch.object(
-            registry_with_nodes,
-            "get_nodes_metadata",
-            side_effect=RuntimeError("registry boom"),
-        ):
-            diagnostics = WorkflowValidator._validate_node_types(
-                {"ir_version": "0.1.0", "nodes": [{"id": "n", "type": "shell", "params": {}}]},
-                registry_with_nodes,
-            )
-
-        assert len(diagnostics) == 1
-        diagnostic = diagnostics[0]
-        assert diagnostic.severity == Severity.ERROR
-        assert diagnostic.message.startswith("Registry validation error:")
         assert "exception_type" not in (diagnostic.context or {})
 
 
@@ -550,17 +545,16 @@ class TestValidatorProducerStructure:
 
     def test_unknown_node_type_does_not_double_report_with_templates_enabled(self, registry_with_nodes) -> None:
         """When templates run before node-type validation, an unknown node type
-        must produce exactly ONE rich diagnostic (from V6), not a duplicate
-        generic "Template validation error: Unknown node type: X" from the
-        defensive wrapper.
+        must produce exactly ONE rich diagnostic (from V6), not a duplicate.
 
-        Regression guard for PR #244 review feedback. Before the fix,
-        ``_register_node_outputs_from_registry`` raised a bare ``ValueError``
-        for unknown node types, which bubbled up through ``extract_node_outputs``
-        → ``validate_workflow_templates`` → the defensive ``except Exception``
-        wrapper in ``_validate_templates`` (step 4), producing a generic
-        template-error diagnostic BEFORE ``_validate_node_types`` (step 5)
-        produced the rich one. Users saw both.
+        Two independent mechanisms now enforce this:
+        1. ``_register_node_outputs_from_registry`` silently skips unknown types
+           so ``validate_workflow_templates`` returns cleanly; the rich V6
+           diagnostic comes exclusively from ``_validate_node_types`` (step 5).
+        2. If (1) ever regresses and raises, the exception would propagate to
+           the outer CLI/MCP boundary rather than being absorbed into a
+           duplicate generic "Template validation error" (issue #237 removed
+           the wrappers that used to produce that shape).
         """
         workflow_ir = {
             "ir_version": "0.1.0",

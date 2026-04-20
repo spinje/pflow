@@ -1128,6 +1128,7 @@ class TestShellCommandValidationTiming:
         from pflow.registry.registry import Registry
 
         workflow_ir = {
+            "ir_version": "0.1.0",
             "inputs": {"data": {"type": "object", "required": True}},
             "nodes": [
                 {
@@ -1163,6 +1164,7 @@ class TestShellCommandValidationTiming:
         from pflow.registry.registry import Registry
 
         workflow_ir = {
+            "ir_version": "0.1.0",
             "inputs": {"items": {"type": "array", "required": True}},
             "nodes": [
                 {

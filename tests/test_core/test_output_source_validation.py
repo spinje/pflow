@@ -234,16 +234,21 @@ class TestOutputSourceValidation:
         errors, _ = split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
-    def test_validation_with_no_nodes_but_outputs(self):
-        """❌ Invalid: Workflow with outputs but no nodes."""
+    def test_validation_with_output_referencing_missing_node(self):
+        """❌ Invalid: Output references a node that doesn't exist in the workflow.
+
+        Previously tested via empty ``nodes: []``, but that trips the schema's
+        non-empty-nodes rule (#237 short-circuit stops before the output-source
+        check runs). Using one real node + an output referencing a DIFFERENT
+        missing node exercises the output-source validator's intended path.
+        """
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [],  # No nodes
+            "nodes": [{"id": "real_node", "type": "shell", "params": {"command": "echo hi"}}],
             "edges": [],
-            "outputs": {"result": {"source": "node1.output"}},
+            "outputs": {"result": {"source": "missing_node.output"}},
         }
 
         errors, _ = split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
-        # Should have at least one error (output references non-existent node)
         assert len(errors) >= 1
-        assert any("node1" in d.message for d in errors)
+        assert any("missing_node" in d.message for d in errors)

@@ -107,6 +107,11 @@ class WorkflowValidator:
         # 1. Structural validation (ALWAYS run)
         diagnostics.extend(WorkflowValidator._validate_structure(workflow_ir))
 
+        # Short-circuit: semantic validators (steps 2-10) assume a structurally-valid IR.
+        # Running them on a malformed IR would produce misleading cascades (closes #237).
+        if any(d.severity == Severity.ERROR for d in diagnostics):
+            return diagnostics
+
         # 2. Stdin input validation (ALWAYS run - only one stdin: true allowed)
         diagnostics.extend(WorkflowValidator._validate_stdin_inputs(workflow_ir))
 
@@ -258,26 +263,14 @@ class WorkflowValidator:
     def _validate_data_flow(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         """Validate execution order and data dependencies.
 
-        Args:
-            workflow_ir: Workflow to validate
-
-        Returns:
-            Data flow validation diagnostics
+        Assumes ``workflow_ir`` has passed structural validation (step 1 short-circuits
+        on schema errors). Producer bugs surface as raw exceptions to the outer
+        exception boundary — CLI (``cli/commands/run.py``) and MCP (``PflowMCP``)
+        both convert them to structured Diagnostics via ``exception_to_diagnostics``.
         """
         from pflow.core.workflow.data_flow import validate_data_flow
 
-        try:
-            return validate_data_flow(workflow_ir)
-        except Exception as e:
-            return [
-                Diagnostic(
-                    severity=Severity.ERROR,
-                    source="validator",
-                    title="Validation Error",
-                    message=f"Data flow validation error: {e!s}",
-                    context={"category": "validation"},
-                )
-            ]
+        return validate_data_flow(workflow_ir)
 
     @staticmethod
     def _validate_templates(
@@ -285,39 +278,19 @@ class WorkflowValidator:
     ) -> list[Diagnostic]:
         """Validate template variables and parameters.
 
-        Args:
-            workflow_ir: Workflow to validate
-            extracted_params: Parameters extracted from user input
-            registry: Node registry
-
-        Returns:
-            Template validation diagnostics
+        Assumes ``workflow_ir`` has passed structural validation. See
+        ``_validate_data_flow`` docstring for the producer-bug contract.
         """
         from pflow.runtime.template_validation import validate_workflow_templates
 
-        try:
-            return validate_workflow_templates(workflow_ir, extracted_params, registry)
-        except Exception as e:
-            return [
-                Diagnostic(
-                    severity=Severity.ERROR,
-                    source="validator",
-                    title="Template Error",
-                    message=f"Template validation error: {e!s}",
-                    context={"category": "template_error"},
-                )
-            ]
+        return validate_workflow_templates(workflow_ir, extracted_params, registry)
 
     @staticmethod
     def _validate_node_types(workflow_ir: dict[str, Any], registry: Registry) -> list[Diagnostic]:
         """Validate all node types exist in registry.
 
-        Args:
-            workflow_ir: Workflow to validate
-            registry: Node registry
-
-        Returns:
-            Node type validation diagnostics
+        Assumes ``workflow_ir`` has passed structural validation. See
+        ``_validate_data_flow`` docstring for the producer-bug contract.
         """
         from pflow.core.suggestion_utils import find_similar_items
 
@@ -326,54 +299,38 @@ class WorkflowValidator:
         # Types handled specially by the compiler, not registered in the node registry
         compiler_special_types = {"workflow", "pflow.runtime.workflow_executor"}
 
-        try:
-            # Extract all node types from the workflow
-            node_types = {node.get("type") for node in workflow_ir.get("nodes", []) if node.get("type")}
+        node_types = {node.get("type") for node in workflow_ir.get("nodes", []) if node.get("type")}
+        registry_types = node_types - compiler_special_types
 
-            # Filter out compiler-handled special types
-            registry_types = node_types - compiler_special_types
+        if not registry_types:
+            return diagnostics
 
-            if registry_types:
-                # Get metadata for these specific node types
-                metadata = registry.get_nodes_metadata(registry_types)
+        metadata = registry.get_nodes_metadata(registry_types)
+        unknown_types = registry_types - set(metadata.keys())
+        known_types = sorted(metadata.keys())
 
-                unknown_types = registry_types - set(metadata.keys())
-                known_types = sorted(metadata.keys())
-
-                for index, node in enumerate(workflow_ir.get("nodes", [])):
-                    node_type = node.get("type")
-                    if node_type in unknown_types:
-                        similar = (
-                            find_similar_items(node_type, known_types, max_results=3, method="fuzzy")
-                            if known_types
-                            else []
-                        )
-                        diagnostics.append(
-                            Diagnostic(
-                                severity=Severity.ERROR,
-                                source="validator",
-                                title="Validation Error",
-                                node_id=node.get("id", "unknown"),
-                                message=f"Unknown node type: '{node_type}'",
-                                suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
-                                context={
-                                    "category": "validation",
-                                    "path": f"nodes[{index}].type",
-                                    "node_type": node_type,
-                                    "similar_names": similar or None,
-                                },
-                            )
-                        )
-        except Exception as e:
-            diagnostics.append(
-                Diagnostic(
-                    severity=Severity.ERROR,
-                    source="validator",
-                    title="Validation Error",
-                    message=f"Registry validation error: {e!s}",
-                    context={"category": "validation"},
+        for index, node in enumerate(workflow_ir.get("nodes", [])):
+            node_type = node.get("type")
+            if node_type in unknown_types:
+                similar = (
+                    find_similar_items(node_type, known_types, max_results=3, method="fuzzy") if known_types else []
                 )
-            )
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        node_id=node.get("id", "unknown"),
+                        message=f"Unknown node type: '{node_type}'",
+                        suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
+                        context={
+                            "category": "validation",
+                            "path": f"nodes[{index}].type",
+                            "node_type": node_type,
+                            "similar_names": similar or None,
+                        },
+                    )
+                )
 
         return diagnostics
 
