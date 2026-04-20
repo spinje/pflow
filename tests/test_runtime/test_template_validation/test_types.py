@@ -1546,6 +1546,9 @@ class TestCodeNodeInputAnnotationValidation:
 
         diagnostic = missing[0]
         assert diagnostic.severity == Severity.ERROR
+        # source="validator" is part of the producer contract that the
+        # renderer relies on (see template_validation/CLAUDE.md).
+        assert diagnostic.source == "validator"
         assert diagnostic.node_id == "split"
         # Byte-identical to runtime check in python_code.py::prep.
         assert diagnostic.message == (
@@ -1593,6 +1596,73 @@ class TestCodeNodeInputAnnotationValidation:
 
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
         assert not any("Code must declare result type annotation" in d.message for d in errors)
+
+    def test_next_annotation_must_be_str(self, test_registry):
+        """`next: int` must fail validation, mirroring the runtime prep check.
+
+        Runtime rejects at ``python_code.py:566-572`` with ``'next' must be
+        annotated as str, got <type>``. Validate-time emits a symmetric
+        Diagnostic so ``--validate-only`` catches the same error.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "router",
+                    "type": "code",
+                    "params": {"code": "next: int = 42", "inputs": {}},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        type_errors = [d for d in errors if "'next' must be annotated as str" in d.message]
+        assert len(type_errors) == 1, [d.message for d in errors]
+
+        diagnostic = type_errors[0]
+        assert diagnostic.severity == Severity.ERROR
+        assert diagnostic.source == "validator"
+        assert diagnostic.node_id == "router"
+        assert diagnostic.message == "'next' must be annotated as str, got int"
+        assert diagnostic.context["path"] == "nodes[id=router].params.code"
+        assert diagnostic.context["annotation"] == "int"
+        assert diagnostic.context["expected_type"] == "str"
+        assert diagnostic.see_also == ["code"]
+
+    def test_next_str_annotation_passes(self, test_registry):
+        """`next: str` is the canonical routing declaration — must not fire the type check."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "router",
+                    "type": "code",
+                    "params": {"code": 'next: str = "target"', "inputs": {}},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("'next' must be annotated as str" in d.message for d in errors)
+
+    def test_next_unknown_type_skips_check(self, test_registry):
+        """Unknown/user-defined next annotation types skip the check (matches runtime)."""
+        # Runtime's `_get_outer_type` returns None for types outside _TYPE_MAP.
+        # Validate-time must skip the check too — otherwise we'd reject valid
+        # code that runtime accepts via the user-class escape hatch.
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "router",
+                    "type": "code",
+                    "params": {"code": 'next: UserDefinedType = "target"', "inputs": {}},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("'next' must be annotated as str" in d.message for d in errors)
 
     def test_result_annotation_inside_helper_function_matches_runtime(self, test_registry):
         """Presence check uses walk-mode so validate-time matches runtime parity.
