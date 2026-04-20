@@ -218,6 +218,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 77: Pflow Guide — tailored agent instructions
 - ✅ Task 153: Reject Undeclared Sub-Workflow Inputs
 - ✅ Task 154: Type Vocabulary Coherence
+- ✅ Task 156: Add `--dry-run` flag with cache plan and cost/duration estimates
 
 ### Planned Features (in order of priority)
 

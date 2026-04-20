@@ -6,7 +6,7 @@ Add `--dry-run` to `pflow run` that builds a static execution plan — which nod
 
 ## Status
 
-not started
+done
 
 ## Priority
 
