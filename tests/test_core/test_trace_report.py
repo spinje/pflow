@@ -209,7 +209,15 @@ class TestBuildSummary:
         assert "# Execution Report: my-pipeline" in md
 
     def test_includes_status_and_duration(self) -> None:
-        trace = _make_trace(final_status="failed", duration_ms=12345.0)
+        # failed_node_ids present → report generator trusts stored final_status;
+        # without it the generator recomputes (legacy-trace path).
+        trace = _make_trace(
+            final_status="failed",
+            duration_ms=12345.0,
+            nodes=[_make_event(node_id="failing", success=False, error="boom")],
+            failed_node_ids=["failing"],
+            nodes_failed=1,
+        )
         md = _build_summary(trace, source_path="/home/user/.pflow/debug/trace.json")
         assert "- Status: failed" in md
         assert "- Duration: 12.3s" in md
@@ -1270,6 +1278,38 @@ class TestBuildSummaryLoopRecovery:
         assert "- Status: failed" in md
         assert "## Errors" in md
         assert "**bad**" in md
+
+    def test_legacy_trace_status_recomputed_when_failed_node_ids_absent(self) -> None:
+        """Pre-fix traces on disk carry ``final_status: "failed"`` for loop recovery
+        (old rule was monotonic over events). The report generator must recompute
+        the status from events when ``failed_node_ids`` is absent so Status and
+        Errors agree — otherwise users see "Status: failed" with zero entries
+        under "## Errors".
+        """
+        events = [
+            _make_event(node_id="maybe-fail", success=False, error="visit 1 exit 9"),
+            _make_event(node_id="maybe-fail", success=True),
+        ]
+        # Legacy trace shape: no failed_node_ids, wrong final_status from old rule
+        legacy_trace = {
+            "format_version": "2.0.0",
+            "execution_id": "legacy",
+            "workflow_name": "legacy-loop-recovery",
+            "start_time": "t0",
+            "end_time": "t1",
+            "duration_ms": 1.0,
+            "final_status": "failed",  # what old code wrote
+            "nodes_executed": 2,
+            "nodes_failed": 1,  # what old code counted
+            # NOTE: no failed_node_ids key
+            "nodes": events,
+        }
+        md = _build_summary(legacy_trace, source_path="test")
+
+        # Recomputed: last event per node wins → maybe-fail is success
+        assert "- Status: success" in md
+        # And no Errors section because no node's final state is failed
+        assert "## Errors" not in md
 
 
 class TestFormatCost:

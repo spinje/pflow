@@ -497,6 +497,35 @@ def _write_node_files(events: list[dict[str, Any]], parent_dir: Path, node_index
     return idx
 
 
+def _resolve_final_status(trace: dict[str, Any]) -> str:
+    """Return the workflow-level final status, recomputing for legacy traces.
+
+    New traces (post-GH #240 fix) carry ``failed_node_ids``; their
+    ``final_status`` was written using the per-node-last-event rule and we
+    trust it. Legacy traces (pre-fix) carry a ``final_status`` written with
+    the old per-event rule — for a loop-recovery run that would incorrectly
+    read "failed". ``_collect_errors`` already applies the corrected per-node
+    rule to old traces via its fallback; recomputing status here keeps the
+    Status line and Errors section in sync. Without this, a legacy trace
+    renders "Status: failed" with zero entries under "## Errors".
+    """
+    if "failed_node_ids" in trace:
+        return str(trace.get("final_status", "unknown"))
+
+    # Legacy fallback: apply the canonical per-node-last-event rule and
+    # override the JSON's stored value when the old rule was wrong. Preserve
+    # non-"failed" legacy values ("success"/"degraded") because the fallback
+    # can't reconstruct the degraded vs success distinction on its own.
+    latest = final_events_by_node(trace.get("nodes", []))
+    has_failure = any(not e.get("success", True) for e in latest.values())
+    if has_failure:
+        return "failed"
+    legacy = str(trace.get("final_status", "success"))
+    # Old code wrote "failed" for recovered loops; replace with "success"
+    # since no per-node failures remain. Leave "degraded" and other values alone.
+    return "success" if legacy == "failed" else legacy
+
+
 def _build_summary(
     trace: dict[str, Any],
     source_path: str = "N/A",
@@ -505,7 +534,7 @@ def _build_summary(
 ) -> str:
     """Build top-level summary.md content."""
     lines = [f"# Execution Report: {trace.get('workflow_name', 'workflow')}", ""]
-    lines.append(f"- Status: {trace.get('final_status', 'unknown')}")
+    lines.append(f"- Status: {_resolve_final_status(trace)}")
     lines.append(f"- Duration: {trace.get('duration_ms', 0) / 1000:.1f}s")
     executed = trace.get("nodes_executed", 0)
     if only_node and total_nodes:
