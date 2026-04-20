@@ -1963,3 +1963,111 @@ New formatter test file `tests/test_execution/formatters/test_plan_formatter.py`
 17. **Placeholder child inputs are the bridge between compile-time validation and BFS recursion.** `_placeholder_child_inputs` and `_effective_child_inputs` exist so `compile_workflow`'s required-input check passes when parent's upstream is dirty. Never observed by the child (no `_run()` in BFS mode), so the values don't need semantic meaning — just type-appropriate presence.
 
 18. **`cost_basis` is a semantic signal, not a mode flag.** Honor the BFS `branched` signal: linear = exact, branching = upper_bound. Hardcoding either side produces misleading output for the OTHER scenario. The formatter's label is tied to this signal.
+
+---
+
+## 2026-04-20 — Adversarial verification pass (manual end-to-end)
+
+After all code-level fixes and the state-machine rewrite were green, ran an independent adversarial verification pass through the real `pflow` CLI. Goal: not "confirm it works" — try to break it. Verification specialist brief: find the last 20%. Test suite results are context, not evidence.
+
+### Method
+
+14 custom `.pflow.md` files written to `/tmp/pflow-dry-run-verify/` targeting specific risk areas. Each test invoked real `uv run pflow` subprocesses with clean exit-code capture (`> /dev/null 2>&1; echo $?`) to avoid pipe-masking exit codes. Stderr separated for JSON-mode silence verification. Direct sqlite probe of `cache.db` to confirm reserved-key presence in cache vs. absence in user output.
+
+### 32 scenarios tested, all green
+
+**Side-effect invariants**
+- Canary file path `/tmp/pflow-canary-witness-001` — not written after dry-run
+- TEST-NET-1 reserved IP (`http://192.0.2.1:12345`) — 0.65s return (no 5s HTTP timeout fired → no network call)
+- Trace file count: 0 delta on dry-run; +1 on real run
+
+**CLI surface**
+- `--dry-run + --validate-only` → exit 1 with "pick one" message
+- `--dry-run + --report` → exit 1 with "nothing to report" message
+- `--dry-run + --no-trace` / `-p` / `-o` / `-v` → silent accept, plan renders
+- Missing required input → exit 1 via validator
+- `--only <nonexistent>` → exit 1 with available-nodes hint
+- `--only <sub-workflow-child-node>` → exit 1 (only sees parent's node IDs)
+- Unknown flag `--bogus-flag` → silently accepted (pflow-wide CLI behavior, not dry-run scope)
+- Broken markdown → exit 1 via parser pre-plan
+- Stdin routing (`echo "x" | pflow ... --dry-run`) → works; empty stdin → exit 1
+- JSON mode stderr → 0 bytes confirmed
+
+**Cache semantics**
+- Fresh plan → "nothing cached — full run" divider
+- Full re-plan after run → all cached, `cache_boundary: null`
+- Edit middle node → partial cache with correct boundary, downstream labeled via BFS
+- `cache: false` → always execute with `cause: cache_disabled`, tag `[code, cache: false]`
+- Conditional `next: str = "left"` → planner follows cached action, skips untaken branch
+- Branching post-first-miss → BFS enumerates both branches, `cost_basis: "upper_bound"`
+- Retry loop (`on-error: flaky`) → 8s timeout didn't fire; `visited_edges` terminates
+
+**Sub-workflows**
+- Static ref recursion → `sub_plan` populated with child entries and summary
+- Fully cached re-plan → parent `after` node's `${child-invoke.tagged}` resolves correctly (`_populate_sub_workflow_outputs` working)
+- Edit CHILD's stamp node → top-level `cache_boundary: child-invoke`, `after` status=execute cause=downstream
+- `workflow: ${var}` → status=opaque, cause=dynamic, `[sub-workflow: dynamic, cannot plan]`
+- Missing child file → validator catches pre-plan, exit 1
+- Circular sub-workflow (16a → 16b → 16a) → detected, warning diagnostic, exit 0
+
+**Cross-workflow scoping (L3)**
+- Two workflows both with `classify` node (one with `time.sleep(0.01)`, one with `time.sleep(0.1)`)
+- After running both, edited each to force execute-mode re-plan
+- WF_A plan: `estimated_duration_ms: 13.10` (only its own history)
+- WF_B plan: `estimated_duration_ms: 102.12` (only its own history)
+- Zero cross-pollination confirmed
+
+**BFS downstream stats**
+- Batch workflow: edit `greet-each` batch node → `greet-each` shows as miss with `last_duration_ms: 12.52ms`, `summary` (downstream) shows `last_duration_ms: 4.80ms`
+- Confirms `_execute_entry` chokepoint carries historical stats for BOTH first-miss AND BFS-downstream paths
+
+**Reserved key (`__pflow_stats__`)**
+- Direct sqlite query: present in cache blob (`{'duration_ms': 0.606...}`)
+- Absent from `-p` output
+- Absent from `--full` dump
+- Absent from trace JSON
+- Absent from `pflow report` output
+- All four display-site dunder filters working
+
+**LLM-specific (no mock required)**
+- LLM node dry-run without API credentials configured → no API call, `≈ $? (no history)`, exit 0
+- `nodes_without_history: 1` correctly counts LLM-without-cost-history
+- Summary line: `(1 LLM node without cost history)` + `(2 nodes without duration history)`
+
+**JSON shape (agent contract)**
+- Top keys: `{workflow, plan, summary, diagnostics}`
+- Summary fields for nested: `*_including_nested` (total, cached, execute, cost, nwh, execute_by_type) all aggregate correctly
+- `execute_by_type` uses raw class names (`PythonCodeNode`, `WorkflowExecutor`) — stable agent contract
+- Validator warnings bubble into `diagnostics[]` with severity
+- Agent jq patterns work: `.summary.estimated_cost_usd`, `.summary.cost_basis`, `.plan[] | select(.status=="execute")`
+
+**MCP parity**
+- Direct `ExecutionService.plan_workflow()` call returned identical JSON shape to CLI `--dry-run --output-format json`
+- Tool registration confirmed in `tools/execution_tools.py`
+
+### D1 known limitation confirmed in practice
+
+`--dry-run --no-cache` on a workflow with prior run history: every node shows "would execute" AND surfaces as "N nodes without duration history" — the `read_enabled=False` gate suppresses `get_latest_for_node` along with regular cache hits. Matches the documented deferred fix (progress log line 1860). User feedback in practice would re-open this.
+
+### Spec deviations confirmed as intentional
+
+Verified these deliberate polish deviations work as designed and don't produce regressions:
+
+- Text header: `Dry-run for 01-canary.pflow.md: 3 nodes` (not `Plan for /full/path`)
+- Trailer `No side effects performed.` removed
+- `execute_by_type` JSON keys are raw class names, not pretty tags (pretty tags only in text)
+
+### Diagnostic observations (not bugs)
+
+- Cached entries show `last_duration_ms: null` in JSON. Correct semantics — historical duration is for "would execute" cost-gating, not cached entries. Cached entries carry `age_sec` instead.
+- `cache_boundary` is set to the first would-execute node even when EVERY node is would-execute (nothing cached scenario). Matches spec literal reading ("the node_id of the first would-execute node; null when everything is cached"). Text divider compensates by saying "nothing cached — full run" in that case.
+
+### Verdict
+
+No regressions found. All advertised behavior works end-to-end under adversarial inputs. The state machine's invariants (planner-owned scratch shared mutation, visit_counts pre-bump, BFS non-error-successors, `_execute_entry` chokepoint, `__pflow_stats__` dunder filter) all hold in practice under the adversarial battery.
+
+### For the next agent (updated)
+
+19. **Verification via real subprocess + clean exit-code capture is non-negotiable.** The test suite (5144 passing) missed nothing in this session's battery, but it also couldn't have caught several of the things this session verified — stderr silence under `--output-format json` at OS level, `/tmp/canary` file-absence proof, TEST-NET-1 timing proof of no network call, sqlite probe confirming `__pflow_stats__` cache presence with simultaneous user-output absence. Automated tests are necessary but not sufficient for agent-facing contracts.
+
+20. **Piped commands mask exit codes.** `pflow ... --dry-run --only ghost 2>&1 | head -5; echo $?` reported `EXIT: 0` because `head` exited 0. Clean reality: `pflow ... --only ghost > /dev/null 2>&1; echo $?` returned `EXIT: 1`. Never trust the `$?` that follows a pipe. This tripped me up once in this session; don't repeat.
