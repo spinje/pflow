@@ -1558,6 +1558,9 @@ class TestCodeNodeInputAnnotationValidation:
         # Programmatic consumers (MCP / JSON output) get a structured signal
         # of which declarations are missing without parsing the message text.
         assert diagnostic.context["missing"] == ["result", "next"]
+        # Agents get a direct pointer to the code-node guide topic, matching
+        # the see_also pattern used by Pass 5 and Pass 8 diagnostics.
+        assert diagnostic.see_also == ["code"]
 
     def test_result_annotation_alone_passes(self, test_registry):
         """`result:` without `next:` is sufficient — the check is OR, not AND."""

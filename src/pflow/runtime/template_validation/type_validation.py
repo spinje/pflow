@@ -823,6 +823,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
                         "node_type": "code",
                         "missing": ["result", "next"],
                     },
+                    see_also=["code"],
                 )
             )
 
