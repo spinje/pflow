@@ -15,7 +15,6 @@ from typing import Any
 from mcp import types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ResourceError, ToolError
-from mcp.server.lowlevel.helper_types import ReadResourceContents
 
 from pflow.core.diagnostic import Diagnostic, Severity, exception_to_diagnostics
 from pflow.core.diagnostic_render import format_diagnostic
@@ -94,8 +93,20 @@ def _render_exception(original: Exception) -> str:
 
     Matches ``cli/error_output.py::display_exception_text`` so CLI and MCP
     produce byte-identical text for the same exception.
+
+    Defensive: if a misbehaving ``to_diagnostics()`` method raises (e.g. a
+    third-party exception that happens to have the attribute but fails when
+    called), fall through to the bare string form rather than letting the
+    secondary exception escape the entire boundary.
     """
-    diagnostics = exception_to_diagnostics(original)
+    try:
+        diagnostics = exception_to_diagnostics(original)
+    except Exception:
+        # Defensive: any failure in the rendering pipeline (e.g. a misbehaving
+        # third-party to_diagnostics() method) falls back to bare-string output
+        # rather than letting a secondary exception escape the boundary.
+        logger.exception("exception_to_diagnostics raised while rendering %r", original)
+        return f"Error: {original}"
     if not diagnostics:
         return f"Error: {original}"
     return "\n".join(format_diagnostic(d) for d in diagnostics)
@@ -113,6 +124,25 @@ def _build_unknown_tool_diagnostic(name: str, available_tools: list[str]) -> Dia
         source="mcp",
         title="Tool Not Found",
         message=f"Unknown tool: {name}",
+        suggestions=suggestions,
+        context={"category": "not_found", "similar_names": similar or None},
+    )
+
+
+def _build_unknown_resource_diagnostic(uri: Any, available_uris: list[str]) -> Diagnostic:
+    """Construct a ``Resource Not Found`` diagnostic with similar-URI suggestions."""
+    similar = find_similar_items(str(uri), available_uris, max_results=3, method="fuzzy")
+    suggestions: list[str] = []
+    if similar:
+        suggestions.append(f"Did you mean: {', '.join(similar)}")
+    suggestions.append(
+        "Check the resource URI. Known pflow resources: pflow://instructions, pflow://instructions/sandbox."
+    )
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="mcp",
+        title="Resource Not Found",
+        message=f"Unknown resource: {uri}",
         suggestions=suggestions,
         context={"category": "not_found", "similar_names": similar or None},
     )
@@ -149,6 +179,14 @@ class PflowMCP(FastMCP):
 
             original = _unwrap_cause(te)
             if not _should_render(original):
+                # Debug-log the pass-through so a producer bug misclassified
+                # into the pass-through list still leaves an audit trail.
+                logger.debug(
+                    "Passing through %s in MCP tool %s: %s",
+                    type(original).__name__,
+                    name,
+                    original,
+                )
                 raise
             # logger.exception uses sys.exc_info(), which surfaces the full
             # wrapper → original chain via __cause__/__context__ — strictly
@@ -162,17 +200,41 @@ class PflowMCP(FastMCP):
     async def read_resource(self, uri: Any) -> Any:
         try:
             return await super().read_resource(uri)
-        except ResourceError as re_:
-            original = _unwrap_cause(re_)
+        except (ResourceError, ValueError) as exc:
+            # Unknown-resource URIs raise `ValueError("Unknown resource: ...")`
+            # from resource_manager.py:105 (concrete resources) or
+            # `ResourceError("Unknown resource: ...")` from FastMCP. Render
+            # with similar-URI suggestions, symmetric with the unknown-tool
+            # path. Must re-raise (not return contents) because the MCP
+            # resource protocol signals failure via a JSON-RPC error.
+            if exc.__cause__ is None and exc.__context__ is None and str(exc).startswith("Unknown resource:"):
+                available = [str(r.uri) for r in await self.list_resources()]
+                diagnostic = _build_unknown_resource_diagnostic(uri, available)
+                raise ResourceError(format_diagnostic(diagnostic)) from exc
+
+            # For anything else, only intercept ResourceError — FastMCP's
+            # wrapping for exceptions raised INSIDE resource handlers. A
+            # bare ValueError that isn't an unknown-resource marker is not
+            # something we can classify, so let it propagate.
+            if not isinstance(exc, ResourceError):
+                raise
+
+            original = _unwrap_cause(exc)
             if not _should_render(original):
+                logger.debug(
+                    "Passing through %s reading MCP resource %s: %s",
+                    type(original).__name__,
+                    uri,
+                    original,
+                )
                 raise
             logger.exception("Unhandled exception reading MCP resource %s", uri)
-            # MCP resource responses have no isError channel — surface the
-            # rendered diagnostic as readable text content. Agents reading
-            # resources typically render the content directly, so the
-            # diagnostic is visible even though the protocol layer doesn't
-            # flag it as an error.
-            return [ReadResourceContents(content=_render_exception(original), mime_type="text/plain")]
+            # MCP resource protocol has no isError channel; re-raise as
+            # ResourceError so the lowlevel handler produces a proper
+            # JSON-RPC error response. Matches FastMCP's default pass-through
+            # behavior — programmatic agents see the error at the protocol
+            # level, not as successful-looking content.
+            raise ResourceError(_render_exception(original)) from original
 
 
 # Create the FastMCP server instance with instructions for agents.
