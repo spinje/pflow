@@ -248,3 +248,45 @@ Verification:
 - `uv run pytest tests/test_execution/` — `419 passed`
 - `uv run make test` — `5206 passed`
 - Manual: re-ran the simple repro (parent.pflow.md + child.pflow.md) — all 3 scenarios (fresh/cached/partial) produce correct output
+
+### Step 6: PR review fixes + end-to-end verification
+
+PR review (#332 comment) identified 3 warnings:
+1. Unused `batch_count` parameter in `_aggregate_batch_child_plans` — became dead after the `len(entries_for_node)` fix. Removed.
+2. Redundant nested `if config.template_config:` check — copy-paste artifact from the 3-way merge fix. Removed.
+3. Broad `except Exception` — reviewer suggested narrowing. Kept intentionally (planner must never crash). Removed the `# noqa: BLE001` comment that ruff auto-stripped anyway.
+
+End-to-end verification on lyrics-generator pipeline:
+- Ran the full pipeline ($2.43, ~7 min) to populate fresh cache entries
+- Dry-run immediately after: `fetch-sources` (batch) and `analyze-sources` (batch) correctly show `↻` cached
+- 12 cached · 33 would execute (vs the old "0 cached · 47 would execute")
+- No validation error
+
+### Step 7: Root-cause investigation of pre-existing cache key drift
+
+The lyrics-generator dry-run showed `assign-diversity` (inside `enforce-diversity`) as a cache miss even though it was just written 6 minutes ago. Investigated to determine if this was our bug or pre-existing.
+
+**Attempted repros (all PASSED — no drift):**
+1. Complex nested Python data (20 items, unicode, floats, nested dicts) — stable
+2. LLM structured output through sub-workflow boundary — stable
+3. Chained LLM sub-workflows (step1 → step2, structured JSON crossing boundary) — stable
+
+**Root cause found by comparing runtime trace vs planner cache data:**
+
+The runtime trace showed `assign-diversity`'s resolved `concepts` input with dict keys in INSERTION ORDER (as the LLM produced them): `['title', 'core_idea', 'angle', 'why_compelling', ...]`. The planner's version (read from cache via `json.loads`) had keys in ALPHABETICAL ORDER: `['angle', 'core_idea', 'emotional_core', ...]`.
+
+**The bug**: `cache.py` stores output blobs with `json.dumps(sort_keys=True)`. This is correct for cache KEY computation (deterministic hashing) but WRONG for cache VALUE storage — it destroys insertion order. When cached structured output is restored and stringified into a downstream prompt template via `str()` or `json.dumps()`, the alphabetical key order produces a different string → different cache key → false miss.
+
+**Filed as GH #333** with full repro steps, diagnostic evidence, and suggested fix (separate `sort_keys=True` for hashing from `sort_keys=False` for storage — one-line change in `cache.py`).
+
+**Confirmed NOT caused by our batch fix** — affects non-batch sub-workflows identically. The batch sub-workflow nodes (`fetch-sources`, `analyze-sources`) correctly show as cached. Only `assign-diversity` (a non-batch node downstream of a non-batch sub-workflow) drifts.
+
+### Final state
+
+- PR #332 open with all review fixes
+- 5206 tests pass, `make check` clean
+- GH #333 filed for the pre-existing cache key drift (separate fix)
+- All three original symptoms fixed for the documented scope:
+  - ✅ No false validation error
+  - ✅ Batch sub-workflow nodes show per-item cache status
+  - ✅ Downstream nodes resolve templates (no "nothing cached" cascade)
