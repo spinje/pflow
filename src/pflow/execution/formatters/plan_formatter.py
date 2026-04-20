@@ -122,6 +122,20 @@ def format_plan_text(plan: Plan) -> str:
     if effective_nwdh > 0:
         lines.append(f"  ({effective_nwdh} node{'s' if effective_nwdh != 1 else ''} without duration history)")
 
+    # Agent-facing caution: the totals above exclude any sub-workflow the
+    # planner couldn't resolve (`workflow: ${var}`). Cost-gating must know
+    # the number is an under-estimate so it can refuse to proceed.
+    effective_opaque = (
+        plan.summary.opaque_count_including_nested
+        if plan.summary.opaque_count_including_nested is not None
+        else plan.summary.opaque_count
+    )
+    if effective_opaque > 0:
+        lines.append(
+            f"  ⚠ {effective_opaque} opaque sub-workflow{'s' if effective_opaque != 1 else ''} — "
+            "totals above exclude their cost/duration"
+        )
+
     if plan.diagnostics:
         lines.append("")
         for diagnostic in plan.diagnostics:
@@ -312,6 +326,7 @@ def _summary_to_dict(summary: Any) -> dict[str, Any]:
         "nodes_without_history": summary.nodes_without_history,
         "estimated_duration_ms": summary.estimated_duration_ms,
         "nodes_without_duration_history": summary.nodes_without_duration_history,
+        "opaque_count": summary.opaque_count,
         "cost_basis": summary.cost_basis,
     }
     if summary.total_including_nested is not None:
@@ -328,4 +343,6 @@ def _summary_to_dict(summary: Any) -> dict[str, Any]:
         result["nodes_without_duration_history_including_nested"] = (
             summary.nodes_without_duration_history_including_nested
         )
+    if summary.opaque_count_including_nested is not None:
+        result["opaque_count_including_nested"] = summary.opaque_count_including_nested
     return result

@@ -140,6 +140,36 @@ def test_dry_run_exits_one_when_plan_contains_error_diagnostic(tmp_path) -> None
     assert result.exit_code == 1
 
 
+def test_dry_run_circular_subworkflow_exits_one(tmp_path) -> None:
+    """Broken sub-workflow topology (cycle) must exit 1.
+
+    Before the severity fix, `_sub_workflow_error_entry` emitted WARNING
+    and `_display_plan_result` only exits 1 on ERROR — so cycles, max-depth,
+    unresolvable refs, and bad `inputs:` shapes all silently exited 0.
+    Agents cost-gating via `exit != 0` missed these broken workflows.
+
+    This test pins the user-facing exit-code contract at the CLI boundary;
+    `test_build_plan_circular_subworkflow_emits_error_diagnostic` pins the
+    library severity it depends on.
+    """
+    parent_path = tmp_path / "circular-dry-run.pflow.md"
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "self-call", "type": "workflow", "params": {"workflow": str(parent_path), "inputs": {}}},
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+
+    result = invoke_cli(["--dry-run", str(parent_path)])
+
+    assert result.exit_code == 1, (
+        f"Circular sub-workflow should exit 1 (was 0 before the severity fix). Output: {result.output}"
+    )
+
+
 def test_dry_run_text_output_contains_boundary_divider(tmp_path) -> None:
     """Fresh dry-run text output should include a cache divider."""
     workflow_path = tmp_path / "dry-run-text.pflow.md"

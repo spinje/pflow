@@ -60,6 +60,25 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 }
 
 
+def is_clean_termination(action: Optional[str], successors: dict[str, Any]) -> bool:
+    """Whether the graph walk should clean-terminate after a node returns `action`.
+
+    Shared predicate between the runtime engine (`_handle_no_successor` —
+    called when no successor matches the action) and the dry-run planner's
+    `_classify`. Centralized here so termination semantics can't drift.
+
+    Two cases count as clean termination:
+    - `action == "end"` — the intentional-termination sentinel a node can
+      return to stop the walk without a routing error.
+    - All successor edges are on-error handlers (`all(k == "error" ...)`)
+      — no forward path exists; falling off the end is clean.
+
+    Returns `True` for clean termination, `False` when the missing-successor
+    condition should surface as a routing error.
+    """
+    return action == "end" or all(k == "error" for k in successors)
+
+
 class WorkflowEngine:
     """Executes a CompiledWorkflow by walking the node graph and handling all runtime concerns."""
 
@@ -137,7 +156,7 @@ class WorkflowEngine:
 
         Returns the (possibly updated) last_action.
         """
-        if last_action == "end" or all(k == "error" for k in curr.successors):
+        if is_clean_termination(last_action, curr.successors):
             return last_action  # Intentional termination or no forward path
 
         # Unmatched action — either a node failure with no error handler,

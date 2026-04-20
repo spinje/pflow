@@ -85,6 +85,41 @@ def test_build_plan_cache_false_node_always_executes(tmp_path) -> None:
     assert plan.entries[0].cause == "cache_disabled"
 
 
+def test_build_plan_surfaces_opaque_count_for_cost_gate_agents(tmp_path) -> None:
+    """Opaque sub-workflows increment `opaque_count` so agents can refuse to proceed.
+
+    Without this signal, an agent cost-gating on `estimated_cost_usd_including_nested`
+    sees $0 for a workflow whose `workflow: ${var}` sub-tree could cost anything.
+    `nodes_without_history` is LLM-specific and doesn't catch this case.
+
+    Mutation: remove the `if entry.status == "opaque": opaque_count += 1`
+    branch in `_compute_totals` → this assertion fails (agent has no signal
+    that an unplannable region exists).
+    """
+    workflow_path = tmp_path / "parent.pflow.md"
+    write_workflow_file(
+        {
+            "inputs": {"child_ref": {"type": "string", "description": "Child workflow ref"}},
+            "nodes": [
+                {
+                    "id": "child",
+                    "type": "workflow",
+                    "params": {"workflow": "${child_ref}", "inputs": {}},
+                }
+            ],
+            "edges": [],
+        },
+        workflow_path,
+    )
+
+    plan = WorkflowRunner().plan(str(workflow_path), {"child_ref": "./child.pflow.md"}, RunnerConfig())
+
+    assert plan.entries[0].status == "opaque"
+    assert plan.summary.opaque_count == 1
+    # No nested aggregation when there are no sub_plans to merge.
+    assert plan.summary.opaque_count_including_nested is None
+
+
 def test_build_plan_marks_dynamic_subworkflow_opaque(tmp_path) -> None:
     """workflow: ${var} renders as opaque instead of template_error."""
     workflow_path = tmp_path / "parent.pflow.md"
@@ -198,8 +233,21 @@ def test_build_plan_max_depth_guard_emits_diagnostic(tmp_path) -> None:
     assert any("Max sub-workflow depth" in diagnostic.message for diagnostic in plan.diagnostics)
 
 
-def test_build_plan_circular_subworkflow_emits_diagnostic(tmp_path) -> None:
-    """Circular sub-workflow references are surfaced as diagnostics."""
+def test_build_plan_circular_subworkflow_emits_error_diagnostic(tmp_path) -> None:
+    """Circular sub-workflow references are surfaced as ERROR-severity diagnostics.
+
+    Severity is load-bearing for the CLI exit-code contract: `_display_plan_result`
+    exits 1 only on ERROR-severity diagnostics. Cycles, max-depth, resolve
+    failures, and bad `inputs:` shapes all reach `_sub_workflow_error_entry` —
+    each represents a workflow that would fail at runtime, so the plan must
+    signal "don't run this" via exit code.
+
+    Mutation: revert `_sub_workflow_error_entry` to `Severity.WARNING` →
+    the severity assertion below fails and `test_dry_run_circular_subworkflow_exits_one`
+    starts seeing exit 0.
+    """
+    from pflow.core.diagnostic import Severity
+
     parent_path = tmp_path / "circular.pflow.md"
     write_workflow_file(
         {
@@ -213,7 +261,12 @@ def test_build_plan_circular_subworkflow_emits_diagnostic(tmp_path) -> None:
 
     plan = _plan_workflow_file(parent_path)
 
-    assert any("Circular sub-workflow reference" in diagnostic.message for diagnostic in plan.diagnostics)
+    cycle_diags = [d for d in plan.diagnostics if "Circular sub-workflow reference" in d.message]
+    assert cycle_diags, f"Expected cycle diagnostic, got: {[d.message for d in plan.diagnostics]}"
+    assert all(d.severity == Severity.ERROR for d in cycle_diags), (
+        f"Cycle diagnostics must be ERROR severity for CLI exit-1 contract. "
+        f"Got: {[(d.message, d.severity) for d in cycle_diags]}"
+    )
 
 
 def test_build_plan_visited_edges_prevents_loop_hang(tmp_path) -> None:

@@ -2071,3 +2071,87 @@ No regressions found. All advertised behavior works end-to-end under adversarial
 19. **Verification via real subprocess + clean exit-code capture is non-negotiable.** The test suite (5144 passing) missed nothing in this session's battery, but it also couldn't have caught several of the things this session verified — stderr silence under `--output-format json` at OS level, `/tmp/canary` file-absence proof, TEST-NET-1 timing proof of no network call, sqlite probe confirming `__pflow_stats__` cache presence with simultaneous user-output absence. Automated tests are necessary but not sufficient for agent-facing contracts.
 
 20. **Piped commands mask exit codes.** `pflow ... --dry-run --only ghost 2>&1 | head -5; echo $?` reported `EXIT: 0` because `head` exited 0. Clean reality: `pflow ... --only ghost > /dev/null 2>&1; echo $?` returned `EXIT: 1`. Never trust the `$?` that follows a pipe. This tripped me up once in this session; don't repeat.
+
+---
+
+## 2026-04-20 — Pre-merge audit: sub-workflow failures + duplication + review
+
+Three small rounds of work landed after the task review was written, all in service of PR #320's final shape.
+
+### Round 1 — User-caught review finding: sub-workflow failures silently exited 0
+
+Scratchpad code review identified: `_sub_workflow_error_entry` emitted `Severity.WARNING`, and `_display_plan_result` only exits 1 on `ERROR`. So cycles, max-depth, resolve exceptions, and bad `inputs:` shape silently exited 0 for plans that would fail at runtime.
+
+**Empirical confirmation**: `pflow /tmp/cycle.pflow.md --dry-run; echo $?` → `EXIT=0` with a warning about the cycle. Agent cost-gating via `exit != 0` missed these entirely.
+
+**Fix**: upgraded `_sub_workflow_error_entry` severity `WARNING → ERROR`. Matches `_template_error_entry` and `_compile_error_entry` precedent. Two regression guards added:
+- `test_build_plan_circular_subworkflow_emits_error_diagnostic` — asserts severity == ERROR at library level
+- `test_dry_run_circular_subworkflow_exits_one` — asserts exit 1 at CLI level
+
+Mutation-verified: reverting severity to WARNING fails both tests. Restored.
+
+### Round 2 — Duplication audit (accidental drift surfaces)
+
+User asked the sharper question: "is duplication NEEDED at all, or is it accidental?" Answered honestly with a 6-way taxonomy:
+
+| # | Duplication | Classification | Fixed in PR #320 |
+|---|---|---|---|
+| 1 | `_MAX_SUB_WORKFLOW_DEPTH = 10` | Accidental (literal copy) | ✅ now imports `WorkflowExecutor.MAX_DEPTH_DEFAULT` |
+| 2 | `_expose_child_outputs` filter prefixes | Accidental (pure-predicate copy) | ✅ now `WorkflowExecutor.is_exposable_child_key` staticmethod, shared predicate |
+| 3 | Base-path fallback (`Path.cwd()`) | NOT duplicated — already aligned (audit error) | — |
+| 4 | Termination predicate (`"end"` / all-error-successors) | Accidental (pure-predicate copy) | ✅ now `runtime.engine.engine.is_clean_termination`, shared predicate |
+| 5 | Sub-workflow output population structure | Partially inherent (computation shared via `is_exposable_child_key`; write mechanism differs because runtime uses `NamespacedSharedStore` proxy) | Deferred to GH #321 |
+| 6 | Cycle detection storage (`_pflow_stack` list vs `visited_paths` arg) | Partially inherent (check is pure; storage differs because WorkflowExecutor has prep/exec/post lifecycle and can't pass args across re-entry) | Deferred to GH #321 |
+
+#1, #2, #4 eliminate four drift surfaces with net zero new abstractions — just movement.
+
+#5 and #6 bundled into GH #321 with FULL context: what the research implementer should answer before coding, what the load-bearing invariants are, what's out of scope, and explicit permission to close the issue if they conclude the remaining duplication isn't worth the refactor.
+
+### Round 3 — PR reviewer comment (claude[bot])
+
+claude[bot] posted a full review on PR #320 with 3 Warnings + 4 Suggestions. Applied CLAUDE.md's "don't validate scenarios that can't happen" rule to evaluate:
+
+**Fixed**:
+- **W3 opaque sub-workflows silent in cost estimates** — REAL silent-failure. `workflow: ${var}` renders `status="opaque"` with no cost/duration, and `nodes_without_history` only counts execute-status LLM nodes. An agent cost-gating on `estimated_cost_usd_including_nested < threshold` sees $0 for an unplannable sub-tree and proceeds. Added `opaque_count` + `opaque_count_including_nested` fields to `PlanSummary`, exposed in JSON, surfaced in text as `⚠ N opaque sub-workflows — totals above exclude their cost/duration`. Mutation-verified via `test_build_plan_surfaces_opaque_count_for_cost_gate_agents`.
+- **S4 `_bfs_walk` missing doc comment on loop-guard skip** — added ~10-line docstring explaining why `enforce_loop_guard` is intentionally skipped inside BFS (BFS is per-visit enumeration for cost/duration estimation, not re-execution; calling the guard would double-bump visit counts and wrongly invalidate in-process state the walker still depends on).
+
+**Skipped (with rationale)**:
+- **W1 negative duration guard** — `duration_ms` is computed via `time.perf_counter()` in engine.py; monotonic clocks can't regress. Reviewer's scenario is hypothetical. CLAUDE.md: don't validate for scenarios that can't happen.
+- **W2 N SQL queries per plan** — reviewer themselves said "only worth it if profiling shows it matters." Zero user signal; premature optimization.
+- **S1 case-sensitive placeholder type dispatch** — Task 154's validator normalizes type names upstream. Trust internal contract.
+- **S2 `_execute_entry` cause Literal wider than callers** — type-narrowing for future-proofing; risks renaming a stable `PlanEntry.cause` Literal in `result.py` that agents may parse.
+- **S3 silent drop of unresolved declared outputs** — edge case (parent forwards to non-templated slot). Current silent-drop behavior matches runtime. Reviewer wanted a test pinning silent behavior — defensive documentation, low value.
+
+### Key decisions from this session (for future agents)
+
+**D16. Apply "don't validate for scenarios that can't happen" rigorously to review findings.**
+
+Reviewer proposed 3 warnings + 4 suggestions. Of 7, only 2 survived CLAUDE.md's filter. The 5 skipped weren't wrong; they just added validation for cases the existing internal code structure prevents, or optimized for pressure that hasn't manifested. MVP with zero users: ship the real signal (`opaque_count`), skip the defensive guards.
+
+**D17. Accidental duplication is always worth fixing; architectural duplication deserves its own design pass.**
+
+The 3 accidental duplications (constant, predicate, predicate) fixed in this PR took ~30 LOC net with zero new abstractions — just moving existing code to a shared location. The 2 architectural duplications (sub-workflow output population, cycle detection storage) bundled into GH #321 because each needs its own design pass about where the shared helper lives and whether runtime's lifecycle model needs to change to accommodate unified storage.
+
+Distinguishing accidental from architectural: if the two implementations share 100% of the logic and only differ in where they call it from, it's accidental — extract a pure function. If they differ in the storage mechanism, lifecycle, or write mechanism, it's architectural — needs design.
+
+**D18. `opaque_count` is a separate field, not a retask of `nodes_without_history`.**
+
+`nodes_without_history` means "LLM would-execute with no cost data" — a specific, well-defined signal. Widening to "any entry missing data" would change the semantics of a user-visible field agents may already parse. Parallel field (`opaque_count`) preserves existing semantics AND gives agents the new signal to refuse-to-proceed when the plan is incomplete. This is the same pattern as `nodes_without_duration_history` being parallel to `nodes_without_history`.
+
+### Final state (end of session)
+
+- `make check`: clean (ruff + format + mypy + deptry).
+- `make test`: 5146 passed (+2 net — `test_build_plan_surfaces_opaque_count_for_cost_gate_agents` added, 1 test renamed), 9 skipped.
+- Branch: `feat/add-dry-run-flag` (8 commits ahead of main after this round; the final commit lands now).
+- PR #320 ready to merge.
+- GH #321 filed for remaining architectural duplication work.
+- Drift surfaces eliminated: `plan_node()` (cache-hit semantics), `WorkflowExecutor.MAX_DEPTH_DEFAULT` (max depth), `WorkflowExecutor.is_exposable_child_key` (filter rule), `is_clean_termination` (termination predicate).
+- Agent cost-gating contract tightened: cycles / max-depth / resolve-failures / bad-inputs now exit 1; opaque sub-workflows surface via `opaque_count` so agents can refuse to proceed.
+
+### For the next agent (final additions)
+
+21. **When a review finding claims to document current behavior rather than change it, ask whether that's load-bearing.** S3's "add a test for silent drop of unresolved declared outputs" would pin existing correct behavior — but if nobody is trying to change that behavior, the test adds maintenance burden without catching regressions. Prefer tests that catch specific drift classes over tests that document "this is how it is today."
+
+22. **Four drift surfaces are now enforced by shared primitives**: `plan_node()` (cache decision), `WorkflowExecutor.MAX_DEPTH_DEFAULT` (depth constant), `WorkflowExecutor.is_exposable_child_key` (filter predicate), `is_clean_termination` (routing predicate). Any future code that reimplements these is a bug — import the primitive instead.
+
+23. **`opaque_count` is the agent's "refuse-to-proceed" signal for cost-gating.** Accompanies `estimated_cost_usd_including_nested` (absolute cost) and `nodes_without_history` (LLM cost visibility). Agents checking all three get complete cost-gate coverage: the cost is within budget (1), no LLM nodes are missing cost data (2), and no sub-trees are unplannable (3).

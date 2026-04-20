@@ -43,14 +43,15 @@ from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
+from pflow.runtime.engine.engine import is_clean_termination
 from pflow.runtime.engine.instrumentation import apply_memo_hit, enforce_loop_guard
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
+from pflow.runtime.workflow_executor import WorkflowExecutor
 
 logger = logging.getLogger(__name__)
 
 _LLM_NODE_CLASSES: frozenset[str] = frozenset({"LLMNode", "ClaudeCodeNode"})
-_MAX_SUB_WORKFLOW_DEPTH = 10
 
 _CostBasis = Literal["upper_bound", "exact"]
 
@@ -137,9 +138,10 @@ def _classify(entry: PlanEntry, curr: Any) -> Decision:
             return Decision(Transition.BOUNDARY, action)
         return Decision(Transition.FOLLOW, action)
 
-    # No matching successor. Mirror engine's `_handle_no_successor`:
-    # "end" sentinel and all-error-successors are clean termination.
-    if action == "end" or all(name == "error" for name in curr.successors):
+    # No matching successor. Shared with engine's `_handle_no_successor` via
+    # `is_clean_termination` — "end" sentinel and all-error-successors clean-
+    # terminate in both paths by construction.
+    if is_clean_termination(action, curr.successors):
         return Decision(Transition.STOP, action)
 
     # Cached node routed an action that doesn't name any successor →
@@ -574,6 +576,14 @@ def _bfs_walk(
 
     Callers seed the queue differently (successors vs start node) but the
     loop body — dequeue, build entry, enqueue successors — is identical.
+
+    `enforce_loop_guard()` is intentionally NOT called here — BFS is per-visit
+    enumeration for cost/duration estimation, not re-execution. The boundary
+    node (or start node in force-downstream) was the last place the guard ran
+    in the main walker; downstream entries never re-enter the engine's repeat-
+    visit invalidation path, so there's nothing for the guard to protect
+    against. Calling it inside BFS would double-bump visit counts and wrongly
+    invalidate in-process cache state the walker still depends on.
     """
     entries: list[PlanEntry] = []
     branched = False
@@ -923,11 +933,11 @@ def _plan_sub_workflow(
     node_type = config.node_type_name
     downstream = cause == "downstream"
 
-    if depth >= _MAX_SUB_WORKFLOW_DEPTH:
+    if depth >= WorkflowExecutor.MAX_DEPTH_DEFAULT:
         return _sub_workflow_error_entry(
             node_id,
             node_type,
-            f"Max sub-workflow depth {_MAX_SUB_WORKFLOW_DEPTH} exceeded at '{node_id}'",
+            f"Max sub-workflow depth {WorkflowExecutor.MAX_DEPTH_DEFAULT} exceeded at '{node_id}'",
         )
 
     # Opaque pre-check: `workflow: ${...}` can't be planned; don't run plan_node.
@@ -1081,18 +1091,15 @@ def _mirror_child_shared(
     child_shared: dict[str, Any],
     child_inputs: dict[str, Any],
 ) -> dict[str, Any]:
-    """Copy non-internal, non-input child_shared keys — runtime fallback parity."""
+    """Copy non-internal, non-input child_shared keys — runtime fallback parity.
+
+    Filter rule lives on `WorkflowExecutor.is_exposable_child_key` (shared
+    with runtime's `_expose_child_outputs`) so prefix changes can't drift.
+    """
     input_keys = set(child_inputs.keys())
-    mirrored: dict[str, Any] = {}
-    for key, value in child_shared.items():
-        if not isinstance(key, str):
-            continue
-        if key.startswith(("_pflow_", "__")):
-            continue
-        if key in input_keys:
-            continue
-        mirrored[key] = value
-    return mirrored
+    return {
+        key: value for key, value in child_shared.items() if WorkflowExecutor.is_exposable_child_key(key, input_keys)
+    }
 
 
 def _resolve_sub_workflow_params(
@@ -1165,7 +1172,7 @@ def _placeholder_child_inputs(child_ir: dict[str, Any]) -> dict[str, Any]:
     placeholders: dict[str, Any] = {}
     for name, spec in declared.items():
         type_name = spec.get("type") if isinstance(spec, dict) else None
-        placeholders[name] = _TYPE_PLACEHOLDERS.get(str(type_name), None)
+        placeholders[name] = _TYPE_PLACEHOLDERS.get(str(type_name))
     return placeholders
 
 
@@ -1225,14 +1232,25 @@ def _opaque_sub_workflow_entry(node_id: str, node_type: str) -> PlanEntry:
 
 
 def _sub_workflow_error_entry(node_id: str, node_type: str, message: str) -> PlanEntry:
-    """Entry for a sub-workflow that failed at resolve / validate / cycle check."""
+    """Entry for a sub-workflow that failed at resolve / validate / cycle check.
+
+    Severity is ERROR: each of the four call sites (max-depth exceeded,
+    resolve exception, circular reference, bad `inputs:` shape) represents
+    a workflow the engine would fail at runtime. `_display_plan_result`
+    uses diagnostic severity to decide the CLI exit code — ERROR here
+    ensures `--dry-run` exits 1 for these cases, matching the spec's
+    "MUST exit 1 when the plan cannot be built" contract and the
+    convention shared with `_template_error_entry` and
+    `_compile_error_entry` (both also ERROR). Agents cost-gating via
+    `exit != 0` need this signal to abort on broken workflow topology.
+    """
     return PlanEntry(
         node_id=node_id,
         node_type=node_type,
         status="execute",
         cause="template_error",
         diagnostic=Diagnostic(
-            severity=Severity.WARNING,
+            severity=Severity.ERROR,
             message=message,
             node_id=node_id,
             source="planner",
@@ -1437,6 +1455,7 @@ class _Totals:
     nodes_without_history: int
     estimated_duration_ms: float
     nodes_without_duration_history: int
+    opaque_count: int
 
 
 def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") -> PlanSummary:
@@ -1455,6 +1474,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
             nodes_without_history=totals.nodes_without_history,
             estimated_duration_ms=totals.estimated_duration_ms,
             nodes_without_duration_history=totals.nodes_without_duration_history,
+            opaque_count=totals.opaque_count,
             cost_basis=cost_basis,
         )
 
@@ -1466,6 +1486,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
     nested_nwh = totals.nodes_without_history
     nested_duration = totals.estimated_duration_ms
     nested_nwdh = totals.nodes_without_duration_history
+    nested_opaque = totals.opaque_count
     effective_basis = cost_basis
 
     for entry in entries:
@@ -1498,6 +1519,11 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
             if child.nodes_without_duration_history_including_nested is not None
             else child.nodes_without_duration_history
         )
+        nested_opaque += (
+            child.opaque_count_including_nested
+            if child.opaque_count_including_nested is not None
+            else child.opaque_count
+        )
         if child.cost_basis == "upper_bound":
             effective_basis = "upper_bound"
 
@@ -1511,6 +1537,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
         nodes_without_history=totals.nodes_without_history,
         estimated_duration_ms=totals.estimated_duration_ms,
         nodes_without_duration_history=totals.nodes_without_duration_history,
+        opaque_count=totals.opaque_count,
         cost_basis=effective_basis,
         total_including_nested=nested_total,
         cached_including_nested=nested_cached,
@@ -1520,6 +1547,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
         nodes_without_history_including_nested=nested_nwh,
         estimated_duration_ms_including_nested=nested_duration,
         nodes_without_duration_history_including_nested=nested_nwdh,
+        opaque_count_including_nested=nested_opaque,
     )
 
 
@@ -1534,10 +1562,14 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
     nodes_without_history = 0
     estimated_duration_ms = 0.0
     nodes_without_duration_history = 0
+    opaque_count = 0
 
     for entry in entries:
         if entry.status == "cached":
             cached_count += 1
+
+        if entry.status == "opaque":
+            opaque_count += 1
 
         if _represents_work(entry):
             execute_count += 1
@@ -1567,4 +1599,5 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
         nodes_without_history=nodes_without_history,
         estimated_duration_ms=estimated_duration_ms,
         nodes_without_duration_history=nodes_without_duration_history,
+        opaque_count=opaque_count,
     )

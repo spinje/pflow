@@ -115,6 +115,15 @@ class PlanSummary:
     `nodes_without_history` counts LLM would-execute with no cost data,
     `nodes_without_duration_history` counts any would-execute with no
     duration data.
+
+    `opaque_count` counts entries with `status="opaque"` — sub-workflows
+    the planner couldn't resolve (`workflow: ${var}`) and whose cost/
+    duration are therefore absent from the totals. Agents cost-gating
+    should treat `opaque_count > 0` as a "refuse-to-proceed" signal:
+    the summary cost is an under-estimate by a potentially unbounded
+    amount. Exposing this separately from `nodes_without_history`
+    preserves the "nodes_without_history = LLM nodes with no cost
+    record" semantic and avoids retasking an existing field.
     """
 
     total: int
@@ -126,6 +135,7 @@ class PlanSummary:
     nodes_without_history: int
     estimated_duration_ms: float = 0.0
     nodes_without_duration_history: int = 0
+    opaque_count: int = 0
     cost_basis: Literal["upper_bound", "exact"] = "upper_bound"
     total_including_nested: int | None = None
     cached_including_nested: int | None = None
@@ -135,6 +145,7 @@ class PlanSummary:
     nodes_without_history_including_nested: int | None = None
     estimated_duration_ms_including_nested: float | None = None
     nodes_without_duration_history_including_nested: int | None = None
+    opaque_count_including_nested: int | None = None
 
 
 @dataclass(frozen=True)
