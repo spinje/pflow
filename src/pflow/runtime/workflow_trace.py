@@ -17,6 +17,29 @@ logger = logging.getLogger(__name__)
 TRACE_FORMAT_VERSION = "2.0.0"
 
 
+def final_events_by_node(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Last event per node_id — represents each node's terminal state.
+
+    Single source of truth for the "last event per node_id = final state"
+    aggregation rule. Used by WorkflowTraceCollector at write time (status
+    determination, failed_node_ids derivation) and by ``trace_report._collect_errors``
+    at read time (Errors-section rendering, fallback for legacy traces without
+    ``failed_node_ids``). If this rule ever evolves, it evolves here.
+
+    Loop recovery records multiple events for the same node_id; only the most
+    recent reflects the node's final outcome.
+
+    Keyed by node_id — batch items (which carry ``index``, not ``node_id``)
+    and nested sub-workflow events are intentionally ignored.
+    """
+    final: dict[str, dict[str, Any]] = {}
+    for event in events:
+        nid = event.get("node_id")
+        if nid:
+            final[nid] = event
+    return final
+
+
 class WorkflowTraceCollector:
     """Collects detailed execution traces for workflow debugging.
 
@@ -272,24 +295,6 @@ class WorkflowTraceCollector:
             warning.to_display_dict() if isinstance(warning, Diagnostic) else warning for warning in warnings
         ]
 
-    def _final_events_by_node(self) -> dict[str, dict[str, Any]]:
-        """Last event per node_id — represents each node's terminal state.
-
-        Loop recovery records multiple events for the same node_id; only the
-        most recent reflects the node's final outcome. This is the single
-        aggregation rule used by status determination, failed-node count,
-        and the failed_node_ids list written to the trace file.
-
-        Keyed by node_id — batch items (which carry `index`, not `node_id`)
-        and nested sub-workflow events are intentionally ignored here.
-        """
-        final: dict[str, dict[str, Any]] = {}
-        for event in self.events:
-            nid = event.get("node_id")
-            if nid:
-                final[nid] = event
-        return final
-
     def mark_last_event_failed(self, node_id: str, *, error: str) -> None:
         """Flip the most recent event for node_id to failed.
 
@@ -325,13 +330,13 @@ class WorkflowTraceCollector:
     def _determine_trace_status(self) -> str:
         """Determine status from per-node final state and warnings.
 
-        Uses last-event-per-node_id (via ``_final_events_by_node``) so loop
+        Uses last-event-per-node_id (via ``final_events_by_node``) so loop
         recovery that ends in success is reported as success — see GH #240.
 
         Returns:
             Status string: "success", "degraded", or "failed"
         """
-        failed = any(not e.get("success", True) for e in self._final_events_by_node().values())
+        failed = any(not e.get("success", True) for e in final_events_by_node(self.events).values())
         if failed:
             return "failed"
         if self.execution_warnings and any(
@@ -463,7 +468,7 @@ class WorkflowTraceCollector:
         # visit 1 failure) so nodes_failed reflects UNIQUE failed nodes, not
         # total failed invocations. nodes_executed still counts per-visit.
         # See GH #240.
-        final_events = self._final_events_by_node()
+        final_events = final_events_by_node(self.events)
         failed_node_ids = sorted(nid for nid, e in final_events.items() if not e.get("success", True))
 
         # Prepare trace data with format version

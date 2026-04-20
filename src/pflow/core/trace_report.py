@@ -11,6 +11,8 @@ import statistics
 from pathlib import Path
 from typing import Any
 
+from pflow.runtime.workflow_trace import final_events_by_node
+
 logger = logging.getLogger(__name__)
 
 # Priority keys for extracting a label from a batch item's input data
@@ -239,25 +241,12 @@ def _collect_errors(
     Only collects top-level failures. If a sub-workflow fails, the parent
     container event has success=false — we show that, not the internal failure.
     """
+    latest = final_events_by_node(events)
     if failed_node_ids is not None:
         failed_set = set(failed_node_ids)
-        latest: dict[str, dict[str, Any]] = {}
-        for e in events:
-            nid = e.get("node_id")
-            if nid in failed_set:
-                latest[nid] = e
-        return list(latest.values())
-
-    # Fallback: derive per-node final state from events directly. Matches the
-    # aggregation rule in workflow_trace._final_events_by_node so new-format
-    # traces written without failed_node_ids (e.g. by hand in tests) still
-    # produce the correct Errors section.
-    fallback_latest: dict[str, dict[str, Any]] = {}
-    for e in events:
-        nid = e.get("node_id")
-        if nid:
-            fallback_latest[nid] = e
-    return [e for e in fallback_latest.values() if not e.get("success")]
+        return [e for nid, e in latest.items() if nid in failed_set]
+    # Legacy fallback: derive from per-event success flag directly (pre-fix traces).
+    return [e for e in latest.values() if not e.get("success")]
 
 
 def _suggest_template_fixes(

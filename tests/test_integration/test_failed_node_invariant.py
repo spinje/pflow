@@ -1,6 +1,8 @@
 """End-to-end tests for the failed-node invariant fix (GH #208)."""
 
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 from pflow.core.diagnostic import Severity
 from pflow.core.diagnostic_render import format_diagnostic
@@ -1206,30 +1208,33 @@ def test_example_coalesce_mixed_absent_failed_emits_summary_fix():
 # --- GH #240 + #250 end-to-end regression tests ---
 
 
-def test_loop_recovery_trace_reports_success_end_to_end():
+def test_loop_recovery_trace_reports_success_end_to_end(tmp_path):
     """GH #240 — loop recovery: visit 1 fails, visit 2 succeeds → trace aggregation
     reports Status: success and failed_node_ids is empty.
 
-    Runs through the full WorkflowRunner → engine → trace pipeline so the test
-    exercises the real code path, not just the workflow_trace unit. Uses the
-    committed fixture (same fixture used by ``test_example_loop_recovery_final_state_is_succeeded``
-    to verify the runtime invariant).
+    Runs through the full WorkflowRunner → engine → trace → save_to_file pipeline
+    and asserts on the SERIALIZED trace JSON — what agents and the report
+    generator actually consume.
     """
     result = _run_fixture("loop-recovery.pflow.md")
 
     # Runtime invariant (Task 148) — unchanged: workflow succeeded, no failures left
     assert result.status == WorkflowStatus.SUCCESS
 
-    # Trace aggregation — #240 fix: last-event-per-node rule, failed_node_ids empty
+    # Trace aggregation — #240 fix: read via the serialized JSON path, the same
+    # path `--report` and external consumers take.
     assert result.trace is not None, "trace collector must exist under default RunnerConfig"
-    assert result.trace._determine_trace_status() == "success"
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text())
 
-    final_by_node = result.trace._final_events_by_node()
-    assert "maybe-fail" in final_by_node
-    # Visit 2 (the recovered one) is the final event — success=True
-    assert final_by_node["maybe-fail"]["success"] is True
-    # And the event list has BOTH visits (audit history preserved)
-    maybe_fail_events = [e for e in result.trace.events if e.get("node_id") == "maybe-fail"]
+    assert trace_data["final_status"] == "success"
+    assert trace_data["failed_node_ids"] == []
+    assert trace_data["nodes_failed"] == 0
+    assert trace_data["nodes_executed"] == 4  # setup, maybe-fail(fail), retry, maybe-fail(ok)
+
+    # Audit history preserved in the events list — BOTH visits of maybe-fail present
+    maybe_fail_events = [e for e in trace_data["nodes"] if e.get("node_id") == "maybe-fail"]
     assert len(maybe_fail_events) == 2
     assert maybe_fail_events[0]["success"] is False  # visit 1
     assert maybe_fail_events[1]["success"] is True  # visit 2

@@ -1232,8 +1232,8 @@ class TestBuildSummaryLoopRecovery:
     def test_loop_recovery_pipeline_table_shows_both_visits(self) -> None:
         """Pipeline table is per-visit — both visits of maybe-fail must appear."""
         events = [
-            _make_event(node_id="maybe-fail", success=False, error="exit 9"),
-            _make_event(node_id="maybe-fail", success=True),
+            _make_event(node_id="maybe-fail", node_output={"stdout": "oops"}, success=False, error="exit 9"),
+            _make_event(node_id="maybe-fail", node_output={"stdout": "ok"}, success=True),
         ]
         trace = _make_trace(
             nodes=events,
@@ -1244,10 +1244,14 @@ class TestBuildSummaryLoopRecovery:
         )
         md = _build_summary(trace, source_path="test")
 
-        # Table has two rows for maybe-fail — one FAILED, one ok
-        assert md.count("maybe-fail") >= 2
-        assert "**FAILED**" in md
-        assert " ok " in md  # the succeeded visit's status column
+        # Scope count to the pipeline table — anomaly/warning sections can
+        # legitimately mention the node for other reasons.
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        assert pipeline.count("maybe-fail") == 2, f"Pipeline section:\n{pipeline}"
+        assert "**FAILED**" in pipeline
+        assert " ok " in pipeline  # the succeeded visit's status column
+        # Errors section must NOT be present — recovered node is not an error.
+        assert "## Errors" not in md
 
     def test_single_failure_still_renders_errors_section(self) -> None:
         """Non-loop single failure — Errors section must still render."""

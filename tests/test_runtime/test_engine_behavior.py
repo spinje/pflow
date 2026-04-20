@@ -536,10 +536,21 @@ class TestRoutingFailureTraceEventSync:
         assert len(events) == 1
         event = events[0]
         # Step 16 recorded success=False (is_error_action=True) with the
-        # node's own error text
+        # node's own error text.
         assert event["success"] is False
-        # The critical anti-regression: error text must be the shell's error,
+        # Trace event anti-regression: error text must be the shell's error,
         # NOT the generic routing warning (which would indicate mark_last_event_failed
-        # fired and overwrote it)
+        # fired and overwrote it).
         assert "no successor edge matches" not in (event.get("error") or "")
         assert "exit 9" in (event.get("error") or "")
+        # Failure-record anti-regression: the `get_node_failure` guard must
+        # preserve the rich shell_failure data (category + exit_code) that
+        # step 17.5 archived. Without the guard, a second mark_node_failed
+        # call would overwrite with an empty routing_error record.
+        from pflow.runtime.node_state import get_node_failure
+
+        failure = get_node_failure(shared, "failing")
+        assert failure is not None
+        assert failure["category"] == "shell_failure"
+        assert failure["data"]["exit_code"] == 9
+        assert failure["data"]["stderr"] == "shell died"

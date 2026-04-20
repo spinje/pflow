@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.runtime.workflow_trace import WorkflowTraceCollector
+from pflow.runtime.workflow_trace import WorkflowTraceCollector, final_events_by_node
 
 
 class TestWorkflowTraceCollector:
@@ -1254,7 +1254,7 @@ class TestFinalEventsByNode:
         collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=True)
         collector.record_node_execution(node_id="b", node_type="T", duration_ms=1.0, success=False, error="boom")
 
-        final = collector._final_events_by_node()
+        final = final_events_by_node(collector.events)
 
         assert set(final.keys()) == {"a", "b"}
         assert final["a"]["success"] is True
@@ -1267,7 +1267,7 @@ class TestFinalEventsByNode:
         collector.record_node_execution(node_id="retry", node_type="T", duration_ms=1.0, success=True)
         collector.record_node_execution(node_id="maybe-fail", node_type="T", duration_ms=1.0, success=True)
 
-        final = collector._final_events_by_node()
+        final = final_events_by_node(collector.events)
 
         assert final["maybe-fail"]["success"] is True
         # Error from the first visit must NOT bleed into the final state
@@ -1278,7 +1278,7 @@ class TestFinalEventsByNode:
         collector.events.append({"node_type": "T", "duration_ms": 1.0, "success": False})  # no node_id
         collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=True)
 
-        final = collector._final_events_by_node()
+        final = final_events_by_node(collector.events)
 
         assert set(final.keys()) == {"a"}
 
@@ -1311,11 +1311,32 @@ class TestDetermineTraceStatusAggregation:
         assert collector._determine_trace_status() == "failed"
 
     def test_cached_after_fail_reports_success(self, collector):
-        """Visit 1 fail, visit 2 cached+success → success. Locks the cached+loop invariant."""
+        """Visit 1 fail, visit 2 cached+success → success.
+
+        Locks the cached+loop invariant: when a cached hit follows a failure
+        in the same node, aggregation treats the cached hit as the final state.
+        The ``cached=True`` flag is preserved on the event (audit view) but does
+        NOT exclude it from aggregation — it participates like any other
+        success=True event.
+        """
         collector.record_node_execution(node_id="n", node_type="T", duration_ms=1.0, success=False, error="boom")
         collector.record_node_execution(node_id="n", node_type="T", duration_ms=0.0, success=True, cached=True)
 
         assert collector._determine_trace_status() == "success"
+        # Verify the final event actually IS the cached one — guards against
+        # a future "exclude cached from aggregation" rule silently flipping behavior.
+        final = final_events_by_node(collector.events)
+        assert final["n"].get("cached") is True
+        assert final["n"]["success"] is True
+
+    def test_cached_hit_does_not_mask_failure_on_other_node(self, collector):
+        """Negative variant: a cached success on node A does NOT mask a
+        failure on node B. Aggregation is per-node, not global.
+        """
+        collector.record_node_execution(node_id="a", node_type="T", duration_ms=0.0, success=True, cached=True)
+        collector.record_node_execution(node_id="b", node_type="T", duration_ms=1.0, success=False, error="boom")
+
+        assert collector._determine_trace_status() == "failed"
 
 
 class TestMarkLastEventFailed:
