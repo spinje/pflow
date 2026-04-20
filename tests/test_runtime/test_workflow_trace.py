@@ -1404,6 +1404,35 @@ class TestMarkLastEventFailed:
         assert event["error"] == "routing boom"
         assert event["node_output"] == {"result": "custom_route"}
 
+    def test_does_not_touch_batch_items(self, collector):
+        """Flipping a batch node's event must NOT mutate per-item batch_items.
+
+        ``mark_last_event_failed`` walks ``self.events`` (top-level only). Batch
+        items live inside ``event["batch_items"]`` with their own per-item success
+        flags (audit view). If the helper recursed, a routing failure on a batch
+        with all-successful items would silently change their reported status.
+        """
+        collector.record_node_execution(
+            node_id="my-batch",
+            node_type="BatchNode",
+            duration_ms=1.0,
+            success=True,
+            batch_items=[
+                {"index": 0, "success": True, "duration_ms": 0.5},
+                {"index": 1, "success": True, "duration_ms": 0.5},
+            ],
+        )
+
+        collector.mark_last_event_failed("my-batch", error="routing boom")
+
+        event = collector.events[0]
+        # Top-level flipped
+        assert event["success"] is False
+        assert event["error"] == "routing boom"
+        # Per-item status untouched — audit view preserved
+        assert event["batch_items"][0]["success"] is True
+        assert event["batch_items"][1]["success"] is True
+
 
 class TestSaveToFileFailedNodeIds:
     """Trace file must carry failed_node_ids as the authoritative failed-node list."""

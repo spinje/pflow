@@ -1240,6 +1240,106 @@ def test_loop_recovery_trace_reports_success_end_to_end(tmp_path):
     assert maybe_fail_events[1]["success"] is True  # visit 2
 
 
+def test_routing_failure_in_sub_workflow_propagates_to_parent_trace(tmp_path):
+    """GH #250 sub-workflow variant — when a routing failure happens INSIDE a
+    sub-workflow, the child engine's ``_handle_no_successor`` calls
+    ``mark_last_event_failed`` on the CHILD collector. The flipped event is
+    embedded in the parent's ``sub_workflow_events`` list, and the parent's
+    own trace event for the sub-workflow node shows success=False because
+    the child engine returned "error".
+
+    Pins the child-engine → child-collector → parent-sub_workflow_events wiring.
+    """
+    child_file = tmp_path / "child.pflow.md"
+    child_file.write_text(
+        """\
+# Child
+
+Child workflow whose router returns a custom action with no matching edge.
+
+## Steps
+
+### child-router
+
+Emit a custom action at runtime that the parser can't statically verify.
+
+- type: code
+- next: child-default
+
+```python code
+import os
+result: str = "child-routed"
+next: str = os.environ.get("PFLOW_CHILD_ROUTE", "child-default")
+```
+
+### child-default
+
+Unreachable default-edge target — only exists to make the router's action unmatched.
+
+- type: shell
+- next: end
+
+```shell command
+echo "child default"
+```
+""",
+        encoding="utf-8",
+    )
+
+    parent_file = tmp_path / "parent.pflow.md"
+    parent_file.write_text(
+        f"""\
+# Parent
+
+Parent invokes the child workflow that triggers an internal routing failure.
+
+## Steps
+
+### invoke-child
+
+Delegate to the child workflow.
+
+- type: workflow
+- workflow: {child_file}
+""",
+        encoding="utf-8",
+    )
+
+    import os
+
+    os.environ["PFLOW_CHILD_ROUTE"] = "child_custom_route"
+    try:
+        runner = WorkflowRunner()
+        result = runner.run(str(parent_file), {}, config=RunnerConfig(cache_enabled=False))
+    finally:
+        os.environ.pop("PFLOW_CHILD_ROUTE", None)
+
+    # Parent-level: the WorkflowExecutor node failed (child returned "error"
+    # from its own routing failure → parent's error_action="error" by default).
+    assert not result.success
+    assert result.trace is not None
+
+    parent_events = [e for e in result.trace.events if e.get("node_id") == "invoke-child"]
+    assert len(parent_events) == 1
+    parent_event = parent_events[0]
+    assert parent_event["success"] is False, "parent sub-workflow event must reflect child failure"
+
+    # Child-level: the child collector flipped the router event. That event
+    # lives inside parent_event["sub_workflow_events"].
+    sub_events = parent_event.get("sub_workflow_events") or []
+    child_router_events = [e for e in sub_events if e.get("node_id") == "child-router"]
+    assert len(child_router_events) == 1, (
+        f"expected exactly one child-router event in sub_workflow_events, got {sub_events}"
+    )
+    child_router = child_router_events[0]
+    assert child_router["success"] is False, (
+        "child engine's _handle_no_successor must flip the child collector's event — "
+        "otherwise trace says success=True while __failures__ says routing_error"
+    )
+    assert "child_custom_route" in (child_router.get("error") or "")
+    assert "no successor edge matches" in (child_router.get("error") or "")
+
+
 def test_routing_failure_on_custom_action_propagates_to_trace():
     """GH #250 — a code node returning a custom non-error action with no matching
     successor produces a trace event with success=False (not success=True silently

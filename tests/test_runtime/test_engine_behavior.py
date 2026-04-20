@@ -554,3 +554,58 @@ class TestRoutingFailureTraceEventSync:
         assert failure["category"] == "shell_failure"
         assert failure["data"]["exit_code"] == 9
         assert failure["data"]["stderr"] == "shell died"
+
+    def test_only_mode_with_unmatched_action_does_not_flip_trace(self):
+        """--only terminates the walk BEFORE _handle_no_successor fires.
+
+        Pins expected behavior: when a user runs with --only=router and the
+        router returns a custom action that has no matching edge, the engine
+        breaks at the --only check at engine.py:130 before reaching the
+        successor lookup. mark_last_event_failed is NOT called; the trace
+        event retains success=True (the node's execution genuinely succeeded
+        — the routing concern doesn't apply in --only mode).
+        """
+        from pflow.runtime.node_state import get_node_failure
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+        router = _ActionNode()
+        router.node_id = "router"
+        router.set_params({"action": "custom_route"})
+
+        # A non-error successor so is_clean_termination would return False
+        # IF the --only check didn't break first.
+        downstream = _ActionNode()
+        downstream.node_id = "downstream"
+        router >> downstream
+
+        configs = {
+            "router": NodeConfig(
+                node_id="router",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+            "downstream": NodeConfig(
+                node_id="downstream",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+        workflow = CompiledWorkflow(start_node=router, node_configs=configs)
+        shared: dict = {}
+        collector = WorkflowTraceCollector("test")
+        engine = WorkflowEngine(trace_collector=collector, only_node="router")
+        engine.run(workflow, shared)
+
+        # Runtime: no routing failure record — engine broke before the check
+        assert get_node_failure(shared, "router") is None
+        # Trace event preserves the successful execution result — success=True
+        router_events = [e for e in collector.events if e.get("node_id") == "router"]
+        assert len(router_events) == 1
+        assert router_events[0]["success"] is True
+        assert "error" not in router_events[0] or router_events[0]["error"] is None
