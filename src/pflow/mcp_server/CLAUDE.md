@@ -11,7 +11,7 @@ Exposes pflow's workflow building and execution capabilities as MCP tools for AI
 │         MCP Tools (12 enabled)          │  ← FastMCP decorators, async wrappers
 │         asyncio.to_thread bridge        │
 ├─────────────────────────────────────────┤
-│      Services Layer (7 services)        │  ← Business logic, stateless pattern
+│      Services Layer (6 services)        │  ← Business logic, stateless pattern
 │      Fresh instances per request        │
 ├─────────────────────────────────────────┤
 │   Core pflow (sync components)          │  ← Registry, WorkflowManager, WorkflowRunner
@@ -31,9 +31,7 @@ src/pflow/mcp_server/
 │   ├── discovery_tools.py   - workflow_discover, registry_discover
 │   ├── execution_tools.py   - workflow_execute, validate, plan, save, registry_run, read_fields
 │   ├── registry_tools.py    - registry_describe, registry_list
-│   ├── workflow_tools.py    - workflow_list, workflow_describe
-│   ├── settings_tools.py    - DISABLED (4 tools, code kept for future use)
-│   └── test_tools.py        - DISABLED (3 tools, development only)
+│   └── workflow_tools.py    - workflow_list, workflow_describe
 ├── resources/
 │   ├── __init__.py
 │   ├── instruction_resources.py  - 2 MCP resources (regular + sandbox agent instructions)
@@ -45,8 +43,7 @@ src/pflow/mcp_server/
 │   ├── execution_service.py - Execute, validate, save workflows + test nodes
 │   ├── field_service.py     - Read cached fields from previous registry_run executions
 │   ├── registry_service.py  - Node describe, list, search
-│   ├── workflow_service.py  - Workflow list, describe
-│   └── settings_service.py  - Environment variable management (DISABLED tools use this)
+│   └── workflow_service.py  - Workflow list, describe
 └── utils/
     ├── __init__.py
     ├── errors.py            - sanitize_parameters() for sensitive data redaction
@@ -67,7 +64,7 @@ src/pflow/mcp_server/
 
 Tool/resource registration happens at import time via decorators. `register_tools()` imports the modules to trigger this.
 
-## Tools (11 Enabled)
+## Tools (12 Enabled)
 
 All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — pflow is sync, MCP is async.
 
@@ -91,8 +88,6 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 - `workflow_list(filter_pattern)` — List saved workflows with keyword filtering
 - `workflow_describe(name)` — Show workflow interface (inputs/outputs/example usage)
 
-**Disabled** (code kept): settings_tools (4 tools), test_tools (3 tools).
-
 ## Resources (2)
 
 - `pflow://instructions` — Complete workflow building guide for agents with **full system access** (CLI, settings.json, traces, library)
@@ -105,7 +100,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 
 If none found, returns a fallback message with tool reference and troubleshooting steps.
 
-## Services (7)
+## Services (6)
 
 All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_stateless` decorator. Every request creates fresh instances of Registry, WorkflowManager, etc.
 
@@ -115,7 +110,6 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
 - **RegistryService** — `describe_nodes()` uses `build_component_context()`, `list_all_nodes()` supports filter via Registry.search()
 - **WorkflowService** — List/describe with shared formatters, raises ValueError with "did you mean" suggestions
-- **SettingsService** — Environment variable CRUD via SettingsManager (used by disabled settings_tools)
 
 ## Utilities
 
@@ -153,7 +147,7 @@ MCP execution differs from CLI:
 - Traces always saved to `~/.pflow/debug/workflow-trace-{timestamp}.json`
 - Text output format (LLMs parse text better than nested JSON)
 - Auto-normalization of workflow IR (`ir_version`, `edges`)
-- Services **raise exceptions** (ValueError, RuntimeError, FileExistsError) — tools layer lets MCP handle conversion
+- Services **raise exceptions** (ValueError, RuntimeError, FileExistsError, and pflow types like WorkflowValidationError / MarkdownParseError) with pre-rendered rich text. The `PflowMCP.call_tool` and `PflowMCP.read_resource` overrides (`server.py`) catch unhandled producer bugs and any self-describing exception (anything with `to_diagnostics()` — includes all `PflowError` subclasses plus `MaxNodeVisitsError`) and convert them to structured `CallToolResult(isError=True)` / rendered resource text via `exception_to_diagnostics()` + `format_diagnostic()`, matching the CLI's outer error boundary. Bare pre-formatted `ValueError` / `TypeError` / `RuntimeError` / `FileExistsError` pass through so their hand-rolled rich text survives unchanged.
 
 ## Critical Behaviors
 
