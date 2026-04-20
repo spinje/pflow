@@ -193,6 +193,11 @@ class WorkflowEngine:
             error=warning_msg,
             warning=warning_msg,
         )
+        # The trace event was recorded at step 16 with success=True (because
+        # is_error_action was False for this custom action). Flip it so trace
+        # and __failures__ agree — see GH #250.
+        if self.trace is not None:
+            self.trace.mark_last_event_failed(node_id, error=warning_msg)
         return "error"
 
     def _execute_node(self, node: Any, config: NodeConfig, shared: dict[str, Any]) -> str:  # noqa: C901

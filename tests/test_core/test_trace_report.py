@@ -1148,6 +1148,125 @@ class TestCollectErrors:
         errors = _collect_errors(events)
         assert errors == []
 
+    def test_reads_failed_node_ids_when_present(self) -> None:
+        """When failed_node_ids is supplied, use it as the authoritative set.
+
+        Ignores per-event success flag for inclusion decision — the list drives it.
+        """
+        events = [
+            _make_event(node_id="x", success=True),  # flag says ok — not in list → excluded
+            _make_event(node_id="y", success=False, error="Y-err"),  # in list → included
+        ]
+        errors = _collect_errors(events, failed_node_ids=["y"])
+        assert len(errors) == 1
+        assert errors[0]["node_id"] == "y"
+
+    def test_loop_recovery_omits_recovered_node(self) -> None:
+        """Node failed on visit 1, succeeded on visit 2 → not in failed_node_ids → omitted.
+
+        Motivating case for GH #240.
+        """
+        events = [
+            _make_event(node_id="maybe-fail", success=False, error="visit 1"),
+            _make_event(node_id="maybe-fail", success=True),
+        ]
+        errors = _collect_errors(events, failed_node_ids=[])
+        assert errors == []
+
+    def test_returns_latest_event_per_failed_node(self) -> None:
+        """When a node fails on both visits, only the latest event is returned."""
+        events = [
+            _make_event(node_id="n", success=False, error="visit 1 error"),
+            _make_event(node_id="n", success=False, error="visit 2 error"),
+        ]
+        errors = _collect_errors(events, failed_node_ids=["n"])
+        assert len(errors) == 1
+        assert errors[0]["error"] == "visit 2 error"
+
+    def test_fallback_per_node_when_list_absent(self) -> None:
+        """No failed_node_ids supplied → derive per-node final state from events.
+
+        Back-compat path for traces generated before the #240 fix.
+        """
+        events = [
+            _make_event(node_id="maybe-fail", success=False, error="visit 1"),
+            _make_event(node_id="maybe-fail", success=True),  # recovered
+        ]
+        errors = _collect_errors(events, failed_node_ids=None)
+        assert errors == []
+
+    def test_fallback_still_returns_latest_if_node_truly_failed(self) -> None:
+        events = [
+            _make_event(node_id="n", success=False, error="visit 1 error"),
+            _make_event(node_id="n", success=False, error="visit 2 error"),
+        ]
+        errors = _collect_errors(events, failed_node_ids=None)
+        assert len(errors) == 1
+        assert errors[0]["error"] == "visit 2 error"
+
+
+class TestBuildSummaryLoopRecovery:
+    """Summary rendering under loop recovery — GH #240 acceptance criteria."""
+
+    def test_loop_recovery_shows_status_success(self) -> None:
+        """Trace with visit-1-fail + visit-2-success renders Status: success."""
+        events = [
+            _make_event(node_id="setup", success=True),
+            _make_event(node_id="maybe-fail", success=False, error="exit 9"),
+            _make_event(node_id="retry", success=True),
+            _make_event(node_id="maybe-fail", success=True),
+        ]
+        trace = _make_trace(
+            nodes=events,
+            final_status="success",
+            nodes_executed=4,
+            nodes_failed=0,
+            failed_node_ids=[],
+        )
+        md = _build_summary(trace, source_path="test")
+
+        assert "- Status: success" in md
+        # Errors section must NOT be present for recovered node
+        assert "## Errors" not in md
+
+    def test_loop_recovery_pipeline_table_shows_both_visits(self) -> None:
+        """Pipeline table is per-visit — both visits of maybe-fail must appear."""
+        events = [
+            _make_event(node_id="maybe-fail", success=False, error="exit 9"),
+            _make_event(node_id="maybe-fail", success=True),
+        ]
+        trace = _make_trace(
+            nodes=events,
+            final_status="success",
+            nodes_executed=2,
+            nodes_failed=0,
+            failed_node_ids=[],
+        )
+        md = _build_summary(trace, source_path="test")
+
+        # Table has two rows for maybe-fail — one FAILED, one ok
+        assert md.count("maybe-fail") >= 2
+        assert "**FAILED**" in md
+        assert " ok " in md  # the succeeded visit's status column
+
+    def test_single_failure_still_renders_errors_section(self) -> None:
+        """Non-loop single failure — Errors section must still render."""
+        events = [
+            _make_event(node_id="bad", node_type="ShellNode", success=False, error="exit 1"),
+        ]
+        trace = _make_trace(
+            nodes=events,
+            final_status="failed",
+            nodes_executed=1,
+            nodes_failed=1,
+            failed_node_ids=["bad"],
+        )
+        md = _build_summary(trace, source_path="test")
+
+        assert "- Status: failed" in md
+        assert "## Errors" in md
+        assert "**bad**" in md
+
 
 class TestFormatCost:
     def test_format_cost_none(self) -> None:

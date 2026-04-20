@@ -412,3 +412,134 @@ class TestBatchTemplateErrorPropagation:
         assert "batch_node" in shared["__template_errors__"], (
             f"Expected 'batch_node' in __template_errors__, got keys: {list(shared['__template_errors__'].keys())}"
         )
+
+
+class TestRoutingFailureTraceEventSync:
+    """GH #250 — when a node returns a custom non-error action that has no
+    matching successor, _handle_no_successor archives it as a routing failure.
+    The trace event (recorded at step 16 with success=True because the action
+    didn't start with "error") must be flipped to success=False so the trace
+    agrees with __failures__.
+    """
+
+    def test_custom_action_routing_failure_flips_trace_event(self):
+        """Router returns 'custom_route' with no matching edge → trace event shows failed."""
+        from pflow.runtime.node_state import get_node_failure
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+        router = _ActionNode()
+        router.node_id = "router"
+        router.set_params({"action": "custom_route"})
+
+        # A default-edge target exists, so is_clean_termination returns False
+        # and _handle_no_successor surfaces as a routing failure (not clean term).
+        unreachable = _ActionNode()
+        unreachable.node_id = "unreachable"
+        router >> unreachable
+
+        configs = {
+            "router": NodeConfig(
+                node_id="router",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+            "unreachable": NodeConfig(
+                node_id="unreachable",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+        workflow = CompiledWorkflow(start_node=router, node_configs=configs)
+        shared: dict = {}
+        collector = WorkflowTraceCollector("test")
+        engine = WorkflowEngine(trace_collector=collector)
+        engine.run(workflow, shared)
+
+        # Runtime invariant: node is archived as routing failure
+        failure = get_node_failure(shared, "router")
+        assert failure is not None
+        assert failure["category"] == "routing_error"
+
+        # Trace invariant: event agrees with __failures__ — success=False with
+        # routing-mention in error (not success=True silently disagreeing)
+        router_events = [e for e in collector.events if e.get("node_id") == "router"]
+        assert len(router_events) == 1
+        event = router_events[0]
+        assert event["success"] is False
+        assert "custom_route" in event.get("error", "")
+        assert "no successor edge matches" in event.get("error", "")
+
+    def test_error_action_routing_does_not_double_mark_trace(self):
+        """Error-action routing is handled by the get_node_failure guard at engine.py:182
+        — mark_last_event_failed is NOT called.
+
+        Regression guard for Task 148 Fix #2: step 17.5 archives the error-action
+        node with the real category (shell_failure/http_error/etc) and data. The
+        error-action branch of _handle_no_successor then hits the
+        `get_node_failure is not None` guard and returns without re-archiving.
+        If mark_last_event_failed were called here, it would overwrite the
+        richer error text on the trace event (which step 16 already set via
+        trace_error read from node data).
+
+        Setup: node returns 'error' action, has a non-error successor (so
+        _handle_no_successor is reached, not clean-terminated) with no
+        matching 'error' edge.
+        """
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+        class _ErrorShellNode(BaseNode):
+            """Mimics a shell node failing with exit_code: pre-populates shared store."""
+
+            def post(self, shared, prep_res, exec_res):
+                shared["failing"] = {"exit_code": 9, "stderr": "shell died", "error": "exit 9"}
+                return "error"
+
+        failing = _ErrorShellNode()
+        failing.node_id = "failing"
+
+        # Non-error successor so is_clean_termination returns False → routing path runs
+        downstream = _ActionNode()
+        downstream.node_id = "downstream"
+        failing >> downstream
+
+        configs = {
+            "failing": NodeConfig(
+                node_id="failing",
+                node_type_name="ShellNode",  # routes to FAILURE_CATEGORY_SHELL in step 17.5
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+            "downstream": NodeConfig(
+                node_id="downstream",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+        workflow = CompiledWorkflow(start_node=failing, node_configs=configs)
+        shared: dict = {}
+        collector = WorkflowTraceCollector("test")
+        engine = WorkflowEngine(trace_collector=collector)
+        engine.run(workflow, shared)
+
+        events = [e for e in collector.events if e.get("node_id") == "failing"]
+        assert len(events) == 1
+        event = events[0]
+        # Step 16 recorded success=False (is_error_action=True) with the
+        # node's own error text
+        assert event["success"] is False
+        # The critical anti-regression: error text must be the shell's error,
+        # NOT the generic routing warning (which would indicate mark_last_event_failed
+        # fired and overwrote it)
+        assert "no successor edge matches" not in (event.get("error") or "")
+        assert "exit 9" in (event.get("error") or "")

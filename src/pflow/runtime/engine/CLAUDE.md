@@ -73,7 +73,7 @@ Stateless executor. No per-node instance state.
 1. Validates `--only` target exists (raises `CompilationError` if not)
 2. Resets `node_visit_counts`
 3. Walks graph: `_execute_node` per node, follows `curr.successors.get(action or "default")`
-4. On unmatched action: `_handle_no_successor` checks if step 17.5 already archived the node; if so, preserves the existing failure record and only writes a routing hint to `__warnings__`. Otherwise rolls back success bookkeeping and archives as `routing_error`.
+4. On unmatched action: `_handle_no_successor` checks if step 17.5 already archived the node; if so, preserves the existing failure record and only writes a routing hint to `__warnings__`. Otherwise rolls back success bookkeeping, archives as `routing_error` via `mark_node_failed`, AND calls `self.trace.mark_last_event_failed(node_id, error=...)` to flip the already-recorded trace event so trace state agrees with `__failures__` (GH #250). The trace-flip call happens only in the non-error-action branch — the error-action branch is already correct because `is_error_action=True` caused step 16 to record `success=False`.
 5. On `--only`: stops after target node, sets `__execution__["only_node"]`
 6. On success: calls `populate_declared_outputs` (skipped on error or `--only`)
 

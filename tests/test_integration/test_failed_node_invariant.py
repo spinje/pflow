@@ -1201,3 +1201,86 @@ def test_example_coalesce_mixed_absent_failed_emits_summary_fix():
     assert "<peer>" not in rendered, rendered
     # The summary suggestion should reference one of the surviving peer nodes.
     assert ("selector.stdout" in rendered) or ("soak.stdout" in rendered), rendered
+
+
+# --- GH #240 + #250 end-to-end regression tests ---
+
+
+def test_loop_recovery_trace_reports_success_end_to_end():
+    """GH #240 — loop recovery: visit 1 fails, visit 2 succeeds → trace aggregation
+    reports Status: success and failed_node_ids is empty.
+
+    Runs through the full WorkflowRunner → engine → trace pipeline so the test
+    exercises the real code path, not just the workflow_trace unit. Uses the
+    committed fixture (same fixture used by ``test_example_loop_recovery_final_state_is_succeeded``
+    to verify the runtime invariant).
+    """
+    result = _run_fixture("loop-recovery.pflow.md")
+
+    # Runtime invariant (Task 148) — unchanged: workflow succeeded, no failures left
+    assert result.status == WorkflowStatus.SUCCESS
+
+    # Trace aggregation — #240 fix: last-event-per-node rule, failed_node_ids empty
+    assert result.trace is not None, "trace collector must exist under default RunnerConfig"
+    assert result.trace._determine_trace_status() == "success"
+
+    final_by_node = result.trace._final_events_by_node()
+    assert "maybe-fail" in final_by_node
+    # Visit 2 (the recovered one) is the final event — success=True
+    assert final_by_node["maybe-fail"]["success"] is True
+    # And the event list has BOTH visits (audit history preserved)
+    maybe_fail_events = [e for e in result.trace.events if e.get("node_id") == "maybe-fail"]
+    assert len(maybe_fail_events) == 2
+    assert maybe_fail_events[0]["success"] is False  # visit 1
+    assert maybe_fail_events[1]["success"] is True  # visit 2
+
+
+def test_routing_failure_on_custom_action_propagates_to_trace():
+    """GH #250 — a code node returning a custom non-error action with no matching
+    successor produces a trace event with success=False (not success=True silently
+    disagreeing with __failures__).
+
+    End-to-end: constructs an inline workflow, runs through WorkflowRunner, then
+    inspects the collected trace.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "router",
+                "type": "code",
+                "purpose": "Return a custom non-error action that has no matching edge.",
+                "params": {"code": 'result: str = "routed"\nnext: str = "custom_route"'},
+            },
+            {
+                "id": "default_path",
+                "type": "shell",
+                "purpose": "Unreachable default-edge target — provides a non-error successor.",
+                "params": {"command": 'echo "default"'},
+            },
+        ],
+        "edges": [
+            {"from": "router", "to": "default_path", "action": "default"},
+        ],
+        "start_node": "router",
+    }
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig(cache_enabled=False))
+
+    # Runtime invariant: router archived as routing failure
+    assert not result.success
+    failures = result.shared_after.get("__failures__", {})
+    assert "router" in failures
+    assert failures["router"]["category"] == "routing_error"
+
+    # Trace invariant: the router event agrees with __failures__
+    assert result.trace is not None
+    router_events = [e for e in result.trace.events if e.get("node_id") == "router"]
+    assert len(router_events) == 1
+    event = router_events[0]
+    assert event["success"] is False, (
+        "Trace event for router must show success=False even though action='custom_route' "
+        "did not literally start with 'error'. This was the GH #250 bug."
+    )
+    assert "custom_route" in (event.get("error") or "")

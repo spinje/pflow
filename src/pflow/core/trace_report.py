@@ -220,13 +220,44 @@ def _format_cost(cost: float | None) -> str:
     return f"${cost:.4f}"
 
 
-def _collect_errors(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collect all failed events from the event tree (non-recursive — top level only).
+def _collect_errors(
+    events: list[dict[str, Any]],
+    failed_node_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the latest failed event per failed node (non-recursive — top level only).
 
-    Only collects top-level failures. If a sub-workflow fails, the parent container
-    event has success=false — we show that, not the internal failure.
+    When the trace carries ``failed_node_ids`` (added as part of the GH #240 fix),
+    use it as the authoritative failed-node set. Otherwise derive per-node final
+    state from events directly (for backward compat with traces generated before
+    this fix).
+
+    Returns one event per failed node — under loop recovery, only the last
+    (recovered) event would be returned, but since the node's final state was
+    success, it wouldn't be in ``failed_node_ids`` at all. If a node fails on
+    both visits, only the latest (still-failed) event is returned.
+
+    Only collects top-level failures. If a sub-workflow fails, the parent
+    container event has success=false — we show that, not the internal failure.
     """
-    return [e for e in events if not e.get("success")]
+    if failed_node_ids is not None:
+        failed_set = set(failed_node_ids)
+        latest: dict[str, dict[str, Any]] = {}
+        for e in events:
+            nid = e.get("node_id")
+            if nid in failed_set:
+                latest[nid] = e
+        return list(latest.values())
+
+    # Fallback: derive per-node final state from events directly. Matches the
+    # aggregation rule in workflow_trace._final_events_by_node so new-format
+    # traces written without failed_node_ids (e.g. by hand in tests) still
+    # produce the correct Errors section.
+    fallback_latest: dict[str, dict[str, Any]] = {}
+    for e in events:
+        nid = e.get("node_id")
+        if nid:
+            fallback_latest[nid] = e
+    return [e for e in fallback_latest.values() if not e.get("success")]
 
 
 def _suggest_template_fixes(
@@ -531,7 +562,7 @@ def _build_summary(
     lines.append("")
 
     # Error and warning sections
-    _append_error_section(all_events, lines)
+    _append_error_section(trace, lines)
     _append_runtime_warnings(trace.get("warnings", []), lines)
     _append_warning_section(all_events, lines)
 
@@ -539,9 +570,17 @@ def _build_summary(
     return "\n".join(lines)
 
 
-def _append_error_section(events: list[dict[str, Any]], lines: list[str]) -> None:
-    """Append ## Errors section if there are failed events."""
-    errors = _collect_errors(events)
+def _append_error_section(trace: dict[str, Any], lines: list[str]) -> None:
+    """Append ## Errors section if there are failed nodes.
+
+    Consumes ``trace["failed_node_ids"]`` when present (authoritative per-node
+    failure list) and falls back to per-node derivation from ``trace["nodes"]``
+    when absent (backward compat). Under loop recovery a node that failed on
+    visit 1 and succeeded on visit 2 is NOT in ``failed_node_ids`` and does not
+    appear here — see GH #240.
+    """
+    events = trace.get("nodes", [])
+    errors = _collect_errors(events, failed_node_ids=trace.get("failed_node_ids"))
     if not errors:
         return
     lines.append("## Errors")
@@ -553,6 +592,7 @@ def _append_error_section(events: list[dict[str, Any]], lines: list[str]) -> Non
         if len(error_msg) > 200:
             error_msg = error_msg[:200] + "..."
         lines.append(f"- **{node_id}** ({node_type}): {error_msg}")
+        # events (not just errors) is needed for upstream-output lookup
         for s in _suggest_template_fixes(event, events):
             lines.append(f"  - Suggestion: {s}")
     lines.append("")
