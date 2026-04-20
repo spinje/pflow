@@ -109,12 +109,6 @@ async def workflow_describe(
         result: str = WorkflowService.describe_workflow(name)
         return result
 
-    try:
-        # Run in thread pool
-        result = await asyncio.to_thread(_sync_describe)
-        logger.info(f"Described workflow: {name}")
-        return result
-    except ValueError:
-        # Workflow not found - error includes suggestions
-        logger.warning(f"Workflow not found: {name}")
-        raise
+    result = await asyncio.to_thread(_sync_describe)
+    logger.info(f"Described workflow: {name}")
+    return result

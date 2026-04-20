@@ -17,7 +17,7 @@ Stateless business logic layer that bridges async MCP tools with synchronous pfl
 
 See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 
-## Services (7)
+## Services (6)
 
 - **BaseService** — Pattern enforcement via `@ensure_stateless` decorator
 - **DiscoveryService** — Wraps `find_workflow()` and `find_components()` plain functions
@@ -25,7 +25,6 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 - **FieldService** — Read cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. **Not exported from `__init__.py`** — imported directly in execution_tools.py.
 - **RegistryService** — Node describe, list/search via `build_component_context()` and `Registry.search()`
 - **WorkflowService** — Workflow list/describe with shared formatters, "did you mean" suggestions
-- **SettingsService** — Environment variable CRUD via SettingsManager (used by disabled settings_tools)
 
 ## Discovery Integration (DiscoveryService)
 
@@ -41,7 +40,7 @@ Model defaults to `get_model_for_feature("discovery")`.
 
 ## Error Handling
 
-Services raise exceptions — tools layer lets MCP handle conversion automatically.
+Services raise exceptions. Self-describing exceptions (anything with `to_diagnostics()` — all `PflowError` subclasses plus `MaxNodeVisitsError`) are rendered by the `PflowMCP.call_tool` override (`server.py`) via the shared `exception_to_diagnostics()` + `format_diagnostic()` pipeline, producing structured `CallToolResult(isError=True)` output. Bare `ValueError` / `RuntimeError` / `TypeError` / `FileExistsError` with pre-formatted message text pass through FastMCP's default handling to preserve existing rich output. Producer bugs (`AttributeError`, `KeyError`, etc.) are always rendered.
 
 **Exception types used:**
 - `ValueError` — Invalid input, not found, validation failures
@@ -102,4 +101,4 @@ Mock at service layer (service methods return predictable results). Integration 
 3. Local formatter imports: `from pflow.execution.formatters.X import format_Y`
 4. Validate inputs: check existence, include "did you mean" suggestions via `format_did_you_mean()`
 5. Use shared formatters for output: `return format_Y(result)`
-6. Let exceptions propagate — tool layer handles conversion to MCP errors
+6. Let exceptions propagate — `PflowMCP.call_tool` renders self-describing exceptions via the shared Diagnostic pipeline and passes hand-rolled rich-text exceptions through unchanged.
