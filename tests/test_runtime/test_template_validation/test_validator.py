@@ -1375,7 +1375,7 @@ class TestInputsContextTemplateValidation:
                 {
                     "id": "build-item",
                     "type": "code",
-                    "params": {"code": "result = {'concept_md': 'test'}"},
+                    "params": {"code": "result: dict = {'concept_md': 'test'}"},
                 },
                 {
                     "id": "consumer",
@@ -1399,7 +1399,7 @@ class TestInputsContextTemplateValidation:
                 {
                     "id": "upstream",
                     "type": "code",
-                    "params": {"code": "result = {'a': {'b': {'c': 1}}}"},
+                    "params": {"code": "result: dict = {'a': {'b': {'c': 1}}}"},
                 },
                 {
                     "id": "consumer",

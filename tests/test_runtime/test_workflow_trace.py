@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.runtime.workflow_trace import WorkflowTraceCollector
+from pflow.runtime.workflow_trace import WorkflowTraceCollector, final_events_by_node
 
 
 class TestWorkflowTraceCollector:
@@ -1237,3 +1237,265 @@ class TestThreadLocalCurrentNode:
         # Each thread should see its own value, not the other's
         assert results["node-A"] == "node-A"
         assert results["node-B"] == "node-B"
+
+
+class TestFinalEventsByNode:
+    """Aggregation rule: last event per node_id = final state.
+
+    Motivating issue: GH #240 — loop recovery records two events for the same
+    node_id (visit 1 fail, visit 2 success); aggregation must report success.
+    """
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test")
+
+    def test_single_visit_per_node(self, collector):
+        collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=True)
+        collector.record_node_execution(node_id="b", node_type="T", duration_ms=1.0, success=False, error="boom")
+
+        final = final_events_by_node(collector.events)
+
+        assert set(final.keys()) == {"a", "b"}
+        assert final["a"]["success"] is True
+        assert final["b"]["success"] is False
+
+    def test_loop_recovery_returns_latest(self, collector):
+        collector.record_node_execution(
+            node_id="maybe-fail", node_type="T", duration_ms=1.0, success=False, error="exit 9"
+        )
+        collector.record_node_execution(node_id="retry", node_type="T", duration_ms=1.0, success=True)
+        collector.record_node_execution(node_id="maybe-fail", node_type="T", duration_ms=1.0, success=True)
+
+        final = final_events_by_node(collector.events)
+
+        assert final["maybe-fail"]["success"] is True
+        # Error from the first visit must NOT bleed into the final state
+        assert final["maybe-fail"].get("error") is None
+
+    def test_event_without_node_id_ignored(self, collector):
+        """Defensive: events missing node_id (shouldn't happen today) are skipped."""
+        collector.events.append({"node_type": "T", "duration_ms": 1.0, "success": False})  # no node_id
+        collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=True)
+
+        final = final_events_by_node(collector.events)
+
+        assert set(final.keys()) == {"a"}
+
+
+class TestDetermineTraceStatusAggregation:
+    """_determine_trace_status uses the per-node-last-event rule."""
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test")
+
+    def test_loop_recovery_reports_success(self, collector):
+        """Visit 1 fail + visit 2 success → success (GH #240)."""
+        collector.record_node_execution(
+            node_id="maybe-fail", node_type="T", duration_ms=1.0, success=False, error="exit 9"
+        )
+        collector.record_node_execution(node_id="maybe-fail", node_type="T", duration_ms=1.0, success=True)
+
+        assert collector._determine_trace_status() == "success"
+
+    def test_loop_both_visits_fail_reports_failed(self, collector):
+        """Both visits fail → failed (recovery did not happen)."""
+        collector.record_node_execution(
+            node_id="maybe-fail", node_type="T", duration_ms=1.0, success=False, error="boom1"
+        )
+        collector.record_node_execution(
+            node_id="maybe-fail", node_type="T", duration_ms=1.0, success=False, error="boom2"
+        )
+
+        assert collector._determine_trace_status() == "failed"
+
+    def test_cached_after_fail_reports_success(self, collector):
+        """Visit 1 fail, visit 2 cached+success → success.
+
+        Locks the cached+loop invariant: when a cached hit follows a failure
+        in the same node, aggregation treats the cached hit as the final state.
+        The ``cached=True`` flag is preserved on the event (audit view) but does
+        NOT exclude it from aggregation — it participates like any other
+        success=True event.
+        """
+        collector.record_node_execution(node_id="n", node_type="T", duration_ms=1.0, success=False, error="boom")
+        collector.record_node_execution(node_id="n", node_type="T", duration_ms=0.0, success=True, cached=True)
+
+        assert collector._determine_trace_status() == "success"
+        # Verify the final event actually IS the cached one — guards against
+        # a future "exclude cached from aggregation" rule silently flipping behavior.
+        final = final_events_by_node(collector.events)
+        assert final["n"].get("cached") is True
+        assert final["n"]["success"] is True
+
+    def test_cached_hit_does_not_mask_failure_on_other_node(self, collector):
+        """Negative variant: a cached success on node A does NOT mask a
+        failure on node B. Aggregation is per-node, not global.
+        """
+        collector.record_node_execution(node_id="a", node_type="T", duration_ms=0.0, success=True, cached=True)
+        collector.record_node_execution(node_id="b", node_type="T", duration_ms=1.0, success=False, error="boom")
+
+        assert collector._determine_trace_status() == "failed"
+
+
+class TestMarkLastEventFailed:
+    """Mutation API for GH #250 — routing failures detected after step 16 trace."""
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test")
+
+    def test_flips_most_recent_event_for_node(self, collector):
+        collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=True)
+        collector.record_node_execution(node_id="b", node_type="T", duration_ms=1.0, success=True)
+
+        collector.mark_last_event_failed("a", error="routing failed: action 'x' not in successors")
+
+        # Only 'a' flipped; 'b' untouched
+        flipped = next(e for e in collector.events if e["node_id"] == "a")
+        untouched = next(e for e in collector.events if e["node_id"] == "b")
+        assert flipped["success"] is False
+        assert flipped["error"] == "routing failed: action 'x' not in successors"
+        assert untouched["success"] is True
+        assert "error" not in untouched
+
+    def test_flips_most_recent_when_multiple_events_for_node(self, collector):
+        """When a node has multiple events (loop), only the LAST one is flipped."""
+        collector.record_node_execution(node_id="n", node_type="T", duration_ms=1.0, success=False, error="visit1")
+        collector.record_node_execution(node_id="n", node_type="T", duration_ms=1.0, success=True)
+
+        collector.mark_last_event_failed("n", error="routing boom")
+
+        # Visit 1 event retains its original error
+        assert collector.events[0]["success"] is False
+        assert collector.events[0]["error"] == "visit1"
+        # Visit 2 event is now flipped with the new error
+        assert collector.events[1]["success"] is False
+        assert collector.events[1]["error"] == "routing boom"
+
+    def test_no_op_for_unknown_node(self, collector):
+        """No event matching node_id → no mutation, no exception."""
+        collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=True)
+
+        collector.mark_last_event_failed("does-not-exist", error="ignored")
+
+        # 'a' untouched
+        assert collector.events[0]["success"] is True
+
+    def test_preserves_node_output(self, collector):
+        """Flipped event retains node_output from the successful execution.
+
+        Semantically correct: the node produced output, then routing failed.
+        Per-node report files show both the output and the failed status.
+        """
+        collector.record_node_execution(
+            node_id="router",
+            node_type="T",
+            duration_ms=1.0,
+            success=True,
+            node_output={"result": "custom_route"},
+        )
+
+        collector.mark_last_event_failed("router", error="routing boom")
+
+        event = collector.events[0]
+        assert event["success"] is False
+        assert event["error"] == "routing boom"
+        assert event["node_output"] == {"result": "custom_route"}
+
+    def test_does_not_touch_batch_items(self, collector):
+        """Flipping a batch node's event must NOT mutate per-item batch_items.
+
+        ``mark_last_event_failed`` walks ``self.events`` (top-level only). Batch
+        items live inside ``event["batch_items"]`` with their own per-item success
+        flags (audit view). If the helper recursed, a routing failure on a batch
+        with all-successful items would silently change their reported status.
+        """
+        collector.record_node_execution(
+            node_id="my-batch",
+            node_type="BatchNode",
+            duration_ms=1.0,
+            success=True,
+            batch_items=[
+                {"index": 0, "success": True, "duration_ms": 0.5},
+                {"index": 1, "success": True, "duration_ms": 0.5},
+            ],
+        )
+
+        collector.mark_last_event_failed("my-batch", error="routing boom")
+
+        event = collector.events[0]
+        # Top-level flipped
+        assert event["success"] is False
+        assert event["error"] == "routing boom"
+        # Per-item status untouched — audit view preserved
+        assert event["batch_items"][0]["success"] is True
+        assert event["batch_items"][1]["success"] is True
+
+
+class TestSaveToFileFailedNodeIds:
+    """Trace file must carry failed_node_ids as the authoritative failed-node list."""
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test")
+
+    @pytest.fixture
+    def temp_home(self, tmp_path):
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        return home_dir
+
+    def _read_trace(self, filepath):
+        with open(filepath) as f:
+            return json.load(f)
+
+    def test_writes_failed_node_ids_key(self, collector, temp_home):
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(node_id="ok", node_type="T", duration_ms=1.0, success=True)
+            collector.record_node_execution(node_id="bad", node_type="T", duration_ms=1.0, success=False, error="boom")
+            trace_data = self._read_trace(collector.save_to_file())
+
+            assert "failed_node_ids" in trace_data
+            assert trace_data["failed_node_ids"] == ["bad"]
+
+    def test_invariants_hold(self, collector, temp_home):
+        """nodes_failed == len(failed_node_ids); final_status=='failed' iff list non-empty.
+
+        This invariant is the architectural guarantee the #240 fix creates;
+        pin it explicitly so a future refactor can't silently break it.
+        """
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=False, error="x")
+            collector.record_node_execution(node_id="b", node_type="T", duration_ms=1.0, success=False, error="y")
+            trace_data = self._read_trace(collector.save_to_file())
+
+            assert trace_data["nodes_failed"] == len(trace_data["failed_node_ids"])
+            assert (trace_data["final_status"] == "failed") == (len(trace_data["failed_node_ids"]) > 0)
+
+    def test_loop_recovery_reports_zero_failed_nodes(self, collector, temp_home):
+        """Loop recovery: 2 visits, 0 failed nodes. nodes_executed (per-visit) != nodes_failed (per-node).
+
+        Documents the semantic shift — GH #240.
+        """
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="maybe-fail", node_type="T", duration_ms=1.0, success=False, error="exit 9"
+            )
+            collector.record_node_execution(node_id="maybe-fail", node_type="T", duration_ms=1.0, success=True)
+            trace_data = self._read_trace(collector.save_to_file())
+
+            assert trace_data["nodes_executed"] == 2  # per-visit
+            assert trace_data["nodes_failed"] == 0  # per-node (unique failed)
+            assert trace_data["failed_node_ids"] == []
+            assert trace_data["final_status"] == "success"
+
+    def test_failed_node_ids_sorted(self, collector, temp_home):
+        """Sorted alphabetically for deterministic JSON output."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(node_id="zebra", node_type="T", duration_ms=1.0, success=False, error="z")
+            collector.record_node_execution(node_id="alpha", node_type="T", duration_ms=1.0, success=False, error="a")
+            trace_data = self._read_trace(collector.save_to_file())
+
+            assert trace_data["failed_node_ids"] == ["alpha", "zebra"]

@@ -1,6 +1,8 @@
 """End-to-end tests for the failed-node invariant fix (GH #208)."""
 
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 from pflow.core.diagnostic import Severity
 from pflow.core.diagnostic_render import format_diagnostic
@@ -1201,3 +1203,189 @@ def test_example_coalesce_mixed_absent_failed_emits_summary_fix():
     assert "<peer>" not in rendered, rendered
     # The summary suggestion should reference one of the surviving peer nodes.
     assert ("selector.stdout" in rendered) or ("soak.stdout" in rendered), rendered
+
+
+# --- GH #240 + #250 end-to-end regression tests ---
+
+
+def test_loop_recovery_trace_reports_success_end_to_end(tmp_path):
+    """GH #240 — loop recovery: visit 1 fails, visit 2 succeeds → trace aggregation
+    reports Status: success and failed_node_ids is empty.
+
+    Runs through the full WorkflowRunner → engine → trace → save_to_file pipeline
+    and asserts on the SERIALIZED trace JSON — what agents and the report
+    generator actually consume.
+    """
+    result = _run_fixture("loop-recovery.pflow.md")
+
+    # Runtime invariant (Task 148) — unchanged: workflow succeeded, no failures left
+    assert result.status == WorkflowStatus.SUCCESS
+
+    # Trace aggregation — #240 fix: read via the serialized JSON path, the same
+    # path `--report` and external consumers take.
+    assert result.trace is not None, "trace collector must exist under default RunnerConfig"
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text())
+
+    assert trace_data["final_status"] == "success"
+    assert trace_data["failed_node_ids"] == []
+    assert trace_data["nodes_failed"] == 0
+    assert trace_data["nodes_executed"] == 4  # setup, maybe-fail(fail), retry, maybe-fail(ok)
+
+    # Audit history preserved in the events list — BOTH visits of maybe-fail present
+    maybe_fail_events = [e for e in trace_data["nodes"] if e.get("node_id") == "maybe-fail"]
+    assert len(maybe_fail_events) == 2
+    assert maybe_fail_events[0]["success"] is False  # visit 1
+    assert maybe_fail_events[1]["success"] is True  # visit 2
+
+
+def test_routing_failure_in_sub_workflow_propagates_to_parent_trace(tmp_path):
+    """GH #250 sub-workflow variant — when a routing failure happens INSIDE a
+    sub-workflow, the child engine's ``_handle_no_successor`` calls
+    ``mark_last_event_failed`` on the CHILD collector. The flipped event is
+    embedded in the parent's ``sub_workflow_events`` list, and the parent's
+    own trace event for the sub-workflow node shows success=False because
+    the child engine returned "error".
+
+    Pins the child-engine → child-collector → parent-sub_workflow_events wiring.
+    """
+    child_file = tmp_path / "child.pflow.md"
+    child_file.write_text(
+        """\
+# Child
+
+Child workflow whose router returns a custom action with no matching edge.
+
+## Steps
+
+### child-router
+
+Emit a custom action at runtime that the parser can't statically verify.
+
+- type: code
+- next: child-default
+
+```python code
+import os
+result: str = "child-routed"
+next: str = os.environ.get("PFLOW_CHILD_ROUTE", "child-default")
+```
+
+### child-default
+
+Unreachable default-edge target — only exists to make the router's action unmatched.
+
+- type: shell
+- next: end
+
+```shell command
+echo "child default"
+```
+""",
+        encoding="utf-8",
+    )
+
+    parent_file = tmp_path / "parent.pflow.md"
+    parent_file.write_text(
+        f"""\
+# Parent
+
+Parent invokes the child workflow that triggers an internal routing failure.
+
+## Steps
+
+### invoke-child
+
+Delegate to the child workflow.
+
+- type: workflow
+- workflow: {child_file}
+""",
+        encoding="utf-8",
+    )
+
+    import os
+
+    os.environ["PFLOW_CHILD_ROUTE"] = "child_custom_route"
+    try:
+        runner = WorkflowRunner()
+        result = runner.run(str(parent_file), {}, config=RunnerConfig(cache_enabled=False))
+    finally:
+        os.environ.pop("PFLOW_CHILD_ROUTE", None)
+
+    # Parent-level: the WorkflowExecutor node failed (child returned "error"
+    # from its own routing failure → parent's error_action="error" by default).
+    assert not result.success
+    assert result.trace is not None
+
+    parent_events = [e for e in result.trace.events if e.get("node_id") == "invoke-child"]
+    assert len(parent_events) == 1
+    parent_event = parent_events[0]
+    assert parent_event["success"] is False, "parent sub-workflow event must reflect child failure"
+
+    # Child-level: the child collector flipped the router event. That event
+    # lives inside parent_event["sub_workflow_events"].
+    sub_events = parent_event.get("sub_workflow_events") or []
+    child_router_events = [e for e in sub_events if e.get("node_id") == "child-router"]
+    assert len(child_router_events) == 1, (
+        f"expected exactly one child-router event in sub_workflow_events, got {sub_events}"
+    )
+    child_router = child_router_events[0]
+    assert child_router["success"] is False, (
+        "child engine's _handle_no_successor must flip the child collector's event — "
+        "otherwise trace says success=True while __failures__ says routing_error"
+    )
+    assert "child_custom_route" in (child_router.get("error") or "")
+    assert "no successor edge matches" in (child_router.get("error") or "")
+
+
+def test_routing_failure_on_custom_action_propagates_to_trace():
+    """GH #250 — a code node returning a custom non-error action with no matching
+    successor produces a trace event with success=False (not success=True silently
+    disagreeing with __failures__).
+
+    End-to-end: constructs an inline workflow, runs through WorkflowRunner, then
+    inspects the collected trace.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "router",
+                "type": "code",
+                "purpose": "Return a custom non-error action that has no matching edge.",
+                "params": {"code": 'result: str = "routed"\nnext: str = "custom_route"'},
+            },
+            {
+                "id": "default_path",
+                "type": "shell",
+                "purpose": "Unreachable default-edge target — provides a non-error successor.",
+                "params": {"command": 'echo "default"'},
+            },
+        ],
+        "edges": [
+            {"from": "router", "to": "default_path", "action": "default"},
+        ],
+        "start_node": "router",
+    }
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig(cache_enabled=False))
+
+    # Runtime invariant: router archived as routing failure
+    assert not result.success
+    failures = result.shared_after.get("__failures__", {})
+    assert "router" in failures
+    assert failures["router"]["category"] == "routing_error"
+
+    # Trace invariant: the router event agrees with __failures__
+    assert result.trace is not None
+    router_events = [e for e in result.trace.events if e.get("node_id") == "router"]
+    assert len(router_events) == 1
+    event = router_events[0]
+    assert event["success"] is False, (
+        "Trace event for router must show success=False even though action='custom_route' "
+        "did not literally start with 'error'. This was the GH #250 bug."
+    )
+    assert "custom_route" in (event.get("error") or "")
