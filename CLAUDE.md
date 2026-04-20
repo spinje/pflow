@@ -227,7 +227,6 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 **v0.12.0**
 - Task 142: Explore Function-Based Code Node Syntax
 - Task 46: Workflow Export to Zero-Dependency Code
-- Task 75: Execution Preview in Validation
 - Task 94: Display Available LLM Models
 - Task 99: Expose pflow Tools to Claude Code Node
 - Task 111: Batch Limit for Iteration

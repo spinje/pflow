@@ -450,6 +450,23 @@ class WorkflowExecutor(BaseNode):
             )
 
     @staticmethod
+    def is_exposable_child_key(key: object, child_input_keys: set[str]) -> bool:
+        """Whether a child_storage key should be exposed to the parent's namespace.
+
+        Shared predicate between runtime `_expose_child_outputs` and the dry-run
+        planner's `_mirror_child_shared` (in `execution/plan.py`). Centralizing
+        the rule here prevents drift: adding a new reserved prefix means
+        updating one function, both consumers inherit. Non-string keys are
+        skipped defensively — Python dicts use string keys in practice, but
+        a non-string key from a rogue node would otherwise crash `startswith`.
+        """
+        if not isinstance(key, str):
+            return False
+        if key.startswith(("_pflow_", "__")):
+            return False
+        return key not in child_input_keys
+
+    @staticmethod
     def _expose_child_outputs(
         shared: dict[str, Any],
         prep_res: dict[str, Any],
@@ -471,11 +488,8 @@ class WorkflowExecutor(BaseNode):
 
         child_input_keys = set(prep_res.get("child_params", {}).keys())
         for key, value in child_storage.items():
-            if key.startswith(("_pflow_", "__")):
-                continue
-            if key in child_input_keys:
-                continue
-            shared[key] = value
+            if WorkflowExecutor.is_exposable_child_key(key, child_input_keys):
+                shared[key] = value
 
     @staticmethod
     def _extract_child_error(child_storage: dict[str, Any], workflow_path: str) -> str:

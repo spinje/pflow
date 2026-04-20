@@ -159,6 +159,7 @@ class MemoizationCache:
                     );
                     CREATE INDEX IF NOT EXISTS idx_created_at ON cache_entries(created_at);
                     CREATE INDEX IF NOT EXISTS idx_workflow_path ON cache_entries(workflow_path);
+                    CREATE INDEX IF NOT EXISTS idx_node_id_created_at ON cache_entries(node_id, created_at DESC);
                 """)
             finally:
                 conn.close()
@@ -218,6 +219,104 @@ class MemoizationCache:
                 conn.close()
         except (sqlite3.Error, zlib.error, json.JSONDecodeError, OSError):
             logger.debug("Memoization cache read failed", exc_info=True)
+            return None
+
+    def get_with_age(self, cache_key: str) -> Optional[tuple[str, dict[str, Any], float]]:
+        """Look up cache entry with its creation time.
+
+        Args:
+            cache_key: The cache key to look up
+
+        Returns:
+            Tuple of (action, output, created_at_epoch_seconds) or None if not
+            found, expired, or reads disabled
+        """
+        if not self.read_enabled:
+            return None
+
+        try:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(
+                    "SELECT action, output, created_at FROM cache_entries WHERE cache_key = ?",
+                    (cache_key,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+
+                action, output_blob, created_at = row
+
+                if time.time() - created_at > self.ttl_seconds:
+                    conn.execute("DELETE FROM cache_entries WHERE cache_key = ?", (cache_key,))
+                    conn.commit()
+                    return None
+
+                output_json = zlib.decompress(output_blob).decode()
+                output = json.loads(output_json)
+                return (action, output, created_at)
+            finally:
+                conn.close()
+        except (sqlite3.Error, zlib.error, json.JSONDecodeError, OSError):
+            logger.debug("Memoization cache get_with_age failed", exc_info=True)
+            return None
+
+    def get_latest_for_node(
+        self, node_id: str, *, workflow_path: Optional[str] = None
+    ) -> Optional[tuple[dict[str, Any], float]]:
+        """Look up the newest cache entry for a node_id.
+
+        Args:
+            node_id: Node identifier to search for.
+            workflow_path: When provided, scope the lookup to entries written
+                by this workflow. Prevents cross-workflow pollution for common
+                node names (e.g., two workflows both with a "classify" node).
+                When None, falls back to unscoped lookup — required for
+                direct-IR / content-string runs where `_pflow_workflow_file`
+                is never set and rows are written with a NULL `workflow_path`
+                column (SQL `= NULL` matches zero rows).
+
+        Returns:
+            Tuple of (output, created_at_epoch_seconds) or None if not found,
+            expired, or reads disabled.
+        """
+        if not self.read_enabled:
+            return None
+
+        try:
+            conn = self._connect()
+            try:
+                if workflow_path is not None:
+                    cursor = conn.execute(
+                        "SELECT cache_key, output, created_at FROM cache_entries "
+                        "WHERE node_id = ? AND workflow_path = ? "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (node_id, workflow_path),
+                    )
+                else:
+                    cursor = conn.execute(
+                        "SELECT cache_key, output, created_at FROM cache_entries "
+                        "WHERE node_id = ? ORDER BY created_at DESC LIMIT 1",
+                        (node_id,),
+                    )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+
+                cache_key, output_blob, created_at = row
+
+                if time.time() - created_at > self.ttl_seconds:
+                    conn.execute("DELETE FROM cache_entries WHERE cache_key = ?", (cache_key,))
+                    conn.commit()
+                    return None
+
+                output_json = zlib.decompress(output_blob).decode()
+                output = json.loads(output_json)
+                return (output, created_at)
+            finally:
+                conn.close()
+        except (sqlite3.Error, zlib.error, json.JSONDecodeError, OSError):
+            logger.debug("Memoization cache get_latest_for_node failed", exc_info=True)
             return None
 
     def put(

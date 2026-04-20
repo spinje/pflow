@@ -388,6 +388,7 @@ Errors include fix suggestions — read them carefully and apply the recommended
 Caching is automatic — unchanged nodes return instantly on re-run. Use this:
 
 - Edit a prompt or parameter → re-run → only changed nodes re-execute
+- `--dry-run` — preview plan + historical cost/duration without executing (expensive LLM runs, verifying what an edit invalidated)
 - `--only <node>` — run just that node (upstream from cache, downstream skipped)
 - `--no-cache` — force fresh execution (side-effect nodes, external API changes)
 - `cache: false` on a node — permanently opt out for nodes reading runtime state (date, git branch, env vars)

@@ -12,13 +12,115 @@ src/pflow/execution/
 ├── workflow_resolver.py     # Unified workflow resolution (file, library, markdown, dict → ResolvedWorkflow)
 ├── executor_service.py      # Internal utility: error extraction helpers (_build_error_list, etc.)
 ├── execution_state.py       # Per-node execution state building (shared CLI/MCP)
+├── plan.py                  # Dry-run planner — graph walker with explicit `Transition` state machine
 └── formatters/              # Shared output formatters (return strings/dicts, NEVER print)
     ├── error_formatter.py
     ├── success_formatter.py
     ├── node_output_formatter.py
     ├── validation_formatter.py
-    └── ... (13 formatters total, see formatters/CLAUDE.md)
+    ├── plan_formatter.py
+    └── ... (14 formatters total, see formatters/CLAUDE.md)
 ```
+
+## Dry-Run Planner (`plan.py`)
+
+`build_plan(compiled, params, cache, registry, ...) -> Plan` walks a compiled workflow and produces a typed `Plan` describing what would happen at runtime — cached vs would-execute per node, historical cost (LLM nodes) and duration (all nodes), sub-workflow recursion — without invoking any node side effects. Called by `WorkflowRunner.plan()` and the MCP `plan_workflow` tool.
+
+### State machine (the walker's shape)
+
+The walker is an explicit discriminated-union state machine, not a set of ad-hoc branches:
+
+```python
+class Transition(Enum):
+    FOLLOW         # advance to successor on `action`
+    STOP           # clean termination (end / all-error successors / revisit)
+    BOUNDARY       # first would-execute node → BFS downstream, then stop
+    ROUTING_ERROR  # cached action has no matching successor → emit + stop
+
+def _classify(entry: PlanEntry, curr) -> Decision  # pure mapping
+def _advance(decision, ..., state: _WalkerState) -> Any | None  # dispatches via match
+```
+
+`build_plan`'s main loop does exactly three things per iteration: plan one node, classify its transition, apply the decision. `_classify` is the one authoritative mapping from `PlanEntry.status` to `Transition` — extending the planner means adding an enum variant plus a `match` arm plus a `_classify` case, in that order. Unit tests pin the mapping at `tests/test_execution/test_plan_classify.py`.
+
+### Load-bearing invariants (documented at top of `plan.py`)
+
+- The scratch `shared` the planner constructs is planner-owned; `apply_memo_hit` mutates it on memo hits so downstream template resolution matches the engine's cache-key computation. Skipping the mutation looks purer but causes silent drift.
+- `enforce_loop_guard()` (shared with the engine) runs BEFORE each `plan_node()` call. It bumps `node_visit_counts` AND invalidates `completed_nodes`/`node_actions`/`node_hashes` for revisited nodes. Without the invalidation, visit 2 of a successfully-cached node in a loop is reported as `cached_in_process` when the engine would re-execute.
+- Sub-workflow base_path derivation reads `shared["_pflow_workflow_file"]` (same source runtime uses). For inline workflows the synthetic `"ir-hash:..."` identifier's `Path(...).parent` is `Path(".")` — relative child refs resolve against CWD, matching runtime. Falls back to `Path.cwd()` when the key is absent.
+- Declared sub-workflow outputs delegate to `output_resolver.resolve_output_source` — accepts `${node.key}` / `$node.key` / plain `node.key` formats, returns None on unresolved. The planner skips both unresolved and resolved-to-None values; downstream templating of the missing key surfaces as a plan-time `template_error`, which matches how runtime would fail at `populate_declared_outputs`.
+- Post-first-miss: BFS over ALL non-"error" successors. Following only `default` underestimates cost for conditional workflows, the wrong failure mode for a cost gate.
+- A cached entry whose action has no matching successor = runtime routing error. Surface as a plan entry and stop.
+
+Parity with runtime is pinned by `tests/test_execution/test_plan_drift.py`.
+
+### Entry-builder taxonomy
+
+`_plan_standard_node` dispatches on `NodePlan.status` to one of five named builders: `_template_error_entry` / `_cache_disabled_entry` / `_cached_memo_entry` / `_cached_in_process_entry` / `_miss_entry`. Adding a new status means adding a builder plus one dispatch branch — no scattered edits. `_sub_workflow_error_entry` is shared by every sub-workflow failure path (depth exceeded, resolve failure, cycle, bad inputs).
+
+### `_execute_entry` — single source of truth for `status="execute"` entries
+
+Every would-execute entry — first-miss (`_miss_entry`) AND BFS-downstream (`_make_downstream_entry`) — flows through `_execute_entry(config, cache, *, cause, diagnostic=None)`. It calls `_lookup_last_run_stats` and attaches `last_cost_usd` + `last_duration_ms` + `last_run_age_sec` by construction. Previously the downstream path built a bare `PlanEntry` without stats, so agents cost-gating on an LLM downstream of a non-LLM miss saw `$0` even when history existed. Funneling both paths through the same primitive eliminates the drift surface. Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_bfs_downstream_attaches_historical_stats`.
+
+### Historical stats (`_read_stats_from_output`, `_lookup_last_run_stats`)
+
+Cost (`llm_usage.cost_usd`, LLM-only) and duration (`__pflow_stats__.duration_ms`, all-node) both ride inside the cached output blob — no schema change to `cache_entries`. `_read_stats_from_output` is the symmetric reader for the key `instrumentation.py::write_memo_cache` injects. See `runtime/engine/CLAUDE.md` → "Engine-injected output metadata" for the convention and its load-bearing dunder-naming rationale.
+
+`PlanSummary` carries parallel aggregates: `estimated_cost_usd` + `nodes_without_history` (LLM cost domain), `estimated_duration_ms` + `nodes_without_duration_history` (all-node duration domain), each with an `_including_nested` variant that rolls sub-workflow totals up to the parent level. Agents cost- or time-gating should read the `_including_nested` value when present; formatters do the same.
+
+### Text vs JSON per-entry rendering
+
+Per-entry `last_duration_ms` is only rendered in text when ≥ 1s (`_TEXT_DURATION_THRESHOLD_MS`) — see `plan_formatter.py::_format_stats_annotation`. Sub-second durations still contribute to the summary aggregate and always appear in JSON at full precision. Rationale: twenty 50ms code nodes in a row pads text output without signal; the summary's total still reflects them; agents parse JSON for exact numbers.
+
+### Sub-workflow compile failures
+
+`_compile_child` raises `_ChildCompileFailed(entry=...)` when the child fails a recoverable compile check. The caller unwraps it in one line (`except _ChildCompileFailed as failure: return failure.entry`), avoiding a `CompiledWorkflow | PlanEntry` sum type and the isinstance plumbing that would come with it.
+
+### Sub-workflow recursion — one function, parameterized by `cause`
+
+`_plan_sub_workflow(..., cause: Literal["no_cache_match", "downstream"] = "no_cache_match")` is the single sub-workflow recursion point. It's called from two places:
+
+1. **Pre-boundary (state machine path)** — parent walker's FOLLOW/BOUNDARY transitions dispatch `WorkflowExecutor` via `_plan_one_node` → `_plan_sub_workflow(cause="no_cache_match")`. Runs `plan_node`, resolves templated inputs, populates parent's `shared[node_id]` with the child's declared outputs for downstream template resolution.
+
+2. **Post-boundary (BFS path)** — after first cache miss, `_make_downstream_entry` dispatches `WorkflowExecutor` → `_plan_sub_workflow(cause="downstream")`. Skips `plan_node` (parent's upstream is dirty, strict template resolution would hit `template_exception` on `inputs: ${upstream.x}`). Skips output population (no downstream successor will template against this sub_plan — they're all downstream themselves).
+
+Both paths share: depth guard, opaque check (`workflow: ${var}`), resolve + compile + recurse + warning attach. `cause` flows through to the returned `PlanEntry`.
+
+### Force-downstream mode — `_build_plan_with_shared(_force_downstream=True)`
+
+When `_plan_sub_workflow(cause="downstream")` recurses into a child, it passes `_force_downstream=True`. The child then:
+- Skips the state machine entirely.
+- Runs `_bfs_from_start(start_node=compiled.start_node, ...)` — seeds BFS with the start node INCLUDED (unlike `_bfs_downstream`, which seeds from a boundary's successors because the boundary is already an entry).
+- Every child entry → `_execute_entry(cause="downstream")` → historical stats scoped to the child's `workflow_path`.
+- `cost_basis = "upper_bound" if branched else "exact"` — honest: a linear downstream graph IS exactly what will run (only the cost numbers are historical), while a branching one is an upper bound.
+
+`_bfs_downstream` and `_bfs_from_start` share their loop body via `_bfs_walk(queue, ...)` — different seeding, identical per-node dispatch.
+
+Load-bearing: without recursion in BFS mode, any sub-workflow reached post-first-miss became a leaf entry with no `sub_plan`, hiding every nested LLM cost. Agents cost-gating after an upstream edit silently under-reported — the #1 iteration pattern. Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats`.
+
+### Placeholder child inputs in downstream mode
+
+`_placeholder_child_inputs(child_ir)` synthesizes type-appropriate values (`list[None]`, `"<dry-run-downstream-placeholder>"`, `1`, etc.) for every declared child input. Used only in downstream mode — the child's BFS walk never reads inputs (no template resolution, no `_run()`), so placeholders are never observed. They just satisfy `compile_workflow`'s required-input presence check.
+
+`_effective_child_inputs(child_ir, child_inputs, *, downstream)` is the one-liner dispatch that chooses between placeholders (downstream) and caller-provided inputs (normal). Normal mode must NOT get placeholders — missing required inputs SHOULD fail loudly there.
+
+Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_downstream_subworkflow_placeholders_satisfy_required_inputs`.
+
+### Nested type aggregation — `execute_by_type_including_nested`
+
+`_summarize` walks sub_plans and merges each child's `execute_by_type_including_nested` (or per-level `execute_by_type` as fallback) into the parent's `nested_by_type`. This is how "2 LLM, 2 code, 2 shell, 1 workflow" appears in the top-level text summary when the graph is parent (1 LLM + 1 code + 1 shell + 1 workflow) nesting child (1 LLM + 1 code + 1 shell). Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_summary_execute_by_type_aggregates_across_nested`.
+
+JSON exposes both per-level (`execute_by_type`) and nested (`execute_by_type_including_nested`) with raw class names — stable agent contract. Text renders only the nested breakdown (when present) via `_NODE_TYPE_TAGS` translation, so humans see `LLM`/`code`/`shell`/`workflow` not `LLMNode`/`PythonCodeNode`/`ShellNode`/`WorkflowExecutor`.
+
+### Formatter (`formatters/plan_formatter.py`)
+
+Text-only rendering decisions, all pinned by `tests/test_execution/formatters/test_plan_formatter.py`:
+
+- **Header**: `Dry-run for {Path(plan.workflow).name}: N nodes, M sub-workflow(s)`. Base name only — the absolute path is already in the command the user ran. JSON `plan.workflow` keeps the full value.
+- **Type translation in summary**: class names → `_NODE_TYPE_TAGS` map (same one per-entry labels use).
+- **Nested-aware counts**: when `*_including_nested` fields exist on `PlanSummary`, the summary displays those numbers under the label `Summary (including nested):`. Agents cost- or time-gating must read `*_including_nested` when present — the formatter mirrors.
+- **"Nothing cached" divider**: `_has_any_cached_recursive(entries)` checks sub_plans too. A plan whose top-level entries are all `sub_workflow` with fully-cached children must NOT render "nothing cached" — something IS cached, just one level down.
+- **No redundant "No side effects performed." trailer.** The `--dry-run` flag is the contract; restating it on every plan is noise.
 
 ## WorkflowRunner — Primary Entry Point
 
@@ -26,6 +128,7 @@ src/pflow/execution/
 class WorkflowRunner:
     def run(workflow, params, config, *, progress_callback=None, workflow_manager=None, workflow_name=None) -> ExecutionResult
     def validate(workflow, params, *, source_file_path=None) -> ValidationResult
+    def plan(workflow, params, config) -> Plan
 ```
 
 **Stateless**: fresh instance per call. No mutable state on instance.
@@ -39,6 +142,10 @@ class WorkflowRunner:
 6. `_compile_and_execute()` — `compile_workflow()` + `WorkflowEngine.run()`. On exception: annotates `e._pflow_node_id` (skipped for `OutputResolutionError`) and `e._pflow_shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after` with the full failure state.
 7. `_build_errors()` + `_extract_runtime_warnings()` — converts shared store + action result into `Diagnostic` list. Permissive-mode template warnings pass through the structured `Diagnostic` already built by `runtime/engine/template_errors.py` (preserves `unresolved_references`); api warnings still build a basic Diagnostic from `__warnings__[id]`.
 8. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
+
+`plan()` reuses the same resolve → file-ref → validation → compile pipeline, then delegates to `execution/plan.py::build_plan()` instead of running the engine. No trace collector, metrics collector, MCP pool, or progress callback is created on the plan path.
+
+**Inline-workflow cache scoping** (load-bearing): `_prepare_workflow` injects `params["_pflow_workflow_file"]` for every run — file/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline submissions) get a synthetic `ir-hash:<md5>` identifier from `_synthesize_inline_workflow_id(resolved.ir)`. Without this, inline writers pass `workflow_path=NULL` to the memo cache, and SQL's NULL semantics (`WHERE workflow_path = NULL` matches zero rows) cause scoped `get_latest_for_node` lookups to fall back to unscoped — pooling cost/duration history across unrelated inline workflows that happen to share node IDs. Uses `setdefault` so callers that pre-inject survive (only `runner.validate()`'s own write path does today — CLI and MCP no longer pre-inject).
 
 **Exception boundary**: `run()` catches ALL exceptions, wraps into `ExecutionResult`. Only `KeyboardInterrupt`/`SystemExit` propagate.
 
@@ -92,6 +199,19 @@ class ExecutionResult:
 
     @property
     def warnings(self) -> list[Diagnostic]: ...
+
+@dataclass(frozen=True)
+class PlanEntry: ...
+
+@dataclass(frozen=True)
+class PlanSummary: ...
+
+@dataclass(frozen=True)
+class Plan:
+    workflow: str
+    entries: list[PlanEntry]
+    summary: PlanSummary
+    diagnostics: list[Diagnostic] = field(default_factory=list)
 ```
 
 ## Unified Resolver (workflow_resolver.py)

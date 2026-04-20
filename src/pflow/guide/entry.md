@@ -27,6 +27,7 @@ Run Options:
   --report              Generate per-node execution report
   -o, --output-key <key>  Extract specific output
   --validate-only       Validate without executing
+  --dry-run             Preview cache/execute plan + cost/duration estimates (no execution)
   --output-format json  JSON output for piping
   -p, --print           Minimal output (suppress progress)
 

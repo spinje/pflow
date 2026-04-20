@@ -156,6 +156,8 @@ def format_text_output(
     if outputs:
         lines.append("Outputs:")
         for key, value in outputs.items():
+            if isinstance(key, str) and key.startswith("_"):
+                continue  # Skip reserved keys (engine-injected metadata, private markers).
             # Format value for display (pretty-print JSON if it's a dict/list)
             if isinstance(value, (dict, list)):
                 value_str = json.dumps(value, indent=2, ensure_ascii=False)
@@ -332,6 +334,8 @@ def format_output_values(outputs: dict[str, Any]) -> list[str]:
 
     lines = ["Outputs:"]
     for key, value in outputs.items():
+        if isinstance(key, str) and key.startswith("_"):
+            continue  # Skip reserved keys (engine-injected metadata, private markers).
         # Show full output (pretty-print JSON if it's a dict/list)
         if isinstance(value, (dict, list)):
             value_str = json.dumps(value, indent=2, ensure_ascii=False)
@@ -414,6 +418,8 @@ def extract_runtime_paths(outputs: dict[str, Any]) -> tuple[list[tuple[str, str]
     seen_structures: dict[str, str] = {}  # Track structures we've already shown
 
     for key, value in outputs.items():
+        if isinstance(key, str) and key.startswith("_"):
+            continue  # Skip reserved keys (engine-injected metadata, private markers).
         # Check if this value is identical to one we've already processed
         # (MCP nodes often return both 'result' and 'server_TOOL_result' with same data)
         value_hash = get_value_hash(value)

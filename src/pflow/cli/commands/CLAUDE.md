@@ -129,7 +129,7 @@ LLM model resolution chain (genuinely hard to discover):
 
 | Command file | Test file(s) | Key mock.patch targets |
 |-------------|-------------|----------------------|
-| `run.py` | `test_workflow_resolution.py`, `test_validate_only.py`, `test_workflow_commands.py`, `test_dual_mode_stdin.py` | `pflow.cli.commands.run.WorkflowManager`, `.execute_json_workflow` |
+| `run.py` | `test_workflow_resolution.py`, `test_validate_only.py`, `test_workflow_commands.py`, `test_dual_mode_stdin.py`, `test_dry_run.py` | `pflow.cli.commands.run.WorkflowManager`, `.execute_json_workflow` |
 | `list.py` | `test_workflow_commands.py` | `pflow.cli.commands.list.WorkflowManager` |
 | `describe.py` | `test_workflow_commands.py` | `pflow.cli.commands.describe.WorkflowManager` |
 | `history.py` | `test_workflow_commands.py` | `pflow.cli.commands.history.WorkflowManager` |

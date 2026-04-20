@@ -6,12 +6,15 @@ runtime concerns sequentially per node.
 """
 
 from .engine import WorkflowEngine
+from .plan_node import NodePlan, plan_node
 from .types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
 
 __all__ = [
     "BatchConfig",
     "CompiledWorkflow",
     "NodeConfig",
+    "NodePlan",
     "TemplateConfig",
     "WorkflowEngine",
+    "plan_node",
 ]

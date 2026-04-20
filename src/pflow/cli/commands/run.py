@@ -200,9 +200,15 @@ def execute_json_workflow(  # noqa: C901
     if stdin_data:
         _route_stdin_to_params(ctx, stdin_data, ir_data, params)
 
-    source_file_path = ctx.obj.get("source_file_path")
-    if source_file_path:
-        params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
+    # `_pflow_workflow_file` is injected by `WorkflowRunner._prepare_workflow`
+    # via `setdefault` against the runner's own resolved file_path (canonical
+    # absolute path for file/library workflows, or the synthetic `ir-hash:...`
+    # identifier for inline workflows). Validate() receives the path
+    # explicitly through its `source_file_path` kwarg below.
+
+    if ctx.obj.get("dry_run"):
+        _display_plan_result(ctx, workflow, params, output_format)
+        return
 
     if ctx.obj.get("validate_only"):
         runner = WorkflowRunner()
@@ -362,6 +368,43 @@ def _display_validation_result(
     ctx.exit(0 if vresult.valid else 1)
 
 
+def _display_plan_result(
+    ctx: click.Context,
+    workflow: dict[str, Any] | ResolvedWorkflow,
+    params: dict[str, Any],
+    output_format: str,
+) -> None:
+    """Display dry-run plan result and exit.
+
+    Exit code mirrors `_display_validation_result`'s severity-based convention:
+    any ERROR-severity diagnostic (e.g. unresolvable strict-mode template)
+    exits 1. Plans that build with only WARNINGs exit 0.
+    """
+    from pflow.execution.formatters.plan_formatter import format_plan_json, format_plan_text
+    from pflow.execution.result import RunnerConfig
+    from pflow.execution.runner import WorkflowRunner
+
+    runner = WorkflowRunner()
+    plan = runner.plan(
+        workflow,
+        params,
+        RunnerConfig(
+            trace_enabled=False,
+            cache_enabled=ctx.obj.get("cache", True),
+            verbose=False,
+            only_node=ctx.obj.get("only_node"),
+        ),
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(format_plan_json(plan), indent=2, default=str))
+    else:
+        click.echo(format_plan_text(plan))
+
+    has_error = any(d.severity == Severity.ERROR for d in plan.diagnostics)
+    ctx.exit(1 if has_error else 0)
+
+
 def _initialize_context(
     ctx: click.Context,
     output_key: str | None,
@@ -417,6 +460,7 @@ def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
             "--report",
             "--report-dir",
             "--validate-only",
+            "--dry-run",
             "--cache",
             "--no-cache",
             "--only",
@@ -493,6 +537,47 @@ def _route_stdin_to_params(
 
     if target_input not in params:
         params[target_input] = stdin_text
+
+
+def _validate_dry_run_flag_combination(
+    *,
+    dry_run: bool,
+    validate_only: bool,
+    report_flag: bool,
+    report_dir: str | None,
+) -> None:
+    """Enforce dry-run flag composition rules."""
+    if not dry_run:
+        return
+
+    from pflow.core.user_errors import UserFriendlyError
+
+    if validate_only:
+        raise UserFriendlyError(
+            title="Cannot combine --dry-run and --validate-only",
+            explanation=(
+                "These flags answer different questions: --dry-run shows what "
+                "would happen at runtime; --validate-only checks structural "
+                "validity. Pick one."
+            ),
+            suggestions=[
+                "pflow <workflow> --dry-run",
+                "pflow <workflow> --validate-only",
+            ],
+        )
+
+    if report_flag or report_dir is not None:
+        raise UserFriendlyError(
+            title="Cannot combine --dry-run and --report",
+            explanation=(
+                "--report generates output from execution traces; --dry-run "
+                "does not execute anything, so there is nothing to report."
+            ),
+            suggestions=[
+                "pflow <workflow> --dry-run",
+                "pflow <workflow> --report",
+            ],
+        )
 
 
 def _validate_and_prepare_workflow_params(
@@ -728,6 +813,7 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
     help="Custom output directory for execution report (implies --report)",
 )
 @click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
+@click.option("--dry-run", "dry_run", is_flag=True, help="Build execution plan without invoking side effects")
 @click.option("--cache/--no-cache", default=True, help="Enable/disable memoization cache (default: enabled)")
 @click.option(
     "--only", "only_node", default=None, help="Run workflow through this node then stop (caching still applies)"
@@ -742,6 +828,7 @@ def run(
     report_flag: bool,
     report_dir: str | None,
     validate_only: bool,
+    dry_run: bool,
     cache: bool,
     only_node: str | None,
     workflow: tuple[str, ...],
@@ -760,6 +847,13 @@ def run(
             trace_enabled,
             validate_only,
         )
+        _validate_dry_run_flag_combination(
+            dry_run=dry_run,
+            validate_only=validate_only,
+            report_flag=report_flag,
+            report_dir=report_dir,
+        )
+        ctx.obj["dry_run"] = dry_run
         ctx.obj["report"] = report_dir or ("auto" if report_enabled else None)
         ctx.obj["cache"] = cache
         ctx.obj["only_node"] = only_node

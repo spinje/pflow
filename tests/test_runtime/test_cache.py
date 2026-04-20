@@ -180,6 +180,107 @@ def test_write_still_works_when_read_disabled(tmp_path):
     assert output == {"v": 42}
 
 
+def test_get_with_age_returns_created_at(tmp_path):
+    """get_with_age() returns the stored entry plus its timestamp."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    before = time.time()
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"v": 1})
+    result = cache.get_with_age("k")
+
+    assert result is not None
+    action, output, created_at = result
+    assert action == "default"
+    assert output == {"v": 1}
+    assert created_at >= before
+    assert created_at <= time.time()
+
+
+def test_get_latest_for_node_returns_newest_entry(tmp_path):
+    """get_latest_for_node() returns the most recent entry for that node_id."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("old-key", "node-a", "/wf.pflow.md", "default", {"version": 1})
+    time.sleep(0.01)
+    cache.put("new-key", "node-a", "/wf.pflow.md", "default", {"version": 2})
+
+    result = cache.get_latest_for_node("node-a")
+
+    assert result is not None
+    output, created_at = result
+    assert output == {"version": 2}
+    assert isinstance(created_at, float)
+
+
+def test_get_with_age_respects_ttl(tmp_path):
+    """Expired entries are hidden by get_with_age()."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path, ttl_seconds=60)
+
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"v": 1})
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE cache_entries SET created_at = ? WHERE cache_key = ?",
+        (time.time() - 3600, "k"),
+    )
+    conn.commit()
+    conn.close()
+
+    assert cache.get_with_age("k") is None
+
+
+def test_get_with_age_respects_read_enabled(tmp_path):
+    """Read-disabled cache returns None for get_with_age()."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path, read_enabled=False)
+
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"v": 1})
+
+    assert cache.get_with_age("k") is None
+
+
+def test_get_latest_for_node_returns_none_for_unknown_node(tmp_path):
+    """Unknown node_id returns None."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    assert cache.get_latest_for_node("missing-node") is None
+
+
+def test_get_latest_for_node_respects_ttl(tmp_path):
+    """Expired latest entries are treated as misses."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path, ttl_seconds=60)
+
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"v": 1})
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE cache_entries SET created_at = ? WHERE node_id = ?",
+        (time.time() - 3600, "n1"),
+    )
+    conn.commit()
+    conn.close()
+
+    assert cache.get_latest_for_node("n1") is None
+
+
+def test_idx_node_id_created_at_exists(tmp_path):
+    """Schema initialization creates the node_id+created_at index."""
+    db_path = tmp_path / "cache.db"
+    MemoizationCache(db_path=db_path)
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute("PRAGMA index_list(cache_entries)").fetchall()
+    finally:
+        conn.close()
+
+    index_names = {row[1] for row in rows}
+    assert "idx_node_id_created_at" in index_names
+
+
 # ---------------------------------------------------------------------------
 # Cache key computation — node keys
 # ---------------------------------------------------------------------------

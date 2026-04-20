@@ -21,7 +21,7 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 
 - **BaseService** — Pattern enforcement via `@ensure_stateless` decorator
 - **DiscoveryService** — Wraps `find_workflow()` and `find_components()` plain functions
-- **ExecutionService** — Execute, validate, save workflows + run registry nodes (largest service)
+- **ExecutionService** — Execute, validate, plan, save workflows + run registry nodes (largest service)
 - **FieldService** — Read cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. **Not exported from `__init__.py`** — imported directly in execution_tools.py.
 - **RegistryService** — Node describe, list/search via `build_component_context()` and `Registry.search()`
 - **WorkflowService** — Workflow list/describe with shared formatters, "did you mean" suggestions
@@ -69,9 +69,9 @@ This pattern appears in discovery_service.py and is required anywhere formatters
 
 Service methods must return one type consistently. Never return dict from one branch and str from another when the signature says `-> str`.
 
-### Node Execution via WorkflowRunner
+### Workflow Execution / Planning via WorkflowRunner
 
-Service methods no longer import node classes directly. All execution routes through `WorkflowRunner().run()` with synthetic IR. For `run_registry_node()`, build a single-node IR dict and call the Runner — the compilation pipeline handles node loading internally.
+Service methods no longer import node classes directly. Execution routes through `WorkflowRunner().run()`, validation through `WorkflowRunner().validate()`, and dry-run planning through `WorkflowRunner().plan()`. `plan_workflow()` must return the CLI dry-run JSON shape via `format_plan_json(plan)`. For `run_registry_node()`, build a single-node IR dict and call the Runner — the compilation pipeline handles node loading internally.
 
 ### Dummy Parameters for Validation
 

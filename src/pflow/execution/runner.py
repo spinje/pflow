@@ -1,8 +1,11 @@
 """Shared workflow execution runner for CLI and MCP entry points."""
 
 import contextlib
+import hashlib
+import json
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -17,10 +20,30 @@ from pflow.core.exceptions import (
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
 
-from .result import ExecutionResult, ResolvedWorkflow, RunnerConfig, ValidationResult
+from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
 
 logger = logging.getLogger(__name__)
+
+
+def _synthesize_inline_workflow_id(ir: dict[str, Any]) -> str:
+    """Produce a stable synthetic `_pflow_workflow_file` for inline runs.
+
+    SQL `WHERE workflow_path = NULL` matches zero rows (NULL semantics), so
+    writing NULL falls back to the unscoped read path — pooling cache
+    history across unrelated inline workflows. A content hash gives each
+    distinct inline IR its own scope without requiring a real filesystem
+    path.
+
+    Hashes the RAW parsed IR (pre file-reference resolution, pre defaults
+    fill) so the identifier represents what the caller submitted, not what
+    the runner derived. Cache-key invalidation already handles file-content
+    changes via `resolved_params` hashing; the `workflow_path` scope just
+    needs to partition across distinct inline submissions.
+    """
+    canonical = json.dumps(ir, sort_keys=True, default=str, separators=(",", ":"))
+    digest = hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return f"ir-hash:{digest}"
 
 
 class WorkflowRunner:
@@ -134,11 +157,17 @@ class WorkflowRunner:
         resolved = self._resolve(workflow)
         diagnostics.extend(resolved.diagnostics)
 
-        # For dict inputs (pre-resolved IR), file_path is always None here.
-        # Callers who pre-resolve must inject _pflow_workflow_file into params
-        # before calling run(). See MCP execute_workflow() and CLI execute_json_workflow().
+        # `_pflow_workflow_file` scopes memo-cache reads to the originating
+        # workflow. File/library runs use the resolved absolute path; inline
+        # runs (dict, content-string, MCP-inline) use a synthetic IR-content
+        # hash so unrelated inline workflows with overlapping node IDs don't
+        # pollute each other's cost/duration history. `setdefault` preserves
+        # any value a caller pre-injected (back-compat with existing MCP/CLI
+        # pre-injection sites).
         if resolved.file_path:
-            params["_pflow_workflow_file"] = resolved.file_path
+            params.setdefault("_pflow_workflow_file", resolved.file_path)
+        else:
+            params.setdefault("_pflow_workflow_file", _synthesize_inline_workflow_id(resolved.ir))
 
         self._resolve_file_references(resolved.ir, params)
 
@@ -338,6 +367,47 @@ class WorkflowRunner:
                 )
             # Unexpected errors (programming bugs) — let them propagate.
             raise
+
+    def plan(
+        self,
+        workflow: str | dict[str, Any] | ResolvedWorkflow,
+        params: dict[str, Any],
+        config: RunnerConfig,
+    ) -> Plan:
+        """Build an execution plan without invoking any node."""
+        from pflow.execution.plan import build_plan
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.cache import MemoizationCache
+
+        params = dict(params)
+
+        validation_diags: list[Diagnostic] = []
+        resolved = self._prepare_workflow(workflow, params, validation_diags)
+
+        cache = MemoizationCache(read_enabled=config.cache_enabled)
+        registry = Registry()
+
+        self._strip_placeholders(params)
+        compiled = compile_workflow(resolved.ir, registry=registry, initial_params=params)
+
+        workflow_name = (
+            resolved.file_path if resolved.file_path else (str(workflow) if isinstance(workflow, str) else "<workflow>")
+        )
+        plan = build_plan(
+            compiled,
+            params,
+            cache,
+            registry,
+            workflow_name=workflow_name,
+            only_node=config.only_node,
+            _parent_workflow_file=resolved.file_path,
+        )
+
+        if validation_diags:
+            plan = replace(plan, diagnostics=[*plan.diagnostics, *validation_diags])
+
+        return plan
 
     # --- Internal helpers ---
 

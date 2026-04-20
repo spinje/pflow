@@ -85,22 +85,16 @@ def enforce_loop_guard(node_id: str, shared: dict) -> dict[str, int]:
 
 
 def check_cache_validity(node_id: str, config_hash: str, shared: dict) -> tuple[bool, Any]:
-    """Check if node is in completed list with matching hash.
-
-    Returns:
-        (valid, cached_action)
-    """
-    if node_id not in shared["__execution__"]["completed_nodes"]:
-        return False, None
-
-    cached_hash = shared["__execution__"]["node_hashes"].get(node_id)
-    if config_hash == cached_hash:
-        cached_action = shared["__execution__"]["node_actions"].get(node_id, "default")
+    """Backwards-compatible wrapper: lookup + invalidate-on-mismatch."""
+    valid, cached_action = in_process_cache_lookup(node_id, config_hash, shared)
+    if valid:
         return True, cached_action
-    else:
-        # Cache invalid — config changed
+
+    execution = shared.get("__execution__", {})
+    completed_nodes = execution.get("completed_nodes", [])
+    if node_id in completed_nodes:
         invalidate_cache(node_id, shared)
-        return False, None
+    return False, None
 
 
 def cache_result(node_id: str, config_hash: str, action: str, shared: dict) -> None:
@@ -118,14 +112,29 @@ def cache_result(node_id: str, config_hash: str, action: str, shared: dict) -> N
 
 def invalidate_cache(node_id: str, shared: dict) -> None:
     """Remove node from all cache structures."""
-    completed = shared["__execution__"]["completed_nodes"]
+    execution = shared.setdefault("__execution__", {})
+    completed = execution.setdefault("completed_nodes", [])
     if node_id in completed:
         completed.remove(node_id)
-    shared["__execution__"]["node_actions"].pop(node_id, None)
-    shared["__execution__"]["node_hashes"].pop(node_id, None)
+    execution.setdefault("node_actions", {}).pop(node_id, None)
+    execution.setdefault("node_hashes", {}).pop(node_id, None)
 
 
 # --- Memoization Cache (Cross-Run SQLite) ---
+
+
+def in_process_cache_lookup(node_id: str, config_hash: str, shared: dict) -> tuple[bool, Any]:
+    """Pure read: check in-process cache state without mutating."""
+    execution = shared.get("__execution__", {})
+    completed_nodes = execution.get("completed_nodes", [])
+    if node_id not in completed_nodes:
+        return False, None
+
+    cached_hash = execution.get("node_hashes", {}).get(node_id)
+    if config_hash == cached_hash:
+        cached_action = execution.get("node_actions", {}).get(node_id, "default")
+        return True, cached_action
+    return False, None
 
 
 def compute_node_config(
@@ -170,7 +179,7 @@ def compute_config_hash(config: dict[str, Any]) -> str:
     return hashlib.md5(config_json.encode()).hexdigest()  # noqa: S324
 
 
-def check_memo_cache(
+def memo_cache_lookup(
     node_id: str,
     node_type_name: str,
     config_hash: str,
@@ -178,24 +187,15 @@ def check_memo_cache(
     shared: dict,
     visit_counts: dict,
     resolved_params: Optional[dict] = None,
-) -> tuple[bool, Any, Optional[str]]:
-    """Check SQLite memo cache.
-
-    Returns:
-        (hit, result, cache_key):
-        - hit=True, result=action, cache_key=None on cache hit
-        - hit=False, result=None, cache_key=str on cache miss (key for later write)
-        - hit=False, result=None, cache_key=None when memoization is skipped
-    """
+) -> tuple[bool, Optional[str], Optional[tuple[str, dict]]]:
+    """Pure read: check SQLite memo cache without mutating shared state."""
     memo_cache = shared.get("__memoization_cache__")
     if not memo_cache or visit_counts.get(node_id, 0) > 1:
         return False, None, None
 
-    # Skip for WorkflowExecutor — sub-workflow files may change
     if node_type_name == "WorkflowExecutor":
         return False, None, None
 
-    # Compute cache key
     from pflow.runtime.cache import compute_node_cache_key
 
     if batch_config:
@@ -232,22 +232,88 @@ def check_memo_cache(
 
     cached = memo_cache.get(cache_key)
     if cached is None:
-        return False, None, cache_key
+        return False, cache_key, None
 
     cached_action, cached_output = cached
-    cached_action = cached_action or "default"  # Normalize None from SQLite
-    # Restore output for downstream template resolution
-    shared[node_id] = cached_output
-    # Record in in-process execution state
-    shared["__execution__"]["completed_nodes"].append(node_id)
-    shared["__execution__"]["node_actions"][node_id] = cached_action
-    shared["__execution__"]["node_hashes"][node_id] = config_hash
-
-    return True, cached_action, None
+    cached_action = cached_action or "default"
+    return True, cache_key, (cached_action, cached_output)
 
 
-def write_memo_cache(node_id: str, shared: dict, cache_key: Optional[str], action: str = "default") -> None:
-    """Write to SQLite cache after successful execution. Skips error results."""
+def apply_memo_hit(
+    node_id: str,
+    shared: dict,
+    cached_action: str,
+    cached_output: dict,
+    config_hash: str,
+) -> None:
+    """Apply a memoization cache hit to shared state.
+
+    `__pflow_stats__` is engine-injected metadata (duration, etc.) that lives
+    in the stored blob for --dry-run historical estimates but must NOT leak
+    into the live `shared` dict — a fresh execution would never produce that
+    key, so restoring it would make cached and fresh paths observably differ
+    (template resolution, equality checks, trace output).
+    """
+    execution = shared.setdefault("__execution__", {})
+    completed_nodes = execution.setdefault("completed_nodes", [])
+    node_actions = execution.setdefault("node_actions", {})
+    node_hashes = execution.setdefault("node_hashes", {})
+
+    if "__pflow_stats__" in cached_output:
+        restored = {k: v for k, v in cached_output.items() if k != "__pflow_stats__"}
+    else:
+        restored = cached_output
+    shared[node_id] = restored
+    completed_nodes.append(node_id)
+    node_actions[node_id] = cached_action
+    node_hashes[node_id] = config_hash
+
+
+def check_memo_cache(
+    node_id: str,
+    node_type_name: str,
+    config_hash: str,
+    batch_config: Optional[BatchConfig],
+    shared: dict,
+    visit_counts: dict,
+    resolved_params: Optional[dict] = None,
+) -> tuple[bool, Any, Optional[str]]:
+    """Backwards-compatible wrapper: lookup + apply memo hit."""
+    hit, cache_key, cached_data = memo_cache_lookup(
+        node_id=node_id,
+        node_type_name=node_type_name,
+        config_hash=config_hash,
+        batch_config=batch_config,
+        shared=shared,
+        visit_counts=visit_counts,
+        resolved_params=resolved_params,
+    )
+    if hit and cached_data is not None:
+        cached_action, cached_output = cached_data
+        apply_memo_hit(node_id, shared, cached_action, cached_output, config_hash)
+        return True, cached_action, None
+    return False, None, cache_key
+
+
+def write_memo_cache(
+    node_id: str,
+    shared: dict,
+    cache_key: Optional[str],
+    action: str = "default",
+    *,
+    duration_ms: Optional[float] = None,
+) -> None:
+    """Write to SQLite cache after successful execution. Skips error results.
+
+    Optionally records execution metadata (currently `duration_ms`) under the
+    reserved output key `__pflow_stats__` so `--dry-run` can surface historical
+    duration estimates via `MemoizationCache.get_latest_for_node`.
+
+    Dunder naming is load-bearing: `cache.py::_make_serializable` collapses
+    dunder-keyed values to their type name for deterministic hashing, so
+    stats deltas don't invalidate cache identity. A single-underscore key
+    would feed stats into the hash — silent cache-breakage bug.
+    """
     if not cache_key or str(action).startswith("error"):
         return
     memo_cache = shared.get("__memoization_cache__")
@@ -257,6 +323,8 @@ def write_memo_cache(node_id: str, shared: dict, cache_key: Optional[str], actio
     if node_output is not None:
         workflow_path = shared.get("_pflow_workflow_file")
         output_dict = dict(node_output) if isinstance(node_output, dict) else {"value": node_output}
+        if duration_ms is not None:
+            output_dict["__pflow_stats__"] = {"duration_ms": float(duration_ms)}
         memo_cache.put(cache_key, node_id, workflow_path, action or "default", output_dict)
 
 

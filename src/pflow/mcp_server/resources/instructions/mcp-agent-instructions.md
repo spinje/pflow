@@ -634,6 +634,7 @@ Analysis results from the LLM processing step.
 pflow caches node outputs automatically. When you edit a prompt or parameter and re-run, only the changed node and its downstream re-execute. Use this:
 
 - Edit a prompt file → re-run → only affected nodes execute (~seconds, not minutes)
+- `--dry-run` → preview plan + cost/duration estimate without running (expensive runs, checking what an edit invalidated)
 - `--only <node>` → run just that node (upstream cached, downstream skipped)
 - `--no-cache` → force everything fresh (side-effect nodes, external API changes)
 

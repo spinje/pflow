@@ -155,6 +155,28 @@ async def workflow_validate(
 
 
 @mcp.tool()
+async def plan_workflow(
+    workflow: Annotated[
+        str | dict[str, Any],
+        Field(description="Workflow name from library, path to workflow file, or workflow IR object"),
+    ],
+    parameters: Annotated[
+        dict[str, Any] | None,
+        Field(description="Input parameters as key-value pairs matching the workflow's declared inputs"),
+    ] = None,
+) -> dict[str, Any]:
+    """Build a workflow execution plan without invoking side effects."""
+    logger.debug(f"plan_workflow called: workflow type={type(workflow).__name__}")
+
+    def _sync_plan() -> dict[str, Any]:
+        return ExecutionService.plan_workflow(workflow, parameters)
+
+    result = await asyncio.to_thread(_sync_plan)
+    logger.info("Workflow plan generated")
+    return result
+
+
+@mcp.tool()
 async def workflow_save(
     workflow: Annotated[
         str,
@@ -329,6 +351,7 @@ async def read_fields(
 
 # Export all execution tools
 __all__ = [
+    "plan_workflow",
     "read_fields",
     "registry_run",
     "workflow_execute",
