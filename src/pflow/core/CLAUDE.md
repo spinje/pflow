@@ -271,7 +271,9 @@ Generates navigable markdown report directories from trace files. `generate_repo
 
 **`--only` context**: When `only_node` and `total_nodes` are provided, summary shows `Nodes: N/M (--only 'X', K skipped)` instead of just `Nodes: N`. Only executed nodes get report files (skipped nodes aren't in the trace).
 
-**Pipeline table**: `_format_event_status()` shows `ok [cached]` for cached nodes, `**FAILED**` for errors, and `ok (N/M)` for batch nodes with item counts.
+**Pipeline table**: `_format_event_status()` shows `ok [cached]` for cached nodes, `**FAILED**` for errors, and `ok (N/M)` for batch nodes with item counts. The table is **per-invocation** — under loop recovery it shows both visits (visit 1 FAILED, visit 2 ok) even though the node's final aggregation state is success.
+
+**Errors section — per-node, not per-event**: `_collect_errors(events, failed_node_ids=trace.get("failed_node_ids"))` reads the trace's authoritative `failed_node_ids` list when present (new format) or derives per-node final state from events (fallback for older traces). A node that failed on visit 1 and succeeded on visit 2 is NOT in `failed_node_ids` and correctly omitted from Errors. See GH #240. Other `event.get("success")` readers in this module (pipeline table, `_detect_anomalies`, `_check_event_anomaly`, batch-item display, per-node metadata) are **per-invocation** and MUST stay per-event — they are the audit view of loop recovery and batch items.
 
 **Per-node files include**: metadata (type, timing, status, LLM model/tokens/cost, error), resolved inputs (`## Command` for shell, `## Prompt` for LLM, `## Code` + `## Inputs` for python), outputs (`## stdout`, `## stderr`, `## Result`, `## Response`), and a catch-all for remaining output keys.
 

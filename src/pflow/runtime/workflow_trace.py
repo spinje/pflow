@@ -17,6 +17,35 @@ logger = logging.getLogger(__name__)
 TRACE_FORMAT_VERSION = "2.0.0"
 
 
+def final_events_by_node(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Last event per node_id — represents each node's terminal state.
+
+    Single source of truth for the "last event per node_id = final state"
+    aggregation rule. Used by WorkflowTraceCollector at write time (status
+    determination, failed_node_ids derivation) and by ``trace_report._collect_errors``
+    at read time (Errors-section rendering, fallback for legacy traces without
+    ``failed_node_ids``). If this rule ever evolves, it evolves here.
+
+    Loop recovery records multiple events for the same node_id; only the most
+    recent reflects the node's final outcome.
+
+    Keyed by node_id — batch items (which carry ``index``, not ``node_id``)
+    and nested sub-workflow events are intentionally ignored.
+
+    **Assumes ``events`` is in chronological append order** (as produced by
+    ``record_node_execution``). The function takes the LAST occurrence of
+    each node_id as the final state — callers must not pre-sort or merge
+    out-of-order events, or loop-recovery aggregation will silently report
+    the wrong final state.
+    """
+    final: dict[str, dict[str, Any]] = {}
+    for event in events:
+        nid = event.get("node_id")
+        if nid:
+            final[nid] = event
+    return final
+
+
 class WorkflowTraceCollector:
     """Collects detailed execution traces for workflow debugging.
 
@@ -272,14 +301,56 @@ class WorkflowTraceCollector:
             warning.to_display_dict() if isinstance(warning, Diagnostic) else warning for warning in warnings
         ]
 
-    def _determine_trace_status(self) -> str:
-        """Determine status from execution events and warnings.
+    def mark_last_event_failed(self, node_id: str, *, error: str) -> None:
+        """Flip the most recent event for node_id to failed.
+
+        Used by the engine when a node's failure is detected AFTER its trace
+        event has been recorded — specifically, routing failures on custom
+        non-error actions (GH #250). Without this, the trace event says
+        success=True while __failures__[node_id] says the node failed.
+
+        No-op if no event for node_id exists. Today the only caller is
+        _handle_no_successor, which runs AFTER step 16 trace recording in
+        the engine walk — so the no-op path is unreachable under current
+        engine semantics. The guard is defensive for future engine paths
+        that might call this before trace recording.
+
+        `category` is intentionally NOT accepted: trace events don't carry
+        a category field today; the canonical category lives in
+        __failures__[node_id]["category"]. A future migration that upgrades
+        `success: bool` → `status: enum` would read category from
+        __failures__ at migration time.
+
+        The flipped event retains its original `node_output` from the
+        successful execution (captured at step 16 before __failures__
+        archival). This is intentional: the node DID produce output, and
+        then routing failed. Per-node report files show both the output
+        and the failed status — this is semantically correct.
+        """
+        for event in reversed(self.events):
+            if event.get("node_id") == node_id:
+                event["success"] = False
+                event["error"] = error
+                return
+
+    def _determine_trace_status(self, final_events: dict[str, dict[str, Any]] | None = None) -> str:
+        """Determine status from per-node final state and warnings.
+
+        Uses last-event-per-node_id (via ``final_events_by_node``) so loop
+        recovery that ends in success is reported as success — see GH #240.
+
+        Args:
+            final_events: optional pre-computed dict. ``save_to_file`` already
+                computes this to derive ``failed_node_ids`` and passes it in
+                to avoid a second pass over ``self.events``. Callers that
+                don't need the dict elsewhere can omit the argument.
 
         Returns:
             Status string: "success", "degraded", or "failed"
         """
-        failed = any(not e.get("success", True) for e in self.events)
-        if failed:
+        if final_events is None:
+            final_events = final_events_by_node(self.events)
+        if any(not e.get("success", True) for e in final_events.values()):
             return "failed"
         if self.execution_warnings and any(
             self._warning_changes_status(warning) for warning in self.execution_warnings
@@ -402,11 +473,15 @@ class WorkflowTraceCollector:
         # Calculate total duration
         duration_ms = (datetime.now() - self.start_time).total_seconds() * 1000
 
-        # Determine final status (tri-state: success/degraded/failed)
-        final_status = self._determine_trace_status()
-
-        # Count failed nodes for statistics
-        failed_nodes = [e for e in self.events if not e.get("success", True)]
+        # Per-node final state — drives BOTH final_status AND failed_node_ids.
+        # Loop recovery: last event per node_id wins (visit 2 success overwrites
+        # visit 1 failure) so nodes_failed reflects UNIQUE failed nodes, not
+        # total failed invocations. nodes_executed still counts per-visit.
+        # Computed once and passed to _determine_trace_status so the events
+        # list is walked once per save. See GH #240.
+        final_events = final_events_by_node(self.events)
+        final_status = self._determine_trace_status(final_events)
+        failed_node_ids = sorted(nid for nid, e in final_events.items() if not e.get("success", True))
 
         # Prepare trace data with format version
         trace_data: dict[str, Any] = {
@@ -418,7 +493,8 @@ class WorkflowTraceCollector:
             "duration_ms": round(duration_ms, 2),
             "final_status": final_status,
             "nodes_executed": len(self.events),
-            "nodes_failed": len(failed_nodes),
+            "nodes_failed": len(failed_node_ids),
+            "failed_node_ids": failed_node_ids,
             "nodes": self.events,
         }
 
