@@ -1664,6 +1664,30 @@ class TestCodeNodeInputAnnotationValidation:
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
         assert not any("'next' must be annotated as str" in d.message for d in errors)
 
+    def test_next_forward_ref_wrong_type_rejected(self, test_registry):
+        """Forward-ref `next: "int"` must be unwrapped and rejected.
+
+        `_get_outer_type` unwraps forward-ref quotes via `_annotation_outer_base`
+        (landed in #317). Without the unwrap, `"'int'"` would miss the type map
+        and silently skip — letting `next: "int"` pass validation only to fail
+        at runtime. This test pins the Pass 9 ↔ unwrap-helper integration so
+        the forward-ref handling can't silently regress.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "router",
+                    "type": "code",
+                    "params": {"code": 'next: "int" = 42', "inputs": {}},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        type_errors = [d for d in errors if "'next' must be annotated as str" in d.message]
+        assert len(type_errors) == 1, [d.message for d in errors]
+
     def test_result_annotation_inside_helper_function_matches_runtime(self, test_registry):
         """Presence check uses walk-mode so validate-time matches runtime parity.
 
