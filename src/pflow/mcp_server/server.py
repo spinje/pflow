@@ -59,6 +59,10 @@ def _is_function_resource_wrapper(exc: Exception) -> bool:
     """FunctionResource.read wraps any exception it sees as
     ``ValueError(f"Error reading resource {uri}: {e}")``.  Recognize the
     shape so the unwrap walks past it to the original producer exception.
+
+    Drift guard: ``test_resource_producer_bug_raises_with_rendered_diagnostic``
+    asserts the 3-layer unwrap walks through this wrapper — a mcp-SDK minor
+    release that reworded the prefix would fail that test.
     """
     return isinstance(exc, ValueError) and str(exc).startswith("Error reading resource ")
 
@@ -135,9 +139,10 @@ def _build_unknown_resource_diagnostic(uri: Any, available_uris: list[str]) -> D
     suggestions: list[str] = []
     if similar:
         suggestions.append(f"Did you mean: {', '.join(similar)}")
-    suggestions.append(
-        "Check the resource URI. Known pflow resources: pflow://instructions, pflow://instructions/sandbox."
-    )
+    # Derive the "known resources" list from the live registry so the hint
+    # stays correct when resources are added or removed.
+    known = ", ".join(available_uris) if available_uris else "(none registered)"
+    suggestions.append(f"Check the resource URI. Known pflow resources: {known}.")
     return Diagnostic(
         severity=Severity.ERROR,
         source="mcp",
@@ -169,6 +174,8 @@ class PflowMCP(FastMCP):
             # Unknown-tool errors are raised at tool_manager.py:91 without
             # `from e` and outside any except block — both __cause__ and
             # __context__ are None. Render with similar-name suggestions.
+            # Drift guard: test_typo_returns_did_you_mean_suggestion pins
+            # this prefix; a mcp-SDK rewording would fail that test.
             if te.__cause__ is None and te.__context__ is None and str(te).startswith("Unknown tool:"):
                 available = [t.name for t in await self.list_tools()]
                 diagnostic = _build_unknown_tool_diagnostic(name, available)
@@ -207,6 +214,8 @@ class PflowMCP(FastMCP):
             # with similar-URI suggestions, symmetric with the unknown-tool
             # path. Must re-raise (not return contents) because the MCP
             # resource protocol signals failure via a JSON-RPC error.
+            # Drift guard: test_unknown_resource_renders_rich_diagnostic pins
+            # this prefix; a mcp-SDK rewording would fail that test.
             if exc.__cause__ is None and exc.__context__ is None and str(exc).startswith("Unknown resource:"):
                 available = [str(r.uri) for r in await self.list_resources()]
                 diagnostic = _build_unknown_resource_diagnostic(uri, available)
