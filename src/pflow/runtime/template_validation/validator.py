@@ -760,13 +760,13 @@ def _register_node_outputs_from_registry(
     """Register outputs from registry interface metadata for non-batch nodes.
 
     Silently skips unknown node types — the pre-execution
-    ``WorkflowValidator._validate_node_types`` step (step 5) produces a rich
+    ``WorkflowValidator._validate_node_types`` step (step 6) produces a rich
     ``Unknown node type`` diagnostic with ``similar_names`` and structured
     path, which is strictly more useful than anything this function could
-    emit. Raising here would be caught by the defensive ``except Exception``
-    wrapper around ``validate_workflow_templates`` (step 4, runs before
-    step 5) and produce a duplicate generic ``"Template validation error:
-    Unknown node type: ..."`` diagnostic on top of the rich one.
+    emit. Raising here would propagate through ``validate_workflow_templates``
+    (step 5) to the outer CLI/MCP exception boundary — issue #237 removed the
+    defensive wrapper that previously would have absorbed it as a generic
+    ``"Template validation error: ..."`` diagnostic on top of the rich one.
     """
     # Get node metadata from registry
     nodes_metadata = registry.get_nodes_metadata([node_type])

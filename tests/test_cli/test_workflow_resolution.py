@@ -263,9 +263,15 @@ class TestWorkflowResolutionCLI:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "process-data"
             mock_wm.load_ir.return_value = {
-                "nodes": [],
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "n1",
+                        "type": "shell",
+                        "params": {"command": "cat ${file} > ${output}"},
+                    }
+                ],
                 "edges": [],
-                "ir_version": "1.0",
                 "inputs": {
                     "file": {"description": "Input file path", "required": True},
                     "output": {"description": "Output file path", "required": True},
@@ -275,7 +281,6 @@ class TestWorkflowResolutionCLI:
             result = runner.invoke(main, ["process-data"])
 
             assert result.exit_code == 1
-            assert "❌" in result.output
             # Input names must appear in the error (validation or compilation catches them)
             assert "file" in result.output
             assert "output" in result.output

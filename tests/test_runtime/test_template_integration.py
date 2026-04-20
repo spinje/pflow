@@ -131,7 +131,11 @@ class TestCompilerIntegration:
         WorkflowValidator. The compiler no longer raises for missing params.
         WorkflowValidator catches undefined template references as errors.
         """
-        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${required_param}"}}], "edges": []}
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${required_param}"}}],
+            "edges": [],
+        }
 
         # WorkflowValidator catches missing template variables as errors
         errors, _warnings = split_validator_diagnostics(
