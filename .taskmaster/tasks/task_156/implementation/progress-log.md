@@ -2155,3 +2155,57 @@ Distinguishing accidental from architectural: if the two implementations share 1
 22. **Four drift surfaces are now enforced by shared primitives**: `plan_node()` (cache decision), `WorkflowExecutor.MAX_DEPTH_DEFAULT` (depth constant), `WorkflowExecutor.is_exposable_child_key` (filter predicate), `is_clean_termination` (routing predicate). Any future code that reimplements these is a bug — import the primitive instead.
 
 23. **`opaque_count` is the agent's "refuse-to-proceed" signal for cost-gating.** Accompanies `estimated_cost_usd_including_nested` (absolute cost) and `nodes_without_history` (LLM cost visibility). Agents checking all three get complete cost-gate coverage: the cost is within budget (1), no LLM nodes are missing cost data (2), and no sub-trees are unplannable (3).
+
+---
+
+## 2026-04-20 — User-facing docs + agent guide surface
+
+After the pre-merge audit closed, an independent pass over user-facing surfaces found three places that still hadn't been updated for `--dry-run`: the Mintlify CLI reference, `pflow guide`'s entry.md (which also backs `pflow --help`), and the MCP agent instructions. The spec's implementation table listed only the eight internal `CLAUDE.md` files; the public-facing surfaces were outside its scope.
+
+### Changes
+
+**`docs/reference/cli/index.mdx`** — added a `--dry-run` row to the Global options table, plus a new `## Dry-run mode` section parallel to `## Validation mode`. First draft was ~70 lines (too heavy vs. the 8–9 line sibling sections like `--only`, `--no-cache`). User flagged the detail level and also that per-node duration rendering wasn't mentioned. Tightened in a second pass:
+
+- Cut the "boundary points at..." explanatory paragraph — the example + two-sentence caption already carry the meaning
+- Cut the "Upper-bound is the safer default..." design-rationale paragraph — rolled into the `cost_basis` table row
+- Merged cost-and-duration into one paragraph; added explicit mention of the 1s threshold for per-node duration annotation (verified empirically: `▸ slow [shell] ~1.5s (last run 0s ago)` renders; sub-second nodes stay bare)
+- Moved the JSON field tables into an `<Expandable>`, mirroring the pattern already used in the same file for `JSON output structure`
+- Collapsed the exit-code paragraph to a single line under the flag table
+
+Final size ~40 lines visible + expandable behind the fold. Above-fold length now roughly in line with sibling sections; the agent contract (field definitions) is one click away, not buried.
+
+**`src/pflow/guide/entry.md`** (backs `pflow --help` and `pflow guide`) — added one line to the Run Options block: `--dry-run             Preview cache/execute plan + cost/duration estimates (no execution)`. This is the entry-level discovery point; without it, agents running `pflow --help` would never know the flag exists.
+
+**`src/pflow/guide/core.md`** — added one bullet to the iteration-loop list, with triggers in parentheses so the guide doesn't push agents to dry-run every invocation: `- `--dry-run` — preview plan + historical cost/duration without executing (expensive LLM runs, verifying what an edit invalidated)`. Placed first in the list because the natural order is "peek → iterate on specific node → bypass cache entirely".
+
+**`src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md`** — parallel bullet in arrow form matching the file's voice: `- `--dry-run` → preview plan + cost/duration estimate without running (expensive runs, checking what an edit invalidated)`.
+
+### Design decisions from this session
+
+**D19. Discoverability vs. anti-overuse tension solved via trigger-first voice.** First draft of the guide bullets was a generic "preview what would happen before running" — which would push agents to dry-run every workflow invocation, including cheap 2-node shell pipes. User flagged this. The fix was to match the existing voice pattern in `core.md` where mechanism is followed by concrete triggers in parentheses (e.g. `--no-cache — force fresh execution (side-effect nodes, external API changes)`). Baking the triggers into the same line ("expensive LLM runs, verifying what an edit invalidated") does the anti-overuse work — an agent reading that won't reach for dry-run before a shell-only workflow because the triggers don't apply.
+
+**D20. "cost/duration" over "cost estimate" for consistency with JSON field names.** First draft used "cost estimate" across all three surfaces. User flagged inconsistency vs. `core.md`'s "cost/duration" and the CLI reference's "cost and duration". Unified to "cost/duration" everywhere. Rationale: matches the JSON contract (`estimated_cost_usd`, `estimated_duration_ms`) so agents grepping or parsing the fields see the same terminology in prose. "cost/time" reads more naturally in English but loses the grep-alignment with actual field names.
+
+**D21. Per-node duration rendering threshold is user-visible contract; document it.** First doc draft mentioned only the aggregate `Estimated duration:` summary line. Verification via real subprocess (`sleep 1.5` node → `▸ slow [shell]   ~1.5s (last run 0s ago)`; `sleep 0.3` → bare `▸ slow [shell]`) confirmed the 1s threshold in `plan_formatter.py::_TEXT_DURATION_THRESHOLD_MS = 1000.0`. Added to docs because it's a behavior users will notice: fast nodes stay clean, slow ones get annotated. JSON always carries `last_duration_ms` at full precision regardless — formatting is text-only.
+
+### Verification
+
+- `pflow --help` now surfaces the `--dry-run` row (verified via subprocess).
+- Documented CLI examples all run clean against the real binary (verified with a throwaway `/tmp/dry-run-doc-demo.pflow.md`).
+- All three agent-facing surfaces now consistently say "cost/duration" — matches the JSON contract.
+
+### Follow-up filed — GH #322
+
+An audit of duration formatting turned up four distinct formats across user-facing surfaces: `format_duration` (dry-run plan only, rich breakpoints), `{ms/1000:.1f}s` (live progress + trace top-level), `{ms/1000:.3f}s` (completion banner), `{ms:.0f}ms` (trace per-node rows). A 3m12s duration renders as `3m12s`, `192.3s`, `192.345s`, or `192345ms` depending on where you look. The last one is actively hostile past ~10s.
+
+Filed GH #322 to unify user-facing duration rendering via `format_duration`, with the implementer required to do a thorough `pflow-codebase-searcher` sweep and present option evaluation before coding. The issue explicitly calls out live-progress ticks as intentionally distinct (flagged in `duration_format.py`'s module docstring) — don't casually unify that one.
+
+Not part of PR #320 scope. Filed as future work.
+
+### For the next agent (continued)
+
+24. **The spec's "files to modify" table is not exhaustive for public-facing docs.** Task 156's spec listed eight internal `CLAUDE.md` updates but missed `docs/` (Mintlify user docs), `src/pflow/guide/*.md` (agent-facing help text), and `src/pflow/mcp_server/resources/instructions/*.md` (MCP agent entry point). When a feature adds a CLI flag or user-visible behavior, grep for existing flag mentions (`--only`, `--no-cache`, `--validate-only`) in all three surfaces as a sanity check before closing the PR.
+
+25. **User-facing doc voice is terse + mechanism-first with concrete triggers.** Sibling sections in `docs/reference/cli/index.mdx` are 8–9 lines each. If a new feature needs more (dry-run genuinely has three axes: cache markers, cost/duration, composition), push detail into `<Expandable>` blocks rather than expanding above-fold prose. The existing `JSON output structure` expandable in the same file is the pattern to mirror.
+
+26. **Guide content (`entry.md`, `core.md`) renders as `pflow --help` and `pflow guide`.** Edits to these files are user-visible immediately — no build step, no mintlify deploy. Verify changes with a real subprocess (`uv run pflow --help`) before committing. A typo here ships to every agent using the tool.

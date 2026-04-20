@@ -79,6 +79,7 @@ pflow ~/workflows/analysis.pflow.md param=value
 | `--cache/--no-cache` | Enable/disable memoization cache reads (default: enabled) |
 | `--only NODE` | Run workflow through this node then stop |
 | `--validate-only` | Validate workflow without running |
+| `--dry-run` | Preview which nodes would run or serve from cache, without executing |
 | `--help` | Show help message |
 
 <Note>
@@ -298,6 +299,77 @@ pflow --validate-only my-saved-workflow
 ```
 
 Agents use this to check workflows before running them — pflow catches template errors, type mismatches, and missing inputs during validation, so problems surface immediately instead of after step 5 fails. Exit code 0 means valid.
+
+## Dry-run mode
+
+Preview what a workflow would do without running it. `--dry-run` walks the graph using the same cache lookup the engine uses at runtime, but never invokes a node — no shell commands, LLM calls, HTTP requests, file writes, or trace files:
+
+```bash
+pflow ./workflow.pflow.md --dry-run topic=hello
+```
+
+Cached nodes render with `↻`, would-execute nodes with `▸`, and a divider marks the cache boundary:
+
+```
+Dry-run for workflow.pflow.md: 2 nodes
+
+  ↻ fetch  (1m ago)
+  ─── cache boundary: 'summarize' ───
+  ▸ summarize  [code]
+
+Summary: 1 cached · 1 would execute (1 code)
+Estimated duration: ~1ms  (historical, actual may vary)
+```
+
+When everything is cached, there's no boundary. When nothing is cached, the divider reads `nothing cached — full run`.
+
+For would-execute LLM nodes, the plan surfaces the cost from the most recent cache entry — labeled `≈` because pricing may have drifted. Per-node duration annotations appear on any would-execute node whose last run took at least 1 second; faster nodes stay bare:
+
+```
+▸ summarize  [LLM]   ≈ $0.02 (last run 15m ago)
+▸ upload     [shell] ~1.5s (last run 2m ago)
+```
+
+
+### JSON output
+
+```bash
+pflow ./workflow.pflow.md --dry-run --output-format json topic=hello
+```
+
+Top-level shape: `{workflow, plan, summary, diagnostics}`.
+
+<Expandable title="Summary and plan entry fields">
+
+**Summary fields agents use for cost gating:**
+
+| Field | Description |
+|-------|-------------|
+| `estimated_cost_usd` | Sum of historical LLM costs across would-execute nodes |
+| `estimated_duration_ms` | Sum of historical durations across would-execute nodes |
+| `cost_basis` | `"exact"` for linear plans; `"upper_bound"` when branches are enumerated |
+| `cache_boundary` | Node ID of the first cache miss, or `null` when everything is cached |
+| `execute_by_type` | Count of would-execute nodes by type: `{"LLMNode": 1, "ShellNode": 2}` |
+| `nodes_without_history` | Would-execute LLM nodes missing cost data — non-zero means the estimate is incomplete |
+| `opaque_count` | Sub-workflows the planner couldn't resolve (e.g. `workflow: ${dynamic-ref}`) — their cost is excluded |
+
+**Plan entry fields:** `node_id`, `node_type`, `status` (`cached`, `execute`, `sub_workflow`, `opaque`, `routing_error`), `cause`, `last_cost_usd`, `last_duration_ms`, `age_sec`.
+
+Agents cost-gating on `estimated_cost_usd` should check `opaque_count == 0` and `nodes_without_history == 0` first — otherwise the estimate is missing data.
+
+</Expandable>
+
+### Flag combinations
+
+| Flag | With `--dry-run` |
+|------|------------------|
+| `--validate-only` | Rejected with exit 1 — different audiences, different exit contracts |
+| `--report`, `--report-dir` | Rejected with exit 1 — no execution means no report |
+| `--no-cache` | Every node shows as would-execute |
+| `--only NODE` | Plan stops at the named node |
+| `--no-trace`, `-p`, `-o` | Accepted silently — dry-run writes no traces, and the plan itself is the result |
+
+Exit 0 on a successful plan, 1 on planner-level failures (missing input, compile error, unresolvable sub-workflow, cycle, max depth exceeded).
 
 ## Iteration and caching
 
