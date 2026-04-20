@@ -7,6 +7,7 @@ Implementation: src/pflow/cli/commands/visualize.py
 """
 
 from pathlib import Path
+from unittest.mock import patch
 
 from click.testing import CliRunner, Result
 
@@ -73,6 +74,40 @@ class TestVisualizeNonexistentFile:
         result = _invoke(["nonexistent.pflow.md"])
 
         assert result.exit_code == 1
+
+
+class TestVisualizeProducerBugBoundary:
+    """Regression guard for issue #237 wrapper deletion.
+
+    After the 3 defensive wrappers in ``WorkflowValidator`` were deleted,
+    producer bugs (``AttributeError``/``KeyError`` from same-team code)
+    propagate out of ``runner.validate()``. The visualize command must
+    convert them to structured diagnostics via ``exception_to_diagnostics``
+    — mirroring the existing boundary around ``resolve_workflow`` — not let
+    a raw Python traceback escape to the user.
+    """
+
+    def test_producer_bug_in_validator_renders_as_diagnostic(self, tmp_path: Path) -> None:
+        ir = {
+            "nodes": [{"id": "n1", "type": "shell", "params": {"command": "echo hi"}}],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "producer_bug.pflow.md"
+        write_workflow_file(ir, workflow_path)
+
+        # Simulate a producer bug: something inside validation raises an
+        # AttributeError that no handler converts to a Diagnostic.
+        with patch(
+            "pflow.execution.runner.WorkflowRunner.validate",
+            side_effect=AttributeError("'str' object has no attribute 'get'"),
+        ):
+            result = _invoke([str(workflow_path)])
+
+        assert result.exit_code == 1
+        # Must be a rendered diagnostic, not a raw traceback.
+        assert "Traceback" not in result.output
+        # The message from exception_to_diagnostics should surface.
+        assert "'str' object has no attribute 'get'" in result.output
 
 
 class TestVisualizeDepthFlag:
