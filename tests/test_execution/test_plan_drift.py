@@ -282,6 +282,74 @@ def test_plan_batch_items_cache_matches(tmp_path) -> None:
     assert _log_lines(log_file) == first_lines
 
 
+def test_plan_batch_sub_workflow_partial_cache_matches_execution(tmp_path) -> None:
+    """Batch sub-workflow partial-cache prediction must match the next real run.
+
+    Regression target for task 157's missing dispatch. Without the batch
+    WorkflowExecutor planning path, `--dry-run` either reported the whole
+    sub-workflow as uncached or failed to resolve `${item}` for the child
+    input, while the real execution reused cached items correctly.
+
+    Mutation: remove the `config.batch_config and not downstream` dispatch in
+    `_plan_sub_workflow` → this assertion fails because the child sub-plan no
+    longer reports `1/2` cache reuse.
+    """
+    log_file = tmp_path / "batch-sub.log"
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "shell",
+                    "params": {"command": f"echo ${{value}} >> {log_file}; printf '${{value}}'"},
+                }
+            ],
+            "edges": [],
+            "outputs": {"out": {"source": "${echo.stdout}", "description": "Echoed value"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "inputs": {"items": {"type": "array"}},
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child_path),
+                        "inputs": {"value": "${item}"},
+                    },
+                    "batch": {"items": "${items}"},
+                }
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+
+    first_result = _runner_run(parent_path, {"items": ["a", "b"]})
+    assert first_result.success
+
+    plan = _runner_plan(parent_path, {"items": ["a", "c"]})
+    second_result = _runner_run(parent_path, {"items": ["a", "c"]})
+    assert second_result.success
+
+    assert [entry.status for entry in plan.entries] == ["sub_workflow"]
+    fanout = plan.entries[0]
+    assert fanout.sub_plan is not None
+    assert len(fanout.sub_plan.entries) == 1
+    child_entry = fanout.sub_plan.entries[0]
+    assert child_entry.status == "execute"
+    assert child_entry.batch_items_cached == 1
+    assert child_entry.batch_items_total == 2
+    assert _log_lines(log_file) == ["a", "b", "c"]
+
+
 def test_plan_cache_false_always_executes(tmp_path) -> None:
     """Nodes with cache:false must re-execute regardless of previous runs."""
     log_file = tmp_path / "cache-false.log"
@@ -798,7 +866,7 @@ def test_plan_batch_llm_cost_aggregates_across_results(tmp_path) -> None:
 
     # Directly seed the cache with a batch entry shape matching what the
     # engine would write — no real LLM call needed.
-    compiled, registry = _compile(ir, params={"items": ["a", "b", "c"]})
+    compiled, _registry = _compile(ir, params={"items": ["a", "b", "c"]})
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
     batch_output = {
         "results": [
@@ -856,7 +924,7 @@ def test_plan_workflow_path_scoped_lookup_no_pollution(tmp_path) -> None:
         "edges": [],
     }
     compiled_a, registry_a = _compile(ir_a)
-    compiled_b, registry_b = _compile(ir_b)
+    compiled_b, _registry_b = _compile(ir_b)
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
     # Write each entry with its own workflow_path, different durations.
@@ -1204,7 +1272,7 @@ def test_plan_direct_ir_null_workflow_path_historical_stats(tmp_path) -> None:
         "nodes": [{"id": "work", "type": "shell", "params": {"command": "printf result"}}],
         "edges": [],
     }
-    compiled, registry = _compile(ir)
+    compiled, _registry = _compile(ir)
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
     # Seed a cache entry with NULL workflow_path (matches what the engine

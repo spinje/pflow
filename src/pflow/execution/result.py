@@ -102,6 +102,10 @@ class PlanEntry:
     last_run_age_sec: float | None = None
     sub_plan: Plan | None = None
     diagnostic: Diagnostic | None = None
+    batch_count: int | None = None
+    batch_parallel: bool = False
+    batch_items_cached: int | None = None
+    batch_items_total: int | None = None
 
 
 @dataclass(frozen=True)

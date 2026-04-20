@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -43,10 +43,13 @@ from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
+from pflow.runtime.engine.batch_executor import resolve_batch_items
 from pflow.runtime.engine.engine import is_clean_termination
 from pflow.runtime.engine.instrumentation import apply_memo_hit, enforce_loop_guard
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
-from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
+from pflow.runtime.engine.template_resolution import resolve_templates
+from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig
+from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.workflow_executor import WorkflowExecutor
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,26 @@ class _ChildCompileFailed(Exception):
     def __init__(self, entry: PlanEntry) -> None:
         super().__init__()
         self.entry = entry
+
+
+@dataclass(frozen=True)
+class _PreparedSubWorkflow:
+    """Resolved sub-workflow target ready for recursive planning."""
+
+    merged: dict[str, Any]
+    child_inputs: dict[str, Any]
+    resolved: Any
+    resolved_path_str: str | None
+    compiled_child: CompiledWorkflow
+
+
+@dataclass(frozen=True)
+class _PreparedBatchSubWorkflowParams:
+    """Item[0]-resolved params needed to plan a batch sub-workflow."""
+
+    merged: dict[str, Any]
+    child_inputs: dict[str, Any]
+    raw_inputs_template: Any
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -933,71 +956,51 @@ def _plan_sub_workflow(
     node_type = config.node_type_name
     downstream = cause == "downstream"
 
-    if depth >= WorkflowExecutor.MAX_DEPTH_DEFAULT:
-        return _sub_workflow_error_entry(
-            node_id,
-            node_type,
-            f"Max sub-workflow depth {WorkflowExecutor.MAX_DEPTH_DEFAULT} exceeded at '{node_id}'",
+    if config.batch_config and not downstream:
+        return _plan_batch_sub_workflow(
+            curr,
+            config,
+            shared,
+            cache,
+            registry,
+            visited_paths=visited_paths,
+            depth=depth,
         )
 
-    # Opaque pre-check: `workflow: ${...}` can't be planned; don't run plan_node.
-    workflow_ref = _raw_workflow_ref(curr, config)
-    if isinstance(workflow_ref, str) and "${" in workflow_ref:
-        return _opaque_sub_workflow_entry(node_id, node_type)
+    guard_entry = _precheck_sub_workflow(curr, config, depth=depth)
+    if guard_entry is not None:
+        return guard_entry
 
     params_or_entry = _resolve_sub_workflow_params(curr, config, shared, downstream=downstream)
     if isinstance(params_or_entry, PlanEntry):
         return params_or_entry
     merged, child_inputs = params_or_entry
-
-    # Resolve relative child refs against the parent's dir, or CWD for inline
-    # (non-file) workflows. Mirrors `WorkflowExecutor._load_workflow` exactly:
-    # `shared["_pflow_workflow_file"]` is the parent's absolute path for file
-    # runs, the synthetic `"ir-hash:..."` identifier for inline runs (whose
-    # `Path(...).parent` is `Path(".")` → CWD-relative), or absent.
-    parent_file = shared.get("_pflow_workflow_file")
-    base_path = Path(parent_file).parent if parent_file else Path.cwd()
-    try:
-        resolved = resolve_sub_workflow(merged, base_path=base_path)
-    except _SUB_WORKFLOW_RESOLVE_EXCEPTIONS as exc:
-        return _sub_workflow_error_entry(node_id, node_type, f"Sub-workflow resolve failed: {exc}")
-    if resolved is None:
-        return _opaque_sub_workflow_entry(node_id, node_type)
-
-    resolved_path_str = str(resolved.path.resolve()) if resolved.path else None
-
-    if resolved_path_str is not None and resolved_path_str in visited_paths:
-        return _sub_workflow_error_entry(
-            node_id,
-            node_type,
-            f"Circular sub-workflow reference: {resolved_path_str}",
-        )
-
-    child_inputs = _effective_child_inputs(resolved.ir, child_inputs, downstream=downstream)
-
-    try:
-        compiled_child = _compile_child(resolved.ir, resolved_path_str, child_inputs, registry, node_id, node_type)
-    except _ChildCompileFailed as failure:
-        return failure.entry
+    target_or_entry = _prepare_sub_workflow(
+        merged=merged,
+        child_inputs=child_inputs,
+        shared=shared,
+        registry=registry,
+        visited_paths=visited_paths,
+        node_id=node_id,
+        node_type=node_type,
+        downstream=downstream,
+    )
+    if isinstance(target_or_entry, PlanEntry):
+        return target_or_entry
+    prepared = target_or_entry
 
     child_plan, child_shared = _build_plan_with_shared(
-        compiled_child,
-        child_inputs,
+        prepared.compiled_child,
+        prepared.child_inputs,
         cache,
         registry,
-        workflow_name=str(merged.get("workflow") or "<sub-workflow>"),
-        _visited_paths=[*visited_paths, resolved_path_str] if resolved_path_str else visited_paths,
+        workflow_name=str(prepared.merged.get("workflow") or "<sub-workflow>"),
+        _visited_paths=[*visited_paths, prepared.resolved_path_str] if prepared.resolved_path_str else visited_paths,
         _depth=depth + 1,
-        _parent_workflow_file=resolved_path_str,
+        _parent_workflow_file=prepared.resolved_path_str,
         _force_downstream=downstream,
     )
-    if resolved.warnings:
-        child_plan = Plan(
-            workflow=child_plan.workflow,
-            entries=child_plan.entries,
-            summary=child_plan.summary,
-            diagnostics=[*child_plan.diagnostics, *resolved.warnings],
-        )
+    child_plan = _attach_sub_workflow_warnings(child_plan, prepared.resolved.warnings)
 
     # Populate parent's shared[node_id] with the child's outputs so downstream
     # nodes that template against ${<node_id>.<key>} can resolve at plan time.
@@ -1008,7 +1011,13 @@ def _plan_sub_workflow(
     # to resolve from. Parent's downstream successors won't template against
     # this sub_plan anyway (they're all downstream too).
     if not downstream:
-        _populate_sub_workflow_outputs(shared, node_id, compiled_child, child_shared, child_inputs)
+        _populate_sub_workflow_outputs(
+            shared,
+            node_id,
+            prepared.compiled_child,
+            child_shared,
+            prepared.child_inputs,
+        )
 
     return PlanEntry(
         node_id=node_id,
@@ -1017,6 +1026,577 @@ def _plan_sub_workflow(
         cause=cause,
         sub_plan=child_plan,
     )
+
+
+def _plan_batch_sub_workflow(
+    curr: Any,
+    config: NodeConfig,
+    shared: dict[str, Any],
+    cache: MemoizationCache,
+    registry: Registry,
+    *,
+    visited_paths: list[str],
+    depth: int,
+) -> PlanEntry:
+    """Plan a batch WorkflowExecutor by recursively planning one child per item."""
+    node_id = config.node_id
+    node_type = config.node_type_name
+    batch_config = config.batch_config
+    if batch_config is None:
+        return _sub_workflow_error_entry(node_id, node_type, "Batch sub-workflow planning requires batch config")
+
+    guard_entry = _precheck_sub_workflow(curr, config, depth=depth)
+    if guard_entry is not None:
+        return guard_entry
+
+    items_or_entry = _resolve_batch_sub_workflow_items(config, shared, batch_config)
+    if isinstance(items_or_entry, PlanEntry):
+        return items_or_entry
+    items = items_or_entry
+
+    if not items:
+        return _empty_batch_sub_workflow_entry(curr, config, shared, batch_config)
+
+    params_or_entry = _prepare_batch_sub_workflow_params(curr, config, shared, items, batch_config)
+    if isinstance(params_or_entry, PlanEntry):
+        return params_or_entry
+    batch_params = params_or_entry
+    target_or_entry = _prepare_sub_workflow(
+        merged=batch_params.merged,
+        child_inputs=batch_params.child_inputs,
+        shared=shared,
+        registry=registry,
+        visited_paths=visited_paths,
+        node_id=node_id,
+        node_type=node_type,
+    )
+    if isinstance(target_or_entry, PlanEntry):
+        return target_or_entry
+    prepared = target_or_entry
+    child_plans, item_outputs, per_item_diagnostics = _plan_batch_sub_workflow_items(
+        items=items,
+        shared=shared,
+        cache=cache,
+        registry=registry,
+        batch_config=batch_config,
+        raw_inputs_template=batch_params.raw_inputs_template,
+        prepared=prepared,
+        depth=depth,
+        visited_paths=visited_paths,
+        node_id=node_id,
+    )
+
+    aggregated_plan = _aggregate_batch_child_plans(
+        child_plans,
+        batch_parallel=batch_config.parallel,
+        batch_count=len(items),
+        extra_diagnostics=per_item_diagnostics,
+    )
+    shared[node_id] = _build_batch_output_shape(item_outputs, items, batch_config)
+
+    return PlanEntry(
+        node_id=node_id,
+        node_type=node_type,
+        status="sub_workflow",
+        cause="no_cache_match",
+        sub_plan=aggregated_plan,
+        batch_count=len(items),
+        batch_parallel=batch_config.parallel,
+    )
+
+
+def _precheck_sub_workflow(curr: Any, config: NodeConfig, *, depth: int) -> PlanEntry | None:
+    """Return an early guard entry for depth / dynamic-ref failures."""
+    node_id = config.node_id
+    node_type = config.node_type_name
+    if depth >= WorkflowExecutor.MAX_DEPTH_DEFAULT:
+        return _sub_workflow_error_entry(
+            node_id,
+            node_type,
+            f"Max sub-workflow depth {WorkflowExecutor.MAX_DEPTH_DEFAULT} exceeded at '{node_id}'",
+        )
+
+    workflow_ref = _raw_workflow_ref(curr, config)
+    if isinstance(workflow_ref, str) and "${" in workflow_ref:
+        return _opaque_sub_workflow_entry(node_id, node_type)
+    return None
+
+
+def _resolve_sub_workflow_base_path(shared: dict[str, Any]) -> Path:
+    """Resolve child workflow refs against the same base runtime uses."""
+    parent_file = shared.get("_pflow_workflow_file")
+    return Path(parent_file).parent if parent_file else Path.cwd()
+
+
+def _prepare_sub_workflow(
+    *,
+    merged: dict[str, Any],
+    child_inputs: dict[str, Any],
+    shared: dict[str, Any],
+    registry: Registry,
+    visited_paths: list[str],
+    node_id: str,
+    node_type: str,
+    downstream: bool = False,
+) -> _PreparedSubWorkflow | PlanEntry:
+    """Resolve, cycle-check, and compile a child workflow target."""
+    try:
+        resolved = resolve_sub_workflow(merged, base_path=_resolve_sub_workflow_base_path(shared))
+    except _SUB_WORKFLOW_RESOLVE_EXCEPTIONS as exc:
+        return _sub_workflow_error_entry(node_id, node_type, f"Sub-workflow resolve failed: {exc}")
+    if resolved is None:
+        return _opaque_sub_workflow_entry(node_id, node_type)
+
+    resolved_path_str = str(resolved.path.resolve()) if resolved.path else None
+    if resolved_path_str is not None and resolved_path_str in visited_paths:
+        return _sub_workflow_error_entry(
+            node_id,
+            node_type,
+            f"Circular sub-workflow reference: {resolved_path_str}",
+        )
+
+    effective_inputs = _effective_child_inputs(resolved.ir, child_inputs, downstream=downstream)
+    try:
+        compiled_child = _compile_child(resolved.ir, resolved_path_str, effective_inputs, registry, node_id, node_type)
+    except _ChildCompileFailed as failure:
+        return failure.entry
+
+    return _PreparedSubWorkflow(
+        merged=merged,
+        child_inputs=effective_inputs,
+        resolved=resolved,
+        resolved_path_str=resolved_path_str,
+        compiled_child=compiled_child,
+    )
+
+
+def _attach_sub_workflow_warnings(plan: Plan, warnings: list[Diagnostic] | tuple[Diagnostic, ...]) -> Plan:
+    """Append resolver warnings to a child plan when present."""
+    if not warnings:
+        return plan
+    return Plan(
+        workflow=plan.workflow,
+        entries=plan.entries,
+        summary=plan.summary,
+        diagnostics=[*plan.diagnostics, *warnings],
+    )
+
+
+def _resolve_batch_sub_workflow_items(
+    config: NodeConfig,
+    shared: dict[str, Any],
+    batch_config: BatchConfig,
+) -> list[Any] | PlanEntry:
+    """Resolve batch items for a WorkflowExecutor or surface an honest entry."""
+    items = resolve_batch_items(batch_config.items_template, shared)
+    if items is None:
+        return _opaque_sub_workflow_entry(config.node_id, config.node_type_name)
+    if not isinstance(items, list):
+        return _sub_workflow_error_entry(
+            config.node_id,
+            config.node_type_name,
+            f"Workflow batch items resolved to {type(items).__name__}, expected list",
+        )
+    return items
+
+
+def _empty_plan(workflow: str) -> Plan:
+    """Create an empty nested plan with fully-populated zero summary fields."""
+    return Plan(
+        workflow=workflow,
+        entries=[],
+        summary=PlanSummary(
+            total=0,
+            cached_count=0,
+            execute_count=0,
+            cache_boundary=None,
+            execute_by_type={},
+            estimated_cost_usd=0.0,
+            nodes_without_history=0,
+            estimated_duration_ms=0.0,
+            nodes_without_duration_history=0,
+            opaque_count=0,
+            cost_basis="exact",
+            total_including_nested=0,
+            cached_including_nested=0,
+            execute_including_nested=0,
+            execute_by_type_including_nested={},
+            estimated_cost_usd_including_nested=0.0,
+            nodes_without_history_including_nested=0,
+            estimated_duration_ms_including_nested=0.0,
+            nodes_without_duration_history_including_nested=0,
+            opaque_count_including_nested=0,
+        ),
+    )
+
+
+def _empty_batch_sub_workflow_entry(
+    curr: Any,
+    config: NodeConfig,
+    shared: dict[str, Any],
+    batch_config: BatchConfig,
+) -> PlanEntry:
+    """Return the empty-batch plan entry and runtime-shaped shared output."""
+    workflow_ref = _raw_workflow_ref(curr, config)
+    shared[config.node_id] = _build_batch_output_shape([], [], batch_config)
+    return PlanEntry(
+        node_id=config.node_id,
+        node_type=config.node_type_name,
+        status="sub_workflow",
+        cause="no_cache_match",
+        sub_plan=_empty_plan(str(workflow_ref or "<sub-workflow>")),
+        batch_count=0,
+        batch_parallel=batch_config.parallel,
+    )
+
+
+def _prepare_batch_sub_workflow_params(
+    curr: Any,
+    config: NodeConfig,
+    shared: dict[str, Any],
+    items: list[Any],
+    batch_config: BatchConfig,
+) -> _PreparedBatchSubWorkflowParams | PlanEntry:
+    """Resolve item[0]-scoped params for a batch sub-workflow."""
+    try:
+        shared[batch_config.item_alias] = items[0]
+        shared["__index__"] = 0
+        if config.template_config:
+            resolved_params, _, _ = resolve_templates(config.template_config, shared, config.node_id)
+            merged = dict(getattr(curr, "params", {}) or {})
+            if config.template_config:
+                merged.update(config.template_config.static_params or {})
+            merged.update(resolved_params)
+        else:
+            merged = dict(getattr(curr, "params", {}) or {})
+    except Exception as exc:
+        if isinstance(exc, ValueError):
+            return _template_error_entry(config, exc)
+        logger.warning("Batch sub-workflow template resolution failed: %s", exc)
+        return _sub_workflow_error_entry(config.node_id, config.node_type_name, f"Template resolution failed: {exc}")
+    finally:
+        shared.pop(batch_config.item_alias, None)
+        shared.pop("__index__", None)
+
+    raw_inputs = merged.get("inputs")
+    if raw_inputs is not None and not isinstance(raw_inputs, dict):
+        return _sub_workflow_error_entry(
+            config.node_id,
+            config.node_type_name,
+            f"Workflow node 'inputs:' resolved to {type(raw_inputs).__name__}, expected dict",
+        )
+
+    raw_inputs_template = None
+    if config.template_config:
+        raw_inputs_template = config.template_config.template_params.get("inputs")
+
+    return _PreparedBatchSubWorkflowParams(
+        merged=merged,
+        child_inputs=dict(raw_inputs) if raw_inputs else {},
+        raw_inputs_template=raw_inputs_template,
+    )
+
+
+def _resolve_per_item_sub_workflow_inputs(
+    *,
+    shared: dict[str, Any],
+    batch_config: BatchConfig,
+    item: Any,
+    idx: int,
+    raw_inputs_template: Any,
+    default_inputs: dict[str, Any],
+    node_id: str,
+) -> tuple[dict[str, Any], Diagnostic | None]:
+    """Resolve child inputs for one batch item, falling back to item[0] shape.
+
+    Returns (inputs, diagnostic). Diagnostic is non-None when resolution
+    produced a non-dict — runtime would raise ValueError in that case, so
+    we surface a WARNING to make the plan honest about a likely runtime failure.
+    """
+    if raw_inputs_template is None:
+        return default_inputs, None
+    per_item_context = {**shared, batch_config.item_alias: item, "__index__": idx}
+    resolved_inputs = TemplateResolver.resolve_nested(raw_inputs_template, per_item_context)
+    if isinstance(resolved_inputs, dict):
+        return resolved_inputs, None
+    diag = Diagnostic(
+        severity=Severity.WARNING,
+        source="planner",
+        node_id=node_id,
+        message=(
+            f"Batch item {idx}: 'inputs:' resolved to {type(resolved_inputs).__name__}, "
+            f"expected dict. Runtime will reject this item."
+        ),
+        context={"category": "validation", "batch_item_index": idx},
+    )
+    return default_inputs, diag
+
+
+def _extract_child_outputs(
+    compiled_child: CompiledWorkflow,
+    child_shared: dict[str, Any],
+    child_inputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Mirror runtime child-output exposure for one per-item child plan."""
+    declared = getattr(compiled_child, "outputs", None)
+    if isinstance(declared, dict) and declared:
+        return _resolve_declared_outputs(declared, child_shared)
+    return _mirror_child_shared(child_shared, child_inputs)
+
+
+def _plan_batch_sub_workflow_items(
+    *,
+    items: list[Any],
+    shared: dict[str, Any],
+    cache: MemoizationCache,
+    registry: Registry,
+    batch_config: BatchConfig,
+    raw_inputs_template: Any,
+    prepared: _PreparedSubWorkflow,
+    depth: int,
+    visited_paths: list[str],
+    node_id: str,
+) -> tuple[list[Plan], list[dict[str, Any]], list[Diagnostic]]:
+    """Plan each batch item's child workflow and collect exposed outputs."""
+    child_plans: list[Plan] = []
+    item_outputs: list[dict[str, Any]] = []
+    child_workflow_name = str(prepared.merged.get("workflow") or "<sub-workflow>")
+    child_visited_paths = [*visited_paths, prepared.resolved_path_str] if prepared.resolved_path_str else visited_paths
+
+    per_item_diagnostics: list[Diagnostic] = []
+
+    for idx, item in enumerate(items):
+        per_item_inputs, input_diag = _resolve_per_item_sub_workflow_inputs(
+            shared=shared,
+            batch_config=batch_config,
+            item=item,
+            idx=idx,
+            raw_inputs_template=raw_inputs_template,
+            default_inputs=prepared.child_inputs,
+            node_id=node_id,
+        )
+        if input_diag is not None:
+            per_item_diagnostics.append(input_diag)
+        child_plan, child_shared = _build_plan_with_shared(
+            prepared.compiled_child,
+            per_item_inputs,
+            cache,
+            registry,
+            workflow_name=child_workflow_name,
+            _visited_paths=child_visited_paths,
+            _depth=depth + 1,
+            _parent_workflow_file=prepared.resolved_path_str,
+        )
+        child_plans.append(child_plan)
+        item_outputs.append(_extract_child_outputs(prepared.compiled_child, child_shared, per_item_inputs))
+
+    if prepared.resolved.warnings:
+        child_plans[0] = _attach_sub_workflow_warnings(child_plans[0], prepared.resolved.warnings)
+
+    return child_plans, item_outputs, per_item_diagnostics
+
+
+def _nested_or_level(summary: PlanSummary, *, nested: str, level: str) -> Any:
+    """Read the *_including_nested variant of a summary field, falling back to per-level."""
+    value = getattr(summary, nested)
+    return value if value is not None else getattr(summary, level)
+
+
+def _aggregate_batch_summary(child_plans: list[Plan], *, batch_parallel: bool) -> PlanSummary:
+    """Build a single PlanSummary aggregating N per-item child plan summaries."""
+    per_item_totals = [_nested_or_level(p.summary, nested="total_including_nested", level="total") for p in child_plans]
+    per_item_cached = [
+        _nested_or_level(p.summary, nested="cached_including_nested", level="cached_count") for p in child_plans
+    ]
+    per_item_execute = [
+        _nested_or_level(p.summary, nested="execute_including_nested", level="execute_count") for p in child_plans
+    ]
+    per_item_cost = [
+        _nested_or_level(p.summary, nested="estimated_cost_usd_including_nested", level="estimated_cost_usd")
+        for p in child_plans
+    ]
+    per_item_duration = [
+        _nested_or_level(p.summary, nested="estimated_duration_ms_including_nested", level="estimated_duration_ms")
+        for p in child_plans
+    ]
+    per_item_no_history = [
+        _nested_or_level(p.summary, nested="nodes_without_history_including_nested", level="nodes_without_history")
+        for p in child_plans
+    ]
+    per_item_no_duration = [
+        _nested_or_level(
+            p.summary, nested="nodes_without_duration_history_including_nested", level="nodes_without_duration_history"
+        )
+        for p in child_plans
+    ]
+    per_item_opaque = [
+        _nested_or_level(p.summary, nested="opaque_count_including_nested", level="opaque_count") for p in child_plans
+    ]
+
+    execute_by_type: dict[str, int] = {}
+    for p in child_plans:
+        child_types = (
+            p.summary.execute_by_type_including_nested
+            if p.summary.execute_by_type_including_nested is not None
+            else p.summary.execute_by_type
+        )
+        for node_type, count in child_types.items():
+            execute_by_type[node_type] = execute_by_type.get(node_type, 0) + count
+
+    cost_basis: _CostBasis = "exact"
+    if any(p.summary.cost_basis == "upper_bound" for p in child_plans):
+        cost_basis = "upper_bound"
+
+    total_duration = max(per_item_duration) if batch_parallel else sum(per_item_duration)
+    agg_total = sum(per_item_totals)
+    agg_cached = sum(per_item_cached)
+    agg_execute = sum(per_item_execute)
+    agg_cost = sum(cost for cost in per_item_cost if cost is not None)
+    agg_no_history = sum(per_item_no_history)
+    agg_no_duration = sum(per_item_no_duration)
+    agg_opaque = sum(per_item_opaque)
+
+    return PlanSummary(
+        total=agg_total,
+        cached_count=agg_cached,
+        execute_count=agg_execute,
+        cache_boundary=None,
+        execute_by_type=execute_by_type,
+        estimated_cost_usd=agg_cost,
+        nodes_without_history=agg_no_history,
+        estimated_duration_ms=total_duration,
+        nodes_without_duration_history=agg_no_duration,
+        opaque_count=agg_opaque,
+        cost_basis=cost_basis,
+        total_including_nested=agg_total,
+        cached_including_nested=agg_cached,
+        execute_including_nested=agg_execute,
+        execute_by_type_including_nested=execute_by_type,
+        estimated_cost_usd_including_nested=agg_cost,
+        nodes_without_history_including_nested=agg_no_history,
+        estimated_duration_ms_including_nested=total_duration,
+        nodes_without_duration_history_including_nested=agg_no_duration,
+        opaque_count_including_nested=agg_opaque,
+    )
+
+
+def _aggregate_batch_child_plans(
+    child_plans: list[Plan],
+    *,
+    batch_parallel: bool,
+    batch_count: int,
+    extra_diagnostics: list[Diagnostic] | None = None,
+) -> Plan:
+    """Collapse N per-item child plans into one display/rollup plan."""
+    if not child_plans:
+        return Plan(
+            workflow="<sub-workflow>",
+            entries=[],
+            summary=PlanSummary(
+                total=0,
+                cached_count=0,
+                execute_count=0,
+                cache_boundary=None,
+                execute_by_type={},
+                estimated_cost_usd=0.0,
+                nodes_without_history=0,
+                estimated_duration_ms=0.0,
+                nodes_without_duration_history=0,
+                opaque_count=0,
+                cost_basis="exact",
+                total_including_nested=0,
+                cached_including_nested=0,
+                execute_including_nested=0,
+                execute_by_type_including_nested={},
+                estimated_cost_usd_including_nested=0.0,
+                nodes_without_history_including_nested=0,
+                estimated_duration_ms_including_nested=0.0,
+                nodes_without_duration_history_including_nested=0,
+                opaque_count_including_nested=0,
+            ),
+        )
+
+    entries_by_node: dict[str, list[PlanEntry]] = defaultdict(list)
+    seen_node_ids: list[str] = []
+    seen_lookup: set[str] = set()
+    for plan in child_plans:
+        for entry in plan.entries:
+            entries_by_node[entry.node_id].append(entry)
+            if entry.node_id not in seen_lookup:
+                seen_lookup.add(entry.node_id)
+                seen_node_ids.append(entry.node_id)
+
+    synthetic_entries: list[PlanEntry] = []
+    for node_id in seen_node_ids:
+        entries_for_node = entries_by_node.get(node_id, [])
+        if not entries_for_node:
+            continue
+
+        items_traversed = len(entries_for_node)
+        cached_count = sum(
+            1
+            for entry in entries_for_node
+            if entry.status == "cached" or (entry.status == "sub_workflow" and not _represents_work(entry))
+        )
+        cost_values = [entry.last_cost_usd for entry in entries_for_node if entry.last_cost_usd is not None]
+        duration_values = [entry.last_duration_ms for entry in entries_for_node if entry.last_duration_ms is not None]
+        age_values = [entry.age_sec for entry in entries_for_node if entry.age_sec is not None]
+        template_entry = entries_for_node[0]
+
+        synthetic_entries.append(
+            PlanEntry(
+                node_id=node_id,
+                node_type=template_entry.node_type,
+                status="cached" if cached_count == items_traversed else "execute",
+                cause="hash_match" if cached_count == items_traversed else "no_cache_match",
+                last_cost_usd=sum(cost_values) / len(cost_values) if cost_values else None,
+                last_duration_ms=sum(duration_values) / len(duration_values) if duration_values else None,
+                age_sec=max(age_values) if age_values else None,
+                batch_items_cached=cached_count,
+                batch_items_total=items_traversed,
+                sub_plan=template_entry.sub_plan,
+            )
+        )
+
+    summary = _aggregate_batch_summary(child_plans, batch_parallel=batch_parallel)
+    all_diagnostics = [diagnostic for child_plan in child_plans for diagnostic in child_plan.diagnostics]
+    if extra_diagnostics:
+        all_diagnostics.extend(extra_diagnostics)
+    return Plan(
+        workflow=child_plans[0].workflow,
+        entries=synthetic_entries,
+        summary=summary,
+        diagnostics=all_diagnostics,
+    )
+
+
+def _build_batch_output_shape(
+    item_outputs: list[dict[str, Any]],
+    items: list[Any],
+    batch_config: BatchConfig,
+) -> dict[str, Any]:
+    """Mirror the runtime batch result shape for downstream template resolution."""
+    results: list[dict[str, Any]] = []
+    for idx, (item, output) in enumerate(zip(items, item_outputs, strict=True)):
+        result = dict(output) if output else {}
+        result["item"] = item
+        result["original_index"] = idx
+        results.append(result)
+    return {
+        "results": results,
+        "count": len(items),
+        "success_count": len(item_outputs),
+        "error_count": 0,
+        "errors": None,
+        "batch_metadata": {
+            "parallel": batch_config.parallel,
+            "max_concurrent": batch_config.max_concurrent if batch_config.parallel else None,
+            "max_retries": batch_config.max_retries,
+            "retry_wait": batch_config.retry_wait if batch_config.retry_wait > 0 else None,
+            "execution_mode": "parallel" if batch_config.parallel else "sequential",
+            "timing": None,
+        },
+    }
 
 
 def _populate_sub_workflow_outputs(

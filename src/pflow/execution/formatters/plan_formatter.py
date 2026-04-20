@@ -192,6 +192,8 @@ def _has_any_cached_recursive(entries: list[PlanEntry]) -> bool:
     for entry in entries:
         if entry.status == "cached":
             return True
+        if entry.batch_items_cached is not None and entry.batch_items_cached > 0:
+            return True
         if entry.sub_plan is not None and _has_any_cached_recursive(entry.sub_plan.entries):
             return True
     return False
@@ -199,6 +201,33 @@ def _has_any_cached_recursive(entries: list[PlanEntry]) -> bool:
 
 def _render_entry_line(entry: PlanEntry, indent: str) -> str:
     """Render one plan entry."""
+    if entry.status == "sub_workflow" and entry.batch_count is not None:
+        ref = entry.sub_plan.workflow if entry.sub_plan else "<unknown>"
+        has_work = True
+        if entry.sub_plan is not None:
+            child = entry.sub_plan.summary
+            has_work = child.execute_count > 0 or (child.execute_including_nested or 0) > 0
+        symbol = "▸" if has_work else click.style("↻", fg="blue", dim=True)
+        parallel_tag = ", parallel" if entry.batch_parallel else ""
+        return f"{indent}{symbol} {entry.node_id}  [workflow '{ref}' \u00d7 {entry.batch_count} items{parallel_tag}]"
+
+    if entry.batch_items_total is not None:
+        cached = entry.batch_items_cached or 0
+        total = entry.batch_items_total
+        if cached == total:
+            age = f"  ({_format_age(entry.age_sec)} ago)" if entry.age_sec is not None else ""
+            return f"{indent}{click.style('↻', fg='blue', dim=True)} {entry.node_id}{age}"
+
+        tag = f"  [{_tag_from_entry(entry)}]"
+        execute_count = total - cached
+        if cached > 0:
+            stats = _format_batch_node_stats(entry)
+            return f"{indent}▸ {entry.node_id}{tag}  {execute_count}/{total} would execute{stats}"
+
+        annotation = _format_stats_annotation(entry)
+        suffix = f"   {annotation}" if annotation else ""
+        return f"{indent}▸ {entry.node_id}{tag}{suffix}"
+
     if entry.status == "cached":
         age = f"  ({_format_age(entry.age_sec)} ago)" if entry.age_sec is not None else ""
         return f"{indent}{click.style('↻', fg='blue', dim=True)} {entry.node_id}{age}"
@@ -219,6 +248,29 @@ def _render_entry_line(entry: PlanEntry, indent: str) -> str:
     annotation = _format_stats_annotation(entry)
     suffix = f"   {annotation}" if annotation else ""
     return f"{indent}▸ {entry.node_id}{tag}{suffix}"
+
+
+def _format_batch_node_stats(entry: PlanEntry) -> str:
+    """Build the average-cost / average-duration suffix for partial batch nodes."""
+    is_llm = _is_llm_entry(entry)
+    has_cost = entry.last_cost_usd is not None
+    duration_ms = entry.last_duration_ms
+    show_duration = duration_ms is not None and duration_ms >= _TEXT_DURATION_THRESHOLD_MS
+
+    if not has_cost and not show_duration:
+        return "  ≈ $? (no history)" if is_llm else ""
+
+    parts: list[str] = []
+    if is_llm:
+        if has_cost and entry.last_cost_usd is not None:
+            parts.append(f"≈ {_format_cost(entry.last_cost_usd)}")
+        else:
+            parts.append("≈ $?")
+    if show_duration and duration_ms is not None:
+        parts.append(f"~{format_duration(duration_ms)}")
+    if not parts:
+        return ""
+    return f"  {' · '.join(parts)}"
 
 
 def _format_stats_annotation(entry: PlanEntry) -> str | None:
@@ -307,6 +359,12 @@ def _entry_to_dict(entry: PlanEntry) -> dict[str, Any]:
         result["last_duration_ms"] = entry.last_duration_ms
     if entry.last_run_age_sec is not None:
         result["last_run_age_sec"] = entry.last_run_age_sec
+    if entry.batch_count is not None:
+        result["batch_count"] = entry.batch_count
+        result["batch_parallel"] = entry.batch_parallel
+    if entry.batch_items_total is not None:
+        result["batch_items_cached"] = entry.batch_items_cached
+        result["batch_items_total"] = entry.batch_items_total
     if entry.sub_plan is not None:
         result["sub_plan"] = format_plan_json(entry.sub_plan)
     if entry.diagnostic is not None:
