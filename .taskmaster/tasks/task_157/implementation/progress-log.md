@@ -1,0 +1,155 @@
+# Task 157 Progress Log — Design Journey
+
+## 2026-04-20 — Design session
+
+### Phase 1: Problem space mapping
+
+Read all four related issues (#318, #323, #321, #297) plus the detailed investigation comment on #318. The investigation comment (from the music-generation pipeline) was the most valuable artifact — it included:
+- Minimal repro workflows proving the exact boundary (batch sub-workflow, nothing else)
+- A results matrix showing which combinations work vs break
+- Evidence that #323 is a downstream consequence of #318, not a separate bug
+- A partial finding about cache key stability through sub-workflow re-entry (separate issue, not blocking)
+
+Read task reviews for 156 (dry-run implementation), 96 (batch processing), 131 (batch error handling), 153 (undeclared inputs), and 147 (validator diagnostics). Key takeaways:
+- Task 156 review: the `plan_node()` shared primitive, state machine architecture, `_execute_entry` chokepoint, "Option E" pattern. The review explicitly documents the batch-of-sub-workflow gap as TD2 with two candidate approaches.
+- Task 96 review: wrapper chain position (batch OUTSIDE namespace), per-item shallow copy pattern, `item_alias` injection at ROOT level
+- Task 153 review: `inputs:` is the single canonical form, `ALLOWED_PARAMS` closed schema, heterogeneous batch IR cache
+- Task 147 review: "prioritize simplicity of final code, not how easy it is to get there" — Option D (full conversion) over phased approaches. This principle directly applied to our design decisions.
+
+### Phase 2: Initial approach (wrong framing)
+
+First proposed three options:
+- **A**: Full per-item recursion (~450 LOC)
+- **B**: Representative-item recursion (~200 LOC)
+- **C**: Opaque with aggregate stats (~80 LOC)
+
+Recommended **Option B** based on: smaller delta, reuses existing machinery, honest approximation, overestimates (safe for cost-gating).
+
+**This framing was wrong.** It treated the problem as "which approximation strategy for batch sub-workflows" — a patch to bolt onto the existing code. The user's pushback ("prioritize simplicity of final code") forced a reframe.
+
+### Phase 3: Architectural reframe (the real insight)
+
+The actual problem is structural: the planner's dispatch has a hole in a 2×2 matrix.
+
+```
+                    non-batch           batch
+                    ─────────           ─────
+standard node       _plan_standard      _plan_standard (plan_node handles batch keys)
+WorkflowExecutor    _plan_sub_workflow   ??? ← hole
+```
+
+The engine solves this cleanly: batch is an OUTER concern that wraps per-item execution. `_execute_node` dispatches on batch at the top level; `_execute_single_node` is batch-unaware. This orthogonality is the engine's architecture.
+
+The planner should mirror it: batch dispatch at `_plan_sub_workflow` entry, with per-item planning reusing `_plan_sub_workflow`'s infrastructure.
+
+**Key decision**: The dispatch belongs inside `_plan_sub_workflow` (3-line check at the top) rather than at `_plan_one_node`, because only WorkflowExecutor nodes reach `_plan_sub_workflow`. Standard batch nodes are already handled by `plan_node`'s batch cache key computation.
+
+### Phase 4: Representative vs full per-item (the elderberry argument)
+
+Initially classified full per-item as "overengineering." User challenged: "is it really overengineering if it's correct?"
+
+The decisive example: You run a batch of 5 items, then change "elderberry" to "strawberry" and run `--dry-run`. Representative-item plans with items[0] ("apple") → cached → reports "all cached." But "strawberry" has never been seen — it would execute. The agent proceeds thinking it's free.
+
+**This is not an edge case — it's THE use case for `--dry-run`**: "I changed something, what would re-execute?"
+
+The LOC delta between representative and full per-item is ~50 lines, not 300 as initially estimated. The architecture (dispatch, PlanEntry fields, formatter, aggregation) is the same either way. The inner loop is the only difference.
+
+**Decision**: Full per-item recursion. The ~50 LOC delta buys correctness for the primary use case. And with it, we don't need multiplier heuristics — the aggregated plan reflects real per-item data.
+
+### Phase 5: Display format iteration
+
+Checked actual current output by running `--dry-run` on the lyrics-generator workflow. Discoveries:
+- Current cached format: `↻ node  (5s ago)` — recycle symbol + age, NO `✓`
+- Current execute format: `▸ node  [type]  ≈ $X · ~Ys (last run Xm ago)`
+- Sub-workflow header: `▸ node  [sub-workflow './path' (N nodes)]`
+- Batch sub-workflows in BFS mode DO get sub-plans (via `_make_downstream_entry` → `_plan_sub_workflow(cause="downstream")`), but as single iterations
+- The pre-boundary batch sub-workflow (`fetch-sources`) shows NO recursion — just flat `[workflow]`
+
+User pointed out: if we show "× 10 items", each child node should show its per-item breakdown. With full per-item data available, the natural display is `M/N would execute` per node.
+
+**Key display decisions:**
+- All-cached nodes: normal `↻` format (M/N is redundant when M=N)
+- All-execute nodes: normal `▸` format (M/N is redundant when M=0)
+- Partial: `▸ node [type]  M/N would execute  ≈ $avg · ~avg_time`
+- Only show M/N when it adds information (the partial case)
+
+### Phase 6: Cost and duration semantics
+
+User asked: "if one of the parallel sub-workflows costs differently, we ignore that?"
+
+No — with full per-item recursion we have each item's actual cost from its own cache entry. The per-node cost shown is the average (representative of "what one call costs"), and the summary shows the real sum.
+
+**Cost**: Always additive (parallel doesn't reduce cost). Per-node line shows per-execution average. Summary shows real total.
+
+**Duration**: Depends on execution mode. Per-node line shows per-execution average (how long one call takes — unambiguous). Summary shows parallel-aware total (max for parallel, sum for sequential). This avoids the ambiguity of "does this per-node number represent wall-clock for the batch?"
+
+Decision: Per-execution averages on per-node lines (consistent with non-batch format). Summary handles the batch-level math. The reader understands "2/4 would execute ≈ $0.28 · ~30.6s" as "each execution costs $0.28 and takes 30.6s, and 2 items need it."
+
+### Phase 7: Plan review findings
+
+Deployed 4 review agents (silent-failures, feature-interactions, validation-consistency, impact-completeness). Key findings that changed the implementation:
+
+**1. Dict unpacking order** (silent-failures) — Would have silently used wrong per-item values. `{alias: item, **shared}` puts item first, then shared overwrites it. Must be `{**shared, alias: item}`.
+
+**2. Aggregate by node_id, not position** (silent-failures + feature-interactions) — Branching children produce different entry sequences per item. Positional aggregation would silently mix nodes.
+
+**3. `resolve_templates` directly instead of `plan_node`** (validation-consistency) — Using `plan_node` with stripped `batch_config` computes a meaningless config hash (WorkflowExecutor is never memoized anyway). Calling `resolve_templates` directly is honest about intent and avoids dead computation.
+
+**4. `*_including_nested` must be explicitly computed** (impact-completeness) — Without these, `_summarize` falls back to per-level values and the parent rollup silently under-reports. This was the most complex piece of the aggregation and the plan was hand-waving it.
+
+**5. `_has_any_cached_recursive` needs extending** (feature-interactions) — Without checking `batch_items_cached > 0`, the "nothing cached" divider appears when batch items are partially cached. Cosmetic but directly undermines fix #2 (the cascade symptom).
+
+**6. Per-item output extraction must use declared-output logic** (silent-failures) — Raw `child_shared` includes internal keys that would pollute the batch output shape and cause downstream templates to resolve against keys absent at runtime.
+
+### Phase 8: #321 compatibility verification
+
+Ran a dedicated searcher to verify our approach doesn't conflict with GH #321 (extending shared-primitive pattern to sub-workflow output population + cycle detection).
+
+**Finding**: Our batch wrapper operates ABOVE the abstraction boundary #321 targets. It reads `parent_shared[node_id]` AFTER `_populate_sub_workflow_outputs` writes it. If #321 replaces that function with a shared `compute_child_exposure()` helper, our wrapper is unaffected. **Neutral to #321's goals.**
+
+### Critical insights for the implementer
+
+1. **The `plan_node` batch_config skip is CORRECT for standard batch nodes** — the engine also skips top-level resolution for batch. The fix is NOT "remove the skip" — it's "add a dispatch that handles WE batch nodes before reaching the skip."
+
+2. **`_build_plan_with_shared` creates its own scratch shared** — each per-item call is isolated. No cross-contamination between items. The parent shared is only modified for output population (once, after the loop).
+
+3. **Compile once is safe** because `compile_workflow` validates input PRESENCE, not VALUES. All items use the same child topology — only the input values (and thus cache keys) differ.
+
+4. **The downstream path (`cause="downstream"`) is intentionally left unchanged** — items templates in downstream mode usually depend on would-execute upstream → `resolve_batch_items` returns None → opaque. The fix targets the pre-boundary state-machine path where upstream cached data makes item resolution possible.
+
+5. **Task 147's principle applies directly**: "Task 143 took the pragmatic shortcut and Task 144 had to fix it. The lesson is in the codebase history." We chose full per-item over representative because the "shortcut" (representative) gives wrong answers for the primary use case and would need fixing later.
+
+6. **The `_summarize` NO-CHANGES claim is verified** but depends on the aggregated plan having correct `*_including_nested` fields. If those are wrong or missing, `_summarize` silently under-reports. This is why the review agents flagged it as the most critical piece to get right.
+
+### Rejected alternatives (and why)
+
+| Alternative | Why rejected |
+|---|---|
+| Representative-item (items[0] × N) | Wrong for "edit one item" scenario — THE primary use case for dry-run |
+| `plan_node` with stripped `batch_config` | Computes meaningless config hash for WE nodes. `resolve_templates` directly is cleaner |
+| Batch dispatch at `_plan_one_node` level | Only WE nodes need it — standard batch already handled. Dispatch inside `_plan_sub_workflow` is more focused |
+| Aggregate by entry position | Breaks for branching children with different entry sequences per item |
+| Scale child plan summary (mutate Plan) | Less clean than aggregating from real data. Child plan becomes inaccurate as standalone object |
+| `batch_count` multiplier on PlanEntry (without per-item recursion) | Can't detect which specific items are cached/miss. Gives wrong answers |
+| Lifting the `WorkflowExecutor` memo cache skip | Fights a documented invariant ("sub-workflow files may change"). Inner nodes already cached individually |
+| Phased approach (fix validation error first, cost later) | Task 147's lesson: "phased approaches accrue debt the next task has to fix" |
+
+### Open questions resolved during session
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Does `resolve_batch_items` work with planner's scratch shared? | Yes — uses TemplateResolver against shared dict. Upstream cached outputs are in shared via `apply_memo_hit`. | batch_executor.py:32-55, confirmed by searcher |
+| Can we `dataclasses.replace(config, batch_config=None)`? | Yes — NodeConfig is regular `@dataclass`, not frozen | types.py:37 |
+| Does `_summarize` need changes? | No — reads `sub_plan.summary.*_including_nested` which our aggregation correctly populates | Verified by 2 review agents |
+| Does our fix break existing batch drift tests? | No — those test standard batch nodes (ShellNode/LLMNode), our dispatch only fires for WorkflowExecutor | Confirmed by searcher |
+| Circular import risk? | None — `batch_executor.py` never imports from `execution/` | Confirmed by searcher |
+| Is #321 affected? | Neutral — we operate above the level #321 targets | Confirmed by dedicated searcher |
+
+### Session metrics
+
+- ~3 hours of design discussion
+- 4 parallel searcher deployments for verification
+- 4 parallel review agents for plan review
+- 8 review findings incorporated
+- 3 rejected alternatives documented
+- 6 open questions resolved empirically (not by assumption)
