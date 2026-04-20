@@ -86,6 +86,31 @@ Per-entry `last_duration_ms` is only rendered in text when ≥ 1s (`_TEXT_DURATI
 
 Both paths share: depth guard, opaque check (`workflow: ${var}`), resolve + compile + recurse + warning attach. `cause` flows through to the returned `PlanEntry`.
 
+### Batch sub-workflow planning (pre-boundary only)
+
+Batch `WorkflowExecutor` nodes are the one place where the planner cannot rely on `plan_node()` alone. `plan_node()` intentionally skips top-level template resolution when `config.batch_config` is set — correct for standard batch nodes because runtime resolves the batch item context inside the batch loop. For sub-workflows, the planner must mirror that same outer-batch / inner-single-item split explicitly.
+
+`_plan_sub_workflow()` therefore has an early dispatch:
+
+```python
+if config.batch_config and not downstream:
+    return _plan_batch_sub_workflow(...)
+```
+
+Load-bearing details:
+- **Only pre-boundary uses per-item recursion.** Post-boundary (`cause="downstream"`) keeps the existing force-downstream behavior because upstream state is dirty and batch item templates are usually not resolvable there.
+- **Compile once, plan N times.** `_plan_batch_sub_workflow()` resolves the child workflow path + item[0] inputs once, compiles the child once, then calls `_build_plan_with_shared()` once per item with per-item inputs. This mirrors runtime's compiled sub-workflow cache reuse.
+- **Per-item inputs use item context only where needed.** The prologue resolves the parent workflow node with `item[0]` injected into shared so `${item}`-backed child inputs don't false-fail validation. The per-item loop then re-resolves only the raw `inputs` template with `{**shared, alias: item, "__index__": idx}`.
+- **Aggregation is by `node_id`, not list position.** Different items can take different child branches, so positional zipping silently mixes unrelated nodes. `_aggregate_batch_child_plans()` groups entries by `node_id` and preserves first-seen order across all item plans. `batch_items_total` on each synthetic entry is `len(entries_for_node)` (items that traversed this node), NOT `batch_count` — branch-local nodes correctly show as fully cached when all their traversing items hit cache.
+- **Nested `sub_plan` on synthetic entries is item[0]'s view only.** When a child node is itself a sub-workflow, the synthetic entry preserves that sub_plan from the first item's plan. Cross-item aggregation of nested sub-plans is a known limitation — the aggregated summary IS correct (sums across all items), but the displayed nested tree under a synthetic entry shows only one item's structure.
+- **Synthetic plan summary is already fully aggregated.** The returned child `PlanSummary` sets both per-level fields and `*_including_nested` fields to the same aggregated values. This is why `_summarize()` needs no batch-specific branch.
+- **Parent shared output must match runtime batch shape.** `_build_batch_output_shape()` writes `results[]`, `count`, `success_count`, `error_count`, `errors`, and `batch_metadata` to `shared[node_id]`, and each result carries `item` + `original_index`. Downstream parent nodes templating `${fanout.results}` or `${fanout.count}` resolve against the same shape runtime exposes.
+
+Current display contract:
+- Parent batch entry uses `PlanEntry.batch_count` / `batch_parallel` and renders as `[workflow 'path' × N items[, parallel]]`.
+- Synthetic child entries use `batch_items_cached` / `batch_items_total`.
+- Partial cache lines show `M/N would execute` plus per-execution average cost/duration; all-cached and all-execute cases intentionally fall back to the normal cached/execute rendering to avoid redundant labels.
+
 ### Force-downstream mode — `_build_plan_with_shared(_force_downstream=True)`
 
 When `_plan_sub_workflow(cause="downstream")` recurses into a child, it passes `_force_downstream=True`. The child then:
@@ -119,7 +144,7 @@ Text-only rendering decisions, all pinned by `tests/test_execution/formatters/te
 - **Header**: `Dry-run for {Path(plan.workflow).name}: N nodes, M sub-workflow(s)`. Base name only — the absolute path is already in the command the user ran. JSON `plan.workflow` keeps the full value.
 - **Type translation in summary**: class names → `_NODE_TYPE_TAGS` map (same one per-entry labels use).
 - **Nested-aware counts**: when `*_including_nested` fields exist on `PlanSummary`, the summary displays those numbers under the label `Summary (including nested):`. Agents cost- or time-gating must read `*_including_nested` when present — the formatter mirrors.
-- **"Nothing cached" divider**: `_has_any_cached_recursive(entries)` checks sub_plans too. A plan whose top-level entries are all `sub_workflow` with fully-cached children must NOT render "nothing cached" — something IS cached, just one level down.
+- **"Nothing cached" divider**: `_has_any_cached_recursive(entries)` checks sub_plans AND `batch_items_cached > 0`. A plan whose top-level entries are all `sub_workflow` with fully-cached children (or partially-cached batch items) must NOT render "nothing cached."
 - **No redundant "No side effects performed." trailer.** The `--dry-run` flag is the contract; restating it on every plan is noise.
 
 ## WorkflowRunner — Primary Entry Point
@@ -201,7 +226,7 @@ class ExecutionResult:
     def warnings(self) -> list[Diagnostic]: ...
 
 @dataclass(frozen=True)
-class PlanEntry: ...
+class PlanEntry: ...  # Includes batch_count / batch_parallel / batch_items_* for batch sub-workflows
 
 @dataclass(frozen=True)
 class PlanSummary: ...
