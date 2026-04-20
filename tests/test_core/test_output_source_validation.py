@@ -250,5 +250,5 @@ class TestOutputSourceValidation:
         }
 
         errors, _ = split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
-        assert len(errors) >= 1
-        assert any("missing_node" in d.message for d in errors)
+        assert len(errors) == 1
+        assert "missing_node" in errors[0].message

@@ -65,11 +65,17 @@ def visualize(
 
     # Validate (same pipeline as --validate-only)
     runner = WorkflowRunner()
-    vresult = runner.validate(
-        resolved,
-        params={},
-        source_file_path=resolved.file_path,
-    )
+    try:
+        vresult = runner.validate(
+            resolved,
+            params={},
+            source_file_path=resolved.file_path,
+        )
+    except Exception as e:
+        for diagnostic in exception_to_diagnostics(e):
+            click.echo(format_diagnostic(diagnostic), err=True)
+        ctx.exit(1)
+        return
 
     if not vresult.valid:
         from pflow.execution.formatters.validation_formatter import format_validation_failure
