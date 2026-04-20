@@ -1089,7 +1089,6 @@ def _plan_batch_sub_workflow(
     aggregated_plan = _aggregate_batch_child_plans(
         child_plans,
         batch_parallel=batch_config.parallel,
-        batch_count=len(items),
         extra_diagnostics=per_item_diagnostics,
     )
     shared[node_id] = _build_batch_output_shape(item_outputs, items, batch_config)
@@ -1264,8 +1263,7 @@ def _prepare_batch_sub_workflow_params(
         if config.template_config:
             resolved_params, _, _ = resolve_templates(config.template_config, shared, config.node_id)
             merged = dict(getattr(curr, "params", {}) or {})
-            if config.template_config:
-                merged.update(config.template_config.static_params or {})
+            merged.update(config.template_config.static_params or {})
             merged.update(resolved_params)
         else:
             merged = dict(getattr(curr, "params", {}) or {})
@@ -1484,7 +1482,6 @@ def _aggregate_batch_child_plans(
     child_plans: list[Plan],
     *,
     batch_parallel: bool,
-    batch_count: int,
     extra_diagnostics: list[Diagnostic] | None = None,
 ) -> Plan:
     """Collapse N per-item child plans into one display/rollup plan."""

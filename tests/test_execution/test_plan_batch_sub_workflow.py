@@ -317,8 +317,8 @@ def test_aggregate_batch_child_plans_parallel_duration_uses_max() -> None:
         ),
     ]
 
-    parallel = _aggregate_batch_child_plans(child_plans, batch_parallel=True, batch_count=2)
-    sequential = _aggregate_batch_child_plans(child_plans, batch_parallel=False, batch_count=2)
+    parallel = _aggregate_batch_child_plans(child_plans, batch_parallel=True)
+    sequential = _aggregate_batch_child_plans(child_plans, batch_parallel=False)
 
     assert parallel.summary.estimated_duration_ms == 5000.0
     assert parallel.summary.estimated_duration_ms_including_nested == 5000.0
@@ -375,7 +375,7 @@ def test_aggregate_batch_child_plans_sums_costs_without_average_times_count() ->
         ),
     ]
 
-    aggregated = _aggregate_batch_child_plans(child_plans, batch_parallel=False, batch_count=2)
+    aggregated = _aggregate_batch_child_plans(child_plans, batch_parallel=False)
 
     assert aggregated.summary.estimated_cost_usd == 0.40
     assert aggregated.summary.estimated_cost_usd_including_nested == 0.40
