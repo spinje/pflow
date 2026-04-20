@@ -195,7 +195,10 @@ class WorkflowEngine:
         )
         # The trace event was recorded at step 16 with success=True (because
         # is_error_action was False for this custom action). Flip it so trace
-        # and __failures__ agree — see GH #250.
+        # and __failures__ agree — see GH #250. Note: the mutation only sets
+        # success=False + error text; the failure category (FAILURE_CATEGORY_ROUTING)
+        # lives on the __failures__ record set by mark_node_failed above, not on
+        # the trace event itself (events don't carry a category field).
         if self.trace is not None:
             self.trace.mark_last_event_failed(node_id, error=warning_msg)
         return "error"

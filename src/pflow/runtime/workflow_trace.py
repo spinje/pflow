@@ -31,6 +31,12 @@ def final_events_by_node(events: list[dict[str, Any]]) -> dict[str, dict[str, An
 
     Keyed by node_id — batch items (which carry ``index``, not ``node_id``)
     and nested sub-workflow events are intentionally ignored.
+
+    **Assumes ``events`` is in chronological append order** (as produced by
+    ``record_node_execution``). The function takes the LAST occurrence of
+    each node_id as the final state — callers must not pre-sort or merge
+    out-of-order events, or loop-recovery aggregation will silently report
+    the wrong final state.
     """
     final: dict[str, dict[str, Any]] = {}
     for event in events:
@@ -327,17 +333,24 @@ class WorkflowTraceCollector:
                 event["error"] = error
                 return
 
-    def _determine_trace_status(self) -> str:
+    def _determine_trace_status(self, final_events: dict[str, dict[str, Any]] | None = None) -> str:
         """Determine status from per-node final state and warnings.
 
         Uses last-event-per-node_id (via ``final_events_by_node``) so loop
         recovery that ends in success is reported as success — see GH #240.
 
+        Args:
+            final_events: optional pre-computed dict. ``save_to_file`` already
+                computes this to derive ``failed_node_ids`` and passes it in
+                to avoid a second pass over ``self.events``. Callers that
+                don't need the dict elsewhere can omit the argument.
+
         Returns:
             Status string: "success", "degraded", or "failed"
         """
-        failed = any(not e.get("success", True) for e in final_events_by_node(self.events).values())
-        if failed:
+        if final_events is None:
+            final_events = final_events_by_node(self.events)
+        if any(not e.get("success", True) for e in final_events.values()):
             return "failed"
         if self.execution_warnings and any(
             self._warning_changes_status(warning) for warning in self.execution_warnings
@@ -460,15 +473,14 @@ class WorkflowTraceCollector:
         # Calculate total duration
         duration_ms = (datetime.now() - self.start_time).total_seconds() * 1000
 
-        # Determine final status (tri-state: success/degraded/failed)
-        final_status = self._determine_trace_status()
-
-        # Per-node final state — drives nodes_failed and failed_node_ids.
+        # Per-node final state — drives BOTH final_status AND failed_node_ids.
         # Loop recovery: last event per node_id wins (visit 2 success overwrites
         # visit 1 failure) so nodes_failed reflects UNIQUE failed nodes, not
         # total failed invocations. nodes_executed still counts per-visit.
-        # See GH #240.
+        # Computed once and passed to _determine_trace_status so the events
+        # list is walked once per save. See GH #240.
         final_events = final_events_by_node(self.events)
+        final_status = self._determine_trace_status(final_events)
         failed_node_ids = sorted(nid for nid, e in final_events.items() if not e.get("success", True))
 
         # Prepare trace data with format version
