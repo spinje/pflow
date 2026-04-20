@@ -33,7 +33,7 @@ Validate and normalize the source documents.
 docs: list
 focus: str
 
-result = [{"text": d, "focus": focus} for d in docs]
+result: list = [{"text": d, "focus": focus} for d in docs]
 ```
 
 ### analyze-sources
@@ -62,7 +62,7 @@ Merge all source analyses into a unified summary.
 ```python code
 analyses: list
 
-result = {"summary": "Combined analysis", "source_count": len(analyses)}
+result: dict = {"summary": "Combined analysis", "source_count": len(analyses)}
 ```
 
 ### reviews
@@ -103,7 +103,7 @@ Compile the analysis and reviews into a final research report.
 analyses: list
 reviews: list
 
-result = {"report": "Final research report", "analyses": len(analyses), "reviews": len(reviews)}
+result: dict = {"report": "Final research report", "analyses": len(analyses), "reviews": len(reviews)}
 ```
 
 ## Outputs

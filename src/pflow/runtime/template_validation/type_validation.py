@@ -759,7 +759,12 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
     # compiler for code-node annotation introspection.
     import ast as _ast
 
-    from pflow.nodes.python.python_code import extract_code_load_references, extract_top_level_annotations
+    from pflow.nodes.python.python_code import (
+        _extract_annotations,
+        _get_outer_type,
+        extract_code_load_references,
+        extract_top_level_annotations,
+    )
 
     diagnostics: list[Diagnostic] = []
 
@@ -789,6 +794,73 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         # candidate code-node inputs. Using ``_extract_annotations`` here
         # would flag every ``def helper(): y: int = 1`` as an orphan.
         annotations = extract_top_level_annotations(code)
+
+        # Mirror the two prep-time checks in ``python_code.py::prep`` at
+        # validate-time:
+        #   1. Presence: ``result:`` or ``next:`` declared (lines 559-563).
+        #   2. Type: ``next`` (if present) must be annotated as str (lines 566-572).
+        # Walk-mode ``_extract_annotations`` matches runtime's AST walk so
+        # validate-time accepts exactly what runtime's prep accepts — a
+        # ``result:`` declared inside a helper function passes both layers.
+        # Messages are byte-identical so agents see the same wording at both
+        # tiers; runtime retains the checks as defense-in-depth for callers
+        # that bypass validation.
+        #
+        # Out of reach for validate-time: runtime's third gate at exec
+        # (``python_code.py:629-631``, ``if "result" not in namespace``)
+        # catches helper-only ``result:`` annotations that are never bound at
+        # module level. That check requires executing the code.
+        all_annotations = _extract_annotations(code)
+
+        # Check 1: presence
+        if "result" not in all_annotations and "next" not in all_annotations:
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    node_id=node_id,
+                    message=(
+                        "Code must declare result type annotation (result: <type> = ...) "
+                        "or next type annotation (next: str = ...) for routing"
+                    ),
+                    suggestions=[
+                        "Add a result annotation at the top of the code block: result: <type> = ...",
+                        'Or, to route to a downstream node, declare: next: str = "<target-node-id>"',
+                    ],
+                    context={
+                        "category": "validation",
+                        "path": f"nodes[id={node_id}].params.code",
+                        "node_type": "code",
+                        "missing": ["result", "next"],
+                    },
+                    see_also=["code"],
+                )
+            )
+
+        # Check 2: next must be annotated as str
+        if "next" in all_annotations:
+            next_type_str = all_annotations["next"]
+            next_outer_type = _get_outer_type(next_type_str)
+            if next_outer_type is not None and next_outer_type is not str:
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        node_id=node_id,
+                        message=f"'next' must be annotated as str, got {next_type_str}",
+                        suggestions=['Change the annotation: next: str = "<target-node-id>"'],
+                        context={
+                            "category": "validation",
+                            "path": f"nodes[id={node_id}].params.code",
+                            "node_type": "code",
+                            "annotation": next_type_str,
+                            "expected_type": "str",
+                        },
+                        see_also=["code"],
+                    )
+                )
 
         input_keys = set(inputs.keys())
         # `result` / `next` are outputs / routing declarations, not inputs.
