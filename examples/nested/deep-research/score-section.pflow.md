@@ -37,7 +37,7 @@ Normalize scores to a 0-100 scale.
 ```python code
 raw_score: str
 
-result = {"score": 85, "normalized": True}
+result: dict = {"score": 85, "normalized": True}
 ```
 
 ## Outputs

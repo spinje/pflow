@@ -49,7 +49,7 @@ Compile the extraction and scores into a structured analysis.
 sections: str
 scores: dict
 
-result = {"sections": sections, "scores": scores, "compiled": True}
+result: dict = {"sections": sections, "scores": scores, "compiled": True}
 ```
 
 ## Outputs

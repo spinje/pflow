@@ -759,7 +759,11 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
     # compiler for code-node annotation introspection.
     import ast as _ast
 
-    from pflow.nodes.python.python_code import extract_code_load_references, extract_top_level_annotations
+    from pflow.nodes.python.python_code import (
+        _extract_annotations,
+        extract_code_load_references,
+        extract_top_level_annotations,
+    )
 
     diagnostics: list[Diagnostic] = []
 
@@ -789,6 +793,38 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         # candidate code-node inputs. Using ``_extract_annotations`` here
         # would flag every ``def helper(): y: int = 1`` as an orphan.
         annotations = extract_top_level_annotations(code)
+
+        # Mirror the runtime check in ``python_code.py::prep``. Message is
+        # byte-identical so agents see the same wording at validate-time and
+        # runtime. Uses walk-mode ``_extract_annotations`` (not module-level)
+        # so validate-time accepts exactly what runtime accepts — a ``result:``
+        # declared inside a helper function passes both layers. Runtime
+        # retains the check as defense-in-depth for callers that bypass
+        # validation.
+        all_annotations = _extract_annotations(code)
+        if "result" not in all_annotations and "next" not in all_annotations:
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    node_id=node_id,
+                    message=(
+                        "Code must declare result type annotation (result: <type> = ...) "
+                        "or next type annotation (next: str = ...) for routing"
+                    ),
+                    suggestions=[
+                        "Add a result annotation at the top of the code block: result: <type> = ...",
+                        'Or, to route to a downstream node, declare: next: str = "<target-node-id>"',
+                    ],
+                    context={
+                        "category": "validation",
+                        "path": f"nodes[id={node_id}].params.code",
+                        "node_type": "code",
+                        "missing": ["result", "next"],
+                    },
+                )
+            )
 
         input_keys = set(inputs.keys())
         # `result` / `next` are outputs / routing declarations, not inputs.

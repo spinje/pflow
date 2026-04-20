@@ -1522,6 +1522,94 @@ class TestCodeNodeInputAnnotationValidation:
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
         assert not any("no corresponding entry" in d.message for d in errors)
 
+    def test_missing_result_or_next_annotation_fires(self, test_registry):
+        """Code with neither `result:` nor `next:` annotation fails validation.
+
+        Mirrors the runtime ``ValueError`` in ``python_code.py::prep`` so
+        ``--validate-only`` and ``--dry-run`` catch the gap at validate-time
+        with byte-identical wording.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "split",
+                    "type": "code",
+                    "params": {"code": "items = [1, 2, 3]", "inputs": {}},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        missing = [d for d in errors if "Code must declare result type annotation" in d.message]
+        assert len(missing) == 1, [d.message for d in errors]
+
+        diagnostic = missing[0]
+        assert diagnostic.severity == Severity.ERROR
+        assert diagnostic.node_id == "split"
+        # Byte-identical to runtime check in python_code.py::prep.
+        assert diagnostic.message == (
+            "Code must declare result type annotation (result: <type> = ...) "
+            "or next type annotation (next: str = ...) for routing"
+        )
+        assert diagnostic.context["category"] == "validation"
+        assert diagnostic.context["path"] == "nodes[id=split].params.code"
+        assert diagnostic.context["node_type"] == "code"
+        # Programmatic consumers (MCP / JSON output) get a structured signal
+        # of which declarations are missing without parsing the message text.
+        assert diagnostic.context["missing"] == ["result", "next"]
+
+    def test_result_annotation_alone_passes(self, test_registry):
+        """`result:` without `next:` is sufficient — the check is OR, not AND."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "producer",
+                    "type": "code",
+                    "params": {"code": "result: list = [1, 2, 3]", "inputs": {}},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("Code must declare result type annotation" in d.message for d in errors)
+
+    def test_next_annotation_alone_passes(self, test_registry):
+        """`next:` without `result:` is sufficient — dynamic-routing code nodes."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "router",
+                    "type": "code",
+                    "params": {"code": "next: str = 'target'", "inputs": {}},
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("Code must declare result type annotation" in d.message for d in errors)
+
+    def test_result_annotation_inside_helper_function_matches_runtime(self, test_registry):
+        """Presence check uses walk-mode so validate-time matches runtime parity.
+
+        Runtime ``_extract_annotations`` walks into function bodies; the
+        presence gate must accept what runtime accepts. A ``result:``
+        annotation inside a helper function that's then reassigned at
+        module level runs cleanly at runtime and must pass validation too.
+        """
+        code = "def build():\n    result: dict = {'ok': True}\n    return result\n\nresult = build()"
+        workflow_ir = {
+            "nodes": [{"id": "build", "type": "code", "params": {"code": code, "inputs": {}}}],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        assert not any("Code must declare result type annotation" in d.message for d in errors), [
+            d.message for d in errors
+        ]
+
     def test_any_annotation_skips_check(self, test_registry):
         """`x: Any` accepts any upstream type."""
         workflow_ir = {
