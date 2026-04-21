@@ -786,8 +786,13 @@ def _push_batch_warnings(
     """Push warnings for DEGRADED status when batch had issues."""
     empty_indices = _detect_empty_output_items(exec_res, errors)
 
-    # Under --only, empty output is expected — child declared outputs may not
-    # resolve when the targeted node is upstream of the output source.
+    # Under --only, suppress empty-output warnings workflow-wide. The common
+    # case is that the target sub-workflow batch has empty items because the
+    # child's declared outputs couldn't resolve against skipped nodes. A rare
+    # false negative: an upstream batch (not the target) with legitimately
+    # empty items would also have its warning suppressed here. Scoping to the
+    # target subtree requires threading the target node id into the batch
+    # executor; the complexity isn't worth it for a debugging-mode flag.
     only_node = shared.get("__execution__", {}).get("only_node")
     if only_node:
         empty_indices = []

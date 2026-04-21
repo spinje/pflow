@@ -255,20 +255,31 @@ class TestAutoDetectionWarning:
         assert "No outputs declared" in captured.err
         assert "auto-detected key 'result'" in captured.err
 
-    def test_only_node_tries_declared_outputs(self, capsys):
-        """CORRECTNESS: --only still tries declared outputs (engine populates resolvable ones)."""
+    def test_only_node_falls_through_to_auto_detect_when_declared_outputs_unresolvable(self, capsys):
+        """REGRESSION GUARD: --only on a node whose output isn't referenced by any
+        declared output must still emit *something* to stdout via auto-detection.
+
+        Before the fallback was added, the CLI's ``elif`` declared-output branch
+        returned False silently and the ``else`` auto-detect branch was never
+        reached (elif/else are mutually exclusive), leaving stdout empty.
+        """
         from pflow.cli.workflow_output import _handle_text_output
 
+        # --only targeted "upstream" whose stdout is in shared, but the only
+        # declared output sources from "downstream" which didn't execute.
         shared = {
-            "__execution__": {"only_node": "fetch"},
-            "final": "populated value",
+            "__execution__": {"only_node": "upstream"},
+            "upstream": {"stdout": "target-node-value"},
         }
-        workflow_ir = {"outputs": {"final": {"type": "string"}}}
+        workflow_ir = {"outputs": {"final": {"source": "${downstream.stdout}"}}}
         _handle_text_output(shared, output_key=None, workflow_ir=workflow_ir, verbose=False)
 
         captured = capsys.readouterr()
-        assert "populated value" in captured.out
-        assert "Declared outputs skipped" not in captured.err
+        # Auto-detected value MUST reach stdout — this is the silent regression we fix
+        assert "target-node-value" in captured.out
+        # Stderr explains why we fell back, without falsely claiming no outputs were declared
+        assert "Declared outputs unresolvable under --only" in captured.err
+        assert "No outputs declared" not in captured.err
 
     def test_only_node_without_declared_outputs_shows_no_outputs_warning(self, capsys):
         """CORRECTNESS: --only on workflow without outputs falls through to auto-detection."""

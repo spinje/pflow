@@ -158,23 +158,47 @@ def _handle_text_output(
     elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
         if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag, print_flag):
             output_found = True
+        elif shared_storage.get("__execution__", {}).get("only_node"):
+            # --only left every declared output unresolved (the target is
+            # upstream of all output sources). Fall through to auto-detection
+            # so the user sees output from the node they actually targeted,
+            # rather than silent empty stdout.
+            output_found = _emit_auto_detected_output(
+                shared_storage,
+                print_flag,
+                "cli: Declared outputs unresolvable under --only. Showing auto-detected key '{key}'.",
+            )
 
     # Fall back to auto-detect from common keys (using unified function)
     else:
-        from pflow.execution.formatters.output_utils import find_auto_output
-
-        key_found, value = find_auto_output(shared_storage)
-        if key_found:
-            if not print_flag:
-                msg = (
-                    f"cli: No outputs declared — showing auto-detected key '{key_found}'."
-                    " Declare outputs for reliable results."
-                )
-                click.echo(msg, err=True)
-            _output_with_header(value, print_flag)
-            output_found = True
+        output_found = _emit_auto_detected_output(
+            shared_storage,
+            print_flag,
+            "cli: No outputs declared — showing auto-detected key '{key}'. Declare outputs for reliable results.",
+        )
 
     return output_found
+
+
+def _emit_auto_detected_output(
+    shared_storage: dict[str, Any],
+    print_flag: bool,
+    message_template: str,
+) -> bool:
+    """Auto-detect output from shared storage and emit it with a stderr note.
+
+    ``message_template`` must contain ``{key}`` for the detected key name.
+    Returns True if output was emitted.
+    """
+    from pflow.execution.formatters.output_utils import find_auto_output
+
+    key_found, value = find_auto_output(shared_storage)
+    if not key_found:
+        return False
+    if not print_flag:
+        click.echo(message_template.format(key=key_found), err=True)
+    _output_with_header(value, print_flag)
+    return True
 
 
 def _emit_declared_output(
@@ -286,7 +310,13 @@ def _try_declared_outputs(
 
 
 def _populate_declared_outputs_best_effort(shared_storage: dict[str, Any], workflow_ir: dict[str, Any]) -> None:
-    """Best-effort population of declared outputs from source expressions."""
+    """Best-effort population of declared outputs from source expressions.
+
+    Redundant with ``engine._populate_outputs`` for normal CLI runs (engine
+    populates first), but kept as a safety net for callers that bypass the
+    engine path. The second call is idempotent — resolvable outputs already
+    in ``shared_storage`` are overwritten with the same values.
+    """
     from pflow.core.user_errors import OutputResolutionError
     from pflow.runtime.output_resolver import populate_declared_outputs
 
