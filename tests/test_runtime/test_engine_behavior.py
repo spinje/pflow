@@ -20,6 +20,14 @@ class _ActionNode(BaseNode):
         return self.params.get("action", "default")
 
 
+class _OutputNode(BaseNode):
+    """Test node that writes a value to shared and returns a configurable action."""
+
+    def post(self, shared, prep_res, exec_res):
+        shared["result"] = self.params.get("output_value", "hello")
+        return self.params.get("action", "default")
+
+
 class _FlakyLoopNode(BaseNode):
     """Fails on first visit, succeeds on second, writing namespaced output."""
 
@@ -190,13 +198,14 @@ class TestUnmatchedActionWarning:
 
 
 class TestOnlyNodeWithOutputs:
-    """When --only is set, output resolution must be skipped even if
-    the workflow declares outputs. Without this gate, OutputResolutionError
-    would fire for outputs depending on nodes that were skipped.
+    """When --only is set, output resolution attempts to populate all declared
+    outputs but silently skips any that fail to resolve (because the source
+    node was skipped). Outputs whose source templates CAN resolve are populated
+    normally — this is critical for -o and batch sub-workflow results.
     """
 
-    def test_only_node_skips_output_resolution(self):
-        """--only with declared outputs does NOT attempt to resolve them."""
+    def test_only_node_skips_unresolvable_output(self):
+        """--only silently skips outputs whose source depends on a skipped node."""
         node_a = _ActionNode()
         node_a.node_id = "first"
         node_a.set_params({"action": "default"})
@@ -240,8 +249,106 @@ class TestOnlyNodeWithOutputs:
 
         assert result == "default"
         assert shared["__execution__"]["only_node"] == "first"
-        # "result" output should NOT be in shared (resolution was skipped)
+        # "result" output should NOT be in shared (source node was skipped)
         assert "result" not in shared
+
+    def test_only_node_populates_resolvable_outputs(self):
+        """--only populates declared outputs whose source templates can resolve."""
+        node_a = _OutputNode()
+        node_a.node_id = "first"
+        node_a.set_params({"action": "default", "output_value": "hello"})
+
+        node_b = _ActionNode()
+        node_b.node_id = "second"
+        node_b.set_params({"action": "default"})
+
+        node_a >> node_b
+
+        configs = {
+            "first": NodeConfig(
+                node_id="first",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "second": NodeConfig(
+                node_id="second",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(
+            start_node=node_a,
+            node_configs=configs,
+            # Output from FIRST node — resolvable even with --only=first
+            outputs={"output": {"source": "${first.result}"}},
+        )
+
+        shared: dict = {}
+        engine = WorkflowEngine(only_node="first")
+        result = engine.run(workflow, shared)
+
+        assert result == "default"
+        assert shared["__execution__"]["only_node"] == "first"
+        # Output SHOULD be populated — source resolves from the target node
+        assert "output" in shared
+        assert shared["output"] == "hello"
+
+    def test_only_node_partial_output_resolution(self):
+        """--only populates resolvable outputs, silently skips unresolvable ones."""
+        node_a = _OutputNode()
+        node_a.node_id = "first"
+        node_a.set_params({"action": "default", "output_value": "hello"})
+
+        node_b = _OutputNode()
+        node_b.node_id = "second"
+        node_b.set_params({"action": "default", "output_value": "world"})
+
+        node_a >> node_b
+
+        configs = {
+            "first": NodeConfig(
+                node_id="first",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "second": NodeConfig(
+                node_id="second",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(
+            start_node=node_a,
+            node_configs=configs,
+            outputs={
+                "from_first": {"source": "${first.result}"},
+                "from_second": {"source": "${second.result}"},
+            },
+        )
+
+        shared: dict = {}
+        engine = WorkflowEngine(only_node="first")
+        result = engine.run(workflow, shared)
+
+        assert result == "default"
+        # Resolvable output IS populated
+        assert shared["from_first"] == "hello"
+        # Unresolvable output is silently skipped (second didn't run)
+        assert "from_second" not in shared
 
 
 class TestCustomErrorAction:
