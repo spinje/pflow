@@ -33,7 +33,7 @@ Run Options:
 
 Guide Topics:
 
-Load tailored content: `pflow guide <topic>` (combine: `pflow guide core http llm batch`)
+Load tailored content: `pflow guide <topic> <topic>` (prefer combining nodes and features in one command: `pflow guide core http llm batch`)
 
 Nodes:
   http             JSON REST APIs
@@ -58,7 +58,7 @@ Workflow-scoped: `pflow guide ./workflow.pflow.md` auto-detects relevant topics.
 
 When to load the guide:
   Building a new workflow           → `pflow guide core` + relevant node/feature topics
-  Modifying an existing workflow    → `pflow guide ./workflow.pflow.md` (auto-detects topics)
+  Modifying an existing workflow    → `pflow guide core ./workflow.pflow.md` (auto-detects topics)
   Running into errors               → read the error first (includes fix suggestions). For deeper inspection: `pflow report`
 
 All commands support `--help` for detailed usage.
