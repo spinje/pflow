@@ -4,12 +4,9 @@ argument-hint: [description of task]
 ---
 Create a git worktree for pflow development.
 
-**Step 1:** Check the current branch:
-```bash
-git branch --show-current
-```
+!`git branch --show-current`
 
-**Step 2:** Build and run the command:
+Build and run the command:
 ```bash
 uv run pflow git-worktree-task-creator task_description='$ARGUMENTS'
 ```
