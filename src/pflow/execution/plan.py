@@ -44,7 +44,7 @@ from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import resolve_batch_items
-from pflow.runtime.engine.engine import is_clean_termination
+from pflow.runtime.engine.engine import is_clean_termination, parse_only_path
 from pflow.runtime.engine.instrumentation import apply_memo_hit, enforce_loop_guard
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.template_resolution import resolve_templates
@@ -78,6 +78,7 @@ class _WalkerState:
     diagnostics: list[Diagnostic]
     visited_edges: set[tuple[str, str]]
     only_node: str | None
+    child_only_node: str | None
     shared: dict[str, Any]
     registry: Registry
     visited_paths: list[str]
@@ -254,7 +255,9 @@ def _build_plan_with_shared(
     historical cost/duration estimates scoped to the child's workflow_path.
     Cost basis is always `upper_bound` — conservative for cost-gating.
     """
-    _validate_only_target(compiled, only_node, _depth)
+    _validate_only_target(compiled, only_node)
+
+    this_only, child_only = parse_only_path(only_node)
 
     shared = _create_planner_shared(compiled, params, cache, _parent_workflow_file)
     visited_paths = list(_visited_paths) if _visited_paths else []
@@ -270,7 +273,8 @@ def _build_plan_with_shared(
             visited_paths=visited_paths,
             depth=_depth,
             workflow_path=workflow_path,
-            only_node=only_node,
+            only_node=this_only,
+            child_only_node=child_only,
         )
         diagnostics: list[Diagnostic] = []
         for entry in entries:
@@ -294,7 +298,8 @@ def _build_plan_with_shared(
         entries=[],
         diagnostics=[],
         visited_edges=set(),
-        only_node=only_node,
+        only_node=this_only,
+        child_only_node=child_only,
         workflow_path=workflow_path,
         shared=shared,
         registry=registry,
@@ -312,6 +317,7 @@ def _build_plan_with_shared(
 
         enforce_loop_guard(node_id, shared)
 
+        target_child_only = child_only if (this_only is not None and node_id == this_only) else None
         entry = _plan_one_node(
             curr,
             config,
@@ -320,6 +326,7 @@ def _build_plan_with_shared(
             registry,
             visited_paths=visited_paths,
             depth=_depth,
+            child_only_node=target_child_only,
         )
         state.entries.append(entry)
         if entry.sub_plan is not None:
@@ -396,6 +403,7 @@ def _apply_boundary(
         visited_nodes={e.node_id for e in state.entries if e.sub_plan is None},
         visited_edges=state.visited_edges,
         only_node=state.only_node,
+        child_only_node=state.child_only_node,
         workflow_path=state.workflow_path,
         shared=state.shared,
         registry=state.registry,
@@ -428,17 +436,29 @@ def _apply_follow(
     return curr.successors.get(action)
 
 
-def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None, depth: int) -> None:
-    """Hard-error when --only names a node that doesn't exist (top level only)."""
-    if only_node is None or depth != 0 or only_node in compiled.node_configs:
+def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None) -> None:
+    """Hard-error when --only names a node that doesn't exist or dotted path targets a non-workflow."""
+    this_only, child_only = parse_only_path(only_node)
+    if this_only is None:
         return
-    available = sorted(compiled.node_configs.keys())
-    raise CompilationError(
-        f"Node '{only_node}' not found",
-        phase="only_node_resolution",
-        details={"available_nodes": available},
-        suggestion=f"Available nodes: {', '.join(available)}",
-    )
+    if this_only not in compiled.node_configs:
+        available = sorted(compiled.node_configs.keys())
+        raise CompilationError(
+            f"Node '{this_only}' not found",
+            phase="only_node_resolution",
+            details={"available_nodes": available},
+            suggestion=f"Available nodes: {', '.join(available)}",
+        )
+    if child_only:
+        target_config = compiled.node_configs[this_only]
+        if target_config.node_type_name != "WorkflowExecutor":
+            raise CompilationError(
+                f"Node '{this_only}' is not a sub-workflow",
+                phase="only_node_resolution",
+                details={"node_type": target_config.node_type_name},
+                suggestion=f"Cannot use dotted path '{only_node}' — "
+                f"'{this_only}' is a {target_config.node_type_name}, not a sub-workflow.",
+            )
 
 
 def _create_planner_shared(
@@ -510,6 +530,7 @@ def _bfs_downstream(
     visited_nodes: set[str],
     visited_edges: set[tuple[str, str]],
     only_node: str | None,
+    child_only_node: str | None = None,
     workflow_path: str | None = None,
     shared: dict[str, Any],
     registry: Registry,
@@ -536,6 +557,7 @@ def _bfs_downstream(
         visited_nodes=visited_nodes,
         visited_edges=visited_edges,
         only_node=only_node,
+        child_only_node=child_only_node,
         workflow_path=workflow_path,
         shared=shared,
         registry=registry,
@@ -556,6 +578,7 @@ def _bfs_from_start(
     depth: int,
     workflow_path: str | None,
     only_node: str | None,
+    child_only_node: str | None = None,
 ) -> tuple[list[PlanEntry], bool]:
     """BFS over the entire graph from the start node, every entry downstream.
 
@@ -573,6 +596,7 @@ def _bfs_from_start(
         visited_nodes=set(),
         visited_edges=set(),
         only_node=only_node,
+        child_only_node=child_only_node,
         workflow_path=workflow_path,
         shared=shared,
         registry=registry,
@@ -589,6 +613,7 @@ def _bfs_walk(
     visited_nodes: set[str],
     visited_edges: set[tuple[str, str]],
     only_node: str | None,
+    child_only_node: str | None = None,
     workflow_path: str | None,
     shared: dict[str, Any],
     registry: Registry,
@@ -613,6 +638,8 @@ def _bfs_walk(
 
     while queue:
         node = queue.popleft()
+        node_id = getattr(node, "node_id", None)
+        target_child = child_only_node if (only_node and node_id == only_node) else None
         entry = _make_downstream_entry(
             node,
             compiled,
@@ -623,6 +650,7 @@ def _bfs_walk(
             registry=registry,
             visited_paths=visited_paths,
             depth=depth,
+            child_only_node=target_child,
         )
         if entry is None:
             continue
@@ -664,6 +692,7 @@ def _make_downstream_entry(
     registry: Registry,
     visited_paths: list[str],
     depth: int,
+    child_only_node: str | None = None,
 ) -> PlanEntry | None:
     """Build a downstream PlanEntry for a BFS-discovered node, or None to skip it.
 
@@ -696,6 +725,7 @@ def _make_downstream_entry(
             visited_paths=visited_paths,
             depth=depth,
             cause="downstream",
+            child_only_node=child_only_node,
         )
 
     return _execute_entry(config, cache, cause="downstream", workflow_path=workflow_path)
@@ -739,6 +769,7 @@ def _plan_one_node(
     *,
     visited_paths: list[str],
     depth: int,
+    child_only_node: str | None = None,
 ) -> PlanEntry:
     """Plan a single node, dispatching on WorkflowExecutor vs standard."""
     if config.node_type_name == "WorkflowExecutor":
@@ -750,6 +781,7 @@ def _plan_one_node(
             registry,
             visited_paths=visited_paths,
             depth=depth,
+            child_only_node=child_only_node,
         )
     return _plan_standard_node(curr, config, shared, cache)
 
@@ -939,6 +971,7 @@ def _plan_sub_workflow(
     visited_paths: list[str],
     depth: int,
     cause: Literal["no_cache_match", "downstream"] = "no_cache_match",
+    child_only_node: str | None = None,
 ) -> PlanEntry:
     """Compile and recursively plan a nested workflow.
 
@@ -965,6 +998,7 @@ def _plan_sub_workflow(
             registry,
             visited_paths=visited_paths,
             depth=depth,
+            child_only_node=child_only_node,
         )
 
     guard_entry = _precheck_sub_workflow(curr, config, depth=depth)
@@ -995,6 +1029,7 @@ def _plan_sub_workflow(
         cache,
         registry,
         workflow_name=str(prepared.merged.get("workflow") or "<sub-workflow>"),
+        only_node=child_only_node,
         _visited_paths=[*visited_paths, prepared.resolved_path_str] if prepared.resolved_path_str else visited_paths,
         _depth=depth + 1,
         _parent_workflow_file=prepared.resolved_path_str,
@@ -1037,6 +1072,7 @@ def _plan_batch_sub_workflow(
     *,
     visited_paths: list[str],
     depth: int,
+    child_only_node: str | None = None,
 ) -> PlanEntry:
     """Plan a batch WorkflowExecutor by recursively planning one child per item."""
     node_id = config.node_id
@@ -1072,6 +1108,7 @@ def _plan_batch_sub_workflow(
             batch_config=batch_config,
             visited_paths=visited_paths,
             depth=depth,
+            child_only_node=child_only_node,
         )
     else:
         params_or_entry = _prepare_batch_sub_workflow_params(curr, config, shared, items, batch_config)
@@ -1101,6 +1138,7 @@ def _plan_batch_sub_workflow(
             depth=depth,
             visited_paths=visited_paths,
             node_id=node_id,
+            child_only_node=child_only_node,
         )
 
     aggregated_plan = _aggregate_batch_child_plans(
@@ -1371,6 +1409,7 @@ def _plan_batch_sub_workflow_items(
     depth: int,
     visited_paths: list[str],
     node_id: str,
+    child_only_node: str | None = None,
 ) -> tuple[list[Plan], list[dict[str, Any]], list[Diagnostic]]:
     """Plan each batch item's child workflow and collect exposed outputs."""
     child_plans: list[Plan] = []
@@ -1398,6 +1437,7 @@ def _plan_batch_sub_workflow_items(
             cache,
             registry,
             workflow_name=child_workflow_name,
+            only_node=child_only_node,
             _visited_paths=child_visited_paths,
             _depth=depth + 1,
             _parent_workflow_file=prepared.resolved_path_str,
@@ -1422,6 +1462,7 @@ def _plan_heterogeneous_batch_items(
     batch_config: BatchConfig,
     visited_paths: list[str],
     depth: int,
+    child_only_node: str | None = None,
 ) -> tuple[list[Plan], list[dict[str, Any]], list[Diagnostic]]:
     """Plan a batch where each item may reference a different child workflow.
 
@@ -1505,6 +1546,7 @@ def _plan_heterogeneous_batch_items(
             cache,
             registry,
             workflow_name=str(prepared.merged.get("workflow") or "<sub-workflow>"),
+            only_node=child_only_node,
             _visited_paths=child_visited,
             _depth=depth + 1,
             _parent_workflow_file=prepared.resolved_path_str,

@@ -165,10 +165,14 @@ def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> No
 def _echo_target_node_path(ctx: click.Context, report_dir: Path, events: list[dict[str, Any]], only_node: str) -> None:
     """Display the --only target node's report file path."""
     from pflow.core.trace_report import _safe_name
+    from pflow.runtime.engine.engine import parse_only_path
 
+    this_only, _ = parse_only_path(only_node)
+    if this_only is None:
+        return
     for i, event in enumerate(events, 1):
-        if event.get("node_id") == only_node:
-            safe_id = _safe_name(only_node)
+        if event.get("node_id") == this_only:
+            safe_id = _safe_name(this_only)
             prefix = f"{i:02d}"
             is_container = event.get("batch_items") or event.get("sub_workflow_events")
             target = (
@@ -816,7 +820,10 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
 @click.option("--dry-run", "dry_run", is_flag=True, help="Build execution plan without invoking side effects")
 @click.option("--cache/--no-cache", default=True, help="Enable/disable memoization cache (default: enabled)")
 @click.option(
-    "--only", "only_node", default=None, help="Run workflow through this node then stop (caching still applies)"
+    "--only",
+    "only_node",
+    default=None,
+    help="Run through this node then stop. Use dotted paths for sub-workflows: --only sub-wf.inner-node",
 )
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def run(

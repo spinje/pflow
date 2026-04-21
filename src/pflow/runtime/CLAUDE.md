@@ -150,7 +150,7 @@ shared["__execution__"] = {
     "node_hashes": {},         # MD5 config hashes for cache validation
     "failed_node": None,       # Node that caused workflow failure
     "node_visit_counts": {},   # Per-node visit counter (loop guard)
-    "only_node": None,         # --only target node ID (set by engine)
+    "only_node": None,         # --only target (full dotted path if nested, set by engine)
 }
 
 # Failure archive (managed by runtime/node_state.py::mark_node_failed)
@@ -177,6 +177,9 @@ shared["__index__"] = int                 # 0-based batch item index
 shared["_pflow_depth"] = int
 shared["_pflow_stack"] = list[str]
 shared["_pflow_workflow_file"] = str
+shared["_pflow_child_only_node"] = str   # Transient: remaining dotted --only path for child engine.
+                                         # Written by engine before target sub-workflow, read+consumed
+                                         # by WorkflowExecutor.exec(), cleaned up by engine after.
 ```
 
 ## Critical Behaviors

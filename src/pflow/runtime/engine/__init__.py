@@ -5,7 +5,7 @@ with direct orchestration. The engine walks the node graph and handles all
 runtime concerns sequentially per node.
 """
 
-from .engine import WorkflowEngine
+from .engine import WorkflowEngine, parse_only_path
 from .plan_node import NodePlan, plan_node
 from .types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
 
@@ -16,5 +16,6 @@ __all__ = [
     "NodePlan",
     "TemplateConfig",
     "WorkflowEngine",
+    "parse_only_path",
     "plan_node",
 ]
