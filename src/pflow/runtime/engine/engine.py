@@ -60,17 +60,23 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 }
 
 
-def parse_only_path(only_node: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:
     """Split a dotted ``--only`` path into (this_level, child_level).
 
     ``'a.b.c'`` → ``('a', 'b.c')``.  No dots → ``(value, None)``.
     ``None`` → ``(None, None)``.
 
     Raises ``CompilationError`` on malformed paths (empty segments from
-    leading/trailing dots like ``'.b'`` or ``'a.'``).
+    leading/trailing dots like ``'.b'``, ``'a.'``, or ``'a..b'``).
     """
     if only_node is None or "." not in only_node:
         return only_node, None
+    if ".." in only_node:
+        raise CompilationError(
+            f"Invalid --only path: '{only_node}' contains an empty segment",
+            phase="only_node_resolution",
+            suggestion="Use 'parent-node.child-node' format, e.g. '--only my-workflow.target-step'.",
+        )
     first, remaining = only_node.split(".", 1)
     if not first or not remaining:
         raise CompilationError(
@@ -134,6 +140,22 @@ class WorkflowEngine:
                     f"'{this_only}' is a {target_config.node_type_name}, not a sub-workflow.",
                 )
 
+    def _run_node_with_child_only(
+        self, node: Any, config: NodeConfig, shared: dict[str, Any], child_only: str | None
+    ) -> str:
+        """Execute a node, injecting ``_pflow_child_only_node`` for sub-workflow targeting.
+
+        The key is written before and cleaned up after execution (including on
+        exception) so it never leaks into ``shared_after``.
+        """
+        if child_only:
+            shared["_pflow_child_only_node"] = child_only
+        try:
+            return self._execute_node(node, config, shared)
+        finally:
+            if child_only:
+                shared.pop("_pflow_child_only_node", None)
+
     def run(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
         """Execute a compiled workflow. Returns action string."""
         this_only, child_only = parse_only_path(self.only_node)
@@ -159,15 +181,12 @@ class WorkflowEngine:
                 )
 
             config = workflow.node_configs[node_id]
+            is_only_target = this_only is not None and node_id == this_only
 
-            if child_only and node_id == this_only:
-                shared["_pflow_child_only_node"] = child_only
-
-            last_action = self._execute_node(curr, config, shared)
+            last_action = self._run_node_with_child_only(curr, config, shared, child_only if is_only_target else None)
 
             # --only: stop after target node
-            if this_only and node_id == this_only:
-                shared.pop("_pflow_child_only_node", None)
+            if is_only_target:
                 if "__execution__" in shared:
                     shared["__execution__"]["only_node"] = self.only_node
                 break

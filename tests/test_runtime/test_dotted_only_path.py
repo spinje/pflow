@@ -87,6 +87,11 @@ class TestParseOnlyPath:
         with pytest.raises(CompilationError, match="empty segment"):
             parse_only_path(".")
 
+    def test_consecutive_dots_raises(self) -> None:
+        """``a..b`` is caught early with the full original path in the error."""
+        with pytest.raises(CompilationError, match="a\\.\\.b"):
+            parse_only_path("a..b")
+
 
 # ---------------------------------------------------------------------------
 # 2. Engine validation tests
@@ -233,6 +238,28 @@ class TestDottedOnlyIntegration:
         config = RunnerConfig(only_node="step-b.child-first")
         result = runner.run(str(parent_path), {}, config)
 
+        assert "_pflow_child_only_node" not in result.shared_after
+
+    def test_dotted_only_cleans_up_key_on_child_failure(self, tmp_path: Path) -> None:
+        """``_pflow_child_only_node`` must not leak into shared_after when the child fails."""
+        broken_child = tmp_path / "broken-child.pflow.md"
+        broken_child.write_text(
+            "# Broken Child\n\nA child that fails.\n\n## Steps\n\n"
+            "### child-first\n\nFails immediately.\n\n- type: shell\n- command: exit 1\n\n"
+            "### child-second\n\nNever reached.\n\n- type: shell\n- command: echo unreachable\n"
+        )
+        parent = tmp_path / "parent.pflow.md"
+        parent.write_text(
+            "# Parent\n\nParent workflow.\n\n## Steps\n\n"
+            "### step-a\n\nFirst step.\n\n- type: shell\n- command: echo ok\n\n"
+            f"### step-b\n\nSub-workflow.\n\n- type: workflow\n- workflow: {broken_child}\n\n"
+            "### step-c\n\nLast step.\n\n- type: shell\n- command: echo done\n"
+        )
+
+        runner = WorkflowRunner()
+        result = runner.run(str(parent), {}, RunnerConfig(only_node="step-b.child-first"))
+
+        assert not result.success
         assert "_pflow_child_only_node" not in result.shared_after
 
 
