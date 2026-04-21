@@ -786,6 +786,12 @@ def _push_batch_warnings(
     """Push warnings for DEGRADED status when batch had issues."""
     empty_indices = _detect_empty_output_items(exec_res, errors)
 
+    # Under --only, empty output is expected — child declared outputs may not
+    # resolve when the targeted node is upstream of the output source.
+    only_node = shared.get("__execution__", {}).get("only_node")
+    if only_node:
+        empty_indices = []
+
     warning_parts: list[str] = []
     if not exec_res:
         warning_parts.append("0 items to process (input list was empty)")

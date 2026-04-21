@@ -2845,3 +2845,25 @@ class TestEmptyOutputWarnings:
 
         assert "test_node" in shared.get("__warnings__", {})
         assert "0 items" in shared["__warnings__"]["test_node"]
+
+    def test_only_node_suppresses_empty_output_warning(self):
+        """Under --only, empty output is expected and should not trigger a warning."""
+
+        class EmptyOutputNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                shared[self.node_id] = {"item": shared.get("item", "")}
+                return "default"
+
+        inner = EmptyOutputNode("test_node")
+        shared: dict = {
+            "data": ["a", "b"],
+            "__execution__": {"only_node": "parent.child"},
+        }
+
+        _run_batch(inner, shared)
+
+        warnings = shared.get("__warnings__", {})
+        assert "empty output" not in str(warnings)

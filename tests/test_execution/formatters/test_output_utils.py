@@ -242,12 +242,7 @@ class TestFindAutoOutput:
 
 
 class TestAutoDetectionWarning:
-    """Tests for the CLI warning messages when auto-detection is used.
-
-    The warning distinguishes between two cases:
-    1. No declared outputs — "No outputs declared"
-    2. --only active — "Declared outputs skipped (--only)"
-    """
+    """Tests for the CLI warning messages when auto-detection is used."""
 
     def test_no_declared_outputs_warning(self, capsys):
         """CORRECTNESS: Warning says 'No outputs declared' when workflow has no outputs."""
@@ -260,29 +255,23 @@ class TestAutoDetectionWarning:
         assert "No outputs declared" in captured.err
         assert "auto-detected key 'result'" in captured.err
 
-    def test_only_node_warning(self, capsys):
-        """CORRECTNESS: Warning says 'Declared outputs skipped' when --only is active."""
+    def test_only_node_tries_declared_outputs(self, capsys):
+        """CORRECTNESS: --only still tries declared outputs (engine populates resolvable ones)."""
         from pflow.cli.workflow_output import _handle_text_output
 
         shared = {
             "__execution__": {"only_node": "fetch"},
-            "result": "some value",
+            "final": "populated value",
         }
-        # workflow_ir has outputs, but --only skips them (condition at line 154)
         workflow_ir = {"outputs": {"final": {"type": "string"}}}
         _handle_text_output(shared, output_key=None, workflow_ir=workflow_ir, verbose=False)
 
         captured = capsys.readouterr()
-        assert "Declared outputs skipped (--only)" in captured.err
-        assert "auto-detected key 'result'" in captured.err
+        assert "populated value" in captured.out
+        assert "Declared outputs skipped" not in captured.err
 
     def test_only_node_without_declared_outputs_shows_no_outputs_warning(self, capsys):
-        """CORRECTNESS: --only on workflow without outputs section says 'No outputs declared'.
-
-        Bug caught in review: the else branch triggers for both 'no declared outputs'
-        and '--only with declared outputs'. Without checking has_declared_outputs,
-        --only on a workflow without outputs: would incorrectly say 'Declared outputs skipped'.
-        """
+        """CORRECTNESS: --only on workflow without outputs falls through to auto-detection."""
         from pflow.cli.workflow_output import _handle_text_output
 
         shared = {

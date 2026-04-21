@@ -153,14 +153,9 @@ def _handle_text_output(
             if not print_flag:
                 click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
 
-    # Check workflow-declared outputs (skip when --only is active — declared outputs
-    # reference downstream nodes that didn't execute; use auto-detection instead)
-    elif (
-        workflow_ir
-        and "outputs" in workflow_ir
-        and workflow_ir["outputs"]
-        and not shared_storage.get("__execution__", {}).get("only_node")
-    ):
+    # Check workflow-declared outputs (resolvable outputs are populated by the
+    # engine even under --only; _try_declared_outputs handles partial availability)
+    elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
         if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag, print_flag):
             output_found = True
 
@@ -171,15 +166,10 @@ def _handle_text_output(
         key_found, value = find_auto_output(shared_storage)
         if key_found:
             if not print_flag:
-                only_node = shared_storage.get("__execution__", {}).get("only_node")
-                has_declared_outputs = workflow_ir and workflow_ir.get("outputs")
-                if only_node and has_declared_outputs:
-                    msg = f"cli: Declared outputs skipped (--only). Showing auto-detected key '{key_found}'."
-                else:
-                    msg = (
-                        f"cli: No outputs declared — showing auto-detected key '{key_found}'."
-                        " Declare outputs for reliable results."
-                    )
+                msg = (
+                    f"cli: No outputs declared — showing auto-detected key '{key_found}'."
+                    " Declare outputs for reliable results."
+                )
                 click.echo(msg, err=True)
             _output_with_header(value, print_flag)
             output_found = True
@@ -303,10 +293,12 @@ def _populate_declared_outputs_best_effort(shared_storage: dict[str, Any], workf
     try:
         populate_declared_outputs(shared_storage, workflow_ir)
     except OutputResolutionError as e:
-        from pflow.core.diagnostic import exception_to_diagnostics
+        only_node = shared_storage.get("__execution__", {}).get("only_node")
+        if not only_node:
+            from pflow.core.diagnostic import exception_to_diagnostics
 
-        for d in exception_to_diagnostics(e):
-            click.echo(format_diagnostic(d), err=True)
+            for d in exception_to_diagnostics(e):
+                click.echo(format_diagnostic(d), err=True)
     except Exception:  # noqa: S110
         pass  # Best-effort: non-diagnostic errors silently ignored
 

@@ -337,3 +337,101 @@ class TestDottedOnlyPlanner:
 
         with pytest.raises(CompilationError, match="not a sub-workflow"):
             WorkflowRunner().plan(str(parent_path), {}, RunnerConfig(only_node="step-a.foo"))
+
+
+# ---------------------------------------------------------------------------
+# 5. Dotted --only with batch sub-workflow output population (GH #342)
+# ---------------------------------------------------------------------------
+
+
+class TestDottedOnlyOutputPopulation:
+    """Dotted --only on a batch sub-workflow must populate child declared
+    outputs in batch result items.
+
+    GH #342: before the fix, ``populate_declared_outputs`` was skipped when
+    ``--only`` was active, so child declared outputs never appeared in the
+    batch results — downstream nodes referencing ``${batch-node.results}``
+    would find items without the expected output keys.
+    """
+
+    def test_batch_subworkflow_only_populates_declared_outputs(self, tmp_path: Path) -> None:
+        """``--only process-all.echo`` must produce batch results that include
+        the child's declared output ``result``."""
+        # --- child workflow: echo input text, declare "result" output ---
+        child_path = tmp_path / "child.pflow.md"
+        child_ir = {
+            "inputs": {
+                "text": {"type": "string", "description": "The text to echo"},
+            },
+            "outputs": {
+                "result": {"source": "${echo.stdout}", "description": "The echoed text"},
+            },
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "shell",
+                    "purpose": "Echo the input text back",
+                    "params": {"command": 'echo "${text}"'},
+                },
+            ],
+        }
+        write_workflow_file(child_ir, child_path)
+
+        # --- parent workflow: batch over items calling child, plus downstream ---
+        parent_path = tmp_path / "parent.pflow.md"
+        parent_ir = {
+            "inputs": {
+                "messages": {"type": "array", "description": "List of messages to process"},
+            },
+            "nodes": [
+                {
+                    "id": "process-all",
+                    "type": "workflow",
+                    "purpose": "Process each message through child workflow",
+                    "params": {
+                        "workflow": str(child_path),
+                        "inputs": {"text": "${item}"},
+                    },
+                    "batch": {
+                        "items": "${messages}",
+                    },
+                },
+                {
+                    "id": "count",
+                    "type": "shell",
+                    "purpose": "Count processed messages from batch output",
+                    "params": {"command": 'echo "Done: ${process-all.count}"'},
+                },
+            ],
+            "edges": [{"from": "process-all", "to": "count"}],
+        }
+        write_workflow_file(parent_ir, parent_path)
+
+        # --- run with dotted --only targeting child node inside batch ---
+        config = RunnerConfig(only_node="process-all.echo")
+        result = WorkflowRunner().run(
+            str(parent_path),
+            params={"messages": ["hello", "world"]},
+            config=config,
+        )
+
+        assert result.success is True
+        shared = result.shared_after
+
+        # The batch node executed
+        assert "process-all" in shared, "batch node 'process-all' should be in shared"
+
+        # Each batch result item contains the child's declared output
+        batch_output = shared["process-all"]
+        results = batch_output["results"]
+        assert len(results) == 2
+
+        # THIS is the #342 fix verification — "result" comes from
+        # populate_declared_outputs running even under --only
+        for item in results:
+            assert "result" in item, f"Child declared output 'result' missing from batch item: {item}"
+        assert results[0]["result"] == "hello"
+        assert results[1]["result"] == "world"
+
+        # Downstream "count" should NOT have executed (--only stops at process-all)
+        assert "count" not in shared, "downstream 'count' should not execute under --only"

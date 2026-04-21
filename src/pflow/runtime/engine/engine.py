@@ -199,13 +199,31 @@ class WorkflowEngine:
             curr = nxt
 
         # 3. Populate declared outputs
-        is_error = last_action and isinstance(last_action, str) and str(last_action).startswith("error")
-        if workflow.outputs and not is_error and not self.only_node:
-            from pflow.runtime.output_resolver import populate_declared_outputs
-
-            populate_declared_outputs(shared, {"outputs": workflow.outputs})
+        self._populate_outputs(workflow, shared, last_action)
 
         return str(last_action) if last_action else "default"
+
+    def _populate_outputs(self, workflow: CompiledWorkflow, shared: dict[str, Any], last_action: Optional[str]) -> None:
+        """Resolve declared workflow outputs into the shared store.
+
+        Under ``--only``, outputs whose source templates cannot resolve (because
+        the source node was skipped) are silently ignored — the resolver writes
+        each successful resolution to ``shared`` during iteration before raising
+        ``OutputResolutionError`` for failures.  Non-``--only`` runs re-raise
+        so the user sees the full error.
+        """
+        is_error = last_action and isinstance(last_action, str) and str(last_action).startswith("error")
+        if not workflow.outputs or is_error:
+            return
+
+        from pflow.core.user_errors import OutputResolutionError
+        from pflow.runtime.output_resolver import populate_declared_outputs
+
+        try:
+            populate_declared_outputs(shared, {"outputs": workflow.outputs})
+        except OutputResolutionError:
+            if not self.only_node:
+                raise
 
     def _handle_no_successor(
         self, last_action: Optional[str], node_id: str, curr: Any, shared: dict[str, Any]
@@ -275,6 +293,8 @@ class WorkflowEngine:
 
         # 2. Execution state
         initialize_execution_state(shared)
+        if self.only_node:
+            shared["__execution__"]["only_node"] = self.only_node
 
         # 3. Loop guard
         enforce_loop_guard(config.node_id, shared)
