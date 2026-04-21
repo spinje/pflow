@@ -158,9 +158,16 @@ def _collect_outputs(
         # Auto-detect output (handles both --only and no-declared-outputs cases).
         # find_auto_output is namespace-aware: looks inside node namespace dicts
         # for common output keys, so it finds the target node's stdout/result/response.
+        # Under --only, pass the target's root segment as preferred_key so the
+        # user's explicit target wins over unrelated resolved declared outputs
+        # at root (GH #344).
         from pflow.execution.formatters.output_utils import find_auto_output
 
-        key_found, value = find_auto_output(shared_storage)
+        # Only dotted --only passes preferred_key — flat --only relies on
+        # priority-key unwrap for clean scalar output from leaf nodes.
+        only_node = shared_storage.get("__execution__", {}).get("only_node")
+        preferred_key = only_node.split(".", 1)[0] if isinstance(only_node, str) and "." in only_node else None
+        key_found, value = find_auto_output(shared_storage, preferred_key=preferred_key)
         if key_found:
             result[key_found] = parse_json_or_original(value)
 

@@ -233,6 +233,60 @@ class TestFindAutoOutput:
         assert key == "result"
         assert value is False
 
+    def test_preferred_key_wins_over_priority_keys_at_root(self):
+        """GH #344 regression guard: preferred_key beats priority-key match at root.
+
+        When the user explicitly targets a node via --only, the engine's
+        resolved declared outputs may land at root with a priority-key name
+        (e.g. 'result') from an UNRELATED upstream node. Without
+        preferred_key, find_auto_output returns that unrelated value;
+        with it, the user's target wins.
+        """
+        shared = {
+            # Unrelated upstream declared output at root — priority search would win this
+            "result": ["unrelated", "upstream", "data"],
+            # User's actual target — batch node's output namespace
+            "process-all": {"results": [{"result": "hello"}, {"result": "world"}], "count": 2},
+        }
+        key, value = find_auto_output(shared, preferred_key="process-all")
+        assert key == "process-all"
+        assert value == {"results": [{"result": "hello"}, {"result": "world"}], "count": 2}
+
+    def test_preferred_key_missing_falls_to_priority_search(self):
+        """preferred_key pointing to a missing key falls through to priority search."""
+        shared = {"result": "priority value"}
+        key, value = find_auto_output(shared, preferred_key="nonexistent")
+        assert key == "result"
+        assert value == "priority value"
+
+    def test_preferred_key_invalid_value_falls_to_priority_search(self):
+        """preferred_key pointing to None/empty falls through to priority search."""
+        shared = {
+            "target": None,
+            "result": "priority value",
+        }
+        key, value = find_auto_output(shared, preferred_key="target")
+        assert key == "result"
+        assert value == "priority value"
+
+    def test_preferred_key_none_preserves_default_behavior(self):
+        """preferred_key=None (default) behaves exactly like no preferred_key."""
+        shared = {"result": "R", "response": "S"}
+        key_no, value_no = find_auto_output(shared)
+        key_none, value_none = find_auto_output(shared, preferred_key=None)
+        assert (key_no, value_no) == (key_none, value_none)
+        assert key_no == "result"
+
+    def test_preferred_key_dict_value_is_returned(self):
+        """preferred_key works for dict values (common case: batch node namespace)."""
+        shared = {
+            "result": "scalar",
+            "batch-node": {"results": [1, 2, 3], "count": 3},
+        }
+        key, value = find_auto_output(shared, preferred_key="batch-node")
+        assert key == "batch-node"
+        assert value == {"results": [1, 2, 3], "count": 3}
+
     def test_dict_value_at_root_is_returned(self):
         """Dict values at root level are valid outputs (not just namespaces)."""
         shared = {"result": {"key": "value"}}
@@ -277,9 +331,55 @@ class TestAutoDetectionWarning:
         captured = capsys.readouterr()
         # Auto-detected value MUST reach stdout — this is the silent regression we fix
         assert "target-node-value" in captured.out
-        # Stderr explains why we fell back, without falsely claiming no outputs were declared
-        assert "Declared outputs unresolvable under --only" in captured.err
+        # No noisy stderr note — the --only indicator line already establishes context
+        assert "Declared outputs unresolvable" not in captured.err
         assert "No outputs declared" not in captured.err
+
+    def test_dotted_only_prefers_target_namespace_over_shadowing_declared_output(self, capsys):
+        """GH #344 regression guard: dotted --only on a batch sub-workflow must
+        emit the target's namespace, even when a parent-level declared output
+        resolved to a priority-key name at root.
+
+        Setup mirrors the real lyrics-generator case: the parent has two
+        declared outputs. The first (becomes stdout target) references a
+        downstream node and fails to resolve under --only. The second is
+        named 'result' and references an upstream node that DID run, so it
+        resolves at root. Without preferred_key, find_auto_output's priority
+        search returns the unrelated 'result' value instead of the user's
+        actual target (the batch namespace).
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "process-all.echo"},
+            # Unrelated upstream declared output that resolved at root (shadowing)
+            "result": ["upstream", "data", "NOT", "what", "user", "wants"],
+            # Target: the batch node's namespace — what the user actually wants to see
+            "process-all": {
+                "results": [
+                    {"result": "hello", "item": "hello"},
+                    {"result": "world", "item": "world"},
+                ],
+                "count": 2,
+            },
+        }
+        workflow_ir = {
+            "outputs": {
+                # First = stdout target, references downstream → won't resolve
+                "downstream_summary": {"source": "${count.stdout}"},
+                # Second = resolves, shadows batch namespace in priority search
+                "result": {"source": "${upstream.stdout}"},
+            }
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir=workflow_ir, verbose=False)
+
+        captured = capsys.readouterr()
+        # Target namespace MUST reach stdout — the batch namespace, not the shadowing value
+        assert '"count": 2' in captured.out  # batch namespace structure
+        # Critically: the shadowing value MUST NOT reach stdout
+        assert "NOT" not in captured.out
+        # No noisy stderr note under --only — the --only indicator already establishes context
+        assert "Declared outputs unresolvable" not in captured.err
 
     def test_only_node_without_declared_outputs_shows_no_outputs_warning(self, capsys):
         """CORRECTNESS: --only on workflow without outputs falls through to auto-detection."""
