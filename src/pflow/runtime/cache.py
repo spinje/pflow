@@ -339,7 +339,7 @@ class MemoizationCache:
         try:
             # Serialize and compress output (use default=str for non-JSON types,
             # NOT _make_serializable which mangles __dunder__ key values)
-            output_json = json.dumps(output, sort_keys=True, default=str)
+            output_json = json.dumps(output, default=str)
             output_blob = zlib.compress(output_json.encode())
             output_hash = hashlib.md5(output_json.encode()).hexdigest()  # noqa: S324
 

@@ -1045,9 +1045,10 @@ def _plan_batch_sub_workflow(
     if batch_config is None:
         return _sub_workflow_error_entry(node_id, node_type, "Batch sub-workflow planning requires batch config")
 
-    guard_entry = _precheck_sub_workflow(curr, config, depth=depth)
-    if guard_entry is not None:
-        return guard_entry
+    if depth >= WorkflowExecutor.MAX_DEPTH_DEFAULT:
+        return _sub_workflow_error_entry(
+            node_id, node_type, f"Max sub-workflow depth {WorkflowExecutor.MAX_DEPTH_DEFAULT} exceeded at '{node_id}'"
+        )
 
     items_or_entry = _resolve_batch_sub_workflow_items(config, shared, batch_config)
     if isinstance(items_or_entry, PlanEntry):
@@ -1057,34 +1058,50 @@ def _plan_batch_sub_workflow(
     if not items:
         return _empty_batch_sub_workflow_entry(curr, config, shared, batch_config)
 
-    params_or_entry = _prepare_batch_sub_workflow_params(curr, config, shared, items, batch_config)
-    if isinstance(params_or_entry, PlanEntry):
-        return params_or_entry
-    batch_params = params_or_entry
-    target_or_entry = _prepare_sub_workflow(
-        merged=batch_params.merged,
-        child_inputs=batch_params.child_inputs,
-        shared=shared,
-        registry=registry,
-        visited_paths=visited_paths,
-        node_id=node_id,
-        node_type=node_type,
-    )
-    if isinstance(target_or_entry, PlanEntry):
-        return target_or_entry
-    prepared = target_or_entry
-    child_plans, item_outputs, per_item_diagnostics = _plan_batch_sub_workflow_items(
-        items=items,
-        shared=shared,
-        cache=cache,
-        registry=registry,
-        batch_config=batch_config,
-        raw_inputs_template=batch_params.raw_inputs_template,
-        prepared=prepared,
-        depth=depth,
-        visited_paths=visited_paths,
-        node_id=node_id,
-    )
+    workflow_ref = _raw_workflow_ref(curr, config)
+    is_per_item_workflow = isinstance(workflow_ref, str) and "${" in workflow_ref
+
+    if is_per_item_workflow:
+        child_plans, item_outputs, per_item_diagnostics = _plan_heterogeneous_batch_items(
+            curr=curr,
+            config=config,
+            shared=shared,
+            cache=cache,
+            registry=registry,
+            items=items,
+            batch_config=batch_config,
+            visited_paths=visited_paths,
+            depth=depth,
+        )
+    else:
+        params_or_entry = _prepare_batch_sub_workflow_params(curr, config, shared, items, batch_config)
+        if isinstance(params_or_entry, PlanEntry):
+            return params_or_entry
+        batch_params = params_or_entry
+        target_or_entry = _prepare_sub_workflow(
+            merged=batch_params.merged,
+            child_inputs=batch_params.child_inputs,
+            shared=shared,
+            registry=registry,
+            visited_paths=visited_paths,
+            node_id=node_id,
+            node_type=node_type,
+        )
+        if isinstance(target_or_entry, PlanEntry):
+            return target_or_entry
+        prepared = target_or_entry
+        child_plans, item_outputs, per_item_diagnostics = _plan_batch_sub_workflow_items(
+            items=items,
+            shared=shared,
+            cache=cache,
+            registry=registry,
+            batch_config=batch_config,
+            raw_inputs_template=batch_params.raw_inputs_template,
+            prepared=prepared,
+            depth=depth,
+            visited_paths=visited_paths,
+            node_id=node_id,
+        )
 
     aggregated_plan = _aggregate_batch_child_plans(
         child_plans,
@@ -1394,6 +1411,110 @@ def _plan_batch_sub_workflow_items(
     return child_plans, item_outputs, per_item_diagnostics
 
 
+def _plan_heterogeneous_batch_items(
+    *,
+    curr: Any,
+    config: NodeConfig,
+    shared: dict[str, Any],
+    cache: MemoizationCache,
+    registry: Registry,
+    items: list[Any],
+    batch_config: BatchConfig,
+    visited_paths: list[str],
+    depth: int,
+) -> tuple[list[Plan], list[dict[str, Any]], list[Diagnostic]]:
+    """Plan a batch where each item may reference a different child workflow.
+
+    Mirrors runtime's per-item compile-once cache: resolve the workflow path
+    per item, compile each unique path once, plan each item against its own
+    compiled child. Tracked as intentional duplication in GH #334.
+    """
+    node_id = config.node_id
+    node_type = config.node_type_name
+    compile_cache: dict[str, _PreparedSubWorkflow] = {}
+    child_plans: list[Plan] = []
+    item_outputs: list[dict[str, Any]] = []
+    per_item_diagnostics: list[Diagnostic] = []
+
+    raw_inputs_template = config.template_config.template_params.get("inputs") if config.template_config else None
+
+    for idx, item in enumerate(items):
+        try:
+            shared[batch_config.item_alias] = item
+            shared["__index__"] = idx
+            if config.template_config:
+                resolved_params, _, _ = resolve_templates(config.template_config, shared, node_id)
+                merged: dict[str, Any] = dict(getattr(curr, "params", {}) or {})
+                merged.update(config.template_config.static_params or {})
+                merged.update(resolved_params)
+            else:
+                merged = dict(getattr(curr, "params", {}) or {})
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                per_item_diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.WARNING,
+                        source="planner",
+                        node_id=node_id,
+                        message=f"Batch item {idx}: template resolution failed: {exc}",
+                        context={"category": "template_error", "batch_item_index": idx},
+                    )
+                )
+            else:
+                logger.warning("Batch item %d template resolution failed: %s", idx, exc)
+            continue
+        finally:
+            shared.pop(batch_config.item_alias, None)
+            shared.pop("__index__", None)
+
+        child_inputs = dict(merged.get("inputs", {})) if isinstance(merged.get("inputs"), dict) else {}
+        resolved_path_key = str(merged.get("workflow", ""))
+
+        if resolved_path_key not in compile_cache:
+            prepared_or_entry = _prepare_sub_workflow(
+                merged=merged,
+                child_inputs=child_inputs,
+                shared=shared,
+                registry=registry,
+                visited_paths=visited_paths,
+                node_id=node_id,
+                node_type=node_type,
+            )
+            if isinstance(prepared_or_entry, PlanEntry):
+                continue
+            compile_cache[resolved_path_key] = prepared_or_entry
+
+        prepared = compile_cache[resolved_path_key]
+
+        per_item_inputs, input_diag = _resolve_per_item_sub_workflow_inputs(
+            shared=shared,
+            batch_config=batch_config,
+            item=item,
+            idx=idx,
+            raw_inputs_template=raw_inputs_template,
+            default_inputs=child_inputs,
+            node_id=node_id,
+        )
+        if input_diag is not None:
+            per_item_diagnostics.append(input_diag)
+
+        child_visited = [*visited_paths, prepared.resolved_path_str] if prepared.resolved_path_str else visited_paths
+        child_plan, child_shared = _build_plan_with_shared(
+            prepared.compiled_child,
+            per_item_inputs,
+            cache,
+            registry,
+            workflow_name=str(prepared.merged.get("workflow") or "<sub-workflow>"),
+            _visited_paths=child_visited,
+            _depth=depth + 1,
+            _parent_workflow_file=prepared.resolved_path_str,
+        )
+        child_plans.append(child_plan)
+        item_outputs.append(_extract_child_outputs(prepared.compiled_child, child_shared, per_item_inputs))
+
+    return child_plans, item_outputs, per_item_diagnostics
+
+
 def _nested_or_level(summary: PlanSummary, *, nested: str, level: str) -> Any:
     """Read the *_including_nested variant of a summary field, falling back to per-level."""
     value = getattr(summary, nested)
@@ -1478,6 +1599,35 @@ def _aggregate_batch_summary(child_plans: list[Plan], *, batch_parallel: bool) -
     )
 
 
+def _collect_entry_stats(entries: list[PlanEntry]) -> tuple[list[float], list[float]]:
+    """Collect cost and duration values from plan entries.
+
+    For sub-workflow entries without direct stats, reads from the sub_plan summary.
+    """
+    cost_values: list[float] = []
+    duration_values: list[float] = []
+    for entry in entries:
+        if entry.last_cost_usd is not None:
+            cost_values.append(entry.last_cost_usd)
+        elif entry.sub_plan is not None:
+            sub_cost = _nested_or_level(
+                entry.sub_plan.summary, nested="estimated_cost_usd_including_nested", level="estimated_cost_usd"
+            )
+            if sub_cost is not None and sub_cost > 0:
+                cost_values.append(sub_cost)
+        if entry.last_duration_ms is not None:
+            duration_values.append(entry.last_duration_ms)
+        elif entry.sub_plan is not None:
+            sub_dur = _nested_or_level(
+                entry.sub_plan.summary,
+                nested="estimated_duration_ms_including_nested",
+                level="estimated_duration_ms",
+            )
+            if sub_dur is not None and sub_dur > 0:
+                duration_values.append(sub_dur)
+    return cost_values, duration_values
+
+
 def _aggregate_batch_child_plans(
     child_plans: list[Plan],
     *,
@@ -1535,8 +1685,7 @@ def _aggregate_batch_child_plans(
             for entry in entries_for_node
             if entry.status == "cached" or (entry.status == "sub_workflow" and not _represents_work(entry))
         )
-        cost_values = [entry.last_cost_usd for entry in entries_for_node if entry.last_cost_usd is not None]
-        duration_values = [entry.last_duration_ms for entry in entries_for_node if entry.last_duration_ms is not None]
+        cost_values, duration_values = _collect_entry_stats(entries_for_node)
         age_values = [entry.age_sec for entry in entries_for_node if entry.age_sec is not None]
         template_entry = entries_for_node[0]
 
