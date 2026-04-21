@@ -364,7 +364,8 @@ class WorkflowExecutor(BaseNode):
                 child_storage[k] = v
         child_storage.update(child_params)
 
-        engine = WorkflowEngine(trace_collector=child_trace)
+        child_only = parent_shared.get("_pflow_child_only_node")
+        engine = WorkflowEngine(trace_collector=child_trace, only_node=child_only)
 
         try:
             result = engine.run(compiled, child_storage)
