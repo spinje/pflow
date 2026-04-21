@@ -219,6 +219,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 153: Reject Undeclared Sub-Workflow Inputs
 - ✅ Task 154: Type Vocabulary Coherence
 - ✅ Task 156: Add `--dry-run` flag with cache plan and cost/duration estimates
+- ✅ Task 157: Fix Dry-Run Batch Sub-Workflow Recursion
 
 ### Planned Features (in order of priority)
 
@@ -259,6 +260,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 120: Strict Input Type Validation
 
 **Later:**
+- Task 155: Workflow Graph Model for Multi-Renderer Support
 - Task 124: Code Node Dependency Management
 - Task 45: Evaluate n8n integration
 - Task 62: Route stdin to Workflow Inputs
