@@ -1939,3 +1939,142 @@ def test_plan_cached_end_action_terminates_cleanly(tmp_path) -> None:
     causes = [entry.cause for entry in plan.entries]
     assert statuses == ["cached", "cached"]
     assert "routing_error" not in causes
+
+
+def test_plan_heterogeneous_batch_sub_workflow_per_item_cache(tmp_path) -> None:
+    """Batch sub-workflows with per-item workflow paths resolve per-item cache status.
+
+    Regression target for GH #336. Without the heterogeneous batch planning
+    path, `workflow: ${item.workflow}` returns opaque — no per-item cache
+    checking, no cost/duration, and everything downstream cascades to
+    "would execute."
+
+    Mutation: revert _plan_batch_sub_workflow to call _precheck_sub_workflow
+    unconditionally → this test fails because the batch entry becomes opaque.
+    """
+    log_file = tmp_path / "hetero.log"
+
+    child_a = tmp_path / "child-a.pflow.md"
+    child_a.write_text(
+        f"""\
+# Child A
+
+Test child workflow A.
+
+## Inputs
+
+### value
+
+Input value.
+
+- type: string
+- required: true
+
+## Steps
+
+### do-a
+
+Echoes the value.
+
+- type: shell
+- command: echo a:${{value}} >> {log_file}; printf a:${{value}}
+
+## Outputs
+
+### out
+
+Output from do-a.
+
+- source: ${{do-a.stdout}}
+""",
+        encoding="utf-8",
+    )
+
+    child_b = tmp_path / "child-b.pflow.md"
+    child_b.write_text(
+        f"""\
+# Child B
+
+Test child workflow B.
+
+## Inputs
+
+### value
+
+Input value.
+
+- type: string
+- required: true
+
+## Steps
+
+### do-b
+
+Echoes the value.
+
+- type: shell
+- command: echo b:${{value}} >> {log_file}; printf b:${{value}}
+
+## Outputs
+
+### out
+
+Output from do-b.
+
+- source: ${{do-b.stdout}}
+""",
+        encoding="utf-8",
+    )
+
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        f"""\
+# Heterogeneous Batch Parent
+
+Dispatches to different child workflows per item.
+
+## Steps
+
+### fanout
+
+Runs different child workflows per batch item.
+
+- type: workflow
+- workflow: ${{item.workflow}}
+- inputs: ${{item.inputs}}
+
+```yaml batch
+items:
+  - workflow: {child_a}
+    inputs:
+      value: hello
+  - workflow: {child_b}
+    inputs:
+      value: world
+parallel: false
+```
+""",
+        encoding="utf-8",
+    )
+
+    first_result = _runner_run(parent)
+    assert first_result.success, first_result.diagnostics
+
+    plan = _runner_plan(parent)
+    second_result = _runner_run(parent)
+    assert second_result.success
+
+    assert len(plan.entries) == 1
+    fanout = plan.entries[0]
+    assert fanout.status == "sub_workflow"
+    assert fanout.batch_count == 2
+    assert fanout.sub_plan is not None
+
+    child_entries = fanout.sub_plan.entries
+    assert len(child_entries) == 2
+    statuses = {e.node_id: e.status for e in child_entries}
+    assert statuses.get("do-a") == "cached"
+    assert statuses.get("do-b") == "cached"
+
+    # Second run did no extra work
+    assert _log_lines(log_file) == ["a:hello", "b:world"]

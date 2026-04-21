@@ -410,3 +410,69 @@ def test_concurrent_access(tmp_path):
     count = cursor.fetchone()[0]
     conn.close()
     assert count == num_threads * ops_per_thread
+
+
+# ---------------------------------------------------------------------------
+# Key order preservation (GH #333)
+# ---------------------------------------------------------------------------
+
+
+def test_put_get_preserves_dict_key_order(tmp_path):
+    """Cache round-trip preserves dict insertion order (not alphabetical).
+
+    Regression guard for GH #333: sort_keys=True in the storage path
+    reordered keys, causing downstream cache misses when dicts were
+    stringified in templates.
+    """
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    output = {
+        "zebra": 1,
+        "apple": 2,
+        "mango": {"nested_z": True, "nested_a": False},
+        "banana": [{"z_key": 1, "a_key": 2}],
+    }
+    cache.put("k", "n", "/wf.pflow.md", "default", output)
+    _, restored = cache.get("k")
+
+    assert list(restored.keys()) == ["zebra", "apple", "mango", "banana"]
+    assert list(restored["mango"].keys()) == ["nested_z", "nested_a"]
+    assert list(restored["banana"][0].keys()) == ["z_key", "a_key"]
+
+
+def test_cached_output_produces_same_downstream_cache_key(tmp_path):
+    """Downstream cache key is identical whether upstream output comes from live run or cache.
+
+    Regression guard for GH #333: sort_keys=True in storage reordered dict keys.
+    When a downstream node embeds the upstream dict in a complex template
+    (str() stringification), different key order → different prompt string →
+    different cache key → false cache miss.
+
+    Mutation: add sort_keys=True to MemoizationCache.put() → this test fails.
+    """
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    upstream_output = {
+        "zebra": 1,
+        "apple": 2,
+        "mango": {"nested_z": True, "nested_a": False},
+    }
+
+    cache.put("upstream-key", "upstream-node", "/wf.pflow.md", "default", upstream_output)
+    _, restored_output = cache.get("upstream-key")
+
+    # Simulate downstream template resolution: dict embedded in a complex
+    # template gets stringified via str(), becoming part of resolved_params.
+    live_resolved = {"prompt": f"Analyze: {upstream_output}"}
+    cached_resolved = {"prompt": f"Analyze: {restored_output}"}
+
+    live_key = compute_node_cache_key("config-hash", live_resolved)
+    cached_key = compute_node_cache_key("config-hash", cached_resolved)
+
+    assert live_key == cached_key, (
+        f"Cache key diverged: live={live_key}, cached={cached_key}. "
+        f"Live keys: {list(upstream_output.keys())}, "
+        f"Cached keys: {list(restored_output.keys())}"
+    )
