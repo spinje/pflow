@@ -48,23 +48,39 @@ def _find_in_namespaces(shared_storage: dict[str, Any], key: str) -> Any:
     return last_value
 
 
-def find_auto_output(shared_storage: dict[str, Any]) -> tuple[str | None, Any]:
+def find_auto_output(
+    shared_storage: dict[str, Any],
+    preferred_key: str | None = None,
+) -> tuple[str | None, Any]:
     """Find the auto-detectable output with the highest priority.
 
     Unified implementation used by both CLI text and JSON/MCP paths.
 
-    Priority order: result > response > output > text > data > stdout
+    Priority order: ``preferred_key`` (when valid) > result > response > output >
+    text > data > stdout
     Search order: root first, then namespaces (root is where declared outputs live)
     Validity filter: skips None and empty/whitespace strings
     Key filter: skips _ and __ prefixed keys
     Last-key fallback: if no priority key matches, takes the last valid non-internal key
 
+    ``preferred_key`` is an explicit hint from the caller — when the user ran
+    ``--only X.Y`` the caller can pass ``"X"`` so the target node's namespace
+    wins over priority-key matches elsewhere in shared. Without it, a resolved
+    declared output named ``result`` at root shadows the batch namespace the
+    user actually targeted (GH #344).
+
     Args:
         shared_storage: The shared storage dictionary
+        preferred_key: Optional explicit key to return first if present and valid
 
     Returns:
         Tuple of (key_found, value) or (None, None) if no output found
     """
+    if preferred_key and preferred_key in shared_storage:
+        value = shared_storage[preferred_key]
+        if _is_valid_output_value(value):
+            return preferred_key, value
+
     priority_keys = ["result", "response", "output", "text", "data", "stdout"]
 
     for key in priority_keys:

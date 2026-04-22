@@ -1086,3 +1086,46 @@ class TestFindAutoOutputNamespaceAware:
 
         assert key == "result"
         assert value == "clean declared output"
+
+    def test_mcp_json_dotted_only_returns_target_namespace(self):
+        """GH #344 regression guard: MCP JSON output for dotted --only on a
+        batch sub-workflow must return the target's namespace, not a shadowing
+        declared output at root.
+
+        The ``_collect_outputs`` path (used by ``format_execution_success`` to
+        build the ``result`` field in JSON/MCP responses) must pass
+        ``preferred_key`` to ``find_auto_output`` when --only is dotted, so the
+        user's explicit target wins over unrelated resolved declared outputs.
+        """
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {
+            "__execution__": {"only_node": "process-all.echo"},
+            # Unrelated upstream declared output that resolved at root
+            "result": ["upstream", "data", "NOT", "what", "user", "wants"],
+            # Target: the batch node's namespace
+            "process-all": {
+                "results": [{"result": "hello", "item": "hello"}],
+                "count": 1,
+            },
+        }
+        workflow_ir = {
+            "outputs": {"result": {"source": "${upstream.stdout}"}},
+        }
+        outputs = _collect_outputs(shared, workflow_ir, output_key=None)
+
+        # The target namespace must be what we return — not the shadowing 'result'
+        assert "process-all" in outputs
+        assert outputs["process-all"] == {
+            "results": [{"result": "hello", "item": "hello"}],
+            "count": 1,
+        }
+        # The shadowing unrelated value must NOT be what we return
+        assert "result" not in outputs or outputs.get("result") != [
+            "upstream",
+            "data",
+            "NOT",
+            "what",
+            "user",
+            "wants",
+        ]
