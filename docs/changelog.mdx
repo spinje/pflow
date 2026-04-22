@@ -5,22 +5,114 @@ icon: "clock"
 rss: true
 ---
 
-<Update label="April 2026" description="v0.12.0" tags={["Breaking changes", "Improvements"]}>
-  ## Type vocabulary coherence
+<Update label="April 2026" description="v0.12.0" tags={["New releases", "Improvements", "Breaking changes"]}>
+  ## Execution previews and planning
 
-  The `## Inputs` and `## Outputs` `type:` field now accepts exactly 7 values:
-  `string`, `number`, `integer`, `boolean`, `array`, `object`, `any`.
+  We introduced a high-fidelity execution planner via the `--dry-run` flag. It provides historical LLM cost and duration estimates without invoking side effects, using the same cache-key and template-resolution logic as the live engine to ensure zero drift.
 
-  **Breaking changes**
-  - Python type aliases (`str`, `int`, `float`, `bool`, `dict`, `list`) no longer work in workflow input/output declarations. Validation errors now suggest the canonical replacement.
-  - `object` is now documented as dict-only. Use `any` when the value can be any type.
-  - Parameterized generics such as `list[str]` and `dict[str, int]` are rejected in workflow input/output declarations.
-  - Saved workflows in `~/.pflow/workflows/` that still use Python aliases will fail validation until the file is updated to the canonical names.
+  ```bash
+  # Preview execution with cost and duration estimates
+  pflow workflow.pflow.md --dry-run
+  ```
 
-  **New**
-  - `any` is the explicit wildcard type for workflow inputs and outputs.
-  - `Any` is auto-injected into code node execution, so `from typing import Any` is optional.
-  - The guides now document the bridge between workflow `type:` declarations and Python code annotations.
+  <Note>
+    The planner now supports full per-item recursion for batch sub-workflows, allowing you to see exactly which items in a large parallel run would execute and which would serve from cache.
+  </Note>
+
+  **Highlights**
+  - Added the `--dry-run` flag to provide execution plans with historical cost ($USD) and duration estimates.
+  - Implemented recursive batch planning that aggregates child summaries into a single synthetic plan, correctly handling parallel vs. sequential durations.
+  - Added a `cost_basis` indicator (`upper_bound` vs `exact`) to dry-run summaries to help agents gate high-cost operations.
+  - Fixed dry-run recursion for batch sub-workflows to prevent false validation errors on `${item}`-backed child inputs.
+
+  ## Modernized CLI and guidance
+
+  The CLI has been flattened into a focused, top-level surface, and the monolithic agent instructions have been replaced by `pflow guide`—a topic-scoped system that delivers framework and node-specific guidance at runtime.
+
+  ```bash
+  # Access topic-scoped guidance for agents or users
+  pflow guide llm code batch
+  ```
+
+  **Highlights**
+  - Flattened the CLI surface: `pflow workflow <verb>` and `pflow registry <verb>` are now top-level commands like `pflow list`, `pflow describe`, and `pflow probe`.
+  - Added `pflow guide`, a content delivery system that composes help topics based on requested scope or auto-detected workflow features.
+  - Improved non-interactive output routing: live progress now streams to `stderr` in real-time, while node data is routed strictly to `stdout` for clean piping to `jq`.
+  - Added an exception boundary to the MCP server via a `FastMCP` subclass to provide structured diagnostics to agents.
+  - Consolidated `pflow trace report` into the flattened `pflow report` command.
+  - Added confidence-based guidance and runnable command hints to the `pflow find` output.
+
+  ## Type safety and native diagnostics
+
+  We refactored the workflow type vocabulary to use canonical JSON Schema names and moved the validation engine to produce structured `Diagnostic` objects natively. This ensures that typos and contract violations are caught early with rich, actionable "Did you mean?" suggestions.
+
+  <Tip>
+    The new type vocabulary is strictly enforced at the sub-workflow boundary. Any value crossing from parent to child must be declared on the child workflow, or it will be rejected at parse time.
+  </Tip>
+
+  **Highlights**
+  - Refactored the type vocabulary to 7 canonical names: `string`, `integer`, `number`, `boolean`, `array`, `object`, and `any`.
+  - Upgraded the validator to produce `Diagnostic` objects natively, enabling numbered lists, fuzzy suggestions, and source-line tracking in all validation errors.
+  - Implemented a strict parent-to-child input boundary for sub-workflows that rejects undeclared inputs at both parse-time and runtime.
+  - Added validate-time type checking for Python code-node input and result/next annotations.
+  - Unified the `??` coalesce operator to correctly distinguish between nodes that were skipped and nodes that failed.
+  - Fixed workflow and template validators to short-circuit on structural errors, preventing cascades of redundant messages.
+
+  ## Rich Mermaid visualization
+
+  The Mermaid visualization system has been transformed into a full data-flow engine. It now renders sub-workflow boundaries, external IO subgraphs, and data-provenance edges derived from template references.
+
+  ```bash
+  # Visualize data-flow and batch semantics in Mermaid format
+  pflow visualize my-workflow.pflow.md --descriptions
+  ```
+
+  **Highlights**
+  - Added support for "External IO" wrappers that render sub-workflow inputs and outputs as dashed subgraphs outside the primary pipeline.
+  - Added data-flow edges that trace the actual provenance of data through `${node.field}` template references.
+  - Implemented the Mermaid `procs` shape (stacked rectangles) to visually communicate batch parallelism.
+  - Added `--descriptions` support to the visualizer to include node-level documentation in the rendered output.
+  - Improved layout logic to connect top-level inputs directly to their nearest consumer, preventing long-range edges from distorting the diagram.
+
+  ## Reliability and invariants
+
+  This release addresses several critical execution invariants, particularly how the shared store handles node failures and how batch results are filtered.
+
+  **Highlights**
+  - Fixed the failed-node invariant: data from failed nodes now moves to `shared["__failures__"]` instead of leaking into `shared[node_id]`, preventing downstream nodes from accidentally reading partial or failed results.
+  - Updated batch processing to exclude failed items from the `results` array, ensuring downstream nodes receive only successful data.
+  - Added protection against `__dunder__` parameter names to prevent workflows from accidentally overwriting internal framework state.
+  - Implemented a `_ProgressPartialLineFilter` to prevent `logger.warning` messages from corrupting live progress lines.
+  - Added automatic node registry refreshing when source files change on disk.
+  - Fixed on-error recovery reporting to correctly reflect a `DEGRADED` status instead of a false `SUCCESS`.
+
+  <Accordion title="Breaking changes">
+    ### Flattened CLI commands
+    The hierarchical `workflow` and `registry` namespaces have been removed.
+    - `pflow workflow save` → `pflow save`
+    - `pflow workflow history` → `pflow history`
+    - `pflow registry run` → `pflow probe`
+    - `pflow instructions` → `pflow guide`
+    - `pflow mcp tools` → `pflow mcp list`
+
+    ### Type vocabulary refactor
+    Python type aliases (`str`, `int`, `list`, `dict`) are no longer supported in `## Inputs` or `## Outputs`.
+    - Use `string` instead of `str`.
+    - Use `integer` instead of `int`.
+    - Use `array` instead of `list`.
+    - Use `object` instead of `dict`.
+    - Use `any` for wildcards.
+
+    ### Sub-workflow input strictness
+    - The `workflow_ir` inline-IR escape hatch has been removed. Use file references instead.
+    - Sub-workflows now reject undeclared inputs. Any parameter passed from a parent must be explicitly declared in the child's `## Inputs` section.
+
+    ### Failed-node data location
+    Data from failed nodes is no longer available at `shared[node_id]`. It is archived in `shared["__failures__"][node_id]`. Standard template references to failed nodes will now correctly trigger "node did not execute" errors unless the coalesce operator (`??`) is used.
+
+    ### Batch result filtering
+    When `error_handling: continue` is used, the `results` list in the batch output no longer contains `None` or error objects for failed items; it only contains successful results.
+  </Accordion>
 </Update>
 
 <Update label="April 2026" description="v0.11.0" tags={["New releases", "Improvements", "Breaking changes"]}>

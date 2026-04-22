@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.12.0 (2026-04-22)
+
+### Removed
+- Removed the `pflow workflow` and `pflow registry` command groups as part of a CLI refactor to flatten the command surface. [#275](https://github.com/spinje/pflow/pull/275) ([Task 151](.taskmaster/tasks/task_151/task-review.md))
+- Removed the `workflow_ir` inline-IR escape hatch for sub-workflows. [#286](https://github.com/spinje/pflow/pull/286) ([Task 153](.taskmaster/tasks/task_153/task-review.md))
+
+### Changed
+- Changed the CLI to a flattened, agent-friendly structure with top-level commands like `list`, `find`, `describe`, and `probe` (renamed from `registry run`). [#275](https://github.com/spinje/pflow/pull/275) ([Task 151](.taskmaster/tasks/task_151/task-review.md))
+- Changed the type vocabulary to use 7 canonical JSON Schema names (`string`, `number`, `integer`, `boolean`, `array`, `object`, `any`) for workflow inputs and outputs. [#290](https://github.com/spinje/pflow/pull/290) ([Task 154](.taskmaster/tasks/task_154/task-review.md))
+- Changed the failed-node invariant so failed nodes no longer leak data into downstream template resolution, moving failure records to `shared["__failures__"]`. [#251](https://github.com/spinje/pflow/pull/251) ([Task 148](.taskmaster/tasks/task_148/task-review.md))
+- Changed non-interactive output routing to follow Unix conventions where data flows to stdout and diagnostics flow to stderr. [#243](https://github.com/spinje/pflow/pull/243) ([Task 149](.taskmaster/tasks/task_149/task-review.md))
+- Changed sub-workflow inputs to use a canonical `inputs:` dictionary form, rejecting undeclared inputs at both parse and runtime. [#286](https://github.com/spinje/pflow/pull/286) ([Task 153](.taskmaster/tasks/task_153/task-review.md))
+- Changed `normalize_ir()` to return the normalized dictionary instead of `None` to allow for chaining.
+
+### Added
+- Added the `--dry-run` flag to provide execution plans with historical cost and duration estimates without invoking node side effects. [#320](https://github.com/spinje/pflow/pull/320) ([Task 156](.taskmaster/tasks/task_156/task-review.md))
+- Added the `pflow guide` command, providing a topic-scoped system for delivering framework, node, and feature guidance. [#278](https://github.com/spinje/pflow/pull/278) ([Task 77](.taskmaster/tasks/task_77/task-review.md))
+- Added support for dotted paths in the `--only` flag to target specific nodes in sub-workflows. [#338](https://github.com/spinje/pflow/pull/338)
+- Added rich Mermaid visualizations supporting batch semantics, data-flow edges via template refs, and external IO wrapper subgraphs. [#228](https://github.com/spinje/pflow/pull/228) ([Task 146](.taskmaster/tasks/task_146/task-review.md))
+- Added support for stdout routing symmetric with stdin, allowing specific outputs to be marked with `stdout: true`. [#282](https://github.com/spinje/pflow/pull/282)
+- Added an exception boundary to the MCP server via a FastMCP subclass to prevent server-wide crashes on tool errors. [#328](https://github.com/spinje/pflow/pull/328)
+- Added validate-time type checking for code-node input and result annotations. [#317](https://github.com/spinje/pflow/pull/317), [#324](https://github.com/spinje/pflow/pull/324)
+- Added a `see_also` field to Diagnostics to provide selective guide topic links. [#313](https://github.com/spinje/pflow/pull/313)
+
+### Fixed
+- Fixed dry-run recursion for batch sub-workflows to correctly aggregate costs and durations. [#332](https://github.com/spinje/pflow/pull/332) ([Task 157](.taskmaster/tasks/task_157/task-review.md))
+- Fixed issues where auto-detection shadowed dotted targets or populated unresolvable outputs when using the `--only` flag. [#344](https://github.com/spinje/pflow/pull/344), [#343](https://github.com/spinje/pflow/pull/343)
+- Fixed batch processing to exclude failed items from the `results` array, ensuring downstream nodes receive clean data. [#265](https://github.com/spinje/pflow/pull/265)
+- Fixed workflow and template validators to short-circuit on structural errors. [#330](https://github.com/spinje/pflow/pull/330)
+- Fixed memoization cache key sorting and dry-run issues for heterogeneous batches. [#337](https://github.com/spinje/pflow/pull/337)
+- Fixed trace aggregation correctness for loop recovery and routing failures. [#327](https://github.com/spinje/pflow/pull/327)
+- Fixed the `--output-format json` flag to be orthogonal to stderr verbosity. [#257](https://github.com/spinje/pflow/pull/257)
+- Fixed parent-to-child sub-workflow input boundaries to prevent silent dropping of undeclared parameters. [#286](https://github.com/spinje/pflow/pull/286) ([Task 153](.taskmaster/tasks/task_153/task-review.md))
+- Fixed preservation of exception annotations during template resolution and engine execution. [#272](https://github.com/spinje/pflow/pull/272)
+- Fixed silent failures in error pipelines when running on a cluster. [#298](https://github.com/spinje/pflow/pull/298)
+- Fixed on-error recovery to correctly report DEGRADED status instead of SUCCESS. [#261](https://github.com/spinje/pflow/pull/261)
+- Fixed prep-time failures to correctly route through the `error_action` dispatch. [#303](https://github.com/spinje/pflow/pull/303)
+- Fixed shell node to emit a clean warning instead of a full traceback on timeout.
+- Fixed a bug where parameter names using double underscores (`__dunder__`) could corrupt the shared store.
+- Fixed validation of inline-static batch items against child input contracts. [#307](https://github.com/spinje/pflow/pull/307)
+- Fixed Mermaid reference resolution and consolidated resolution logic. [#299](https://github.com/spinje/pflow/pull/299)
+- Fixed workflow scan warnings leaking into unrelated CLI commands. [#280](https://github.com/spinje/pflow/pull/280)
+- Fixed a template detection false positive for escaped variables ($${var}).
+
+### Improved
+- Improved the workflow validator to produce structured `Diagnostic` objects natively, enabling richer error reporting and suggestions. [#219](https://github.com/spinje/pflow/pull/219) ([Task 147](.taskmaster/tasks/task_147/task-review.md))
+- Improved workflow security and reliability by wiring the `WorkflowValidator` into the save process. [#258](https://github.com/spinje/pflow/pull/258) ([Task 150](.taskmaster/tasks/task_150/task-review.md))
+- Improved branch-target routing error messages in the markdown parser to be more actionable. [#312](https://github.com/spinje/pflow/pull/312)
+- Improved node registry performance and accuracy by automatically refreshing when source files change. [#296](https://github.com/spinje/pflow/pull/296)
+- Improved validation of output sources against nodes and declared inputs. [#264](https://github.com/spinje/pflow/pull/264)
+- Improved template validation by correctly registering input keys and enabling input forwarding to sub-workflows. [#260](https://github.com/spinje/pflow/pull/260)
+
 ## v0.11.0 (2026-04-05)
 
 - Removed built-in `git`, `github`, `test`, and `echo` nodes and their related configuration settings [#203](https://github.com/spinje/pflow/pull/203)

@@ -6,7 +6,7 @@ icon: "map"
 
 ## <Icon icon="circuit-board" size={24} color="#f97316" /> Current status
 
-Where pflow is today (v0.11.0):
+Where pflow is today (v0.12.0):
 
 - **Standalone orchestration engine** with compile-once batch optimization (~7x speedup for large parallel workflows)
 - **Markdown workflows** — `.pflow.md` files that agents read and write naturally
@@ -15,6 +15,7 @@ Where pflow is today (v0.11.0):
 - **Nested workflows** — saved or file-based workflows as nodes inside other workflows, with automatic input/output mapping
 - **Memoization cache** — unchanged nodes serve cached results across re-runs, with `--only`, `--no-cache`, and per-node `cache: false` controls
 - **Execution reports** — `--report` generates navigable markdown directories with rendered prompts, responses, token breakdowns, and cost data per node
+- **Dry-run execution plans** — `--dry-run` previews cost, duration, and cache boundaries before execution
 - **Workflow visualization** — `pflow visualize` generates Mermaid flowcharts of workflow topology
 - **Batch processing** — process arrays through nodes, sequential or parallel, with per-item parameter overrides and error handling modes
 - **External file references** — `prompt: ./prompts/system.md` keeps long content out of workflow files
@@ -40,7 +41,6 @@ Where pflow is today (v0.11.0):
 
 - **Function-based code node syntax** — write Python functions instead of top-level scripts, with automatic input/output wiring from type annotations
 - **Workflow export** — export a workflow to standalone Python with zero pflow dependency. Build and iterate with structure, ship plain code.
-- **Execution preview** — show what will run, in what order, with what data flow, before anything executes
 - **Workflow testing** — mock nodes, assert outputs, `pflow test`. Modify a saved workflow and know it still works before re-publishing.
 - **Code and shell linting** — catch syntax errors in code blocks during validation, not at runtime
 - **Batch limits** — cap iteration count for development and cost control
