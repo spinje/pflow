@@ -15,7 +15,7 @@ graph LR
         input_mintlify_file[/"mintlify_file (string)"/]:::input
         input_releases_dir[/"releases_dir (string)"/]:::input
         input_slack_channel[/"slack_channel (string)"/]:::input
-        input_version_type[/"version_type (string)"/]:::input
+        input_is_major_release[/"is_major_release (boolean, required)"/]:::input
     end
     style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     get-latest-tag[["get-latest-tag (shell)"]]:::shell
@@ -38,6 +38,7 @@ graph LR
         render-changelogs__mintlify(["mintlify (llm)"]):::llm
     end
     style render-changelogs fill:#808080,fill-opacity:0.14,stroke:#999
+    check-warnings["check-warnings (code)"]:::code
     save-release-context["save-release-context (code)"]:::code
     update-changelog-file["update-changelog-file (code)"]:::code
     update-mintlify-file["update-mintlify-file (code)"]:::code
@@ -49,9 +50,10 @@ graph LR
     input_to_ref --> gather-commit-data
     input_to_ref --> get-task-reviews
     input_to_ref --> compute-version
-    input_version_type --> compute-version
+    input_is_major_release --> compute-version
     input_to_ref --> get-docs-diff
     input_mintlify_file --> get-style-reference
+    input_is_major_release --> check-warnings
     input_releases_dir --> save-release-context
     input_changelog_file --> update-changelog-file
     input_mintlify_file --> update-mintlify-file
@@ -85,8 +87,9 @@ graph LR
     join-docs-summary --> get-style-reference
     get-style-reference --> render-changelogs__markdown
     get-style-reference --> render-changelogs__mintlify
-    render-changelogs__markdown --> save-release-context
-    render-changelogs__mintlify --> save-release-context
+    render-changelogs__markdown --> check-warnings
+    render-changelogs__mintlify --> check-warnings
+    check-warnings --> save-release-context
     save-release-context --> update-changelog-file
     update-changelog-file --> update-mintlify-file
     update-mintlify-file --> check-slack

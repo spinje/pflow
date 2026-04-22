@@ -390,7 +390,7 @@ STRICT RULES - Output "SKIP: <original commit message>" unless this DIRECTLY aff
 * Internal implementation details
 * Dependency updates
 * Task/planning files (e.g., "add task for X")
-* Files in internal paths: .claude/, .taskmaster/, .github/, tests/
+* Files in internal paths: .claude/, .taskmaster/, .github/, tests/, examples/
 
 ## Output Format
 If INCLUDE and has PR link: Write entry ending with [#N](link)
@@ -485,15 +485,16 @@ result: list = entries
 
 ### compute-version
 
-Determine the next version number, release date, and any release-type
-warnings. When `to_ref` is a tag, version and date are extracted from
-it directly.
+Determine the next version number and release date. When `to_ref` is
+a tag, version and date are extracted from it directly.
 
 The LLM/classifier never picks major — `is_major_release` is always
-the deciding input. Minor vs patch auto-detects from entries (Added →
-minor, else patch). Mismatches between the declared release type and
-classifier output surface as warnings in `result.warnings`, not errors
-— the user reviews and overrides as needed.
+the deciding input. When `is_major_release=false`, minor vs patch
+auto-detects from entries (Added → minor, else patch).
+
+Mismatch warnings (breaking entries vs is_major_release) are emitted
+downstream by `check-warnings`, which scans the rendered CHANGELOG
+output where canonical Removed/Changed verbs have been applied.
 
 - type: code
 - inputs:
@@ -512,27 +513,10 @@ import subprocess
 from datetime import datetime
 
 drafts = [e['draft'] for e in entries]
-has_breaking = any(d.startswith(('Removed', 'Changed')) for d in drafts)
 has_features = any(d.startswith('Added') for d in drafts)
-
-warnings = []
 
 if is_major_release:
     bump_type = 'major'
-    if not has_breaking:
-        warnings.append(
-            'is_major_release=true but no entries start with Removed or Changed. '
-            'Shipping as a major release anyway — confirm this is intentional '
-            '(e.g. a declaratory stability bump like v1.0.0).'
-        )
-elif has_breaking:
-    bump_type = 'minor' if has_features else 'patch'
-    warnings.append(
-        'Entries starting with Removed or Changed were detected but '
-        'is_major_release=false. Shipping as a non-major release may violate '
-        'semver — review the changelog and either reclassify the entries or '
-        're-run with is_major_release=true if a major bump was intended.'
-    )
 elif has_features:
     bump_type = 'minor'
 else:
@@ -569,7 +553,6 @@ result: dict = {
     'next_version': next_version,
     'date_iso': date_iso,
     'date_month_year': date_month_year,
-    'warnings': warnings,
 }
 ```
 
@@ -819,7 +802,6 @@ standardizes terminology. The markdown format includes PR and task
 links; the Mintlify format groups entries into themes without links.
 
 - type: llm
-- model: claude-opus-4-5
 
 ```yaml batch
 items:
@@ -966,6 +948,56 @@ parallel: true
 ${item.prompt}
 ```
 
+### check-warnings
+
+Scan the rendered CHANGELOG for canonical Removed/Changed entries and
+compare against `is_major_release`. The check runs here, not in
+`compute-version`, because the classifier writes drafts with free-form
+verbs (Refactored, Consolidated, Implemented, ...) — canonical verbs
+only appear after `render-changelogs` standardizes them.
+
+When `is_major_release=false` but Removed/Changed entries exist, or
+when `is_major_release=true` with neither, a warning is emitted for
+display in the summary and release context file. Warnings are
+informational — they do not block the release.
+
+- type: code
+- inputs:
+    markdown: ${render-changelogs.results[0].response}
+    is_major_release: ${is_major_release}
+
+```python code
+markdown: str
+is_major_release: bool
+
+import re
+
+breaking_lines = [
+    line for line in markdown.split('\n')
+    if re.match(r'^\s*-\s+(Removed|Changed)\s', line)
+]
+
+warnings = []
+
+if is_major_release and not breaking_lines:
+    warnings.append(
+        'is_major_release=true but no entries start with Removed or Changed '
+        'in the rendered changelog. Shipping as a major release anyway — '
+        'confirm this is intentional (e.g. a declaratory stability bump '
+        'like v1.0.0).'
+    )
+elif not is_major_release and breaking_lines:
+    warnings.append(
+        f'{len(breaking_lines)} entries starting with Removed or Changed '
+        f'were detected but is_major_release=false. Shipping as a non-major '
+        f'release may violate semver — review the CHANGELOG and either '
+        f'reclassify the entries or re-run with is_major_release=true if a '
+        f'major bump was intended.'
+    )
+
+result: dict = {'warnings': warnings}
+```
+
 ### save-release-context
 
 Write a release context file for pre-release verification. Contains the
@@ -982,7 +1014,7 @@ commit/PR context and matched task reviews.
     unmatched_reviews: ${format-draft-entries.result.unmatched_reviews}
     next_version: ${compute-version.result.next_version}
     date_iso: ${compute-version.result.date_iso}
-    warnings: ${compute-version.result.warnings}
+    warnings: ${check-warnings.result.warnings}
     releases_dir: ${releases_dir}
 
 ```python code
@@ -1216,7 +1248,7 @@ created files with descriptions.
     next_version: ${compute-version.result.next_version}
     bump_type: ${compute-version.result.bump_type}
     date_iso: ${compute-version.result.date_iso}
-    warnings: ${compute-version.result.warnings}
+    warnings: ${check-warnings.result.warnings}
     changelog_path: ${update-changelog-file.result}
     mintlify_path: ${update-mintlify-file.result}
     context_path: ${save-release-context.result}
