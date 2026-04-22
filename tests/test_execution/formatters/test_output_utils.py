@@ -331,8 +331,8 @@ class TestAutoDetectionWarning:
         captured = capsys.readouterr()
         # Auto-detected value MUST reach stdout — this is the silent regression we fix
         assert "target-node-value" in captured.out
-        # Stderr explains why we fell back, without falsely claiming no outputs were declared
-        assert "Declared outputs unresolvable under --only" in captured.err
+        # No noisy stderr note — the --only indicator line already establishes context
+        assert "Declared outputs unresolvable" not in captured.err
         assert "No outputs declared" not in captured.err
 
     def test_dotted_only_prefers_target_namespace_over_shadowing_declared_output(self, capsys):
@@ -375,10 +375,11 @@ class TestAutoDetectionWarning:
 
         captured = capsys.readouterr()
         # Target namespace MUST reach stdout — the batch namespace, not the shadowing value
-        assert "process-all" in captured.err  # message mentions the auto-detected key
         assert '"count": 2' in captured.out  # batch namespace structure
         # Critically: the shadowing value MUST NOT reach stdout
         assert "NOT" not in captured.out
+        # No noisy stderr note under --only — the --only indicator already establishes context
+        assert "Declared outputs unresolvable" not in captured.err
 
     def test_only_node_without_declared_outputs_shows_no_outputs_warning(self, capsys):
         """CORRECTNESS: --only on workflow without outputs falls through to auto-detection."""

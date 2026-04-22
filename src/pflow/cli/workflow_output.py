@@ -164,11 +164,13 @@ def _handle_text_output(
             # so the user sees output from the node they actually targeted,
             # rather than silent empty stdout. Pass the --only target as
             # preferred_key so the target's namespace wins over unrelated
-            # resolved declared outputs at root (GH #344).
+            # resolved declared outputs at root (GH #344). No stderr note —
+            # the --only indicator line already established context; a second
+            # "declared outputs unresolvable" message is noise.
             output_found = _emit_auto_detected_output(
                 shared_storage,
                 print_flag,
-                "cli: Declared outputs unresolvable under --only. Showing auto-detected key '{key}'.",
+                message_template=None,
                 preferred_key=_only_target_root(shared_storage),
             )
 
@@ -205,12 +207,14 @@ def _only_target_root(shared_storage: dict[str, Any]) -> str | None:
 def _emit_auto_detected_output(
     shared_storage: dict[str, Any],
     print_flag: bool,
-    message_template: str,
+    message_template: str | None,
     preferred_key: str | None = None,
 ) -> bool:
-    """Auto-detect output from shared storage and emit it with a stderr note.
+    """Auto-detect output from shared storage and emit it.
 
-    ``message_template`` must contain ``{key}`` for the detected key name.
+    ``message_template`` (optional) must contain ``{key}`` for the detected
+    key name. Pass ``None`` to suppress the stderr note entirely — used for
+    --only fallback where the --only indicator already establishes context.
     ``preferred_key`` is forwarded to ``find_auto_output`` — when set and valid,
     it wins over priority-key matches elsewhere in shared. Returns True if
     output was emitted.
@@ -220,7 +224,7 @@ def _emit_auto_detected_output(
     key_found, value = find_auto_output(shared_storage, preferred_key=preferred_key)
     if not key_found:
         return False
-    if not print_flag:
+    if message_template and not print_flag:
         click.echo(message_template.format(key=key_found), err=True)
     _output_with_header(value, print_flag)
     return True
