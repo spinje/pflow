@@ -5,6 +5,9 @@ before a release to get three outputs: a CHANGELOG.md entry with PR links,
 a Mintlify changelog component for your docs site, and a release context
 file for pre-release verification.
 
+This workflow generates pflow's own changelogs — it's the dogfooding
+entry point invoked by the `/release` skill.
+
 The workflow analyzes commits between two git refs, uses an LLM to separate
 user-facing changes from internal work, determines the version (computed
 from entries or extracted from a target tag), and formats the results in
@@ -16,25 +19,31 @@ authenticated, and an LLM configured via `llm`.
 **Usage**
 
 ```bash
-# Generate changelog since latest tag
-pflow examples/real-workflows/generate-changelog/workflow.pflow.md
+# Preview cost and plan without running LLMs or writing files
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
+  is_major_release=false --dry-run
+
+# Standard minor/patch release (auto-detects minor vs patch from entries)
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md is_major_release=false
+
+# Major release (breaking changes, or declaratory e.g. v1.0.0)
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md is_major_release=true
 
 # Specify starting tag
-pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=v0.5.0
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
+  is_major_release=false since_tag=v0.5.0
 
 # Skip Mintlify output
-pflow examples/real-workflows/generate-changelog/workflow.pflow.md mintlify_file=""
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
+  is_major_release=false mintlify_file=""
 
 # Historical changelog for a specific tag range
 pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
-  since_tag=v0.5.0 to_ref=v0.6.0
-
-# Force a minor release (skip auto-detection)
-pflow examples/real-workflows/generate-changelog/workflow.pflow.md version_type=minor
+  is_major_release=false since_tag=v0.5.0 to_ref=v0.6.0
 
 # Custom output paths
 pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
-  changelog_file=RELEASE_NOTES.md releases_dir=release-notes
+  is_major_release=false changelog_file=RELEASE_NOTES.md releases_dir=release-notes
 ```
 
 **Limitations**
@@ -43,6 +52,15 @@ pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
 * Cost scales with commit count (~$0.003 per commit for classification)
 * Task reviews require `.taskmaster/tasks/task_N/task-review.md` structure
 * Docs diff requires a `docs/` directory in the repository
+* Major bumps require explicit `is_major_release=true`. The LLM can
+  never pick major — it's a human/agent decision. If breaking entries
+  are detected but `is_major_release=false`, the workflow ships as
+  minor and surfaces a prominent warning for review.
+* Zero-commit ranges are not tested — LLM batch with 0 items may error
+* `gh pr list --limit 200` is not date-scoped — very active repos may
+  miss older merged PRs relevant to the tag range
+* Every run writes to CHANGELOG.md, docs/changelog.mdx, and releases/
+  (use `--dry-run` to preview cost/plan without side effects)
 
 ## Inputs
 
@@ -102,15 +120,24 @@ changelog entries after all files are written.
 - required: false
 - default: releases
 
-### version_type
+### is_major_release
 
-Force a specific release type instead of computing it from changelog
-entries. When empty, the type is auto-detected: Removed/Changed = major,
-Added = minor, otherwise patch.
+Explicit decision on whether this is a major release. Required — the
+LLM/classifier can never pick major; it must always be a human or
+agent decision.
 
-- type: string
-- required: false
-- default: ""
+When `true`, the workflow bumps to the next major version (e.g.
+v0.11.0 → v1.0.0, v1.4.2 → v2.0.0). Use this for releases with
+breaking changes users must adapt to, or for declaratory stability
+bumps like v1.0.0.
+
+When `false`, the workflow auto-detects minor vs patch from entries
+(Added → minor, else patch) and never bumps major. If breaking
+entries are detected anyway, the release still ships but a prominent
+warning is surfaced in the summary and release context file.
+
+- type: boolean
+- required: true
 
 ## Steps
 
@@ -120,6 +147,7 @@ Detect the most recent git tag to use as the changelog baseline.
 Falls back to `v0.0.0` if no tags exist.
 
 - type: shell
+- cache: false
 
 ```shell command
 git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'
@@ -150,6 +178,9 @@ the full commit message (`%B`), PR titles and bodies, file paths (so
 the classifier can identify internal-only changes like `.taskmaster/`
 or `tests/`), and task numbers. Uses `--first-parent` to avoid
 duplicates from PR branch commits.
+
+Timeout is raised above the 30s default because `gh pr list` over 200
+merged PRs can be slow on active repos.
 
 - type: code
 - inputs:
@@ -184,7 +215,7 @@ file_log = subprocess.run(
     ['git', 'log', '--first-parent', f'{tag}..{to_ref}', '--format=HASH:%H', '--name-only'],
     capture_output=True, text=True
 ).stdout
-file_changes: dict = {}
+file_changes = {}
 current_hash = None
 for line in file_log.strip().split('\n'):
     if line.startswith('HASH:'):
@@ -283,7 +314,7 @@ diff_output = subprocess.run(
     capture_output=True, text=True
 ).stdout
 
-reviews: dict = {}
+reviews = {}
 for line in diff_output.strip().split('\n'):
     if not line or 'task-review.md' not in line:
         continue
@@ -454,23 +485,28 @@ result: list = entries
 
 ### compute-version
 
-Determine the next version number and release date. When `to_ref` is a
-tag, the version and date are extracted from it directly. Otherwise,
-entries starting with Removed/Changed trigger a major bump, Added
-triggers minor, anything else is patch, and the date is today.
+Determine the next version number, release date, and any release-type
+warnings. When `to_ref` is a tag, version and date are extracted from
+it directly.
+
+The LLM/classifier never picks major — `is_major_release` is always
+the deciding input. Minor vs patch auto-detects from entries (Added →
+minor, else patch). Mismatches between the declared release type and
+classifier output surface as warnings in `result.warnings`, not errors
+— the user reviews and overrides as needed.
 
 - type: code
 - inputs:
     entries: ${enrich-drafts.result}
     current_tag: ${resolve-tag.result}
     to_ref: ${to_ref}
-    version_type: ${version_type}
+    is_major_release: ${is_major_release}
 
 ```python code
 entries: list
 current_tag: str
 to_ref: str
-version_type: str
+is_major_release: bool
 
 import subprocess
 from datetime import datetime
@@ -479,10 +515,24 @@ drafts = [e['draft'] for e in entries]
 has_breaking = any(d.startswith(('Removed', 'Changed')) for d in drafts)
 has_features = any(d.startswith('Added') for d in drafts)
 
-if version_type in ('major', 'minor', 'patch'):
-    bump_type = version_type
-elif has_breaking:
+warnings = []
+
+if is_major_release:
     bump_type = 'major'
+    if not has_breaking:
+        warnings.append(
+            'is_major_release=true but no entries start with Removed or Changed. '
+            'Shipping as a major release anyway — confirm this is intentional '
+            '(e.g. a declaratory stability bump like v1.0.0).'
+        )
+elif has_breaking:
+    bump_type = 'minor' if has_features else 'patch'
+    warnings.append(
+        'Entries starting with Removed or Changed were detected but '
+        'is_major_release=false. Shipping as a non-major release may violate '
+        'semver — review the changelog and either reclassify the entries or '
+        're-run with is_major_release=true if a major bump was intended.'
+    )
 elif has_features:
     bump_type = 'minor'
 else:
@@ -519,6 +569,7 @@ result: dict = {
     'next_version': next_version,
     'date_iso': date_iso,
     'date_month_year': date_month_year,
+    'warnings': warnings,
 }
 ```
 
@@ -538,7 +589,7 @@ input instead of serialized Python data structures.
 entries: list
 task_reviews: dict
 
-used_reviews: set = set()
+used_reviews = set()
 total = len(entries)
 sections = []
 for i, e in enumerate(entries, 1):
@@ -608,7 +659,7 @@ files = [
     if f and 'changelog.mdx' not in f
 ]
 
-file_sections: list = []
+file_sections = []
 for file in files:
     commits = subprocess.run(
         ['git', 'log', f'{tag}..{to_ref}', '--oneline', '--', file],
@@ -627,10 +678,10 @@ for file in files:
     section = f'## {file}\nCommits: {commits}\nChanges:\n' + '\n'.join(change_lines)
     file_sections.append({'text': section, 'lines': len(change_lines)})
 
-max_lines: int = 300
-chunks: list = []
-current_chunk: list = []
-current_lines: int = 0
+max_lines = 300
+chunks = []
+current_chunk = []
+current_lines = 0
 
 for fs in file_sections:
     if current_chunk and current_lines + fs['lines'] > max_lines:
@@ -768,7 +819,7 @@ standardizes terminology. The markdown format includes PR and task
 links; the Mintlify format groups entries into themes without links.
 
 - type: llm
-- model: gemini-3-pro-preview
+- model: claude-opus-4-5
 
 ```yaml batch
 items:
@@ -931,6 +982,7 @@ commit/PR context and matched task reviews.
     unmatched_reviews: ${format-draft-entries.result.unmatched_reviews}
     next_version: ${compute-version.result.next_version}
     date_iso: ${compute-version.result.date_iso}
+    warnings: ${compute-version.result.warnings}
     releases_dir: ${releases_dir}
 
 ```python code
@@ -941,6 +993,7 @@ formatted_entries: str
 unmatched_reviews: str
 next_version: str
 date_iso: str
+warnings: list
 releases_dir: str
 
 from pathlib import Path
@@ -957,6 +1010,14 @@ parts = [
     f'Generated: {date_iso}',
     'This file contains implementation context for AI agents and release verification.',
     '',
+]
+
+if warnings:
+    parts.extend(['---', '', '## ⚠ Warnings — Review Before Release', ''])
+    parts.extend(f'- {w}' for w in warnings)
+    parts.append('')
+
+parts.extend([
     '---',
     '',
     '## Changelog',
@@ -982,7 +1043,7 @@ parts = [
     '## Draft Entries with Context',
     '',
     formatted_entries,
-]
+])
 
 if unmatched_reviews:
     parts.extend([
@@ -1155,6 +1216,7 @@ created files with descriptions.
     next_version: ${compute-version.result.next_version}
     bump_type: ${compute-version.result.bump_type}
     date_iso: ${compute-version.result.date_iso}
+    warnings: ${compute-version.result.warnings}
     changelog_path: ${update-changelog-file.result}
     mintlify_path: ${update-mintlify-file.result}
     context_path: ${save-release-context.result}
@@ -1167,19 +1229,28 @@ task_reviews: dict
 next_version: str
 bump_type: str
 date_iso: str
+warnings: list
 changelog_path: str
 mintlify_path: str
 context_path: str
 slack_channel: str
 
-lines = [
+lines = []
+
+if warnings:
+    lines.append('## ⚠ Warnings — Review Before Release\n')
+    for w in warnings:
+        lines.append(f'- {w}')
+    lines.append('')
+
+lines.extend([
     '## Release Summary\n',
     f'Version: {next_version} ({bump_type})',
     f'Date: {date_iso}\n',
     'Created files:',
     f'  {changelog_path}',
     f'    {len(entries)} entries with PR links',
-]
+])
 
 if mintlify_path:
     lines.append(f'  {mintlify_path}')

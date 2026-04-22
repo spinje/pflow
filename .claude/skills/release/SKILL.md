@@ -48,20 +48,28 @@ git log --oneline <since_tag>..HEAD | wc -l
 
 ### 3. Run the changelog workflow
 
-If the user hasn't specified a release type (major, minor, or patch), ask them before running:
+**If you have reason to believe this should be a major release, ask the user** before running:
 
-> "Do you want to force a release type (major/minor/patch), or let the workflow auto-detect from the changelog entries? Auto-detection uses: Removed/Changed = major, Added = minor, otherwise patch."
+> "Is this a major release? A major release means breaking changes that
+> users must adapt to — removals, renames, or behavior changes — or a
+> declaratory stability bump (e.g. v1.0.0). Default is no."
 
-Then run the workflow, passing `version_type=<choice>` if they specified one:
+Translate the answer to `is_major_release=true` or `is_major_release=false`. This input is required — the workflow errors out at validation time if not passed. The LLM can never pick major; it's always a human decision.
+
+When `is_major_release=false`, the workflow auto-detects minor vs patch from entries (Added → minor, else patch) and never bumps major. If breaking entries are detected anyway, the release still ships but a **prominent warning** is surfaced in both the summary and the release context file for your review at step 4.
+
+When `is_major_release=true` without any Removed/Changed entries, a warning also appears — confirm the declaratory major is intentional.
+
+Run the workflow:
 
 ```bash
-uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> version_type=<type>
+uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> is_major_release=<true|false>
 ```
 
 To skip the Slack notification, pass an empty channel (the workflow uses conditional branching to skip Slack steps automatically):
 
 ```bash
-uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> version_type=<type> slack_channel=""
+uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> is_major_release=<true|false> slack_channel=""
 ```
 
 This produces three file outputs:
@@ -74,12 +82,13 @@ The CLI output includes a `suggested_version` (computed from entry verbs: Remove
 ### 4. Review
 
 **STOP here.** Show the user:
-1. The suggested version from the workflow output
-2. The changelog entries that were included (read `CHANGELOG.md` to show the new section)
-3. A summary of what was skipped (read the "Skipped Changes" section from `releases/<version>-context.md`)
-4. Ask: "Does this look correct? Any edits needed? Is the suggested version right?"
+1. **Any warnings surfaced by the workflow** — the summary and the top of `releases/<version>-context.md` both start with a "⚠ Warnings — Review Before Release" section when `is_major_release` and the classified entries disagree. Relay these verbatim and ask the user whether to adjust `is_major_release` and re-run, reclassify entries, or accept and proceed.
+2. The suggested version from the workflow output
+3. The changelog entries that were included (read `CHANGELOG.md` to show the new section)
+4. A summary of what was skipped (read the "Skipped Changes" section from `releases/<version>-context.md`)
+5. Ask: "Does this look correct? Any edits needed? Is the suggested version right?"
 
-Do NOT proceed until the user confirms the version and content.
+Do NOT proceed until the user confirms the version, warnings (if any), and content.
 
 ### 5. Bump version
 
