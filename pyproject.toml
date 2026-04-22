@@ -27,13 +27,13 @@ dependencies = [
     "click", # CLI framework (more flexible than Typer)
     "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
     "llm>=0.29", # Simon Willison's LLM library for text processing
-    "llm-anthropic==0.24", # Anthropic Claude models (provides anthropic as transitive dep)
+    "llm-anthropic==0.25", # Anthropic Claude models (provides anthropic as transitive dep)
     "pydantic", # IR/metadata validation
     "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
     "claude-agent-sdk>=0.1.17", # Claude Agent SDK for agentic development node
     "PyYAML>=6.0.0", # YAML parsing for markdown workflow format params and frontmatter
-    "llm-gemini>=0.29", # Google Gemini models including Gemini 3 Flash
+    "llm-gemini>=0.30", # Google Gemini models including Gemini 3 Flash
 ]
 
 # Optional dependencies can be added here for future LLM providers
