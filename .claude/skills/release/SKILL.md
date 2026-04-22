@@ -2,7 +2,7 @@
 name: release
 description: Run the pflow release process — generate changelog, bump version, commit, and create GitHub Release
 argument-hint: [since_tag]
-allowed-tools: Bash(uv run pflow:*), Bash(git:*), Bash(gh:*), Bash(cat:*), Bash(sed:*), Read, Glob, Grep, Edit
+allowed-tools: Bash(uv run pflow:*), Bash(git:*), Bash(gh:*), Bash(cat:*), Bash(sed:*), Read, Glob, Grep, Edit, Monitor
 ---
 
 # Release Process
@@ -150,9 +150,38 @@ This triggers the CI workflow which:
 ### 9. Verify
 
 After creating the release:
-- Show the GitHub Release URL (from `gh release create` output)
-- Check the CI workflow status: `gh run list --limit 3`
-- Once CI completes, verify on PyPI: `https://pypi.org/project/pflow-cli/`
+
+1. Show the GitHub Release URL (from `gh release create` output).
+
+2. Wait for CI to finish using **Monitor** — do NOT chain `sleep` commands or poll `gh run list` in a Bash loop. The harness blocks long idle sleeps, and Monitor keeps you responsive to the user while CI runs:
+
+   ```bash
+   while true; do
+     line=$(gh run list --workflow=release-main --limit 1 \
+       --json status,conclusion,databaseId,displayTitle \
+       --jq '"\(.[0].status) \(.[0].conclusion) \(.[0].databaseId) \(.[0].displayTitle)"' 2>/dev/null || echo "api_error")
+     state=$(echo "$line" | awk '{print $1}')
+     if [ "$state" = "completed" ] || [ "$state" = "api_error" ]; then
+       echo "$line"
+       exit 0
+     fi
+     sleep 20
+   done
+   ```
+
+   The script stays silent while CI is queued or running; one notification arrives with the final line (e.g. `completed success 24770302049 v0.12.0` or `completed failure 24770302049 v0.12.0`). **Check the `conclusion` field** — `success` means proceed, anything else means investigate via `gh run view <databaseId> --log-failed`.
+
+   Critical: the filter above emits on `completed` regardless of conclusion, so crashes and failures surface too. Never write a Monitor script that matches only the success signature — silence ≠ success.
+
+3. Once CI succeeds, verify on PyPI: `https://pypi.org/project/pflow-cli/` (may take 30-60s after workflow completion). Confirm with:
+
+   ```bash
+   curl -s https://pypi.org/pypi/pflow-cli/json | python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])"
+   ```
+
+4. If CI fails, the release tag still exists but PyPI wasn't published. Options:
+   - Fix the issue, commit + push, delete + recreate the release: `gh release delete v<version> --cleanup-tag && gh release create v<version> ...`
+   - Or bump to the next patch version and re-run from step 5.
 
 ## Known issues
 
