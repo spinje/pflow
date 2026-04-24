@@ -37,7 +37,7 @@ Three tightly-coupled changes, shipped together because none provides value alon
 
 ## Design Decisions
 
-1. **LiteLLM migration is required, not optional.** The `llm-anthropic==0.25` plugin exposes only a `cache: bool` option that marks `cache_control` on the last attachment or the last content block of the last prior user message. It does not mark system prompts, first-turn user content, or arbitrary breakpoints — and `llm.models.Options` is pinned to `extra="forbid"`, so there is no kwarg passthrough or `extra_body` escape hatch. Caching system prompts and first-turn content is the core Task 158 use case. LiteLLM covers Anthropic + Gemini + OpenAI through one `cache_control` syntax; direct SDKs would require two code paths. Keeping `llm` + monkey-patching is fragile across plugin upgrades. The 5–10 engineer-day replacement cost is unavoidable for this use case.
+1. **LiteLLM migration is required, not optional.** The `llm-anthropic==0.25` plugin exposes only a `cache: bool` option that marks `cache_control` on the last attachment or the last content block of the last prior user message. It does not mark system prompts, first-turn user content, or arbitrary breakpoints — and `llm.models.Options` is pinned to `extra="forbid"`, so there is no kwarg passthrough or `extra_body` escape hatch. Caching system prompts and first-turn content is the core Task 158 use case. LiteLLM covers Anthropic + Gemini + OpenAI through one `cache_control` syntax; direct SDKs would require two code paths. Keeping `llm` + monkey-patching is fragile across plugin upgrades.
 
 2. **Explicit `## Cache` declaration, not silent restructuring.** Autodetecting "this value is reused, let me lift it out of the prompt file into a cacheable system prefix" would silently change the message structure the LLM receives. Even though the content bytes would be identical, the message assembly pattern differs (inline prose vs. structured system blocks). pflow's existing philosophy is explicit, visible workflow syntax — caching follows that. The author declares what's cached; pflow renders what was declared.
 
@@ -53,7 +53,7 @@ Three tightly-coupled changes, shipped together because none provides value alon
 
 8. **No auto-optimization for reruns.** Extended TTL (1h) is never auto-applied. Rerun benefits cost money on first-write; that tradeoff is the author's to make, not pflow's.
 
-9. **Auto batch-prefix caching is on by default, but visible.** Within a batched LLM call, detecting the stable prefix before the first `${item.X}` and inserting `cache_control` does not change the bytes sent. It's free money. But it's visible in `pflow analyze-cache` output and opt-outable with `- batch_cache: false`. User decision during discussion: "B" (visible automatic) over fully automatic or fully explicit.
+9. **Auto batch-prefix caching is gated on `prewarm: true`.** Within a batched LLM call, pflow can detect the stable prefix before the first batch-scoped reference and insert a `cache_control` marker. Without pre-warming, all N calls write the cache simultaneously — no savings, just overhead. So auto-batch-prefix is only applied when `prewarm: true` is explicitly declared (which serializes the first call, then fans out the remaining N-1 in parallel as cache reads). For large batches where the author hasn't declared prewarm, pflow emits a hard validation error, forcing an explicit decision (agents must choose opt-in or opt-out, not silent default). Small batches skip auto-batch-prefix silently. Declared `## Cache` references whose prefix was written by earlier non-batch nodes still apply to batches at read cost — independent of prewarm.
 
 10. **Prefix padding is advisory, never auto-applied.** When a node's `prompt_cache:` subset doesn't start at position 1 of the master order, it doesn't cache-hit upstream writes. Extending the subset to include earlier items can unlock prefix hits at the cost of sending extra content at 0.1× read rate. pflow computes whether padding is net-positive per node and surfaces it as an **optional recommendation** in analyze-cache output. The author decides; pflow never modifies the workflow.
 
@@ -71,7 +71,7 @@ Three tightly-coupled changes, shipped together because none provides value alon
 
 17. **Verification tier strategy: ship Tier 1 (static in-file) + Tier 3 (trace-based) in v1; Tier 2 (cross-workflow prediction) is a planned follow-up.** Tier 1 catches all in-file correctness issues cheaply. Tier 3 is the source-of-truth using actual provider-reported cache data from runtime traces. Tier 2 (predicting cross-workflow cache hits before running) requires cross-file graph analysis and prose-label comparison — valuable but not required for the feature to be useful.
 
-18. **Pre-warming for batches is opt-in, not default.** Firing the first batch call alone and waiting for cache write before fanning out trades ~one call's latency for ~5× cost reduction on the remaining N-1 calls. Default off (latency preservation); opt-in via `- prewarm: true` on the batch node or via `pflow analyze-cache` suggestion when batch size is large.
+18. **Pre-warming for batches is opt-in via `prewarm: true`.** Semantics: serialize the first call, wait for completion (cache write), then fan out the remaining N-1 calls in parallel at read cost. Trades ~one call's latency for 5–10× cost reduction on the remaining calls. Default off (latency preservation). For batches where the detected stable prefix is large enough that silent skipping would represent a meaningful cost regression, pflow emits a hard validation error demanding an explicit choice (`prewarm: true` or `prewarm: false`). Below that threshold, pflow skips auto-batch-prefix silently. Threshold values are tunable; v1 starts conservative (e.g. batch size > 10 AND prefix > 2k tokens) and may simplify if a single dimension proves sufficient.
 
 19. **`prompt_cache` rendered content must be in `compute_node_config`, conditionally.** The memo-cache hash (`runtime/engine/instrumentation.py:140-179`) determines which cached output is served. If `prompt_cache` content prepends to the system message at runtime but is NOT in the hash, existing cache entries hit for upgraded workflows and serve outputs produced WITHOUT the prepended content — a silent correctness bug. Fix: thread the rendered `prompt_cache` content into `compute_node_config` **conditionally** (only when `prompt_cache` is non-empty) so nodes that don't opt in retain their existing hash. Precedent: `batch_config` is added the same conditional way (Task 96).
 
@@ -105,30 +105,30 @@ Related but explicitly out of scope:
 
 ### Library Replacement (LiteLLM)
 
-- Replace all `import llm` / `from llm import ...` imports in `src/pflow/` with a pflow-owned adapter (new `src/pflow/core/llm_client.py`) that wraps `litellm.completion`.
-- Preserve current LLM-node external behavior for non-cached calls: same parameters accepted (`model`, `temperature`, `max_tokens`, `system`, `prompt`, `images`, `output_schema`, `reasoning_effort`, `reasoning_max_tokens`, `model_options`, `timeout`), same output shape (`response: str|dict`, `error: str`, `llm_usage: dict`).
-- Reasoning-options mapping handled by an explicit provider-to-option-name table inside pflow (replaces `model.Options.model_fields` introspection at `nodes/llm/llm.py:99`). Live in new `src/pflow/core/llm_reasoning_map.py`.
+- Replace all `import llm` / `from llm import ...` imports across pflow with a pflow-owned adapter wrapping `litellm.completion`.
+- Preserve current LLM-node external behavior for non-cached calls: same parameters accepted (`model`, `temperature`, `max_tokens`, `system`, `prompt`, `images`, `output_schema`, `reasoning_effort`, `reasoning_max_tokens`, `model_options`, `timeout`); same output shape (`response: str|dict`, `error: str`, `llm_usage: dict`).
+- Reasoning-options mapping handled by an explicit provider-to-option-name table inside pflow (replaces the current `model.Options.model_fields` introspection).
 - Structured output (`output_schema` → JSON Schema dict OR Pydantic model) preserved; rendered to LiteLLM's structured-output mechanism (`response_format`).
 - Image attachments (`images: list[str]`) supported across Anthropic, OpenAI, Gemini (each provider's encoding handled by LiteLLM).
 - Ollama and other local-model runtimes remain supported for non-caching use. First-class Ollama; best-effort vLLM / LM Studio / Llamafile.
-- Exception handling: detect LiteLLM's equivalent of `UnknownModelError` and `NeedsKeyException` and produce pflow's existing user-facing error messages (currently detected by class-name string matching at `nodes/llm/llm.py:435-452`).
-- Key discovery: read env vars (LiteLLM's native path) and optionally `~/.config/io.datasette.llm/keys.json` for users migrating from `llm`. No subprocess shelling to `llm` CLI binary (`core/llm_config.py:40-99, 348-387` replaced).
-- `pflow settings llm` CLI subgroup updated (`cli/commands/settings.py:40-41, 451-467`) — help text no longer references Simon's `llm` binary; point users at env vars and `pflow settings llm` itself.
+- Exception handling: detect LiteLLM's equivalents of `UnknownModelError` and `NeedsKeyException` and produce pflow's existing user-facing error messages (currently detected by class-name string matching).
+- Key discovery: read env vars (LiteLLM's native path) and optionally `~/.config/io.datasette.llm/keys.json` for users migrating from `llm`. No subprocess shelling to `llm` CLI binary.
+- `pflow settings llm` CLI subgroup updated — help text no longer references Simon's `llm` binary; point users at env vars and the legacy keys.json migration path.
 
 ### `## Cache` Block Parsing
 
-- New top-level section `## Cache` recognized by the markdown workflow parser (`core/markdown_parser.py`). Added to `_SectionType` enum, `_KNOWN_SECTIONS`, `_SECTION_DISPLAY_NAMES`, `_SECTION_SYNTAX_HINTS`, `_resolve_section()`.
+- New top-level section `## Cache` recognized by the markdown workflow parser, integrated into the existing section-type machinery alongside `## Inputs` / `## Steps` / `## Outputs`.
 - Optional `- ttl: <duration>` parameter on the section (`5m` default; `1h` extended; reject other values in v1).
 - Contains a tagged `` ```cache `` code block; multiple cache code blocks in one section are a syntax error.
 - The `cache` code block content is a sequence of `[prose block][${var} reference]` pairs. Prose between variables, prose before the first variable, and the variable itself are rendered as a single content chunk.
 - **Exactly one `${var}` per chunk.** Two or more `${var}` in a chunk is a syntax error (prose should describe its value, not contain further template references).
 - Each `${var}` must resolve to a valid workflow input or upstream step output in the containing workflow file (reference resolution, same rules as existing templates).
-- `${item.X}` (batch-scoped) or any non-stable reference in a cache block is a syntax error.
+- References that vary across calls referencing the same chunk are a syntax error. In practice this means batch-scoped references (`${item.X}` and any descendants) are rejected. Workflow inputs, step outputs (including aggregate batch outputs like `${batch-node.some_field}`), and indexed accesses that resolve to stable values are valid.
 - Empty cache block is a syntax error (must have ≥1 variable).
 - Prose-only cache block (no variables) is a syntax error.
 - Cache chunk identifier = stripped template path. `${concept}` → `concept`; `${chorus-chooser.winning_chorus}` → `chorus-chooser.winning_chorus`. Duplicate identifiers (same `${var}` appearing twice) is a syntax error.
-- New top-level IR field `cache` added to `core/ir_schema.py::FLOW_IR_SCHEMA.properties` (top-level `additionalProperties: False` means the schema must be extended). Shape: `{"cache": {"type": "object", "properties": {"ttl": {"enum": ["5m", "1h"]}, "items": {"type": "array", "items": {...}}}}}`.
-- `_source_line` metadata injected on cache block + per-chunk for error-rendering (follow same pattern as `markdown_parser.py:1030-1033` for code blocks).
+- New top-level IR field `cache` added to the workflow JSON schema (top-level `additionalProperties: False` means the schema must be extended explicitly). Shape: `{"cache": {"type": "object", "properties": {"ttl": {"enum": ["5m", "1h"]}, "items": {"type": "array", "items": {...}}}}}`.
+- `_source_line` metadata injected on the cache block and on each chunk for error-rendering, following the existing source-line pattern for tagged code blocks.
 
 ### Per-Node `prompt_cache:` Field
 
@@ -139,28 +139,30 @@ Related but explicitly out of scope:
 - Absence of the `prompt_cache:` field means "no declared cache" — the node runs with no cross-call caching context (intentional isolation, e.g., `review-stranger-summary` pattern).
 - Empty list `- prompt_cache: []` is valid and equivalent to absence.
 - Per-node inline cache is NOT supported in v1 — everything cacheable goes in the master `## Cache`.
-- IR schema extension at `core/ir_schema.py:152-189` (per-node): add `prompt_cache: {"type": "array", "items": {"type": "string"}}`. Per-node `additionalProperties: False` at line 186 means this must be added.
+- New per-node `prewarm: bool` field accepted on `type: llm` nodes with a `batch:` config. `true` = serialize-first-then-fan-out with auto-batch-prefix marker; `false` = fan out all N immediately, no auto-batch-prefix; absent = treated as false unless the large-batch threshold (see Auto Batch-Prefix Caching) forces an explicit choice via validation error.
+- IR schema extended (per-node): add `prompt_cache: {"type": "array", "items": {"type": "string"}}` and `prewarm: {"type": "boolean"}`. Per-node `additionalProperties: False` means both must be added explicitly.
 - Existing `cache: bool` field remains unchanged in schema and semantics. The two fields coexist on the same node.
 
 ### Cache Rendering into LLM Calls
 
-- Cache rendering happens inside the pflow-owned adapter (`llm_client.complete(...)`) before it calls `litellm.completion(...)`. The adapter is called from `LLMNode._call_llm` (`nodes/llm/llm.py:271-321`), after kwargs build, before the API call — inside the ThreadPoolExecutor timeout budget.
+- Cache rendering happens inside the pflow-owned adapter before it calls `litellm.completion(...)`. The adapter is called from `LLMNode._call_llm` after kwargs build, before the API call — inside the ThreadPoolExecutor timeout budget and inside the retry loop.
 - For each LLM node with a declared `prompt_cache:` list, pflow renders the cache content as a system-message prefix:
   - One content block per `[prose + ${var}]` chunk, in declaration order filtered to the node's subset.
   - Anthropic/Gemini: a `cache_control: {type: ephemeral}` marker on the final chunk (v1 single-breakpoint strategy). TTL translates to Anthropic's extended cache (via LiteLLM's passthrough of `ttl` when supported).
   - OpenAI: content is the prefix; no markers needed. Optionally emit a `prompt_cache_key` computed from a hash of the rendered cache content (improves routing consistency across parallel batch calls).
 - The node's `prompt:` (the task) is rendered as the user message, after the cacheable system prefix.
 - If the rendered cache content is below the provider's minimum token threshold (1024 for Anthropic sonnet/opus, 2048 for haiku), pflow issues a validation-time warning but does not fail the call — provider silently no-ops.
-- Rendering failures (template resolution error on a cache item) follow the `build_template_error_diagnostic` pattern at `runtime/engine/template_errors.py:320`, returning an error-dict from the adapter to avoid wasted retries.
+- Rendering failures (template resolution error on a cache item) follow the existing `build_template_error_diagnostic` pattern, returning an error-dict from the adapter to avoid wasted retries.
 
 ### Auto Batch-Prefix Caching
 
-- For any `type: llm` node with a `batch:` config, pflow detects the static prefix of the rendered prompt (text before the first `${item.X}` or other batch-scoped reference).
-- Detection reads from the unresolved template at `config.template_config.template_params["prompt"]` (the raw `${var}` template), NOT the rendered string.
-- If the static prefix exceeds the provider's minimum token threshold, pflow inserts an additional `cache_control` marker at the end of that prefix (Anthropic/Gemini).
+- Auto batch-prefix caching applies ONLY when the batch node has `prewarm: true`. Without prewarm, all N calls would write the cache simultaneously and pay the write cost without any read benefit — pflow does not insert markers in that case.
+- When active: pflow detects the static prefix of the rendered prompt (text before the first batch-scoped reference). If the prefix exceeds the provider's minimum token threshold, pflow inserts a `cache_control` marker at the end of that prefix (Anthropic/Gemini).
+- Detection resolves all non-batch-scoped template variables first, then locates the first batch-scoped reference in the partially-resolved string. Position-mapping details are an implementation concern.
 - The rendered prompt bytes are identical to what the author wrote — only the content-block structure and `cache_control` metadata differ.
-- Opt-out per node via `- batch_cache: false`.
-- Combines with declared cache: a batch node can have both a `prompt_cache:` list (reusing workflow-level cache items) AND auto batch-prefix on its prompt — these are distinct cache breakpoints, both marked.
+- N=1 batches skip auto-batch-prefix (no fan-out, no savings opportunity).
+- Large batches without an explicit prewarm decision produce a hard validation error, requiring the author to declare `prewarm: true` (opt in) or `prewarm: false` (explicit opt out). Threshold (v1, tunable): batch size > 10 AND detected static prefix > 2k tokens. Below the threshold, pflow skips auto-batch-prefix silently.
+- Combines with declared cache: a batch node can have both `prompt_cache: [...]` (applies regardless of prewarm — those chunks were written by upstream non-batch nodes) AND `prewarm: true` (which adds the auto-batch-prefix marker). Distinct cache breakpoints, both marked.
 
 ### Strict Order Validation
 
@@ -174,18 +176,19 @@ Related but explicitly out of scope:
   ```
 
 - Error is caught by both `pflow run` validation and `pflow analyze-cache` (via the shared `data_flow.py::validate_data_flow()` call site).
-- No auto-reorder. The workflow file is the source of truth.
+- No auto-reorder. The workflow file is the source of truth. No escape hatch in v1; if a real use case emerges for per-node reorder, revisit.
 
 ### Validation Location
 
-- Structural cache-block validation (required fields, types, enum values for `ttl`) lives in the `FLOW_IR_SCHEMA` at `core/ir_schema.py` — automatically runs at every validation entry point.
-- Cache reference validation (item names resolve, order matches, subsets valid, `${item.X}` not allowed) lives in `core/workflow/data_flow.py::validate_data_flow()` — already called by both `WorkflowValidator.validate()` (save + pre-execution) and `runtime/compilation/compile_validation.py::_prepare_compilation()` (compile-time). One implementation covers all entry points.
-- Diagnostics emitted follow existing pattern (Wave 1C findings): `Diagnostic(severity=ERROR, source="validator", category="validation", path="nodes[id=X].prompt_cache[i]", similar_names=..., available_fields=..., see_also=["caching"])`. Use `find_similar_items` from `core/suggestion_utils.py` for "Did you mean?" hints.
+- Structural cache-block validation (required fields, types, enum values for `ttl`) lives in the `FLOW_IR_SCHEMA` — automatically runs at every validation entry point.
+- Cache reference validation (item names resolve, order matches, subsets valid, batch-scoped references rejected) lives in `core/workflow/data_flow.py::validate_data_flow()` — already called by both the workflow validator (save + pre-execution path) and compile-time validation. One implementation covers all entry points.
+- Diagnostics emitted follow existing pattern: `Diagnostic(severity=ERROR, source="validator", category="validation", path="nodes[id=X].prompt_cache[i]", similar_names=..., available_fields=..., see_also=["caching"])`. Use `find_similar_items` from `core/suggestion_utils.py` for "Did you mean?" hints.
 - Schema-level errors and reference-resolution errors both flow through the existing CLI / MCP / JSON diagnostic pipeline (stderr for text, structured for JSON).
+- **Unused cache chunk warning.** If `## Cache` declares a chunk that no node's `prompt_cache:` references, emit a validation warning (not error) suggesting removal or referencing. Helps the author keep the cache block lean and surfaces dead code.
 
 ### Memo Cache Hash Correctness
 
-- Thread `prompt_cache` rendered content into `compute_node_config()` at `runtime/engine/instrumentation.py:140-179` conditionally:
+- Thread `prompt_cache` rendered content into `compute_node_config()` conditionally:
 
   ```python
   if prompt_cache_content:  # non-empty list of rendered chunks
@@ -196,6 +199,13 @@ Related but explicitly out of scope:
 - `prompt_cache_content` must be the **rendered** content (prose + resolved value), not the declaration (`[name1, name2]`), because two different resolved values under the same name should produce different hashes.
 - Update `runtime/engine/CLAUDE.md` to note: "`prompt_cache` content is included conditionally, mirroring `batch_config`. The value is the rendered content chunks."
 - Regression test required: existing workflow (no `prompt_cache`) produces identical hash pre- and post-task.
+
+### Cache Layer Independence (`--no-cache` scope)
+
+- The `--no-cache` flag disables pflow's local **memoization** layer only. It does NOT disable LLM provider prompt caching.
+- Rationale: the two layers are conceptually independent. Memoization opts a node out of re-executing when inputs match a prior run (correctness/freshness control). Prompt caching is pure cost reduction at the provider level with no behavioral change. There is no reason to disable prompt caching when debugging memo behavior.
+- `pflow analyze-cache` output and trace cached-token reporting remain active under `--no-cache`.
+- Documentation (`--no-cache` flag help, guide section) must make this distinction explicit.
 
 ### Breakpoint Limit Handling
 
@@ -218,17 +228,20 @@ Related but explicitly out of scope:
   - **Warnings:** severity-tagged, each with stable ID and concrete fix action.
 - JSON output (`--format=json`): structured equivalent with `summary`, `warnings`, `shared_context_candidates` arrays. Warning entries have stable `id`, `severity`, `node`, `fix.action`, `fix.description`.
 - Confidence indicator: `estimate_confidence: "low_no_trace" | "high_from_trace"` depending on whether a trace is available.
+- **v1 algorithm scope (Level 2 — detect + suggest).** The analysis identifies LLM calls that share static context, computes a candidate `## Cache` block + per-node `prompt_cache:` assignments using a most-shared-first ordering heuristic, and emits a copy-pasteable block with blank prose placeholders for the author to fill in. The author decides whether to apply. Suggestions never modify workflow files.
+- **Out of v1 (deferred to v1b follow-up):** full prefix-tree optimization across the whole workflow, cross-workflow prose alignment suggestions, an explicit `pflow cache apply` command that writes the suggestions to disk after preview. v1b's scope and complexity will be assessed during Phase B-G plan writing once we see the workflow code in detail.
 - Size estimates use `MemoizationCache.get_latest_for_node(node_id, workflow_path=...)` (`runtime/cache.py:264-320`) to pull historical output sizes from previous runs. A new helper `MemoizationCache.get_size_for_node(...)` returning `LENGTH(output)` may be added to avoid materializing the full blob; skip this if size is extracted from already-materialized entries.
 - `--from-trace [trace-path]` mode: reads an existing trace file (format 2.1.0) and compares predicted cache behavior to actual `cache_creation_input_tokens` / `cache_read_input_tokens` from `event["llm_call"]`. Flags discrepancies with root-cause hints (TTL expiry via `cache_age_sec`, content mismatch via `cache_key` compare, parallel-write race). Falls back gracefully on 2.0.0 traces (omits cache-key-correlated analysis with an info message).
 - Exits 0 on successful analysis. Non-zero only on validation errors (unparseable workflow, unresolvable references).
 
-### `--dry-run` Cache Nudge
+### `--dry-run` Cache Nudge and Cache Rendering
 
-- `src/pflow/execution/plan.py` (the dry-run planner) calls `cache_analysis.summarize(...)` and attaches its optional `Severity.INFO` `Diagnostic` to the plan's `diagnostics` list.
-- `plan_formatter.py` (line 139-142 existing loop) renders the diagnostic automatically. No new formatter code.
-- JSON `--format=json` output includes the diagnostic via `Diagnostic.to_dict()` — already serialized by the planner's summary assembly.
-- Nudge is silent when no actionable opportunities exist (keeps common-case output unchanged).
+- The dry-run planner calls `cache_analysis.summarize(...)` and attaches its optional `Severity.INFO` `Diagnostic` to the plan's `diagnostics` list.
+- The existing diagnostic-rendering loop in the plan formatter renders it automatically. No new formatter code.
+- JSON `--format=json` output includes the diagnostic via `Diagnostic.to_dict()`.
+- Nudge is silent when no actionable opportunities exist.
 - Example nudge text: `Cache: 3 design opportunities available (estimated -$0.78/run). Run 'pflow analyze-cache' for details.`
+- **Cache content rendering during dry-run.** The planner does not execute LLM calls, so live cache values are unavailable. For workflows with `## Cache` blocks: cache chunk values resolve from `MemoizationCache.get_latest_for_node()` (the same mechanism Task 156 uses for cost estimates). For chunks with no prior cached data, the planner records "cache content unavailable — estimates low-confidence" and proceeds; this is not an error. Confidence indicator on the dry-run summary degrades accordingly.
 
 ### MCP Parity
 
@@ -300,9 +313,9 @@ Related but explicitly out of scope:
 - ~212 tests across 12 files mechanically updated to the new mock shape. Most should be transparent (they assert on shared-store outputs, not mock internals).
 - New tests added:
   - `tests/test_core/test_cache_block_parser.py` — parse valid/invalid `## Cache` blocks.
-  - `tests/test_core/test_prompt_cache_validation.py` — reference resolution, order enforcement, subset validity, `${item.X}` rejection.
-  - `tests/test_nodes/test_llm/test_prompt_cache_rendering.py` — content-block structure per provider, cache_control markers placed correctly.
-  - `tests/test_nodes/test_llm/test_batch_cache_prefix.py` — auto batch-prefix detection + opt-out.
+  - `tests/test_core/test_prompt_cache_validation.py` — reference resolution, order enforcement, subset validity, batch-scoped reference rejection, unused-chunk warning.
+  - `tests/test_nodes/test_llm/test_prompt_cache_rendering.py` — content-block structure per provider, cache_control markers placed correctly, structured output + cache composition, extended thinking + cache composition.
+  - `tests/test_nodes/test_llm/test_batch_cache_prefix.py` — auto batch-prefix detection gated on prewarm, large-batch validation error, N=1 skip.
   - `tests/test_cli/test_analyze_cache.py` — CLI output (text + JSON), exit codes.
   - `tests/test_cli/test_analyze_cache_from_trace.py` — trace-based verification.
   - `tests/test_mcp_server/test_analyze_cache_tool.py` — MCP parity.
@@ -318,7 +331,8 @@ Related but explicitly out of scope:
 - **Automatic cache-order optimization** — pflow validates order but does not suggest reordering the `## Cache` block itself. Manual only.
 - **Per-node inline cache blocks** (non-master) — everything cacheable goes in the master `## Cache`. No inline node-local cache blocks.
 - **Gemini explicit cache lifecycle management** beyond what LiteLLM handles transparently.
-- **Pre-warming as default** — opt-in via `- prewarm: true` only.
+- **Pre-warming as default** — opt-in via `- prewarm: true` only. v1 forces an explicit choice via validation error only when the batch is large enough that silent skipping would be a meaningful cost regression.
+- **Full prefix-tree optimization across the workflow** — v1 ships Level 2 suggestions (most-shared-first heuristic). Cross-workflow prose alignment, full graph optimization, and an explicit `cache apply` command are deferred to v1b; their scope and complexity will be assessed during Phase B–G plan writing.
 - **MemoizationCache schema versioning or migration** — no version column exists; natural 24h TTL flush is the migration mechanism. Do not introduce schema versioning for this task.
 
 ## Implementation Notes
@@ -424,110 +438,60 @@ ${chorus-chooser.winning_chorus}
 
 ### Files to Modify
 
-**Production source (substantive changes):**
+Detailed file-level modifications, line numbers, and patch ordering live in the implementation plan (see `implementation/plan-phase-0-and-A.md` for Phase 0 + Phase A; subsequent plans for Phases B–G). High-level touch points by area:
 
-- `src/pflow/nodes/llm/llm.py` (~465 LOC) — rewrite LLM node around pflow-owned adapter. Preserve external behavior. Replace `llm` import with adapter import. Remove `_map_reasoning_options` introspection (lines 35-114); replace with call to the hardcoded map.
-- `src/pflow/core/llm_config.py` — replace `llm` CLI subprocess (lines 40-99, 348-387) with env-var detection + optional keys.json read.
-- `src/pflow/core/llm_utils.py` — `parse_structured_response` adapts to LiteLLM response shape.
-- `src/pflow/core/llm_pricing.py` — verify cache-write (2×) and cache-read (0.1×) multipliers still correct; already implemented at lines 167-171.
-- `src/pflow/core/workflow/discovery.py` (line 12, 85) — swap `llm.get_model` call to adapter.
-- `src/pflow/registry/discovery.py` (line 13, 88) — same.
-- `src/pflow/registry/smart_filter.py` (line 21, 169, 175-180) — same + hardcoded reasoning-options map.
-- `src/pflow/runtime/workflow_trace.py` (lines 520-574, 592-599) — redesign tracing around pflow-owned adapter; remove `llm.get_model` monkey-patch.
-- `src/pflow/runtime/engine/instrumentation.py` (lines 140-179, 196-197, 423-434, 506-554) — extend `compute_node_config` with conditional `prompt_cache` inclusion; wire `cache_age_sec` and `cache_source` into trace events via `handle_cached_execution`.
-- `src/pflow/cli/commands/settings.py` (lines 40-41, 451-467) — update `pflow settings llm` group copy.
-- **New files:**
-  - `src/pflow/core/llm_client.py` — pflow-owned adapter wrapping `litellm.completion`, attaches tracing, handles cache rendering.
-  - `src/pflow/core/llm_reasoning_map.py` — explicit provider-to-option-name mapping.
-  - `src/pflow/core/cache_analysis/` package — `analyze()`, `summarize()`, trace-correlation helpers.
-
-**Markdown workflow parser:**
-
-- `src/pflow/core/markdown_parser.py` — extend `_SectionType`, `_KNOWN_SECTIONS`, `_SECTION_DISPLAY_NAMES`, `_SECTION_SYNTAX_HINTS`, `_resolve_section()`. Add `_build_cache_dict(entity)` helper. Integrate into phase 4 at lines 475-530.
-- `src/pflow/core/ir_schema.py` — extend `FLOW_IR_SCHEMA` with top-level `cache` section AND per-node `prompt_cache` field. Mind the `additionalProperties: False` at both levels (lines 186, 297).
-
-**Validation:**
-
-- `src/pflow/core/workflow/data_flow.py::validate_data_flow()` — add cache reference validation (item names resolve, order, subset membership). Runs automatically from both `WorkflowValidator` and `compile_validation`.
-- `src/pflow/core/workflow/validator.py` — verify the new diagnostics integrate cleanly with existing Step 4 (data flow). If a dedicated Step for cache-specific structural checks is needed, add between current steps 7 and 8.
-- `src/pflow/core/exceptions.py` — no new exception types needed; use existing `WorkflowValidationError` (aggregated) and `Diagnostic` (per-error).
-
-**Runtime compilation:**
-
-- `src/pflow/runtime/compilation/compiler.py:358` — extract `prompt_cache` from `node_data` alongside existing `cache`. Thread into `NodeConfig.prompt_cache_items: list[str]` (new field on `runtime/engine/types.py:NodeConfig`).
-- `src/pflow/runtime/engine/types.py` — add `prompt_cache_items: list[str] | None = None` to `NodeConfig`.
-
-**Dry-run plan integration:**
-
-- `src/pflow/execution/plan.py` — call `cache_analysis.summarize(...)` and attach nudge Diagnostic to plan's `diagnostics` list. No formatter changes needed (existing loop at `plan_formatter.py:139-142` renders it).
-
-**New CLI command:**
-
-- `src/pflow/cli/commands/analyze_cache.py` — new file. Parses args, invokes shared `cache_analysis.analyze()`, formats text or JSON.
-- Register in CLI entry point alongside other commands.
-
-**MCP parity:**
-
-- `src/pflow/mcp_server/services/execution_service.py` — add `analyze_cache(workflow, parameters) -> dict` method. Mirror `plan_workflow` at lines 301-354.
-- `src/pflow/mcp_server/tools/execution_tools.py` — add `@mcp.tool() async def analyze_cache(...)`. Mirror `plan_workflow` at lines 157-176. Add to tool exports list at line 354.
-
-**Guide updates:**
-
-- `src/pflow/guide/caching.md` — new top-level guide page.
-- `src/pflow/guide/nodes/llm.md` (or equivalent location) — cross-reference caching guide.
-- Existing `guide/core.md` mentions of `cache: false` (lines 70, 73, 394) — clarify the distinction from `prompt_cache:`.
-
-**Docs (mintlify):**
-
-- `docs/reference/cli/index.mdx:413-428` — expand cache section to distinguish `cache: false` from `prompt_cache:`.
-- New `docs/reference/caching.mdx` or similar — full prompt-caching reference.
-
-**Dependencies:**
-
-- `pyproject.toml` — remove `llm>=0.29`, `llm-anthropic==0.25`, `llm-gemini>=0.30` (lines 28-41). Add `litellm>=X.Y`. Update `DEP002` list (line 184).
-
-**Test infrastructure:**
-
-- `tests/shared/llm_mock.py` — rewrite around adapter shape; keep backwards-compatible accessors; add untruncated-prompt mode.
-- `tests/conftest.py:11-35` — update autouse fixture patch target from `llm.get_model` to the adapter.
-- ~12 test files with `llm` mock dependencies — mechanically updated patch targets.
-- New test files per **Test Infrastructure** section above.
+- **LLM node and adapter** — existing LLM node rewrites around a new pflow-owned adapter wrapping `litellm.completion`; new explicit reasoning-options map replaces `model.Options.model_fields` introspection.
+- **Markdown parser and IR schema** — new `## Cache` section type and code-block handling; new top-level `cache` field and per-node `prompt_cache` + `prewarm` fields with `additionalProperties: False` extensions.
+- **Validation** — cache reference validation lives in shared `data_flow.py::validate_data_flow()` (picked up by both `WorkflowValidator` and `compile_validation`); structural rules in `FLOW_IR_SCHEMA`.
+- **Runtime compilation and engine** — extract `prompt_cache` and `prewarm` into `NodeConfig`; conditional inclusion in `compute_node_config` memo hash; `cache_age_sec` and `cache_source` wired into trace events; pre-warm execution in batch handling.
+- **Tracing** — replace `llm.get_model` monkey-patch with adapter-owned wrapping; bump trace format to 2.1.0; new fields per the Trace Format requirements.
+- **Key discovery and settings** — env vars + optional `~/.config/io.datasette.llm/keys.json` direct read; `pflow settings llm` copy rewrite.
+- **New CLI command** — `pflow analyze-cache`; new shared `cache_analysis` package exposing `analyze()` and `summarize()`.
+- **MCP service and tool** — `analyze_cache` method on the execution service + `@mcp.tool()` registration mirroring `plan_workflow`.
+- **Test infrastructure** — `tests/shared/llm_mock.py` rewrite around the adapter (dual-mode for truncation), root autouse fixture updated, ~12 dependent test files mechanically retargeted, plus new tests per the Test Infrastructure section above.
+- **Dependency manifest** — remove `llm`, `llm-anthropic`, `llm-gemini`; add `litellm`; update DEP002 list.
+- **Documentation** — new `pflow guide caching` page; mintlify reference updates; clarification of `cache: false` vs `prompt_cache:` everywhere both appear.
 
 ### Implementation Phasing
 
-A single-PR landing is too large. Phases that merge incrementally:
+A single-PR landing is too large. Work splits into phases that merge incrementally. The plan is itself phased: **Phase 0 + Phase A are planned and executed first; Phases B–G are planned only after Phase A lands and LiteLLM behavior is verified end-to-end.** This avoids committing detailed plans to assumptions about a library we haven't yet integrated.
 
-**Phase A.0 (prerequisite spike — do NOT skip):** Before committing to adapter design, run two concrete spikes:
+**Phase 0 — LiteLLM verification spike.** Before committing to adapter design, verify LiteLLM meets pflow's requirements. Detailed spike scope lives in the Phase 0+A implementation plan; high-level coverage:
 
-1. **Cache mechanics verification.** Fire `litellm.completion(...)` with `cache_control` markers at Anthropic, Gemini, OpenAI. Verify: (a) `response.usage.cache_creation_input_tokens` / `cache_read_input_tokens` populate as expected, (b) message structure is `system: [{text, cache_control}]` or equivalent, (c) Gemini's single-cached-block architectural limit holds (only last breakpoint honored — confirm silently not silently corrupted), (d) extended thinking (`thinking_budget`, `thinking_effort`) passes through cleanly.
+- Cache mechanics across Anthropic, Gemini, OpenAI: `cache_control` passthrough, `cache_creation_input_tokens` / `cache_read_input_tokens` population, second-call cache hits, Gemini single-cached-block behavior.
+- Composition: extended thinking (`thinking_budget`, `thinking_effort`) + cache, structured output (`response_format`) + cache, structured output + extended thinking + cache.
+- Pricing accuracy: compare `litellm.completion_cost()` against `core/llm_pricing.py` across pflow's `MODEL_PRICING` table on cached and non-cached calls. Confirm the Gemini double-counting fix (PR #15226, 2025-10-07) is present in the pinned version. Outcome decides whether `llm_pricing.py` is removed (preferred), kept as fallback, or kept fully.
+- Operational: thread safety, logger chattiness, deterministic env-var key resolution, transitive dependency audit (`uv pip list --tree` — check size, security surface, optional vs mandatory deps).
+- Exception detection: equivalents of `UnknownModelError` and `NeedsKeyException` for friendly error messages.
 
-2. **Pricing authority decision.** Compare `litellm.completion_cost(response)` against `core/llm_pricing.py::calculate_llm_cost()` on every model currently in pflow's `MODEL_PRICING` table. Acceptable disagreement threshold: 2% on non-cached calls, 5% on calls with cache tokens. Special attention to Gemini — a Sept 2025 LiteLLM GitHub issue reported cache-token double-counting (~4× inflated costs); closed via PR #15226 on 2025-10-07. Confirm the fix is present in the LiteLLM version being pinned — if pinning an older release, upgrade or add a regression test that would catch the double-count. Based on results, choose:
-   - **Outcome A:** LiteLLM accurate + comprehensive → delete `llm_pricing.py`, use `completion_cost()` directly.
-   - **Outcome B:** LiteLLM mostly accurate, edge bugs → use LiteLLM as primary, keep thin `llm_pricing.py` as fallback for unknown-model cases.
-   - **Outcome C:** Material bugs → import LiteLLM's `model_prices_and_context_window.json` as data, keep pflow's computation code.
+**Phase A — LiteLLM migration.** Replace `llm` with the pflow-owned adapter backed by LiteLLM. Preserve all current LLM-node external behavior. No caching syntax yet, no cache rendering. Tests pass green (test fixes happen as part of this phase, not deferred). Ship standalone; safe-revert. The largest phase.
 
-   Current spec assumes `llm_pricing.py` stays intact (the conservative default). If the spike shifts the outcome toward A or B, update the "Library Replacement" and "Files to Modify" sections accordingly before Phase A proper.
+**Phase B — `## Cache` block parsing + `prompt_cache:` and `prewarm:` fields.** Markdown parser, IR schema, validation (membership, order, unused chunk warnings) via shared `data_flow.py`. No rendering yet.
 
-1. **Phase A: LiteLLM migration, no caching yet.** Replace `llm` with the pflow-owned adapter backed by LiteLLM. Preserve all current behavior. Tests pass. No cache syntax recognized; no cache rendering. Ship standalone; safe-revert. This is the largest phase (~40% of the work).
-2. **Phase B: `## Cache` block parsing + per-node `prompt_cache:` field.** Parser recognizes syntax; IR schema updated; validation (membership, order) fires via `data_flow.py`; no rendering yet. Tests for parser + validator correctness.
-3. **Phase C: Cache rendering into LLM calls.** Cache block + `prompt_cache:` list produces a rendered system prefix with `cache_control` markers via the adapter. `compute_node_config` updated conditionally. Tracing captures cached-token counts. End-to-end works on a single provider (Anthropic) first, then Gemini, then OpenAI.
-4. **Phase D: Auto batch-prefix caching.** Detect and mark stable prefix in batch prompts.
-5. **Phase E: Trace format 2.1.0.** Bump version. Add `cache_key`, `cache_source`, `cache_age_sec`, `workflow_path` fields.
-6. **Phase F: `pflow analyze-cache` command + MCP parity.** Static analysis (`analyze()`), `--from-trace` mode, JSON output, MCP tool registration, `--dry-run` nudge integration.
-7. **Phase G: Deterministic serialization + pre-warming opt-in + guide updates.**
+**Phase C — Cache rendering into LLM calls.** The adapter renders cached prefix with `cache_control` markers. `compute_node_config` updated conditionally. Tracing captures cached-token counts. End-to-end on Anthropic first, then Gemini, then OpenAI.
 
-Each phase has its own tests; merges independently. Phase A is prerequisite for all others. Phases B–D can land in parallel after A. Phase E enables richer Phase F. Phase G wraps.
+**Phase D — Auto batch-prefix + prewarm semantics.** Static-prefix detection in batch prompts; serialize-first-then-fan-out execution; large-batch validation error.
+
+**Phase E — Trace format 2.1.0.** New per-event and top-level fields for cache correlation.
+
+**Phase F — `pflow analyze-cache` command + MCP parity + `--dry-run` nudge.** Static analysis (Level 2), `--from-trace` mode, JSON output, MCP tool registration.
+
+**Phase G — Deterministic serialization + guide updates.**
+
+Each phase has its own tests; each merges independently. Phase 0 + A is prerequisite for all others. Phases B–D can land in parallel after A. Phase E enables richer Phase F. Phase G wraps.
 
 ### Non-Obvious Integration Points
 
-- **Memo cache hash conditional inclusion.** The `batch_config` precedent at `runtime/engine/instrumentation.py` is the canonical pattern. Follow it exactly. A regression test asserting pre- and post-task hash equality for no-prompt_cache workflows is mandatory.
-- **Tracing is the riskiest rewrite.** Global monkey-patch of `llm.get_model` (`workflow_trace.py:520-574`) is replaced by wrapping the pflow-owned adapter. Validate via drift-catcher test (`tests/test_execution/test_plan_drift.py` — do NOT weaken).
-- **Reasoning-options live-introspection removal.** `model.Options.model_fields` introspection at `nodes/llm/llm.py:99` is replaced by a hardcoded map. The comment at lines 52-54 ("Anthropic Opus 4.5 has thinking_effort, thinking, AND thinking_budget, so thinking_effort must be checked first") encodes a precedence — preserve the same ordering in the new map.
-- **Pydantic `ValidationError` catch at `nodes/llm/llm.py:298-311`** is flagged as a PATTERN EXCEPTION. Tied to `llm`'s Pydantic-validated options. Remove when no longer applicable under LiteLLM, or redirect to LiteLLM's equivalent deterministic-error detection.
-- **Prompt flattening in template resolution.** By the time `LLMNode.prep()` reads `self.params["prompt"]`, it's a fully-resolved flat string. Auto batch-prefix detection must read from the UNRESOLVED template at `config.template_config.template_params["prompt"]`, not the rendered string — the position of `${item.X}` is only identifiable pre-resolution.
-- **LLM call integration point.** Cache rendering belongs inside `LLMNode._call_llm` (`nodes/llm/llm.py:271-321`) right before the API call — inside the ThreadPoolExecutor timeout budget, inside the retry loop. Do NOT put rendering in `prep()` or before `pool.submit` (no timeout protection).
-- **Sub-workflow compile-once cache.** `WorkflowExecutor._compiled_workflow_cache` (`workflow_executor.py:204-243`) is keyed by resolved workflow path. New fields (e.g., `cache` IR section) shouldn't affect this keying — they're part of the compiled form, which is what's cached. Confirm tests cover the re-compile-with-different-cache-block case.
-- **`pflow settings llm` subgroup copy audit.** User-facing strings repeatedly reference Simon's `llm` binary (`cli/commands/settings.py:40-41, 451-467`, `core/llm_config.py:220-237, 433-465`, error messages at `nodes/llm/llm.py:443-452`). Grep for `llm keys`, `llm models`, `llm install` and rewrite.
+These are facts the implementation plan must respect; specific file paths and line numbers belong in the plan.
+
+- **Memo cache hash conditional inclusion.** The `batch_config` field is included in `compute_node_config` only when non-empty — it's the canonical conditional-inclusion precedent. `prompt_cache` content follows it exactly. A regression test asserting pre- and post-task hash equality for no-`prompt_cache` workflows is mandatory.
+- **Tracing is the riskiest rewrite.** The global monkey-patch of `llm.get_model` becomes wrapping the pflow-owned adapter. The plan-drift test (`tests/test_execution/test_plan_drift.py`) is the safety net — it must remain green and must not be weakened.
+- **Reasoning-options live-introspection removal.** `model.Options.model_fields` introspection is replaced by an explicit hardcoded provider-to-option-name map. The current code's precedence ordering (e.g., Anthropic Opus 4.5: `thinking_effort` checked before `thinking_budget`) encodes provider quirks; the new map must preserve those.
+- **`Pydantic ValidationError` catch in the LLM node** is tied to `llm`'s Pydantic-validated options. Under LiteLLM it must be removed or redirected to LiteLLM's equivalent deterministic-error detection.
+- **Prompt flattening in template resolution.** By the time `LLMNode.prep()` reads `self.params["prompt"]`, it's a fully-resolved flat string. Auto batch-prefix detection must read from the UNRESOLVED template (the raw `${var}` form), not the rendered string — the position of `${item.X}` is only identifiable pre-resolution.
+- **LLM call integration point.** Cache rendering belongs inside `LLMNode._call_llm` right before the API call — inside the ThreadPoolExecutor timeout budget and inside the retry loop. Do NOT put rendering in `prep()` or before `pool.submit` (no timeout protection).
+- **Sub-workflow compile-once cache.** `WorkflowExecutor._compiled_workflow_cache` is keyed by resolved workflow path. New IR fields (e.g., the `cache` section) should not affect this keying — they're part of the compiled form, which is what's cached. Tests must cover the re-compile-with-different-cache-block case.
+- **`pflow settings llm` subgroup copy audit.** User-facing strings repeatedly reference Simon's `llm` binary across CLI help, config code, and error messages. Grep for `llm keys`, `llm models`, `llm install` and rewrite to point at env vars (and optionally the legacy keys.json migration path) instead.
 
 ### Edge Cases
 

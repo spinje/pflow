@@ -576,3 +576,85 @@ When Phase A begins, append a dated entry below capturing:
 - Initial scope probe (what files touched first)
 - Any surprises not predicted by the research
 - Test pass/fail state at merge
+
+---
+
+## 25. Session 2026-04-24 — pre-implementation refinement
+
+Resumed in worktree `pflow-feat-prompt-caching-lite-llm` on branch `feat/prompt-caching-lite-llm`. Re-read the spec, progress log, and braindump in full. No implementation yet. Goal of this session: surface remaining ambiguity in the design, decide on resolutions, refine the spec, and commit to a phased planning approach.
+
+### Ambiguities surfaced and resolved
+
+The previous spec was internally consistent but had unaddressed gaps. Each was raised, discussed, and decided this session:
+
+1. **`--no-cache` flag scope.** Decision: disables pflow's memo layer only; LLM provider prompt caching is untouched. The two layers are conceptually independent. Rationale: prompt caching is pure cost reduction with no behavioral change; there is no debug scenario where disabling it helps. Documented in spec under new "Cache Layer Independence" subsection.
+
+2. **Gemini explicit-cache cost regression risk.** Surfaced in the braindump: Gemini explicit caching can cost MORE than no caching for small/rarely-reused caches because of storage fees. Decision: with default 5-min TTL, the storage cost window is small enough that the risk is negligible. The 1h-TTL opt-in is what could create the economic trap, and that's already opt-in. Defer Gemini break-even warning to v1b follow-up; do not block v1.
+
+3. **Tier 2 cross-workflow verification.** Decision: re-evaluate complexity during Phase B–G plan writing. If the mechanical part (parse parent + child cache blocks, compare prose-before-each-var) is cheap and the data-flow tracing for "same logical value across boundary" is also cheap, include in v1; else defer.
+
+4. **Auto-batch-prefix caching default.** **Significant design shift.** The previous spec had auto-batch-prefix ON by default with `batch_cache: false` opt-out. New realization: without pre-warming, all N parallel calls write the cache simultaneously — no read benefit, just overhead. Decision:
+   - Auto-batch-prefix is GATED on `prewarm: true`. Without prewarm, no marker is inserted.
+   - `batch_cache: false` field removed (subsumed by `prewarm` choice).
+   - For large batches (v1 threshold: size > 10 AND detected prefix > 2k tokens), pflow emits a hard validation error demanding an explicit prewarm choice — silent skipping at this scale would represent a meaningful cost regression.
+   - N=1 batches always skip auto-batch-prefix (no fan-out, no opportunity).
+   - Declared `## Cache` references whose prefix was written by upstream non-batch nodes still apply at read cost — independent of prewarm.
+   - `prewarm` semantics: serialize the first call, wait for cache write, then fan out N-1 in parallel as cache reads.
+
+5. **Dry-run cache rendering policy.** Decision: planner uses `MemoizationCache.get_latest_for_node()` — same source Task 156's dry-run uses for cost estimates. For chunks without prior cached data, record "cache content unavailable — estimates low-confidence". Not an error.
+
+6. **Unused cache chunk handling.** Decision: validation warning (not error) when `## Cache` declares a chunk no node references. Surfaces dead code; suggests removal or referencing.
+
+7. **Algorithm depth for analyze-cache suggestions.** Decision for v1: Level 2 — detect shared context, suggest pastable `## Cache` block + per-node `prompt_cache:` assignments using a most-shared-first ordering heuristic. Author manually applies. Level 3 (explicit `cache apply` command writing changes to disk after preview) and full prefix-tree optimization with cross-workflow alignment are deferred to v1b. v1b scope assessed during Phase B–G plan writing once code is concrete.
+
+8. **Cache block reference rule generalization.** Previous spec rejected `${item.X}` specifically. New phrasing: "references that vary across calls referencing the same chunk are rejected". Aggregate batch outputs (`${batch-node.some_field}`) and indexed accesses that resolve to stable values are valid.
+
+### Spec revisions made this session
+
+- Design Decision 9 rewritten to reflect prewarm-gating.
+- Design Decision 18 rewritten with prewarm semantics and the large-batch hard-error rule.
+- Removed "5–10 engineer-day" estimate from Design Decision 1 (estimates with AI implementation are too unreliable to anchor on).
+- Auto Batch-Prefix Caching requirements section rewritten end-to-end.
+- Per-Node fields section gained `prewarm: bool`; lost `batch_cache: false`.
+- Cache Block Parsing section: generalized batch-reference rule.
+- New Cache Layer Independence section covering `--no-cache` scope.
+- `--dry-run` section gained the cache-rendering policy.
+- Validation Location section gained the unused-chunk warning.
+- analyze-cache Requirements section gained explicit v1a (Level 2) scope and v1b deferral note.
+- Implementation Phasing section: split planning itself into "plan Phase 0+A first, then plan B–G after Phase A lands". Added Phase 0 spike scope detail (extended thinking + cache, structured output + cache, transitive dep audit, pricing investigation).
+- Files to Modify section trimmed heavily — high-level pointers only; detailed file-level work moved to forthcoming implementation plan.
+- Non-Obvious Integration Points section: kept the facts, removed specific file:line numbers (those belong in plan).
+- Out of Scope additions: full prefix-tree optimization (v1b); refined pre-warming default note.
+- Test Infrastructure additions: structured output + cache test, extended thinking + cache test, prewarm-gating tests, unused-chunk warning test.
+
+### Phased planning commitment
+
+Decided we cannot write a credible plan for Phases B–G without first verifying LiteLLM works for pflow's use case. Sequence:
+
+1. Spec revision (this session — done).
+2. Write `implementation/plan-phase-0-and-A.md`. Covers the spike (Phase 0) and the LiteLLM migration (Phase A). Not B–G.
+3. Plan review.
+4. Execute Phase 0 spike.
+5. Execute Phase A migration. All tests green before merge (test fixes are part of the phase, not deferred). `test_plan_drift.py` is sacred.
+6. After Phase A lands, write `implementation/plan-phase-B-through-G.md` informed by concrete LiteLLM behavior.
+7. Plan review.
+8. Execute B–G in order.
+
+### Decisions deferred (intentional)
+
+- Phase 0 rollback criterion (what to do if LiteLLM has a dealbreaker — direct SDKs? Stay on `llm`?). Not decided this session because the spike is cheap; we'll cross that bridge if the spike fails.
+- Exact thresholds for the large-batch prewarm-required error. v1 starts at "size > 10 AND prefix > 2k tokens"; can simplify if a single dimension proves sufficient.
+
+### Open assumptions still requiring verification
+
+(Most of these flow into Phase 0 spike scope.)
+
+- LiteLLM passes `cache_control` cleanly to all three providers.
+- LiteLLM `completion_cost()` is accurate enough to replace `llm_pricing.py` (best case) or merit primary-with-fallback (medium case). Outcome chooses spec direction for pricing module fate.
+- Gemini double-counting fix (LiteLLM PR #15226, 2025-10-07) is present in the version we pin.
+- Extended thinking parameters compose with `cache_control` and with `response_format`.
+- `pflow publish` (Task 119) preserves `## Cache` sections in published skills (verify in Phase F or earlier).
+
+### Next step
+
+Write `implementation/plan-phase-0-and-A.md`. The spec is now in a state to inform that plan without needing further revisions for the LiteLLM migration scope. (Phases B–G may surface more spec refinement once we see concrete code.)
