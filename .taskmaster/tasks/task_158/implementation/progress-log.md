@@ -658,3 +658,70 @@ Decided we cannot write a credible plan for Phases B–G without first verifying
 ### Next step
 
 Write `implementation/plan-phase-0-and-A.md`. The spec is now in a state to inform that plan without needing further revisions for the LiteLLM migration scope. (Phases B–G may surface more spec refinement once we see concrete code.)
+
+---
+
+## 26. Session 2026-04-24 (cont.) — Phase 0 + Phase A plan written and approved
+
+Continued in worktree `pflow-feat-prompt-caching-lite-llm` on branch `feat/prompt-caching-lite-llm`. Plan file: `.taskmaster/tasks/task_158/implementation/implementation-plan.md` (also at `~/.claude/plans/lets-create-the-plan-foamy-haven.md`). User approved the plan via ExitPlanMode at end of session.
+
+### Research conducted before plan writing
+
+Three pflow-codebase-searcher agents launched in parallel against the worktree to verify the codebase surface against the spec's assumptions. Two completed cleanly, one timed out and was relaunched with tighter scope. Findings consolidated into the plan; key learnings:
+
+**Verified against current code (matches spec assumptions):**
+- 4 production import sites of `llm` library: `nodes/llm/llm.py`, `registry/discovery.py`, `registry/smart_filter.py`, `core/workflow/discovery.py` (plus 2 lazy imports in `runtime/workflow_trace.py`).
+- Tracing monkey-patch is more sophisticated than expected: two-layer interception (`llm.get_model` + per-instance `model.prompt`), reference-counted via `_llm_interception_count`, per-thread state via `_thread_local.current_node` and `_active_collectors[thread_id]`, lock-protected.
+- `compute_node_config` `batch_config` conditional inclusion pattern is the canonical precedent for Phase C's `prompt_cache` inclusion.
+- `NodeConfig` dataclass is NOT frozen — Phase B/C field additions are safe.
+- 9 test files patch `llm.get_model`; 6 use the `mock_llm_calls` autouse fixture; ~20 inline `Mock()` assertions in `test_llm.py` will need shape-reshape during Phase A.
+- `test_plan_drift.py` has 32 tests asserting planner ↔ runtime parity. Sacred during the tracing redesign.
+- Reasoning options precedence at `nodes/llm/llm.py:53-56` (Anthropic Opus 4.5 thinking_effort BEFORE thinking_budget) is load-bearing — must preserve in the new hardcoded map.
+
+**Two findings contradict the spec — flagged in plan:**
+
+1. **`~/.config/io.datasette.llm/keys.json` direct read.** Spec says "optionally read for users migrating from `llm`". Codebase grep confirms pflow does NOT currently read this file — all key discovery is via `llm keys get` subprocess. So adding direct read is NEW functionality, not migration of existing behavior. Plan defers this to v1.x follow-up. Phase A migration story: env vars only, with a CHANGELOG note for users who currently use Simon's keys.json to migrate manually.
+
+2. **Cache-write multiplier.** Spec assumes Anthropic-style 1.25× (5-min) and 2× (1-hour) write multipliers. Current `core/llm_pricing.py:168` has hardcoded `2.0` only — no per-TTL distinction. Becomes load-bearing in Phase E (when 1h TTL becomes selectable in `## Cache` blocks), not Phase A. Note in Phase 0 spike outcome but no Phase A change needed.
+
+**Documentation drift discovered:** `core/CLAUDE.md:198` claims "46+ models"; actual count in `MODEL_PRICING` is 41. Fix during Phase A.10 documentation pass.
+
+### Plan structure
+
+- **Context** — scope is Phase 0 + Phase A only; Phases B–G plan deferred until Phase A lands.
+- **Phase 0** — verification spike, 5 concerns: cache mechanics, composition matrix (cache + thinking + structured output), pricing authority decision (A/B/C outcomes), operational checks (logger, threading, env-var, hidden config files, dep audit), exception detection. Deliverable: short markdown report appended to progress-log with pass/fail per concern.
+- **Phase A** — 12 sub-steps (A.1 through A.12), each with files touched and verification:
+  - A.1 — Install LiteLLM (don't remove old yet)
+  - A.2 — `llm_reasoning_map.py` (new)
+  - A.3 — `llm_client.py` adapter (new)
+  - A.4 — Test infrastructure: add `MockLLMClient` and `mock_llm_client` fixture (existing fixture coexists)
+  - A.5 — Rewire LLMNode to use adapter
+  - A.6 — Tracing redesign (riskiest step)
+  - A.7 — Update 3 other call sites (discovery × 2 + smart_filter)
+  - A.8 — Mass test migration; delete legacy mock infrastructure
+  - A.9 — `llm_config.py` and `settings.py` cleanup (drop subprocess paths)
+  - A.10 — Pricing decision + cleanup (outcome-dependent on Phase 0)
+  - A.11 — Remove `llm`/`llm-anthropic`/`llm-gemini` from `pyproject.toml`
+  - A.12 — Documentation and CHANGELOG note
+- **Critical files** + **Existing utilities to reuse** — explicit listings.
+- **Spec corrections discovered** — the two contradictions above plus the CLAUDE.md drift.
+- **Verification** — separate criteria for Phase 0 and Phase A; `test_plan_drift.py` is sacred; smoke test against `lyrics-generator` end-to-end.
+- **Suggested commit sequence** — 12 commits matching A.1–A.12, tests green at every step.
+- **Risks and mitigations** — 7 risks called out; tracing redesign is the highest-risk single step (mitigated by overlap window where both monkey-patch and trace_hook coexist briefly).
+- **Out of scope** — explicit list of everything deferred to Phases B–G.
+
+### Notable design decisions in the plan
+
+- **Adapter API shape:** `complete(...)` keyword-only function returning an `AdapterResponse` dataclass with `.text` (attribute, not callable), `.usage` (dict with stable keys matching what `enrich_llm_usage_with_cost` expects), `.model`, `.has_schema`. Normalizes LiteLLM's per-provider quirks at the seam — LLMNode.post() should not need changes after Phase A.
+- **Trace hook replaces monkey-patch.** Adapter takes optional `trace_hook` callable. LLMNode passes `trace_hook=collector.get_trace_hook(node_id)` when a collector is active. The `_active_collectors[thread_id]` registry is preserved (consulted from LLMNode side now, not from inside a patched llm function).
+- **Test infrastructure transitions overlap.** A.4 adds `MockLLMClient` and the new fixture WHILE keeping `MockLLMModel` and `mock_llm_calls` in place. Callers migrate one-by-one (A.5, A.7), then legacy infrastructure deletes in A.8. Avoids a hard cutover.
+- **Pydantic ValidationError catch** (the `nodes/llm/llm.py:298-311` PATTERN EXCEPTION) — likely removed under LiteLLM since it's tied to llm-library's Options Pydantic validation. If LiteLLM has an equivalent deterministic-error pattern (e.g., `BadRequestError` for bad params), redirect there.
+- **`inject_settings_env_vars()`** at `llm_config.py:250-286` is UNCHANGED. LiteLLM reads from `os.environ` natively, so the existing settings → env-var pipeline still works.
+- **User-facing error messages** preserved as close to current text as possible. Users have muscle memory; the messages get adjusted for env-var setup but keep the same shape.
+- **Pricing branch from Phase 0** affects only A.10. Other phases are outcome-independent.
+
+### Next step
+
+Phase 0 spike. Write throwaway `spike_*.py` scripts under `scratchpads/task-158-spike/`. Total expected cost: ~$0.10 of API calls. Need API keys for Anthropic, Gemini, OpenAI to fully validate. Spike deliverable is a markdown report appended below this section before Phase A starts.
+
+If the spike finds blockers (e.g., LiteLLM can't pass `cache_control` on Gemini), pause and reassess library choice. Otherwise proceed to Phase A.1.
