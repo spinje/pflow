@@ -725,3 +725,144 @@ Three pflow-codebase-searcher agents launched in parallel against the worktree t
 Phase 0 spike. Write throwaway `spike_*.py` scripts under `scratchpads/task-158-spike/`. Total expected cost: ~$0.10 of API calls. Need API keys for Anthropic, Gemini, OpenAI to fully validate. Spike deliverable is a markdown report appended below this section before Phase A starts.
 
 If the spike finds blockers (e.g., LiteLLM can't pass `cache_control` on Gemini), pause and reassess library choice. Otherwise proceed to Phase A.1.
+
+
+---
+
+## 27. Session 2026-04-24 (cont.) — Phase 0 spike executed
+
+Executed the five Phase 0 spike scripts from `scratchpads/task-158-spike/` against live provider APIs. LiteLLM version pinned to **`litellm==1.83.7`** (PyPI — closest-canonical match to the `v1.83.7-stable.patch.1` GitHub Docker tag, and well past the Gemini PR #15226 fix that landed 2025-10-07). Total spike spend: ~$0.04.
+
+### Pass/fail per concern
+
+| Concern | Status | Key finding |
+|---|---|---|
+| 1. Cache mechanics | PASS | `cache_control` passes cleanly; Anthropic reports via `cache_creation_input_tokens` / `cache_read_input_tokens`; Gemini/OpenAI only via `prompt_tokens_details.cached_tokens`. |
+| 2. Composition matrix | PASS | cache + thinking, cache + schema, and all three together all work. Opus cache behavior with thinking needs follow-up (see below). |
+| 3. Pricing authority | OUTCOME A | LiteLLM's pricing is more current and comprehensive (2678 vs 41 models); pflow has real bugs. Detail below. |
+| 4. Operational | PASS | Quiet logging by default; thread-safe; no hidden config files; 56-package lean footprint. |
+| 5. Exceptions | PASS | All current detection patterns map cleanly to `isinstance` on typed LiteLLM exceptions. |
+
+### 1. Cache mechanics
+
+Confirmed LiteLLM accepts the spec's proposed message structure:
+
+```python
+{"role": "system", "content": [
+    {"type": "text", "text": "...", "cache_control": {"type": "ephemeral"}}
+]}
+```
+
+Results on ~1,200–1,500-token system block:
+
+- **Anthropic Sonnet 4.5:** call 1 `cache_creation_input_tokens=1345`, call 2 `cache_read_input_tokens=1345`. Cost: $0.0052 (write) → $0.00051 (read), matches Anthropic's 0.1× read multiplier. Content returns as `str` at `response.choices[0].message.content`.
+- **Gemini 2.5 Flash:** both calls showed `prompt_tokens_details.cached_tokens=1226`. Gemini's *implicit* caching fired on the first call. `cache_creation_input_tokens` is always `None` for Gemini (Anthropic-only field). Cost: $0.00005/call (near-zero).
+- **OpenAI gpt-4o-mini:** both calls had `cached_tokens=0` — auto-cache did NOT fire on a 1,173-token prompt (above the 1024 threshold). Not a blocker — spec already treats OpenAI auto-caching as best-effort.
+
+**Finding that affects the adapter:** the `AdapterResponse.usage` dict must normalize two different paths:
+- Anthropic: read `usage.cache_creation_input_tokens` / `usage.cache_read_input_tokens` directly.
+- Gemini/OpenAI: read `usage.prompt_tokens_details.cached_tokens` and surface it as `cache_read_input_tokens` (no distinction between creation and read from the response alone).
+
+### 2. Composition matrix
+
+All four compositions worked on real calls once I fixed one rule:
+
+- **Anthropic requires `temperature=1.0` when thinking is enabled** — both Sonnet and Opus rejected `temperature=0.0` with a `BadRequestError`. pflow must enforce this at the adapter level (or at least let it through clearly). Current pflow behavior via the `llm` library likely already hits this; worth verifying during A.5.
+- Content shape stays `str` across all four compositions. `message.reasoning_content` carries thinking output separately.
+- Structured output (`response_format={"type":"json_schema","json_schema":{"name":..., "schema":..., "strict":True}}`) returns valid JSON as a string — not a parsed object. Consumer parsing stays unchanged.
+- **Unresolved nuance on Opus:** Opus 4.5 calls with thinking enabled showed `cache_creation_input_tokens=0, cache_read_input_tokens=0` — cache neither wrote nor read, despite ~1,380-token prompt above the Sonnet/Opus threshold. Sonnet in identical conditions did cache-hit. Hypotheses: (a) Opus 4.5 minimum threshold is higher than Sonnet's, (b) extended thinking silently disables cache_control markers, (c) something else provider-specific. Not a blocker for Phase A (the library migration works regardless), but worth flagging for Phase C when cache rendering lands — we may need a per-model-family cache-minimum check.
+
+### 3. Pricing authority → Outcome A
+
+Compared all 41 entries in pflow's `MODEL_PRICING` to LiteLLM's `model_cost` dict (2,678 entries). After correcting for key-format mismatch (pflow uses `anthropic/claude-sonnet-4-5`; LiteLLM keys by `claude-sonnet-4-5`), every model pflow knows about is present in LiteLLM's data. Quality comparison:
+
+- **LiteLLM's data matches pflow on Anthropic** (cache_read = 0.1× input, confirmed per-model).
+- **pflow is wrong for non-Anthropic providers' cache multipliers.** The hardcoded `0.1×` input multiplier at `llm_pricing.py:170-171` is Anthropic-specific but applied universally. LiteLLM has correct per-provider values:
+  - OpenAI cache_read should be 0.5× input (pflow: 0.1× → 80% too low).
+  - Gemini 2.0 Flash cache_read should be 0.25× input (pflow: 0.1× → 60% too low).
+- **pflow's `gpt-4o` pricing is outdated:** pflow has `input=$5/M, output=$15/M`; LiteLLM (matching OpenAI's current published prices) has `input=$2.50/M, output=$10/M`. pflow missed OpenAI's 2024 price cut.
+- **Gemini PR #15226 fix confirmed present in v1.83.7.** Live cached Gemini 2.5 Flash call: LiteLLM's `response_cost=$5.388e-5`, hand-calc via pflow pricing=$5.400e-5 → 0.22% disagreement, well within the 2% acceptance band.
+
+**Decision: Outcome A — delete `llm_pricing.py` in Phase A.10.**
+
+Adapter replacement strategy:
+- Primary path: `litellm.completion_cost(response)` OR read `response._hidden_params["response_cost"]` directly.
+- Normalize model-name translation: strip `anthropic/` prefix before lookup where needed (LiteLLM's `completion_cost()` handles this internally, so model-name translation is likely not needed at the adapter level).
+- Fallback when `completion_cost()` returns `None` (unknown model): the adapter surfaces `cost_usd: None` in `AdapterResponse.usage`. Consumer code (`enrich_llm_usage_with_cost`) already handles `None` gracefully.
+- Net effect: `enrich_llm_usage_with_cost` becomes a one-liner that reads `llm_usage["cost_usd"]` straight from the adapter response. The 41-model maintenance burden disappears; new-model releases show correct costs automatically.
+
+**Spec adjustments required:**
+- Design Decision 17, Requirements "Tracing and Cost Reporting" section, and A.10 in the plan all assume some form of `llm_pricing.py` retention. **Outcome A supersedes.** Will update these during Phase A.10; no Phase A.1–A.9 changes needed.
+
+### 4. Operational
+
+- **Logger silencing.** LiteLLM 1.83.7 produces **zero stderr** on a vanilla call — chatter is gone in this version. Still setting `litellm.suppress_debug_info = True` at adapter module import as belt-and-suspenders.
+- **Thread safety.** 5 concurrent `litellm.completion()` calls via `ThreadPoolExecutor(max_workers=5)` completed in 0.79s. All 5 succeeded. No shared-state corruption, no httpx races. Mirrors pflow's LLMNode threading model.
+- **Env-var key resolution.** Ran LiteLLM with `HOME=/tmp/pflow_spike_clean_home` in a subprocess. Call succeeded using only `GEMINI_API_KEY` from env. Zero non-uv files created in the clean HOME — **LiteLLM has no hidden config files.**
+- **Dependency footprint.** Fresh venv install of `litellm==1.83.7` = 56 packages total. **No `boto3`, no `google-cloud-*`, no `azure-*`, no AWS.** LiteLLM doesn't even pull in the `anthropic` SDK (it calls the HTTP API directly via `httpx`). Core deps: `openai`, `httpx`, `pydantic`, `tiktoken`, `tokenizers`, `jinja2`. **No `litellm[proxy]` extras needed.**
+
+### 5. Exception detection
+
+Concrete mapping from pflow's current string-match patterns (`llm.py:435-452`) to LiteLLM typed exceptions, all `isinstance`-detectable:
+
+| Current pflow pattern | LiteLLM exception | Example status_code |
+|---|---|---|
+| `UnknownModelError` — bad model, known provider | `litellm.exceptions.NotFoundError` | 404 |
+| `UnknownModelError` — bad provider prefix | `litellm.exceptions.BadRequestError` (message contains "LLM Provider NOT provided") | 400 |
+| `NeedsKeyException` — wrong key | `litellm.exceptions.AuthenticationError` | 401 |
+| `NeedsKeyException` — missing key | `litellm.exceptions.AuthenticationError` | 500 (quirky but stable) |
+| `Pydantic ValidationError` (PATTERN EXCEPTION, `llm.py:298-311`) | `litellm.exceptions.BadRequestError` | 400 |
+| Timeout | `litellm.exceptions.Timeout` | 408 |
+
+All exceptions carry rich attributes: `status_code: int`, `llm_provider: str`, `model: str`, `response: httpx.Response`. Useful for structured error rendering.
+
+All LiteLLM exceptions inherit from `openai.OpenAIError` through `openai.APIError` — one umbrella catch is possible if we want it. The adapter will catch them specifically rather than with a single umbrella.
+
+### Pattern exception decision (ambiguity #4 from session start)
+
+The `Pydantic ValidationError` catch at `llm.py:298-311` was added because llm-library's `model.Options` are Pydantic-validated and a retry won't help. The LiteLLM equivalent is `litellm.exceptions.BadRequestError` (deterministic server-side rejection of malformed requests; retrying will produce the same error).
+
+**Recommendation:** inside the adapter's `complete()` function, catch `litellm.exceptions.BadRequestError` and re-raise as pflow's `NonRetriableError` (or equivalent deterministic-error marker respected by the Node retry loop). That way the adapter is the single seam for both the pydantic case (removed with the llm library) and the new LiteLLM bad-param case. One attempt, clean failure. Keep the existing user-facing error messages close to current text. This is the approach I'll take in A.3 unless you want to discuss further.
+
+### LiteLLM version rationale
+
+**Pinned: `litellm==1.83.7`.** Rationale:
+- Matches the `v1.83.7-stable.patch.1` Docker tag the user suggested (closest canonical PyPI release).
+- Released ~2026-04-21, 6 months after the Gemini double-count fix (PR #15226, 2025-10-07) — fix confirmed present via live call.
+- Zero chatter on stderr; stable API surface; 56-package footprint.
+- If the `-stable.patch.1` tag has fixes absent from plain `1.83.7` that we need, we can switch to a git-URL pin during Phase A. No evidence we need that today.
+
+### Confirmed message structure for cache_control across providers
+
+Single structure works cleanly on Anthropic, Gemini, and OpenAI (no-op on OpenAI):
+
+```python
+messages=[
+    {"role": "system", "content": [
+        {"type": "text", "text": "<system text>",
+         "cache_control": {"type": "ephemeral"}}
+    ]},
+    {"role": "user", "content": "<user text>"},
+    # or, for attachments/images, nested content blocks as per provider docs
+]
+```
+
+No need for LiteLLM's `extra_body` passthrough for the system-prompt cache case.
+
+### Spec adjustments to apply during Phase A
+
+1. **A.10 scope collapses** — `llm_pricing.py` deletion is a one-step drop, not a conditional branch. Consumer code (`enrich_llm_usage_with_cost` callers) rewrites to read `cost_usd` from the adapter response.
+2. **A.3 adapter responsibility grows slightly** — the adapter now owns `response_cost` extraction AND normalization across providers for cached tokens.
+3. **Model-name translation** between pflow's `anthropic/claude-sonnet-4-5` and LiteLLM's `claude-sonnet-4-5` keys: LiteLLM's `completion_cost()` handles this internally, so no translation layer needed at the adapter level. Confirmed by spike evidence on live calls.
+4. **Temperature-with-thinking rule** is a real composition constraint; adapter may want a sanity check that raises a clearer error than Anthropic's raw "temperature may only be set to 1 when thinking is enabled". Optional — could defer to reading the error message if it's user-facing.
+5. **Opus cache behavior with thinking** flagged for Phase C verification. Not Phase A scope.
+6. **CLAUDE.md drift fix:** `core/CLAUDE.md:198` says "46+ models" but the actual count is 41 (and will drop to zero after A.10). Fix during A.12 documentation pass.
+
+### Phase 0 next step
+
+Phase 0 is complete. Requesting user confirmation of the outcome before starting Phase A.
+
+- Outcome decisions: Outcome A (delete `llm_pricing.py`); version pin `litellm==1.83.7`; pattern exception strategy (catch `BadRequestError` in adapter and re-raise as `NonRetriableError` equivalent).
+- Spike scripts and raw outputs retained under `scratchpads/task-158-spike/` for reference; not committed.
+
+---
