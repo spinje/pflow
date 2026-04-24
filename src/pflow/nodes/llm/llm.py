@@ -3,115 +3,34 @@
 import json
 import logging
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from pydantic import ValidationError
+import litellm.exceptions
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-import llm
-
+from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_pricing import enrich_llm_usage_with_cost
+from pflow.core.llm_reasoning_map import (
+    DEFAULT_MAX_TOKENS_BASE,
+    EFFORT_RATIOS,
+    map_reasoning_options,
+)
 from pflow.core.node import Node
 
 logger = logging.getLogger(__name__)
 
-# OpenRouter-style effort-to-token-budget ratios
-EFFORT_RATIOS: dict[str, float] = {
-    "xhigh": 0.95,
-    "high": 0.80,
-    "medium": 0.50,
-    "low": 0.20,
-    "minimal": 0.10,
-}
-
-# Default base for token budget calculation when max_tokens is not set
-DEFAULT_MAX_TOKENS_BASE = 16000
-
-
-def _map_direct_budget(option_fields: set[str], reasoning_max_tokens: int) -> dict[str, Any]:
-    """Map reasoning_max_tokens to provider-specific token budget param."""
-    if "thinking_budget" in option_fields:
-        kwargs: dict[str, Any] = {"thinking_budget": reasoning_max_tokens}
-        if "thinking" in option_fields:
-            kwargs["thinking"] = True
-        return kwargs
-    if "reasoning_max_tokens" in option_fields:
-        return {"reasoning_max_tokens": reasoning_max_tokens}
-    return {}
-
-
-def _map_effort(option_fields: set[str], effort: str, max_tokens: Optional[int]) -> dict[str, Any]:
-    """Map effort level string to provider-specific reasoning params.
-
-    Provider detection order matters — Anthropic Opus 4.5 has thinking_effort,
-    thinking, AND thinking_budget, so thinking_effort must be checked first.
-    """
-    # Anthropic Opus 4.5 — thinking_effort natively
-    if "thinking_effort" in option_fields:
-        mapped = {"xhigh": "high", "minimal": "low"}.get(effort, effort)
-        return {"thinking_effort": mapped}
-    # OpenAI / OpenRouter — reasoning_effort natively
-    if "reasoning_effort" in option_fields:
-        return {"reasoning_effort": effort}
-    # Gemini 3 — thinking_level natively
-    if "thinking_level" in option_fields:
-        mapped = {"xhigh": "high"}.get(effort, effort)
-        return {"thinking_level": mapped}
-    # Anthropic older / Gemini 2.5 — needs token budget calculation
-    if "thinking_budget" in option_fields:
-        base = max_tokens or DEFAULT_MAX_TOKENS_BASE
-        ratio = EFFORT_RATIOS.get(effort, 0.50)
-        budget = max(min(int(base * ratio), 128000), 1024)
-        kwargs: dict[str, Any] = {"thinking_budget": budget}
-        if "thinking" in option_fields:
-            kwargs["thinking"] = True
-        return kwargs
-    # Thinking-only (no budget control)
-    if "thinking" in option_fields:
-        return {"thinking": True}
-    return {}
-
-
-def _map_reasoning_options(
-    model: llm.Model,
-    reasoning_effort: Optional[str],
-    reasoning_max_tokens: Optional[int],
-    max_tokens: Optional[int],
-) -> dict[str, Any]:
-    """Map unified reasoning params to provider-specific model options.
-
-    Follows OpenRouter's approach: introspect the model's Options class
-    to determine which params it accepts, then map accordingly.
-
-    Args:
-        model: The llm Model instance (with Options class already set)
-        reasoning_effort: xhigh/high/medium/low/minimal/none
-        reasoning_max_tokens: Direct token budget (mutually exclusive with effort)
-        max_tokens: The max response tokens, used as base for budget formula
-    """
-    if not reasoning_effort and reasoning_max_tokens is None:
-        return {}
-
-    option_fields = set(model.Options.model_fields.keys())
-
-    # Direct token budget takes precedence over effort
-    if reasoning_max_tokens is not None:
-        return _map_direct_budget(option_fields, reasoning_max_tokens)
-
-    effort = reasoning_effort.lower()  # type: ignore[union-attr]
-
-    if effort == "none":
-        if "thinking" in option_fields:
-            return {"thinking": False}
-        if "thinking_budget" in option_fields:
-            return {"thinking_budget": 0}
-        return {}
-
-    return _map_effort(option_fields, effort, max_tokens)
+# Re-exported for backward compatibility with code that imported these names
+# from pflow.nodes.llm.llm. The canonical home is pflow.core.llm_reasoning_map.
+__all__ = [
+    "DEFAULT_MAX_TOKENS_BASE",
+    "EFFORT_RATIOS",
+    "LLMNode",
+]
 
 
 class LLMNode(Node):
@@ -228,24 +147,23 @@ class LLMNode(Node):
         if not isinstance(images, list):
             images = [images]  # Wrap single value in list
 
-        # Build attachments list
-        attachments = []
+        # Build attachments list (typed dataclass; the adapter encodes
+        # local paths to data-URLs at the API boundary).
+        attachments: list[Attachment] = []
         for img in images:
             if not isinstance(img, str):
                 raise TypeError(f"Image must be a string (URL or path), got: {type(img).__name__}")
 
             # Detect URL vs file path
             if img.startswith(("http://", "https://")):
-                # URL - let llm library handle validation/fetching
-                attachments.append(llm.Attachment(url=img))
+                attachments.append(Attachment(kind="image_url", value=img))
             else:
-                # File path - validate existence now
                 path = Path(img)
                 if not path.exists():
                     raise ValueError(
                         f"Image file not found: {img}\nPlease ensure the file exists at the specified path."
                     )
-                attachments.append(llm.Attachment(path=str(path)))
+                attachments.append(Attachment(kind="image_path", value=str(path)))
 
         # Validate reasoning_effort early (deterministic error, not worth retrying)
         reasoning_effort = self.params.get("reasoning_effort")
@@ -270,54 +188,44 @@ class LLMNode(Node):
 
     def _call_llm(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Execute the actual LLM API call. Extracted for timeout wrapping."""
-        model = llm.get_model(prep_res["model"])
-
-        kwargs = {"stream": False, "temperature": prep_res["temperature"]}
-
-        if prep_res["system"] is not None:
-            kwargs["system"] = prep_res["system"]
-        if prep_res["max_tokens"] is not None:
-            kwargs["max_tokens"] = prep_res["max_tokens"]
-
-        if prep_res["attachments"]:
-            kwargs["attachments"] = prep_res["attachments"]
-
-        if prep_res["output_schema"] is not None:
-            kwargs["schema"] = prep_res["output_schema"]
-
-        reasoning_kwargs = _map_reasoning_options(
-            model,
+        reasoning_kwargs = map_reasoning_options(
+            prep_res["model"],
             prep_res.get("reasoning_effort"),
             prep_res.get("reasoning_max_tokens"),
             prep_res.get("max_tokens"),
         )
-        kwargs.update(reasoning_kwargs)
 
-        kwargs.update(prep_res.get("model_options") or {})
+        # The adapter handles the PATTERN EXCEPTION (deterministic
+        # BadRequestError → error-marked response, no retry burned).
+        # See pflow.core.llm_client.complete docstring.
+        adapter_response = complete(
+            model=prep_res["model"],
+            prompt=prep_res["prompt"],
+            system=prep_res["system"],
+            temperature=prep_res["temperature"],
+            max_tokens=prep_res["max_tokens"],
+            attachments=prep_res["attachments"] or None,
+            schema=prep_res["output_schema"],
+            reasoning_kwargs=reasoning_kwargs,
+            model_options=prep_res.get("model_options") or None,
+            timeout=prep_res.get("timeout"),
+            trace_hook=_active_trace_hook(),
+        )
 
-        # PATTERN EXCEPTION: try/except in exec() is normally an anti-pattern (prevents
-        # retries), but ValidationError from Pydantic Options is deterministic — retrying
-        # won't help. We catch it here to avoid 3 wasted attempts on bad model_options.
-        # Long-term fix: add NonRetriableError support to PocketFlow's _exec loop (#100).
-        try:
-            response = model.prompt(prep_res["prompt"], **kwargs)
-        except ValidationError as e:
+        if adapter_response.status == "error":
             return {
                 "response": "",
-                "error": f"Invalid model options for '{prep_res['model']}': {e}",
-                "model": prep_res["model"],
+                "error": adapter_response.error or "LLM call failed",
+                "model": adapter_response.model or prep_res["model"],
                 "usage": {},
                 "status": "error",
             }
 
-        text = response.text()
-        usage_obj = response.usage()
-
         return {
-            "response": text,
-            "usage": usage_obj,
-            "model": prep_res["model"],
-            "has_schema": prep_res["output_schema"] is not None,
+            "response": adapter_response.text,
+            "usage": adapter_response.usage,
+            "model": adapter_response.model,
+            "has_schema": adapter_response.has_schema,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -366,38 +274,23 @@ class LLMNode(Node):
         raw_response = exec_res["response"]
 
         # Store usage metrics BEFORE response parsing — ensures usage is
-        # captured even if output_schema JSON parsing fails below
-        usage_obj = exec_res.get("usage")
-        if usage_obj:
-            # Handle both object (with .input attribute) and dict (with ["input"] key)
-            if isinstance(usage_obj, dict):
-                # Dict format (some models return this)
-                input_tokens = usage_obj.get("input", usage_obj.get("input_tokens", 0))
-                output_tokens = usage_obj.get("output", usage_obj.get("output_tokens", 0))
-                # Extract cache metrics from dict
-                cache_creation = usage_obj.get("cache_creation_input_tokens", 0)
-                cache_read = usage_obj.get("cache_read_input_tokens", 0)
-            else:
-                # Object format (standard llm library)
-                input_tokens = usage_obj.input
-                output_tokens = usage_obj.output
-                # Extract cache metrics from details if available
-                details = getattr(usage_obj, "details", {}) or {}
-                cache_creation = details.get("cache_creation_input_tokens", 0)
-                cache_read = details.get("cache_read_input_tokens", 0)
-
-            # Ensure tokens are integers (handle None values)
-            input_tokens = input_tokens or 0
-            output_tokens = output_tokens or 0
-
+        # captured even if output_schema JSON parsing fails below.
+        # The adapter normalizes usage into a stable dict shape (matching keys
+        # below), so post() reads them directly with no object-path fallback.
+        usage_dict = exec_res.get("usage")
+        if usage_dict:
             llm_usage = {
-                "model": exec_res.get("model", "unknown"),
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
-                "cache_creation_input_tokens": cache_creation,
-                "cache_read_input_tokens": cache_read,
+                "model": usage_dict.get("model", exec_res.get("model", "unknown")),
+                "input_tokens": usage_dict.get("input_tokens", 0) or 0,
+                "output_tokens": usage_dict.get("output_tokens", 0) or 0,
+                "total_tokens": usage_dict.get("total_tokens", 0) or 0,
+                "cache_creation_input_tokens": usage_dict.get("cache_creation_input_tokens", 0) or 0,
+                "cache_read_input_tokens": usage_dict.get("cache_read_input_tokens", 0) or 0,
             }
+            # Adapter populates cost_usd from LiteLLM's response_cost. Carry it
+            # through if present so enrich_llm_usage_with_cost can no-op.
+            if "cost_usd" in usage_dict:
+                llm_usage["cost_usd"] = usage_dict["cost_usd"]
             enrich_llm_usage_with_cost(llm_usage)
             shared["llm_usage"] = llm_usage
         else:
@@ -422,18 +315,18 @@ class LLMNode(Node):
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle errors after all retries exhausted."""
         error_msg = str(exc)
-        exc_type = type(exc).__name__
 
         # Timeout check first — isinstance is more reliable than string matching
-        if isinstance(exc, (TimeoutError, FuturesTimeoutError)):
+        if isinstance(exc, (TimeoutError, FuturesTimeoutError, litellm.exceptions.Timeout)):
             timeout = prep_res.get("timeout", 120)
             error_detail = (
                 f"LLM call timed out after {timeout}s. "
                 f"Model: {prep_res['model']}. "
                 f"Increase timeout or check API connectivity."
             )
-        elif exc_type == "UnknownModelError" or "UnknownModelError" in error_msg or "Unknown model" in error_msg:
-            # Try to suggest a working model based on configured API keys
+        elif isinstance(exc, litellm.exceptions.NotFoundError):
+            # Was UnknownModelError under the llm library — model exists but
+            # provider doesn't recognize it.
             from pflow.core.llm_config import get_default_llm_model
 
             detected_model = get_default_llm_model()
@@ -441,14 +334,26 @@ class LLMNode(Node):
                 error_detail = (
                     f"Unknown model: {prep_res['model']}. "
                     f"Tip: Your API key supports '{detected_model}'. "
-                    f"Run 'llm models' to see all available models."
+                    f"Run 'pflow settings llm show' to see configured models."
                 )
             else:
-                error_detail = f"Unknown model: {prep_res['model']}. Run 'llm models' to see available models."
-        elif exc_type == "NeedsKeyException" or "NeedsKeyException" in error_msg:
+                error_detail = (
+                    f"Unknown model: {prep_res['model']}. Run 'pflow settings llm show' to see configured models."
+                )
+        elif isinstance(exc, litellm.exceptions.AuthenticationError):
+            # Was NeedsKeyException under the llm library — wrong or missing key.
             error_detail = (
                 f"API key required for model: {prep_res['model']}. "
-                f"Set up with 'llm keys set <provider>' or environment variable."
+                f"Set the appropriate environment variable "
+                f"(e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) "
+                f"or configure via 'pflow settings env set'."
+            )
+        elif isinstance(exc, litellm.exceptions.BadRequestError) and "LLM Provider NOT provided" in error_msg:
+            # Unknown provider prefix — looks like an unknown model to the user.
+            error_detail = (
+                f"Unknown model/provider: {prep_res['model']}. "
+                f"Use a provider prefix (e.g., 'anthropic/claude-sonnet-4-5', "
+                f"'openai/gpt-4o-mini', 'gemini/gemini-2.5-flash')."
             )
         else:
             error_detail = (
@@ -463,3 +368,30 @@ class LLMNode(Node):
             "usage": {},
             "status": "error",
         }
+
+
+def _active_trace_hook() -> "TraceHook | None":
+    """Resolve the trace hook for the currently-running node, if any.
+
+    Pulls the active trace collector for this thread (set by the engine's
+    `setup_llm_interception` before each LLM-capable node runs) and the
+    current node id (set on the same path), then asks the collector for
+    its hook. Returns None when no trace is active — the adapter handles
+    None as a no-op.
+
+    Reuses the existing `_active_collectors` and `_thread_local` registries
+    that the legacy monkey-patch maintains; A.6 will delete the patch
+    itself but keep these registries (they are the bridge between the
+    engine's per-node setup and the LLM-call path).
+    """
+    # Local import to avoid a runtime/core import cycle.
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    thread_id = threading.get_ident()
+    collector = WorkflowTraceCollector._active_collectors.get(thread_id)
+    if collector is None:
+        return None
+    node_id = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
+    if not node_id:
+        return None
+    return collector.get_trace_hook(node_id)

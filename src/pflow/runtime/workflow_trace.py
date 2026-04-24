@@ -517,6 +517,32 @@ class WorkflowTraceCollector:
 
         return filepath
 
+    def get_trace_hook(self, node_id: str) -> Callable[[dict[str, Any]], None]:
+        """Return a callable that the LLM adapter invokes around its API call.
+
+        The new pflow-owned LiteLLM adapter (`pflow.core.llm_client.complete`)
+        accepts a `trace_hook` parameter. When a workflow trace is active, the
+        LLMNode passes `collector.get_trace_hook(node_id)` to the adapter.
+        On `before_call` the hook captures the rendered prompt into
+        `self.llm_prompts[node_id]` — same destination the legacy
+        `setup_llm_interception` monkey-patch wrote to. Same downstream
+        consumer (`_attach_llm_call_to_event` at line 168 of this file).
+
+        This is the seam that replaces the monkey-patch. After Task 158 Phase
+        A.6, `setup_llm_interception` and friends will be removed entirely;
+        the hook is the only path. During A.5-A.6 both mechanisms coexist —
+        LLMNode uses the hook, the 3 legacy discovery callsites still go
+        through the monkey-patch until A.7 migrates them.
+        """
+
+        def hook(event: dict[str, Any]) -> None:
+            if event.get("event") == "before_call":
+                prompt = event.get("prompt")
+                if isinstance(prompt, str):
+                    self.llm_prompts[node_id] = prompt
+
+        return hook
+
     def setup_llm_interception(self, node_id: str) -> None:
         """Thread-safe setup of LLM interception to capture prompts.
 

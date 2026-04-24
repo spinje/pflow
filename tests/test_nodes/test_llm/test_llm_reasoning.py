@@ -1,15 +1,39 @@
-"""Tests for reasoning/thinking parameter mapping in the LLM node."""
+"""Tests for reasoning/thinking parameter mapping in the LLM node.
 
-from typing import Any
-from unittest.mock import Mock, patch
+OBSOLETE — superseded by Task 158 Phase A.5.
+
+The mapping logic is now exhaustively tested in
+``tests/test_core/test_llm_reasoning_map.py`` against the new
+``pflow.core.llm_reasoning_map.map_reasoning_options`` API.
+LLMNode-specific reasoning behavior (prep validation, kwargs forwarding to
+the adapter) is tested in ``tests/test_nodes/test_llm/test_llm.py``
+under ``TestReasoningEffortValidation`` and ``TestReasoningKwargsForwarded``.
+
+This file is module-level skipped — pending deletion. The body relies on
+``_map_reasoning_options`` and ``llm.get_model``, both removed in A.5.
+"""
 
 import pytest
 
-from pflow.nodes.llm.llm import (
-    DEFAULT_MAX_TOKENS_BASE,
-    EFFORT_RATIOS,
-    _map_reasoning_options,
+pytest.skip(
+    "Superseded by tests/test_core/test_llm_reasoning_map.py and the new "
+    "TestReasoningEffortValidation / TestReasoningKwargsForwarded classes "
+    "in tests/test_nodes/test_llm/test_llm.py. Pending deletion.",
+    allow_module_level=True,
 )
+
+# --- Original imports kept for reference; commented to avoid ImportError
+#     when something tries to introspect the file:
+#
+# from typing import Any
+# from unittest.mock import Mock, patch
+# from pflow.nodes.llm.llm import (
+#     DEFAULT_MAX_TOKENS_BASE,
+#     EFFORT_RATIOS,
+#     _map_reasoning_options,
+# )
+#
+# --- Original Mock-Options helpers (also obsolete) follow below.
 
 # --- Fake Options classes to simulate provider plugins ---
 

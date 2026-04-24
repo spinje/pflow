@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from tests.shared.llm_mock import create_mock_get_model
+from tests.shared.llm_mock import create_mock_get_model, create_mock_llm_client
 
 
 @pytest.fixture(autouse=True, scope="function")
@@ -33,6 +33,44 @@ def mock_llm_calls(monkeypatch, request):
 
     # Clean up after test
     mock_get_model.reset()
+
+
+@pytest.fixture(autouse=True, scope="function")
+def mock_llm_client(monkeypatch, request):
+    """Auto-applied fixture that mocks the pflow LiteLLM adapter.
+
+    Coexists with ``mock_llm_calls`` during Task 158 Phase A.4-A.7 — both
+    fixtures patch their respective seams so tests can migrate from the
+    legacy llm-library mock to the new adapter mock one caller at a time.
+    Cleanup (delete the legacy fixture and ``MockLLMModel``) happens in A.8.
+
+    Skipped for tests in ``/llm/`` directories, same as ``mock_llm_calls``.
+    """
+    test_path = str(request.fspath)
+    if "/llm/" in test_path or "\\llm\\" in test_path:
+        yield
+        return
+
+    mock_client = create_mock_llm_client()
+
+    # Patch the adapter at its definition site, plus every consumer module
+    # that may have imported `complete` into its own namespace. ``raising=False``
+    # tolerates modules that haven't migrated to import `complete` yet — those
+    # patches become live as A.5 and A.7 land.
+    monkeypatch.setattr("pflow.core.llm_client.complete", mock_client.complete)
+    for module_attr in (
+        "pflow.nodes.llm.llm.complete",
+        "pflow.registry.discovery.complete",
+        "pflow.registry.smart_filter.complete",
+        "pflow.core.workflow.discovery.complete",
+    ):
+        monkeypatch.setattr(module_attr, mock_client.complete, raising=False)
+
+    request.node.mock_llm_client = mock_client
+
+    yield mock_client
+
+    mock_client.reset()
 
 
 @pytest.fixture
