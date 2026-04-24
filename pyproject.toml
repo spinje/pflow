@@ -182,4 +182,4 @@ ignore = [
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML", "litellm"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser. litellm temporarily unused — imported by adapter in Task 158 Phase A.3.
+DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser
