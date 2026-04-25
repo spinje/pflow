@@ -1214,3 +1214,268 @@ Phase A is feature-complete and ready for review. The next agent's job is to rev
 After review approval and PR merge, the next work is writing the `implementation/plan-phase-B-through-G.md` informed by the concrete LiteLLM behavior observed during Phase A.
 
 ---
+
+## 31. Session 2026-04-25 (cont.) — Phase A code review + 6 follow-up commits
+
+User invoked `/code-review` on the full Phase A branch. Six review agents deployed in parallel: `review-silent-failures`, `review-concurrency-safety`, `review-impact-completeness`, `review-test-fidelity`, `review-feature-interactions`, `review-agent-ux`. Across ~30 distinct findings, the orchestrator triaged into 12 action items (3 critical / 7 high-value / 9 medium / 8 pre-existing-or-cosmetic). Items 1–8, 10–12 implemented; **item 9 dropped after evidence; item 3 was the substantial architectural change** (its own isolation pass, its own plan + plan-review).
+
+**Final state**: 5284 tests pass (5266 baseline + 18 new), `test_plan_drift.py` 32 sacred tests green throughout, `make check` green, real-API smoke test confirms `event["llm_prompt"]` now populates end-to-end. Six new commits since `ac257fc6` — branch ready for the user-deferred independent code review.
+
+### The biggest finding from the review
+
+**The `trace_hook` abstraction added in Phase A.6 was non-functional in production.** The engine registered the collector against the main thread's id (`_active_collectors[main_thread_id] = collector`) but `LLMNode._call_llm` runs inside an inner `ThreadPoolExecutor(max_workers=1)`. The worker thread's `threading.get_ident()` never matched the registered id, so `_active_trace_hook()` returned `None` for every adapter call. The adapter's `trace_hook` parameter was wired correctly but never actually invoked.
+
+Verified by smoke test against real Gemini-3-flash-preview: trace JSON had `llm_call` ✓ and `llm_response` ✓ but `llm_prompt` ✗ for every literal-prompt LLM node. `pflow report`'s `## Prompt` section was consequently missing for those nodes (the fallback at `trace_report.py:810` only fires for template-based prompts via `template_resolutions["prompt"]["resolved"]`).
+
+This was caught by `review-concurrency-safety` Finding 1 with empirical reproduction against pre-Phase-A code (commit `8349df88`'s `setup_llm_interception`/`intercept_prompt`) — i.e. the bug pre-dated Phase A; the Phase A.6 monkey-patch removal didn't fix it because the same thread-id mismatch was inherited. Item 3 is the genuine fix.
+
+### The 12 action items and their disposition
+
+Items 1, 4, 5, 6, 7, 8, 11, 12 — trivial doc/test fixes, batched into commits 1–3. Items 2, 10 — adapter contract changes, batched into commit 4. Item 3 — the trace refactor — own commit pair (5+6). Item 9 dropped after spike.
+
+| # | Topic | Resolution |
+|---|---|---|
+| 1 | `pflow settings env set` typo at `nodes/llm/llm.py:348` | Fixed to `pflow settings set-env <KEY> <value>` |
+| 2 | Discovery callers don't honor `AdapterResponse.status == "error"` | Option F: adapter raises `LLMCallError` instead of returning error-marked response — see "Item 2 design pivot" below |
+| 3 | `trace_hook` worker-thread mismatch | Refactor to shared-store seam — see "Item 3 architecture" below |
+| 4 | Missing test: Opus 4.5 effort+max_tokens precedence | Added `test_opus_45_max_tokens_takes_precedence_over_effort` in `test_llm_reasoning_map.py` |
+| 5 | Missing test: `enrich_llm_usage_with_cost` `total_cost_usd` mirror branch | Added `TestEnrichLlmUsageWithCost` (5 tests) in `test_llm_client.py` |
+| 6 | Missing test: smart_filter Gemini heuristics → `model_options` | Added `TestGeminiThinkingHeuristics` (5 parametrized tests) in `test_smart_filter.py` |
+| 7 | Stale `tests/CLAUDE.md` + `TESTING.md` | Rewritten — see "Doc cleanup" below |
+| 8 | 7 doc-drift sites referencing removed code | Fixed all (CLAUDE.md trees, settings docstring, mintlify, llm.py:58, two warning strings) |
+| 9 | Anthropic temperature+thinking pre-validation | **DROPPED** after spike — see "Item 9 dropped" below |
+| 10 | Empty-response warning for reasoning models | Added warning in `_normalize` when `text == "" and output_tokens > 0 and finish_reason in ("length", "max_tokens")` |
+| 11 | Unknown-model error: include LiteLLM provider list URL | Added `https://docs.litellm.ai/docs/providers` in `NotFoundError` tip |
+| 12 | CHANGELOG note about 24h memo cache transient | Added `<Note>` to changelog Unreleased entry |
+
+### Item 2 design pivot — Option F (adapter raises typed exception)
+
+The original review proposal was a `raise_for_status()` method on `AdapterResponse` called from `parse_structured_response`. User pushed back: "make sure this is the best possible solution before implementing." The simpler answer surfaced:
+
+**Option F**: adapter raises `LLMCallError` (new in `core/exceptions.py`) on `BadRequestError` instead of returning an error-marked response. **This deletes the `error` and `status` fields from `AdapterResponse` entirely** — the dataclass becomes "successful response only". LLMNode catches `LLMCallError` at its single `_call_llm` boundary to preserve PATTERN EXCEPTION semantics (no retry burned). Discovery callers let it propagate naturally. smart_filter's existing `except Exception` still catches it (intentional graceful degradation).
+
+**Net effect**: `AdapterResponse` has a single contract (success). One try/except in LLMNode replaces the `if adapter_response.status == "error"` check. Discovery callers get correct error handling for free with zero callsite changes. Trace hook still fires `after_call` with `error` set BEFORE the raise, so traces capture the failure.
+
+Test impacts: deleted assertions on `response.status == "ok"`/`response.error is None` (the fields no longer exist); rewrote `test_bad_request_returns_error_marked_response` → `test_bad_request_raises_llm_call_error`; rewrote `test_invoked_after_on_bad_request` to wrap in `pytest.raises(LLMCallError)`.
+
+### Item 3 architecture — shared-store seam
+
+**Plan written, plan-reviewed by 3 agents, design refined, then implemented.** Plan file at `/Users/andfal/.claude/plans/magical-swinging-taco.md` (also exported above into the implementation directory if/when needed).
+
+**Initial design used a NEW shared key `_pflow_current_node`. Plan-review C1 caught that `node.node_id` is already a compiler-set dynamic attribute** (`compilation/compiler.py:299`, documented at `compilation/CLAUDE.md:43,155`). LLMNode.prep just reads `getattr(self, "node_id", None)`. **No new shared key needed.** This is a strictly simpler final state — one less mutation site, one less key invention.
+
+**The seam reuses the existing `_trace_collector` shared key.** Already in `_PROPAGATED_KEYS` at `workflow_executor.py:118-126`, already installed by runner at `runner.py:490`, already read by formatters (`success_formatter.py:64`, `error_formatter.py:84`, `cli/error_output.py:134`). The "dual identity" — `_PROPAGATED_KEYS` copies the parent's `_trace_collector` into child_storage, but the child engine has its own `child_trace` from its constructor — is exactly what `engine.run` save/restore resolves: the child's collector overrides the propagated parent value for the duration of the child run, then the parent's value is restored.
+
+**Save/restore design — the `pop` discovery:**
+- Initial design used `.pop()` style (mirroring `_pflow_child_only_node` at `engine.py:157`).
+- Step 2 verification crashed `tests/test_runtime/test_compile_once_regression.py::test_storage_mode_shared_through_engine` with `'NamespacedSharedStore' object has no attribute 'pop'`.
+- **NamespacedSharedStore (`runtime/engine/namespaced_store.py`) doesn't implement `pop`.** It implements `update`, `__setitem__`, `__getitem__`, `__contains__`, `get`, `setdefault`, `keys`, `items`, `values`, `__iter__`, `__len__` — but not `pop` or `__delitem__`. CLAUDE.md note at `runtime/engine/CLAUDE.md` (the inherited one) does call out that any new proxy subclass must override mutation methods explicitly — but `pop` was never needed before, so it wasn't added.
+- **Fix**: switch to unconditional write-back (`shared["_trace_collector"] = saved_trace` in finally, even when `saved_trace is None`). All consumers use `.get()` (verified by review-impact-completeness W3 and re-verified during Step 2), so writing `None` back is indistinguishable from key absence to every reader.
+- **This is a critical context point for any future shared-store-key save/restore pattern**: don't use `.pop()` on `shared` if your key might be visible to a sub-workflow's `NamespacedSharedStore`. The `_pflow_child_only_node` precedent at `engine.py:157` only works because that key is set/cleared within the parent's `_run_node_with_child_only` method, which operates on the parent's regular dict (not a child's namespaced store).
+
+**Free behavior fixes (intentional, no regressions)** — flagged in commit message:
+1. `event["llm_prompt"]` now populates in trace JSON for every non-batch LLM call. `pflow report` gains the `## Prompt` section for nodes that previously had it missing (literal prompts).
+2. Sub-workflow LLM prompts now correctly land in the child collector's `llm_prompts` under the child node's id (was being captured as part of parent's WorkflowExecutor event when the trace_hook would have fired at all, which it didn't).
+3. Cross-test stale-collector contamination eliminated — no class-level globals to leak across tests.
+
+**Deletions in commit `96003f3c`** (~110 lines):
+- `WorkflowTraceCollector._active_collectors`, `_thread_local`, `_llm_lock`, `_llm_interceptor_installed` class state
+- `WorkflowTraceCollector.register_for_llm_call` + `unregister_from_llm_call` methods
+- `WorkflowTraceCollector.enable_llm_interception` instance flag (and the line in `workflow_executor.py:343` that set it on child collectors — no longer needed because save/restore handles inheritance)
+- `_active_trace_hook()` function in `nodes/llm/llm.py`
+- `register_for_llm_call(...)` wrapper in `instrumentation.py` + its call site in `engine.py::_execute_node` + import
+- `unregister_from_llm_call` cleanup call in `runner.py::_cleanup`
+- `threading` import in `workflow_trace.py` and `nodes/llm/llm.py`; `ClassVar` import in `workflow_trace.py`
+
+**The engine `_execute_node` step numbering keeps a gap (no step 1)** — preserved with an explanatory comment because the step numbers are referenced by `runtime/engine/CLAUDE.md` (steps 17.5, 16, etc.) and renumbering would cascade. The deleted step 1 was "LLM interception"; the comment now says: "(Step 1 — LLM trace registration — removed in Task 158 Phase A post-cleanup. The trace collector is now installed by `run()` into `shared['_trace_collector']` and resolved by `LLMNode.prep()` directly. Lifecycle step numbers below preserved for cross-reference with engine/CLAUDE.md.)"
+
+### Item 9 dropped — what the spike showed
+
+Reviewers (`review-feature-interactions` W1, `review-agent-ux` #6) flagged that Anthropic models with thinking enabled require `temperature=1.0` and proposed pre-validation in `LLMNode.prep`. User pushed back: "doesn't the llm library output correct error as is? can we investigate what errors we are getting from this problem right now for 3 different anthropic models including opus 4.5 and sonnet 4.5 and sonnet 4.6 or something."
+
+**Spike: `scratchpads/task-158-spike/spike_6_temp_thinking_errors.py`** — calls `litellm.completion` with `temperature=0.0` + thinking enabled against Opus 4.5, Sonnet 4.5, Sonnet 4.6, Haiku 4.5. All four models returned IDENTICAL `BadRequestError`:
+
+```
+litellm.BadRequestError: AnthropicException - {"type":"error","error":{"type":"invalid_request_error","message":"`temperature` may only be set to 1 when thinking is enabled. Please consult our documentation at https://docs.claude.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking"},"request_id":"req_..."}
+```
+
+**This message has all four ingredients of an actionable error**: WHAT broke (`temperature may only be set to 1 when thinking is enabled`), HOW to fix (set temperature to 1), WHERE to learn more (documentation link), and diagnostic context (`status_code`, `llm_provider`, `model`, `request_id`). It's identical across all 4 Anthropic models — Anthropic treats this as a single API rule, not a per-model quirk.
+
+Pflow already handles this cleanly: PATTERN EXCEPTION catches `BadRequestError` (no retry burned) → adapter raises `LLMCallError` with the message preserved → LLMNode converts to error dict → user sees the actionable message.
+
+**Pre-validation would have**: duplicated a server-side rule (drift risk if Anthropic relaxes it for some future model), saved one network call (~$0 cost since the request is rejected before tokens are consumed), saved zero retries (PATTERN EXCEPTION already prevents them). The cost/benefit was bad. Item dropped.
+
+Spike script kept under `scratchpads/task-158-spike/` as runnable evidence.
+
+### Operational gotchas an agent might hit
+
+1. **NamespacedSharedStore lacks `pop`** — see "Save/restore design" above. Any new shared-store-key save/restore must use unconditional write-back, not `.pop()`. Documented in commit `96003f3c`'s message.
+
+2. **`monkeypatch.setattr` on lazy-imported functions must target the SOURCE module.** `smart_filter.py:166` does `from pflow.core.llm_config import get_model_for_feature` INSIDE the function body. Patching `pflow.registry.smart_filter.get_model_for_feature` fails (`AttributeError: module has no attribute`). Must patch `pflow.core.llm_config.get_model_for_feature`. Caught during step 5 test development (item 6).
+
+3. **`MockLLMClient` in `tests/shared/llm_mock.py:219-221, 251-253` fires `trace_hook` automatically** when one is provided. Sufficient for unit tests of the new path. The trace_hook contract (signature `Callable[[dict], None]` invoked with `{"event": "before_call", ...}` and `{"event": "after_call", ...}`) is honored by the mock.
+
+4. **The engine `_execute_node` step numbering has an intentional gap** at step 1 (was LLM trace registration, now done by `run()` + LLMNode.prep). Don't renumber — the higher numbers (16, 17.5) are referenced from CLAUDE.md and code comments; cascading renumbering would be churn for no benefit.
+
+5. **`_PROPAGATED_KEYS` propagation timing**: child_storage gets `_trace_collector` = parent's collector copied in by `_create_child_storage` (workflow_executor.py:681-683), THEN `engine.run` save/restore swaps in the child's own collector. The two mechanisms are sequential, not racing. Verified by review-concurrency-safety W4.
+
+6. **Comment in `workflow_trace.py:_add_llm_data` updated** to reflect the new sub-workflow flow (each engine.run installs its own collector; child events bubble up via `sub_workflow_events`). The old comment referenced `enable_llm_interception=False` which no longer exists.
+
+### What was NOT addressed (intentional — pre-existing or out of scope)
+
+These were flagged by reviewers but explicitly deferred:
+
+1. **Parallel batch LLM per-item prompt indexing** — `collector.llm_prompts[node_id]` is keyed by node_id, so parallel items share the batch wrapper id and overwrite. Pre-existing limitation (NOT introduced by item 3 refactor). Per-item indexing would require either writing prompts to `node_output` so `_capture_item_trace` picks them up, or keying `llm_prompts` by `(node_id, batch_idx)`. **Test #4 in item 3's plan was REMOVED** before implementation after both `review-concurrency-safety` W6 and `review-impact-completeness` W4 flagged this independently. The new test #4 (parallel batch of SUB-WORKFLOWS containing LLMs) tests a different, properly-isolated case.
+
+2. **PATTERN EXCEPTION scope expansion** — adapter only catches `BadRequestError` and subclasses (`UnsupportedParamsError`, `ContentPolicyViolationError`, `ContextWindowExceededError`, `InvalidRequestError`). Other deterministic errors — `AuthenticationError`, `NotFoundError`, `JSONSchemaValidationError`, `PermissionDeniedError` — still get retried 3x by the Node loop before `exec_fallback` produces a friendly message. Pre-existing; flagged in original handoff §3 and review-silent-failures W2. Not a regression.
+
+3. **smart_filter's `except Exception`** at `smart_filter.py:223` silently degrades to unfiltered fields on any error including the new `LLMCallError`. Intentional behavior for smart_filter (filtering is best-effort). Worth noting that with Option F (item 2), more error paths now flow through this silencer. Pre-existing pattern.
+
+4. **Trace JSON `llm_summary.total_cost_usd` silently zeros None** — `total_cost += event["llm_call"].get("cost_usd", 0) or 0` at `workflow_trace.py:405`. Pre-existing. Made more reachable post-A.10 because LiteLLM returns `None` for unknown-pricing models more often than the deleted `MODEL_PRICING` table did. CLI summary handles it correctly via `pricing_available: False`/`partial_cost_usd`; only the trace JSON consumer divergence remains.
+
+5. **Dead `thinking_tokens` aggregation** in `core/metrics.py:110, 156, 188-197, 250-252` — reads from `llm_usage["thinking_tokens"]` and `["thinking_budget"]`, but no production code WRITES those keys. Pre-existing dead code. Worth a separate cleanup task.
+
+6. **CHANGELOG note about `pflow report` improvement** — item 3 plan mentions adding a CHANGELOG entry for the new `## Prompt` section appearing where it didn't before. NOT added in this session — the existing Unreleased entry already covers the LiteLLM swap; the trace_hook fix could be appended but the user wanted to defer the broader code review first.
+
+### Key file changes by commit
+
+**`96f5f3dd` — fix(llm): correct settings command name + LiteLLM URL**:
+- `src/pflow/nodes/llm/llm.py:348` — typo fix; line 326-341 — added LiteLLM provider list URL; line 58 — Interface docstring fix
+- `tests/test_nodes/test_llm/test_llm.py:232,253` — test assertion updated
+
+**`ad58d856` — test(llm): 3 missing tests**:
+- `tests/test_core/test_llm_reasoning_map.py` — Opus 4.5 effort+max_tokens precedence test
+- `tests/test_core/test_llm_client.py` — `TestEnrichLlmUsageWithCost` class (5 tests, all 3 branches of the cost-key contract)
+- `tests/test_registry/test_smart_filter.py` — `TestGeminiThinkingHeuristics` class (5 parametrized tests)
+
+**`3aa7ed8f` — docs(llm): purge stale references**:
+- `docs/changelog.mdx` — `<Note>` about 24h cache transient
+- `docs/reference/cli/settings.mdx:335` — corrected `pflow settings llm show` example output
+- `src/pflow/cli/workflow_output.py:464` + `src/pflow/execution/formatters/success_formatter.py:253` — "model not in pricing table" → "pricing data missing for"
+- `src/pflow/core/CLAUDE.md:21` — directory tree (added `llm_client.py`, `llm_reasoning_map.py`; removed `llm_pricing.py`)
+- `src/pflow/core/settings.py:67-78` — `LLMSettings` docstring resolution chain
+- `src/pflow/runtime/engine/CLAUDE.md:293` — Cross-Module Dependencies updated
+- `tests/CLAUDE.md` — autouse fixture + LLM mock sections rewritten
+- `tests/test_nodes/test_llm/TESTING.md` — full rewrite (was telling testers to install `llm-anthropic` plugin and `llm keys set`; now covers env vars + `pflow settings set-env`)
+- `tests/test_cli/test_direct_execution_helpers.py:195` — small docstring refresh
+
+**`30918fc0` — refactor(llm): adapter contract + reasoning empty-response warning**:
+- `src/pflow/core/exceptions.py` — added `LLMCallError(PflowError)`
+- `src/pflow/core/llm_client.py` — DELETED `error` and `status` fields from `AdapterResponse`; `BadRequestError` handler now raises `LLMCallError` (after firing trace_hook); added empty-response warning in `_normalize` for reasoning-model trap
+- `src/pflow/nodes/llm/llm.py::_call_llm` — wrapped `complete()` call in `try/except LLMCallError`; converted to error dict at the single boundary
+- `tests/test_core/test_llm_client.py` — updated 3 error-path tests + added `TestNormalizeEmptyResponseWarning` class (5 tests)
+
+**`96003f3c` — refactor(trace): shared-store seam**: 8 production files (see Deletions section above)
+
+**`8df7ebfa` — test(trace): regression guards**:
+- `tests/test_runtime/test_workflow_trace.py` — DELETED `test_enable_llm_interception_attribute` and `test_current_node_is_thread_local` + class
+- `tests/test_runtime/test_trace_integration.py` — DELETED 4 setup lines (`enable_llm_interception = False`); ADDED 4 new test classes (`TestLLMTraceHookCapture`, `TestSubWorkflowTraceCollector` with 2 tests, `TestParallelBatchSubWorkflowTrace`)
+
+### Verification chain that proves item 3 worked
+
+1. **Sacred test**: `tests/test_execution/test_plan_drift.py` 32 passed at every step
+2. **Full suite**: 5284 passed (5266 baseline + 18 new — see commit deltas)
+3. **Lint**: `make check` green (ruff, ruff-format, mypy, deptry)
+4. **End-to-end smoke** (real Gemini-3, $0.0002):
+   ```
+   uv run pflow --no-cache /tmp/smoke-trace-check.pflow.md
+   # Inspect trace JSON:
+   #   has llm_call:     YES
+   #   has llm_prompt:   YES   ← was MISSING before
+   #   has llm_response: YES
+   #   llm_prompt: 'Reply with exactly OK_TRACE_PROBE.'
+   ```
+
+### Branch summary (since `8349df88` baseline — full Phase A + cleanup)
+
+```
+8349df88 ready for phase 0 + a    ← baseline (pre-Phase-A)
+7babf9e5 A.1: install LiteLLM
+0a2eb798 A.2 + A.3: reasoning_map + adapter
+a38afa6d A.4 + A.5: mock + LLMNode rewire
+40b74f8e A.6 + A.7 + A.8: tracing + discovery + cleanup
+5d0e0a9b A.9: drop llm CLI subprocess paths
+8247ae2a A.10: delete llm_pricing.py
+4becef96 A.11: drop llm/llm-anthropic/llm-gemini deps
+6222697f A.12: docs pass + CHANGELOG
+ac257fc6 end-of-task cleanup     ← end of Phase A proper
+c1f417c1 docs(task-158): progress log §30 + Phase A review handoff braindump
+96f5f3dd fix(llm): correct settings command name and improve unknown-model error tip
+ad58d856 test(llm): add Opus 4.5 precedence, cost mirror, smart_filter Gemini coverage
+3aa7ed8f docs(llm): purge stale references to llm-library and pricing table
+30918fc0 refactor(llm): centralize adapter error contract and warn on empty reasoning output
+96003f3c refactor(trace): replace global LLM trace state with shared-store seam
+8df7ebfa test(trace): add regression guards for trace_hook + sub-workflow + storage_mode    ← current HEAD
+```
+
+### Important contracts that changed in this session
+
+**`AdapterResponse` now has a single mode (success only).** The `error: str | None` and `status: Literal["ok", "error"]` fields are GONE. Any code reading `adapter_response.status` or `adapter_response.error` will fail. Replacement: catch `LLMCallError` from `pflow.core.exceptions`. LLMNode does this; discovery callers let it propagate; smart_filter's `except Exception` catches it.
+
+**`shared["_trace_collector"]` is now actively managed by `engine.run()` save/restore.** It is the seam LLMNode reads to find its trace collector. For sub-workflows: parent's value is preserved across the child run via try/finally; child's collector is installed for the duration of the child's `_run_inner` walk. Save/restore uses unconditional write-back (NOT `.pop()`) — see "Save/restore design" above.
+
+**`WorkflowTraceCollector` no longer has** `_active_collectors`, `_thread_local`, `_llm_lock`, `_llm_interceptor_installed`, `register_for_llm_call`, `unregister_from_llm_call`, `enable_llm_interception`. The remaining public surface: `events`, `llm_prompts`, `record_node_execution`, `get_trace_hook(node_id)`, `save_to_file`, plus the various `_sanitize_*` and aggregation helpers.
+
+**`LLMNode.prep` reads `self.node_id`** (a compiler-set dynamic attribute) and `shared["_trace_collector"]` to resolve `prep_res["_trace_hook"]`. **`LLMNode.exec` captures the hook from prep_res BEFORE submitting `_call_llm` to its inner `ThreadPoolExecutor`.** This is the load-bearing mechanism that survives the worker-thread boundary.
+
+### Loose ends acknowledged (not blockers)
+
+1. **Code review of full implementation deferred** — user said "another agent will handle that." No further commits without explicit permission.
+2. **Pre-existing limitations** (carried over from previous handoff + this session's reviewers): parallel batch LLM per-item prompts (last-item-wins), PATTERN EXCEPTION scope (only `BadRequestError` caught), smart_filter silent degradation on errors, trace JSON `total_cost_usd` None coercion, dead `thinking_tokens` aggregation. None are regressions.
+3. **CHANGELOG entry for `pflow report` `## Prompt` improvement** not added — the trace_hook fix produces a user-visible improvement (the section appears where it didn't before) that arguably warrants a CHANGELOG note. Could be added in a future docs touch-up.
+4. **Plan file** at `/Users/andfal/.claude/plans/magical-swinging-taco.md` documents the item 3 design + plan-review refinements. Worth referencing if questions arise about the design decisions.
+
+### Files NOT to delete despite being unreferenced (intentional retention)
+
+- `scratchpads/task-158-spike/spike_6_temp_thinking_errors.py` — runnable evidence of the item 9 investigation. ~$0.00 to re-run if Anthropic ever changes the error format. Not committed.
+- `scratchpads/task-158-spike/spike_*.py` from §27 — Phase 0 spike scripts. Same rationale: runnable docs of pricing/exception/etc findings.
+
+### What the next agent (code reviewer or PR opener) should know
+
+1. **The branch is ready for review** — 6 follow-up commits + 9 Phase A commits since `8349df88` baseline. All tests green. All lint green. Sacred test green throughout.
+
+2. **Item 3 is the highest-stakes change** — touches engine, runner, workflow_executor, instrumentation, workflow_trace, llm.py + 2 CLAUDE.md. ~110 lines of class-level globals + methods deleted; ~25 lines of straightforward shared-store reads added. The plan + plan-review (3 agents) + design refinement is documented in `/Users/andfal/.claude/plans/magical-swinging-taco.md`.
+
+3. **Two architectural facts the reviewer must understand**:
+   - `_trace_collector` is the established shared-store seam — runner installs it, propagation puts parent's into child storage, formatters read it. The new design has `engine.run` save/restore around its graph walk to make `shared["_trace_collector"]` always reflect the currently-executing engine's collector.
+   - `node.node_id` is a dynamic attribute set by the compiler at `compilation/compiler.py:299` — LLMNode.prep reads its own `self.node_id`, no engine plumbing needed.
+
+4. **The PATTERN EXCEPTION pattern moved** but didn't go away. Adapter raises `LLMCallError` (typed); LLMNode catches at `_call_llm` boundary and converts to error dict. Net effect identical to the previous return-error-marked-response design, but with a single contract on `AdapterResponse` and zero-touch error handling for discovery callers.
+
+5. **If running a real-API smoke test**: `uv run pflow --no-cache /tmp/smoke-trace-check.pflow.md` — small literal-prompt LLM call against gemini-3-flash-preview, ~$0.0002. The check that matters: trace JSON has `event["llm_prompt"]` populated (was MISSING in real traces pre-fix). Workflow file content:
+
+   ```markdown
+   # Trace check
+
+   ## Steps
+
+   ### greet
+
+   Greeting step.
+
+   - type: llm
+   - model: gemini/gemini-3-flash-preview
+   - prompt: Reply with exactly OK_TRACE_PROBE.
+   - max_tokens: 1024
+   - reasoning_effort: minimal
+
+   ## Outputs
+
+   ### result
+
+   The greeting.
+
+   - type: string
+   - source: ${greet.response}
+   ```
+
+6. **What could go wrong during PR review**:
+   - Reviewer might not realize `event["llm_prompt"]` was MISSING before this work — the fix is invisible in tests because no test asserted on `llm_prompt`'s presence pre-fix. The smoke test against real API is the proof.
+   - Reviewer might question the `_pflow_current_node` mention in the plan but absence in the implementation — the plan-review caught that `self.node_id` already exists, plan was refined accordingly.
+   - Reviewer might worry about the `pop` → write-back change — it's documented in the commit message and the impact-completeness review verified all consumers use `.get()`.
+
+### Next step
+
+Code review (deferred to another agent). Then PR. After merge, write `implementation/plan-phase-B-through-G.md` for the actual prompt-caching feature work.
+
+---
