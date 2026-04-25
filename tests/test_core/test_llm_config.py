@@ -1,6 +1,5 @@
 """Tests for llm_config module."""
 
-import os
 from unittest import mock
 
 from pflow.core.llm_config import clear_model_cache, get_default_llm_model
@@ -71,16 +70,16 @@ class TestLLMConfig:
             assert result2 == "model-2"
             assert mock_detect.call_count == 2
 
-    def test_pytest_environment_skips_detection(self):
-        """Test that PYTEST_CURRENT_TEST environment variable skips detection."""
+    def test_detection_only_uses_env_and_settings(self, monkeypatch):
+        """Detection only consults env vars and pflow settings (no subprocess)."""
         clear_model_cache()
+        # Clear any provider keys so detection has nothing to find
+        for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
 
-        # Ensure PYTEST_CURRENT_TEST is set (it should be during tests)
-        assert os.environ.get("PYTEST_CURRENT_TEST") is not None
-
-        # Should return None without calling subprocess
-        with mock.patch("pflow.core.llm_config._has_llm_key") as mock_has_key:
+        # Mock SettingsManager so settings lookup also finds nothing
+        mock_manager = mock.MagicMock()
+        mock_manager.get_env.return_value = None
+        with mock.patch("pflow.core.settings.SettingsManager", return_value=mock_manager):
             result = get_default_llm_model()
-            assert result is None
-            # _has_llm_key should never be called in test environment
-            assert mock_has_key.call_count == 0
+        assert result is None

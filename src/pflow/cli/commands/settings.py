@@ -36,9 +36,9 @@ def settings() -> None:
       pflow settings set-env GITHUB_TOKEN "ghp-..."
       pflow settings show                          Verify stored values
     \b
-    LLM provider keys (via Simon Willison's llm tool):
-      llm keys set anthropic
-      llm keys set openai
+    LLM provider keys (via environment variables or pflow settings):
+      export ANTHROPIC_API_KEY=sk-ant-...
+      pflow settings set-env OPENAI_API_KEY "sk-..."
     \b
     Stored credentials are available as fallbacks for declared workflow inputs.
     Precedence: CLI params > shell env > settings env > workflow defaults.
@@ -396,19 +396,16 @@ def _get_resolved_model(setting_name: str, configured_value: str | None, default
     Returns:
         String describing the resolved value and its source
     """
-    from pflow.core.llm_config import (
-        get_default_llm_model,
-        get_llm_cli_default_model,
-    )
+    from pflow.core.llm_config import get_default_llm_model
 
     if configured_value:
         return f"{configured_value} (configured)"
 
-    # For default_model, resolution is: settings → llm CLI → error
+    # For default_model, resolution is: settings → auto-detect → error
     if setting_name == "default":
-        llm_cli_default = get_llm_cli_default_model()
-        if llm_cli_default:
-            return f"(llm CLI default → {llm_cli_default})"
+        detected = get_default_llm_model()
+        if detected:
+            return f"(auto-detect → {detected})"
         return "(not configured - will error if LLM node used)"
 
     # For discovery/filtering, resolution is: feature → default_model → auto-detect → fallback
@@ -448,7 +445,7 @@ def llm_show() -> None:
     click.echo(f"  filtering_model:  {filtering_resolved}")
 
     click.echo("\nResolution order:")
-    click.echo("  default:    workflow params → default_model → llm CLI default → error")
+    click.echo("  default:    workflow params → default_model → auto-detect → error")
     click.echo("  discovery:  discovery_model → default_model → auto-detect → fallback")
     click.echo("  filtering:  filtering_model → default_model → auto-detect → fallback")
 
@@ -552,7 +549,7 @@ def llm_unset(setting: str) -> None:
         else:
             current_settings.llm.default_model = None
             manager.save(current_settings)
-            click.echo("✓ Removed default_model (will use llm CLI default or error)")
+            click.echo("✓ Removed default_model (will use auto-detection or error)")
     elif setting == "discovery":
         if current_settings.llm.discovery_model is None:
             click.echo("discovery_model is not set")

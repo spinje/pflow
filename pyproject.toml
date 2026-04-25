@@ -175,8 +175,6 @@ ignore = [
 "tests/*" = ["S101"]
 "tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
 "src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
-# S603: Safe subprocess use - hardcoded commands, no user input
-"src/pflow/core/llm_config.py" = ["S603"]
 # Test file is pytest.skip'd at module level (Task 158 Phase A.5 superseded its
 # coverage). Body retained pending user-approved deletion — ignore static checks.
 "tests/test_nodes/test_llm/test_llm_reasoning.py" = ["F821", "F401"]
