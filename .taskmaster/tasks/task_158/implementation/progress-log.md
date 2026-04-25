@@ -1693,3 +1693,128 @@ grep -rn 'litellm\.exceptions' src/pflow/nodes/                       # 1 docstr
 After this commit lands, Phase A is fully complete (all 12 review items resolved). Next step is the actual prompt-caching feature work (Phase B–G).
 
 ---
+
+## 33. Session 2026-04-25 (cont.) — Broader deferred-findings closeout (what §32 didn't capture)
+
+### Context
+
+§32 documents the implementation of #6 in detail, but the commit it describes (`5a070312`) actually bundled **eight other deferred-findings items** that were implemented earlier in the same session, before the #6 plan was written. The commit message names #8, #9, and the trace-cost propagation work (B7) but doesn't enumerate the rest. This section closes the gap so future agents can see the full closure state of `.taskmaster/tasks/task_158/starting-context/deferred-findings-from-phase-A-review-2026-04-25.md` from one read.
+
+The session order was: read the deferred-findings doc → launch 6 parallel `pflow-codebase-searcher` agents to verify each finding's claims against current code → implement Group A + B + selected Group C items → write the #6 plan in plan mode → another agent (or a continuation) implemented #6 and bundled everything into one commit.
+
+### Verification methodology — 6 parallel agents before any code change
+
+Before touching anything, the 18 deferred findings were re-verified via 6 `pflow-codebase-searcher` agents in parallel (1 message, 6 tool calls). Each agent owned a slice of findings, was asked to quote current code at the cited line numbers, confirm/refute each claim, and flag related issues the original review may have missed.
+
+**This surfaced four issues the original deferred-findings doc had missed:**
+
+1. **`test_missing_api_key_error` was silently broken.** The test used `pytest.raises(ValueError)` but post-Phase-A `node.run()` returns the `"error"` action and stores the message in `shared["error"]` rather than raising. The test could never pass when run, but `RUN_LLM_TESTS=1` gating hid it. **Class of bug worth noting**: gated tests rot silently in proportion to the gate's restrictiveness. The fix in A2 made the test actually exercisable.
+
+2. **The dead BadRequestError "LLM Provider NOT provided" branch in `exec_fallback`** (already removed in the earlier A16 cleanup) had a downstream consequence the review missed: a user typing a bare model name with no provider prefix saw the raw LiteLLM JSON envelope instead of the friendly "use a provider prefix" hint. This drove the design choice in #6's `_classify_litellm_error` to detect `"LLM Provider NOT provided"` at the LiteLLM boundary and raise `UnknownModelError(reason="missing_prefix")`.
+
+3. **C4 (image-path docstring) had a deeper inconsistency than the original doc surfaced.** The test docstring claimed "Relative paths resolve against the current working directory" but production at `nodes/llm/llm.py:160-167` stored the input string verbatim — Python's `open()` later does cwd-relative resolution, but pflow itself doesn't `.resolve()`. The contract was real (cwd-relative), the documented mechanism (pflow resolution) was fictitious.
+
+4. **B11 (parallel batch LLM per-item prompts)** was rated "L (4-6 hours)" in the deferred doc but the agent investigation found that `batch_executor._capture_item_trace` already had the mapping `("prompt", "llm_prompt")` expecting `node_output["prompt"]` to exist. The design originally assumed the prompt would be there; the implementation just never wrote it. Option A (`LLMNode.post()` writes `shared["prompt"]`) is ~3 lines + a regression test. **Estimate revised down significantly once the existing fallback contract was inspected.**
+
+### Operational principles surfaced this session
+
+These shaped the design decisions and are worth keeping for the next round:
+
+1. **"Simplicity of the FINAL code, not how easy it is to get there."** The user's framing eliminated several "minimum diff" / "leave it as-is" defenses for individual items. It's the lens that drove #6 to full Option 3 (true seal) rather than a halfway expansion of the existing PATTERN EXCEPTION pattern, and that turned C8 from "narrow with a fallback comment" into "be explicit about every failure mode you handle and let everything else propagate."
+
+2. **"What would the top 10% of codebases similar to this one implement?"** is the operational question that selects between equivalent-by-LOC alternatives. For #6 it picked the structured-attribute discriminator over message-text parsing; for C8 it picked an explicit exception tuple over a broad catch with comment; for C10 it picked surfacing real data via the adapter over deleting the dead aggregation.
+
+3. **Mirror existing patterns when extending a data contract.** B7's trace JSON tri-state (`total_cost_usd: None` + `partial_cost_usd` + `unavailable_models` + `pricing_available: False`) deliberately copies the exact shape of `MetricsCollector.calculate_costs` rather than inventing a new one. Two consumers reading "is pricing available?" should see identical-shaped answers regardless of which path produced them.
+
+4. **The adapter is the single source of truth for derived data.** C10's thinking-budget extraction lives in the adapter (`_extract_thinking_budget(kwargs)` reads from translated request kwargs), not in LLMNode mirroring request-side state into responses. Same principle as cost (LiteLLM populates) and reasoning_tokens (LiteLLM standardizes via `usage.completion_tokens_details.reasoning_tokens`). Consumers of `AdapterResponse.usage` get a complete picture from one read.
+
+5. **Lint complexity limits sometimes drive useful refactors.** B7's `_collect_llm_summary` rewrite triggered ruff C901 ("too complex"); the fix extracted a `_LLMSummaryAccumulator` dataclass at module level. The accumulator is cleaner than inline nested helpers — explicit fields, two methods (`add_leaf`, `merge_sub`), one `as_dict` builder. The lint constraint surfaced an abstraction that the inline code was hiding.
+
+### Group A — 5 doc/test cleanup items (bundled into commit `5a070312`)
+
+| # | Site | Change |
+|---|---|---|
+| A1 | `tests/test_core/test_llm_config_provider_detection.py:1-7` | Module docstring updated from "env vars, settings, and llm CLI in order" to "env vars and settings (in that order)" — A.9 removed the llm-CLI tier; only the docstring lagged. |
+| A2 | `tests/test_nodes/test_llm/test_llm_integration.py:27, 199-200, 210` | Skip-reason text + comment + dead `or "llm models"` OR-branch all updated to post-Phase-A reality. **Plus**: `test_missing_api_key_error` rewritten end-to-end (was using `pytest.raises(ValueError)` which never fires — see methodology surprise #1). Renamed to `test_unknown_model_produces_helpful_error` and rewritten to assert `action == "error"` + `shared["error"]` substring. |
+| A3 + B9 | `src/pflow/core/llm_utils.py` | Bundled: deleted dead `callable(response.text)` branch (`AdapterResponse.text` is always a `str` attribute now); rewrote stale "the LLM library normalizes responses to have a text() method" docstring/comments; converted all 5 `ValueError` raise sites to `LLMCallError`. Discovery callers and smart_filter (post-C8) catch the typed exception cleanly. |
+| A5 | `docs/changelog.mdx` Unreleased | Added bullet about `event["llm_prompt"]` populating in trace JSON for every literal-prompt LLM call + `pflow report ## Prompt` section visibility (the user-visible improvement from §31's item-3 trace_hook fix). |
+| A16 | `src/pflow/nodes/llm/llm.py::exec_fallback` | Consolidated NotFoundError two sub-branches; deleted the unreachable BadRequestError "LLM Provider NOT provided" branch (later superseded by #6's `_classify_litellm_error` which surfaces the same UX at the right layer). |
+
+### Group B — 3 real bugs (B7, B11 bundled into commit `5a070312`)
+
+**B7 — Trace JSON cost None-handling** (`runtime/workflow_trace.py`, `core/trace_report.py`):
+
+`_collect_llm_summary` and `_compute_event_cost` previously coerced `cost_usd: None` to `0.0` via `cost or 0`, silently dropping the unpriced contribution. Trace JSON consumers (third-party tooling, future analyze-cache feature) saw `total_cost_usd: 0.0` instead of `None` with no flag for "we don't have pricing for some calls."
+
+Fix mirrors `MetricsCollector.calculate_costs` exactly: when any leaf has `cost_usd: None`, summary returns `total_cost_usd: None`, `partial_cost_usd: <priced subset>`, `unavailable_models: [...]`, `pricing_available: False`. Same shape across three sites = consumers don't have to special-case.
+
+`_compute_event_cost` got a parallel treatment — returns `None` (rendered as `—` by `_format_cost`) when any leaf in the subtree is unpriced, instead of a misleading partial sum.
+
+The ruff-driven extraction (`_LLMSummaryAccumulator` dataclass + `_accumulate_call_cost` / `_accumulate_child_cost` helpers in trace_report) is the principle-5 lesson above.
+
+**B11 — Per-item batch LLM prompt capture** (`nodes/llm/llm.py::post()`):
+
+`WorkflowTraceCollector.llm_prompts[node_id]` is keyed by node_id alone, so parallel batch workers (which share the batch wrapper's id via deepcopy) all overwrite the same slot — last-item-wins, often missing entirely. **The fix is one line in `LLMNode.post()`**: `shared["prompt"] = prep_res["prompt"]`. Via NamespacedSharedStore this routes to `parent_shared[node_id]["prompt"]`, which `_capture_item_trace`'s existing fallback (`for src_key, dst_key in [("response", "llm_response"), ("prompt", "llm_prompt")]`) was already designed to read.
+
+The mapping in `_capture_item_trace` had been there since the original batch implementation — it expected `node_output["prompt"]`; nothing wrote it. Adding the single write closes a documented gap that affected 4+ shipped example workflows (`release-announcements`, `generate-changelog-simple`, `vision-scraper`, `batch-file-ref`). One regression test (`TestParallelBatchOfLLMs::test_each_batch_item_llm_captures_own_rendered_prompt`) pins per-item visibility going forward.
+
+### Group C — 3 design-decision items (C4, C8, C10 bundled into `5a070312`; C6 = §32)
+
+**C4 — Image-path cwd-relative contract**:
+
+Decision (user-driven): images are workflow inputs, not workflow assets. Inputs are cwd-relative; assets (code-block file refs like `code: @./helper.py`) are workflow-relative. Different layers, different conventions. Fix: production stores the input string verbatim (`Attachment(value=str(Path(img)))`); Python's `open()` resolves at file-read time. Test asserts `attachments[0].value == "relative.jpg"` (verbatim); docstring explicitly contrasts the two conventions for future maintainers.
+
+**C8 — smart_filter narrow `except`**:
+
+Replaced `except Exception` with `except (LLMCallError, ConnectionError, TimeoutError, OSError)`. Programming errors (`AttributeError`, `TypeError`, `KeyError`) propagate so refactor-introduced bugs surface as test failures rather than silent UX degradation. **Two existing tests had to be migrated** because they encoded the broad-catch behavior using `RuntimeError` and bare `ValueError` — fixtures that didn't reflect what the real adapter would raise post-#9. Updated to raise typed `LLMCallError` (matching the real contract). Added `test_programming_error_propagates` (regression guard) and `test_warning_logged_on_graceful_fallback` (caplog test pinning the warning emission contract).
+
+**C10 — Thinking tokens via adapter (Option B per user direction)**:
+
+User picked Option B (surface real data) over Option A (delete the dead `metrics.py` aggregation that was reading keys nobody wrote). Implementation:
+
+- `_normalize` reads `usage.completion_tokens_details.reasoning_tokens` — LiteLLM's standardized field for reasoning-token counts across all providers (Anthropic extended thinking, OpenAI o1/o3, Gemini 2.5/3).
+- New helper `_extract_thinking_budget(kwargs)` mirrors the request-side budget from the translated kwargs — handles both Anthropic's nested `thinking={"budget_tokens": N}` shape and Gemini's top-level `thinking_budget=N`. OpenAI's `reasoning_effort` and Gemini-3's `thinking_level` are categorical (no token budget) → returns 0 so utilization metrics simply omit the section.
+- `AdapterResponse.usage` gains `thinking_tokens` and `thinking_budget` keys (stable shape).
+- LLMNode passes through to `shared["llm_usage"]`.
+- `MockLLMClient` default mirrors the new shape.
+
+The previously-dead `metrics.py` aggregation (which the verification round confirmed had zero production writers) is now live. The fabricated `test_metrics_thinking_cache.py` tests now validate aggregation logic against shapes that real production data flows through.
+
+4 new adapter tests pin the contract: zero-when-no-reasoning, extraction from `completion_tokens_details`, Anthropic budget mirroring, Gemini budget mirroring.
+
+### Closure state of `deferred-findings-from-phase-A-review-2026-04-25.md`
+
+| Status | Items | Notes |
+|---|---|---|
+| **Closed (12)** | #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #16 | All bundled into commit `5a070312`. |
+| **Verified-and-deferred (4)** | #12 (AdapterResponse `finish_reason`/`reasoning_content`), #13 (`_normalize` IndexError guard), #14 (`model_options` overrides reasoning_kwargs silently — documented), #15 (`LLMCallError` JSON envelope wrapping — minor UX polish) | Each deliberately scoped out as "no current consumer needs it" or "defensive code where the trade isn't worth it." Documented in §32 / this section. |
+| **User decision (2)** | #17 (CHANGELOG version label "Unreleased" vs version bump), #18 (Gemini PR #15226 fix verification on 1.82.6 — release-date-inferred, never spike-verified) | Surface for PR prep. |
+
+### Testing-trap addendum to §32
+
+§32 mentions the `/llm/` autouse-mock skip pattern in the context of `test_llm_integration.py`. The broader observation worth stating: **the skip pattern is path-substring based, so it does NOT skip files at `tests/test_nodes/test_llm/test_*.py`** (the substring there is `_llm/`, not `/llm/`). Every unit test under `tests/test_nodes/test_llm/` gets the autouse `mock_llm_client` fixture applied, including `test_llm_integration.py` itself — that file gates real LLM calls via `RUN_LLM_TESTS=1` + `pytest.mark.skipif`, NOT via the conftest skip pattern.
+
+This means: any test that wants to verify the real adapter's behavior (not the mock's) will hit the autouse-mock trap because the mock has already replaced `pflow.core.llm_client.complete` before the test's `monkeypatch.setattr` runs. Workarounds documented in §32 (move test path, `importlib.reload`, etc.) are correct. **The simpler fix** for future tests that need real-adapter behavior: monkeypatch one layer down at `pflow.core.llm_client.litellm.completion` — that's the actual LiteLLM call site, which the autouse mock doesn't touch (because it replaces the `complete` function entirely, bypassing whatever `litellm.completion` is). This was found while writing #6's adapter-translation tests in `tests/test_core/test_llm_client.py` — they all `@patch("pflow.core.llm_client.litellm.completion")` and work cleanly.
+
+### Final state at end of §33 work
+
+- `make test`: 5301 passed, 0 failed (pre-#6: 5293; #6 adds 8 net tests — 3 from C10 thinking-token surfacing, 2 from C8 propagation/caplog, 2 from B7 cost None-handling, 1 from B11 batch-LLM trace, plus #6's own additions documented in §32).
+- Sacred `tests/test_execution/test_plan_drift.py`: 32/32 throughout every step (verified after each finding implementation, after each lint fix, after the #6 work, after the bundle commit).
+- `make check`: ruff + ruff-format + mypy + deptry green.
+- `grep -rn 'import litellm\.exceptions\|from litellm\.exceptions' src/pflow/`: returns exactly one match (`core/llm_client.py:35`).
+
+### What the next agent should know about Phase A→B-G handoff
+
+1. **Phase A is structurally and architecturally complete.** All 12 review items closed, all 18 deferred findings either closed or deliberately scoped out with documented reasoning. The branch is ready for a PR review pass.
+
+2. **The deferred-findings doc is now mostly historical** — it described work to do; that work is done. The remaining "verified-and-deferred" items (#12-#15) are explicitly low-value or future-feature-driven; they don't block Phase B-G.
+
+3. **Two open user-decision items before merge:** the CHANGELOG version label (#17) and the Gemini PR #15226 fix re-verification on 1.82.6 (#18, ~$0.001 spike if the user wants the audit-trail conversion).
+
+4. **Phase B-G plan can now be written informed by concrete LiteLLM behavior.** The Phase 0 spike (§27) confirmed cache_control mechanics; Phase A confirmed the adapter shape, the typed exception hierarchy, the trace seam, and the pricing flow. Open questions for Phase B-G planning that Phase A didn't answer: how `## Cache` block parsing slots into the markdown parser (parser is line-by-line state machine, NOT a markdown library), how cache rendering interacts with `prep_res["prompt"]` (the rendered prompt today is a flat string by the time `_call_llm` sees it — cache rendering would split it into content blocks at the adapter layer), and the validation-time data-flow rules for `prompt_cache:` order checking.
+
+5. **Two architectural patterns to keep using when extending the LLM seam**:
+   - **Structured discriminators on typed exceptions, not message-text parsing across the seam.** §32's discriminator-loss insight generalizes — any new sub-case on a typed exception should be a structured attribute, never encoded in the message text.
+   - **Adapter as the single source of truth for derived data.** Cost, reasoning tokens, thinking budget, future cache metadata — all extracted/mirrored at `_normalize` so consumers of `AdapterResponse.usage` get a complete picture from one read. Don't make LLMNode mirror request-side state into response-side outputs.
+
+---

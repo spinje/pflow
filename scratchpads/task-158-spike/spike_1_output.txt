@@ -1,0 +1,145 @@
+system block chars: 5528 (expect ~5500)
+
+========================================================================
+Anthropic Sonnet 4.5 — anthropic/claude-sonnet-4-5
+========================================================================
+[USAGE call-1] {
+  "prompt_tokens": 1361,
+  "completion_tokens": 4,
+  "total_tokens": 1365,
+  "cache_creation_input_tokens": 1345,
+  "cache_read_input_tokens": 0,
+  "prompt_tokens_details.cached_tokens": 0,
+  "response_cost_litellm": 0.005151750000000001
+}
+  latency-1: 1.27s
+  content-1 type: str
+  content-1 value: 'OK'
+[USAGE call-2] {
+  "prompt_tokens": 1361,
+  "completion_tokens": 4,
+  "total_tokens": 1365,
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 1345,
+  "prompt_tokens_details.cached_tokens": 1345,
+  "response_cost_litellm": 0.0005115
+}
+  latency-2: 2.85s
+
+========================================================================
+Gemini 2.5 Flash — gemini/gemini-2.5-flash
+========================================================================
+[USAGE call-1] {
+  "prompt_tokens": 1237,
+  "completion_tokens": 6,
+  "total_tokens": 1243,
+  "cache_creation_input_tokens": null,
+  "cache_read_input_tokens": 1226,
+  "prompt_tokens_details.cached_tokens": 1226,
+  "response_cost_litellm": 5.5079999999999994e-05
+}
+  latency-1: 2.20s
+  content-1 type: str
+  content-1 value: 'OK'
+[USAGE call-2] {
+  "prompt_tokens": 1237,
+  "completion_tokens": 6,
+  "total_tokens": 1243,
+  "cache_creation_input_tokens": null,
+  "cache_read_input_tokens": 1226,
+  "prompt_tokens_details.cached_tokens": 1226,
+  "response_cost_litellm": 5.5079999999999994e-05
+}
+  latency-2: 1.00s
+
+========================================================================
+OpenAI gpt-4o-mini — openai/gpt-4o-mini
+========================================================================
+[USAGE call-1] {
+  "prompt_tokens": 1173,
+  "completion_tokens": 1,
+  "total_tokens": 1174,
+  "cache_creation_input_tokens": null,
+  "cache_read_input_tokens": null,
+  "prompt_tokens_details.cached_tokens": 0,
+  "response_cost_litellm": 0.00017654999999999998
+}
+  latency-1: 2.64s
+  content-1 type: str
+  content-1 value: 'OK'
+[USAGE call-2] {
+  "prompt_tokens": 1173,
+  "completion_tokens": 1,
+  "total_tokens": 1174,
+  "cache_creation_input_tokens": null,
+  "cache_read_input_tokens": null,
+  "prompt_tokens_details.cached_tokens": 0,
+  "response_cost_litellm": 0.00017654999999999998
+}
+  latency-2: 1.38s
+
+========================================================================
+SPIKE 1 SUMMARY
+========================================================================
+{
+  "anthropic_sonnet": {
+    "first": {
+      "prompt_tokens": 1361,
+      "completion_tokens": 4,
+      "total_tokens": 1365,
+      "cache_creation_input_tokens": 1345,
+      "cache_read_input_tokens": 0,
+      "prompt_tokens_details.cached_tokens": 0,
+      "response_cost_litellm": 0.005151750000000001
+    },
+    "second": {
+      "prompt_tokens": 1361,
+      "completion_tokens": 4,
+      "total_tokens": 1365,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 1345,
+      "prompt_tokens_details.cached_tokens": 1345,
+      "response_cost_litellm": 0.0005115
+    }
+  },
+  "gemini_flash": {
+    "first": {
+      "prompt_tokens": 1237,
+      "completion_tokens": 6,
+      "total_tokens": 1243,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": 1226,
+      "prompt_tokens_details.cached_tokens": 1226,
+      "response_cost_litellm": 5.5079999999999994e-05
+    },
+    "second": {
+      "prompt_tokens": 1237,
+      "completion_tokens": 6,
+      "total_tokens": 1243,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": 1226,
+      "prompt_tokens_details.cached_tokens": 1226,
+      "response_cost_litellm": 5.5079999999999994e-05
+    }
+  },
+  "openai_4o_mini": {
+    "first": {
+      "prompt_tokens": 1173,
+      "completion_tokens": 1,
+      "total_tokens": 1174,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "prompt_tokens_details.cached_tokens": 0,
+      "response_cost_litellm": 0.00017654999999999998
+    },
+    "second": {
+      "prompt_tokens": 1173,
+      "completion_tokens": 1,
+      "total_tokens": 1174,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "prompt_tokens_details.cached_tokens": 0,
+      "response_cost_litellm": 0.00017654999999999998
+    }
+  }
+}
