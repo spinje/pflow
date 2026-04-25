@@ -13,6 +13,7 @@ import litellm.exceptions
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
+from pflow.core.exceptions import LLMCallError
 from pflow.core.llm_client import Attachment, TraceHook, complete, enrich_llm_usage_with_cost
 from pflow.core.llm_reasoning_map import (
     DEFAULT_MAX_TOKENS_BASE,
@@ -197,25 +198,31 @@ class LLMNode(Node):
         # The adapter handles the PATTERN EXCEPTION (deterministic
         # BadRequestError → error-marked response, no retry burned).
         # See pflow.core.llm_client.complete docstring.
-        adapter_response = complete(
-            model=prep_res["model"],
-            prompt=prep_res["prompt"],
-            system=prep_res["system"],
-            temperature=prep_res["temperature"],
-            max_tokens=prep_res["max_tokens"],
-            attachments=prep_res["attachments"] or None,
-            schema=prep_res["output_schema"],
-            reasoning_kwargs=reasoning_kwargs,
-            model_options=prep_res.get("model_options") or None,
-            timeout=prep_res.get("timeout"),
-            trace_hook=_active_trace_hook(),
-        )
-
-        if adapter_response.status == "error":
+        try:
+            adapter_response = complete(
+                model=prep_res["model"],
+                prompt=prep_res["prompt"],
+                system=prep_res["system"],
+                temperature=prep_res["temperature"],
+                max_tokens=prep_res["max_tokens"],
+                attachments=prep_res["attachments"] or None,
+                schema=prep_res["output_schema"],
+                reasoning_kwargs=reasoning_kwargs,
+                model_options=prep_res.get("model_options") or None,
+                timeout=prep_res.get("timeout"),
+                trace_hook=_active_trace_hook(),
+            )
+        except LLMCallError as e:
+            # PATTERN EXCEPTION: deterministic provider error (bad params,
+            # bad model, schema rejection). Convert to error-marked output
+            # at this single boundary so the Node retry loop sees a normal
+            # return and doesn't burn three attempts. The adapter raised a
+            # typed exception precisely so this conversion lives here, with
+            # the one consumer that needs it, not inside the adapter.
             return {
                 "response": "",
-                "error": adapter_response.error or "LLM call failed",
-                "model": adapter_response.model or prep_res["model"],
+                "error": str(e),
+                "model": prep_res["model"],
                 "usage": {},
                 "status": "error",
             }

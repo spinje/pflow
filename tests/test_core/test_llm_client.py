@@ -23,6 +23,7 @@ from unittest.mock import patch
 import litellm.exceptions
 import pytest
 
+from pflow.core.exceptions import LLMCallError
 from pflow.core.llm_client import (
     AdapterResponse,
     Attachment,
@@ -39,22 +40,27 @@ from pflow.core.llm_client import (
 
 def make_litellm_response(
     *,
-    text: str = "OK",
+    text: str | None = "OK",
     prompt_tokens: int = 100,
     completion_tokens: int = 20,
     cache_creation: int | None = None,
     cache_read: int | None = None,
     cached_tokens_details: int | None = None,
     response_cost: float | None = 0.001,
+    finish_reason: str | None = "stop",
 ) -> SimpleNamespace:
     """Mimic ``litellm.ModelResponse``'s attribute shape minimally.
 
     Real LiteLLM ``ModelResponse`` is a Pydantic model; we only need the
     attribute access pattern the adapter reads. Using SimpleNamespace
     avoids pulling Pydantic internals into the test.
+
+    Pass ``text=None`` to mimic the reasoning-model empty-output case
+    (provider returns ``message.content=None``); the adapter normalizes
+    this to ``text=""``.
     """
     message = SimpleNamespace(content=text, reasoning_content=None)
-    choice = SimpleNamespace(message=message)
+    choice = SimpleNamespace(message=message, finish_reason=finish_reason)
     usage_kwargs: dict = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
@@ -229,8 +235,6 @@ class TestCompleteHappyPath:
         # Verify response shape
         assert isinstance(response, AdapterResponse)
         assert response.text == "hello world"
-        assert response.status == "ok"
-        assert response.error is None
         assert response.model == "gpt-4o-mini"
         assert response.has_schema is False
         # `.text` is an attribute, not callable (different from llm library)
@@ -386,20 +390,21 @@ class TestCompleteUsageNormalization:
 
 class TestCompleteErrorPaths:
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_bad_request_returns_error_marked_response(self, mock_completion):
-        # PATTERN EXCEPTION: deterministic error → error-marked response,
-        # not raised. Caller should not retry.
+    def test_bad_request_raises_llm_call_error(self, mock_completion):
+        # PATTERN EXCEPTION: deterministic error → typed LLMCallError raised
+        # at the adapter boundary so LLMNode can convert at its single seam
+        # (preventing the Node retry loop from burning N attempts). The
+        # underlying provider message is preserved so it stays actionable.
         mock_completion.side_effect = litellm.exceptions.BadRequestError(
             message="Invalid model: 'gpt-fake'",
             model="gpt-fake",
             llm_provider="openai",
         )
-        response = complete(model="gpt-fake", prompt="hi")
-        assert response.status == "error"
-        assert response.error is not None
-        assert "gpt-fake" in response.error
-        assert response.text == ""
-        assert response.model == "gpt-fake"
+        with pytest.raises(LLMCallError) as exc_info:
+            complete(model="gpt-fake", prompt="hi")
+        assert "gpt-fake" in str(exc_info.value)
+        # Underlying exception preserved as cause for traceback context.
+        assert isinstance(exc_info.value.__cause__, litellm.exceptions.BadRequestError)
 
     @patch("pflow.core.llm_client.litellm.completion")
     def test_timeout_propagates(self, mock_completion):
@@ -442,18 +447,23 @@ class TestCompleteTraceHook:
 
     @patch("pflow.core.llm_client.litellm.completion")
     def test_invoked_after_on_bad_request(self, mock_completion):
+        # The trace_hook MUST fire after_call before the LLMCallError raises
+        # so the trace captures the failure. Otherwise an error path silently
+        # produces no after_call event and trace consumers can't tell what
+        # happened.
         mock_completion.side_effect = litellm.exceptions.BadRequestError(
             message="bad",
             model="m",
             llm_provider="openai",
         )
         events: list[dict] = []
-        complete(model="m", prompt="hi", trace_hook=events.append)
+        with pytest.raises(LLMCallError):
+            complete(model="m", prompt="hi", trace_hook=events.append)
         assert len(events) == 2
         assert events[0]["event"] == "before_call"
         assert events[1]["event"] == "after_call"
         assert events[1]["error"] is not None
-        assert events[1]["response"].status == "error"
+        assert "m" in events[1]["error"]
 
     @patch("pflow.core.llm_client.litellm.completion")
     def test_hook_exception_does_not_break_call(self, mock_completion):
@@ -464,7 +474,6 @@ class TestCompleteTraceHook:
 
         # Should still return a successful response despite the hook blowing up
         response = complete(model="gpt-4o-mini", prompt="hi", trace_hook=boom)
-        assert response.status == "ok"
         assert response.text == "OK"
 
     @patch("pflow.core.llm_client.litellm.completion")
@@ -477,6 +486,85 @@ class TestCompleteTraceHook:
 # --------------------------------------------------------------------------
 # enrich_llm_usage_with_cost — cost-key normalization
 # --------------------------------------------------------------------------
+
+
+class TestNormalizeEmptyResponseWarning:
+    """Detect the reasoning-model trap: tokens consumed, no visible text.
+
+    A reasoning model with max_tokens too low spends its entire budget on
+    internal thinking and emits ``content=None`` with ``finish_reason=length``.
+    Without a warning the workflow surfaces an empty result silently and the
+    user can't tell what happened. The Phase 0 spike on
+    ``gemini-3-flash-preview`` first surfaced this; the warning is a
+    targeted heuristic — no false positives because text="" on a normal
+    successful call is genuinely strange.
+    """
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_warns_when_text_empty_and_finish_reason_length(self, mock_completion, caplog):
+        # Logger gotcha (tests/CLAUDE.md #16): explicit level + logger name
+        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+        mock_completion.return_value = make_litellm_response(
+            text=None,  # provider returned content=None
+            completion_tokens=13,
+            finish_reason="length",
+        )
+        complete(model="gemini/gemini-3-flash-preview", prompt="hi", max_tokens=16)
+        assert "Empty response" in caplog.text
+        assert "gemini-3-flash-preview" in caplog.text
+        assert "13 tokens" in caplog.text
+        assert "max_tokens" in caplog.text
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_warns_on_max_tokens_finish_reason_too(self, mock_completion, caplog):
+        # OpenAI uses "max_tokens" instead of "length" for the same condition
+        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=50,
+            finish_reason="max_tokens",
+        )
+        complete(model="gpt-5-mini", prompt="hi")
+        assert "Empty response" in caplog.text
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_no_warning_on_normal_finish_reason_stop(self, mock_completion, caplog):
+        # Provider returned text="" with finish_reason="stop" — that's a
+        # different (rarer) failure mode and our heuristic shouldn't fire.
+        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=5,
+            finish_reason="stop",
+        )
+        complete(model="gpt-4o-mini", prompt="hi")
+        assert "Empty response" not in caplog.text
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_no_warning_when_text_present(self, mock_completion, caplog):
+        # Successful call — never warn even if finish_reason is unusual
+        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+        mock_completion.return_value = make_litellm_response(
+            text="hello",
+            completion_tokens=10,
+            finish_reason="length",
+        )
+        complete(model="gpt-4o-mini", prompt="hi")
+        assert "Empty response" not in caplog.text
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_no_warning_when_zero_tokens_and_empty(self, mock_completion, caplog):
+        # No tokens generated AND empty text — provider didn't produce
+        # anything; this is a different failure mode (e.g. immediate refusal)
+        # that doesn't match the reasoning-trap heuristic.
+        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=0,
+            finish_reason="length",
+        )
+        complete(model="gpt-4o-mini", prompt="hi")
+        assert "Empty response" not in caplog.text
 
 
 class TestEnrichLlmUsageWithCost:

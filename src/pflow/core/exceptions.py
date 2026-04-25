@@ -145,6 +145,23 @@ class CriticalDiscoveryError(PflowError):
         super().__init__(message)
 
 
+class LLMCallError(PflowError):
+    """Raised by the LLM adapter for deterministic provider errors.
+
+    Used when the provider returned a 4xx that retrying cannot fix —
+    bad params, unknown model, schema rejected, content policy, etc.
+    Currently raised for ``litellm.exceptions.BadRequestError`` and its
+    subclasses; non-deterministic errors (Timeout, RateLimitError, network)
+    propagate unwrapped so the caller's retry loop can decide.
+
+    Consumers in the Node retry loop (LLMNode) catch this at the
+    ``_call_llm`` boundary and convert to an error-marked output dict, so
+    the retry loop doesn't burn three attempts on a permanent failure.
+    Consumers outside a retry loop (registry/discovery callers) let it
+    propagate.
+    """
+
+
 class SchemaValidationError(PflowError):
     """Validation error for IR schema with helpful messages and field paths.
 

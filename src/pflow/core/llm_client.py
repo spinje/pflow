@@ -8,8 +8,8 @@ discovery callsites) operates on `AdapterResponse`, not on
 - Translating reasoning kwargs from the provider-neutral shape produced by
   ``llm_reasoning_map`` into LiteLLM-native shapes (e.g. Anthropic's
   ``thinking={"type":"enabled","budget_tokens":N}``)
-- Catching deterministic ``BadRequestError`` and returning an error-marked
-  response (preserves the PATTERN EXCEPTION pattern that was previously in
+- Raising ``LLMCallError`` on deterministic ``BadRequestError`` (preserves
+  the PATTERN EXCEPTION pattern that was previously in
   ``nodes/llm/llm.py:298-311`` for Pydantic ``ValidationError``)
 - Normalizing the response shape to a stable ``AdapterResponse``
 - Reading ``response_cost`` from LiteLLM's ``_hidden_params`` so consumers
@@ -33,6 +33,7 @@ from typing import Any, Callable, Literal
 import litellm
 import litellm.exceptions
 
+from pflow.core.exceptions import LLMCallError
 from pflow.core.llm_reasoning_map import DEFAULT_MAX_TOKENS_BASE, EFFORT_RATIOS
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,14 @@ class Attachment:
 
 @dataclass
 class AdapterResponse:
-    """Normalized LLM response. Stable contract for downstream consumers.
+    """Normalized successful LLM response. Stable contract for consumers.
+
+    The adapter ALWAYS returns this on success, NEVER on error. Deterministic
+    failures (bad params, unknown model, schema rejection) raise
+    ``LLMCallError`` from ``pflow.core.exceptions``; non-deterministic
+    failures (timeout, auth, network) propagate the underlying LiteLLM
+    exception. Either way, an ``AdapterResponse`` is by construction a
+    successful response.
 
     The ``usage`` dict keys are STABLE — do not rename without coordinated
     updates across LLMNode.post(), trace event capture, MCP, and analyze-cache
@@ -96,10 +104,6 @@ class AdapterResponse:
     usage: dict[str, Any] = field(default_factory=dict)
     model: str = ""
     has_schema: bool = False
-    # Populated when the adapter caught a deterministic error (returned
-    # instead of raised); see complete()'s docstring for the contract.
-    error: str | None = None
-    status: Literal["ok", "error"] = "ok"
 
 
 # Public API -----------------------------------------------------------------
@@ -121,15 +125,17 @@ def complete(
 ) -> AdapterResponse:
     """Execute an LLM call via LiteLLM and return a normalized response.
 
-    Returns an ``AdapterResponse``. On deterministic errors (bad params, bad
-    model, deterministic 4xx other than auth/rate-limit), returns an
-    error-marked response with ``status="error"``. The caller should NOT
-    retry these — they are the LiteLLM-era equivalent of the Pydantic
-    ``ValidationError`` PATTERN EXCEPTION at the previous
-    ``nodes/llm/llm.py:298-311``.
+    On success, returns an ``AdapterResponse``. On deterministic errors
+    (bad params, bad model, schema rejection, content policy — anything
+    LiteLLM raises as ``BadRequestError`` or a subclass), raises
+    ``LLMCallError``. The caller should NOT retry — these are the
+    LiteLLM-era equivalent of the Pydantic ``ValidationError`` PATTERN
+    EXCEPTION at the previous ``nodes/llm/llm.py:298-311``. LLMNode catches
+    ``LLMCallError`` at its ``_call_llm`` boundary so the Node retry loop
+    doesn't burn three attempts on a permanent failure.
 
     Other exceptions (timeout, auth, network, rate limit, internal server
-    error) propagate. The caller's retry loop decides whether to retry.
+    error) propagate unwrapped. The caller's retry loop decides.
 
     Args:
         model: LiteLLM model identifier, e.g. ``"anthropic/claude-sonnet-4-5"``,
@@ -139,7 +145,8 @@ def complete(
         system: Optional system-message text.
         temperature: 0.0 to 2.0. NOTE: Anthropic models with thinking enabled
             require temperature=1.0 (LiteLLM/Anthropic enforces; the adapter
-            does not pre-validate).
+            does not pre-validate). Violation surfaces as ``LLMCallError``
+            with Anthropic's actionable message and docs link preserved.
         max_tokens: Optional max output tokens.
         attachments: Optional list of ``Attachment`` (images). URL attachments
             pass through; ``image_path`` attachments are base64-encoded.
@@ -154,11 +161,15 @@ def complete(
         model_options: User-provided extra kwargs merged last (overrides
             adapter-built kwargs on key collision).
         timeout: Per-request timeout in seconds. None disables.
-        trace_hook: Optional callable; see ``TraceHook`` docstring.
+        trace_hook: Optional callable; see ``TraceHook`` docstring. Fires
+            ``after_call`` with ``error`` set before any ``LLMCallError`` is
+            raised, so traces capture the failure.
 
     Returns:
-        AdapterResponse with ``status="ok"`` on success or
-        ``status="error"`` when a deterministic error was caught.
+        AdapterResponse on success.
+
+    Raises:
+        LLMCallError: deterministic provider error (4xx that retrying won't fix).
     """
     messages = _build_messages(system=system, prompt=prompt, attachments=attachments)
 
@@ -193,23 +204,18 @@ def complete(
         raw_response = litellm.completion(**kwargs)
     except litellm.exceptions.BadRequestError as e:
         # PATTERN EXCEPTION: deterministic server-side rejection. Retrying
-        # the same bad request will produce the same error. Return an
-        # error-marked response instead of raising so the Node retry loop
-        # doesn't burn N attempts on a permanent failure. Mirrors the
-        # behavior at the previous nodes/llm/llm.py:298-311 (which caught
-        # Pydantic ValidationError under the llm-library path).
-        err = AdapterResponse(
-            text="",
-            model=model,
-            has_schema=schema is not None,
-            error=f"Invalid request for model '{model}': {e}",
-            status="error",
-        )
+        # the same bad request will produce the same error, so we raise a
+        # typed pflow exception that LLMNode catches at its _call_llm
+        # boundary (preventing the Node retry loop from burning three
+        # attempts). Mirrors the behavior at the previous
+        # nodes/llm/llm.py:298-311 (which caught Pydantic ValidationError
+        # under the llm-library path) but at a single, typed seam.
+        err_msg = f"Invalid request for model '{model}': {e}"
         _emit_trace(
             trace_hook,
-            {"event": "after_call", "model": model, "response": err, "error": err.error},
+            {"event": "after_call", "model": model, "error": err_msg},
         )
-        return err
+        raise LLMCallError(err_msg) from e
 
     # Success path: normalize and emit after_call trace
     response = _normalize(raw_response, model=model, has_schema=schema is not None)
@@ -356,6 +362,23 @@ def _normalize(
 
     input_tokens = _safe_int(getattr(usage_obj, "prompt_tokens", None))
     output_tokens = _safe_int(getattr(usage_obj, "completion_tokens", None))
+
+    # Detect the reasoning-model trap: tokens consumed but no visible text.
+    # Phase 0 surfaced this on gemini-3-flash-preview with max_tokens=16 —
+    # the entire budget went to internal thinking, leaving content=None.
+    # Without this warning the workflow surfaces an empty result with no clue.
+    if not text and output_tokens > 0:
+        finish_reason = getattr(raw.choices[0], "finish_reason", None)
+        if finish_reason in ("length", "max_tokens"):
+            logger.warning(
+                "Empty response from %s: %d tokens consumed, finish_reason=%s. "
+                "Likely cause: max_tokens too low for a reasoning model — the "
+                "budget was spent on internal thinking before any visible "
+                "output could be emitted. Try increasing max_tokens.",
+                model,
+                output_tokens,
+                finish_reason,
+            )
 
     # LiteLLM populates response_cost on _hidden_params. None when LiteLLM
     # doesn't have pricing for the model — consumers tolerate None already.
