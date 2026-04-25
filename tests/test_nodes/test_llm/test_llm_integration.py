@@ -12,28 +12,14 @@ from pflow.nodes.llm import LLMNode
 
 
 def has_openai_api_key():
-    """Check if OpenAI API key is available."""
-    try:
-        import llm
+    """Check if OpenAI API key is available.
 
-        # OpenAI is built into llm, no plugin needed
-        try:
-            llm.get_model("gpt-4o-mini")
-            # Check if we can get the model (key will be checked on actual use)
-            if os.getenv("OPENAI_API_KEY"):
-                return True
-            # Try to get the key from llm's config
-            return True  # If model loaded, key must be configured
-        except Exception as e:
-            error_msg = str(e)
-            if "NeedsKeyException" in error_msg or "API key" in error_msg:
-                # No key configured
-                return False
-            # Other errors - assume we can't test
-            return False
-    except ImportError:
-        # llm library not installed (shouldn't happen)
-        return False
+    Post-Task 158 Phase A.5 the LiteLLM adapter resolves keys exclusively
+    from environment variables (or `pflow settings env`). For this gating
+    check we just look at the env var directly — keeps the file
+    importable after A.11 removes the legacy llm library.
+    """
+    return bool(os.getenv("OPENAI_API_KEY"))
 
 
 @pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), reason="Set RUN_LLM_TESTS=1 to run real LLM tests")

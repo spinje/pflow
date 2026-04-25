@@ -6,7 +6,7 @@ from pflow.registry.discovery import ComponentSelection, ComponentSelectionSchem
 class TestDiscoverComponentsBasic:
     """find_components returns a ComponentSelection with node_ids, reasoning, and component_context."""
 
-    def test_returns_component_selection_with_selected_nodes(self, mock_llm_calls, monkeypatch):
+    def test_returns_component_selection_with_selected_nodes(self, mock_llm_client, monkeypatch):
         """LLM selects nodes and planning context is built for them."""
         monkeypatch.setattr(
             "pflow.registry.discovery.build_nodes_context",
@@ -21,7 +21,7 @@ class TestDiscoverComponentsBasic:
             lambda **kwargs: "## read-file\nReads files from disk.",
         )
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             ComponentSelectionSchema,
             {
@@ -42,7 +42,7 @@ class TestDiscoverComponentsBasic:
 class TestDiscoverComponentsClearsWorkflowNames:
     """find_components clears workflow_names from LLM output (not yet integrated)."""
 
-    def test_workflow_names_from_llm_are_cleared(self, mock_llm_calls, monkeypatch):
+    def test_workflow_names_from_llm_are_cleared(self, mock_llm_client, monkeypatch):
         """Even if the LLM suggests workflow_names, they are dropped."""
         monkeypatch.setattr(
             "pflow.registry.discovery.build_nodes_context",
@@ -65,7 +65,7 @@ class TestDiscoverComponentsClearsWorkflowNames:
             fake_build_component_context,
         )
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             ComponentSelectionSchema,
             {
@@ -86,7 +86,7 @@ class TestDiscoverComponentsClearsWorkflowNames:
 class TestDiscoverComponentsComponentContextError:
     """When build_component_context returns an error dict, find_components handles it gracefully."""
 
-    def test_returns_empty_component_context_on_error(self, mock_llm_calls, monkeypatch):
+    def test_returns_empty_component_context_on_error(self, mock_llm_client, monkeypatch):
         """An error dict from build_component_context results in empty component_context string."""
         monkeypatch.setattr(
             "pflow.registry.discovery.build_nodes_context",
@@ -101,7 +101,7 @@ class TestDiscoverComponentsComponentContextError:
             lambda **kwargs: {"error": "No matching nodes found", "missing_nodes": ["fake-node"]},
         )
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             ComponentSelectionSchema,
             {
@@ -120,7 +120,7 @@ class TestDiscoverComponentsComponentContextError:
 class TestDiscoverComponentsModelSelection:
     """find_components uses the correct LLM model."""
 
-    def test_uses_get_model_for_feature_as_default(self, mock_llm_calls, monkeypatch):
+    def test_uses_get_model_for_feature_as_default(self, mock_llm_client, monkeypatch):
         """When no model_name is passed, the discovery feature model is used."""
         monkeypatch.setattr(
             "pflow.registry.discovery.build_nodes_context",
@@ -146,7 +146,7 @@ class TestDiscoverComponentsModelSelection:
             fake_get_model_for_feature,
         )
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             ComponentSelectionSchema,
             {
@@ -159,10 +159,10 @@ class TestDiscoverComponentsModelSelection:
         find_components("run a script")
 
         assert captured_model["feature"] == "discovery"
-        assert len(mock_llm_calls.call_history) == 1
-        assert mock_llm_calls.call_history[0]["model"] == "gemini-2.5-flash"
+        assert len(mock_llm_client.call_history) == 1
+        assert mock_llm_client.call_history[0]["model"] == "gemini-2.5-flash"
 
-    def test_uses_explicit_model_name_when_provided(self, mock_llm_calls, monkeypatch):
+    def test_uses_explicit_model_name_when_provided(self, mock_llm_client, monkeypatch):
         """When model_name is explicitly passed, it overrides the default."""
         monkeypatch.setattr(
             "pflow.registry.discovery.build_nodes_context",
@@ -177,7 +177,7 @@ class TestDiscoverComponentsModelSelection:
             lambda **kwargs: "context",
         )
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             ComponentSelectionSchema,
             {
@@ -189,5 +189,5 @@ class TestDiscoverComponentsModelSelection:
 
         find_components("run a script", model_name="openai/gpt-4o")
 
-        assert len(mock_llm_calls.call_history) == 1
-        assert mock_llm_calls.call_history[0]["model"] == "openai/gpt-4o"
+        assert len(mock_llm_client.call_history) == 1
+        assert mock_llm_client.call_history[0]["model"] == "openai/gpt-4o"

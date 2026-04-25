@@ -5,46 +5,20 @@ import shutil
 
 import pytest
 
-from tests.shared.llm_mock import create_mock_get_model, create_mock_llm_client
-
-
-@pytest.fixture(autouse=True, scope="function")
-def mock_llm_calls(monkeypatch, request):
-    """Auto-applied fixture that mocks all LLM calls to prevent API usage.
-
-    This fixture is automatically applied to ALL tests except those in llm/ directories
-    which are meant to test real LLM behavior when RUN_LLM_TESTS=1 is set.
-    """
-    # Skip mocking for tests in llm/ directories
-    test_path = str(request.fspath)
-    if "/llm/" in test_path or "\\llm\\" in test_path:
-        # These tests should use real LLM when RUN_LLM_TESTS=1
-        yield
-        return
-
-    # Create and apply the mock
-    mock_get_model = create_mock_get_model()
-    monkeypatch.setattr("llm.get_model", mock_get_model)
-
-    # Make the mock available to tests that want to configure it
-    request.node.mock_llm = mock_get_model
-
-    yield mock_get_model
-
-    # Clean up after test
-    mock_get_model.reset()
+from tests.shared.llm_mock import create_mock_llm_client
 
 
 @pytest.fixture(autouse=True, scope="function")
 def mock_llm_client(monkeypatch, request):
     """Auto-applied fixture that mocks the pflow LiteLLM adapter.
 
-    Coexists with ``mock_llm_calls`` during Task 158 Phase A.4-A.7 — both
-    fixtures patch their respective seams so tests can migrate from the
-    legacy llm-library mock to the new adapter mock one caller at a time.
-    Cleanup (delete the legacy fixture and ``MockLLMModel``) happens in A.8.
+    Patches ``pflow.core.llm_client.complete`` plus each consumer module's
+    ``complete`` binding. After Task 158 Phase A.4-A.7 this is the sole LLM
+    mock — the legacy ``mock_llm_calls`` (which patched ``llm.get_model``)
+    was retired in A.8 once all production callers migrated to the adapter.
 
-    Skipped for tests in ``/llm/`` directories, same as ``mock_llm_calls``.
+    Skipped for tests under ``/llm/`` directories — those exercise real LLM
+    behavior when ``RUN_LLM_TESTS=1`` is set.
     """
     test_path = str(request.fspath)
     if "/llm/" in test_path or "\\llm\\" in test_path:
@@ -53,10 +27,6 @@ def mock_llm_client(monkeypatch, request):
 
     mock_client = create_mock_llm_client()
 
-    # Patch the adapter at its definition site, plus every consumer module
-    # that may have imported `complete` into its own namespace. ``raising=False``
-    # tolerates modules that haven't migrated to import `complete` yet — those
-    # patches become live as A.5 and A.7 land.
     monkeypatch.setattr("pflow.core.llm_client.complete", mock_client.complete)
     for module_attr in (
         "pflow.nodes.llm.llm.complete",
@@ -71,26 +41,6 @@ def mock_llm_client(monkeypatch, request):
     yield mock_client
 
     mock_client.reset()
-
-
-@pytest.fixture
-def mock_llm_responses(request):
-    """Fixture to configure LLM mock responses for specific tests.
-
-    Usage:
-        def test_something(mock_llm_responses):
-            mock_llm_responses.set_response(
-                "anthropic/claude-sonnet-4-5",
-                WorkflowDecision,
-                {"found": True, "workflow_name": "test"}
-            )
-    """
-    # Get the auto-applied mock from the node
-    if hasattr(request.node, "mock_llm"):
-        return request.node.mock_llm
-
-    # Fallback if not using auto-mock (shouldn't happen)
-    return create_mock_get_model()
 
 
 def _import_test_modules() -> tuple:

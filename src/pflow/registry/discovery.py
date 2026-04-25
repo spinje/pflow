@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-import llm
 from pydantic import BaseModel
 
+from pflow.core.llm_client import complete
 from pflow.core.llm_utils import parse_structured_response
 from pflow.core.prompt_utils import format_prompt, load_prompt
 from pflow.core.workflow.context import build_workflows_context
@@ -84,9 +84,13 @@ def find_components(
         },
     )
 
-    # LLM call
-    model = llm.get_model(resolved_model)
-    response = model.prompt(formatted_prompt, schema=ComponentSelectionSchema)
+    # LLM call via the pflow-owned LiteLLM adapter.
+    # Pydantic class → JSON Schema dict (the adapter accepts only dicts).
+    response = complete(
+        model=resolved_model,
+        prompt=formatted_prompt,
+        schema=ComponentSelectionSchema.model_json_schema(),
+    )
     result = parse_structured_response(response, ComponentSelectionSchema)
 
     # Clear workflow_names (current behavior — nested workflow selection not yet integrated)

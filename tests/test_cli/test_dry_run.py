@@ -297,9 +297,15 @@ def test_dry_run_no_network_calls(tmp_path) -> None:
         workflow_path,
     )
 
-    with patch("requests.request") as mock_request, patch("llm.get_model") as mock_get_model:
+    # The dry-run path must not invoke real adapters — patch both the
+    # `complete` binding LLMNode imports (Task 158 Phase A.5) AND the
+    # legacy http call to verify zero invocations.
+    with (
+        patch("requests.request") as mock_request,
+        patch("pflow.nodes.llm.llm.complete") as mock_complete,
+    ):
         result = invoke_cli(["--dry-run", str(workflow_path)])
 
     assert result.exit_code == 0
     assert mock_request.call_count == 0
-    assert mock_get_model.call_count == 0
+    assert mock_complete.call_count == 0

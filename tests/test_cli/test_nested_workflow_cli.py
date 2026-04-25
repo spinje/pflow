@@ -228,7 +228,7 @@ class TestNestedWorkflowCLI:
             f"Expected missing input error in output but got:\n{combined}"
         )
 
-    def test_broken_sub_workflow_caught_before_execution(self, tmp_path: Path, mock_llm_calls: Any) -> None:
+    def test_broken_sub_workflow_caught_before_execution(self, tmp_path: Path, mock_llm_client: Any) -> None:
         """Sub-workflow parse error caught at validation time — zero LLM calls.
 
         This is the core reproduction case: parent has an expensive upstream LLM
@@ -287,8 +287,8 @@ Call the broken sub-workflow.
             f"Expected sub-workflow validation error but got:\n{combined}"
         )
         # THE KEY ASSERTION: no LLM calls were made — error caught at validation time
-        assert len(mock_llm_calls.call_history) == 0, (
-            f"Expected 0 LLM calls but got {len(mock_llm_calls.call_history)} — "
+        assert len(mock_llm_client.call_history) == 0, (
+            f"Expected 0 LLM calls but got {len(mock_llm_client.call_history)} — "
             "sub-workflow error was not caught before execution"
         )
 

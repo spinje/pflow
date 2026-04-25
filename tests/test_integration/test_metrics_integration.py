@@ -16,43 +16,14 @@ from click.testing import CliRunner
 from pflow.cli.main import main as cli
 from pflow.core.metrics import MetricsCollector
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
-from tests.shared.llm_mock import create_mock_get_model
 from tests.shared.markdown_utils import ir_to_markdown
 
-
-@pytest.fixture
-def mock_llm():
-    """Create a mock LLM that tracks usage data."""
-    mock_get_model = create_mock_get_model()
-
-    # Configure LLM response with usage data
-    def configure_with_usage(model: str, schema: Any, response: dict, input_tokens: int = 100, output_tokens: int = 50):
-        """Configure response and add usage tracking."""
-        mock_get_model.set_response(model, schema, response)
-
-        # Patch the MockLLMModel to include proper usage
-        original_prompt = mock_get_model(model).prompt
-
-        def prompt_with_usage(prompt_text: str, schema_arg: Any = None, **kwargs):
-            result = original_prompt(prompt_text, schema_arg, **kwargs)
-
-            # Add usage data that LLMNode expects - as an object with .input and .output attributes
-            # Create a simple object that mimics the llm library's usage format
-            class Usage:
-                def __init__(self, input_val, output_val):
-                    self.input = input_val
-                    self.output = output_val
-                    self.details = {}  # LLMNode may check for details
-
-            # Make usage a method that returns the usage object
-            usage_obj = Usage(input_tokens, output_tokens)
-            result.usage = lambda: usage_obj
-            return result
-
-        mock_get_model(model).prompt = prompt_with_usage
-
-    mock_get_model.configure_with_usage = configure_with_usage
-    return mock_get_model
+# OBSOLETE: the bespoke `mock_llm` fixture (which wrapped `MockLLMModel` to
+# add a `configure_with_usage` helper) is no longer needed. All three tests
+# that depended on it (`test_llm_cost_calculation`, `test_llm_accumulation_across_nodes`,
+# `test_trace_captures_llm_calls`) now monkeypatch `pflow.nodes.llm.llm.complete`
+# directly with hand-built `AdapterResponse` returns. Pending fixture deletion
+# tracked in the Phase A end-of-task checklist.
 
 
 @pytest.fixture
@@ -375,16 +346,30 @@ class TestTraceGeneration:
         finally:
             Path(workflow_file).unlink()
 
-    def test_trace_captures_llm_calls(self, temp_home, temp_registry, llm_workflow, mock_llm):
+    def test_trace_captures_llm_calls(self, temp_home, temp_registry, llm_workflow, monkeypatch):
         """Trace files should capture LLM call details by default."""
+        from pflow.core.llm_client import AdapterResponse
+
         runner = CliRunner()
 
-        mock_llm.configure_with_usage(
-            "gpt-4o-mini", None, {"response": "Test haiku"}, input_tokens=20, output_tokens=10
-        )
-        mock_llm.configure_with_usage(
-            "anthropic/claude-3-haiku-20240307", None, {"response": "Haiku de test"}, input_tokens=15, output_tokens=8
-        )
+        per_model = {
+            "gpt-4o-mini": ("Test haiku", 20, 10),
+            "anthropic/claude-3-haiku-20240307": ("Haiku de test", 15, 8),
+        }
+
+        def mock_complete(*, model: str, prompt: str, **kwargs):
+            text, in_tok, out_tok = per_model.get(model, ("default", 10, 5))
+            usage = {
+                "model": model,
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "total_tokens": in_tok + out_tok,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            }
+            return AdapterResponse(text=text, usage=usage, model=model, has_schema=False)
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", mock_complete)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(llm_workflow))
@@ -394,7 +379,7 @@ class TestTraceGeneration:
         debug_dir = Path(temp_home) / ".pflow" / "debug"
 
         try:
-            with patch.dict("os.environ", {"HOME": str(temp_home)}), patch("llm.get_model", mock_llm):
+            with patch.dict("os.environ", {"HOME": str(temp_home)}):
                 result = runner.invoke(cli, [workflow_file], env={"HOME": str(temp_home)})
 
                 assert result.exit_code == 0
@@ -829,7 +814,7 @@ class TestMetricsAccuracy:
         finally:
             Path(workflow_file).unlink()
 
-    def test_cost_calculation_accuracy(self, temp_home, temp_registry, mock_llm):
+    def test_cost_calculation_accuracy(self, temp_home, temp_registry):
         """Test accurate cost calculation for different models."""
         from pflow.core.metrics import MetricsCollector
 

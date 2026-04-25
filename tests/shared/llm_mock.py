@@ -1,18 +1,13 @@
 """LLM-level mock for testing without API calls.
 
-This module currently provides TWO parallel mocks — they coexist during
-Task 158 Phase A.4-A.7 while callers migrate from the llm-library path
-to the new pflow-owned LiteLLM adapter:
+After Task 158 Phase A.8 the only mock in active use is ``MockLLMClient``,
+which patches ``pflow.core.llm_client.complete`` and returns ``AdapterResponse``
+instances directly (not ``Mock`` objects).
 
-* ``MockLLMModel`` / ``MockGetModel`` — legacy. Patches ``llm.get_model``.
-  Used by tests that have not yet been migrated to the new adapter.
-* ``MockLLMClient`` — new. Patches ``pflow.core.llm_client.complete``.
-  Returns ``AdapterResponse`` instances directly (not ``Mock`` objects).
-
-Both share the same ``_DEFAULT_RESPONSES`` table and the same exact-match
-→ wildcard → schema-default → fallback resolution chain so workflow-discovery
-tests behave identically through the migration. ``MockLLMModel`` is removed
-in Phase A.8 once all callers use the adapter.
+``MockLLMModel`` / ``MockGetModel`` / ``create_mock_get_model`` are OBSOLETE —
+they patched the now-dead ``llm.get_model`` seam. They remain in this file
+unreferenced, pending user-approved deletion (see Phase A end-of-task
+checklist).
 """
 
 import contextlib

@@ -185,4 +185,4 @@ ignore = [
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser
+DEP002 = ["llm", "llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser. `llm` itself temporarily here — production code finished migrating in Task 158 Phase A.7; the legacy `mock_llm_calls` fixture in tests/conftest.py still uses it. Removed entirely in A.11 along with the llm trio.

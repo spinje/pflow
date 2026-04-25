@@ -59,10 +59,14 @@ class WorkflowTraceCollector:
     - No value truncation (only internal key filtering and binary replacement)
     """
 
-    # Class-level attributes for thread-safe LLM interception
+    # Class-level state for the per-call trace_hook plumbing. Mutated by
+    # `setup_llm_interception` (registration) and read by LLMNode's
+    # `_active_trace_hook()` to find the right collector for the current
+    # adapter call. The lock guards the registry against parallel-batch
+    # contention. The previous reference-counted monkey-patch state
+    # (`_llm_interception_count`, `_original_get_model`) was removed in
+    # Task 158 Phase A.6 along with the patch itself.
     _llm_lock: ClassVar[threading.Lock] = threading.Lock()
-    _llm_interception_count: ClassVar[int] = 0
-    _original_get_model: ClassVar[Optional[Callable[..., Any]]] = None
     _active_collectors: ClassVar[dict[int, "WorkflowTraceCollector"]] = {}  # thread_id -> collector
     _thread_local: ClassVar[threading.local] = threading.local()  # per-thread current_node
 
@@ -544,84 +548,56 @@ class WorkflowTraceCollector:
         return hook
 
     def setup_llm_interception(self, node_id: str) -> None:
-        """Thread-safe setup of LLM interception to capture prompts.
+        """Register this collector as the active one for the current thread.
 
-        Args:
-            node_id: The node that will make LLM calls
+        Task 158 Phase A.6 replaced the previous global ``llm.get_model`` /
+        ``model.prompt`` monkey-patch with a per-call ``trace_hook`` passed
+        directly to the LiteLLM adapter (see
+        ``pflow.core.llm_client.complete``). The hook handles prompt capture
+        through ``get_trace_hook(node_id)``.
+
+        This method is now a thin registration step that the engine calls
+        before each LLM-capable node executes. Two pieces of state survive
+        from the patch era — they're the bridge that lets LLMNode's
+        ``_active_trace_hook()`` find this collector at adapter-call time:
+
+        * ``_thread_local.current_node`` — which node is currently running on
+          this thread, used by LLMNode to ask this collector for the right
+          per-node hook.
+        * ``_active_collectors[thread_id]`` — the collector registry LLMNode
+          consults via ``threading.get_ident()``.
+
+        The class-level lock is retained to make the registry mutation
+        thread-safe under parallel batch execution. The reference-counted
+        install/teardown logic (``_llm_interception_count``,
+        ``_original_get_model``) is gone — there is no global state to install
+        or unwind anymore.
+
+        Sub-workflow collectors with ``enable_llm_interception=False`` skip
+        registration so the parent collector's hook continues to capture.
         """
         if not self.enable_llm_interception:
             return
 
-        import llm
-
-        # Store current node for prompt capture (thread-local to avoid race in parallel batch)
         WorkflowTraceCollector._thread_local.current_node = node_id
 
         with WorkflowTraceCollector._llm_lock:
-            # Register this collector for the current thread
             thread_id = threading.current_thread().ident
             if thread_id:
                 WorkflowTraceCollector._active_collectors[thread_id] = self
-
-            # Only install interceptor if this is the first one
-            if WorkflowTraceCollector._llm_interception_count == 0:
-                # Save the original function
-                WorkflowTraceCollector._original_get_model = llm.get_model
-
-                def intercept_get_model(*args: Any, **kwargs: Any) -> Any:
-                    # Get the original function
-                    if WorkflowTraceCollector._original_get_model is None:
-                        raise RuntimeError("Original get_model not set")
-                    model = WorkflowTraceCollector._original_get_model(*args, **kwargs)
-                    original_prompt = model.prompt
-
-                    def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
-                        # Find the collector for this thread
-                        thread_id = threading.current_thread().ident
-                        if thread_id and thread_id in WorkflowTraceCollector._active_collectors:
-                            collector = WorkflowTraceCollector._active_collectors[thread_id]
-                            current_node = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
-                            if current_node:
-                                collector.llm_prompts[current_node] = prompt_text
-                                logger.debug(f"Captured prompt for node {current_node} in thread {thread_id}")
-
-                        # Call original prompt method
-                        return original_prompt(prompt_text, **prompt_kwargs)
-
-                    model.prompt = intercept_prompt
-                    return model
-
-                llm.get_model = intercept_get_model
-                logger.debug("LLM interception installed globally")
-
-            # Increment the reference count
-            WorkflowTraceCollector._llm_interception_count += 1
             self._llm_interceptor_installed = True
-            logger.debug(f"LLM interception reference count: {WorkflowTraceCollector._llm_interception_count}")
 
     def cleanup_llm_interception(self) -> None:
-        """Thread-safe cleanup of LLM interception."""
+        """Unregister this collector from the active-collector map.
+
+        Called from ``WorkflowRunner._cleanup`` at end of execution. Idempotent
+        and exception-safe — failed cleanup must not break the run.
+        """
         if not self._llm_interceptor_installed:
             return
 
         with WorkflowTraceCollector._llm_lock:
-            # Unregister this collector from the current thread
             thread_id = threading.current_thread().ident
             if thread_id and thread_id in WorkflowTraceCollector._active_collectors:
                 del WorkflowTraceCollector._active_collectors[thread_id]
-                logger.debug(f"Unregistered collector for thread {thread_id}")
-
-            # Decrement the reference count
-            WorkflowTraceCollector._llm_interception_count -= 1
-            logger.debug(f"LLM interception reference count: {WorkflowTraceCollector._llm_interception_count}")
-
-            # If this was the last one, restore the original function
-            if WorkflowTraceCollector._llm_interception_count == 0:
-                import llm
-
-                if WorkflowTraceCollector._original_get_model:
-                    llm.get_model = WorkflowTraceCollector._original_get_model
-                    WorkflowTraceCollector._original_get_model = None
-                    logger.debug("LLM interception removed globally")
-
             self._llm_interceptor_installed = False

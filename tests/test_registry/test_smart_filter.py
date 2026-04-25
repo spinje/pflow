@@ -43,13 +43,13 @@ class TestSmartFilterThreshold:
         assert result == fields
         assert len(result) == 50
 
-    def test_fields_above_threshold_filters(self, mock_llm_calls):
+    def test_fields_above_threshold_filters(self, mock_llm_client):
         """Fields > threshold should trigger LLM filtering."""
         # 51 fields - one above threshold
         fields = [(f"field{i}", "string") for i in range(51)]
 
         # Mock LLM to return subset
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {
@@ -64,7 +64,7 @@ class TestSmartFilterThreshold:
         assert len(result) == 3
         assert result == [("field0", "string"), ("field1", "string"), ("field2", "string")]
 
-    def test_large_field_set_filters_significantly(self, mock_llm_calls):
+    def test_large_field_set_filters_significantly(self, mock_llm_client):
         """Large field sets (200+) should be reduced to 8-15 range."""
         # Simulate GitHub issue fields (200 fields)
         base_fields = [
@@ -83,7 +83,7 @@ class TestSmartFilterThreshold:
         assert len(fields) == 200
 
         # Mock LLM to return relevant business fields only
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {
@@ -112,7 +112,7 @@ class TestSmartFilterThreshold:
 class TestLLMIntegration:
     """Test LLM call and response handling."""
 
-    def test_llm_response_preserves_type_info(self, mock_llm_calls):
+    def test_llm_response_preserves_type_info(self, mock_llm_client):
         """Filtered paths should preserve type information from original."""
         fields = [
             ("title", "string"),
@@ -121,7 +121,7 @@ class TestLLMIntegration:
             ("metadata", "object"),
         ]
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["title", "count"], "reasoning": "Kept primary fields"},
@@ -132,12 +132,12 @@ class TestLLMIntegration:
         # Type info preserved
         assert result == [("title", "string"), ("count", "integer")]
 
-    def test_llm_returns_paths_not_in_original_ignored(self, mock_llm_calls):
+    def test_llm_returns_paths_not_in_original_ignored(self, mock_llm_client):
         """LLM returning paths not in original list should be ignored."""
         fields = [("field1", "string"), ("field2", "integer")]
 
         # LLM hallucinates non-existent fields
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {
@@ -151,7 +151,7 @@ class TestLLMIntegration:
         # Only field1 exists in original, others ignored
         assert result == [("field1", "string")]
 
-    def test_llm_returns_subset_matching_works(self, mock_llm_calls):
+    def test_llm_returns_subset_matching_works(self, mock_llm_client):
         """LLM returning valid subset should work correctly."""
         fields = [
             ("result.messages[0].text", "string"),
@@ -162,7 +162,7 @@ class TestLLMIntegration:
         ]
 
         # LLM selects subset
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {
@@ -193,11 +193,14 @@ class TestFallbackBehavior:
         """LLM API failure should return original fields unfiltered."""
         fields = [(f"field{i}", "string") for i in range(100)]
 
-        # Simulate LLM failure by making get_model raise exception
-        def mock_get_model_error(model_name):
+        # Simulate LLM failure by making the adapter raise exception.
+        # Patches `pflow.registry.smart_filter.complete` (the binding the
+        # production code calls) — not `llm.get_model`, which is the dead
+        # legacy seam since Task 158 Phase A.7.
+        def mock_complete_error(**kwargs):
             raise RuntimeError("API rate limit exceeded")
 
-        monkeypatch.setattr("llm.get_model", mock_get_model_error)
+        monkeypatch.setattr("pflow.registry.smart_filter.complete", mock_complete_error)
 
         result = smart_filter_fields(fields, threshold=50)
 
@@ -205,12 +208,12 @@ class TestFallbackBehavior:
         assert result == fields
         assert len(result) == 100
 
-    def test_empty_llm_response_returns_original(self, mock_llm_calls):
+    def test_empty_llm_response_returns_original(self, mock_llm_client):
         """LLM returning empty field list should fallback to original."""
         fields = [(f"field{i}", "string") for i in range(100)]
 
         # LLM returns nothing
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": [], "reasoning": "Filtered everything"},
@@ -241,11 +244,14 @@ class TestFallbackBehavior:
         """Network errors should fallback gracefully."""
         fields = [(f"field{i}", "string") for i in range(60)]
 
-        # Simulate network error by making get_model raise ConnectionError
-        def mock_get_model_network_error(model_name):
+        # Simulate network error by making the adapter raise ConnectionError.
+        # Patches `pflow.registry.smart_filter.complete` (the binding the
+        # production code calls) — not `llm.get_model`, which is the dead
+        # legacy seam since Task 158 Phase A.7.
+        def mock_complete_network_error(**kwargs):
             raise ConnectionError("Network unreachable")
 
-        monkeypatch.setattr("llm.get_model", mock_get_model_network_error)
+        monkeypatch.setattr("pflow.registry.smart_filter.complete", mock_complete_network_error)
 
         result = smart_filter_fields(fields, threshold=50)
 
@@ -267,12 +273,12 @@ class TestEdgeCases:
         result = smart_filter_fields(fields, threshold=50)
         assert result == fields
 
-    def test_custom_threshold(self, mock_llm_calls):
+    def test_custom_threshold(self, mock_llm_client):
         """Custom threshold should be respected."""
         fields = [(f"field{i}", "string") for i in range(20)]
 
         # Lower threshold to 10
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["field0", "field1"], "reasoning": "Reduced to 2"},
@@ -284,7 +290,7 @@ class TestEdgeCases:
         assert len(result) == 2
         assert result == [("field0", "string"), ("field1", "string")]
 
-    def test_preserves_order(self, mock_llm_calls):
+    def test_preserves_order(self, mock_llm_client):
         """Filtered results should preserve original order."""
         fields = [
             ("zebra", "string"),
@@ -294,7 +300,7 @@ class TestEdgeCases:
         ]
 
         # LLM returns out of order
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["banana", "zebra", "apple"], "reasoning": "Selected 3"},
@@ -305,7 +311,7 @@ class TestEdgeCases:
         # Should match original order, not LLM order
         assert result == [("zebra", "string"), ("apple", "string"), ("banana", "string")]
 
-    def test_mixed_types_preserved(self, mock_llm_calls):
+    def test_mixed_types_preserved(self, mock_llm_client):
         """Different type annotations should be preserved correctly."""
         fields = [
             ("id", "integer"),
@@ -316,7 +322,7 @@ class TestEdgeCases:
             ("score", "number"),
         ]
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["id", "title", "active"], "reasoning": "Core fields"},
@@ -326,7 +332,7 @@ class TestEdgeCases:
 
         assert result == [("id", "integer"), ("title", "string"), ("active", "boolean")]
 
-    def test_fields_with_special_characters(self, mock_llm_calls):
+    def test_fields_with_special_characters(self, mock_llm_client):
         """Field paths with special characters should work."""
         fields = [
             ("result[0].author.login", "string"),
@@ -334,7 +340,7 @@ class TestEdgeCases:
             ("result[0].pull_request.html_url", "string"),
         ]
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {
@@ -351,7 +357,7 @@ class TestEdgeCases:
 class TestSmartFilterCaching:
     """Test caching behavior of smart_filter_fields_cached."""
 
-    def test_cache_hit_on_identical_structure(self, mock_llm_calls):
+    def test_cache_hit_on_identical_structure(self, mock_llm_client):
         """Second call with identical field structure should hit cache."""
         from pflow.registry.smart_filter import clear_cache, smart_filter_fields_cached
 
@@ -359,7 +365,7 @@ class TestSmartFilterCaching:
         clear_cache()
 
         # Setup mock LLM
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["field0", "field1"], "reasoning": "Test"},
@@ -383,13 +389,13 @@ class TestSmartFilterCaching:
         assert stats["hits"] >= 1  # At least one hit
         assert stats["misses"] >= 1  # At least one miss
 
-    def test_cache_miss_on_different_structure(self, mock_llm_calls):
+    def test_cache_miss_on_different_structure(self, mock_llm_client):
         """Different field structure should cause cache miss."""
         from pflow.registry.smart_filter import clear_cache, smart_filter_fields_cached
 
         clear_cache()
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["field1"], "reasoning": "Test"},
@@ -409,7 +415,7 @@ class TestSmartFilterCaching:
         stats = get_cache_stats()
         assert stats["misses"] >= 2  # At least 2 misses for different structures
 
-    def test_cache_order_independence(self, mock_llm_calls):
+    def test_cache_order_independence(self, mock_llm_client):
         """Field order doesn't matter for caching - same fingerprint generated."""
         from pflow.registry.smart_filter import _calculate_fingerprint, clear_cache, smart_filter_fields_cached
 
@@ -424,7 +430,7 @@ class TestSmartFilterCaching:
         fp2 = _calculate_fingerprint(fields2)
         assert fp1 == fp2  # Order doesn't matter for fingerprint
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["a"], "reasoning": "Test"},
@@ -443,7 +449,7 @@ class TestSmartFilterCaching:
         assert stats["hits"] == 1  # Exactly one hit (second call)
         assert stats["misses"] == 1  # Exactly one miss (first call)
 
-    def test_cache_stats_accuracy(self, mock_llm_calls):
+    def test_cache_stats_accuracy(self, mock_llm_client):
         """Cache statistics should update correctly."""
         from pflow.registry.smart_filter import (
             clear_cache,
@@ -457,7 +463,7 @@ class TestSmartFilterCaching:
         assert stats["misses"] == 0
         assert stats["hit_rate"] == 0.0
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["field1"], "reasoning": "Test"},
@@ -486,7 +492,7 @@ class TestSmartFilterCaching:
         assert stats["misses"] == 1
         assert stats["hit_rate"] == 66.7
 
-    def test_cache_clear_resets_state(self, mock_llm_calls):
+    def test_cache_clear_resets_state(self, mock_llm_client):
         """Cache clear should reset cache state."""
         from pflow.registry.smart_filter import (
             clear_cache,
@@ -496,7 +502,7 @@ class TestSmartFilterCaching:
 
         clear_cache()
 
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {"included_fields": ["field1"], "reasoning": "Test"},
