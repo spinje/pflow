@@ -42,7 +42,7 @@ from .instrumentation import (
     initialize_execution_state,
     invalidate_cache,
     record_trace,
-    setup_llm_interception,
+    register_for_llm_call,
     write_memo_cache,
 )
 from .namespaced_store import NamespacedSharedStore
@@ -290,7 +290,7 @@ class WorkflowEngine:
         shared_keys_before = set(shared.keys()) if (self.trace or self.metrics) else set()
 
         # 1. LLM interception
-        setup_llm_interception(config.node_id, config.node_type_name, node.params, self.trace)
+        register_for_llm_call(config.node_id, config.node_type_name, node.params, self.trace)
 
         # 2. Execution state
         initialize_execution_state(shared)

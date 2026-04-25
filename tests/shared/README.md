@@ -10,16 +10,16 @@ Provides a clean LLM-level mock that prevents actual API calls during tests.
 
 #### Key Components:
 
-- `MockLLMModel`: Simulates the `llm` library's Model interface
-- `MockGetModel`: Mock for `llm.get_model()` function
-- `create_mock_get_model()`: Factory function to create mock instances
+- `MockLLMClient`: Mock for `pflow.core.llm_client.complete`. Returns `AdapterResponse` instances directly.
+- `_DEFAULT_RESPONSES`: Schema-name-keyed default responses for known schemas (WorkflowDecision, ComponentSelection, etc.) so workflow-discovery tests work without explicit setup.
+- `create_mock_llm_client()`: Factory function to create mock instances.
 
 #### Purpose:
 
 The LLM mock:
 1. Prevents expensive LLM API calls during tests
 2. Provides configurable responses for different test scenarios
-3. Tracks call history for verification
+3. Tracks call history for verification (truncated and untruncated)
 4. Ensures test isolation with automatic cleanup
 
 #### Usage:
@@ -27,12 +27,13 @@ The LLM mock:
 The mock is automatically applied to all tests via `tests/conftest.py`. Tests can configure responses:
 
 ```python
-def test_something(mock_llm_responses):
-    # Configure what the LLM will return
-    mock_llm_responses.set_response(
+def test_something(mock_llm_client):
+    # Configure what the adapter will return
+    mock_llm_client.set_response(
         "anthropic/claude-sonnet-4-5",
         WorkflowDecision,
-        {"found": True, "workflow_name": "test-workflow"}
+        {"found": True, "workflow_name": "test-workflow"},
+        cost_usd=0.000123,  # optional — defaults to None when omitted
     )
 
     # Run code that uses LLM — no actual API calls made
@@ -94,7 +95,7 @@ shared = compile_and_run(ir, only_node="first_step")
 ## Mock Architecture
 
 The LLM mock is applied globally to prevent API calls:
-- Mocks at the LLM API level (`llm.get_model`)
+- Mocks at the adapter seam (`pflow.core.llm_client.complete` plus each consumer module's `complete` binding)
 - Used by all tests except those in `llm/` directories
 - Configured in `tests/conftest.py`
 

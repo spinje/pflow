@@ -25,7 +25,7 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
   └── for each node in graph:
       _execute_node(node, config, shared) → action
         ┌─ OUTSIDE try (always runs):
-        │  1. setup_llm_interception
+        │  1. register_for_llm_call
         │  2. initialize_execution_state
         │  3. enforce_loop_guard       (clears stale __failures__ on revisit)
         │
@@ -247,7 +247,7 @@ Builds a deterministic config dict for cache key computation:
 
 - `record_trace(...)` — receives all data directly (no chain traversal). Computes shared store mutations (added/removed keys, system keys filtered). `success` parameter takes precedence over `error is None`.
 - `enrich_llm_cost(node_id, shared)` — checks both root and namespaced locations for `llm_usage`
-- `setup_llm_interception(...)` — activates if trace collector present AND (class name contains "llm" OR params contain "prompt"/"model"). **Known limitation**: if `prompt` is in template_params (not static), the params check misses it — the class name fallback catches LLM nodes.
+- `register_for_llm_call(...)` — registers the node with the trace collector if trace collector present AND (class name contains "llm" OR params contain "prompt"/"model"). The collector activates per-call ``trace_hook`` plumbing for the LLM adapter. **Known limitation**: if `prompt` is in template_params (not static), the params check misses it — the class name fallback catches LLM nodes.
 
 ### Progress callbacks
 

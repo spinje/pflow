@@ -60,7 +60,7 @@ class WorkflowTraceCollector:
     """
 
     # Class-level state for the per-call trace_hook plumbing. Mutated by
-    # `setup_llm_interception` (registration) and read by LLMNode's
+    # `register_for_llm_call` (registration) and read by LLMNode's
     # `_active_trace_hook()` to find the right collector for the current
     # adapter call. The lock guards the registry against parallel-batch
     # contention. The previous reference-counted monkey-patch state
@@ -529,14 +529,9 @@ class WorkflowTraceCollector:
         LLMNode passes `collector.get_trace_hook(node_id)` to the adapter.
         On `before_call` the hook captures the rendered prompt into
         `self.llm_prompts[node_id]` — same destination the legacy
-        `setup_llm_interception` monkey-patch wrote to. Same downstream
-        consumer (`_attach_llm_call_to_event` at line 168 of this file).
-
-        This is the seam that replaces the monkey-patch. After Task 158 Phase
-        A.6, `setup_llm_interception` and friends will be removed entirely;
-        the hook is the only path. During A.5-A.6 both mechanisms coexist —
-        LLMNode uses the hook, the 3 legacy discovery callsites still go
-        through the monkey-patch until A.7 migrates them.
+        ``llm.get_model`` monkey-patch wrote to before Task 158 Phase A.6
+        replaced it with this hook. Same downstream consumer
+        (`_attach_llm_call_to_event` at line 168 of this file).
         """
 
         def hook(event: dict[str, Any]) -> None:
@@ -547,19 +542,12 @@ class WorkflowTraceCollector:
 
         return hook
 
-    def setup_llm_interception(self, node_id: str) -> None:
+    def register_for_llm_call(self, node_id: str) -> None:
         """Register this collector as the active one for the current thread.
 
-        Task 158 Phase A.6 replaced the previous global ``llm.get_model`` /
-        ``model.prompt`` monkey-patch with a per-call ``trace_hook`` passed
-        directly to the LiteLLM adapter (see
-        ``pflow.core.llm_client.complete``). The hook handles prompt capture
-        through ``get_trace_hook(node_id)``.
-
-        This method is now a thin registration step that the engine calls
-        before each LLM-capable node executes. Two pieces of state survive
-        from the patch era — they're the bridge that lets LLMNode's
-        ``_active_trace_hook()`` find this collector at adapter-call time:
+        The engine calls this before each LLM-capable node runs. It maintains
+        two pieces of state used by LLMNode's ``_active_trace_hook()`` to find
+        the right collector at adapter-call time:
 
         * ``_thread_local.current_node`` — which node is currently running on
           this thread, used by LLMNode to ask this collector for the right
@@ -567,14 +555,16 @@ class WorkflowTraceCollector:
         * ``_active_collectors[thread_id]`` — the collector registry LLMNode
           consults via ``threading.get_ident()``.
 
-        The class-level lock is retained to make the registry mutation
-        thread-safe under parallel batch execution. The reference-counted
-        install/teardown logic (``_llm_interception_count``,
-        ``_original_get_model``) is gone — there is no global state to install
-        or unwind anymore.
+        The class-level lock makes the registry mutation thread-safe under
+        parallel batch execution.
 
         Sub-workflow collectors with ``enable_llm_interception=False`` skip
         registration so the parent collector's hook continues to capture.
+
+        (Pre-Task-158 this method ran a sophisticated monkey-patch of
+        ``llm.get_model``; Phase A.6 collapsed it to thread-local
+        registration and renamed it from ``setup_llm_interception`` for
+        clarity.)
         """
         if not self.enable_llm_interception:
             return
@@ -587,7 +577,7 @@ class WorkflowTraceCollector:
                 WorkflowTraceCollector._active_collectors[thread_id] = self
             self._llm_interceptor_installed = True
 
-    def cleanup_llm_interception(self) -> None:
+    def unregister_from_llm_call(self) -> None:
         """Unregister this collector from the active-collector map.
 
         Called from ``WorkflowRunner._cleanup`` at end of execution. Idempotent

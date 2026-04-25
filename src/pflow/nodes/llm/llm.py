@@ -373,7 +373,7 @@ def _active_trace_hook() -> "TraceHook | None":
     """Resolve the trace hook for the currently-running node, if any.
 
     Pulls the active trace collector for this thread (set by the engine's
-    `setup_llm_interception` before each LLM-capable node runs) and the
+    `register_for_llm_call` before each LLM-capable node runs) and the
     current node id (set on the same path), then asks the collector for
     its hook. Returns None when no trace is active — the adapter handles
     None as a no-op.

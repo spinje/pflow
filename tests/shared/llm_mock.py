@@ -1,26 +1,20 @@
 """LLM-level mock for testing without API calls.
 
-After Task 158 Phase A.8 the only mock in active use is ``MockLLMClient``,
-which patches ``pflow.core.llm_client.complete`` and returns ``AdapterResponse``
-instances directly (not ``Mock`` objects).
-
-``MockLLMModel`` / ``MockGetModel`` / ``create_mock_get_model`` are OBSOLETE —
-they patched the now-dead ``llm.get_model`` seam. They remain in this file
-unreferenced, pending user-approved deletion (see Phase A end-of-task
-checklist).
+The sole mock is ``MockLLMClient``, which patches
+``pflow.core.llm_client.complete`` (and each consumer module's binding) and
+returns ``AdapterResponse`` instances directly.
 """
 
 import contextlib
 import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
-from unittest.mock import Mock
 
 from pflow.core.llm_client import AdapterResponse
 
 # Shared default responses for known schemas — keyed by schema NAME (Pydantic
-# class __name__ or JSON Schema "title"). Both MockLLMModel and MockLLMClient
-# read from this table so behavior is identical across the migration.
+# class __name__ or JSON Schema "title"). MockLLMClient reads from this table
+# so workflow-discovery tests get sensible defaults without explicit setup.
 _DEFAULT_RESPONSES: dict[str, dict] = {
     "WorkflowDecision": {
         "found": False,
@@ -82,140 +76,17 @@ def _schema_name(schema: Any) -> Optional[str]:
     return None
 
 
-class MockLLMModel:
-    """Mock LLM model that simulates the llm library's Model interface."""
-
-    def __init__(self, model_name: str, mock_get_model: "MockGetModel"):
-        self.model_name = model_name
-        self._mock_get_model = mock_get_model
-        self._default_response = {
-            "found": False,
-            "workflow_name": None,
-            "confidence": 0.5,
-            "reasoning": "Mock response",
-        }
-
-    def prompt(self, prompt: str, schema: Optional[type] = None, temperature: float = 0.0, **kwargs) -> Mock:
-        """Simulate LLM prompt method."""
-        # Record the call
-        call_record = {
-            "model": self.model_name,
-            "prompt": prompt[:500] if len(prompt) > 500 else prompt,  # Truncate long prompts
-            "schema": schema.__name__ if schema else None,
-            "temperature": temperature,
-            "kwargs": kwargs,
-        }
-        self._mock_get_model.call_history.append(call_record)
-
-        # Get configured response or use default
-        response_data = self._mock_get_model.get_response(self.model_name, schema)
-
-        # Create mock response object
-        response = Mock()
-
-        # CRITICAL: text() must return JSON string for ALL responses
-        # Our refactored parse_structured_response() uses text(), not json()
-        response_text = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
-        response.text = Mock(return_value=response_text)
-
-        # Also provide json() for backward compatibility (some tests may still use it)
-        if schema:
-            # Structured response with nested format (old format, kept for compatibility)
-            nested_response = {"content": [{"input": response_data}]}
-            response.json.return_value = nested_response
-        else:
-            # Text response
-            response.json.return_value = response_data
-
-        # Add usage tracking as a method (matching llm library)
-        usage_data = Mock()
-        # LLMNode expects .input and .output properties
-        usage_data.input = len(prompt.split())
-        usage_data.output = 50  # Arbitrary for mock
-        usage_data.details = {}  # Empty details dict
-        response.usage = Mock(return_value=usage_data)
-
-        return response
-
-
-class MockGetModel:
-    """Mock for llm.get_model function."""
-
-    def __init__(self):
-        self.call_history = []
-        self._responses = {}
-        # Reads from the shared _DEFAULT_RESPONSES table at the top of this
-        # module so MockLLMClient and MockLLMModel stay in lockstep.
-        self._default_responses = _DEFAULT_RESPONSES
-
-    def __call__(self, model_name: str) -> MockLLMModel:
-        """Return a mock model when get_model is called."""
-        return MockLLMModel(model_name, self)
-
-    def set_response(self, model: str, schema: Optional[Any], response: dict):
-        """Configure response for specific model and schema combination.
-
-        Args:
-            model: Model name, or "*" for wildcard matching any model
-            schema: Pydantic schema class, or None for text responses
-            response: Response dict to return
-        """
-        key = f"{model}:{schema.__name__ if schema else 'text'}"
-        self._responses[key] = response
-
-    def get_response(self, model: str, schema: Optional[type]) -> dict:
-        """Get configured response or default.
-
-        Resolution order:
-        1. Exact model+schema match
-        2. Wildcard model match (*:schema)
-        3. Schema-based default (_default_responses)
-        4. Final fallback
-        """
-        schema_name = schema.__name__ if schema else "text"
-        key = f"{model}:{schema_name}"
-
-        # Check for specific configuration
-        if key in self._responses:
-            return self._responses[key]
-
-        # Check for wildcard model configuration
-        wildcard_key = f"*:{schema_name}"
-        if wildcard_key in self._responses:
-            return self._responses[wildcard_key]
-
-        # Use schema-based default if available
-        if schema and schema.__name__ in self._default_responses:
-            return self._default_responses[schema.__name__]
-
-        # Final fallback
-        return {"response": "mock response"}
-
-    def reset(self):
-        """Reset mock state for test isolation."""
-        self.call_history.clear()
-        self._responses.clear()
-
-
-def create_mock_get_model() -> MockGetModel:
-    """Factory function to create a mock get_model."""
-    return MockGetModel()
-
-
-# --- New mock for the pflow LiteLLM adapter (Task 158 Phase A.4+) ----------
-
-
 @dataclass
 class MockLLMClient:
     """Mock for ``pflow.core.llm_client.complete``.
 
     Drop-in replacement: same signature, returns ``AdapterResponse`` instances
-    directly (not ``Mock`` objects, unlike the legacy ``MockLLMModel``).
+    directly (no ``Mock`` callables — the dataclass shape is part of the
+    contract).
 
-    Resolution chain mirrors ``MockGetModel`` exactly so workflow-discovery
-    tests behave identically through the migration: exact model+schema
-    match → wildcard model match → ``_DEFAULT_RESPONSES`` schema default
-    → ``{"response": "mock response"}`` fallback.
+    Resolution chain: exact ``model+schema`` match → wildcard ``*+schema``
+    match → ``_DEFAULT_RESPONSES`` schema default → ``{"response": "mock
+    response"}`` fallback.
 
     Cost reporting:
         ``cost_usd`` defaults to ``None`` in the returned usage dict. This
@@ -259,10 +130,7 @@ class MockLLMClient:
         self._costs[key] = cost_usd
 
     def get_response(self, model: str, schema: Any) -> dict:
-        """Resolve a configured or default response.
-
-        Same resolution chain as ``MockGetModel.get_response``.
-        """
+        """Resolve a configured or default response."""
         name = _schema_name(schema) or "text"
 
         # 1. Exact model+schema match
