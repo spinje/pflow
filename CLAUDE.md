@@ -158,7 +158,8 @@ pflow/
 - Create scratch pads in `scratchpads/<conversation-subject>/` for deep thinking
 
 **Utilizing subagents**:
-- Use `pflow-codebase-searcher` for gathering information, research, and verifying assumptions (avoids exhausting context window)
+- Use `pflow-codebase-searcher` for gathering information, research, and verifying assumptions (avoids exhausting context window). **Never use the `Explore` agent**
+- Read files directly with the `Read` tool when the path is known or when the user explicitly asks you to read something.
 - Use `test-writer-fixer` for writing/fixing tests (small tasks, one file at a time, comprehensive context)
 - Use `code-implementer` for small, isolated features/fixes that need no deep codebase knowledge
 - Deploy subagents in **parallel** (one function call block), never sequentially
