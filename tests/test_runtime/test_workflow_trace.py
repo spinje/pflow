@@ -853,14 +853,6 @@ class TestWorkflowTraceCollector:
             assert summary["total_output_tokens"] == 350
             assert summary["total_tokens"] == 1150
 
-    def test_enable_llm_interception_attribute(self, collector):
-        """Test that enable_llm_interception defaults to True."""
-        assert collector.enable_llm_interception is True
-
-        # Can be set to False (e.g., for child collectors)
-        collector.enable_llm_interception = False
-        assert collector.enable_llm_interception is False
-
     def test_optional_fields_omitted_when_none(self, collector):
         """Test that optional fields (node_params, mutations, etc.) are omitted when not provided."""
         collector.record_node_execution(
@@ -1208,35 +1200,6 @@ class TestCachedNodeEvent:
             success=True,
         )
         assert "cached" not in collector.events[0]
-
-
-class TestThreadLocalCurrentNode:
-    """D1: Verify _current_node uses thread-local storage."""
-
-    def test_current_node_is_thread_local(self) -> None:
-        """Setting current_node in one thread doesn't affect another."""
-        import threading
-
-        results: dict[str, str | None] = {}
-
-        def thread_fn(node_name: str) -> None:
-            WorkflowTraceCollector._thread_local.current_node = node_name
-            # Small sleep to let other thread also set its value
-            import time
-
-            time.sleep(0.01)
-            results[node_name] = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
-
-        t1 = threading.Thread(target=thread_fn, args=("node-A",))
-        t2 = threading.Thread(target=thread_fn, args=("node-B",))
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-
-        # Each thread should see its own value, not the other's
-        assert results["node-A"] == "node-A"
-        assert results["node-B"] == "node-B"
 
 
 class TestFinalEventsByNode:

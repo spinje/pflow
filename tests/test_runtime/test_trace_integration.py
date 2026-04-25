@@ -26,7 +26,6 @@ def _run_with_trace(
     from pflow.runtime.engine import WorkflowEngine
 
     collector = WorkflowTraceCollector("test-trace")
-    collector.enable_llm_interception = False
 
     registry = Registry()
     workflow = compile_workflow(ir_json=ir, registry=registry, initial_params=initial_params)
@@ -324,7 +323,6 @@ class TestSubWorkflowTraceTree:
         from pflow.runtime.engine import WorkflowEngine
 
         collector = WorkflowTraceCollector("test-sub-workflow")
-        collector.enable_llm_interception = False
 
         registry = Registry()
         workflow = compile_workflow(ir_json=parent_ir, registry=registry)
@@ -412,7 +410,6 @@ class TestTemplateResolutionsOnError:
         }
 
         collector = WorkflowTraceCollector("test-exec-error")
-        collector.enable_llm_interception = False
 
         from pflow.registry import Registry
         from pflow.runtime import compile_workflow
@@ -468,7 +465,6 @@ class TestTemplateResolutionsOnError:
         }
 
         collector = WorkflowTraceCollector("test-partial-resolutions")
-        collector.enable_llm_interception = False
 
         from pflow.registry import Registry
         from pflow.runtime import compile_workflow
@@ -495,3 +491,242 @@ class TestTemplateResolutionsOnError:
         # The 'command' param should be resolved (it was processed before 'cwd' failed)
         assert "command" in resolutions
         assert resolutions["command"]["template"] == "${producer.stdout}"
+
+
+# --------------------------------------------------------------------------
+# LLM trace_hook plumbing (Task 158 Phase A item 3 — regression guards for
+# the worker-thread mismatch fix and sub-workflow trace flow).
+# --------------------------------------------------------------------------
+
+
+class TestLLMTraceHookCapture:
+    """The trace_hook fires through LLMNode's inner ThreadPoolExecutor.
+
+    Pre-fix bug: the engine's `register_for_llm_call` registered the
+    collector against the MAIN thread's id, but `_call_llm` runs in a
+    worker thread spawned by `LLMNode.exec`'s inner pool. The lookup at
+    `_active_trace_hook` returned None for the worker thread, so the
+    adapter's `trace_hook` never fired and `collector.llm_prompts` stayed
+    empty. Trace events lost `event["llm_prompt"]` for every literal-prompt
+    LLM call. Smoke-verified pre-fix on Gemini-3.
+
+    The new design (`shared["_trace_collector"]` + LLMNode.prep resolves
+    the hook BEFORE pool.submit) survives the worker-thread boundary
+    because the hook is a closure passed as an explicit arg, not a
+    thread-local lookup.
+    """
+
+    def test_llm_prompt_captured_via_trace_hook(self, mock_llm_client):
+        # Configure the mock so the trace_hook receives a known prompt
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "ask",
+                    "type": "llm",
+                    "params": {
+                        "prompt": "Say hello to the world.",
+                        "model": "anthropic/claude-sonnet-4-5",
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        _, collector = _run_with_trace(ir)
+
+        # The trace_hook must have fired AND written the rendered prompt
+        # under this node's id. Pre-fix this dict was always empty.
+        assert collector.llm_prompts == {"ask": "Say hello to the world."}
+
+        # And the trace event must surface it (downstream consumers like
+        # `pflow report` read this field).
+        ask_event = next(e for e in collector.events if e["node_id"] == "ask")
+        assert ask_event.get("llm_prompt") == "Say hello to the world."
+
+
+class TestSubWorkflowTraceCollector:
+    """Sub-workflow LLM prompts land in the CHILD collector, not the parent.
+
+    Pre-fix bug (concurrency-safety review Finding 2 / feature-interactions
+    C3): the parent's `_thread_local.current_node` stayed set to the
+    WorkflowExecutor's id; child LLM calls would have been mis-attributed
+    to the parent's WorkflowExecutor event under that stale id. (In
+    practice the lookup never fired due to the worker-thread mismatch, so
+    nothing was captured at all.)
+
+    The new design installs the child collector into `shared["_trace_collector"]`
+    via the child engine's save/restore — child's LLMNode.prep finds the
+    child collector and writes to `child.llm_prompts[child_node_id]`.
+    """
+
+    def test_sub_workflow_llm_prompt_in_child_collector(self, tmp_path, mock_llm_client):
+        from pathlib import Path
+
+        # Child workflow with one LLM step
+        child_md = Path(tmp_path) / "child.pflow.md"
+        child_md.write_text(
+            "# Child\n\nA child workflow.\n\n"
+            "## Steps\n\n"
+            "### child-llm\n\nLLM call inside the child.\n\n"
+            "- type: llm\n"
+            "- model: anthropic/claude-sonnet-4-5\n"
+            "- prompt: Hello from the child.\n",
+            encoding="utf-8",
+        )
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "child-wf",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_md)},
+                },
+            ],
+            "edges": [],
+        }
+
+        _, parent_collector = _run_with_trace(parent_ir)
+
+        # The PARENT collector saw the WorkflowExecutor event but does NOT
+        # have the child LLM prompt — that lives in the child collector.
+        assert "child-llm" not in parent_collector.llm_prompts
+
+        # The parent's WorkflowExecutor event should have nested
+        # sub_workflow_events from the child collector with the LLM event
+        # carrying the captured prompt.
+        wf_exec_event = next(e for e in parent_collector.events if e["node_id"] == "child-wf")
+        sub_events = wf_exec_event.get("sub_workflow_events", [])
+        child_llm_event = next((e for e in sub_events if e.get("node_id") == "child-llm"), None)
+        assert child_llm_event is not None, f"child-llm event missing from sub_workflow_events: {sub_events}"
+        assert child_llm_event.get("llm_prompt") == "Hello from the child."
+
+    def test_storage_mode_shared_does_not_pollute_parent_collector(self, tmp_path, mock_llm_client):
+        """storage_mode=shared sub-workflow must not leave child's collector
+        installed in the parent's shared store after it returns.
+
+        With `child_storage IS parent_shared`, the child engine.run swaps
+        in child_trace via save/restore. After the child completes, the
+        parent's collector must be reinstated for any subsequent parent-
+        level reads. Identity check (``is``) verifies it's the SAME object,
+        not just an equal one.
+        """
+        from pathlib import Path
+
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        child_md = Path(tmp_path) / "child.pflow.md"
+        child_md.write_text(
+            "# Child\n\nA child workflow.\n\n"
+            "## Steps\n\n"
+            "### echo\n\nEcho a value.\n\n"
+            "- type: shell\n"
+            "- command: echo shared_works\n",
+            encoding="utf-8",
+        )
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "child-wf",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_md), "storage_mode": "shared"},
+                },
+            ],
+            "edges": [],
+        }
+
+        parent_collector = WorkflowTraceCollector("parent")
+        registry = Registry()
+        workflow = compile_workflow(ir_json=parent_ir, registry=registry)
+        shared: dict[str, Any] = {"_trace_collector": parent_collector}
+        shared.update(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(trace_collector=parent_collector)
+        engine.run(workflow, shared)
+
+        # After the run, parent's collector must be back in shared — the
+        # child engine's save/restore must have reinstated it. Identity check
+        # (`is`) catches any case where save/restore returned an equal-but-
+        # different object (e.g. a copy).
+        assert shared["_trace_collector"] is parent_collector
+
+
+class TestParallelBatchSubWorkflowTrace:
+    """Parallel batch where each item is a sub-workflow containing an LLM.
+
+    The most complex nested case the design has to handle:
+    - Each batch worker deepcopies the batch node and gets its own item_shared
+    - Each worker's WorkflowExecutor.exec creates its own child_trace
+    - Each worker's child engine.run installs the child_trace into the
+      child storage via save/restore
+    - Each child's LLMNode.prep resolves the hook from the child collector
+
+    Per the plan-review and concurrency-safety reviewers: this combination
+    is exactly where the previous thread-local design would have regressed.
+    """
+
+    def test_each_batch_item_subworkflow_captures_own_llm_prompt(self, tmp_path, mock_llm_client):
+        from pathlib import Path
+
+        # Child workflow with one LLM step that uses the per-item input
+        child_md = Path(tmp_path) / "child.pflow.md"
+        child_md.write_text(
+            "# Child\n\nProcesses one item.\n\n"
+            "## Inputs\n\n"
+            "### item\n\nThe input item.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### child-llm\n\nLLM call inside the child.\n\n"
+            "- type: llm\n"
+            "- model: anthropic/claude-sonnet-4-5\n"
+            "- prompt: Process item ${item}.\n",
+            encoding="utf-8",
+        )
+
+        # Parent workflow with a batched sub-workflow over a list of items
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "inputs": {"items": {"type": "array", "description": "items to fan out over"}},
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child_md),
+                        "inputs": {"item": "${item}"},
+                    },
+                    "batch": {
+                        "items": "${items}",
+                        "as": "item",
+                        "parallel": True,
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        _, parent_collector = _run_with_trace(parent_ir, initial_params={"items": ["A", "B", "C"]})
+
+        # The fanout event should have batch_items, each with its own
+        # nested events from a separate child collector.
+        fanout_event = next(e for e in parent_collector.events if e["node_id"] == "fanout")
+        batch_items = fanout_event.get("batch_items", [])
+        assert len(batch_items) == 3, f"expected 3 batch items, got {len(batch_items)}"
+
+        # Each item's nested LLM event must carry its own per-item prompt
+        # (rendered with that item's value substituted in). If save/restore
+        # leaked between workers, prompts would be cross-contaminated.
+        seen_prompts = []
+        for item in batch_items:
+            sub_events = item.get("events", [])
+            child_llm_event = next((e for e in sub_events if e.get("node_id") == "child-llm"), None)
+            assert child_llm_event is not None
+            seen_prompts.append(child_llm_event.get("llm_prompt"))
+
+        # Each worker resolved its own item; prompts must all differ
+        assert sorted(seen_prompts) == ["Process item A.", "Process item B.", "Process item C."]
