@@ -34,6 +34,7 @@ def test_something(mock_llm_client):
         WorkflowDecision,
         {"found": True, "workflow_name": "test-workflow"},
         cost_usd=0.000123,  # optional — defaults to None when omitted
+        warnings=[],        # optional — defaults to []
     )
 
     # Run code that uses LLM — no actual API calls made

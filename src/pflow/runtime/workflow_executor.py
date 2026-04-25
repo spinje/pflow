@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, ClassVar, Optional
 
-from pflow.core.diagnostic import Diagnostic, format_child_provenance
+from pflow.core.diagnostic import Diagnostic, format_child_provenance, normalize_runtime_warning
 from pflow.core.exceptions import (
     MarkdownParseError,
     PflowError,
@@ -512,7 +512,8 @@ class WorkflowExecutor(BaseNode):
                     return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {error}"
             warning = child_storage.get("__warnings__", {}).get(failed_node)
             if warning:
-                return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {warning}"
+                message, _context = normalize_runtime_warning(warning)
+                return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {message}"
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:

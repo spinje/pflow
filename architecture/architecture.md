@@ -41,7 +41,7 @@ pflow is a CLI-first workflow execution system. Its node system is built on `Bas
 - `Python 3.10+` - Modern Python
 - `click` - CLI framework
 - `pydantic` - IR/metadata validation
-- `llm` - Simon Willison's LLM CLI integration
+- `litellm` - provider-unified LLM calls through pflow's `llm_client` adapter
 
 **Development Tools**:
 - `uv` - Fast Python package manager (use `uv pip`, not `pip`)

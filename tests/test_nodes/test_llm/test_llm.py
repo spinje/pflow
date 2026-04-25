@@ -65,6 +65,7 @@ class TestLLMNode:
 
         assert "LLM node requires 'prompt'" in str(exc_info.value)
         assert "parameter" in str(exc_info.value)
+        assert "- prompt: ${previous_node.output}" in str(exc_info.value)
 
     # Test Criteria 4: model parameter used → adapter called with correct model
     def test_model_parameter_used(self, mock_llm_client):

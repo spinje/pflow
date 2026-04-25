@@ -67,7 +67,7 @@ Only notes that help you decide whether to read a file. If the filename is self-
 
 ### Core Node Packages
 
-**llm-nodes.md** vs **claude-nodes.md** — Two-tier AI architecture. `llm` = general-purpose text processing via API (Simon Willison's `llm` library). `claude-code` = agentic "super node" via Claude Code CLI with full project context and tool access. Different tools for different jobs.
+**llm-nodes.md** vs **claude-nodes.md** — Two-tier AI architecture. `llm` = general-purpose text processing via API through pflow's LiteLLM adapter. `claude-code` = agentic "super node" via Claude Code CLI with full project context and tool access. Different tools for different jobs.
 
 ### Reference
 

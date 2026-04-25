@@ -82,7 +82,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ### Technology Stack
 
-**Core**: Python 3.10+, click, pydantic, llm (Simon Willison's library)
+**Core**: Python 3.10+, click, pydantic, LiteLLM via pflow's `llm_client` adapter
 
 **Development** (ALWAYS use `uv` instead of `pip`):
 - `uv` - Package manager (`uv pip`, `uv run pytest`)

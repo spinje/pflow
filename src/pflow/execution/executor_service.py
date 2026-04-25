@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from pflow.core.diagnostic import CATEGORY_TITLES, Diagnostic, Severity
+from pflow.core.diagnostic import CATEGORY_TITLES, Diagnostic, Severity, normalize_runtime_warning
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,8 @@ def _extract_error_info(action_result: Optional[str], shared_store: dict[str, An
 
     api_warnings = shared_store.get("__warnings__", {})
     if failed_node and failed_node in api_warnings:
-        return {"message": api_warnings[failed_node], "failed_node": failed_node}
+        message, _context = normalize_runtime_warning(api_warnings[failed_node])
+        return {"message": message, "failed_node": failed_node}
 
     return {
         "message": f"Workflow failed with action: {action_result}",

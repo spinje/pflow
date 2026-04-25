@@ -222,7 +222,7 @@ class LLMNode(Node):
         if not prompt:
             raise ValueError(
                 "LLM node requires 'prompt' parameter. "
-                'Use template syntax like "prompt": "${previous_node.output}" '
+                "Use template syntax like '- prompt: ${previous_node.output}' "
                 "to wire data from other nodes."
             )
 
@@ -447,9 +447,9 @@ class LLMNode(Node):
         # to root via the NamespacedSharedStore proxy contract; subscript
         # write hits the returned root dict. (See namespaced_store.py
         # __setitem__ rules — direct write precedent at batch_executor.py
-        # ~812-814.) Each warning is a dict with `kind`/`text`/`context`
-        # — runner._extract_runtime_warnings dispatches on `kind` to build
-        # the right Diagnostic.
+        # ~812-814.) Each warning is a dict with `kind`/`text`/`context`.
+        # Consumers normalize it with core.diagnostic.normalize_runtime_warning
+        # so legacy string warnings and structured LLM warnings can coexist.
         warnings_list = exec_res.get("warnings") or []
         # node_id is a compiler-set dynamic attribute (compilation/compiler.py:299).
         node_id = getattr(self, "node_id", None)

@@ -126,7 +126,8 @@ If your custom mock isn't being used, check that model name AND schema type both
 - `response.usage` is a dict — read fields with `usage["input_tokens"]`, etc.
 - `call_history` entries **truncate prompts to 500 chars** — don't assert on long prompt content. `call_history_full` is the parallel untruncated record (used for cache-structure tests).
 - `cost_usd` defaults to `None` in the returned usage dict (mirrors production for unknown-pricing models like Ollama). Tests that need a specific cost should pass `cost_usd=` to `set_response`.
-- `reset()` clears custom responses, costs, and call history; built-in `_DEFAULT_RESPONSES` for known schemas remain available.
+- `response.warnings` is a list of structured warning dicts (`kind`, `text`, `context`). Defaults to `[]`. Tests that need warning paths should pass `warnings=` to `set_response`.
+- `reset()` clears custom responses, costs, warnings, and call history; built-in `_DEFAULT_RESPONSES` for known schemas remain available.
 
 ## Conftest Hierarchy
 
@@ -143,6 +144,7 @@ def test_something(mock_llm_client):
         WorkflowDecision,
         {"found": True, "workflow_name": "test"},
         cost_usd=0.000123,  # optional — defaults to None
+        warnings=[],        # optional — defaults to []
     )
 ```
 

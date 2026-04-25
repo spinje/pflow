@@ -105,14 +105,16 @@ class MockLLMClient:
     call_history_full: list[dict] = field(default_factory=list)
     _responses: dict[str, dict] = field(default_factory=dict)
     _costs: dict[str, Optional[float]] = field(default_factory=dict)
+    _warnings: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def set_response(
         self,
         model: str,
         schema: Any,
-        response: dict,
+        response: Any,
         *,
         cost_usd: Optional[float] = None,
+        warnings: list[dict[str, Any]] | None = None,
     ) -> None:
         """Configure a response for a (model, schema) pair.
 
@@ -123,11 +125,14 @@ class MockLLMClient:
             cost_usd: Optional ``cost_usd`` to set on the returned usage dict.
                 When ``None`` (default), the mock leaves ``cost_usd: None`` —
                 matches production behavior for unknown-pricing models.
+            warnings: Optional structured adapter warnings (each entry has
+                ``kind``, ``text``, and ``context``). Defaults to ``[]``.
         """
         name = _schema_name(schema) or "text"
         key = f"{model}:{name}"
         self._responses[key] = response
         self._costs[key] = cost_usd
+        self._warnings[key] = list(warnings or [])
 
     def get_response(self, model: str, schema: Any) -> dict:
         """Resolve a configured or default response."""
@@ -163,12 +168,22 @@ class MockLLMClient:
             return self._costs[f"*:{name}"]
         return None
 
+    def _get_warnings(self, model: str, schema: Any) -> list[dict[str, Any]]:
+        """Resolve configured warnings for a (model, schema) pair."""
+        name = _schema_name(schema) or "text"
+        if f"{model}:{name}" in self._warnings:
+            return list(self._warnings[f"{model}:{name}"])
+        if f"*:{name}" in self._warnings:
+            return list(self._warnings[f"*:{name}"])
+        return []
+
     def reset(self) -> None:
         """Clear call history and configured responses."""
         self.call_history.clear()
         self.call_history_full.clear()
         self._responses.clear()
         self._costs.clear()
+        self._warnings.clear()
 
     # The patched function — must mirror llm_client.complete()'s signature.
     def complete(
@@ -252,6 +267,7 @@ class MockLLMClient:
             usage=usage,
             model=model,
             has_schema=schema is not None,
+            warnings=self._get_warnings(model, schema),
         )
 
         if trace_hook is not None:

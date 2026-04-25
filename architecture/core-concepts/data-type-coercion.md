@@ -27,7 +27,7 @@ This follows the same pattern used by every well-designed LLM orchestration syst
 - **LangChain**: Output parsers are explicit, separate components attached to chains
 - **Vercel AI SDK**: Structured output declared via `output` schema property on `generateText()`
 - **n8n**: Separate "Output Parser" nodes sit between LLM and downstream nodes
-- **Simon Willison's `llm` library** (which pflow wraps): `response.text()` returns raw text, always
+- **pflow's LiteLLM adapter**: `AdapterResponse.text` carries raw text unless an `output_schema` explicitly asks pflow to parse it
 
 None of these systems speculatively parse output. Parsing is always driven by an **intent signal** — the consumer declaring what it needs, or the user explicitly requesting structured access.
 

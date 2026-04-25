@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
+from pflow.core.workflow.status import WorkflowStatus
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.result import ExecutionResult, RunnerConfig
 from pflow.execution.runner import WorkflowRunner, _synthesize_inline_workflow_id
@@ -70,6 +71,60 @@ def test_successful_workflow_runs_through_full_pipeline():
     assert "runner-test" in result.shared_after["test"]["stdout"]
     assert result.trace is not None
     assert result.metrics is not None
+
+
+def test_llm_structured_warning_survives_runner_pipeline(mock_llm_client):
+    """E2E: structured LLM warnings render as text and preserve context.
+
+    LLMNode stores adapter warnings in ``__warnings__`` as dicts so JSON
+    consumers can inspect ``kind``/``context``. The runner must normalize that
+    shape instead of treating the dict itself as the Diagnostic message.
+    """
+    warning = {
+        "kind": "llm_empty_response_reasoning",
+        "text": (
+            "Empty response from gemini/gemini-3-flash-preview: 13 tokens consumed, "
+            "finish_reason=length. Increase max_tokens, or lower reasoning_effort."
+        ),
+        "context": {
+            "model": "gemini/gemini-3-flash-preview",
+            "finish_reason": "length",
+            "output_tokens": 13,
+            "thinking_tokens": 13,
+            "thinking_budget": 0,
+        },
+    }
+
+    mock_llm_client.set_response("*", None, "", cost_usd=0.0001, warnings=[warning])
+
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "think",
+                "type": "llm",
+                "params": {
+                    "model": "gemini/gemini-3-flash-preview",
+                    "prompt": "Reply with exactly OK.",
+                    "max_tokens": 16,
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
+
+    assert result.success is True
+    assert result.status == WorkflowStatus.DEGRADED
+    assert result.shared_after["__warnings__"]["think"] == warning
+
+    runtime_warning = next(w for w in result.warnings if w.node_id == "think")
+    assert runtime_warning.message == warning["text"]
+    assert "{'kind':" not in runtime_warning.message
+    assert runtime_warning.context["type"] == "api_warning"
+    assert runtime_warning.context["category"] == "llm_warning"
+    assert runtime_warning.context["kind"] == "llm_empty_response_reasoning"
+    assert runtime_warning.context["model"] == "gemini/gemini-3-flash-preview"
 
 
 def test_validator_called_exactly_once():

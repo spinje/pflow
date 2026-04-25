@@ -339,8 +339,6 @@ The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Imp
 
 **🚨 Security**: Parameter validation gaps — template variables, node params, LLM/MCP params not validated for shell special characters.
 
-**🐛 Broken**: Two LLM pricing aliases point to non-existent entries.
-
 ## Testing and Examples
 
 Tests in `tests/test_core/` — comprehensive coverage for all components. See `examples/core/` (valid workflows) and `examples/invalid/` (parse error cases) tested by `test_ir_examples.py`.

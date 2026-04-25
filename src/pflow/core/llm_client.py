@@ -8,9 +8,10 @@ discovery callsites) operates on `AdapterResponse`, not on
 - Translating reasoning kwargs from the provider-neutral shape produced by
   ``llm_reasoning_map`` into LiteLLM-native shapes (e.g. Anthropic's
   ``thinking={"type":"enabled","budget_tokens":N}``)
-- Translating every deterministic LiteLLM exception
-  (``BadRequestError``, ``AuthenticationError``, ``NotFoundError``,
-  ``PermissionDeniedError``) into a typed ``LLMCallError`` subclass so
+- Translating every LiteLLM exception we classify (deterministic:
+  ``BadRequestError``, ``AuthenticationError``, ``NotFoundError``,
+  ``PermissionDeniedError``; transient: ``Timeout``, ``RateLimitError``,
+  ``InternalServerError``) into a typed ``LLMCallError`` subclass so
   consumers never import ``litellm.exceptions`` to discriminate
 - Normalizing the response shape to a stable ``AdapterResponse``
 - Reading ``response_cost`` from LiteLLM's ``_hidden_params`` so consumers
@@ -156,8 +157,12 @@ def complete(
     subclasses at its ``_call_llm`` boundary so the Node retry loop
     doesn't burn three attempts on a permanent failure.
 
-    Other exceptions (timeout, network, rate limit, internal server
-    error) propagate unwrapped. The caller's retry loop decides.
+    Transient LiteLLM exceptions (timeout, rate limit, internal server)
+    are wrapped in ``LLMTransientError`` so consumers can catch the
+    ``LLMCallError`` umbrella. Other exceptions (for example, network
+    errors outside LiteLLM's typed hierarchy) propagate unwrapped.
+    LLMNode re-raises ``LLMTransientError`` so the Node retry loop can
+    retry.
 
     Args:
         model: LiteLLM model identifier, e.g. ``"anthropic/claude-sonnet-4-5"``,

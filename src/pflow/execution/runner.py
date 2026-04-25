@@ -9,7 +9,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, exception_to_diagnostics
+from pflow.core.diagnostic import (
+    LLM_WARNING_CATEGORY,
+    Diagnostic,
+    Severity,
+    deduplicate_diagnostics,
+    exception_to_diagnostics,
+    normalize_runtime_warning,
+)
 from pflow.core.exceptions import (
     CompilationError,
     MarkdownParseError,
@@ -541,7 +548,8 @@ class WorkflowRunner:
         """Extract runtime warnings from shared store."""
         warnings: list[Diagnostic] = []
         failures = shared_store.get("__failures__", {})
-        for node_id, message in shared_store.get("__warnings__", {}).items():
+        for node_id, raw_message in shared_store.get("__warnings__", {}).items():
+            message, warning_context = normalize_runtime_warning(raw_message)
             failure = failures.get(node_id)
             is_recovery = (
                 failure is not None
@@ -565,6 +573,10 @@ class WorkflowRunner:
                     )
                 )
             else:
+                context = {"type": "api_warning"}
+                context.update(warning_context)
+                if "kind" in warning_context:
+                    context.setdefault("category", LLM_WARNING_CATEGORY)
                 warnings.append(
                     Diagnostic(
                         severity=Severity.WARNING,
@@ -575,7 +587,7 @@ class WorkflowRunner:
                         ],
                         node_id=node_id,
                         source="runtime",
-                        context={"type": "api_warning"},
+                        context=context,
                     )
                 )
         for node_id, error_data in shared_store.get("__template_errors__", {}).items():

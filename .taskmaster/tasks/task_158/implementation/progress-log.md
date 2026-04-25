@@ -2016,3 +2016,128 @@ The original `LLMNode.post()` had error-handling logic inlined in three places (
 ```
 
 ---
+
+## 35. Session 2026-04-25 (cont.) — Final Phase A loose-ends pass, focused review, follow-up issues
+
+### Context
+
+After §34, the next agent read the full task context (`scratchpads/task-158-phase-A-completion-loose-ends.md`, prior braindump, task spec, implementation plan, and full progress log). The user then asked for a focused `/code-review` using the four best-suited review agents for the implemented Phase A branch.
+
+Four review agents ran in parallel:
+
+- `review-silent-failures`
+- `review-impact-completeness`
+- `review-agent-ux`
+- `review-concurrency-safety`
+
+Two follow-up `pflow-codebase-searcher` agents verified the two highest-impact findings before any code changes were accepted.
+
+### Review finding triage
+
+**Confirmed must-fix: structured LLM warning dicts in `__warnings__`.**
+
+Phase A Step 2 introduced structured `AdapterResponse.warnings` entries (`kind` / `text` / `context`). `LLMNode.post()` wrote the full warning dict to `shared["__warnings__"][node_id]`, but all existing consumers assumed `__warnings__` values were strings:
+
+- `WorkflowRunner._extract_runtime_warnings()` did substring checks and used the value as `Diagnostic.message`.
+- `executor_service._extract_error_info()` used the value as an error message fallback.
+- `WorkflowExecutor._extract_child_error()` interpolated the value into an f-string.
+
+The silent-failure risk was real: warning output would render Python dict reprs and JSON diagnostics could carry non-string `message` values.
+
+**Important design decision:** the narrow one-line fix (`LLMNode.post()` writes `warning["text"]`) was rejected after re-evaluating the final-code shape. Structured LLM warnings were introduced deliberately for agent parseability. Dropping `kind`/`context` would solve text rendering by discarding the new contract. The implemented fix keeps the richer contract:
+
+- Added `core.diagnostic.normalize_runtime_warning(warning) -> (message, context)`.
+- Updated all three consumers above to normalize legacy string warnings and structured dict warnings.
+- `WorkflowRunner._extract_runtime_warnings()` now preserves LLM warning context (`kind`, `model`, `finish_reason`, token counts) and sets `category="llm_warning"` for structured LLM warnings while keeping `type="api_warning"` for backwards-compatible status/rendering behavior.
+- `LLMNode.post()` continues writing structured warning dicts.
+
+This is the "top 10% codebase" shape: one normalizer at the shared-store boundary, no scattered dict/string assumptions, and no loss of agent-facing structured data.
+
+**Confirmed but deferred: bare `ValueError` / `TypeError` in `LLMNode.prep()`.**
+
+`review-agent-ux` flagged five bare `ValueError` sites and one `TypeError` in LLM prep/config validation. Verification showed all are pre-existing relative to the branch baseline and the pattern exists across multiple node types. This is real UX debt but not a Phase A regression. It was filed as a follow-up issue instead of being fixed narrowly in LLM only.
+
+**Low-risk branch fixes accepted:**
+
+- Updated the missing-prompt hint from JSON-era syntax (`"prompt": "${previous_node.output}"`) to `.pflow.md` syntax (`- prompt: ${previous_node.output}`) and pinned it in the existing test.
+- Cleaned live documentation drift where current docs still described Simon Willison's `llm` library or deleted pricing aliases as current architecture. Historical docs were intentionally left alone.
+
+### Loose ends fixed from scratchpad
+
+The five `LE-*` items from `scratchpads/task-158-phase-A-completion-loose-ends.md` are now fixed:
+
+1. **LE-1 / LE-5 — integration coverage for the LLM JSON diagnostic contract and LLM failure category.**
+   - Added `tests/test_execution/test_executor_service_llm.py`.
+   - Runs through `WorkflowRunner`, not unit-only helper calls.
+   - Covers `UnknownModelError(reason="unknown_name")`, `MissingApiKeyError(kind="missing_key")`, `InvalidRequestError`, and `LLMResponseParseError`.
+   - Asserts `result.errors[0].context` carries `category="llm_failure"`, `error_class`, `model`, and discriminator fields.
+   - Asserts `result.shared_after["__failures__"]["ask"]["category"] == FAILURE_CATEGORY_LLM`.
+
+2. **LE-2 — `MockLLMClient` warning support.**
+   - Added `MockLLMClient.set_response(..., warnings=...)`.
+   - Added `_get_warnings()` mirroring `_get_cost()` resolution (exact model/schema, wildcard, default empty list).
+   - `reset()` now clears warnings.
+
+3. **LE-3 — stale adapter docstrings.**
+   - `llm_client.py` module docstring now states deterministic and transient LiteLLM exceptions are translated.
+   - `complete()` docstring now states transient exceptions wrap to `LLMTransientError`; only other exceptions outside LiteLLM's typed hierarchy propagate raw.
+
+4. **LE-4 — `tests/CLAUDE.md` mock behavior drift.**
+   - Documented `response.warnings` and `warnings=` in the mock section.
+   - Also updated `tests/shared/README.md`.
+
+### Follow-up GitHub issues filed
+
+The remaining review findings were grouped into six GitHub issues rather than implemented in this branch:
+
+- `#347` — Task 158 follow-up: standardize node prep validation diagnostics
+- `#348` — Task 158 follow-up: centralize LiteLLM provider metadata for UX hints
+- `#349` — Task 158 follow-up: clarify reasoning option edge cases and observability
+- `#350` — Task 158 follow-up: normalize zero and partial LLM cost display
+- `#351` — Task 158 follow-up: improve batch LLM trace and warning aggregation
+- `#352` — Task 158 follow-up: polish secondary LLM diagnostic context
+
+### Verification
+
+Verification after the final fixes:
+
+```bash
+uv run pytest tests/test_execution/test_executor_service_llm.py \
+  tests/test_execution/test_runner.py \
+  tests/test_core/test_llm_client.py \
+  tests/test_nodes/test_llm/test_llm.py -q
+# 165 passed
+
+make check
+# ruff, ruff-format, mypy, deptry all green
+
+make test
+# 5311 passed
+```
+
+Also verified focused tests during the pass:
+
+- structured warning runner regression: passed
+- LLM diagnostic integration regressions: passed
+- missing-prompt hint regression: passed
+
+### Current branch state before commit
+
+- All Phase A code-review #2 work from §34 plus final loose-ends fixes from §35 are in the working tree.
+- `scratchpads/task-158-phase-A-completion-loose-ends.md` now records LE-1 through LE-5 as fixed.
+- Follow-up issues #347-#352 capture the remaining non-blocking review findings.
+- The two user decisions remain open:
+  1. CHANGELOG version label (`Unreleased` vs version bump).
+  2. Optional Gemini PR #15226 fix re-verification on LiteLLM `1.82.6`.
+
+### What the next agent should know
+
+1. **The structured warning contract is intentionally dict-capable now.** Do not "simplify" by flattening `AdapterResponse.warnings` to strings. Normalize at consumer boundaries via `normalize_runtime_warning()`.
+
+2. **The critical end-to-end LLM diagnostic contract is now pinned.** If a future refactor drops `_diagnostic_context`, the `LLMNode -> __failures__ -> executor_service -> ExecutionResult.errors` tests should fail.
+
+3. **The branch has a larger changed-file set than §34 described.** That is expected: §35 adds final integration tests, warning normalization, mock warning support, and doc cleanup.
+
+4. **The follow-up issues are deliberately grouped.** Avoid reopening them as one-off tiny fixes unless the user asks; each group has cross-cutting implications.
+
+5. **Commit requested by user at end of this session.** Unlike §34, there is now explicit user permission to commit all changes.

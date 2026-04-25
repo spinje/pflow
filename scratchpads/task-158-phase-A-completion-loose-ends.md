@@ -31,6 +31,11 @@ The implementing agent (me) finished all 10 steps of the completion plan. All 53
 
 Bottom line: **fix LE-1 through LE-5 (15-30 min total), defer P-12 through P-16, ask user about UD-1 and UD-2.** Everything in LE-* is ~5 minutes each.
 
+**Status update 2026-04-25:** LE-1 through LE-5 are now fixed in the working tree:
+- LE-1/LE-5: added `WorkflowRunner` end-to-end coverage for LLM error diagnostics and `__failures__[node]["category"] == FAILURE_CATEGORY_LLM`.
+- LE-2/LE-4: `MockLLMClient.set_response(..., warnings=...)` landed and `tests/CLAUDE.md` documents `response.warnings`.
+- LE-3: `llm_client.py` docstrings now describe transient LiteLLM exceptions being translated to `LLMTransientError`.
+
 ---
 
 ## Loose ends from the honesty pass

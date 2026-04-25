@@ -60,7 +60,7 @@ shell --command="git commit -m 'Fix issue 1234'"
 The `llm` node is our general-purpose solution for all text processing tasks:
 - **Instead of**: `analyze-code`, `write-content`, `explain-concept`, `review-text`
 - **Use**: `llm --prompt="Analyze this code"`, `llm --prompt="Write an introduction"`, etc.
-- **Future Integration**: Will wrap Simon Willison's llm CLI for model management
+- **Provider layer**: Routes provider-prefixed model calls through pflow's LiteLLM adapter
 
 ## Simple Node Implementation
 
