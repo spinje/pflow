@@ -10,7 +10,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-from pflow.core.exceptions import LLMCallError, MissingApiKeyError, UnknownModelError
+from pflow.core.exceptions import LLMCallError, LLMTransientError
 from pflow.core.llm_client import Attachment, TraceHook, complete, enrich_llm_usage_with_cost
 from pflow.core.llm_reasoning_map import (
     DEFAULT_MAX_TOKENS_BASE,
@@ -30,15 +30,83 @@ __all__ = [
 ]
 
 
-def _error_dict(model: str, error_class: str, message: str) -> dict[str, Any]:
-    """Build the standard error-dict shape returned from LLMNode error paths.
+def _error_dict_from_exception(exc: LLMCallError) -> dict[str, Any]:
+    """Build the standard error-dict shape from a typed LLMCallError.
 
-    ``error_class`` is the typed exception name (``"UnknownModelError"``,
-    ``"MissingApiKeyError"``, ``"InvalidRequestError"``, ``"TimeoutError"``,
-    or ``type(exc).__name__`` for unclassified failures). It gives JSON-mode
-    consumers and downstream nodes a machine-parseable cause field without
-    forcing them to substring-match the human-readable message.
+    Reads the rich diagnostic produced by ``exc.to_diagnostics()`` — which
+    is the single source of truth for the user-facing message and the
+    structured context (``error_class``, ``model``, ``reason``/``kind``).
+    The ``_diagnostic_context`` field is lifted by
+    ``executor_service._enrich_error_from_node_output`` so the runtime
+    Diagnostic that reaches JSON output carries the same structured fields
+    the override produced — no duplication, no drift.
+
+    Suggestions from the override are joined into the ``error`` prose so
+    text-mode consumers (CLI summaries, log-style readers) get the
+    actionable remediation in the same string they'd see today.
     """
+    diagnostic = exc.to_diagnostics()[0]
+    message = diagnostic.message
+    if diagnostic.suggestions:
+        message = message + "\n\n" + "\n".join(diagnostic.suggestions)
+    return {
+        "response": "",
+        "error": message,
+        "error_class": type(exc).__name__,
+        "model": exc.model or "unknown",
+        "usage": {},
+        "status": "error",
+        "_diagnostic_context": dict(diagnostic.context or {}),
+    }
+
+
+def _error_dict_for_timeout(model: str, message: str) -> dict[str, Any]:
+    """Build the error-dict for the in-thread FuturesTimeoutError path.
+
+    Distinct from LiteLLM's ``Timeout`` (which is now ``LLMTransientError``).
+    This path fires only for the inner ``ThreadPoolExecutor`` per-call
+    timeout — when the LiteLLM call itself hung beyond ``timeout`` seconds.
+    The orphan worker thread is still holding the connection open, so we
+    do NOT retry (would create duplicate in-flight requests).
+    """
+    from pflow.core.diagnostic import LLM_FAILURE_CATEGORY
+
+    return {
+        "response": "",
+        "error": message,
+        "error_class": "TimeoutError",
+        "model": model,
+        "usage": {},
+        "status": "error",
+        "_diagnostic_context": {
+            "category": LLM_FAILURE_CATEGORY,
+            "error_class": "TimeoutError",
+            "model": model,
+            "kind": "pool_timeout",
+        },
+    }
+
+
+def _error_dict_for_generic_failure(model: str, exc: Exception, attempts: int) -> dict[str, Any]:
+    """Build the error-dict for ``exec_fallback`` after retry exhaustion.
+
+    Catches non-deterministic failures that escaped ``_call_llm`` AND any
+    ``LLMTransientError`` whose retry budget was exhausted. We can't call
+    ``to_diagnostics()`` because the caught exception may be any type
+    (network errors, future LiteLLM exception classes, etc.).
+    """
+    from pflow.core.diagnostic import LLM_FAILURE_CATEGORY
+
+    if "timed out" in str(exc).lower():
+        message = (
+            f"LLM call timed out after {attempts} attempts. Model: {model}. Increase timeout or check API connectivity."
+        )
+        error_class = "TimeoutError"
+        kind = "retry_exhausted_timeout"
+    else:
+        message = f"LLM call failed after {attempts} attempts. Model: {model}. Error: {exc}"
+        error_class = type(exc).__name__
+        kind = "retry_exhausted"
     return {
         "response": "",
         "error": message,
@@ -46,24 +114,13 @@ def _error_dict(model: str, error_class: str, message: str) -> dict[str, Any]:
         "model": model,
         "usage": {},
         "status": "error",
+        "_diagnostic_context": {
+            "category": LLM_FAILURE_CATEGORY,
+            "error_class": error_class,
+            "model": model,
+            "kind": kind,
+        },
     }
-
-
-def _api_key_tip(detected_model: str | None) -> str:
-    """Build the per-call API-key tip line.
-
-    When LiteLLM has detected at least one configured key, surface which
-    model that key supports so the agent can pivot to a known-good
-    identifier. Otherwise tell the agent to set one up — the no-keys case
-    used to print an empty tip, which silently buried the root cause.
-    """
-    if detected_model:
-        return f"Tip: Your API key supports '{detected_model}'."
-    return (
-        "Tip: No LLM keys detected. "
-        "Run 'pflow settings set-env ANTHROPIC_API_KEY <value>' "
-        "(or OPENAI_API_KEY / GEMINI_API_KEY) to configure one."
-    )
 
 
 class LLMNode(Node):
@@ -234,7 +291,7 @@ class LLMNode(Node):
         # unlike the previous monkey-patched lookup which read thread-local
         # state from the worker thread (where it was never registered).
         # See plan: /Users/andfal/.claude/plans/magical-swinging-taco.md
-        collector = shared.get("_trace_collector")
+        collector = shared.get("__trace_collector__")
         node_id = getattr(self, "node_id", None)
         if collector is not None and node_id is not None:
             prep_res["_trace_hook"] = collector.get_trace_hook(node_id)
@@ -257,9 +314,14 @@ class LLMNode(Node):
         )
 
         # The adapter raises typed LLMCallError subclasses for deterministic
-        # provider failures. Catch each at this single boundary so the Node
-        # retry loop sees a normal return and doesn't burn three attempts on
-        # a permanent failure. See pflow.core.llm_client.complete docstring.
+        # provider failures and LLMTransientError for transient ones. We
+        # catch the deterministic ones at this single boundary (preventing
+        # the Node retry loop from burning three attempts on a permanent
+        # failure) and re-raise transient ones so the retry loop fires.
+        # The exception's own to_diagnostics() override produces the rich
+        # user-facing message + structured context — the LLMNode just
+        # consumes it. See pflow.core.llm_client.complete docstring and
+        # pflow.core.exceptions for the typed hierarchy.
         model = prep_res["model"]
         try:
             adapter_response = complete(
@@ -275,62 +337,25 @@ class LLMNode(Node):
                 timeout=prep_res.get("timeout"),
                 trace_hook=trace_hook,
             )
-        except UnknownModelError as e:
-            # Lazy import keeps llm_config off the LLMNode import graph for
-            # the common (non-error) path.
-            from pflow.core.llm_config import get_default_llm_model
-
-            tip = _api_key_tip(get_default_llm_model())
-            if e.reason == "missing_prefix":
-                # Model name may be valid; the prefix is what's missing.
-                # Lead with the precise diagnosis so the agent doesn't waste
-                # an iteration trying a different model name.
-                message = (
-                    f"Model '{model}' is missing a provider prefix. "
-                    f"Try a prefixed identifier like 'openai/{model}', "
-                    f"'anthropic/claude-sonnet-4-5', or 'gemini/gemini-2.5-flash'. "
-                    f"{tip} "
-                    f"See https://docs.litellm.ai/docs/providers for the full "
-                    f"list of supported providers."
-                )
-            else:
-                # Prefix is recognized; the model name doesn't exist there.
-                message = (
-                    f"Unknown model: {model}. "
-                    f"The provider didn't recognize this model name. "
-                    f"{tip} "
-                    f"See https://docs.litellm.ai/docs/providers for supported "
-                    f"models, or run 'pflow settings llm show' to see your "
-                    f"configured defaults."
-                )
-            return _error_dict(model, "UnknownModelError", message)
-        except MissingApiKeyError as e:
-            # Append str(e) so a permission-denied case ("API key for model
-            # 'X' lacks permission ...") isn't drowned out by the env-var
-            # advice — the remediation differs (request access vs set a key).
-            return _error_dict(
-                model,
-                "MissingApiKeyError",
-                f"API key required for model: {model}. "
-                f"Set the appropriate environment variable "
-                f"(e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) "
-                f"or run 'pflow settings set-env <KEY> <value>'. "
-                f"Detail: {e} "
-                f"See https://docs.litellm.ai/docs/providers for "
-                f"provider-specific key names (Bedrock, Azure, Vertex, ...).",
-            )
+        except LLMTransientError:
+            # Transient: re-raise so the Node retry loop catches it and
+            # retries. exec_fallback will fire if all retries are exhausted.
+            raise
         except LLMCallError as e:
-            # InvalidRequestError and any future LLMCallError subclass without
-            # a dedicated branch. Preserves str(e) so the provider's message
-            # reaches the user (e.g. "temperature may only be set to 1 when
-            # thinking is enabled").
-            return _error_dict(model, type(e).__name__, str(e))
+            # Deterministic: catch at single boundary, build error dict from
+            # the exception's own to_diagnostics() override. Covers
+            # UnknownModelError, MissingApiKeyError, InvalidRequestError, and
+            # any future deterministic subclass automatically.
+            return _error_dict_from_exception(e)
 
         return {
             "response": adapter_response.text,
             "usage": adapter_response.usage,
             "model": adapter_response.model,
             "has_schema": adapter_response.has_schema,
+            # Pass adapter warnings through to post() so they can be lifted
+            # into shared["__warnings__"] for JSON-output visibility.
+            "warnings": adapter_response.warnings,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -361,9 +386,10 @@ class LLMNode(Node):
             # Retrying timeouts is harmful: the orphan thread from this attempt
             # is still running the API call, so retry would create duplicate
             # in-flight requests (wasting money and adding rate-limit pressure).
-            return _error_dict(
+            # Distinct from LiteLLM's Timeout (now LLMTransientError) — that
+            # path does retry; this one explicitly does not.
+            return _error_dict_for_timeout(
                 prep_res["model"],
-                "TimeoutError",
                 f"LLM call timed out after {timeout}s. "
                 f"Model: {prep_res['model']}. "
                 f"Increase timeout or check API connectivity.",
@@ -384,17 +410,7 @@ class LLMNode(Node):
 
         # Check for error first
         if isinstance(exec_res, dict) and exec_res.get("status") == "error":
-            shared["error"] = exec_res.get("error", "Unknown error")
-            # Surface the machine-parseable cause field so JSON-mode consumers
-            # and downstream nodes can branch on the exception type without
-            # parsing prose ("UnknownModelError" / "MissingApiKeyError" /
-            # "InvalidRequestError" / "TimeoutError" / type(exc).__name__ for
-            # unclassified failures from exec_fallback).
-            error_class = exec_res.get("error_class")
-            if error_class is not None:
-                shared["error_class"] = error_class
-            shared["response"] = ""
-            shared["llm_usage"] = {}
+            self._propagate_error_to_shared(shared, exec_res)
             return "error"  # Return error action so workflow error handling can respond
 
         raw_response = exec_res["response"]
@@ -425,14 +441,50 @@ class LLMNode(Node):
             # Empty dict per spec when usage unavailable
             shared["llm_usage"] = {}
 
-        # Parse response — schema mode or plain text
+        # Surface adapter warnings (e.g. empty-response trap on reasoning
+        # models) into __warnings__ so JSON consumers see them and the
+        # workflow status shifts to DEGRADED. setdefault routes __*__ keys
+        # to root via the NamespacedSharedStore proxy contract; subscript
+        # write hits the returned root dict. (See namespaced_store.py
+        # __setitem__ rules — direct write precedent at batch_executor.py
+        # ~812-814.) Each warning is a dict with `kind`/`text`/`context`
+        # — runner._extract_runtime_warnings dispatches on `kind` to build
+        # the right Diagnostic.
+        warnings_list = exec_res.get("warnings") or []
+        # node_id is a compiler-set dynamic attribute (compilation/compiler.py:299).
+        node_id = getattr(self, "node_id", None)
+        if warnings_list and node_id is not None:
+            # In v1 the adapter emits at most one warning per call. If a
+            # future case needs multiple, change the contract to a list value.
+            shared.setdefault("__warnings__", {})[node_id] = warnings_list[0]
+
+        # Parse response — schema mode or plain text. Schema mode goes
+        # through json.loads first (today's contract); LLMResponseParseError
+        # would also be raisable here in a future version that uses
+        # parse_structured_response, but right now LLMNode's schema path is
+        # the inline json.loads. We catch the typed exception to surface
+        # error_class consistently with the _call_llm path.
         if exec_res["has_schema"]:
             try:
                 shared["response"] = json.loads(raw_response)
             except json.JSONDecodeError as e:
-                # Preserve raw response for downstream fallback parsing
+                # Build the same error dict shape as _call_llm so the runtime
+                # path produces the same structured Diagnostic. Use
+                # LLMResponseParseError so the override produces the right
+                # remediation suggestions.
+                from pflow.core.exceptions import LLMResponseParseError
+
+                err = LLMResponseParseError(
+                    f"Structured output JSON parse failed: {e}",
+                    model=exec_res.get("model"),
+                )
+                error_dict = _error_dict_from_exception(err)
+                # Preserve raw response for downstream fallback parsing —
+                # contract preserved from the previous behavior. Usage was
+                # captured above (the call succeeded; only parsing failed),
+                # so preserve_usage=True keeps shared["llm_usage"] intact.
                 shared["response"] = raw_response
-                shared["error"] = f"Structured output JSON parse failed: {e}"
+                self._propagate_error_to_shared(shared, error_dict, response_already_set=True, preserve_usage=True)
                 return "error"
         else:
             # Unstructured output: strip code block fences (LLM transport artifact), keep as string
@@ -440,16 +492,53 @@ class LLMNode(Node):
 
         return "default"
 
+    def _propagate_error_to_shared(
+        self,
+        shared: dict[str, Any],
+        exec_res: dict[str, Any],
+        *,
+        response_already_set: bool = False,
+        preserve_usage: bool = False,
+    ) -> None:
+        """Write the error-dict fields to shared store.
+
+        Single seam for every error path's shared-store mutation:
+        ``_call_llm`` typed-exception catches, the FuturesTimeoutError path
+        in ``exec``, ``exec_fallback`` after retry exhaustion, and the
+        JSON-parse failure path in ``post``. Surfaces the structured fields
+        an agent needs to discriminate failure modes:
+
+        - ``shared["error"]`` — the user-facing prose
+        - ``shared["error_class"]`` — type(exc).__name__ for programmatic branching
+        - ``shared["_diagnostic_context"]`` — full structured context dict
+          lifted by ``executor_service._enrich_error_from_node_output`` into
+          the runtime Diagnostic that reaches JSON output
+
+        ``preserve_usage=True`` keeps ``shared["llm_usage"]`` intact for
+        the JSON-parse path (the call itself succeeded; usage was captured
+        before parsing). All other error paths zero it out.
+        """
+        shared["error"] = exec_res.get("error", "Unknown error")
+        error_class = exec_res.get("error_class")
+        if error_class is not None:
+            shared["error_class"] = error_class
+        diagnostic_context = exec_res.get("_diagnostic_context")
+        if diagnostic_context:
+            shared["_diagnostic_context"] = diagnostic_context
+        if not response_already_set:
+            shared["response"] = ""
+        if not preserve_usage:
+            shared["llm_usage"] = {}
+
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle errors after all retries exhausted.
 
-        Only fires for non-deterministic failures that escape ``_call_llm``.
+        Fires for ``LLMTransientError`` whose retry budget was exhausted
+        AND any non-deterministic failure that escaped ``_call_llm``.
         Deterministic provider errors (``UnknownModelError``,
         ``MissingApiKeyError``, ``InvalidRequestError``) are caught and
         converted to error dicts at the ``_call_llm`` boundary, so they
-        never reach this path. Network timeouts after retry exhaustion,
-        rate limits after retry exhaustion, and other transient errors that
-        didn't recover land here.
+        never reach this path.
 
         The timeout case keeps its specific "Increase timeout or check API
         connectivity" hint because that's the actionable remediation —
@@ -458,15 +547,4 @@ class LLMNode(Node):
         for what's already a string-typed concept across providers.
         """
         model = prep_res.get("model", "unknown")
-        if "timed out" in str(exc).lower():
-            return _error_dict(
-                model,
-                "TimeoutError",
-                f"LLM call timed out after {self.max_retries} attempts. "
-                f"Model: {model}. Increase timeout or check API connectivity.",
-            )
-        return _error_dict(
-            model,
-            type(exc).__name__,
-            f"LLM call failed after {self.max_retries} attempts. Model: {model}. Error: {exc}",
-        )
+        return _error_dict_for_generic_failure(model, exc, self.max_retries)

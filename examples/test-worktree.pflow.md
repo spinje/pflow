@@ -72,7 +72,7 @@ basename $(pwd)
 Analyze task description to determine branch type, name and worktree paths.
 
 - type: llm
-- model: gemini-2.5-flash-lite
+- model: gemini/gemini-2.5-flash-lite
 - temperature: 0.3
 
 ````prompt

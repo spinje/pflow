@@ -244,8 +244,8 @@ class TestFallbackBehavior:
 
         fields = [(f"field{i}", "string") for i in range(100)]
 
-        def mock_parse_error(response, schema):
-            raise LLMCallError("Response text is not valid JSON: ...")
+        def mock_parse_error(response, schema, *, model=None):
+            raise LLMCallError("Response text is not valid JSON: ...", model=model)
 
         monkeypatch.setattr("pflow.registry.smart_filter.parse_structured_response", mock_parse_error)
 

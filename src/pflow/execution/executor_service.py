@@ -30,6 +30,12 @@ _FAILURE_CATEGORY_MAP: dict[str, str] = {
     "shell_failure": "execution_failure",
     "http_failure": "execution_failure",
     "mcp_failure": "execution_failure",
+    # LLM gets its own diagnostic category (not collapsed into
+    # "execution_failure") because agents most commonly cost-gate, retry-gate,
+    # and key-rotate on LLM specifically — and the auth/permission/model-name
+    # remediations are unusually structured. The string is also the constant
+    # at core/diagnostic.py::LLM_FAILURE_CATEGORY; keep them in sync.
+    "llm_failure": "llm_failure",
     "node_action_error": "execution_failure",
     "api_warning": "api_validation",
     "routing_error": "execution_failure",
@@ -285,3 +291,16 @@ def _enrich_error_from_node_output(context: dict[str, Any], node_output: dict[st
         total_fields = len(all_fields)
         if total_fields > MAX_DISPLAYED_FIELDS:
             context["available_fields_total"] = total_fields
+
+    # LLM node data: lift the structured diagnostic context built by the
+    # exception's to_diagnostics() override, so the runtime Diagnostic that
+    # reaches JSON output carries the same structured fields (error_class,
+    # model, reason/kind, etc.) the override produced. LLMNode.post() writes
+    # _diagnostic_context into shared[node_id]; mark_node_failed archives
+    # node_output → __failures__[id]["data"]; this is where it's read.
+    # setdefault preserves any context keys the runtime path already set
+    # (e.g. category from _FAILURE_CATEGORY_MAP).
+    llm_diagnostic_context = node_output.get("_diagnostic_context")
+    if isinstance(llm_diagnostic_context, dict):
+        for key, value in llm_diagnostic_context.items():
+            context.setdefault(key, value)

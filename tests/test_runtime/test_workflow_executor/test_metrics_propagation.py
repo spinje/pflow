@@ -1,7 +1,7 @@
 """Tests for cross-cutting key propagation from parent to child workflows.
 
 Verifies that infrastructure keys (__progress_callback__, __mcp_pool__,
-__warnings__, _trace_collector) are propagated through workflow nesting
+__warnings__, __trace_collector__) are propagated through workflow nesting
 boundaries via WorkflowExecutor._PROPAGATED_KEYS / _create_child_storage().
 
 This ensures progress callbacks reach nested nodes, MCP connection pools
@@ -200,7 +200,7 @@ class TestLLMCallsViaTrace:
         with _setup_mock_imports():
             workflow = compile_workflow(parent_ir, registry=mock_registry)
             shared: dict = dict(workflow.resolved_defaults)
-            shared["_trace_collector"] = trace
+            shared["__trace_collector__"] = trace
             engine = WorkflowEngine(trace_collector=trace)
             engine.run(workflow, shared)
 
@@ -273,7 +273,7 @@ class TestLLMCallsViaTrace:
         with _setup_mock_imports():
             workflow = compile_workflow(parent_ir, registry=mock_registry)
             shared: dict = dict(workflow.resolved_defaults)
-            shared["_trace_collector"] = trace
+            shared["__trace_collector__"] = trace
             engine = WorkflowEngine(trace_collector=trace)
             engine.run(workflow, shared)
 
@@ -383,7 +383,7 @@ class TestCreateChildStorage:
             "__mcp_pool__": mcp_pool,
             "__warnings__": warnings_dict,
             "__registry__": registry,
-            "_trace_collector": trace_collector,
+            "__trace_collector__": trace_collector,
             "__memoization_cache__": memo_cache,
             "_pflow_depth": 0,
             "_pflow_stack": [],
@@ -397,7 +397,7 @@ class TestCreateChildStorage:
         assert child_storage["__mcp_pool__"] is mcp_pool
         assert child_storage["__warnings__"] is warnings_dict
         assert child_storage["__registry__"] is registry
-        assert child_storage["_trace_collector"] is trace_collector
+        assert child_storage["__trace_collector__"] is trace_collector
         assert child_storage["__memoization_cache__"] is memo_cache
 
         # Child params are present
@@ -430,7 +430,7 @@ class TestCreateChildStorage:
         assert "__mcp_pool__" not in child_storage
         assert "__warnings__" not in child_storage
         assert "__registry__" not in child_storage
-        assert "_trace_collector" not in child_storage
+        assert "__trace_collector__" not in child_storage
 
         # Should still have child params and execution context
         assert child_storage["input1"] == "value1"
@@ -447,7 +447,7 @@ class TestCreateChildStorage:
 
         trace_collector = Mock()
         parent_shared: dict = {
-            "_trace_collector": trace_collector,
+            "__trace_collector__": trace_collector,
             "__progress_callback__": Mock(),
             "_pflow_depth": 0,
             "_pflow_stack": [],
@@ -460,20 +460,20 @@ class TestCreateChildStorage:
         assert child_storage is parent_shared
 
         # The propagated keys are naturally present since it's the same dict
-        assert child_storage["_trace_collector"] is trace_collector
+        assert child_storage["__trace_collector__"] is trace_collector
 
-    def test_trace_collector_reference_identity(self):
-        """_trace_collector in child is the same object as in parent.
+    def test__trace_collector___reference_identity(self):
+        """__trace_collector__ in child is the same object as in parent.
 
         This ensures child workflows can detect tracing is active by checking
-        for the presence of _trace_collector in their storage.
+        for the presence of __trace_collector__ in their storage.
         """
         node = WorkflowExecutor()
         node.set_params({"workflow": "dummy.pflow.md"})
 
         trace_collector = Mock()
         parent_shared: dict = {
-            "_trace_collector": trace_collector,
+            "__trace_collector__": trace_collector,
             "_pflow_depth": 0,
             "_pflow_stack": [],
         }
@@ -482,4 +482,4 @@ class TestCreateChildStorage:
         child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
 
         # Same object reference — not a copy
-        assert child_storage["_trace_collector"] is trace_collector
+        assert child_storage["__trace_collector__"] is trace_collector

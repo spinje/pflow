@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
 
 # Canonical list of dynamic attributes the engine/runner attach to exceptions
 # for cross-boundary context threading.  Used by copy_pflow_annotations() and
@@ -146,31 +146,68 @@ class CriticalDiscoveryError(PflowError):
 
 
 class LLMCallError(PflowError):
-    """Raised by the LLM adapter for deterministic provider errors.
+    """Raised by the LLM adapter for provider errors.
 
-    Used when the provider returned a 4xx that retrying cannot fix.
-    Subclasses discriminate the specific failure mode so consumers can
-    construct precise user-facing messages without importing
-    ``litellm.exceptions``:
+    The adapter (``pflow.core.llm_client``) is the SINGLE place where
+    ``litellm.exceptions`` types are translated to typed pflow exceptions.
+    All consumers operate on these typed subclasses without importing
+    ``litellm.exceptions`` themselves.
+
+    **Deterministic subclasses** (4xx that retrying cannot fix):
 
     - ``UnknownModelError``: model identifier not recognized
-      (``NotFoundError``, or ``BadRequestError`` with the
+      (``NotFoundError`` or ``BadRequestError`` with the
       "LLM Provider NOT provided" substring).
     - ``MissingApiKeyError``: API key missing or rejected
       (``AuthenticationError``, ``PermissionDeniedError``).
     - ``InvalidRequestError``: any other deterministic 4xx (bad params,
-      schema violation, content policy, context-window overflow, etc.).
+      schema violation, content policy, context-window overflow).
+    - ``LLMResponseParseError``: model returned a response that doesn't
+      parse against the requested schema (raised post-call by
+      ``parse_structured_response``).
 
-    Consumers in the Node retry loop (LLMNode) catch the typed subclasses
-    at the ``_call_llm`` boundary to convert to error-marked output dicts
-    so the retry loop doesn't burn three attempts on a permanent failure.
+    **Transient subclass** (5xx and rate limits — retry may help):
+
+    - ``LLMTransientError``: ``Timeout``, ``RateLimitError``,
+      ``InternalServerError``. Marker subclass — its presence signals
+      "the Node retry loop should retry; smart_filter / discovery callers
+      should swallow." LLMNode's ``_call_llm`` re-raises it (rather than
+      catching like the deterministic subclasses) so the retry loop can
+      retry the call.
+
     Consumers outside a retry loop (registry/discovery callers,
-    smart_filter) let them propagate or catch the base ``LLMCallError``
-    for graceful degradation.
+    smart_filter) catch the base ``LLMCallError`` for graceful
+    degradation — the umbrella covers every subclass.
 
-    Non-deterministic errors (``Timeout``, ``RateLimitError``, network
-    errors) propagate unwrapped so the caller's retry loop can decide.
+    The structured ``model`` attribute (set on every instance) carries the
+    model identifier as a typed field instead of embedding it in the
+    message. ``to_diagnostics()`` overrides on each subclass produce rich
+    Diagnostics with structured context (``error_class``, ``model``,
+    ``reason``/``kind``) plus user-facing remediation suggestions — the
+    single source of truth for what each error means in pflow.
     """
+
+    def __init__(self, message: str, *, model: str | None = None) -> None:
+        super().__init__(message)
+        self.model = model
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        # Returns a single-element list (PflowError convention; LLMNode
+        # indexes [0]). Subclasses override with richer context + suggestions.
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="LLM Call Failed",
+                source="runtime",
+                context={
+                    "category": LLM_FAILURE_CATEGORY,
+                    "error_class": type(self).__name__,
+                    "model": self.model,
+                },
+                see_also=["llm"],
+            )
+        ]
 
 
 class UnknownModelError(LLMCallError):
@@ -187,13 +224,124 @@ class UnknownModelError(LLMCallError):
     messages — substring-matching on the message text would be fragile.
     """
 
-    def __init__(self, message: str, *, reason: str = "unknown_name") -> None:
-        super().__init__(message)
+    def __init__(self, message: str, *, model: str | None = None, reason: str = "unknown_name") -> None:
+        super().__init__(message, model=model)
         self.reason = reason
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        # Returns single-element list (PflowError convention).
+        if self.reason == "missing_prefix":
+            suggestions = [
+                f"Add a provider prefix to the model identifier "
+                f"(e.g. 'openai/{self.model}', 'anthropic/claude-sonnet-4-5', "
+                f"'gemini/gemini-2.5-flash').",
+                "See https://docs.litellm.ai/docs/providers for the full list of supported providers.",
+                "Run 'pflow settings llm show' to see your configured defaults.",
+            ]
+        else:
+            # unknown_name: prefix is recognized; the model name doesn't exist there.
+            suggestions = [
+                "Check the model name against the provider's current model catalogue.",
+                "Run 'pflow settings llm show' to see your configured defaults.",
+                "See https://docs.litellm.ai/docs/providers for supported models.",
+            ]
+            # Append "your key supports X" hint when a default is detected.
+            # Lazy import keeps llm_config off the exceptions import graph.
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                # Lazy import — keeps llm_config off the exceptions import graph.
+                # Suppressing import errors here is intentional: this hint is
+                # nice-to-have, not load-bearing. If llm_config can't be imported
+                # for any reason, we silently fall back to the generic suggestions.
+                from pflow.core.llm_config import get_default_llm_model
+
+                detected = get_default_llm_model()
+                if detected:
+                    suggestions.append(f"Your configured API key supports '{detected}'.")
+
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Unknown Model",
+                suggestions=suggestions,
+                source="runtime",
+                context={
+                    "category": LLM_FAILURE_CATEGORY,
+                    "error_class": type(self).__name__,
+                    "model": self.model,
+                    "reason": self.reason,
+                },
+                see_also=["llm"],
+            )
+        ]
 
 
 class MissingApiKeyError(LLMCallError):
-    """API key missing, wrong, or lacks permission for the requested model."""
+    """API key missing, wrong, or lacks permission for the requested model.
+
+    ``kind`` discriminates the two sub-cases the adapter detects:
+
+    - ``"missing_key"``: ``AuthenticationError`` from the provider
+      (no key set, or key rejected as invalid).
+    - ``"lacks_permission"``: ``PermissionDeniedError`` from the provider
+      (key is valid but doesn't have access to the requested model).
+
+    Consumers branch on this attribute — substring-matching on the
+    message text would be fragile to upstream rewording.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        kind: str = "missing_key",
+    ) -> None:
+        super().__init__(message, model=model)
+        self.kind = kind
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        # Returns single-element list (PflowError convention).
+        env_var = _derive_env_var_for_model(self.model)
+        if self.kind == "lacks_permission":
+            suggestions = [
+                "Verify the API key has access to this specific model "
+                "(some models require explicit access requests on the provider's dashboard).",
+                "Check whether your provider tier supports this model.",
+                "Try a different model your key is known to support.",
+            ]
+        else:
+            # missing_key
+            example_var = env_var or "ANTHROPIC_API_KEY"
+            suggestions = [
+                f"Set the provider API key as an environment variable (e.g. 'export {example_var}=...').",
+                f"Alternatively, run 'pflow settings set-env {example_var} <value>' to store it in pflow settings.",
+                "See https://docs.litellm.ai/docs/providers for provider-specific key names "
+                "(Bedrock, Azure, Vertex, etc.).",
+            ]
+
+        ctx: dict[str, Any] = {
+            "category": LLM_FAILURE_CATEGORY,
+            "error_class": type(self).__name__,
+            "model": self.model,
+            "kind": self.kind,
+        }
+        if env_var is not None:
+            ctx["env_var"] = env_var
+
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="API Key Missing or Insufficient",
+                suggestions=suggestions,
+                source="runtime",
+                context=ctx,
+                see_also=["llm"],
+            )
+        ]
 
 
 class InvalidRequestError(LLMCallError):
@@ -203,6 +351,95 @@ class InvalidRequestError(LLMCallError):
     rejections, context-window overflow, and any other ``BadRequestError``
     that isn't an unknown-model case.
     """
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        # Returns single-element list (PflowError convention).
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Invalid Request",
+                suggestions=[
+                    "Check the request shape against the provider's documentation. "
+                    "The provider's message above typically identifies the offending parameter.",
+                ],
+                source="runtime",
+                context={
+                    "category": LLM_FAILURE_CATEGORY,
+                    "error_class": type(self).__name__,
+                    "model": self.model,
+                    "provider_message": str(self),
+                },
+                see_also=["llm"],
+            )
+        ]
+
+
+class LLMTransientError(LLMCallError):
+    """Transient LLM provider error (timeout, rate limit, 5xx).
+
+    Marker subclass — no extra attributes. Its presence signals "the Node
+    retry loop should retry this; consumers outside a retry loop should
+    swallow it gracefully." LLMNode's ``_call_llm`` re-raises this rather
+    than catching it (unlike the deterministic ``LLMCallError`` subclasses)
+    so the retry loop sees an exception and can retry.
+
+    Translated from LiteLLM's ``Timeout``, ``RateLimitError``, and
+    ``InternalServerError`` at the adapter seam (``llm_client.complete``).
+    Note: this is distinct from pflow's inner-pool ``FuturesTimeoutError``
+    (the LLMNode-level timeout that orphan-protects the worker thread).
+    """
+
+
+class LLMResponseParseError(LLMCallError):
+    """Model response could not be parsed against the requested schema.
+
+    Raised by ``parse_structured_response`` when ``output_schema`` is set
+    but the model returned text that isn't valid JSON (or doesn't match
+    the schema). Treated as deterministic — retrying the same prompt is
+    likely to produce the same bad response.
+    """
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        # Returns single-element list (PflowError convention).
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Response Parse Failed",
+                suggestions=[
+                    "Verify the requested 'output_schema' matches what the model can produce.",
+                    "Check the raw response in the trace JSON to see what the model actually returned.",
+                    "Consider simplifying the schema if the model consistently fails to match it.",
+                ],
+                source="runtime",
+                context={
+                    "category": LLM_FAILURE_CATEGORY,
+                    "error_class": type(self).__name__,
+                    "model": self.model,
+                },
+                see_also=["llm"],
+            )
+        ]
+
+
+def _derive_env_var_for_model(model: str | None) -> str | None:
+    """Best-effort derivation of the provider env-var name from a model identifier.
+
+    Used by ``MissingApiKeyError.to_diagnostics()`` to surface the
+    expected env-var name. Returns None when the prefix is unrecognized
+    or absent — caller falls back to a generic example.
+    """
+    if not model:
+        return None
+    name = model.lower()
+    if name.startswith("anthropic/") or name.startswith("claude-"):
+        return "ANTHROPIC_API_KEY"
+    if name.startswith("openai/") or name.startswith("gpt-") or name.startswith("o1") or name.startswith("o3"):
+        return "OPENAI_API_KEY"
+    if name.startswith("gemini/") or name.startswith("gemini-"):
+        return "GEMINI_API_KEY"
+    return None
 
 
 class SchemaValidationError(PflowError):

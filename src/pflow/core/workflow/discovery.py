@@ -88,7 +88,7 @@ def find_workflow(
         prompt=formatted_prompt,
         schema=WorkflowDecision.model_json_schema(),
     )
-    result = parse_structured_response(response, WorkflowDecision)
+    result = parse_structured_response(response, WorkflowDecision, model=resolved_model)
 
     logger.info(
         f"find_workflow: found={result['found']}, "

@@ -1818,3 +1818,201 @@ This means: any test that wants to verify the real adapter's behavior (not the m
    - **Adapter as the single source of truth for derived data.** Cost, reasoning tokens, thinking budget, future cache metadata — all extracted/mirrored at `_normalize` so consumers of `AdapterResponse.usage` get a complete picture from one read. Don't make LLMNode mirror request-side state into response-side outputs.
 
 ---
+
+## 34. Session 2026-04-25 (cont.) — Phase A code review #2 + completion plan + 10-step typed-exception architecture
+
+### Context
+
+After §33 closed the deferred-findings doc, the user asked for another `/code-review` to validate the full implementation state. Four agents in parallel: `review-concurrency-safety`, `review-impact-completeness`, `review-silent-failures`, `review-agent-ux`. The chosen four targeted the highest-stakes blindspots for Phase A's specific shape: shared-pattern replacement, threading-model rewrite, null-handling shifts, rewritten error pipeline.
+
+The four agents combined surfaced **3 critical findings + 7 high-value findings + 6 polish items**. The pattern across critical and high findings: §32 had fixed the discriminator-loss / dead-field bug at the adapter→LLMNode seam. The new findings showed **the same pattern recurring at the LLMNode→executor→JSON-output seam** (`error_class` set in shared but never reaching JSON output) and the duplication that pattern creates (rich error remediation only in `LLMNode._call_llm`, missing from every other adapter caller).
+
+### Critical findings
+
+1. **`error_class` is dead at the user-facing JSON boundary.** §32 fixed the field at the LLMNode boundary; agents reading JSON via `pflow --output-format json` never saw it because `executor_service._enrich_error_from_node_output` had branches for HTTP/MCP/shell/template but no LLM branch. NamespacedSharedStore's namespacing routed `shared["error_class"]` into `shared[node_id]["error_class"]`, archived to `__failures__[id]["data"]`, then ignored by `_enrich`. The dead-field pattern §32 caught — recurring one layer up.
+
+2. **`smart_filter` narrow-except misses every LiteLLM transient exception.** Verified at runtime: `litellm.exceptions.Timeout` doesn't inherit from builtin `TimeoutError` — its MRO is `Timeout → APITimeoutError → APIConnectionError → APIError → OpenAIError → Exception`. Same for `RateLimitError` and `InternalServerError`. The catch tuple `(LLMCallError, ConnectionError, TimeoutError, OSError)` was sized to a builtin-exception ladder it can't reach. Network timeouts during smart filtering crash the discovery caller instead of degrading.
+
+3. **`LLMNode.post()` JSON-parse error path skips `error_class`.** §32's table of 6 paths missed this 7th. Schema-mode `json.JSONDecodeError` set `shared["error"]` but never `shared["error_class"]`.
+
+### Plan structure
+
+Wrote `.taskmaster/tasks/task_158/implementation/phase-A-completion-plan.md` (~700 lines) framing the work as **completing the typed-exception architecture** rather than band-aiding each callsite. The architectural thesis: the exception is the source of truth — `LLMCallError.to_diagnostics()` overrides per subclass produce rich Diagnostics with structured context + remediation suggestions. Consumers branch on structured attributes, never on message text. End-state: ~80 lines of duplication (LLMNode's `_error_dict`/`_api_key_tip` helpers + the typed-catch chain) deleted, replaced with ~60 lines of `to_diagnostics()` overrides every consumer benefits from.
+
+**3 plan-review agents in parallel** (`review-plan`, `review-impact-completeness`, `review-validation-consistency`) caught 6 critical gaps + 7 high-value gaps in the plan v1.0 before any code was written. Most important catches:
+- The `_FAILURE_CATEGORY_MAP` add was implicit (would have silently downgraded `"llm_failure"` to `"execution_failure"` without an explicit map entry in `executor_service.py:29-38`).
+- The `_trace_collector` rename radius was 14 production sites + 10 test sites + a load-bearing filter at `workflow_trace.py:313` — the plan listed only 8.
+- **Empty-response warnings via `__warnings__` would be misclassified.** `runner._extract_runtime_warnings` (line 540-580) wraps every `__warnings__` entry without a matching `__failures__` record into a canned `api_warning` Diagnostic with "Inspect upstream inputs..." remediation. The plan's design would have produced wrong remediation for empty-response cases. Resolution: extend `__warnings__` to support both `str` (legacy) and `dict` shapes, with a `kind` discriminator.
+- The string `"llm_failure"` was duplicated between override and map — extracted as `LLM_FAILURE_CATEGORY` constant in `core/diagnostic.py`.
+- `parse_structured_response` raised bare `LLMCallError` with no model arg — needed signature update to thread model through to `to_diagnostics()`.
+- `FuturesTimeoutError` (pflow's inner pool timeout) is semantically distinct from LiteLLM's `Timeout` and must NOT be translated to `LLMTransientError` — the orphan-thread comment explicitly says don't retry.
+
+### Implementation — 10 commits-worth of work landed
+
+Each step verified via `make test` and `make check` before moving to the next.
+
+**Step 1** (`src/pflow/core/exceptions.py`, `src/pflow/core/diagnostic.py`):
+- Added `LLM_FAILURE_CATEGORY = "llm_failure"` constant + `LLM_WARNING_CATEGORY = "llm_warning"` constant + corresponding `CATEGORY_TITLES` entries.
+- Updated `LLMCallError.__init__(message, *, model: str | None = None)` — model is now a structured attribute on every instance.
+- Added `LLMTransientError(LLMCallError)` — marker subclass for `Timeout`/`RateLimitError`/`InternalServerError`. LLMNode re-raises (so retry loop fires); smart_filter / discovery catch the umbrella.
+- Added `LLMResponseParseError(LLMCallError)` — for JSON-parse failures (raised by `parse_structured_response` and the inline JSON-parse path in `LLMNode.post`).
+- Updated `MissingApiKeyError` with `kind: Literal["missing_key", "lacks_permission"]` discriminator (mirrors `UnknownModelError.reason` pattern).
+- Override `to_diagnostics()` on every subclass — produces Diagnostic with structured context (`category="llm_failure"`, `error_class`, `model`, `reason`/`kind`/`provider_message`) + remediation suggestions + `see_also=["llm"]` (verified valid slug).
+- Added `_derive_env_var_for_model(model)` helper — derives `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` from the model prefix for `MissingApiKeyError.to_diagnostics()`'s remediation.
+- The `UnknownModelError` override's "your key supports X" hint is gated behind `contextlib.suppress(Exception)` because `llm_config` import is opportunistic (the override is callable from any path including pre-import contexts).
+
+**Step 2** (`src/pflow/core/llm_client.py`):
+- Extended catch tuple in `complete()` from 4 to 7 LiteLLM exception classes. `_classify_litellm_error` now handles `Timeout`/`RateLimitError`/`InternalServerError → LLMTransientError`. Every typed exception construction passes `model=model`.
+- Added `AdapterResponse.warnings: list[dict[str, Any]]` field. Populated by `_normalize` for empty-content cases. Each entry is a dict with `kind` (machine-parseable discriminator), `text` (human-readable remediation), `context` (structured fields).
+- Replaced `logger.warning(...)` empty-response emission with structured `warnings_list.append(...)`. Covered the full finish_reason matrix:
+  - `length`/`max_tokens` + reasoning model (`thinking_budget > 0` OR `thinking_tokens > 0`) → `"llm_empty_response_reasoning"` with **dual remediation** (max_tokens OR reasoning_effort)
+  - `length`/`max_tokens` + non-reasoning → `"llm_empty_response_max_tokens"` (single max_tokens hint, no misleading reasoning_effort suggestion)
+  - `content_filter` → `"llm_empty_response_content_filter"` (provider blocked output)
+  - `stop` with empty content → `"llm_empty_response_stop"` (model chose to stop)
+  - `None` → `"llm_empty_response_unknown"` (provider didn't report)
+  - `tool_calls` → silent (expected LiteLLM shape when model wanted tools)
+- Lint-driven extraction: `_normalize` complexity hit C901 (12 > 10). Extracted `_detect_empty_response_warnings(*, text, model, output_tokens, ...)` as a module-level helper. The function signature taxonomy makes the cases scannable; the original inline form was dispatched via nested if/elif.
+
+**Step 3** (`src/pflow/nodes/llm/llm.py` — substantive rewrite):
+- DELETED `_error_dict(model, error_class, message)` and `_api_key_tip(detected_model)` helpers (~50 lines).
+- Replaced with three module-level helpers: `_error_dict_from_exception(exc: LLMCallError)` (reads `e.to_diagnostics()` + propagates context), `_error_dict_for_timeout(model, message)` (in-thread pool timeout — distinct from LLMTransientError, marks `kind="pool_timeout"`), `_error_dict_for_generic_failure(model, exc, attempts)` (exec_fallback path — handles retry-exhausted timeouts AND unknown deterministic exceptions).
+- `_call_llm` exception block collapsed from 3 typed-catch branches (~50 lines) to one `except LLMCallError` (10 lines). The `LLMTransientError` re-raise is one line ahead of the umbrella catch:
+  ```python
+  except LLMTransientError:
+      raise  # let retry loop handle
+  except LLMCallError as e:
+      return _error_dict_from_exception(e)
+  ```
+- New helper method `_propagate_error_to_shared(shared, exec_res, *, response_already_set, preserve_usage)` is the single seam for every error path's shared-store mutation. Writes `shared["error"]`, `shared["error_class"]`, `shared["_diagnostic_context"]`, `shared["response"]`, `shared["llm_usage"]`. The `preserve_usage=True` flag keeps usage intact for the JSON-parse path (the call succeeded; only parsing failed). The plan's R-Crit-3 said `LLMResponseParseError`'s shape via `_error_dict_from_exception` — implemented exactly that.
+- `post()` reads `adapter_response.warnings` and writes the first entry to `shared.setdefault("__warnings__", {})[node_id]`. Uses `getattr(self, "node_id", None)` (compiler-set dynamic attribute, mypy-friendly). Inline comment explains the NamespacedSharedStore routing-to-root via dunder dispatch.
+
+**Step 4** (`src/pflow/execution/executor_service.py`):
+- Added `"llm_failure": "llm_failure"` to `_FAILURE_CATEGORY_MAP` (per R-Crit-1, the explicit map entry).
+- Added LLM branch at the end of `_enrich_error_from_node_output`: reads `_diagnostic_context` from `node_output` and merges into `context` via `setdefault` (preserves any keys the runtime path already set, e.g. `category` from `_FAILURE_CATEGORY_MAP`).
+
+**Step 5** (`src/pflow/runtime/node_state.py`, `src/pflow/runtime/engine/engine.py`):
+- Added `FAILURE_CATEGORY_LLM = "llm_failure"` constant.
+- Added `LLMNode → FAILURE_CATEGORY_LLM` to `_NODE_TYPE_FAILURE_CATEGORY` in engine.py (previously the engine fell through to `FAILURE_CATEGORY_NODE_ERROR`, mapped to generic `"execution_failure"`).
+
+**Step 6** (`src/pflow/registry/smart_filter.py`, `src/pflow/cli/find_errors.py`):
+- smart_filter umbrella narrowed to `(LLMCallError, ConnectionError, OSError)`. The bare `TimeoutError` was removed (LiteLLM's Timeout was never caught by it; cold network errors still flow through `ConnectionError`/`OSError`). Inline comment: "Umbrella catch must remain LLMCallError-narrow. Broadening to bare Exception would swallow KeyboardInterrupt, SystemExit, and programming bugs."
+- `cli/find_errors.py::handle_discovery_error` now branches on `LLMCallError` (ahead of the generic `report-a-bug` fallthrough). Calls `e.to_diagnostics()[0]`, surfaces the title + message + suggestions directly. Discovery callers (find/find_workflow) get the rich UX for free without duplicating the remediation logic that lives on the exception.
+
+**Step 7** (rename `_trace_collector` → `__trace_collector__`):
+- 24 sites updated: 8 production source files + 14 test files + 2 CLAUDE.md files. Used `replace_all=true` per file. The literal-string filter at `workflow_trace.py:313` was the load-bearing site (filters trace-internal keys from saved trace output) — its tuple now contains `("__trace_collector__", "_debug_context", "_batch_trace")`.
+- Renaming aligns with existing convention: `__failures__`, `__warnings__`, `__progress_callback__`, `__sub_workflow_events__`, `__memoization_cache__` — all double-dunder. `_trace_collector`'s single underscore was a footgun: `NamespacedSharedStore.__setitem__` routed it into `parent[child_namespace]["_trace_collector"]` for sub-workflows, which happened to work because reads went through the same proxy, but a future iteration over root would silently miss it. The rename routes the key to root deterministically per the proxy's `__*__` bypass rule.
+- Verification grep: `grep -rn '"_trace_collector"\|\'_trace_collector\'' src/pflow/ tests/` returns zero hits.
+
+**Step 8** (`src/pflow/execution/formatters/success_formatter.py`):
+- Mirror `partial_cost_usd`, `pricing_available`, `unavailable_models` to top-level `result` keys when pricing is unavailable. Lint-driven extraction: `format_execution_success` complexity hit C901 (11 > 10). Extracted `_mirror_pricing_tri_state(result, metrics_summary)` helper.
+
+**Step 9** (`src/pflow/core/llm_config.py`):
+- Hardcoded fallback `"gpt-5.2"` → `"openai/gpt-5.2"` (per review-impact-completeness #3 — only OpenAI was unprefixed; Anthropic/Gemini already had prefixes).
+- `get_model_not_configured_help` text examples prefixed accordingly.
+- Existing test asserting on `"gpt-5.2"` updated; new comment about LiteLLM rejecting bare model names.
+
+**Step 10** (doc/example sweep — 17 files):
+- 4 src docs: `src/pflow/guide/features/batch.md`, `src/pflow/guide/nodes/llm.md`, `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md`, `src/pflow/mcp_server/resources/instructions/mcp-sandbox-agent-instructions.md`.
+- 7 mintlify docs: `docs/quickstart.mdx`, `docs/guides/debugging.mdx`, `docs/reference/cli/settings.mdx` (8+ examples updated), `docs/reference/configuration.mdx`, `docs/how-it-works/template-variables.mdx`, `docs/how-it-works/batch-processing.mdx`, `docs/reference/nodes/llm.mdx` (4 examples updated).
+- 4 example workflows: `examples/test_llm_templates.pflow.md`, `examples/test-worktree.pflow.md`, `examples/real-workflows/release-announcements/workflow.pflow.md` (3 model refs), `examples/real-workflows/vision-scraper/workflow.pflow.md`.
+- CLAUDE.md updates: `core/CLAUDE.md` exception hierarchy table refreshed (added `LLMTransientError`/`LLMResponseParseError`, structured discriminator notes); adapter section rewritten to reflect the now-translates-everything contract; "When to use which exception" table gains a row for transient.
+- CHANGELOG (`docs/changelog.mdx`) Unreleased entry expanded with 3 new bullets:
+  - Structured LLM error context in JSON output (`error_class`, `model`, `reason`/`kind`, `category="llm_failure"`).
+  - Empty-response warnings now surface in JSON + DEGRADED status.
+  - Top-level cost tri-state.
+
+### Lint complexity refactor
+
+Two functions hit C901 ("too complex") after additions:
+
+- `_normalize` was 12 (limit 10) — extracted `_detect_empty_response_warnings` as a module-level helper.
+- `format_execution_success` was 11 — extracted `_mirror_pricing_tri_state` as a module-level helper.
+
+Both extractions are net-positive for readability: the named helper makes the dispatch table scannable, and the `_normalize` body now reads as "compute tokens + cache stats + thinking, then ask the helper for warnings, then build cost + return." The lint constraint surfaced an abstraction the inline code was hiding — same lesson as §33's `_LLMSummaryAccumulator` extraction.
+
+Test fix from the same refactor: the existing empty-response tests in `tests/test_core/test_llm_client.py` were rewritten to assert on `response.warnings` (the new structured field) instead of `caplog.text`. Added `reasoning_tokens` arg to `make_litellm_response()` callers where needed to drive the reasoning-vs-non-reasoning model branch correctly.
+
+### Architectural insight: NamespacedSharedStore namespacing rules
+
+While doing the rename and adding `_diagnostic_context` writes, I confirmed (and exploited) the following routing rule from `runtime/engine/namespaced_store.py:43-55`:
+
+- Single-underscore prefix (`_x`) — namespaced. Writes go to `parent[node_id]["_x"]`. This is what we want for `_diagnostic_context`: it lands in `shared[node_id]`, which `mark_node_failed` archives to `__failures__[id]["data"]`, which `_enrich_error_from_node_output` reads.
+- Double-dunder (`__x__`) — bypass namespacing, write at root. This is what we want for `__warnings__` and `__trace_collector__`. The `setdefault("__warnings__", {})[node_id] = ...` idiom works because the outer `setdefault` returns the root dict (dunder bypass), and the subscript write hits that returned root dict.
+- Single-leading dunder OR single-leading underscore without trailing — namespaced. This is why `_trace_collector` was a footgun: it landed in the namespace, not at root, and the rename to `__trace_collector__` routes it to root deterministically.
+
+Verified by the existing `__warnings__` tests (which still pass post-implementation) and the explicit test `test_workflow_trace.py:166-177` that asserts `"__trace_collector__" not in filtered_output` (renamed from `"_trace_collector"`).
+
+### Architectural insight: The PflowError + Diagnostic + executor pipeline
+
+The research phase (Task 1) revealed a load-bearing detail that shaped the design: **the exception object never reaches `exception_to_diagnostics` on the runtime path.** Pre-execution exceptions (from smart_filter, discovery) DO reach it (via `cli/error_output.py::_format_from_exception`). But for runtime exceptions caught inside a node, the exception is consumed at the boundary (LLMNode `_call_llm`'s `except`), converted to an error dict, archived by `mark_node_failed`, and surfaced as a Diagnostic built from scratch by `executor_service.build_error_list`.
+
+This means: **`to_diagnostics()` overrides on `LLMCallError` are valuable for the pre-execution path, but the runtime path needs explicit field forwarding** — hence the `_diagnostic_context: dict` carried in the error dict, lifted by `_enrich_error_from_node_output`. Both paths produce a Diagnostic with the SAME context shape (because both ultimately come from `to_diagnostics()`'s context dict, just via different transport).
+
+This dual-transport design means the override is the single source of truth for the structured fields; no consumer reimplements the remediation logic. Discovery callers, smart_filter (if it ever wanted rich rendering), find_errors, and the runtime path all read from the same `to_diagnostics()` output. The `cli/find_errors.py` LLM branch (Step 6) is the cleanest demonstration: it just calls `e.to_diagnostics()[0]` and renders title + message + suggestions — three lines of code, full UX parity with LLMNode.
+
+### Architectural insight: Why LLM gets its own failure category
+
+Plan-review #2 (review-validation-consistency) raised a parity question: shell, http, mcp all map to generic `"execution_failure"` in `_FAILURE_CATEGORY_MAP`. Why does LLM get its own `"llm_failure"`? Three rationales (documented in plan D9 and inline in `executor_service._FAILURE_CATEGORY_MAP`):
+
+1. **Cost-gating, retry-gating, key-rotation policies are LLM-specific.** Agents most commonly need to filter on LLM failures (cost cap exceeded? retry budget? rotate keys?) — a dedicated category lets them filter without parsing `error_class`.
+2. **Remediations are unusually structured.** "Set ANTHROPIC_API_KEY" / "use a provider prefix like openai/" / "lower reasoning_effort" are categorically different from "shell command exited with code 1" or "HTTP 500". Distinct categories let agent-side rendering specialize.
+3. **The auth/permission/model-name discriminator hierarchy is unique to LLM.** Shell doesn't have a `kind="missing_key"` vs `"lacks_permission"` discrimination. HTTP doesn't have a `reason="missing_prefix"` discrimination. The structured context fields (`reason`, `kind`, `model`, `provider_message`) are all LLM-specific.
+
+Promoting `shell_failure` / `http_failure` / `mcp_failure` to similarly-specific categories is a follow-up if the agent UX justifies it; out of scope for this work.
+
+### Architectural insight: `_propagate_error_to_shared` as a single seam
+
+The original `LLMNode.post()` had error-handling logic inlined in three places (`_call_llm` typed-catch error path, `exec` `FuturesTimeoutError` path, `exec_fallback`, JSON-parse failure). Extracting `_propagate_error_to_shared(shared, exec_res, *, response_already_set, preserve_usage)` as a single mutation seam paid off:
+
+- All four error paths now produce identical shared-store shape (`error`, `error_class`, `_diagnostic_context`, `response`, `llm_usage`).
+- The `preserve_usage=True` flag for the JSON-parse path is the only legitimate divergence — usage was captured before parsing failed, so we want to keep it. Test `test_malformed_json_preserves_usage` pins this.
+- A future code path that needs to surface an error from `LLMNode` just builds an `_error_dict_*` and calls `_propagate_error_to_shared(shared, error_dict)` — no risk of forgetting to set `error_class` or `_diagnostic_context`.
+
+### Operational gotchas and hard-won lessons
+
+1. **Mock signature compatibility on monkeypatched functions.** The test `test_malformed_llm_response_returns_original` in `tests/test_registry/test_smart_filter.py` had `mock_parse_error(response, schema)` — a 2-arg mock. After Step 1 added `model: str | None = None` as a kwarg-only parameter on `parse_structured_response`, the production call (`parse_structured_response(response, schema, model=...)`) crashed the mock with `TypeError: got unexpected keyword argument 'model'`. Fix: signature now `mock_parse_error(response, schema, *, model=None)`. Generalization: when adding kwargs to a function, audit existing test mocks for the function — they may need parameter-list updates.
+
+2. **mypy + dynamic compiler attributes.** `LLMNode.post()` reads `self.node_id` — a compiler-set dynamic attribute (`compilation/compiler.py:299`), not declared on the class. mypy flagged it (`"LLMNode" has no attribute "node_id"`). Fix: `node_id = getattr(self, "node_id", None)`. Same pattern §31 used for `_active_trace_hook`.
+
+3. **Lazy imports for circular-dep avoidance.** `core/exceptions.py` is imported very early; `core/llm_config.py::get_default_llm_model()` calls `clear_model_cache()` and other heavy paths. The `UnknownModelError.to_diagnostics()` "your key supports X" hint is opportunistic — wrapped in `contextlib.suppress(Exception)` around a lazy import. The hint is nice-to-have, not load-bearing; if `llm_config` can't be imported (e.g. test environment, partial module load), we silently fall back.
+
+4. **`parse_structured_response`'s typed-exception migration is shallow.** The function now takes `model: str | None = None` and raises `LLMResponseParseError(..., model=model)`. Three call sites pass model: `core/workflow/discovery.py`, `registry/discovery.py`, `registry/smart_filter.py`. The migration is shallow because `LLMResponseParseError` IS-A `LLMCallError` — every caller catching `LLMCallError` continues to work without changes. Only the structured `model` attribute is new, and it's optional.
+
+5. **Test prose is fragile; structured assertions are robust.** Several existing tests in `tests/test_nodes/test_llm/test_llm.py` asserted on prose strings like `"didn't recognize this model name"` that came from the old hand-built messages. After the override-driven prose change, these assertions broke. Fix: tighten them to assert on `_diagnostic_context["reason"]` / `_diagnostic_context["kind"]` directly. The structured fields are the public contract; prose is rendering. The plan's design decision was right (override-driven), but the test migration has to follow.
+
+### Final state (commit-ready)
+
+- 5306 tests pass (no regressions).
+- `tests/test_execution/test_plan_drift.py` 32/32 green throughout every step.
+- `make check` clean (ruff, ruff-format, mypy, deptry).
+- Architectural seal verified: `grep -rn 'import litellm\.exceptions' src/pflow/` returns exactly 1 match (`core/llm_client.py:35`).
+- Diff stat: 26 source files + 11 test files + 6 doc/example files = 49 files, 1567 insertions, 378 deletions (net +1189 lines, mostly Diagnostic overrides + structured warnings + tests + docs).
+- LLMNode line-count reduction: ~80 lines of helper logic deleted; replaced with ~25 lines of helper + `_propagate_error_to_shared` (~30 lines). Net ~25 lines removed; clarity significantly improved (single error-path mutation seam).
+
+### What the next agent should know
+
+1. **The implementation is feature-complete but has known loose ends.** See the companion document `scratchpads/task-158-phase-A-completion-loose-ends.md` for the full enumeration. The biggest is **integration test coverage** — the new contract that JSON output `errors[i].context` carries `error_class` / `model` / `reason` / `kind` is verified at unit level only, not end-to-end through `WorkflowRunner`.
+
+2. **No commits made.** All 49 files changed live in the working tree. The user's auto-memory is explicit: never `git add` or `git commit` without permission. Diff is on branch `feat/prompt-caching-lite-llm` against last commit `5a070312`.
+
+3. **Architectural patterns established this session that should propagate to Phase B-G:**
+   - **Override `to_diagnostics()` on every typed exception subclass.** Single source of truth for prose + structured context. Consumers branch on attributes, never on text.
+   - **Adapter is the single seam for ALL exception translation.** No consumer outside `core/llm_client.py` should `import litellm.exceptions`. The grep verifies the seal.
+   - **Failure categories drive the JSON shape AND remediation suggestions.** New failure types (e.g. cache-rendering errors in Phase C) should follow the LLMCallError → `to_diagnostics()` override → `_FAILURE_CATEGORY_MAP` entry → `_enrich_error_from_node_output` branch chain.
+   - **Use `__*__` keys for cross-cutting shared-store state.** Single-underscore-prefix keys land in NamespacedSharedStore namespaces (which is correct for per-node data like `_diagnostic_context`); double-dunder keys bypass to root (correct for cross-cutting state like `__warnings__`, `__trace_collector__`).
+   - **Lint complexity warnings are signal, not noise.** Both C901 hits this session (`_normalize`, `format_execution_success`) surfaced abstractions that the inline code was hiding. Don't suppress; extract.
+
+4. **Phase A code review #2 closure state:** all 3 critical findings + 7 high-value findings addressed; 6 polish items deliberately deferred (documented in the loose-ends doc).
+
+5. **Two open user-decisions still open from §33:** CHANGELOG version label (`Unreleased` vs version bump) and Gemini PR #15226 fix re-verification on 1.82.6 (~$0.001 spike). Neither blocks Phase B-G plan writing.
+
+### Branch summary (since `8349df88` baseline — full Phase A)
+
+```
+8349df88 ready for phase 0 + a    ← baseline
+[15 commits §27-§33]
+5a070312 refactor(llm): complete adapter seam — typed exception translation for all deterministic LiteLLM errors
+[uncommitted: 49 files for Phase A code review #2 closure]    ← current working tree
+```
+
+---

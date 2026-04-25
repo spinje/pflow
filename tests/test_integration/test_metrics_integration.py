@@ -580,7 +580,7 @@ class TestWrapperIntegration:
 
         workflow = compile_workflow(workflow_ir, registry)
         shared: dict[str, Any] = dict(workflow.resolved_defaults)
-        shared["_trace_collector"] = trace
+        shared["__trace_collector__"] = trace
         engine = WorkflowEngine(metrics_collector=metrics, trace_collector=trace)
         engine.run(workflow, shared)
 

@@ -91,7 +91,7 @@ def find_components(
         prompt=formatted_prompt,
         schema=ComponentSelectionSchema.model_json_schema(),
     )
-    result = parse_structured_response(response, ComponentSelectionSchema)
+    result = parse_structured_response(response, ComponentSelectionSchema, model=resolved_model)
 
     # Clear workflow_names (current behavior — nested workflow selection not yet integrated)
     if result.get("workflow_names"):

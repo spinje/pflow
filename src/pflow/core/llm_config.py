@@ -97,10 +97,12 @@ def _detect_default_model() -> Optional[str]:
         logger.debug("Using Google Gemini (key detected)")
         return "gemini/gemini-3-flash-preview"
 
-    # Try OpenAI last (common fallback)
+    # Try OpenAI last (common fallback). Provider prefix is required —
+    # LiteLLM rejects bare model names with a "LLM Provider NOT provided"
+    # BadRequestError that pflow surfaces as UnknownModelError(reason="missing_prefix").
     if _has_provider_key("openai"):
         logger.debug("Using OpenAI GPT (key detected)")
-        return "gpt-5.2"
+        return "openai/gpt-5.2"
 
     logger.debug("No LLM API keys detected")
     return None
@@ -330,9 +332,9 @@ Configure using one of these methods:
   2. Specify model in workflow (per-node, in .pflow.md):
      ### {node_id}
      - type: llm
-     - model: gpt-5.2
+     - model: openai/gpt-5.2
 
   3. Set pflow default model (overrides auto-detection):
-     pflow settings llm set-default gpt-5.2
+     pflow settings llm set-default openai/gpt-5.2
 
 To see configured pflow models: pflow settings llm show"""

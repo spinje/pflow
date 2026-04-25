@@ -222,7 +222,7 @@ class WorkflowTraceCollector:
         # writer that populates self.llm_prompts[node_id] on before_call.
         # Sub-workflow LLM events end up in their own collector's
         # llm_prompts dict (each engine.run installs its own collector into
-        # shared["_trace_collector"]); the parent's WorkflowExecutor event
+        # shared["__trace_collector__"]); the parent's WorkflowExecutor event
         # then aggregates child events via sub_workflow_events.
         # The LLM node does NOT write "prompt" to shared, so the
         # node_output fallback only fires for legacy/external callers.
@@ -310,7 +310,7 @@ class WorkflowTraceCollector:
                 # Skip internal keys
                 if isinstance(key, str) and key.startswith("__") and key not in ("__metrics__",):
                     continue
-                if key in ("_trace_collector", "_debug_context", "_batch_trace"):
+                if key in ("__trace_collector__", "_debug_context", "_batch_trace"):
                     continue
                 result[key] = self._sanitize_for_json(value)
             return result

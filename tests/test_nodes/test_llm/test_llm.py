@@ -196,13 +196,19 @@ class TestLLMNode:
 
         Adapter translates ``litellm.exceptions.NotFoundError`` to
         ``UnknownModelError(reason="unknown_name")`` (verified in
-        ``test_llm_client.py``). LLMNode discriminates on the ``reason``
-        attribute to construct the right user-facing message.
+        ``test_llm_client.py``). LLMNode consumes ``e.to_diagnostics()``
+        and propagates the rich structured context to ``shared``.
+
+        Tightened from substring-on-prose to assertions on structured
+        ``_diagnostic_context`` fields (the contract agents actually
+        consume via JSON output). Prose can change; structure is the
+        public API.
         """
 
         def raise_unknown_model(**kwargs):
             raise UnknownModelError(
                 f"Unknown model: {kwargs.get('model', 'unknown')}",
+                model=kwargs.get("model"),
                 reason="unknown_name",
             )
 
@@ -215,18 +221,21 @@ class TestLLMNode:
         action = node.run(shared)
 
         assert action == "error"
+        # Structured contract that agents see in JSON output:
+        ctx = shared["_diagnostic_context"]
+        assert ctx["category"] == "llm_failure"
+        assert ctx["error_class"] == "UnknownModelError"
+        assert ctx["model"] == "anthropic/claude-foo-99"
+        assert ctx["reason"] == "unknown_name"
+        # error_class also surfaced as a top-level shared field for compat
+        assert shared["error_class"] == "UnknownModelError"
+        # Prose carries the model name and remediation guidance — exact
+        # phrasing comes from to_diagnostics() and is allowed to evolve.
         error_msg = shared["error"]
-        # Unknown-name path leads with the verbatim model name and routes the
-        # agent to the configured-defaults command (not the missing-prefix hint).
-        assert "Unknown model: anthropic/claude-foo-99" in error_msg
-        assert "didn't recognize this model name" in error_msg
+        assert "anthropic/claude-foo-99" in error_msg
         assert "pflow settings llm show" in error_msg
-        # Tip is always present — under PYTEST_CURRENT_TEST get_default_llm_model
-        # returns None, so the no-keys variant fires.
-        assert "Tip:" in error_msg
-        assert "No LLM keys detected" in error_msg
-        # Machine-parseable cause field
-        # (covered by test_unknown_model_error_class_field below).
+        # Suggestions are appended to the prose for text-mode consumers
+        assert "https://docs.litellm.ai/docs/providers" in error_msg
         assert shared["response"] == ""
         assert shared["llm_usage"] == {}
 
@@ -239,7 +248,7 @@ class TestLLMNode:
         """
 
         def raise_unknown_model(**kwargs):
-            raise UnknownModelError("Unknown model: x", reason="unknown_name")
+            raise UnknownModelError("Unknown model: x", model=kwargs.get("model"), reason="unknown_name")
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_unknown_model)
 
@@ -251,10 +260,11 @@ class TestLLMNode:
         assert shared["error_class"] == "UnknownModelError"
 
     def test_unknown_model_with_detected_key_shows_supports_tip(self, monkeypatch):
-        """When an API key IS configured, the tip names the model that key supports.
+        """When an API key IS configured, suggestions name the model that key supports.
 
-        Pins the tip's "discovered key" branch (otherwise unreachable in tests
-        because PYTEST_CURRENT_TEST disables key detection in llm_config).
+        Pins the override's "discovered key" branch (otherwise unreachable
+        in tests because PYTEST_CURRENT_TEST disables key detection in
+        llm_config).
         """
         monkeypatch.setattr(
             "pflow.core.llm_config.get_default_llm_model",
@@ -262,7 +272,7 @@ class TestLLMNode:
         )
 
         def raise_unknown_model(**kwargs):
-            raise UnknownModelError("Unknown model: x", reason="unknown_name")
+            raise UnknownModelError("Unknown model: x", model=kwargs.get("model"), reason="unknown_name")
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_unknown_model)
 
@@ -272,41 +282,48 @@ class TestLLMNode:
         node.run(shared)
 
         error_msg = shared["error"]
-        assert "Tip: Your API key supports 'anthropic/claude-sonnet-4-5'" in error_msg
-        assert "No LLM keys detected" not in error_msg
+        assert "anthropic/claude-sonnet-4-5" in error_msg
 
-    # Test Criteria 15: MissingApiKeyError → friendly message + Detail line
+    # Test Criteria 15: MissingApiKeyError → structured kind discriminator
     def test_needs_key_exception_handling(self, monkeypatch):
-        """The auth sub-case (key missing or wrong).
+        """The missing-key sub-case (auth error, key not set or wrong).
 
         Adapter translates ``litellm.exceptions.AuthenticationError`` to
-        ``MissingApiKeyError`` (verified in ``test_llm_client.py``). LLMNode
-        appends ``str(e)`` as a Detail line so the discriminator the adapter
-        encoded survives to the user.
+        ``MissingApiKeyError(kind="missing_key")`` (verified in
+        ``test_llm_client.py``). LLMNode's structured context exposes the
+        ``kind`` discriminator so agents can branch on auth-vs-permission
+        without parsing prose.
         """
 
         def raise_missing_key(**kwargs):
-            raise MissingApiKeyError(f"API key required for model '{kwargs.get('model', 'unknown')}'")
+            raise MissingApiKeyError(
+                f"API key required for model '{kwargs.get('model', 'unknown')}'",
+                model=kwargs.get("model"),
+                kind="missing_key",
+            )
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_missing_key)
 
         node = LLMNode(wait=0)  # No wait between retries for faster tests
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         action = node.run(shared)
 
         assert action == "error"
+        # Structured contract — auth-vs-permission discriminator
+        ctx = shared["_diagnostic_context"]
+        assert ctx["category"] == "llm_failure"
+        assert ctx["error_class"] == "MissingApiKeyError"
+        assert ctx["kind"] == "missing_key"
+        assert ctx["model"] == "openai/gpt-4o-mini"
+        # env_var derived from model prefix
+        assert ctx["env_var"] == "OPENAI_API_KEY"
+        # Prose carries the remediation hints
         error_msg = shared["error"]
-        assert "API key required" in error_msg
+        assert "OPENAI_API_KEY" in error_msg
         assert "pflow settings set-env" in error_msg
-        # Detail line preserves the adapter's discriminator
-        assert "Detail: API key required for model" in error_msg
-        # Docs URL helps users find provider-specific key names (Bedrock, Azure)
-        assert "https://docs.litellm.ai/docs/providers" in error_msg
-        # Machine-parseable cause field for JSON-mode consumers
         assert shared["error_class"] == "MissingApiKeyError"
-        # Verify empty response and usage as per spec
         assert shared["response"] == ""
         assert shared["llm_usage"] == {}
 
@@ -314,13 +331,16 @@ class TestLLMNode:
         """The permission-denied sub-case: key works, but lacks model access.
 
         Different remediation than missing-key (request access / change tier
-        vs set an env var). The Detail line carries the adapter's
-        "lacks permission" wording so the agent doesn't waste an iteration
-        re-setting an already-valid env var.
+        vs set an env var). Discriminated via the structured ``kind`` field
+        (mirrors the ``UnknownModelError.reason`` pattern §32 introduced).
         """
 
         def raise_permission_denied(**kwargs):
-            raise MissingApiKeyError(f"API key for model '{kwargs['model']}' lacks permission for this request")
+            raise MissingApiKeyError(
+                f"API key for model '{kwargs['model']}' lacks permission for this request",
+                model=kwargs["model"],
+                kind="lacks_permission",
+            )
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_permission_denied)
 
@@ -331,14 +351,15 @@ class TestLLMNode:
         action = node.run(shared)
 
         assert action == "error"
+        # Structured discriminator — distinct from missing_key
+        ctx = shared["_diagnostic_context"]
+        assert ctx["error_class"] == "MissingApiKeyError"
+        assert ctx["kind"] == "lacks_permission"
+        # Prose includes a tier/access remediation, not env-var setup
         error_msg = shared["error"]
-        # The remediation hint stays (covers the common case)
-        assert "pflow settings set-env" in error_msg
-        # The discriminator survives to the user
         assert "lacks permission" in error_msg
         assert "openai/gpt-5-pro" in error_msg
-        # Same error_class as the auth case — agents discriminate via the
-        # message Detail line, not the class name (both are MissingApiKey).
+        assert "tier" in error_msg or "access" in error_msg
         assert shared["error_class"] == "MissingApiKeyError"
 
     def test_invalid_request_error_preserves_provider_message(self, monkeypatch):
@@ -352,7 +373,8 @@ class TestLLMNode:
         def raise_invalid_request(**kwargs):
             raise InvalidRequestError(
                 f"Invalid request for model '{kwargs['model']}': "
-                f"temperature may only be set to 1 when thinking is enabled"
+                f"temperature may only be set to 1 when thinking is enabled",
+                model=kwargs["model"],
             )
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_invalid_request)
@@ -364,12 +386,16 @@ class TestLLMNode:
         action = node.run(shared)
 
         assert action == "error"
+        ctx = shared["_diagnostic_context"]
+        assert ctx["category"] == "llm_failure"
+        assert ctx["error_class"] == "InvalidRequestError"
+        assert ctx["model"] == "anthropic/claude-opus-4-5"
+        # InvalidRequestError surfaces the provider message in context
+        assert ctx["provider_message"]
+        # Prose preserves the provider's actionable text
         error_msg = shared["error"]
         assert "Invalid request" in error_msg
         assert "temperature may only be set to 1" in error_msg
-        # Generic LLMCallError catch uses type(e).__name__ — for any future
-        # LLMCallError subclass without a dedicated branch, the class name
-        # surfaces directly so agents can discriminate.
         assert shared["error_class"] == "InvalidRequestError"
         assert shared["response"] == ""
         assert shared["llm_usage"] == {}
@@ -379,15 +405,14 @@ class TestLLMNode:
 
         Adapter translates ``BadRequestError("LLM Provider NOT provided")`` to
         ``UnknownModelError(reason="missing_prefix")`` (verified in
-        ``test_llm_client.py``). LLMNode's missing-prefix branch leads with
-        the precise diagnosis — not a generic "Unknown model" prefix that
-        would send the agent down the wrong fix path (trying a different name
-        when the name is fine).
+        ``test_llm_client.py``). LLMNode propagates the structured ``reason``
+        so consumers can branch on missing-prefix vs unknown-name.
         """
 
         def raise_missing_prefix(**kwargs):
             raise UnknownModelError(
                 f"Model '{kwargs['model']}' has no provider prefix",
+                model=kwargs["model"],
                 reason="missing_prefix",
             )
 
@@ -400,17 +425,16 @@ class TestLLMNode:
         action = node.run(shared)
 
         assert action == "error"
+        # Structured discriminator — distinct from unknown_name
+        ctx = shared["_diagnostic_context"]
+        assert ctx["error_class"] == "UnknownModelError"
+        assert ctx["reason"] == "missing_prefix"
+        assert ctx["model"] == "gibberish"
+        # Prose includes prefixed alternatives so the agent can pivot
         error_msg = shared["error"]
-        # Missing-prefix diagnosis, not "Unknown model"
-        assert "missing a provider prefix" in error_msg
+        assert "no provider prefix" in error_msg
         assert "gibberish" in error_msg
-        # Suggests prefixed alternatives — including the verbatim model name
-        # with a prefix, since the name itself may be valid.
         assert "openai/gibberish" in error_msg
-        assert "anthropic/" in error_msg
-        # Distinct from the unknown-name branch — must NOT mislead the agent
-        # into thinking the model name itself is wrong.
-        assert "didn't recognize this model name" not in error_msg
 
     # Test Criteria 16: Generic exception → Returns error action with retry count
     def test_generic_exception_handling(self, monkeypatch):

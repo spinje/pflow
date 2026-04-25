@@ -163,7 +163,7 @@ class TestWorkflowTraceCollector:
             duration_ms=5.0,
             success=True,
             node_output={
-                "_trace_collector": "internal",
+                "__trace_collector__": "internal",
                 "_debug_context": "internal",
                 "_batch_trace": "internal",
                 "user_data": "keep_this",
@@ -171,7 +171,7 @@ class TestWorkflowTraceCollector:
         )
 
         filtered_output = collector.events[0]["node_output"]
-        assert "_trace_collector" not in filtered_output
+        assert "__trace_collector__" not in filtered_output
         assert "_debug_context" not in filtered_output
         assert "_batch_trace" not in filtered_output
         assert filtered_output["user_data"] == "keep_this"

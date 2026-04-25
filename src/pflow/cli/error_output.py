@@ -131,7 +131,7 @@ def _format_from_exception(
     if metrics_collector is not None:
         try:
             metrics_collector.record_workflow_end()
-            trace = shared_storage.get("_trace_collector") if shared_storage else None
+            trace = shared_storage.get("__trace_collector__") if shared_storage else None
             llm_calls = trace.collect_llm_calls() if trace else []
             summary_data = metrics_collector.get_summary(llm_calls)
             if summary_data:

@@ -76,7 +76,7 @@ Analyze each image with vision AI to extract content. Uses Gemini's
 vision capabilities for cost-effective batch processing.
 
 - type: llm
-- model: gemini-3-flash-preview
+- model: gemini/gemini-3-flash-preview
 - images: ${item}
 
 ```yaml batch

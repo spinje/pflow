@@ -30,7 +30,7 @@ def _run_with_trace(
     registry = Registry()
     workflow = compile_workflow(ir_json=ir, registry=registry, initial_params=initial_params)
 
-    shared: dict[str, Any] = {"_trace_collector": collector}
+    shared: dict[str, Any] = {"__trace_collector__": collector}
     if initial_params:
         shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
     shared.update(workflow.resolved_defaults)
@@ -327,7 +327,7 @@ class TestSubWorkflowTraceTree:
         registry = Registry()
         workflow = compile_workflow(ir_json=parent_ir, registry=registry)
 
-        shared: dict[str, Any] = {"_trace_collector": collector}
+        shared: dict[str, Any] = {"__trace_collector__": collector}
         shared.update(workflow.resolved_defaults)
 
         engine = WorkflowEngine(trace_collector=collector)
@@ -510,7 +510,7 @@ class TestLLMTraceHookCapture:
     empty. Trace events lost `event["llm_prompt"]` for every literal-prompt
     LLM call. Smoke-verified pre-fix on Gemini-3.
 
-    The new design (`shared["_trace_collector"]` + LLMNode.prep resolves
+    The new design (`shared["__trace_collector__"]` + LLMNode.prep resolves
     the hook BEFORE pool.submit) survives the worker-thread boundary
     because the hook is a closure passed as an explicit arg, not a
     thread-local lookup.
@@ -555,7 +555,7 @@ class TestSubWorkflowTraceCollector:
     practice the lookup never fired due to the worker-thread mismatch, so
     nothing was captured at all.)
 
-    The new design installs the child collector into `shared["_trace_collector"]`
+    The new design installs the child collector into `shared["__trace_collector__"]`
     via the child engine's save/restore — child's LLMNode.prep finds the
     child collector and writes to `child.llm_prompts[child_node_id]`.
     """
@@ -643,7 +643,7 @@ class TestSubWorkflowTraceCollector:
         parent_collector = WorkflowTraceCollector("parent")
         registry = Registry()
         workflow = compile_workflow(ir_json=parent_ir, registry=registry)
-        shared: dict[str, Any] = {"_trace_collector": parent_collector}
+        shared: dict[str, Any] = {"__trace_collector__": parent_collector}
         shared.update(workflow.resolved_defaults)
 
         engine = WorkflowEngine(trace_collector=parent_collector)
@@ -653,7 +653,7 @@ class TestSubWorkflowTraceCollector:
         # child engine's save/restore must have reinstated it. Identity check
         # (`is`) catches any case where save/restore returned an equal-but-
         # different object (e.g. a copy).
-        assert shared["_trace_collector"] is parent_collector
+        assert shared["__trace_collector__"] is parent_collector
 
 
 class TestParallelBatchSubWorkflowTrace:

@@ -190,7 +190,7 @@ Return ONLY the field paths (without type annotations) that the agent needs to s
         )
 
         # Parse structured response
-        result = parse_structured_response(response, FilteredFields)
+        result = parse_structured_response(response, FilteredFields, model=filtering_model)
         included_paths = result["included_fields"]
 
         logger.debug(
@@ -221,14 +221,20 @@ Return ONLY the field paths (without type annotations) that the agent needs to s
 
         return filtered
 
-    except (LLMCallError, ConnectionError, TimeoutError, OSError) as e:
+    except (LLMCallError, ConnectionError, OSError) as e:
         # Graceful degradation for the failure modes filtering can't avoid:
-        # - LLMCallError: deterministic provider rejection (bad model, bad key,
-        #   schema validation, parse failure from parse_structured_response)
-        # - ConnectionError / OSError: network or socket failure
-        # - TimeoutError: request didn't return in time
-        # Programming errors (AttributeError, TypeError, KeyError, etc.)
-        # propagate so they get fixed instead of silently degrading UX.
+        # - LLMCallError: umbrella covers EVERY adapter failure mode —
+        #   deterministic (UnknownModelError, MissingApiKeyError,
+        #   InvalidRequestError, LLMResponseParseError) AND transient
+        #   (LLMTransientError covers Timeout/RateLimit/InternalServerError).
+        #   The architectural seal means we never need to import
+        #   ``litellm.exceptions`` here; one typed catch is enough.
+        # - ConnectionError / OSError: network or socket failure outside the
+        #   adapter (e.g. DNS lookup before httpx is reached).
+        # NOTE: Umbrella catch must remain LLMCallError-narrow. Broadening
+        # to bare Exception would swallow KeyboardInterrupt, SystemExit, and
+        # programming bugs (AttributeError, TypeError, KeyError) that should
+        # surface as test failures instead of silently degrading UX.
         logger.warning(
             f"Smart filter failed, returning all {len(fields)} fields unfiltered: {e}",
             extra={"error_type": type(e).__name__, "error_message": str(e)},

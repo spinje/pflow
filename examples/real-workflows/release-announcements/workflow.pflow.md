@@ -66,7 +66,7 @@ Generate platform-specific announcement drafts using a fast model.
 Each platform gets tailored instructions for formatting and voice.
 
 - type: llm
-- model: gemini-3-flash-preview
+- model: gemini/gemini-3-flash-preview
 
 ```yaml batch
 items:
@@ -100,7 +100,7 @@ Review and critique each draft for platform fit using a different model
 for diversity of perspective.
 
 - type: llm
-- model: gpt-5.2
+- model: openai/gpt-5.2
 
 ```yaml batch
 items:
@@ -153,7 +153,7 @@ DEEPER IMPROVEMENTS:
 Create final polished versions based on critique using the strongest model.
 
 - type: llm
-- model: claude-opus-4.5
+- model: anthropic/claude-opus-4.5
 
 ```yaml batch
 items:

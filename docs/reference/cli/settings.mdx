@@ -85,7 +85,7 @@ Current settings:
     }
   },
   "llm": {
-    "default_model": "gpt-5.2",
+    "default_model": "openai/gpt-5.2",
     "discovery_model": null,
     "filtering_model": null
   },
@@ -328,9 +328,9 @@ pflow settings llm show
 ```
 LLM Model Settings:
 
-  default_model:    gpt-5.2 (configured)
-  discovery_model:  (using default_model → gpt-5.2)
-  filtering_model:  (using default_model → gpt-5.2)
+  default_model:    openai/gpt-5.2 (configured)
+  discovery_model:  (using default_model → openai/gpt-5.2)
+  filtering_model:  (using default_model → openai/gpt-5.2)
 
 Resolution order:
   default:    workflow params → default_model → auto-detect → error
@@ -352,7 +352,7 @@ pflow settings llm set-default <MODEL>
 ```
 
 **Arguments:**
-- `MODEL` - Model identifier (e.g., `gpt-5.2`, `anthropic/claude-sonnet-4-5`, `gemini-3-flash-preview`)
+- `MODEL` - Model identifier (e.g., `openai/gpt-5.2`, `anthropic/claude-sonnet-4-5`, `gemini/gemini-3-flash-preview`). LiteLLM requires the provider prefix.
 
 When set, this model is used instead of auto-detection for:
 - LLM nodes in workflows (when no model specified in params)
@@ -363,13 +363,13 @@ When set, this model is used instead of auto-detection for:
 
 ```bash
 # Set OpenAI model
-pflow settings llm set-default gpt-5.2
+pflow settings llm set-default openai/gpt-5.2
 
 # Set Anthropic model
 pflow settings llm set-default anthropic/claude-sonnet-4-5
 
 # Set Google model
-pflow settings llm set-default gemini-3-flash-preview
+pflow settings llm set-default gemini/gemini-3-flash-preview
 ```
 
 <Tip>
@@ -391,7 +391,7 @@ pflow settings llm set-discovery <MODEL>
 
 ```bash
 # Use a fast, cheap model for discovery
-pflow settings llm set-discovery gemini-3-flash-preview
+pflow settings llm set-discovery gemini/gemini-3-flash-preview
 ```
 
 ### pflow settings llm set-filtering
@@ -409,7 +409,7 @@ pflow settings llm set-filtering <MODEL>
 
 ```bash
 # Use a fast, cheap model for filtering
-pflow settings llm set-filtering gemini-2.5-flash-lite
+pflow settings llm set-filtering gemini/gemini-2.5-flash-lite
 ```
 
 <Tip>

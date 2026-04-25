@@ -206,4 +206,5 @@ class TestDetectDefaultModel:
             clear_model_cache()
             result = _detect_default_model()
 
-            assert result == "gpt-5.2"
+            # Provider prefix is required — LiteLLM rejects bare model names
+            assert result == "openai/gpt-5.2"

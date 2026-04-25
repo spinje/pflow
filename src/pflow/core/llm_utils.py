@@ -9,12 +9,17 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from pflow.core.exceptions import LLMCallError
+from pflow.core.exceptions import LLMCallError, LLMResponseParseError
 
 logger = logging.getLogger(__name__)
 
 
-def parse_structured_response(response: Any, expected_type: type[BaseModel]) -> dict[str, Any]:
+def parse_structured_response(
+    response: Any,
+    expected_type: type[BaseModel],
+    *,
+    model: str | None = None,
+) -> dict[str, Any]:
     """Parse a structured LLM response into a validated dict.
 
     Reads the ``text`` string attribute from the adapter response. For
@@ -25,14 +30,20 @@ def parse_structured_response(response: Any, expected_type: type[BaseModel]) -> 
     Args:
         response: Adapter response object exposing a string ``text`` attribute.
         expected_type: Pydantic model class used to validate the parsed JSON.
+        model: Optional model identifier used to enrich the typed exception's
+            ``model`` attribute. Callers that have model context should pass
+            it so ``to_diagnostics()`` can surface ``context.model`` in JSON
+            output. Defaults to ``None`` for callers without that context.
 
     Returns:
         Parsed and (best-effort) validated response data as a dictionary.
 
     Raises:
-        LLMCallError: If the response shape is invalid, the text is empty,
-            the JSON cannot be parsed, or any other deterministic parsing
-            failure occurs. Provider-side API errors are re-raised unwrapped.
+        LLMResponseParseError: If the response shape is invalid, the text is
+            empty, or the JSON cannot be parsed. The base ``LLMCallError``
+            still catches it for callers that don't discriminate.
+        LLMCallError: For any other deterministic parsing failure. Provider-side
+            API errors are re-raised unwrapped.
     """
     import json
 
@@ -40,28 +51,31 @@ def parse_structured_response(response: Any, expected_type: type[BaseModel]) -> 
         # AdapterResponse.text is a plain string; for structured output it
         # contains JSON matching the schema.
         if not hasattr(response, "text"):
-            raise LLMCallError("Response object has no 'text' attribute")
+            raise LLMResponseParseError("Response object has no 'text' attribute", model=model)
 
         text_output = response.text
 
         if not text_output:
-            raise LLMCallError("LLM returned empty response")
+            raise LLMResponseParseError("LLM returned empty response", model=model)
 
         # Parse the JSON
         try:
             result = json.loads(text_output)
             logger.debug(f"Parsed structured response for {expected_type.__name__}")
         except json.JSONDecodeError as e:
-            raise LLMCallError(f"Response text is not valid JSON: {text_output[:200]}") from e
+            raise LLMResponseParseError(
+                f"Response text is not valid JSON: {text_output[:200]}",
+                model=model,
+            ) from e
 
         # CRITICAL: Validate through Pydantic model and dump with aliases
         # This ensures "from_node"/"to_node" get converted to "from"/"to"
         if isinstance(result, dict):
             # Validate through the expected Pydantic model
             try:
-                model = expected_type.model_validate(result)
+                model_obj = expected_type.model_validate(result)
                 # Dump with aliases to get correct format
-                validated_result: dict[str, Any] = model.model_dump(by_alias=True, exclude_none=True)
+                validated_result: dict[str, Any] = model_obj.model_dump(by_alias=True, exclude_none=True)
                 return validated_result
             except Exception as e:
                 # If validation fails, log and return raw result
@@ -89,4 +103,4 @@ def parse_structured_response(response: Any, expected_type: type[BaseModel]) -> 
             raise  # Re-raise original API errors with full context
 
         # Only wrap actual parsing errors
-        raise LLMCallError(f"Response parsing failed: {e}") from e
+        raise LLMResponseParseError(f"Response parsing failed: {e}", model=model) from e

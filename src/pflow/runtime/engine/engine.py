@@ -19,6 +19,7 @@ from pflow.core.exceptions import CompilationError
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
     FAILURE_CATEGORY_HTTP,
+    FAILURE_CATEGORY_LLM,
     FAILURE_CATEGORY_MCP,
     FAILURE_CATEGORY_NODE_ERROR,
     FAILURE_CATEGORY_ROUTING,
@@ -56,6 +57,7 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
     "ShellNode": FAILURE_CATEGORY_SHELL,
     "HttpNode": FAILURE_CATEGORY_HTTP,
     "MCPNode": FAILURE_CATEGORY_MCP,
+    "LLMNode": FAILURE_CATEGORY_LLM,
 }
 
 
@@ -158,7 +160,7 @@ class WorkflowEngine:
     def run(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
         """Execute a compiled workflow. Returns action string.
 
-        Installs ``self.trace`` into ``shared["_trace_collector"]`` for the
+        Installs ``self.trace`` into ``shared["__trace_collector__"]`` for the
         duration of the run, so LLMNode.prep() can resolve a per-call trace
         hook from the active engine's collector. The save/restore pattern
         correctly handles nested sub-workflow runs (parent's collector is
@@ -172,18 +174,18 @@ class WorkflowEngine:
         #
         # Write-back form (not .pop()) because shared may be a
         # NamespacedSharedStore (sub-workflow path) which doesn't implement
-        # pop. All consumers of _trace_collector use .get() (verified by
+        # pop. All consumers of __trace_collector__ use .get() (verified by
         # grep — runner.py, success_formatter.py, error_formatter.py,
         # cli/error_output.py, workflow_executor.py), so writing None back
         # when the key was originally absent is indistinguishable from
         # absence to every reader.
-        saved_trace = shared.get("_trace_collector")
+        saved_trace = shared.get("__trace_collector__")
         if self.trace is not None:
-            shared["_trace_collector"] = self.trace
+            shared["__trace_collector__"] = self.trace
         try:
             return self._run_inner(workflow, shared)
         finally:
-            shared["_trace_collector"] = saved_trace
+            shared["__trace_collector__"] = saved_trace
 
     def _run_inner(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
         """Run body — split out so run() can wrap with save/restore cleanly."""
@@ -320,7 +322,7 @@ class WorkflowEngine:
 
         # (Step 1 — LLM trace registration — removed in Task 158 Phase A
         # post-cleanup. The trace collector is now installed by `run()`
-        # into ``shared["_trace_collector"]`` and resolved by
+        # into ``shared["__trace_collector__"]`` and resolved by
         # ``LLMNode.prep()`` directly. Lifecycle step numbers below
         # preserved for cross-reference with engine/CLAUDE.md.)
 

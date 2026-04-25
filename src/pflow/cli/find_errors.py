@@ -5,7 +5,7 @@ import sys
 
 import click
 
-from pflow.core.exceptions import CriticalDiscoveryError
+from pflow.core.exceptions import CriticalDiscoveryError, LLMCallError
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,26 @@ def handle_discovery_error(
                 click.echo(f"  {cmd:<35} # {desc}", err=True)
         else:
             click.echo(f"Error: {exception.reason}", err=True)
+        return
+
+    # LLM adapter errors propagating from discovery callers (find_workflow,
+    # find_components). The exception's own to_diagnostics() override
+    # produced the rich Diagnostic — surface its title + message + suggestions
+    # directly so agents get the same actionable text the runtime path
+    # produces, without duplicating the remediation logic here.
+    if isinstance(exception, LLMCallError):
+        diagnostic = exception.to_diagnostics()[0]
+        title = diagnostic.title or "LLM Call Failed"
+        click.echo(f"Error: {title}", err=True)
+        click.echo(f"  {diagnostic.message}\n", err=True)
+        if diagnostic.suggestions:
+            click.echo("Suggestions:", err=True)
+            for hint in diagnostic.suggestions:
+                click.echo(f"  - {hint}", err=True)
+            click.echo("", err=True)
+        click.echo("Alternative methods:", err=True)
+        for cmd, desc in alternative_commands:
+            click.echo(f"  {cmd:<35} # {desc}", err=True)
         return
 
     logger.exception("Unexpected error during %s discovery", discovery_type)

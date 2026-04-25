@@ -63,10 +63,12 @@ PflowError(Exception)                    <- base for all pflow errors
   |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint)
   |- WorkflowExistsError                 <- duplicate workflow save
   |- CriticalDiscoveryError              <- discovery abort (node_name, reason)
-  |- LLMCallError                        <- LLM adapter base for deterministic 4xx (raised by llm_client)
-  |   |- UnknownModelError               <- model identifier not recognized (NotFoundError, no provider prefix)
-  |   |- MissingApiKeyError              <- AuthenticationError, PermissionDeniedError
-  |   |- InvalidRequestError             <- any other BadRequestError (schema, content policy, ...)
+  |- LLMCallError                        <- LLM adapter base for ALL provider errors (raised by llm_client)
+  |   |- UnknownModelError               <- model identifier not recognized (reason="unknown_name"|"missing_prefix")
+  |   |- MissingApiKeyError              <- AuthenticationError or PermissionDeniedError (kind="missing_key"|"lacks_permission")
+  |   |- InvalidRequestError             <- any other BadRequestError (schema, content policy, context window, ...)
+  |   |- LLMTransientError               <- Timeout, RateLimitError, InternalServerError (retry loop catches)
+  |   |- LLMResponseParseError           <- response doesn't parse against output_schema
   |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions)
   |   |- MCPError                        <- user_errors.py
   |   |- OutputResolutionError           <- user_errors.py (failures list)
@@ -84,7 +86,8 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 | Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
 | Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[Diagnostic(...), ...]` |
 | Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
-| LLM adapter — deterministic provider error (4xx that retry won't fix) | `LLMCallError` subclass — `UnknownModelError`, `MissingApiKeyError`, or `InvalidRequestError` | terse `str(e)` carries the provider message; LLMNode catches the typed subclass to construct the user-facing hint |
+| LLM adapter — deterministic provider error (4xx that retry won't fix) | `LLMCallError` subclass — `UnknownModelError(reason)`, `MissingApiKeyError(kind)`, `InvalidRequestError`, or `LLMResponseParseError` | structured `model`, `reason`/`kind` attributes; each subclass overrides `to_diagnostics()` to produce rich Diagnostics. LLMNode catches at `_call_llm` (preventing retry burn) and lifts `_diagnostic_context` into shared. |
+| LLM adapter — transient error (timeout, rate limit, 5xx that retry may help) | `LLMTransientError` (subclass of `LLMCallError`) | marker subclass; LLMNode re-raises so the Node retry loop fires. Smart_filter / discovery callers catch the `LLMCallError` umbrella for graceful degradation. |
 | User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |
 | MCP tool availability errors | `MCPError` (subclass of `UserFriendlyError`) | same + defaults |
 | Output resolution failures (branch-dependent outputs) | `OutputResolutionError` (subclass of `UserFriendlyError`) | `failures=[{...}]` |
@@ -183,7 +186,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### llm_client.py
 
-The pflow-owned LiteLLM adapter — single seam for all LLM calls (LLMNode + 3 discovery callsites). Wraps `litellm.completion`. Owns: messages-list construction, reasoning-kwarg translation (delegating shape detection to `llm_reasoning_map`), `cache_control` placement (Phase B-G), `BadRequestError` → error-marked response (PATTERN EXCEPTION), and response normalization to a stable `AdapterResponse`.
+The pflow-owned LiteLLM adapter — single seam for all LLM calls (LLMNode + 3 discovery callsites). Wraps `litellm.completion`. Owns: messages-list construction, reasoning-kwarg translation (delegating shape detection to `llm_reasoning_map`), `cache_control` placement (Phase B-G), translation of every LiteLLM exception to a typed `LLMCallError` subclass (deterministic → `UnknownModelError`/`MissingApiKeyError`/`InvalidRequestError`; transient → `LLMTransientError`), and response normalization to a stable `AdapterResponse` (with structured `warnings` for empty-content cases that surface to `__warnings__`).
 
 **Cost determination is LiteLLM's responsibility**: the adapter reads `cost_usd` from `response._hidden_params["response_cost"]` (LiteLLM populates this from its built-in pricing data). When LiteLLM doesn't recognize the model (custom endpoints, brand-new releases), `cost_usd` is `None` — consumers must handle that case. The thin `enrich_llm_usage_with_cost(llm_usage)` wrapper ensures the key is always present, mirroring `total_cost_usd` from ClaudeCodeNode if available.
 

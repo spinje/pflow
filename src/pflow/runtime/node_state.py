@@ -37,6 +37,7 @@ class NodeStatus(Enum):
 FAILURE_CATEGORY_SHELL = "shell_failure"
 FAILURE_CATEGORY_HTTP = "http_failure"
 FAILURE_CATEGORY_MCP = "mcp_failure"
+FAILURE_CATEGORY_LLM = "llm_failure"
 FAILURE_CATEGORY_NODE_ERROR = "node_action_error"
 FAILURE_CATEGORY_API_WARNING = "api_warning"
 FAILURE_CATEGORY_ROUTING = "routing_error"

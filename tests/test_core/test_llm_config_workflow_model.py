@@ -143,9 +143,10 @@ class TestGetModelNotConfiguredHelp:
         """Help message has properly formatted markdown workflow examples."""
         help_text = get_model_not_configured_help("my-node")
 
-        # Check that the markdown example includes the node ID and model
+        # Check that the markdown example includes the node ID and a
+        # provider-prefixed model (LiteLLM rejects bare names).
         assert "### my-node" in help_text
-        assert "- model: gpt-5.2" in help_text
+        assert "- model: openai/gpt-5.2" in help_text
 
 
 class TestGetModelForFeature:

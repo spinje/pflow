@@ -330,7 +330,7 @@ Summarize each document with retries and error tolerance.
 
 - type: llm
 - prompt: Summarize: ${doc.content}
-- model: gpt-4
+- model: openai/gpt-4
 - batch:
     items: ${documents}
     as: doc
@@ -356,10 +356,10 @@ Compare quality across model configurations.
 ```yaml batch
 items:
   - data: ${report}
-    model: claude-opus-4-5
+    model: anthropic/claude-opus-4-5
     effort: high
   - data: ${report}
-    model: gpt-5.2
+    model: openai/gpt-5.2
     effort: medium
 as: config
 parallel: true

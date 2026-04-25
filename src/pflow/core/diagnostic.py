@@ -152,6 +152,21 @@ def format_child_provenance(step_id: str, message: str) -> str:
     return f"In step '{step_id}' sub-workflow: {message}"
 
 
+# LLM failure category — single source of truth for the string used by both
+# the typed-exception path (LLMCallError.to_diagnostics() overrides, fired on
+# the pre-execution path via cli/error_output.py::_format_from_exception) AND
+# the runtime path (executor_service._FAILURE_CATEGORY_MAP[FAILURE_CATEGORY_LLM]
+# fired via __failures__). Both paths must produce the same category string;
+# referencing this constant from both prevents silent drift.
+LLM_FAILURE_CATEGORY = "llm_failure"
+
+# LLM warning category — for non-fatal LLM runtime conditions (e.g. empty
+# response from a reasoning model whose output budget went entirely to
+# thinking). Distinct from LLM_FAILURE_CATEGORY because the workflow
+# continues; the call returned a valid (if empty) response.
+LLM_WARNING_CATEGORY = "llm_warning"
+
+
 CATEGORY_TITLES: dict[str, str] = {
     "compilation": "Compilation Failed",
     "max_visits": "Infinite Loop Detected",
@@ -165,6 +180,8 @@ CATEGORY_TITLES: dict[str, str] = {
     "template_error": "Template Resolution Failed",
     "mcp": "MCP Error",
     "cli": "Error",
+    LLM_FAILURE_CATEGORY: "LLM Call Failed",
+    LLM_WARNING_CATEGORY: "LLM Warning",
 }
 
 

@@ -35,7 +35,7 @@ Maximum word count.
 Generate text about a topic in the specified style and word count.
 
 - type: llm
-- model: claude-3.5-haiku
+- model: anthropic/claude-3.5-haiku
 - temperature: 0.7
 - max_tokens: 200
 

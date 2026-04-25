@@ -122,7 +122,7 @@ class WorkflowExecutor(BaseNode):
         "__warnings__",
         "__parser_diagnostics__",
         "__memoization_cache__",
-        "_trace_collector",
+        "__trace_collector__",
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
@@ -334,7 +334,7 @@ class WorkflowExecutor(BaseNode):
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
         # Create child trace collector for sub-workflow visibility
-        parent_trace = parent_shared.get("_trace_collector")
+        parent_trace = parent_shared.get("__trace_collector__")
         child_trace = None
         if parent_trace:
             from pflow.runtime.workflow_trace import WorkflowTraceCollector

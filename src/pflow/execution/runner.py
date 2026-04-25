@@ -266,7 +266,7 @@ class WorkflowRunner:
         duration = time.perf_counter() - start_time
         self._update_metadata(success, workflow_manager, workflow_name, params, duration)
 
-        trace_collector = shared_store.get("_trace_collector", trace_collector)
+        trace_collector = shared_store.get("__trace_collector__", trace_collector)
         if trace_collector:
             trace_collector.set_warnings([
                 diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
@@ -487,7 +487,7 @@ class WorkflowRunner:
 
         shared_store["__mcp_pool__"] = mcp_pool
         shared_store["__memoization_cache__"] = cache
-        shared_store["_trace_collector"] = trace_collector
+        shared_store["__trace_collector__"] = trace_collector
 
         return shared_store
 

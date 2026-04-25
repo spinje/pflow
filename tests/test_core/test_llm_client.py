@@ -30,6 +30,7 @@ import pytest
 from pflow.core.exceptions import (
     InvalidRequestError,
     LLMCallError,
+    LLMTransientError,
     MissingApiKeyError,
     UnknownModelError,
 )
@@ -537,15 +538,47 @@ class TestCompleteErrorPaths:
         assert "gpt-4o-mini" in str(exc_info.value)
 
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_timeout_propagates(self, mock_completion):
-        # Non-deterministic errors propagate so the caller can decide on retry
+    def test_timeout_raises_llm_transient_error(self, mock_completion):
+        # Transient errors (Timeout, RateLimitError, InternalServerError)
+        # are wrapped in LLMTransientError so the architectural seal stays
+        # intact: consumers (LLMNode retry loop, smart_filter) catch the
+        # LLMCallError umbrella without ever importing litellm.exceptions.
+        # LLMNode's _call_llm re-raises this rather than catching it like
+        # the deterministic subclasses, so the Node retry loop fires.
         mock_completion.side_effect = litellm.exceptions.Timeout(
             message="timed out",
             model="gpt-4o-mini",
             llm_provider="openai",
         )
-        with pytest.raises(litellm.exceptions.Timeout):
-            complete(model="gpt-4o-mini", prompt="hi")
+        with pytest.raises(LLMTransientError) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert exc_info.value.model == "openai/gpt-4o-mini"
+        # IS-A LLMCallError — base catch still works for graceful degradation.
+        assert isinstance(exc_info.value, LLMCallError)
+        # Underlying exception preserved for traceback.
+        assert isinstance(exc_info.value.__cause__, litellm.exceptions.Timeout)
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_rate_limit_raises_llm_transient_error(self, mock_completion):
+        mock_completion.side_effect = litellm.exceptions.RateLimitError(
+            message="rate limit exceeded",
+            model="openai/gpt-4o-mini",
+            llm_provider="openai",
+        )
+        with pytest.raises(LLMTransientError) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert isinstance(exc_info.value, LLMCallError)
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_internal_server_error_raises_llm_transient_error(self, mock_completion):
+        mock_completion.side_effect = litellm.exceptions.InternalServerError(
+            message="upstream 500",
+            model="openai/gpt-4o-mini",
+            llm_provider="openai",
+        )
+        with pytest.raises(LLMTransientError) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert isinstance(exc_info.value, LLMCallError)
 
 
 class TestCompleteTraceHook:
@@ -609,82 +642,133 @@ class TestCompleteTraceHook:
 
 
 class TestNormalizeEmptyResponseWarning:
-    """Detect the reasoning-model trap: tokens consumed, no visible text.
+    """Detect empty-content cases the agent needs to know about.
 
-    A reasoning model with max_tokens too low spends its entire budget on
-    internal thinking and emits ``content=None`` with ``finish_reason=length``.
-    Without a warning the workflow surfaces an empty result silently and the
-    user can't tell what happened. The Phase 0 spike on
-    ``gemini-3-flash-preview`` first surfaced this; the warning is a
-    targeted heuristic — no false positives because text="" on a normal
-    successful call is genuinely strange.
+    The adapter populates ``AdapterResponse.warnings`` with structured
+    entries (``kind``, ``text``, ``context``) so consumers can lift them
+    into ``shared["__warnings__"]`` for surfacing in JSON output and the
+    DEGRADED workflow status. Each ``kind`` discriminates a sub-case:
+
+    * ``llm_empty_response_reasoning`` — reasoning model spent budget on
+      internal thinking, emitted no visible text
+    * ``llm_empty_response_max_tokens`` — non-reasoning model hit token cap
+    * ``llm_empty_response_content_filter`` — provider blocked output
+    * ``llm_empty_response_stop`` — model chose to stop without content
+    * ``llm_empty_response_unknown`` — provider didn't report finish_reason
+
+    ``finish_reason="tool_calls"`` is intentionally silent (expected shape
+    when the model wanted tools instead of text).
     """
 
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_warns_when_text_empty_and_finish_reason_length(self, mock_completion, caplog):
-        # Logger gotcha (tests/CLAUDE.md #16): explicit level + logger name
-        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+    def test_reasoning_model_emits_dual_remediation(self, mock_completion):
+        # Reasoning model: thinking_tokens > 0 AND text empty AND finish_reason=length
         mock_completion.return_value = make_litellm_response(
-            text=None,  # provider returned content=None
+            text=None,
             completion_tokens=13,
             finish_reason="length",
+            reasoning_tokens=13,  # entire output budget went to thinking
         )
-        complete(model="gemini/gemini-3-flash-preview", prompt="hi", max_tokens=16)
-        assert "Empty response" in caplog.text
-        assert "gemini-3-flash-preview" in caplog.text
-        assert "13 tokens" in caplog.text
-        assert "max_tokens" in caplog.text
+        response = complete(model="gemini/gemini-3-flash-preview", prompt="hi", max_tokens=16)
+        assert response.warnings, "expected at least one structured warning"
+        warning = response.warnings[0]
+        assert warning["kind"] == "llm_empty_response_reasoning"
+        # Dual remediation: increase max_tokens OR lower reasoning_effort
+        assert "max_tokens" in warning["text"]
+        assert "reasoning_effort" in warning["text"]
+        # Structured context for agent consumers
+        assert warning["context"]["finish_reason"] == "length"
+        assert warning["context"]["thinking_tokens"] == 13
 
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_warns_on_max_tokens_finish_reason_too(self, mock_completion, caplog):
-        # OpenAI uses "max_tokens" instead of "length" for the same condition
-        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+    def test_non_reasoning_model_emits_max_tokens_remediation(self, mock_completion):
+        # Non-reasoning model: thinking_tokens == 0 AND thinking_budget == 0.
+        # Just an output-budget exhaustion; no reasoning_effort to lower.
         mock_completion.return_value = make_litellm_response(
             text=None,
             completion_tokens=50,
             finish_reason="max_tokens",
+            reasoning_tokens=0,
         )
-        complete(model="gpt-5-mini", prompt="hi")
-        assert "Empty response" in caplog.text
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        warning = response.warnings[0]
+        assert warning["kind"] == "llm_empty_response_max_tokens"
+        assert "max_tokens" in warning["text"]
+        # No reasoning_effort hint — would mislead for a non-reasoning model
+        assert "reasoning_effort" not in warning["text"]
 
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_no_warning_on_normal_finish_reason_stop(self, mock_completion, caplog):
-        # Provider returned text="" with finish_reason="stop" — that's a
-        # different (rarer) failure mode and our heuristic shouldn't fire.
-        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+    def test_content_filter_finish_reason(self, mock_completion):
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=5,
+            finish_reason="content_filter",
+        )
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        warning = response.warnings[0]
+        assert warning["kind"] == "llm_empty_response_content_filter"
+        assert "blocked" in warning["text"].lower()
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_stop_with_empty_content(self, mock_completion):
         mock_completion.return_value = make_litellm_response(
             text=None,
             completion_tokens=5,
             finish_reason="stop",
         )
-        complete(model="gpt-4o-mini", prompt="hi")
-        assert "Empty response" not in caplog.text
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        warning = response.warnings[0]
+        assert warning["kind"] == "llm_empty_response_stop"
 
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_no_warning_when_text_present(self, mock_completion, caplog):
+    def test_none_finish_reason(self, mock_completion):
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=5,
+            finish_reason=None,
+        )
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        warning = response.warnings[0]
+        assert warning["kind"] == "llm_empty_response_unknown"
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_tool_calls_finish_reason_is_silent(self, mock_completion):
+        # tool_calls: model wanted tools, no content. Expected shape, not a warning.
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=5,
+            finish_reason="tool_calls",
+        )
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings == []
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_no_warning_when_text_present(self, mock_completion):
         # Successful call — never warn even if finish_reason is unusual
-        caplog.set_level("WARNING", logger="pflow.core.llm_client")
         mock_completion.return_value = make_litellm_response(
             text="hello",
             completion_tokens=10,
             finish_reason="length",
         )
-        complete(model="gpt-4o-mini", prompt="hi")
-        assert "Empty response" not in caplog.text
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings == []
 
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_no_warning_when_zero_tokens_and_empty(self, mock_completion, caplog):
+    def test_no_warning_when_zero_tokens_and_empty(self, mock_completion):
         # No tokens generated AND empty text — provider didn't produce
         # anything; this is a different failure mode (e.g. immediate refusal)
-        # that doesn't match the reasoning-trap heuristic.
-        caplog.set_level("WARNING", logger="pflow.core.llm_client")
+        # that doesn't match the empty-content heuristic.
         mock_completion.return_value = make_litellm_response(
             text=None,
             completion_tokens=0,
             finish_reason="length",
         )
-        complete(model="gpt-4o-mini", prompt="hi")
-        assert "Empty response" not in caplog.text
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings == []
 
 
 class TestEnrichLlmUsageWithCost:

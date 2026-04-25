@@ -37,6 +37,7 @@ import litellm.exceptions
 from pflow.core.exceptions import (
     InvalidRequestError,
     LLMCallError,
+    LLMTransientError,
     MissingApiKeyError,
     UnknownModelError,
 )
@@ -91,10 +92,11 @@ class AdapterResponse:
 
     The adapter ALWAYS returns this on success, NEVER on error. Deterministic
     failures (bad params, unknown model, schema rejection) raise
-    ``LLMCallError`` from ``pflow.core.exceptions``; non-deterministic
-    failures (timeout, auth, network) propagate the underlying LiteLLM
-    exception. Either way, an ``AdapterResponse`` is by construction a
-    successful response.
+    ``LLMCallError`` from ``pflow.core.exceptions``; transient failures
+    (timeout, rate limit, 5xx) raise ``LLMTransientError`` so the caller's
+    retry loop can decide. Other unwrapped exceptions (e.g. arbitrary
+    network errors) propagate raw. Either way, an ``AdapterResponse`` is
+    by construction a successful response.
 
     The ``usage`` dict keys are STABLE — do not rename without coordinated
     updates across LLMNode.post(), trace event capture, MCP, and analyze-cache
@@ -104,12 +106,19 @@ class AdapterResponse:
     * ``input_tokens``, ``output_tokens``, ``total_tokens``: int
     * ``cache_creation_input_tokens``, ``cache_read_input_tokens``: int
     * ``cost_usd``: float | None  (None when LiteLLM doesn't price the model)
+
+    The ``warnings`` list carries structured warnings the adapter detected
+    during normalization (e.g. reasoning-model "tokens consumed but no
+    visible text" trap). Each entry is a dict with at least ``kind`` and
+    ``text``; ``LLMNode.post()`` lifts them into ``shared["__warnings__"]``
+    for surfacing as JSON-output warnings + DEGRADED workflow status.
     """
 
     text: str
     usage: dict[str, Any] = field(default_factory=dict)
     model: str = ""
     has_schema: bool = False
+    warnings: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Public API -----------------------------------------------------------------
@@ -225,18 +234,25 @@ def complete(
     try:
         raw_response = litellm.completion(**kwargs)
     except (
+        # Deterministic errors (4xx that retrying cannot fix).
         litellm.exceptions.BadRequestError,
         litellm.exceptions.AuthenticationError,
         litellm.exceptions.NotFoundError,
         litellm.exceptions.PermissionDeniedError,
+        # Transient errors (timeout, rate limit, 5xx). Wrapped in
+        # LLMTransientError so the architectural seal stays intact:
+        # consumers (LLMNode retry loop, smart_filter) catch the
+        # LLMCallError umbrella without ever importing litellm.exceptions.
+        litellm.exceptions.Timeout,
+        litellm.exceptions.RateLimitError,
+        litellm.exceptions.InternalServerError,
     ) as e:
-        # PATTERN EXCEPTION: deterministic server-side rejection. Retrying
-        # the same bad request will produce the same error, so we raise a
-        # typed pflow exception that LLMNode catches at its _call_llm
-        # boundary (preventing the Node retry loop from burning three
-        # attempts). _classify_litellm_error picks the right subclass so
+        # _classify_litellm_error picks the right typed pflow subclass so
         # consumers can construct precise messages without importing
-        # litellm.exceptions themselves.
+        # litellm.exceptions themselves. Deterministic subclasses are caught
+        # by LLMNode at its _call_llm boundary (preventing the Node retry
+        # loop from burning three attempts on a permanent failure);
+        # LLMTransientError is re-raised by LLMNode so the retry loop fires.
         typed = _classify_litellm_error(e, model=model)
         _emit_trace(
             trace_hook,
@@ -259,30 +275,54 @@ def complete(
 
 
 def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
-    """Translate a deterministic LiteLLM exception to a typed pflow subclass.
+    """Translate a LiteLLM exception to a typed pflow subclass.
 
     The adapter is the single place where ``litellm.exceptions`` types are
     mapped to pflow types. Consumers receive ``UnknownModelError`` /
-    ``MissingApiKeyError`` / ``InvalidRequestError`` and never need to
-    import ``litellm.exceptions`` to discriminate.
+    ``MissingApiKeyError`` / ``InvalidRequestError`` / ``LLMTransientError``
+    and never need to import ``litellm.exceptions`` to discriminate.
+
+    Substring detection on the message text happens ONLY here at the seam
+    (the "LLM Provider NOT provided" check). Past this boundary, consumers
+    branch on structured attributes (``reason``, ``kind``) — never on text.
     """
+    # Transient errors (timeout, rate limit, 5xx). Marker subclass; LLMNode's
+    # _call_llm re-raises rather than catching, so the Node retry loop fires.
+    if isinstance(
+        exc,
+        (
+            litellm.exceptions.Timeout,
+            litellm.exceptions.RateLimitError,
+            litellm.exceptions.InternalServerError,
+        ),
+    ):
+        return LLMTransientError(str(exc), model=model)
+
+    # Deterministic errors
     if isinstance(exc, litellm.exceptions.NotFoundError):
-        return UnknownModelError(f"Unknown model: {model}", reason="unknown_name")
+        return UnknownModelError(f"Unknown model: {model}", model=model, reason="unknown_name")
     if isinstance(exc, litellm.exceptions.AuthenticationError):
-        return MissingApiKeyError(f"API key required for model '{model}'")
+        return MissingApiKeyError(
+            f"API key required for model '{model}'",
+            model=model,
+            kind="missing_key",
+        )
     if isinstance(exc, litellm.exceptions.PermissionDeniedError):
-        return MissingApiKeyError(f"API key for model '{model}' lacks permission for this request")
+        return MissingApiKeyError(
+            f"API key for model '{model}' lacks permission for this request",
+            model=model,
+            kind="lacks_permission",
+        )
     # BadRequestError and its subclasses. The "LLM Provider NOT provided"
     # substring fires when a user passes a bare model name with no provider
-    # prefix — distinct sub-case of UnknownModelError. Substring detection
-    # only happens here at the LiteLLM boundary; consumers branch on the
-    # structured ``reason`` attribute rather than re-parsing the message.
+    # prefix — distinct sub-case of UnknownModelError.
     if "LLM Provider NOT provided" in str(exc):
         return UnknownModelError(
             f"Model '{model}' has no provider prefix",
+            model=model,
             reason="missing_prefix",
         )
-    return InvalidRequestError(f"Invalid request for model '{model}': {exc}")
+    return InvalidRequestError(f"Invalid request for model '{model}': {exc}", model=model)
 
 
 def _build_messages(
@@ -451,22 +491,15 @@ def _normalize(
     if completion_details is not None:
         thinking_tokens = _safe_int(getattr(completion_details, "reasoning_tokens", None))
 
-    # Detect the reasoning-model trap: tokens consumed but no visible text.
-    # Phase 0 surfaced this on gemini-3-flash-preview with max_tokens=16 —
-    # the entire budget went to internal thinking, leaving content=None.
-    # Without this warning the workflow surfaces an empty result with no clue.
-    if not text and output_tokens > 0:
-        finish_reason = getattr(raw.choices[0], "finish_reason", None)
-        if finish_reason in ("length", "max_tokens"):
-            logger.warning(
-                "Empty response from %s: %d tokens consumed, finish_reason=%s. "
-                "Likely cause: max_tokens too low for a reasoning model — the "
-                "budget was spent on internal thinking before any visible "
-                "output could be emitted. Try increasing max_tokens.",
-                model,
-                output_tokens,
-                finish_reason,
-            )
+    finish_reason = getattr(raw.choices[0], "finish_reason", None)
+    warnings_list = _detect_empty_response_warnings(
+        text=text,
+        model=model,
+        output_tokens=output_tokens,
+        thinking_tokens=thinking_tokens,
+        thinking_budget=thinking_budget,
+        finish_reason=finish_reason,
+    )
 
     # LiteLLM populates response_cost on _hidden_params. None when LiteLLM
     # doesn't have pricing for the model — consumers tolerate None already.
@@ -494,7 +527,103 @@ def _normalize(
         usage=usage,
         model=model,
         has_schema=has_schema,
+        warnings=warnings_list,
     )
+
+
+def _detect_empty_response_warnings(
+    *,
+    text: str,
+    model: str,
+    output_tokens: int,
+    thinking_tokens: int,
+    thinking_budget: int,
+    finish_reason: str | None,
+) -> list[dict[str, Any]]:
+    """Build structured warnings for empty-content responses.
+
+    Returns one warning dict per finish_reason case. Each entry has ``kind``
+    (machine-parseable discriminator), ``text`` (human-readable remediation),
+    and ``context`` (structured fields). LLMNode.post() lifts these into
+    ``shared["__warnings__"]`` so JSON consumers see them and the workflow
+    status shifts to DEGRADED.
+
+    ``finish_reason="tool_calls"`` is intentionally silent — that's an
+    expected LiteLLM shape when the model wanted tools instead of text.
+    """
+    if text or output_tokens <= 0:
+        return []
+
+    if finish_reason in ("length", "max_tokens"):
+        is_reasoning_model = thinking_budget > 0 or thinking_tokens > 0
+        if is_reasoning_model:
+            return [
+                {
+                    "kind": "llm_empty_response_reasoning",
+                    "text": (
+                        f"Empty response from {model}: {output_tokens} tokens consumed, "
+                        f"finish_reason={finish_reason}. The budget was spent on internal "
+                        f"thinking before any visible output could be emitted. "
+                        f"Increase max_tokens, or lower reasoning_effort to leave budget for output."
+                    ),
+                    "context": {
+                        "model": model,
+                        "finish_reason": finish_reason,
+                        "output_tokens": output_tokens,
+                        "thinking_budget": thinking_budget,
+                        "thinking_tokens": thinking_tokens,
+                    },
+                }
+            ]
+        return [
+            {
+                "kind": "llm_empty_response_max_tokens",
+                "text": (
+                    f"Empty response from {model}: {output_tokens} tokens consumed, "
+                    f"finish_reason={finish_reason}. Increase max_tokens to allow visible output."
+                ),
+                "context": {
+                    "model": model,
+                    "finish_reason": finish_reason,
+                    "output_tokens": output_tokens,
+                },
+            }
+        ]
+    if finish_reason == "content_filter":
+        return [
+            {
+                "kind": "llm_empty_response_content_filter",
+                "text": (
+                    f"Empty response from {model}: provider blocked the response "
+                    f"(finish_reason=content_filter). Adjust prompt to avoid the trigger."
+                ),
+                "context": {"model": model, "finish_reason": finish_reason},
+            }
+        ]
+    if finish_reason == "stop":
+        return [
+            {
+                "kind": "llm_empty_response_stop",
+                "text": (
+                    f"Empty response from {model}: model returned no content "
+                    f"(finish_reason=stop). Check the prompt — the model chose to stop without output."
+                ),
+                "context": {"model": model, "finish_reason": finish_reason},
+            }
+        ]
+    if finish_reason is None:
+        return [
+            {
+                "kind": "llm_empty_response_unknown",
+                "text": (
+                    f"Empty response from {model}: provider did not report a finish_reason "
+                    f"and no content was returned. Investigate the response shape."
+                ),
+                "context": {"model": model, "finish_reason": None},
+            }
+        ]
+    # finish_reason="tool_calls" or any other future case: silent.
+    return []
 
 
 def _safe_int(value: int | float | None) -> int:
