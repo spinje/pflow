@@ -17,8 +17,9 @@ src/pflow/core/
 ├── types.py                 # TypeSpec, CANONICAL_TYPES, PYTHON_ALIASES_AT_S1 — single source of truth for S1 vocabulary
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection
+├── llm_client.py            # pflow LiteLLM adapter (single seam for all LLM calls)
+├── llm_reasoning_map.py     # Provider/model → reasoning kwargs map
 ├── markdown_parser.py       # .pflow.md → IR dict parser
-├── llm_pricing.py           # LLM pricing and cost calculations
 ├── metrics.py               # Execution metrics collection
 ├── output_controller.py     # Interactive vs non-interactive output
 ├── param_coercion.py        # Type coercion: MCP (dict→JSON str) and CLI (str→declared type)

@@ -290,7 +290,7 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 - `runtime/cache.py`: used by `instrumentation.py` (`_deterministic_json`, `compute_node_cache_key`, `compute_batch_cache_key`)
 - `core/json_utils.py`: used by `template_resolution.py`, `batch_executor.py`
 - `core/param_coercion.py`: used by `template_resolution.py`
-- `core/llm_pricing.py`: used by `instrumentation.py`, `batch_executor.py`
+- `core/llm_client.py`: `enrich_llm_usage_with_cost` used by `instrumentation.py`, `batch_executor.py` (cost-key normalization; cost values come from LiteLLM via the adapter)
 - `core/exceptions.py`: `CompilationError`, `MaxNodeVisitsError`
 
 ## Gotchas

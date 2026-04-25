@@ -461,7 +461,7 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
                 err=True,
             )
         else:
-            click.echo(f"⚠️  Cost unavailable — model not in pricing table: {models_str}", err=True)
+            click.echo(f"⚠️  Cost unavailable — pricing data missing for: {models_str}", err=True)
         return
 
     if total_cost is None or total_cost <= 0:

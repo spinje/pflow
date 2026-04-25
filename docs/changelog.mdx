@@ -29,6 +29,10 @@ rss: true
     ```
   - Plugin packages `llm`, `llm-anthropic`, and `llm-gemini` are no longer pflow dependencies. If you depended on them transitively, install them explicitly.
 
+  <Note>
+    Memo cache entries written before this upgrade lack `cost_usd`. Dry-run plans (`pflow ... --dry-run`) for cached nodes will show `estimated_cost_usd: null` and `cost_basis: upper_bound` until the 24-hour cache TTL refreshes them. New runs are unaffected.
+  </Note>
+
   <Accordion title="What stays the same">
     - All existing `.pflow.md` workflow files run identically — model names, parameters, output shape, error messages.
     - The `cache: bool` per-node memoization opt-out is unchanged.

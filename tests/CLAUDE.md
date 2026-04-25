@@ -97,7 +97,7 @@ Pattern 3's cost is fixture drift: someone edits a fixture "to fix a typo" and s
 ## Autouse Fixtures (tests/conftest.py)
 
 These run automatically for every test — you do NOT need to set them up:
-- **`mock_llm_calls`**: Patches `llm.get_model` with mock. **Skips** tests in `/llm/` directories (they use real APIs).
+- **`mock_llm_client`**: Patches `pflow.core.llm_client.complete` (and each consumer module's `complete` binding) with `MockLLMClient`. Returns `AdapterResponse` instances. **Skips** tests in `/llm/` directories (they use real APIs when `RUN_LLM_TESTS=1`).
 - **`isolate_pflow_config`**: Creates isolated `tmp_path/.pflow/` dir, redirects `Registry`, `SettingsManager`, `MCPServerManager`, and `WorkflowManager` to temp paths. **Pre-populates registry with all core nodes.**
 
 **Surprise**: `isolate_pflow_config` gives every test a registry with all core nodes already loaded. If you need an **empty** registry, create one with an explicit temp path.
@@ -122,21 +122,28 @@ When a test calls an LLM, the mock resolves in this order:
 If your custom mock isn't being used, check that model name AND schema type both match.
 
 **Mock behavior notes**:
-- `response.text()` is a **callable** (not a property) — returns JSON string
-- `call_history` entries **truncate prompts to 500 chars** — don't assert on long prompt content
-- `reset()` clears custom responses and call_history but preserves built-in schema defaults
+- `response.text` is a **string attribute** (not callable). Asserting `response.text()` raises `TypeError`.
+- `response.usage` is a dict — read fields with `usage["input_tokens"]`, etc.
+- `call_history` entries **truncate prompts to 500 chars** — don't assert on long prompt content. `call_history_full` is the parallel untruncated record (used for cache-structure tests).
+- `cost_usd` defaults to `None` in the returned usage dict (mirrors production for unknown-pricing models like Ollama). Tests that need a specific cost should pass `cost_usd=` to `set_response`.
+- `reset()` clears custom responses, costs, and call history; built-in `_DEFAULT_RESPONSES` for known schemas remain available.
 
 ## Conftest Hierarchy
 
 | File | What it provides |
 |------|-----------------|
 | `tests/conftest.py` | Root: auto-applied LLM mock, isolated config, test nodes |
-| `tests/shared/llm_mock.py` | LLM-level mock (configurable responses) |
+| `tests/shared/llm_mock.py` | `MockLLMClient` — patches the adapter seam (`pflow.core.llm_client.complete`) |
 
 To configure LLM mock responses:
 ```python
-def test_something(mock_llm_responses):
-    mock_llm_responses.set_response("anthropic/claude-sonnet-4-5", WorkflowDecision, {"found": True, "workflow_name": "test"})
+def test_something(mock_llm_client):
+    mock_llm_client.set_response(
+        "anthropic/claude-sonnet-4-5",
+        WorkflowDecision,
+        {"found": True, "workflow_name": "test"},
+        cost_usd=0.000123,  # optional — defaults to None
+    )
 ```
 
 ## Pytest Markers

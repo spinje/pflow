@@ -250,7 +250,7 @@ def format_success_as_text(  # noqa: C901
         if partial is not None:
             lines.append(f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_str})")
         else:
-            lines.append(f"⚠️  Cost unavailable — model not in pricing table: {models_str}")
+            lines.append(f"⚠️  Cost unavailable — pricing data missing for: {models_str}")
     elif total_cost and total_cost > 0:
         workflow_metrics = metrics.get("workflow", {})
         total_tokens = workflow_metrics.get("total_tokens", 0)

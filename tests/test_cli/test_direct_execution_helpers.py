@@ -192,7 +192,7 @@ class TestDisplayCostSummary:
         return {"metrics": {"total": total, "workflow": {"total_tokens": 15}}}
 
     def test_unknown_model_shows_warning(self) -> None:
-        """When model not in pricing table, show warning with model name."""
+        """When LiteLLM has no pricing for the model, show warning with model name."""
         result = self._make_formatted_result(pricing_available=False, unavailable_models=["my-custom-model"])
 
         @click.command()

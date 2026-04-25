@@ -332,7 +332,10 @@ LLM Model Settings:
   discovery_model:  (using default_model → gpt-5.2)
   filtering_model:  (using default_model → gpt-5.2)
 
-Resolution: setting → default_model → llm CLI default → auto-detect → error
+Resolution order:
+  default:    workflow params → default_model → auto-detect → error
+  discovery:  discovery_model → default_model → auto-detect → fallback
+  filtering:  filtering_model → default_model → auto-detect → fallback
 
 To configure:
   pflow settings llm set-default <model>
