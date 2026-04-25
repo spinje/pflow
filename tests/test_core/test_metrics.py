@@ -18,71 +18,23 @@ class TestMetricsCollector:
         assert collector.workflow_end is None
         assert collector.workflow_nodes == {}
 
-    def test_aggregation_from_multiple_llm_calls(self):
-        """Test that costs from multiple LLM calls add up correctly."""
+    def test_aggregation_sums_explicit_cost_usd(self):
+        """``calculate_costs`` sums ``cost_usd`` from each call.
+
+        Pricing is LiteLLM's job (set by the adapter on ``llm_usage.cost_usd``);
+        ``MetricsCollector`` only sums what's already there.
+        """
         collector = MetricsCollector()
 
         llm_calls = [
-            {"model": "gpt-4o-mini", "input_tokens": 100, "output_tokens": 50},
-            {"model": "gpt-4o-mini", "input_tokens": 200, "output_tokens": 100},
-            {"model": "gpt-4o-mini", "input_tokens": 150, "output_tokens": 75},
+            {"model": "gpt-4o-mini", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.000045},
+            {"model": "gpt-4o-mini", "input_tokens": 200, "output_tokens": 100, "cost_usd": 0.00009},
+            {"model": "gpt-4o-mini", "input_tokens": 150, "output_tokens": 75, "cost_usd": 0.0000675},
         ]
-
-        # Calculate expected cost
-        # Total input: 450 tokens, output: 225 tokens
-        # gpt-4o-mini pricing: $0.15/M input, $0.60/M output
-        expected_input_cost = (450 / 1_000_000) * 0.15
-        expected_output_cost = (225 / 1_000_000) * 0.60
-        expected_total = round(expected_input_cost + expected_output_cost, 6)
 
         cost_data = collector.calculate_costs(llm_calls)
         assert cost_data["pricing_available"] is True
-        assert cost_data["total_cost_usd"] == expected_total
-
-    def test_cost_calculation_for_different_models(self):
-        """Test that pricing is accurate for different models."""
-        collector = MetricsCollector()
-
-        # Test various models with known pricing
-        test_cases = [
-            {
-                "model": "anthropic/claude-3-haiku-20240307",
-                "input_tokens": 1000,
-                "output_tokens": 500,
-                "expected_cost": round((1000 / 1_000_000 * 0.25) + (500 / 1_000_000 * 1.25), 6),
-            },
-            {
-                "model": "gpt-4",
-                "input_tokens": 2000,
-                "output_tokens": 1000,
-                "expected_cost": round((2000 / 1_000_000 * 30.0) + (1000 / 1_000_000 * 60.0), 6),
-            },
-            {
-                "model": "anthropic/claude-3-5-sonnet-20241022",
-                "input_tokens": 5000,
-                "output_tokens": 2500,
-                "expected_cost": round((5000 / 1_000_000 * 3.0) + (2500 / 1_000_000 * 15.0), 6),
-            },
-            {
-                "model": "gemini-1.5-flash",
-                "input_tokens": 10000,
-                "output_tokens": 5000,
-                "expected_cost": round((10000 / 1_000_000 * 0.075) + (5000 / 1_000_000 * 0.30), 6),
-            },
-        ]
-
-        for test_case in test_cases:
-            llm_calls = [
-                {
-                    "model": test_case["model"],
-                    "input_tokens": test_case["input_tokens"],
-                    "output_tokens": test_case["output_tokens"],
-                }
-            ]
-
-            cost_data = collector.calculate_costs(llm_calls)
-            assert cost_data["pricing_available"] is True
-            assert cost_data["total_cost_usd"] == test_case["expected_cost"], f"Failed for model {test_case['model']}"
+        assert cost_data["total_cost_usd"] == round(0.000045 + 0.00009 + 0.0000675, 6)
 
     def test_unknown_model_uses_default_pricing(self):
         """Test that unknown models are handled gracefully."""
@@ -107,14 +59,15 @@ class TestMetricsCollector:
         collector.record_node_execution("node2", 20.3)
         collector.record_workflow_end()
 
-        llm_calls = [{"model": "gpt-4o-mini", "input_tokens": 100, "output_tokens": 50}]
+        # cost_usd populated as the adapter would set it from LiteLLM's response_cost
+        llm_calls = [{"model": "gpt-4o-mini", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.000045}]
 
         summary = collector.get_summary(llm_calls)
 
         # Check top-level metrics
         assert "duration_ms" in summary
         assert summary["duration_ms"] > 0
-        assert summary["total_cost_usd"] > 0
+        assert summary["total_cost_usd"] == 0.000045
         assert summary["num_nodes"] == 2
 
         # Check metrics structure
@@ -174,62 +127,55 @@ class TestMetricsCollector:
         assert summary["metrics"]["total"]["tokens_total"] == 0
 
     def test_missing_fields_in_llm_usage_handled_gracefully(self):
-        """Test that missing fields in LLM usage data are handled gracefully."""
+        """Test that missing fields in LLM usage data are handled gracefully.
+
+        Calls without ``cost_usd`` set surface in ``unavailable_models``;
+        calls with ``cost_usd`` contribute to ``partial_cost_usd``. Tokens
+        accumulate from every entry regardless of cost availability.
+        """
         collector = MetricsCollector()
 
         # Test various incomplete data scenarios
         llm_calls = [
             {},  # Empty dict
-            {"model": "gpt-4o-mini"},  # Missing token counts
-            {"input_tokens": 100},  # Missing model and output tokens (will be "unknown")
-            {"output_tokens": 50},  # Missing model and input tokens (will be "unknown")
-            {  # Complete valid entry
+            {"model": "gpt-4o-mini"},  # Missing token counts AND cost_usd → unavailable
+            {"input_tokens": 100},  # Missing model AND cost_usd → unavailable as "unknown"
+            {"output_tokens": 50},  # Missing model AND cost_usd → unavailable as "unknown"
+            {  # Complete entry with explicit cost (as the adapter sets it)
                 "model": "gpt-4o-mini",
                 "input_tokens": 200,
                 "output_tokens": 100,
+                "cost_usd": 0.00009,
             },
         ]
 
-        # With new behavior:
-        # Entry 1: Empty dict - skipped
-        # Entry 2: gpt-4o-mini with 0 tokens - no cost (valid model)
-        # Entry 3: unknown model - pricing unavailable
-        # Entry 4: unknown model - pricing unavailable
-        # Entry 5: Complete entry - valid
-
-        # Should have partial cost from valid models only
-        cost5 = round((200 / 1_000_000 * 0.15) + (100 / 1_000_000 * 0.60), 6)
-
         cost_data = collector.calculate_costs(llm_calls)
-        assert cost_data["pricing_available"] is False  # Has unknown models
+        assert cost_data["pricing_available"] is False  # Some calls lack cost_usd
         assert cost_data["total_cost_usd"] is None
         assert "unknown" in cost_data["unavailable_models"]
-        assert cost_data["partial_cost_usd"] == cost5  # Partial cost from valid models
+        assert "gpt-4o-mini" in cost_data["unavailable_models"]
+        assert cost_data["partial_cost_usd"] == 0.00009  # Only the priced entry contributes
 
         # Test summary generation - tokens from all entries are summed
         summary = collector.get_summary(llm_calls)
-        assert summary["total_cost_usd"] is None  # Because of unknown models
+        assert summary["total_cost_usd"] is None  # Because some calls lack cost
         assert summary["pricing_available"] is False
         assert summary["metrics"]["total"]["tokens_input"] == 300  # 0 + 100 + 0 + 200
         assert summary["metrics"]["total"]["tokens_output"] == 150  # 0 + 0 + 50 + 100
 
     def test_cost_rounding_to_six_decimal_places(self):
-        """Test that costs are consistently rounded to 6 decimal places."""
+        """``calculate_costs`` rounds the summed total to 6 decimal places."""
         collector = MetricsCollector()
 
-        # Use token counts that would produce many decimal places
+        # Cost values whose sum has many decimal places
         llm_calls = [
-            {
-                "model": "gpt-4o-mini",
-                "input_tokens": 333,  # Will produce repeating decimals
-                "output_tokens": 777,
-            }
+            {"model": "gpt-4o-mini", "input_tokens": 333, "output_tokens": 777, "cost_usd": 1 / 3},
+            {"model": "gpt-4o-mini", "input_tokens": 333, "output_tokens": 777, "cost_usd": 1 / 7},
         ]
 
         cost_data = collector.calculate_costs(llm_calls)
         assert cost_data["pricing_available"] is True
 
-        # Check that the cost has at most 6 decimal places
         cost = cost_data["total_cost_usd"]
         cost_str = str(cost)
         if "." in cost_str:

@@ -178,6 +178,9 @@ ignore = [
 # Test file is pytest.skip'd at module level (Task 158 Phase A.5 superseded its
 # coverage). Body retained pending user-approved deletion — ignore static checks.
 "tests/test_nodes/test_llm/test_llm_reasoning.py" = ["F821", "F401"]
+# Test file is pytest.skip'd at module level (Task 158 Phase A.10 deleted the
+# llm_pricing module). Body retained pending user-approved deletion.
+"tests/test_core/test_llm_pricing.py" = ["F821", "F401"]
 
 [tool.ruff.format]
 preview = true

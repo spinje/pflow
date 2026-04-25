@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional
 
 from pflow.core.exceptions import CompilationError
 from pflow.core.json_utils import try_parse_json
-from pflow.core.llm_pricing import enrich_llm_usage_with_cost
+from pflow.core.llm_client import enrich_llm_usage_with_cost
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .types import BatchConfig, NodeConfig

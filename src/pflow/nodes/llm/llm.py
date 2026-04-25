@@ -13,8 +13,7 @@ import litellm.exceptions
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-from pflow.core.llm_client import Attachment, TraceHook, complete
-from pflow.core.llm_pricing import enrich_llm_usage_with_cost
+from pflow.core.llm_client import Attachment, TraceHook, complete, enrich_llm_usage_with_cost
 from pflow.core.llm_reasoning_map import (
     DEFAULT_MAX_TOKENS_BASE,
     EFFORT_RATIOS,

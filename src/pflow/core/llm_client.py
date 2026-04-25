@@ -406,3 +406,32 @@ def _emit_trace(hook: TraceHook | None, event: dict[str, Any]) -> None:
         hook(event)
     except Exception as exc:
         logger.debug("trace_hook raised %s: %s", type(exc).__name__, exc)
+
+
+def enrich_llm_usage_with_cost(llm_usage: dict[str, Any]) -> None:
+    """Ensure ``llm_usage`` has a ``cost_usd`` key (may be ``None``).
+
+    Cost determination is LiteLLM's responsibility — the adapter populates
+    ``cost_usd`` from ``response._hidden_params['response_cost']`` when
+    LiteLLM has pricing data for the model, and leaves it absent (or sets
+    it to ``None``) when LiteLLM doesn't know the model.
+
+    This wrapper exists for two cases the adapter doesn't cover:
+
+    1. ClaudeCodeNode produces ``total_cost_usd`` (from the SDK) instead of
+       ``cost_usd``; mirror it into ``cost_usd`` so downstream consumers
+       have a single key to read.
+    2. Defensive programming: any ``llm_usage`` dict that reaches the
+       runtime without ``cost_usd`` set (e.g. older cached entries, custom
+       node implementations) gets ``None`` so consumers can rely on the
+       key being present.
+
+    Modifies ``llm_usage`` in place.
+    """
+    if "cost_usd" in llm_usage:
+        return
+    total_cost = llm_usage.get("total_cost_usd")
+    if total_cost is not None:
+        llm_usage["cost_usd"] = total_cost
+        return
+    llm_usage["cost_usd"] = None

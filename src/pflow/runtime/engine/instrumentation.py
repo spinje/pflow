@@ -14,7 +14,7 @@ import time
 from typing import Any, Optional
 
 from pflow.core.exceptions import MaxNodeVisitsError
-from pflow.core.llm_pricing import enrich_llm_usage_with_cost
+from pflow.core.llm_client import enrich_llm_usage_with_cost
 
 from .types import BatchConfig
 

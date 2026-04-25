@@ -217,6 +217,13 @@ class MockLLMClient:
     match → wildcard model match → ``_DEFAULT_RESPONSES`` schema default
     → ``{"response": "mock response"}`` fallback.
 
+    Cost reporting:
+        ``cost_usd`` defaults to ``None`` in the returned usage dict. This
+        matches production behavior when LiteLLM has no pricing data for a
+        model (custom endpoints, brand-new models, Ollama). Tests that need
+        a specific cost should pass ``cost_usd=`` to ``set_response`` —
+        making the test self-documenting about what cost it expects.
+
     ``call_history`` keeps the legacy 500-char prompt truncation (several
     existing tests assert against the boundary). ``call_history_full`` is
     parallel and untruncated, added here so future cache-structure tests
@@ -226,17 +233,30 @@ class MockLLMClient:
     call_history: list[dict] = field(default_factory=list)
     call_history_full: list[dict] = field(default_factory=list)
     _responses: dict[str, dict] = field(default_factory=dict)
+    _costs: dict[str, Optional[float]] = field(default_factory=dict)
 
-    def set_response(self, model: str, schema: Any, response: dict) -> None:
+    def set_response(
+        self,
+        model: str,
+        schema: Any,
+        response: dict,
+        *,
+        cost_usd: Optional[float] = None,
+    ) -> None:
         """Configure a response for a (model, schema) pair.
 
         Args:
             model: Model name, or ``"*"`` for any model.
             schema: Pydantic class OR JSON Schema dict OR None (for text).
             response: Response dict; serialized to JSON for ``AdapterResponse.text``.
+            cost_usd: Optional ``cost_usd`` to set on the returned usage dict.
+                When ``None`` (default), the mock leaves ``cost_usd: None`` —
+                matches production behavior for unknown-pricing models.
         """
         name = _schema_name(schema) or "text"
-        self._responses[f"{model}:{name}"] = response
+        key = f"{model}:{name}"
+        self._responses[key] = response
+        self._costs[key] = cost_usd
 
     def get_response(self, model: str, schema: Any) -> dict:
         """Resolve a configured or default response.
@@ -262,11 +282,25 @@ class MockLLMClient:
         # 4. Final fallback
         return {"response": "mock response"}
 
+    def _get_cost(self, model: str, schema: Any) -> Optional[float]:
+        """Resolve the configured cost for a (model, schema) pair.
+
+        Returns ``None`` when no cost was set for the matching key — matches
+        production behavior for unknown-pricing models.
+        """
+        name = _schema_name(schema) or "text"
+        if f"{model}:{name}" in self._costs:
+            return self._costs[f"{model}:{name}"]
+        if f"*:{name}" in self._costs:
+            return self._costs[f"*:{name}"]
+        return None
+
     def reset(self) -> None:
         """Clear call history and configured responses."""
         self.call_history.clear()
         self.call_history_full.clear()
         self._responses.clear()
+        self._costs.clear()
 
     # The patched function — must mirror llm_client.complete()'s signature.
     def complete(
@@ -322,15 +356,12 @@ class MockLLMClient:
         response_data = self.get_response(model, schema)
         text = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
 
-        # Build AdapterResponse with a usage dict that matches the adapter's
+        # Build AdapterResponse with a usage dict matching the adapter's
         # stable shape. Token counts are arbitrary mock values — tests that
         # care about specific values should set their own response.
-        # NOTE: cost_usd is intentionally NOT populated. The real adapter reads
-        # it from LiteLLM's `_hidden_params["response_cost"]`, which we can't
-        # reasonably mock. Letting it stay absent means
-        # `enrich_llm_usage_with_cost` computes a real cost from the
-        # MODEL_PRICING table — which is what existing tests rely on for
-        # historical-cost propagation through the memo cache.
+        # ``cost_usd`` is ``None`` unless the test set one via
+        # ``set_response(..., cost_usd=...)``. Mirrors production behavior
+        # for unknown-pricing models (LiteLLM returns None there too).
         input_tokens = max(1, len(prompt.split()))
         usage = {
             "model": model,
@@ -339,6 +370,7 @@ class MockLLMClient:
             "total_tokens": input_tokens + 50,
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
+            "cost_usd": self._get_cost(model, schema),
         }
 
         response = AdapterResponse(

@@ -198,29 +198,36 @@ class TestMetricsCollection:
             Path(workflow_file).unlink()
 
     def test_llm_cost_calculation(self, temp_home, temp_registry, llm_workflow, monkeypatch):
-        """Test that LLM usage is tracked and costs calculated correctly."""
+        """Test that LLM usage is tracked and aggregated costs flow through.
+
+        Cost determination is LiteLLM's responsibility — the adapter populates
+        ``cost_usd`` on each response from ``response._hidden_params``. This
+        test sets ``cost_usd`` directly on the mocked usage dicts (mirroring
+        what the real adapter does) and asserts the summation works end-to-end.
+        """
         from pflow.core.llm_client import AdapterResponse
 
         runner = CliRunner()
 
-        # Mock the adapter with per-model token counts. gpt-4o-mini and
-        # claude-3-haiku have different rates in MODEL_PRICING; the test
-        # asserts on the aggregated cost across both.
+        # Mock per-model with known cost_usd values that the adapter would
+        # have set from LiteLLM's response_cost.
         per_model = {
             "gpt-4o-mini": (
                 "Code flows like water\nBits and bytes dance on the screen\nBugs hide in shadows",
                 20,
                 30,
+                0.000021,  # cost_usd
             ),
             "anthropic/claude-3-haiku-20240307": (
                 "Le code coule comme l'eau\nLes bits et octets dansent\nLes bugs se cachent",
                 40,
                 25,
+                0.000042,  # cost_usd
             ),
         }
 
         def mock_complete(*, model: str, prompt: str, **kwargs):
-            text, in_tokens, out_tokens = per_model.get(model, ("default", 10, 5))
+            text, in_tokens, out_tokens, cost = per_model.get(model, ("default", 10, 5, 0.0))
             usage = {
                 "model": model,
                 "input_tokens": in_tokens,
@@ -228,8 +235,8 @@ class TestMetricsCollection:
                 "total_tokens": in_tokens + out_tokens,
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 0,
+                "cost_usd": cost,
             }
-            # cost_usd intentionally omitted — exercises enrich_llm_usage_with_cost
             return AdapterResponse(text=text, usage=usage, model=model, has_schema=False)
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", mock_complete)
@@ -248,13 +255,9 @@ class TestMetricsCollection:
             assert result.exit_code == 0
             output = json.loads(result.stdout)
 
-            # Check cost calculation
-            # gpt-4o-mini: 20 tokens @ $0.15/M + 30 tokens @ $0.60/M = $0.000021
-            # claude-haiku: 40 tokens @ $0.25/M + 25 tokens @ $1.25/M = $0.0000413
-            # Total: ~$0.0000623
+            # Check cost summation: 0.000021 + 0.000042 = 0.000063
             assert "total_cost_usd" in output
-            assert output["total_cost_usd"] > 0
-            assert output["total_cost_usd"] < 0.001  # Less than 1/10 cent
+            assert output["total_cost_usd"] == pytest.approx(0.000063, rel=1e-6)
 
             # Check token counts - verify they're positive and consistent
             total_in = output["metrics"]["total"]["tokens_input"]
@@ -539,17 +542,21 @@ class TestWrapperIntegration:
             "start_node": "llm1",
         }
 
-        # Sequential mock responses with controlled token counts. Each
-        # call_to_complete() pops the next entry; the assertions below tie
-        # back to these specific values to verify cost/token accumulation.
-        responses = [("Response 1", 10, 5), ("Response 2", 20, 10), ("Response 3", 30, 15)]
+        # Sequential mock responses with controlled token counts AND cost_usd.
+        # The adapter sets cost_usd from LiteLLM's response_cost in production;
+        # the mock sets it directly here so the test can pin the summed total.
+        responses = [
+            ("Response 1", 10, 5, 0.001),
+            ("Response 2", 20, 10, 0.002),
+            ("Response 3", 30, 15, 0.003),
+        ]
         call_count = [0]
 
         def mock_complete(*, model: str, prompt: str, **kwargs):
             idx = call_count[0]
             call_count[0] += 1
-            response_text, in_tokens, out_tokens = (
-                responses[idx] if idx < len(responses) else ("Fallback response", 10, 5)
+            response_text, in_tokens, out_tokens, cost = (
+                responses[idx] if idx < len(responses) else ("Fallback response", 10, 5, 0.0001)
             )
             usage = {
                 "model": model,
@@ -558,10 +565,8 @@ class TestWrapperIntegration:
                 "total_tokens": in_tokens + out_tokens,
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 0,
+                "cost_usd": cost,
             }
-            # NOTE: cost_usd intentionally omitted so enrich_llm_usage_with_cost
-            # populates it from the MODEL_PRICING table — this is the chain we
-            # want to exercise (the assertion below requires summary["total_cost_usd"] > 0).
             return AdapterResponse(text=response_text, usage=usage, model=model, has_schema=False)
 
         # Patch the adapter at the LLMNode's import site
@@ -602,9 +607,12 @@ class TestWrapperIntegration:
         assert total_input == 10 + 20 + 30, f"Expected 60 input tokens, got {total_input}"
         assert total_output == 5 + 10 + 15, f"Expected 30 output tokens, got {total_output}"
 
-        # Cost should be calculated and positive (gpt-4o-mini has pricing)
+        # Cost summation should equal sum of injected per-call cost_usd:
+        # 0.001 + 0.002 + 0.003 = 0.006
         summary = metrics.get_summary(llm_calls)
-        assert summary["total_cost_usd"] > 0, "Cost chain broken: total_cost_usd is 0"
+        assert summary["total_cost_usd"] == pytest.approx(0.006, rel=1e-6), (
+            "Cost chain broken: per-call cost_usd not summed correctly"
+        )
 
 
 class TestCLIFlags:
@@ -814,47 +822,13 @@ class TestMetricsAccuracy:
         finally:
             Path(workflow_file).unlink()
 
-    def test_cost_calculation_accuracy(self, temp_home, temp_registry):
-        """Test accurate cost calculation for different models."""
-        from pflow.core.metrics import MetricsCollector
-
-        collector = MetricsCollector()
-
-        # Test various model costs
-        test_cases = [
-            {
-                "model": "gpt-4o-mini",
-                "input_tokens": 1000,
-                "output_tokens": 500,
-                "expected_cost": 0.00045,  # $0.15/M + $0.30/M
-            },
-            {
-                "model": "anthropic/claude-3-haiku-20240307",
-                "input_tokens": 2000,
-                "output_tokens": 1000,
-                "expected_cost": 0.00175,  # $0.25/M + $1.25/M
-            },
-            {
-                "model": "gpt-4",
-                "input_tokens": 500,
-                "output_tokens": 250,
-                "expected_cost": 0.03,  # $30/M + $60/M
-            },
-        ]
-
-        for case in test_cases:
-            llm_calls = [
-                {"model": case["model"], "input_tokens": case["input_tokens"], "output_tokens": case["output_tokens"]}
-            ]
-
-            cost_data = collector.calculate_costs(llm_calls)
-
-            # Check pricing is available
-            assert cost_data["pricing_available"] is True
-            cost = cost_data["total_cost_usd"]
-
-            # Check within 10% accuracy (floating point)
-            assert abs(cost - case["expected_cost"]) < case["expected_cost"] * 0.1
+    # Removed `test_cost_calculation_accuracy` — Task 158 Phase A.10 deleted
+    # `pflow.core.llm_pricing`. Pricing is now LiteLLM's responsibility (via
+    # `litellm.completion_cost`); pflow no longer maintains a per-model
+    # pricing table. The `MetricsCollector.calculate_costs` summation logic
+    # is exercised in `tests/test_core/test_metrics.py::TestMetricsCollector`
+    # against explicit per-call `cost_usd` values — the contract that matches
+    # how the production adapter actually populates the field.
 
     def test_node_count_accuracy(self, temp_home, temp_registry):
         """Test that node counts are accurate."""

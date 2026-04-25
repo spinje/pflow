@@ -273,9 +273,11 @@ class TestLLMUsageTracking:
         assert trace.events[0]["node_id"] == "regular_node"
 
     def test_llm_usage_enriched_with_cost_in_shared_store(self):
-        """After enrichment, shared store's llm_usage dict should have cost_usd added.
+        """After enrichment, shared store's llm_usage dict has a ``cost_usd`` key.
 
-        Uses input_tokens/output_tokens keys (the standard keys enrich_llm_usage_with_cost reads).
+        Cost determination is LiteLLM's responsibility; the wrapper guarantees
+        the key is present (``None`` when no upstream cost is available, the
+        passed-through value otherwise).
         """
         node_id = "llm_cost"
         shared: dict[str, Any] = {
@@ -284,40 +286,46 @@ class TestLLMUsageTracking:
                     "model": "gpt-4",
                     "input_tokens": 1000,
                     "output_tokens": 500,
+                    "cost_usd": 0.06,  # adapter populated this from LiteLLM's response_cost
                 },
             },
             "llm_usage": {
                 "model": "gpt-4",
                 "input_tokens": 1000,
                 "output_tokens": 500,
+                # No cost_usd here — exercises the fallback that sets it to None
             },
         }
 
         enrich_llm_cost(node_id, shared)
 
-        # Both root-level and namespaced llm_usage should be enriched
+        # Pre-set cost is preserved exactly
+        assert shared[node_id]["llm_usage"]["cost_usd"] == 0.06
+
+        # Root-level dict (no cost_usd set) gets enriched to None
         assert "cost_usd" in shared["llm_usage"]
-        # gpt-4: $30/1M input, $60/1M output
-        # 1000 input = 0.03, 500 output = 0.03 => total = 0.06
-        assert isinstance(shared["llm_usage"]["cost_usd"], float)
-        assert shared["llm_usage"]["cost_usd"] == 0.06
+        assert shared["llm_usage"]["cost_usd"] is None
 
     def test_trace_event_has_cost_usd(self):
-        """The trace event's llm_call should contain cost_usd from enrichment.
+        """The trace event's ``llm_call`` carries the ``cost_usd`` set upstream.
 
-        In real execution, the node writes llm_usage into its namespaced output.
-        enrich_llm_cost finds it at shared[node_id]["llm_usage"] and enriches
-        it in-place. record_trace then reads the same dict via shared[node_id].
+        In real execution, the adapter populates ``cost_usd`` on the node's
+        namespaced ``llm_usage`` dict (from LiteLLM's ``response_cost``).
+        ``enrich_llm_cost`` then finds it at ``shared[node_id]["llm_usage"]``
+        — when present, it's preserved verbatim. ``record_trace`` reads the
+        same dict and emits it on ``event['llm_call']``.
         """
         trace = WorkflowTraceCollector("test")
         import time
 
         node_id = "llm_cost"
-        # Single shared usage dict (as in real namespaced execution)
+        # Single shared usage dict (as in real namespaced execution); cost_usd
+        # set as the adapter would set it from LiteLLM's response_cost.
         usage = {
             "model": "gpt-4",
             "input_tokens": 1000,
             "output_tokens": 500,
+            "cost_usd": 0.06,
         }
         shared: dict[str, Any] = {
             node_id: {"llm_usage": usage},
@@ -342,8 +350,6 @@ class TestLLMUsageTracking:
         assert len(trace.events) == 1
         event = trace.events[0]
         assert "llm_call" in event
-        assert "cost_usd" in event["llm_call"]
-        assert isinstance(event["llm_call"]["cost_usd"], float)
         assert event["llm_call"]["cost_usd"] == 0.06
 
     def test_llmnode_post_enriches_cost_before_memo_write(self, tmp_path):

@@ -442,7 +442,7 @@ def test_plan_routing_error_on_missing_successor(tmp_path) -> None:
     assert shared["__execution__"]["failed_node"] == "router"
 
 
-def test_plan_cost_nested_rollup(tmp_path) -> None:
+def test_plan_cost_nested_rollup(tmp_path, mock_llm_client) -> None:
     """Nested LLM cost must roll up into parent's _including_nested fields.
 
     Pins the agent-facing cost-gate contract: an agent reading
@@ -450,7 +450,13 @@ def test_plan_cost_nested_rollup(tmp_path) -> None:
     `summary.estimated_cost_usd_including_nested` sees the full plan tree.
     A refactor that silently double-counts or drops the nested rollup
     would directly break cost-gating scripts.
+
+    The mock returns an explicit cost_usd (mirroring how the real adapter
+    sets it from LiteLLM's response_cost) so the rollup has a concrete
+    number to verify.
     """
+    expected_cost = 0.000123
+    mock_llm_client.set_response("gpt-4o-mini", None, {"response": "x"}, cost_usd=expected_cost)
     child_path = tmp_path / "child.pflow.md"
     parent_path = tmp_path / "parent.pflow.md"
 
@@ -512,14 +518,13 @@ def test_plan_cost_nested_rollup(tmp_path) -> None:
     assert len(llm_entries) == 1
     assert llm_entries[0].status == "execute"
     assert llm_entries[0].cause == "no_cache_match"
-    assert llm_entries[0].last_cost_usd is not None
-    assert llm_entries[0].last_cost_usd > 0
+    assert llm_entries[0].last_cost_usd == expected_cost
 
     # Nested rollup: parent's _including_nested must equal the child's total.
     nested_cost = plan.summary.estimated_cost_usd_including_nested
     assert nested_cost is not None
     assert nested_cost == child_plan.summary.estimated_cost_usd
-    assert nested_cost > 0
+    assert nested_cost == expected_cost
 
 
 def test_plan_cost_basis_propagates_upper_bound(tmp_path) -> None:

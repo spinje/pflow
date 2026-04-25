@@ -175,23 +175,19 @@ Memory limit configurable via `PFLOW_STDIN_MEMORY_LIMIT`.
 
 See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeline, data flow algorithm, skill publishing, known issues).
 
-### llm_pricing.py
+### llm_client.py
 
-46+ models (Anthropic, OpenAI, Google). 20+ aliases.
+The pflow-owned LiteLLM adapter — single seam for all LLM calls (LLMNode + 3 discovery callsites). Wraps `litellm.completion`. Owns: messages-list construction, reasoning-kwarg translation (delegating shape detection to `llm_reasoning_map`), `cache_control` placement (Phase B-G), `BadRequestError` → error-marked response (PATTERN EXCEPTION), and response normalization to a stable `AdapterResponse`.
 
-**Pricing rules** (Anthropic's model): Cache creation = 2x input rate. Cache reads = 0.1x input rate. Thinking tokens = output rate.
-
-**🐛 Broken aliases**: `"claude-3.5-haiku"` and `"claude-4-opus"` point to non-existent pricing entries.
+**Cost determination is LiteLLM's responsibility**: the adapter reads `cost_usd` from `response._hidden_params["response_cost"]` (LiteLLM populates this from its built-in pricing data). When LiteLLM doesn't recognize the model (custom endpoints, brand-new releases), `cost_usd` is `None` — consumers must handle that case. The thin `enrich_llm_usage_with_cost(llm_usage)` wrapper ensures the key is always present, mirroring `total_cost_usd` from ClaudeCodeNode if available.
 
 ### llm_config.py
 
-**Two different resolution chains** — easy to call the wrong one:
+**Two resolution chains** — easy to call the wrong one:
 - `get_model_for_feature("discovery"|"filtering")`: feature setting → `default_model` → auto-detect (Anthropic → Gemini → OpenAI) → hardcoded fallback. **Never returns None.**
-- `get_default_workflow_model()`: `default_model` → llm CLI default (`llm models default`) → auto-detect → **None** (caller must handle).
+- `get_default_workflow_model()`: `default_model` → auto-detect → **None** (caller must handle).
 
-**`inject_settings_env_vars()`**: Called early in CLI/MCP startup. Injects `settings.json` env vars into `os.environ` so `llm` library finds API keys. User's actual environment takes priority (won't override existing vars). Idempotent.
-
-**Test guard**: All LLM detection skipped when `PYTEST_CURRENT_TEST` is set (prevents subprocess hangs from `llm keys get`).
+**Key sources** (auto-detect): `os.environ` first, then `~/.pflow/settings.json` env section. LiteLLM reads from `os.environ` natively, so `inject_settings_env_vars()` (called early in CLI/MCP startup) pushes settings-stored keys into the environment for LiteLLM to find. User's actual environment takes priority over settings (won't override existing vars). Idempotent. Skipped under `PYTEST_CURRENT_TEST`.
 
 **Module-level caching**: `get_default_llm_model()` caches result after first detection. Call `clear_model_cache()` in tests.
 

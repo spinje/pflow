@@ -46,7 +46,7 @@ class MetricsCollector:
         Returns:
             Dict with total_cost_usd and pricing availability info
         """
-        from pflow.core.llm_pricing import enrich_llm_usage_with_cost
+        from pflow.core.llm_client import enrich_llm_usage_with_cost
 
         total_cost = 0.0
         unavailable_models: set[str] = set()

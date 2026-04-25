@@ -1,14 +1,34 @@
-"""Test LLM pricing calculations."""
+"""Test LLM pricing calculations.
+
+OBSOLETE — superseded by Task 158 Phase A.10.
+
+The ``pflow.core.llm_pricing`` module was deleted: pricing is now LiteLLM's
+responsibility (``litellm.completion_cost`` via the response's
+``_hidden_params['response_cost']`` populates ``cost_usd`` in the adapter
+boundary). pflow no longer maintains a per-model pricing table.
+
+This file is module-level skipped — pending deletion. The body relies on
+``MODEL_PRICING``, ``calculate_llm_cost``, and ``get_model_pricing``, all
+removed in A.10.
+"""
 
 import pytest
 
-from pflow.core.llm_pricing import (
-    MODEL_PRICING,
-    PRICING_VERSION,
-    calculate_llm_cost,
-    enrich_llm_usage_with_cost,
-    get_model_pricing,
+pytest.skip(
+    "pflow.core.llm_pricing was deleted in Task 158 Phase A.10. Pricing is "
+    "now LiteLLM's responsibility via response._hidden_params['response_cost'] "
+    "(populated by the adapter in pflow.core.llm_client.complete). Pending deletion.",
+    allow_module_level=True,
 )
+
+# --- Original imports kept for reference; commented to avoid ImportError ----
+# from pflow.core.llm_pricing import (
+#     MODEL_PRICING,
+#     PRICING_VERSION,
+#     calculate_llm_cost,
+#     enrich_llm_usage_with_cost,
+#     get_model_pricing,
+# )
 
 
 class TestLLMPricing:
