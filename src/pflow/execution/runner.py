@@ -705,12 +705,6 @@ class WorkflowRunner:
             except Exception:
                 logger.debug("MCP pool shutdown error", exc_info=True)
 
-        if trace_collector and hasattr(trace_collector, "unregister_from_llm_call"):
-            try:
-                trace_collector.unregister_from_llm_call()
-            except Exception:
-                logger.debug("Trace collector unregister failed", exc_info=True)
-
         if metrics_collector is not None:
             with contextlib.suppress(Exception):
                 metrics_collector.record_workflow_end()

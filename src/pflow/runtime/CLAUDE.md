@@ -127,7 +127,7 @@ Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
 - **Format 2.0.0**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events`
-- **Thread-safe LLM interception**: Reference counting + per-thread collector lookup. Child collectors skip interception.
+- **LLM prompt capture**: Engine.run installs `self.trace` into `shared["_trace_collector"]`; LLMNode.prep resolves a per-node `trace_hook` via `collector.get_trace_hook(node_id)` and threads it explicitly through the inner ThreadPoolExecutor. The hook writes to `self.llm_prompts[node_id]`; `_add_llm_data` reads from there. Save+restore around `engine.run` swaps in child collectors for sub-workflows so child LLM calls land in the child's `llm_prompts` dict.
 - **Batch item tracing**: via `_batch_trace` shared-store accumulator (GIL-safe for parallel)
 - **Sub-workflow tracing**: Child collectors created by `WorkflowExecutor`, events embedded as `sub_workflow_events`
 - **Per-node aggregation rule — "last event per `node_id` = final state"**: Status determination and the `failed_node_ids` list (written to the trace file by `save_to_file`) both derive from `final_events_by_node(events)` (module-level helper, also imported by `core/trace_report.py::_collect_errors`). Loop recovery records two events for the same node_id; only the later one counts for workflow-level aggregation. Single source of truth — if the rule changes, it changes in one place. See GH #240.

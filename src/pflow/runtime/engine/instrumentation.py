@@ -420,26 +420,6 @@ def enrich_llm_cost(node_id: str, shared: dict) -> None:
         enrich_llm_usage_with_cost(llm_usage)
 
 
-def register_for_llm_call(node_id: str, node_type_name: str, node_params: dict, trace_collector: Any) -> None:
-    """Register this node with the trace collector if it's LLM-capable.
-
-    Activates the per-call ``trace_hook`` plumbing so the LLM adapter can
-    capture the rendered prompt under the right node id. Detects LLM nodes
-    via class name, presence of a ``prompt`` param, or presence of a
-    ``model`` param (covers ClaudeCodeNode and any future LLM-shaped nodes).
-    """
-    if not trace_collector or not hasattr(trace_collector, "register_for_llm_call"):
-        return
-
-    node_type_lower = node_type_name.lower()
-    is_llm_node = "llm" in node_type_lower
-    has_prompt_param = "prompt" in node_params
-    has_model_param = "model" in node_params
-
-    if is_llm_node or has_prompt_param or has_model_param:
-        trace_collector.register_for_llm_call(node_id)
-
-
 # --- Progress Callbacks ---
 
 

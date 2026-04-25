@@ -3,7 +3,6 @@
 import json
 import logging
 import sys
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
@@ -172,7 +171,7 @@ class LLMNode(Node):
             valid_list = ", ".join(sorted(valid_efforts))
             raise ValueError(f"Invalid reasoning_effort: '{reasoning_effort}'. Must be one of: {valid_list}")
 
-        return {
+        prep_res = {
             "prompt": prompt,
             "model": self.params.get("model", "gemini-3-flash-preview"),  # Default to reliable JSON-capable model
             "temperature": temperature,
@@ -186,8 +185,27 @@ class LLMNode(Node):
             "timeout": self._validate_timeout(),
         }
 
-    def _call_llm(self, prep_res: dict[str, Any]) -> dict[str, Any]:
-        """Execute the actual LLM API call. Extracted for timeout wrapping."""
+        # Resolve the per-call trace hook on the engine thread BEFORE
+        # exec() submits to the inner ThreadPoolExecutor. The hook is then
+        # passed explicitly through the pool boundary as a function arg —
+        # unlike the previous monkey-patched lookup which read thread-local
+        # state from the worker thread (where it was never registered).
+        # See plan: /Users/andfal/.claude/plans/magical-swinging-taco.md
+        collector = shared.get("_trace_collector")
+        node_id = getattr(self, "node_id", None)
+        if collector is not None and node_id is not None:
+            prep_res["_trace_hook"] = collector.get_trace_hook(node_id)
+
+        return prep_res
+
+    def _call_llm(self, prep_res: dict[str, Any], trace_hook: TraceHook | None = None) -> dict[str, Any]:
+        """Execute the actual LLM API call. Extracted for timeout wrapping.
+
+        The ``trace_hook`` is captured by ``exec()`` from ``prep_res`` BEFORE
+        the inner pool.submit, then passed through the pool boundary as an
+        explicit arg. Default ``None`` keeps the function callable directly
+        in tests that don't care about tracing.
+        """
         reasoning_kwargs = map_reasoning_options(
             prep_res["model"],
             prep_res.get("reasoning_effort"),
@@ -210,7 +228,7 @@ class LLMNode(Node):
                 reasoning_kwargs=reasoning_kwargs,
                 model_options=prep_res.get("model_options") or None,
                 timeout=prep_res.get("timeout"),
-                trace_hook=_active_trace_hook(),
+                trace_hook=trace_hook,
             )
         except LLMCallError as e:
             # PATTERN EXCEPTION: deterministic provider error (bad params,
@@ -237,12 +255,20 @@ class LLMNode(Node):
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Execute LLM call with timeout protection."""
         timeout = prep_res.get("timeout", 120)
+        # Capture the trace hook on the engine thread (resolved by prep)
+        # BEFORE handing off to the pool. The hook is a closure over the
+        # collector + node_id — passing it as an explicit arg makes it
+        # survive the thread boundary regardless of which worker runs the
+        # call. (The previous design tried to look up the active collector
+        # via thread-local state on the worker thread, which always failed
+        # because the worker wasn't the registered thread.)
+        trace_hook = prep_res.get("_trace_hook")
 
         # IMPORTANT: Do NOT use `with ThreadPoolExecutor` — its __exit__ calls
         # shutdown(wait=True) which blocks until the thread finishes, defeating
         # the timeout for stuck API calls (same pattern as python_code.py).
         pool = ThreadPoolExecutor(max_workers=1)
-        future = pool.submit(self._call_llm, prep_res)
+        future = pool.submit(self._call_llm, prep_res, trace_hook)
         try:
             return future.result(timeout=timeout)
         except FuturesTimeoutError:
@@ -377,30 +403,3 @@ class LLMNode(Node):
             "usage": {},
             "status": "error",
         }
-
-
-def _active_trace_hook() -> "TraceHook | None":
-    """Resolve the trace hook for the currently-running node, if any.
-
-    Pulls the active trace collector for this thread (set by the engine's
-    `register_for_llm_call` before each LLM-capable node runs) and the
-    current node id (set on the same path), then asks the collector for
-    its hook. Returns None when no trace is active — the adapter handles
-    None as a no-op.
-
-    Reuses the existing `_active_collectors` and `_thread_local` registries
-    that the legacy monkey-patch maintains; A.6 will delete the patch
-    itself but keep these registries (they are the bridge between the
-    engine's per-node setup and the LLM-call path).
-    """
-    # Local import to avoid a runtime/core import cycle.
-    from pflow.runtime.workflow_trace import WorkflowTraceCollector
-
-    thread_id = threading.get_ident()
-    collector = WorkflowTraceCollector._active_collectors.get(thread_id)
-    if collector is None:
-        return None
-    node_id = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
-    if not node_id:
-        return None
-    return collector.get_trace_hook(node_id)

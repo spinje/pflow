@@ -340,7 +340,6 @@ class WorkflowExecutor(BaseNode):
             from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
             child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
-            child_trace.enable_llm_interception = False
 
         # Compile (with compile-once caching)
         compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)

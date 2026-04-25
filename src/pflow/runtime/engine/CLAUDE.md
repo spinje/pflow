@@ -22,10 +22,13 @@ src/pflow/runtime/engine/
 
 ```
 WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_string
+  ├── install self.trace into shared["_trace_collector"] (save+restore for nested sub-workflows)
   └── for each node in graph:
       _execute_node(node, config, shared) → action
         ┌─ OUTSIDE try (always runs):
-        │  1. register_for_llm_call
+        │  (Step 1 — LLM trace registration — removed in Task 158 Phase A
+        │   post-cleanup; LLMNode.prep now reads shared["_trace_collector"]
+        │   + self.node_id directly. Numbering preserved for cross-reference.)
         │  2. initialize_execution_state
         │  3. enforce_loop_guard       (clears stale __failures__ on revisit)
         │
@@ -247,7 +250,7 @@ Builds a deterministic config dict for cache key computation:
 
 - `record_trace(...)` — receives all data directly (no chain traversal). Computes shared store mutations (added/removed keys, system keys filtered). `success` parameter takes precedence over `error is None`.
 - `enrich_llm_cost(node_id, shared)` — checks both root and namespaced locations for `llm_usage`
-- `register_for_llm_call(...)` — registers the node with the trace collector if trace collector present AND (class name contains "llm" OR params contain "prompt"/"model"). The collector activates per-call ``trace_hook`` plumbing for the LLM adapter. **Known limitation**: if `prompt` is in template_params (not static), the params check misses it — the class name fallback catches LLM nodes.
+- **LLM trace_hook plumbing**: Engine.run installs `self.trace` into `shared["_trace_collector"]` for the duration of the run (save+restore handles nested sub-workflow runs). LLMNode.prep reads the collector + `self.node_id` from shared, builds the per-call trace hook via `collector.get_trace_hook(node_id)`, stores it in `prep_res["_trace_hook"]`. LLMNode.exec captures the hook before submitting to its inner ThreadPoolExecutor — explicit-arg passing survives the worker-thread boundary, unlike the previous thread-local registry approach.
 
 ### Progress callbacks
 
