@@ -419,17 +419,17 @@ pflow settings llm set-filtering gemini/gemini-2.5-flash-lite
 
   | Provider | Model | Overhead | Notes |
   |----------|-------|----------|-------|
-  | Google | `gemini-2.5-flash-lite` | ~2-3s | Best budget option |
-  | OpenAI | `gpt-5-mini` | ~1-2s | Runner-up budget |
-  | Anthropic | `claude-haiku-4-5` | ~1-2s | Third place budget |
+  | Google | `gemini/gemini-2.5-flash-lite` | ~2-3s | Best budget option |
+  | OpenAI | `openai/gpt-5-mini` | ~1-2s | Runner-up budget |
+  | Anthropic | `anthropic/claude-haiku-4-5` | ~1-2s | Third place budget |
 
   **Alternative (higher cost):**
 
   | Provider | Model | Overhead | Notes |
   |----------|-------|----------|-------|
-  | Anthropic | `claude-sonnet-4-5` | ~1-2s | Best premium option |
-  | Google | `gemini-3-flash-preview` | ~2-3s | Runner-up premium |
-  | OpenAI | `gpt-5.2` | ~5-6s | Slower, not recommended |
+  | Anthropic | `anthropic/claude-sonnet-4-5` | ~1-2s | Best premium option |
+  | Google | `gemini/gemini-3-flash-preview` | ~2-3s | Runner-up premium |
+  | OpenAI | `openai/gpt-5.2` | ~5-6s | Slower, not recommended |
 
   All models produce equivalent quality for this task. Timings are approximate and vary with network latency.
 </Tip>
@@ -473,7 +473,7 @@ pflow uses the same resolution order for all LLM usage (discovery, filtering, an
 |----------|---------------|
 | Anthropic | `anthropic/claude-sonnet-4-5` |
 | Google | `gemini/gemini-3-flash-preview` |
-| OpenAI | `gpt-5.2` |
+| OpenAI | `openai/gpt-5.2` |
 
 <Note>
   Most users just need an API key configured. pflow auto-detects the appropriate model. Use these commands only to override the auto-detected model.

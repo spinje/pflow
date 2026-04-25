@@ -271,9 +271,26 @@ class LLMNode(Node):
             valid_list = ", ".join(sorted(valid_efforts))
             raise ValueError(f"Invalid reasoning_effort: '{reasoning_effort}'. Must be one of: {valid_list}")
 
+        # Model is required. The compiler injects ``model`` for every LLM
+        # node (compilation/compiler.py: it either reads the user's value,
+        # falls back to settings/auto-detect via ``get_default_workflow_model``,
+        # or raises ``CompilationError`` when no source is available). Any
+        # path that reaches here without a model has bypassed compilation
+        # — typically a unit test that constructs ``LLMNode()`` directly
+        # and forgot to set ``model`` in its params. Fail loudly instead
+        # of silently substituting a hardcoded default.
+        model = self.params.get("model")
+        if not model:
+            raise ValueError(
+                "LLM node requires a 'model' parameter. The compiler injects this from "
+                "the workflow YAML, settings.default_model, or auto-detected provider keys; "
+                "if you are calling LLMNode directly (e.g. in a unit test), set "
+                "'model' explicitly via node.set_params({'model': '<provider>/<model>'})."
+            )
+
         prep_res = {
             "prompt": prompt,
-            "model": self.params.get("model", "gemini-3-flash-preview"),  # Default to reliable JSON-capable model
+            "model": model,
             "temperature": temperature,
             "system": system,
             "max_tokens": self.params.get("max_tokens"),

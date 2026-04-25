@@ -2318,3 +2318,157 @@ Also verified focused tests during the pass:
 4. **The follow-up issues are deliberately grouped.** Avoid reopening them as one-off tiny fixes unless the user asks; each group has cross-cutting implications.
 
 5. **Commit requested by user at end of this session.** Unlike §34, there is now explicit user permission to commit all changes.
+
+---
+
+## 36. Session 2026-04-25 (cont.) — Phase A code review #3 + structural adapter seal fix
+
+### Context
+
+User invoked `/evaluate-review` against `scratchpads/task-158-phase-a-code-review-20260425.md` — a fresh code review against the branch state at HEAD `a913437c`. Five findings, three of them substantive enough to require structural fixes rather than band-aids. Implemented all five via the user's framing principle: **"prioritize simplicity of the FINAL code, not how easy it is to get there."**
+
+### The five findings and their resolutions
+
+| # | Severity | Finding | Resolution |
+|---|---|---|---|
+| 1 | Critical | `litellm.exceptions.APIConnectionError` (and several other classes) leak raw past the adapter — the enumerative catch tuple was structurally incomplete | Catch `openai.OpenAIError` (the structural base); rewrite `_classify_litellm_error` to dispatch via the full LiteLLM/OpenAI taxonomy |
+| 2 | Warning | Bare model names (`gpt-5.2`, `gemini-3-flash-preview`) in user-facing examples | Prefix every example across 8 files (CLI docstrings, README, mintlify docs, settings docstring, adapter docstring) |
+| 3 | Warning | `_detect_empty_response_warnings` short-circuited on `output_tokens <= 0`, silencing `content_filter` and `stop` cases | Gate only on `text` and the `tool_calls` carve-out; delete the phantom-case test that encoded the wrong assumption |
+| 4 | Suggestion | README documents a `pflow llm` CLI surface that doesn't exist | Replace with real `.pflow.md` workflow examples |
+| 5 | Suggestion | Add a parametrized "no raw LiteLLM exceptions past the seam" contract test | Implemented as `TestAdapterSealContract` covering 15 LiteLLM exception classes + a synthetic unknown subclass |
+
+### The big architectural surprise: `litellm.exceptions.OpenAIError` is a sibling, not a base
+
+When I first tried to widen the adapter's catch from the enumerative tuple to `litellm.exceptions.OpenAIError`, every error-path test failed — the catch wasn't matching. Class introspection revealed why:
+
+```
+litellm.exceptions.BadRequestError MRO:
+  litellm.exceptions.BadRequestError
+  openai.BadRequestError                      ← real base
+  openai.APIStatusError
+  openai.APIError
+  openai.OpenAIError                          ← real top
+  Exception
+
+litellm.exceptions.OpenAIError MRO:
+  litellm.exceptions.OpenAIError              ← sibling class!
+  openai.OpenAIError
+  Exception
+```
+
+`litellm.exceptions.OpenAIError` is **not** the base of LiteLLM's other exception classes — it's a **separate class** that also inherits from `openai.OpenAIError`. Every LiteLLM exception inherits from `openai.OpenAIError` directly (via the OpenAI SDK's class hierarchy), bypassing `litellm.exceptions.OpenAIError` entirely.
+
+Same trap one layer down: `litellm.exceptions.Timeout` does NOT inherit from `litellm.exceptions.APIConnectionError` — it inherits from `openai.APITimeoutError → openai.APIConnectionError`. So `isinstance(exc, litellm.exceptions.APIConnectionError)` returns False for a `Timeout` instance.
+
+**The fix shape**: catch `openai.OpenAIError` in `complete()`; in `_classify_litellm_error`, dispatch via `openai.X` for OpenAI-mirrored classes (covers both raw OpenAI instances and LiteLLM's thin wrappers via inheritance) plus `litellm.exceptions.X` for litellm-only classes (`ServiceUnavailableError`, `BadGatewayError`, `LiteLLMUnknownProvider`).
+
+This means pflow now imports `openai` directly. It was already a transitive dep via litellm, but I declared it explicitly in `pyproject.toml` — deptry's `DEP003` warning was correctly diagnosing that pflow depends on `openai.OpenAIError` as a real public API, not just incidentally.
+
+### The phantom-case test in finding #3
+
+The pre-existing test `test_no_warning_when_zero_tokens_and_empty` asserted that a `length`-finish-reason call with zero output tokens silently returns no warning. The docstring rationalized this as "immediate refusal" — but providers don't actually behave that way. Real refusals come back as `BadRequestError` (4xx) or `finish_reason=content_filter`. The test was encoding a defensive overcorrection.
+
+Worse: the same `output_tokens <= 0` short-circuit silenced `content_filter` cases at zero tokens, which is the actual signal the warning system is for (provider explicit refusal). The reviewer's reproduction:
+
+```python
+# text=None, completion_tokens=0, finish_reason="content_filter"
+assert complete(model="openai/gpt-4o-mini", prompt="hi").warnings == []  # silently swallowed
+```
+
+The fix gates only on `text` and the `tool_calls` carve-out. Every other empty-text case warns — including zero-token cases where the empty response IS the diagnostic.
+
+### LLMNode model fallback: not really removed by this work
+
+The reviewer flagged `nodes/llm/llm.py:276` (`self.params.get("model", "gemini-3-flash-preview")`) as a footgun teaching bare-name routing. Verification revealed it was unreachable in production (compiler at `compiler.py:281-292` either injects a model from settings/auto-detect or raises `CompilationError`), but reachable from ~30 unit tests that bypass compilation by calling `LLMNode()` directly.
+
+**The deeper fix**: delete the fallback entirely; raise `ValueError` if `model` is missing. Production never hits it; tests must set model explicitly. The bulk script approach: a Python regex pass over `tests/test_nodes/test_llm/test_llm.py` and `test_llm_images.py` injecting `"model": "openai/gpt-4o-mini"` into ~60 `set_params({...})` calls that lacked it. Two multi-line dicts got mangled by the regex (double-comma syntax errors); fixed by hand.
+
+**Caveat I'm preserving**: the new raise uses vanilla `ValueError`, not a `PflowError` subclass. CLAUDE.md says to prefer `PflowError`, but `LLMNode.prep` already raises `ValueError` in 4 other places (image not found, image type wrong, invalid reasoning_effort, missing prompt). Switching just my new raise to `InvalidRequestError` would create inconsistency. Switching all of `prep`'s raises is the scope of GH #347 ("standardize node prep validation diagnostics"). Documented; not fixed here.
+
+### Honesty pass after declaring "fully done"
+
+Before declaring complete, I did one more sweep for things I might have missed. Found 6 real loose ends:
+
+1. `tests/test_execution/test_runner.py:86` — fixture warning text used the OLD format from before Step 2.
+2. `src/pflow/nodes/llm/README.md:175` — "Available Models" section had bare OpenAI names.
+3. Same file:236 — token-usage example JSON had bare `gpt-4o-mini`.
+4. `docs/reference/nodes/llm.mdx:64` — "Model support" provider table had bare names for ALL THREE providers (worse than the reviewer flagged).
+5. `docs/reference/cli/settings.mdx:422-424` — a SECOND performance comparison table I missed when fixing the one at lines 430-432 (same shape, same problem).
+6. `src/pflow/core/llm_client.py:194` — `complete()` docstring used `"gpt-4o-mini"` (bare) as a model arg example.
+
+All six fixed. Lesson: the first audit pass focused on the reviewer's named sites. The honesty pass after looking at the broader pattern caught the rest. **For future similar work, run `grep -rn '\`gpt-[0-9]\|\`gemini-[0-9]\|\`claude-' src/ docs/ | grep -v 'openai/\|anthropic/\|gemini/'` BEFORE declaring done — it surfaces every bare-name occurrence in user-facing files in one shot.**
+
+### Architectural patterns established this session
+
+1. **Catch the structural base, not the friendly-named one.** When dealing with vendored exception hierarchies (LiteLLM wraps OpenAI SDK), check the actual MRO before assuming the package's own `XError` class is the right catch base. `litellm.exceptions.OpenAIError` looks correct semantically but is a sibling, not a parent.
+
+2. **Parametrized contract tests guard structural seals.** The `TestAdapterSealContract` class is the regression guard for "every classified LiteLLM exception wraps to LLMCallError." Adding a new branch to `_classify_litellm_error` requires adding a row; forgetting to add a class to the classifier surfaces as the synthetic-unknown-subclass test asserting the safe-default fallback. Both halves of the seal are pinned.
+
+3. **Default-fallback exceptions should be deterministic, not transient.** When a future LiteLLM subclass appears that we haven't classified, the default branch wraps it as `InvalidRequestError` (deterministic, no retry). Wrong call: defaulting to `LLMTransientError` would infinite-retry an unknown server condition. The right call: fail-fast and add an explicit branch when the new class surfaces in real workloads.
+
+4. **`output_tokens <= 0` is not a useful gate for "empty response."** Provider refusals fire with zero tokens. The right gate for "this isn't a warning" is presence of text, not presence of token consumption.
+
+### Operational gotchas worth remembering
+
+1. **`@patch("litellm.completion")` works regardless of how the production code imports litellm.** The autouse mock-resolution rules are documented in `tests/CLAUDE.md`; the test file's existing pattern is the path of least resistance.
+
+2. **Bulk regex-injection into multi-line dict literals is fragile.** When updating `set_params({...})` calls that span multiple lines, the regex may grab content past a comma and produce double-comma syntax errors. Verify by running the test suite after the script; fix any syntax errors by hand.
+
+3. **`pflow llm` does not exist as a CLI command.** Anyone documenting "how to use the LLM node" must do so via `.pflow.md` workflow snippets. The README rewrite established this pattern; future doc writers should follow.
+
+4. **NamespacedSharedStore namespacing rules** (recap from §34): single-underscore-prefix keys land in node namespace; `__*__` double-dunder keys bypass to root. `__warnings__` and `__trace_collector__` use the dunder convention deliberately.
+
+### Files changed in this session
+
+**Source:**
+- `src/pflow/core/llm_client.py` — module docstring + `complete()` catch + classifier rewrite + docstring example fix
+- `src/pflow/nodes/llm/llm.py` — fallback removal + explicit `ValueError` raise
+- `src/pflow/cli/commands/settings.py` — three CLI docstring example blocks prefixed
+- `src/pflow/core/settings.py` — LLMSettings docstring examples prefixed
+- `src/pflow/nodes/llm/README.md` — full Usage section rewrite + Available Models prefix + token-usage example fix
+
+**Tests:**
+- `tests/test_core/test_llm_client.py` — adapter contract test class added (16 parametrized cases + synthetic-unknown test); zero-token warning tests added; phantom-case test deleted; module docstring updated
+- `tests/test_registry/test_smart_filter.py` — `APIConnectionError` graceful-degradation regression test
+- `tests/test_nodes/test_llm/test_llm.py` — ~47 `set_params` calls injected with explicit model
+- `tests/test_nodes/test_llm/test_llm_images.py` — ~12 `set_params` calls injected with model + 2 multi-line dict fixes
+- `tests/test_execution/test_runner.py` — fixture warning text format aligned with new gate
+
+**Docs:**
+- `docs/reference/cli/settings.mdx` — auto-detect default table OpenAI fix + 2 performance comparison tables prefixed
+- `docs/reference/nodes/llm.mdx` — Model support table prefixed for all three providers + intro sentence
+
+**Dependencies:**
+- `pyproject.toml` — `openai` declared as direct dep (was transitive via litellm)
+- `uv.lock` — regenerated
+
+### Verification at handoff
+
+- `make test`: 5325 passed
+- `make check`: ruff, ruff-format, mypy, deptry all green
+- `tests/test_execution/test_plan_drift.py`: 32 sacred parity tests green throughout every step
+- Architectural seal: `grep -rn 'litellm\.exceptions\|import openai' src/pflow/` returns matches only in `core/llm_client.py` (the seam) — no consumer outside the adapter imports either
+- New tests: 16 contract cases + 1 synthetic-unknown + 4 zero-token warning + 1 smart-filter regression = 22 new test cases
+
+### What the next agent should know
+
+1. **The seal claim is now structurally enforced.** "No LiteLLM exception leaks past the adapter" is true via `openai.OpenAIError` catch + the parametrized contract test. Future LiteLLM additions automatically wrap as `InvalidRequestError` until classified explicitly.
+
+2. **`LLMNode()` requires `model` in params.** Tests that construct LLMNode directly must set `"model": "..."` in `set_params({...})` — there is no silent fallback. The autouse `mock_llm_client` doesn't validate the model name, so `"openai/gpt-4o-mini"` is the conventional test default.
+
+3. **Empty-response warnings now fire for all empty-text cases except `tool_calls`.** Previously the `output_tokens <= 0` short-circuit silenced provider refusals; now the gate is just text presence + the `tool_calls` carve-out.
+
+4. **Sibling-vs-base class hierarchies are a real trap.** When working with libraries that wrap other libraries' exceptions (LiteLLM wraps OpenAI SDK), introspect MRO before assuming `<package>.exceptions.XError` is the catch base. The actual base may be one layer down in the wrapped library.
+
+### Branch summary (since `8349df88` baseline — full Phase A + perf fixes + this review pass)
+
+```
+8349df88 ready for phase 0 + a    ← baseline
+[15 commits §27-§33]
+5a070312 refactor(llm): complete adapter seam — typed exception translation
+0ce7b838 refactor(llm): complete typed-exception architecture across error pipeline
+a7d8c777 braindump + progress log updates
+83e90598 fix(llm): close Phase A diagnostic warning gaps
+a913437c perf(llm): remove litellm from eager CLI path; lazy-import inside complete()
+[this commit] refactor(llm): widen adapter seal to openai.OpenAIError + simplify empty-response gate    ← current HEAD
+```

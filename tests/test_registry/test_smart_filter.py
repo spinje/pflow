@@ -324,6 +324,38 @@ class TestFallbackBehavior:
         assert result == fields
         assert len(result) == 60
 
+    def test_litellm_api_connection_error_returns_original(self, monkeypatch):
+        """LiteLLM ``APIConnectionError`` (DNS / Vertex SDK missing / etc.)
+        must degrade gracefully — not crash smart_filter.
+
+        Regression guard for Phase A code-review #1: the previous
+        enumerative catch tuple in the adapter forgot ``APIConnectionError``,
+        so the raw LiteLLM exception leaked past the seam — past
+        smart_filter's narrow ``LLMCallError`` umbrella — and crashed
+        the discovery probe. The structural ``openai.OpenAIError`` catch
+        in the adapter wraps ``APIConnectionError`` as
+        ``LLMTransientError``, which IS-A ``LLMCallError``, so this test
+        passes via graceful fallback.
+        """
+        from pflow.core.exceptions import LLMTransientError
+
+        fields = [(f"field{i}", "string") for i in range(60)]
+
+        def mock_complete_api_connection_error(**kwargs):
+            # Mirrors the real shape — adapter wraps to LLMTransientError.
+            raise LLMTransientError(
+                "litellm.APIConnectionError: getaddrinfo failed",
+                model="gemini/gemini-3-flash-preview",
+            )
+
+        monkeypatch.setattr("pflow.registry.smart_filter.complete", mock_complete_api_connection_error)
+
+        result = smart_filter_fields(fields, threshold=50)
+
+        # Fallback: original fields returned, no exception leaked
+        assert result == fields
+        assert len(result) == 60
+
 
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""

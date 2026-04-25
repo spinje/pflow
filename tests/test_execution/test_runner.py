@@ -83,8 +83,9 @@ def test_llm_structured_warning_survives_runner_pipeline(mock_llm_client):
     warning = {
         "kind": "llm_empty_response_reasoning",
         "text": (
-            "Empty response from gemini/gemini-3-flash-preview: 13 tokens consumed, "
-            "finish_reason=length. Increase max_tokens, or lower reasoning_effort."
+            "Empty response from gemini/gemini-3-flash-preview "
+            "(finish_reason=length, 13 tokens consumed). "
+            "Increase max_tokens, or lower reasoning_effort."
         ),
         "context": {
             "model": "gemini/gemini-3-flash-preview",

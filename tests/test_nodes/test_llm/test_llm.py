@@ -27,7 +27,7 @@ class TestLLMNode:
         mock_llm_client.set_response("*", None, "Test response")
 
         node = LLMNode()
-        node.set_params({"prompt": "Test prompt from params"})
+        node.set_params({"prompt": "Test prompt from params", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         action = node.run(shared)
@@ -43,7 +43,7 @@ class TestLLMNode:
         mock_llm_client.set_response("*", None, "Param response")
 
         node = LLMNode()
-        node.params = {"prompt": "Test prompt from params"}
+        node.params = {"prompt": "Test prompt from params", "model": "openai/gpt-4o-mini"}
         shared = {}
 
         action = node.run(shared)
@@ -82,7 +82,7 @@ class TestLLMNode:
     def test_temperature_zero(self, mock_llm_client):
         """Test temperature=0.0 is passed correctly."""
         node = LLMNode()
-        node.set_params({"prompt": "Test", "temperature": 0.0})
+        node.set_params({"prompt": "Test", "temperature": 0.0, "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -94,7 +94,7 @@ class TestLLMNode:
     def test_temperature_two(self, mock_llm_client):
         """Test temperature=2.0 is passed correctly."""
         node = LLMNode()
-        node.set_params({"prompt": "Test", "temperature": 2.0})
+        node.set_params({"prompt": "Test", "temperature": 2.0, "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -106,7 +106,7 @@ class TestLLMNode:
     def test_system_parameter_included(self, mock_llm_client):
         """Test that system parameter is included in kwargs when provided."""
         node = LLMNode()
-        node.set_params({"prompt": "Test", "system": "You are helpful"})
+        node.set_params({"prompt": "Test", "system": "You are helpful", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -123,7 +123,7 @@ class TestLLMNode:
         recorded call_history captures the literal None rather than "missing".
         """
         node = LLMNode()
-        node.set_params({"prompt": "Test"})  # No system parameter
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})  # No system parameter
         shared = {}
 
         node.run(shared)
@@ -134,7 +134,7 @@ class TestLLMNode:
     def test_max_tokens_included(self, mock_llm_client):
         """Test that max_tokens is included when provided."""
         node = LLMNode()
-        node.set_params({"prompt": "Test", "max_tokens": 100})
+        node.set_params({"prompt": "Test", "max_tokens": 100, "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -147,7 +147,7 @@ class TestLLMNode:
     def test_max_tokens_none_not_in_kwargs(self, mock_llm_client):
         """Test that max_tokens is None in the adapter call when not provided."""
         node = LLMNode()
-        node.set_params({"prompt": "Test"})  # No max_tokens
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})  # No max_tokens
         shared = {}
 
         node.run(shared)
@@ -160,7 +160,7 @@ class TestLLMNode:
         mock_llm_client.set_response("*", None, "Forced evaluation")
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -173,7 +173,7 @@ class TestLLMNode:
         mock_llm_client.set_response("*", None, "Stored response")
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -184,7 +184,7 @@ class TestLLMNode:
     def test_default_action_returned(self, mock_llm_client):
         """Test that run() always returns 'default' action."""
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         action = node.run(shared)
@@ -447,7 +447,7 @@ class TestLLMNode:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_runtime)
 
         node = LLMNode(max_retries=2, wait=0)  # Custom retry count, no wait
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         action = node.run(shared)
@@ -467,7 +467,7 @@ class TestLLMNode:
     def test_empty_prompt_raises_error(self):
         """Test that empty prompt string raises ValueError."""
         node = LLMNode()
-        node.set_params({"prompt": ""})  # Empty string
+        node.set_params({"prompt": "", "model": "openai/gpt-4o-mini"})  # Empty string
         shared = {}
 
         with pytest.raises(ValueError) as exc_info:
@@ -479,7 +479,7 @@ class TestLLMNode:
     def test_temperature_below_zero_clamped(self, mock_llm_client):
         """Test that temperature below 0 is clamped to 0.0."""
         node = LLMNode()
-        node.set_params({"prompt": "Test", "temperature": -0.5})
+        node.set_params({"prompt": "Test", "temperature": -0.5, "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -490,7 +490,7 @@ class TestLLMNode:
     def test_temperature_above_two_clamped(self, mock_llm_client):
         """Test that temperature above 2.0 is clamped to 2.0."""
         node = LLMNode()
-        node.set_params({"prompt": "Test", "temperature": 3.5})
+        node.set_params({"prompt": "Test", "temperature": 3.5, "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -503,7 +503,7 @@ class TestLLMNode:
         mock_llm_client.set_response("*", None, "")
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         action = node.run(shared)
@@ -568,7 +568,7 @@ class TestLLMNode:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -579,7 +579,7 @@ class TestLLMNode:
     def test_system_parameter_from_params(self, mock_llm_client):
         """Test that system parameter is read from params."""
         node = LLMNode()
-        node.set_params({"prompt": "Test", "system": "Param system"})
+        node.set_params({"prompt": "Test", "system": "Param system", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         node.run(shared)
@@ -604,7 +604,7 @@ class TestLLMNode:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", flaky_complete)
 
         node = LLMNode(max_retries=3, wait=0.01)  # Short wait for testing
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared = {}
 
         action = node.run(shared)
@@ -706,7 +706,7 @@ class TestPostStoresStringResponse:
         mock_llm_client.set_response("*", None, "This is a prose response about JSON.")
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -719,7 +719,7 @@ class TestPostStoresStringResponse:
         mock_llm_client.set_response("*", None, '```json\n{"items": [1, 2, 3]}\n```')
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -738,7 +738,7 @@ class TestPostStoresStringResponse:
         mock_llm_client.set_response("*", None, '{"items": [1, 2, 3], "count": 3}')
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -752,7 +752,7 @@ class TestPostStoresStringResponse:
         mock_llm_client.set_response("*", None, prose)
 
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -785,7 +785,7 @@ class TestStructuredOutput:
         mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Alice", "age": 30})
 
         node = LLMNode()
-        node.set_params({"prompt": "Extract info", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract info", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -800,7 +800,7 @@ class TestStructuredOutput:
     def test_output_schema_not_in_kwargs_when_absent(self, mock_llm_client):
         """No output_schema in params → schema is None in adapter call."""
         node = LLMNode()
-        node.set_params({"prompt": "Test"})
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -813,7 +813,7 @@ class TestStructuredOutput:
         mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Alice", "age": 30})
 
         node = LLMNode()
-        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -826,7 +826,7 @@ class TestStructuredOutput:
         mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Bob"})
 
         node = LLMNode()
-        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         with patch.object(LLMNode, "_strip_code_block") as mock_strip:
@@ -850,7 +850,7 @@ class TestStructuredOutput:
         mock_llm_client.set_response("*", nested_schema, {"user": {"name": "Bob", "scores": [1, 2, 3]}})
 
         node = LLMNode()
-        node.set_params({"prompt": "Extract", "output_schema": nested_schema})
+        node.set_params({"prompt": "Extract", "output_schema": nested_schema, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -882,7 +882,7 @@ class TestStructuredOutput:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
 
         node = LLMNode()
-        node.set_params({"prompt": "List items", "output_schema": array_schema})
+        node.set_params({"prompt": "List items", "output_schema": array_schema, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -912,7 +912,7 @@ class TestStructuredOutput:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
 
         node = LLMNode()
-        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -930,7 +930,7 @@ class TestStructuredOutput:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_error)
 
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -945,7 +945,7 @@ class TestStructuredOutput:
         mock_llm_client.set_response("*", None, '{"key": "value"}')
 
         node = LLMNode()
-        node.set_params({"prompt": "Test", "output_schema": None})
+        node.set_params({"prompt": "Test", "output_schema": None, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         node.run(shared)
@@ -958,7 +958,7 @@ class TestStructuredOutput:
         mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Alice"})
 
         node = LLMNode()
-        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -980,7 +980,7 @@ class TestStructuredOutput:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
 
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -1015,7 +1015,7 @@ class TestStructuredOutput:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
 
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -1033,7 +1033,7 @@ class TestStructuredOutput:
         mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"score": 5})
 
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Rate it", "output_schema": self.SIMPLE_SCHEMA})
+        node.set_params({"prompt": "Rate it", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -1050,7 +1050,7 @@ class TestTimeout:
     def test_timeout_default_is_120(self):
         """Default timeout is 120 seconds when not specified in params."""
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Test prompt"})
+        node.set_params({"prompt": "Test prompt", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         prep_res = node.prep(shared)
@@ -1060,7 +1060,7 @@ class TestTimeout:
     def test_timeout_custom_value(self):
         """Custom timeout value is passed through from params."""
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Test prompt", "timeout": 60})
+        node.set_params({"prompt": "Test prompt", "timeout": 60, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         prep_res = node.prep(shared)
@@ -1082,7 +1082,7 @@ class TestTimeout:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", slow_complete)
 
         node = LLMNode(wait=0, max_retries=1)
-        node.set_params({"prompt": "Test", "timeout": 0.05})
+        node.set_params({"prompt": "Test", "timeout": 0.05, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -1098,7 +1098,7 @@ class TestTimeout:
         mock_llm_client.set_response("*", None, "Fast response")
 
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Test", "timeout": 10})
+        node.set_params({"prompt": "Test", "timeout": 10, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -1124,7 +1124,7 @@ class TestTimeout:
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", slow_complete)
 
         node = LLMNode(max_retries=3, wait=0)
-        node.set_params({"prompt": "Test", "timeout": 0.05})
+        node.set_params({"prompt": "Test", "timeout": 0.05, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -1138,7 +1138,7 @@ class TestTimeout:
     def test_timeout_string_coerced(self):
         """String timeout value is coerced to float."""
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Test", "timeout": "60"})
+        node.set_params({"prompt": "Test", "timeout": "60", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         prep_res = node.prep(shared)
@@ -1148,7 +1148,7 @@ class TestTimeout:
     def test_timeout_zero_rejected(self):
         """Zero timeout raises ValueError during prep."""
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Test", "timeout": 0})
+        node.set_params({"prompt": "Test", "timeout": 0, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         with pytest.raises(ValueError, match="positive"):
@@ -1157,7 +1157,7 @@ class TestTimeout:
     def test_timeout_negative_rejected(self):
         """Negative timeout raises ValueError during prep."""
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Test", "timeout": -5})
+        node.set_params({"prompt": "Test", "timeout": -5, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         with pytest.raises(ValueError, match="positive"):
@@ -1166,7 +1166,7 @@ class TestTimeout:
     def test_timeout_invalid_string_rejected(self):
         """Non-numeric string timeout raises ValueError during prep."""
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Test", "timeout": "abc"})
+        node.set_params({"prompt": "Test", "timeout": "abc", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         with pytest.raises(ValueError, match="positive number"):
@@ -1183,7 +1183,7 @@ class TestReasoningEffortValidation:
 
     def test_invalid_effort_rejected_in_prep(self):
         node = LLMNode()
-        node.set_params({"prompt": "hello", "reasoning_effort": "ultra"})
+        node.set_params({"prompt": "hello", "reasoning_effort": "ultra", "model": "openai/gpt-4o-mini"})
         with pytest.raises(ValueError, match="Invalid reasoning_effort: 'ultra'"):
             node.prep({})
 
@@ -1193,7 +1193,7 @@ class TestReasoningEffortValidation:
     )
     def test_valid_efforts_accepted_in_prep(self, effort):
         node = LLMNode()
-        node.set_params({"prompt": "hello", "reasoning_effort": effort})
+        node.set_params({"prompt": "hello", "reasoning_effort": effort, "model": "openai/gpt-4o-mini"})
         result = node.prep({})
         assert result["reasoning_effort"] == effort
 

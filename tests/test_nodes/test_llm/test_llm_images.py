@@ -17,7 +17,11 @@ def temp_image(tmp_path):
 def test_single_url_image(mock_llm_client):
     """LLMNode forwards a single URL image as an Attachment(image_url)."""
     node = LLMNode()
-    node.set_params({"prompt": "Describe this image", "images": ["https://example.com/image.jpg"]})
+    node.set_params({
+        "prompt": "Describe this image",
+        "images": ["https://example.com/image.jpg"],
+        "model": "openai/gpt-4o-mini",
+    })
     shared = {}
 
     action = node.run(shared)
@@ -33,7 +37,7 @@ def test_single_url_image(mock_llm_client):
 def test_single_file_image(temp_image, mock_llm_client):
     """LLMNode forwards a single file path as an Attachment(image_path)."""
     node = LLMNode()
-    node.set_params({"prompt": "What's this?", "images": [temp_image]})
+    node.set_params({"prompt": "What's this?", "images": [temp_image], "model": "openai/gpt-4o-mini"})
     shared = {}
 
     action = node.run(shared)
@@ -50,6 +54,7 @@ def test_multiple_images_mixed(temp_image, mock_llm_client):
     node = LLMNode()
     node.set_params({
         "prompt": "Compare these",
+        "model": "openai/gpt-4o-mini",
         "images": ["https://example.com/img1.jpg", temp_image, "https://example.com/img2.png"],
     })
     shared = {}
@@ -70,7 +75,7 @@ def test_multiple_images_mixed(temp_image, mock_llm_client):
 def test_missing_file_error():
     """Test that missing file raises ValueError."""
     node = LLMNode()
-    node.set_params({"prompt": "Describe", "images": ["/nonexistent/file.jpg"]})
+    node.set_params({"prompt": "Describe", "images": ["/nonexistent/file.jpg"], "model": "openai/gpt-4o-mini"})
     shared = {}
 
     with pytest.raises(ValueError) as exc_info:
@@ -82,7 +87,7 @@ def test_missing_file_error():
 def test_invalid_image_type():
     """Test that non-string image raises TypeError."""
     node = LLMNode()
-    node.set_params({"prompt": "Describe", "images": [123]})  # Integer instead of string
+    node.set_params({"prompt": "Describe", "images": [123], "model": "openai/gpt-4o-mini"})  # Integer instead of string
     shared = {}
 
     with pytest.raises(TypeError) as exc_info:
@@ -94,7 +99,7 @@ def test_invalid_image_type():
 def test_empty_images_backward_compatibility(mock_llm_client):
     """Empty images list passes None to the adapter (no attachments arg)."""
     node = LLMNode()
-    node.set_params({"prompt": "Hello world", "images": []})
+    node.set_params({"prompt": "Hello world", "images": [], "model": "openai/gpt-4o-mini"})
     shared = {}
 
     action = node.run(shared)
@@ -107,7 +112,7 @@ def test_empty_images_backward_compatibility(mock_llm_client):
 def test_no_images_backward_compatibility(mock_llm_client):
     """Missing images key passes None to the adapter."""
     node = LLMNode()
-    node.set_params({"prompt": "Hello world"})  # No images key at all
+    node.set_params({"prompt": "Hello world", "model": "openai/gpt-4o-mini"})  # No images key at all
     shared = {}
 
     action = node.run(shared)
@@ -119,7 +124,7 @@ def test_no_images_backward_compatibility(mock_llm_client):
 def test_images_from_params(temp_image, mock_llm_client):
     """Direct params assignment works the same as set_params."""
     node = LLMNode()
-    node.params = {"prompt": "Test", "images": [temp_image]}
+    node.params = {"prompt": "Test", "images": [temp_image], "model": "openai/gpt-4o-mini"}
     shared = {}
 
     action = node.run(shared)
@@ -134,7 +139,7 @@ def test_images_from_params(temp_image, mock_llm_client):
 def test_single_string_auto_wrapping(temp_image, mock_llm_client):
     """A single string in `images` gets wrapped into a list of one."""
     node = LLMNode()
-    node.set_params({"prompt": "Describe", "images": temp_image})  # String, not list
+    node.set_params({"prompt": "Describe", "images": temp_image, "model": "openai/gpt-4o-mini"})  # String, not list
     shared = {}
 
     action = node.run(shared)
@@ -149,7 +154,7 @@ def test_single_string_auto_wrapping(temp_image, mock_llm_client):
 def test_http_url_detection(mock_llm_client):
     """http:// (not just https://) URLs are detected as URL attachments."""
     node = LLMNode()
-    node.set_params({"prompt": "Describe", "images": ["http://example.com/image.jpg"]})
+    node.set_params({"prompt": "Describe", "images": ["http://example.com/image.jpg"], "model": "openai/gpt-4o-mini"})
     shared = {}
 
     action = node.run(shared)
@@ -165,6 +170,7 @@ def test_images_with_system_and_max_tokens(temp_image, mock_llm_client):
     node = LLMNode()
     node.set_params({
         "prompt": "Analyze",
+        "model": "openai/gpt-4o-mini",
         "system": "You are an expert",
         "images": [temp_image],
         "max_tokens": 100,
@@ -199,7 +205,7 @@ def test_relative_file_path(tmp_path, mock_llm_client):
         os.chdir(tmp_path)
 
         node = LLMNode()
-        node.set_params({"prompt": "Test", "images": ["relative.jpg"]})
+        node.set_params({"prompt": "Test", "images": ["relative.jpg"], "model": "openai/gpt-4o-mini"})
         shared = {}
 
         action = node.run(shared)

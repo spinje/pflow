@@ -1,18 +1,27 @@
 """pflow-owned LiteLLM adapter — single seam for all LLM calls.
 
 All LiteLLM API-shape complexity stops here. Consumer code (LLMNode,
-discovery callsites) operates on `AdapterResponse`, not on
-`litellm.ModelResponse`. This module owns:
+discovery callsites) operates on ``AdapterResponse``, not on
+``litellm.ModelResponse``. This module owns:
 
-- Building the LiteLLM `messages` list from system + prompt + attachments
+- Building the LiteLLM ``messages`` list from system + prompt + attachments
 - Translating reasoning kwargs from the provider-neutral shape produced by
   ``llm_reasoning_map`` into LiteLLM-native shapes (e.g. Anthropic's
   ``thinking={"type":"enabled","budget_tokens":N}``)
-- Translating every LiteLLM exception we classify (deterministic:
-  ``BadRequestError``, ``AuthenticationError``, ``NotFoundError``,
-  ``PermissionDeniedError``; transient: ``Timeout``, ``RateLimitError``,
-  ``InternalServerError``) into a typed ``LLMCallError`` subclass so
-  consumers never import ``litellm.exceptions`` to discriminate
+- Translating every LiteLLM exception into a typed ``LLMCallError`` subclass
+  so consumers never import ``litellm.exceptions`` to discriminate. The
+  catch is structural: ``openai.OpenAIError`` is the actual base of every
+  HTTP-level / connection / rate-limit / auth / model exception LiteLLM
+  raises (LiteLLM's exception classes inherit from the OpenAI SDK base
+  rather than from ``litellm.exceptions.OpenAIError``, which is a sibling
+  class — confirmed by introspection on litellm 1.82.6). A single catch
+  on ``openai.OpenAIError`` covers all current and future subclasses.
+  (LiteLLM's proxy/guardrail-only errors — ``BlockedPiiEntityError``,
+  ``BudgetExceededError``, ``Guardrail*`` — inherit from plain
+  ``Exception`` and are unreachable in pflow because we don't enable
+  proxy or guardrail mode.) The ``openai`` package is guaranteed installed
+  whenever ``litellm`` is — it's a transitive runtime dependency LiteLLM
+  declares.
 - Normalizing the response shape to a stable ``AdapterResponse``
 - Reading ``response_cost`` from LiteLLM's ``_hidden_params`` so consumers
   get cost without a separate pricing computation (Phase 0 outcome A)
@@ -35,6 +44,7 @@ from typing import Any, Callable, Literal
 from pflow.core.exceptions import (
     InvalidRequestError,
     LLMCallError,
+    LLMResponseParseError,
     LLMTransientError,
     MissingApiKeyError,
     UnknownModelError,
@@ -155,12 +165,15 @@ def complete(
     On success, returns an ``AdapterResponse``. On deterministic errors,
     raises a typed ``LLMCallError`` subclass:
 
-    - ``UnknownModelError`` for ``NotFoundError`` and bare-model-name
-      ``BadRequestError`` (no provider prefix)
+    - ``UnknownModelError`` for ``NotFoundError``, ``LiteLLMUnknownProvider``,
+      and bare-model-name ``BadRequestError`` (no provider prefix)
     - ``MissingApiKeyError`` for ``AuthenticationError`` and
       ``PermissionDeniedError``
-    - ``InvalidRequestError`` for any other ``BadRequestError`` (schema
-      mismatch, content policy, context-window overflow, ...)
+    - ``LLMResponseParseError`` for ``APIResponseValidationError`` and its
+      subclasses (e.g. ``JSONSchemaValidationError``)
+    - ``InvalidRequestError`` for any other ``BadRequestError`` and any
+      unrecognized ``OpenAIError`` subclass (schema mismatch, content
+      policy, context-window overflow, ...)
 
     The caller should NOT retry these — they are the LiteLLM-era
     equivalent of the Pydantic ``ValidationError`` PATTERN EXCEPTION at
@@ -168,16 +181,19 @@ def complete(
     subclasses at its ``_call_llm`` boundary so the Node retry loop
     doesn't burn three attempts on a permanent failure.
 
-    Transient LiteLLM exceptions (timeout, rate limit, internal server)
-    are wrapped in ``LLMTransientError`` so consumers can catch the
-    ``LLMCallError`` umbrella. Other exceptions (for example, network
-    errors outside LiteLLM's typed hierarchy) propagate unwrapped.
-    LLMNode re-raises ``LLMTransientError`` so the Node retry loop can
-    retry.
+    Transient LiteLLM exceptions (timeout, rate limit, connection error,
+    5xx) are wrapped in ``LLMTransientError`` so consumers can catch the
+    ``LLMCallError`` umbrella. The catch is over ``openai.OpenAIError``
+    (the OpenAI SDK base), so every HTTP-level / connection / rate-limit
+    / auth / model error LiteLLM raises is wrapped — there is no
+    "unknown LiteLLM exception" leakage past the seam. LLMNode re-raises
+    ``LLMTransientError`` so the Node retry loop can retry.
 
     Args:
-        model: LiteLLM model identifier, e.g. ``"anthropic/claude-sonnet-4-5"``,
-            ``"gpt-4o-mini"``, ``"gemini/gemini-2.5-flash"``.
+        model: LiteLLM model identifier with provider prefix, e.g.
+            ``"anthropic/claude-sonnet-4-5"``, ``"openai/gpt-4o-mini"``,
+            ``"gemini/gemini-2.5-flash"``. Bare names (no prefix) route
+            inconsistently across providers; prefer explicit prefixes.
         prompt: User-message text. Already template-resolved; no further
             substitution happens here.
         system: Optional system-message text.
@@ -251,33 +267,33 @@ def complete(
     # ~700ms; subsequent calls resolve from sys.modules instantly.
     # Setting suppress_debug_info every call is idempotent and cheaper
     # than gating on a flag.
+    #
+    # ``openai`` is litellm's own transitive runtime dep — guaranteed to
+    # be in sys.modules by the time litellm is imported. We import its
+    # exception base directly because litellm's exception classes inherit
+    # from it (NOT from ``litellm.exceptions.OpenAIError`` — that is a
+    # separate sibling class). See module docstring.
     import litellm
-    import litellm.exceptions
+    import openai
 
     litellm.suppress_debug_info = True
 
     try:
         raw_response = litellm.completion(**kwargs)
-    except (
-        # Deterministic errors (4xx that retrying cannot fix).
-        litellm.exceptions.BadRequestError,
-        litellm.exceptions.AuthenticationError,
-        litellm.exceptions.NotFoundError,
-        litellm.exceptions.PermissionDeniedError,
-        # Transient errors (timeout, rate limit, 5xx). Wrapped in
-        # LLMTransientError so the architectural seal stays intact:
-        # consumers (LLMNode retry loop, smart_filter) catch the
-        # LLMCallError umbrella without ever importing litellm.exceptions.
-        litellm.exceptions.Timeout,
-        litellm.exceptions.RateLimitError,
-        litellm.exceptions.InternalServerError,
-    ) as e:
-        # _classify_litellm_error picks the right typed pflow subclass so
-        # consumers can construct precise messages without importing
-        # litellm.exceptions themselves. Deterministic subclasses are caught
-        # by LLMNode at its _call_llm boundary (preventing the Node retry
-        # loop from burning three attempts on a permanent failure);
-        # LLMTransientError is re-raised by LLMNode so the retry loop fires.
+    except openai.OpenAIError as e:
+        # OpenAIError is the LiteLLM/OpenAI SDK base class. Catching it
+        # covers every HTTP-level, connection, rate-limit, auth, and model
+        # error LiteLLM raises in the call path pflow uses — both the
+        # known subclasses and any future additions. The architectural
+        # seal stays intact: consumers (LLMNode retry loop, smart_filter,
+        # discovery callers) catch the LLMCallError umbrella without ever
+        # importing litellm.exceptions.
+        #
+        # _classify_litellm_error picks the right typed pflow subclass.
+        # Deterministic subclasses are caught by LLMNode at its _call_llm
+        # boundary (preventing the Node retry loop from burning three
+        # attempts on a permanent failure); LLMTransientError is re-raised
+        # by LLMNode so the retry loop fires.
         typed = _classify_litellm_error(e, model=model)
         _emit_trace(
             trace_hook,
@@ -304,54 +320,128 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
 
     The adapter is the single place where ``litellm.exceptions`` types are
     mapped to pflow types. Consumers receive ``UnknownModelError`` /
-    ``MissingApiKeyError`` / ``InvalidRequestError`` / ``LLMTransientError``
-    and never need to import ``litellm.exceptions`` to discriminate.
+    ``MissingApiKeyError`` / ``LLMResponseParseError`` /
+    ``InvalidRequestError`` / ``LLMTransientError`` and never need to
+    import ``litellm.exceptions`` to discriminate.
 
     Substring detection on the message text happens ONLY here at the seam
-    (the "LLM Provider NOT provided" check). Past this boundary, consumers
-    branch on structured attributes (``reason``, ``kind``) — never on text.
+    (the "LLM Provider NOT provided" fallback for older LiteLLM versions
+    that don't raise the typed ``LiteLLMUnknownProvider``). Past this
+    boundary, consumers branch on structured attributes (``reason``,
+    ``kind``) — never on text.
+
+    Two class hierarchies to know about:
+
+    * Most LiteLLM exceptions are *thin wrappers* whose first base is the
+      OpenAI SDK class with the same name (e.g.
+      ``litellm.exceptions.BadRequestError`` IS-A ``openai.BadRequestError``).
+      For these, ``isinstance(exc, openai.X)`` matches both LiteLLM-wrapped
+      and raw OpenAI instances, which makes the dispatch immune to LiteLLM
+      one day raising a sibling class instead.
+    * A few LiteLLM-only classes don't have an OpenAI-side mirror at all:
+      ``ServiceUnavailableError``, ``BadGatewayError``,
+      ``LiteLLMUnknownProvider``. They inherit from ``openai.APIStatusError``
+      / ``openai.BadRequestError`` (so the outer ``openai.OpenAIError``
+      catch in ``complete()`` still wraps them), but the matching dispatch
+      branch must reference them via ``litellm.exceptions``.
+
+    Dispatch order matters for correctness:
+
+    1. **Auth** (``AuthenticationError``, ``PermissionDeniedError``) —
+       most specific; check before other status-code-based classifications.
+    2. **Model name issues** — ``LiteLLMUnknownProvider`` IS-A
+       ``BadRequestError``, so it must be checked before the generic
+       ``BadRequestError`` branch. Same for the substring fallback for
+       older LiteLLM versions that don't raise the typed class.
+       ``NotFoundError`` is the typical "model name unrecognized" case.
+    3. **Transient** — ``APIConnectionError`` (which covers ``Timeout``
+       via inheritance — ``Timeout`` IS-A ``openai.APITimeoutError`` IS-A
+       ``openai.APIConnectionError``), ``RateLimitError``,
+       ``InternalServerError``, plus the LiteLLM-only
+       ``ServiceUnavailableError`` and ``BadGatewayError``.
+    4. **Response validation** — ``APIResponseValidationError`` and its
+       subclasses (``JSONSchemaValidationError``) are LiteLLM-side
+       complaints about provider responses; semantically these are
+       "model returned something unparseable" rather than "request was
+       bad", so they map to ``LLMResponseParseError``.
+    5. **Bad request** — generic ``BadRequestError`` covers schema
+       violations, content-policy rejections, context-window overflow,
+       etc. ``ContextWindowExceededError``, ``ContentPolicyViolationError``,
+       ``UnsupportedParamsError``, ``ImageFetchError``,
+       ``RejectedRequestError`` all flow through here.
+    6. **Default** — any unrecognized ``OpenAIError`` subclass is treated
+       as deterministic ``InvalidRequestError`` so we fail-fast rather
+       than infinite-retry an unknown server condition. Future transient
+       subclasses can be added explicitly to the transient branch above.
     """
-    # Lazy import — only called from complete()'s except handler, so litellm
-    # is already loaded by this point. The import resolves from sys.modules.
-    import litellm.exceptions
+    # Lazy imports — only called from complete()'s except handler, so both
+    # modules are already in sys.modules by the time we reach here.
+    import litellm.exceptions as le
+    import openai
 
-    # Transient errors (timeout, rate limit, 5xx). Marker subclass; LLMNode's
-    # _call_llm re-raises rather than catching, so the Node retry loop fires.
-    if isinstance(
-        exc,
-        (
-            litellm.exceptions.Timeout,
-            litellm.exceptions.RateLimitError,
-            litellm.exceptions.InternalServerError,
-        ),
-    ):
-        return LLMTransientError(str(exc), model=model)
-
-    # Deterministic errors
-    if isinstance(exc, litellm.exceptions.NotFoundError):
-        return UnknownModelError(f"Unknown model: {model}", model=model, reason="unknown_name")
-    if isinstance(exc, litellm.exceptions.AuthenticationError):
+    # 1. Auth (specific status-code classes; check before other 4xx).
+    if isinstance(exc, openai.AuthenticationError):
         return MissingApiKeyError(
             f"API key required for model '{model}'",
             model=model,
             kind="missing_key",
         )
-    if isinstance(exc, litellm.exceptions.PermissionDeniedError):
+    if isinstance(exc, openai.PermissionDeniedError):
         return MissingApiKeyError(
             f"API key for model '{model}' lacks permission for this request",
             model=model,
             kind="lacks_permission",
         )
-    # BadRequestError and its subclasses. The "LLM Provider NOT provided"
-    # substring fires when a user passes a bare model name with no provider
-    # prefix — distinct sub-case of UnknownModelError.
-    if "LLM Provider NOT provided" in str(exc):
+
+    # 2. Model name issues (must check before the generic BadRequestError
+    # branch — LiteLLMUnknownProvider IS-A BadRequestError).
+    if isinstance(exc, le.LiteLLMUnknownProvider) or "LLM Provider NOT provided" in str(exc):
         return UnknownModelError(
             f"Model '{model}' has no provider prefix",
             model=model,
             reason="missing_prefix",
         )
-    return InvalidRequestError(f"Invalid request for model '{model}': {exc}", model=model)
+    if isinstance(exc, openai.NotFoundError):
+        return UnknownModelError(f"Unknown model: {model}", model=model, reason="unknown_name")
+
+    # 3. Transient (network, rate-limit, 5xx). Marker subclass; LLMNode's
+    # _call_llm re-raises rather than catching, so the Node retry loop fires.
+    # APIConnectionError covers Timeout (Timeout IS-A APITimeoutError IS-A
+    # APIConnectionError). ServiceUnavailableError / BadGatewayError have
+    # no openai-side mirror — referenced via litellm.exceptions.
+    if isinstance(
+        exc,
+        (
+            openai.APIConnectionError,
+            openai.RateLimitError,
+            openai.InternalServerError,
+            le.ServiceUnavailableError,
+            le.BadGatewayError,
+        ),
+    ):
+        return LLMTransientError(str(exc), model=model)
+
+    # 4. Response validation — LiteLLM rejected the provider's response
+    # shape (e.g. ``JSONSchemaValidationError`` against an output schema).
+    # Semantically a parse failure, not a bad request.
+    if isinstance(exc, openai.APIResponseValidationError):
+        return LLMResponseParseError(
+            f"Provider response failed validation for model '{model}': {exc}",
+            model=model,
+        )
+
+    # 5. Bad request (covers schema, content policy, context window,
+    # unsupported params, image fetch, rejected request).
+    if isinstance(exc, openai.BadRequestError):
+        return InvalidRequestError(f"Invalid request for model '{model}': {exc}", model=model)
+
+    # 6. Default: unrecognized OpenAIError subclass. Treat as deterministic
+    # so we don't infinite-retry an unknown server condition. Add explicit
+    # branches above as new subclasses surface in real workloads.
+    return InvalidRequestError(
+        f"Unrecognized LiteLLM error for model '{model}' ({type(exc).__name__}): {exc}",
+        model=model,
+    )
 
 
 def _build_messages(
@@ -571,16 +661,23 @@ def _detect_empty_response_warnings(
 ) -> list[dict[str, Any]]:
     """Build structured warnings for empty-content responses.
 
-    Returns one warning dict per finish_reason case. Each entry has ``kind``
-    (machine-parseable discriminator), ``text`` (human-readable remediation),
-    and ``context`` (structured fields). LLMNode.post() lifts these into
-    ``shared["__warnings__"]`` so JSON consumers see them and the workflow
-    status shifts to DEGRADED.
+    Gate is intentionally simple:
 
-    ``finish_reason="tool_calls"`` is intentionally silent — that's an
-    expected LiteLLM shape when the model wanted tools instead of text.
+    * If the model produced visible text → no warning (success).
+    * If ``finish_reason == "tool_calls"`` → no warning (expected LiteLLM
+      shape when the model wanted tools instead of text).
+    * Every other empty-text case is an anomaly worth surfacing — including
+      cases with ``output_tokens == 0``. Provider refusals (``content_filter``)
+      and unexpected stops can fire at zero token counts; gating those out
+      silently would drop the very signal the warning system exists for.
+
+    Returns one warning dict per finish_reason case. Each entry has
+    ``kind`` (machine-parseable discriminator), ``text`` (human-readable
+    remediation), and ``context`` (structured fields). LLMNode.post()
+    lifts these into ``shared["__warnings__"]`` so JSON consumers see
+    them and the workflow status shifts to DEGRADED.
     """
-    if text or output_tokens <= 0:
+    if text or finish_reason == "tool_calls":
         return []
 
     if finish_reason in ("length", "max_tokens"):
@@ -590,8 +687,8 @@ def _detect_empty_response_warnings(
                 {
                     "kind": "llm_empty_response_reasoning",
                     "text": (
-                        f"Empty response from {model}: {output_tokens} tokens consumed, "
-                        f"finish_reason={finish_reason}. The budget was spent on internal "
+                        f"Empty response from {model} (finish_reason={finish_reason}, "
+                        f"{output_tokens} tokens consumed). The budget was spent on internal "
                         f"thinking before any visible output could be emitted. "
                         f"Increase max_tokens, or lower reasoning_effort to leave budget for output."
                     ),
@@ -608,8 +705,8 @@ def _detect_empty_response_warnings(
             {
                 "kind": "llm_empty_response_max_tokens",
                 "text": (
-                    f"Empty response from {model}: {output_tokens} tokens consumed, "
-                    f"finish_reason={finish_reason}. Increase max_tokens to allow visible output."
+                    f"Empty response from {model} (finish_reason={finish_reason}, "
+                    f"{output_tokens} tokens consumed). Increase max_tokens to allow visible output."
                 ),
                 "context": {
                     "model": model,
@@ -651,7 +748,8 @@ def _detect_empty_response_warnings(
                 "context": {"model": model, "finish_reason": None},
             }
         ]
-    # finish_reason="tool_calls" or any other future case: silent.
+    # Any other future finish_reason value: silent (we'd need a real case
+    # to know whether it's a success or anomaly).
     return []
 
 

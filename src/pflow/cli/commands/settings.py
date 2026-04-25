@@ -466,9 +466,9 @@ def llm_set_default(model: str) -> None:
     - Smart filtering (when filtering_model not set)
 
     Example:
-        pflow settings llm set-default gpt-5.2
+        pflow settings llm set-default openai/gpt-5.2
         pflow settings llm set-default anthropic/claude-sonnet-4-5
-        pflow settings llm set-default gemini-3-flash-preview
+        pflow settings llm set-default gemini/gemini-3-flash-preview
     """
     manager = SettingsManager()
     current_settings = manager.load()
@@ -487,7 +487,7 @@ def llm_set_discovery(model: str) -> None:
 
     Example:
         pflow settings llm set-discovery anthropic/claude-sonnet-4-5
-        pflow settings llm set-discovery gemini-3-flash-preview
+        pflow settings llm set-discovery gemini/gemini-3-flash-preview
     """
     manager = SettingsManager()
     current_settings = manager.load()
@@ -505,8 +505,8 @@ def llm_set_filtering(model: str) -> None:
     Used for structure-only mode when filtering large LLM responses.
 
     Example:
-        pflow settings llm set-filtering gemini-2.5-flash-lite
-        pflow settings llm set-filtering gpt-4o-mini
+        pflow settings llm set-filtering gemini/gemini-2.5-flash-lite
+        pflow settings llm set-filtering openai/gpt-4o-mini
     """
     manager = SettingsManager()
     current_settings = manager.load()

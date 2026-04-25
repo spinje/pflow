@@ -40,80 +40,129 @@ Then reference Ollama models with the `ollama/` prefix in your workflow:
 
 ## Usage
 
-### Basic usage:
-```bash
-pflow llm --prompt="Hello, world!"
-```
+LLM nodes are declared inside `.pflow.md` workflow files. There is no
+standalone `pflow llm` CLI — you write the workflow, then run it with
+`pflow <workflow.pflow.md>`.
 
-### With a specific model:
-```bash
-pflow llm --prompt="Hello" --model="anthropic/claude-sonnet-4-5"
-pflow llm --prompt="Hello" --model="gpt-5.2"
-pflow llm --prompt="Hello" --model="gemini/gemini-3-flash-preview"
-pflow llm --prompt="Hello" --model="ollama/llama3.2"
-```
+### Basic LLM node
 
-### With parameters:
-```bash
-pflow llm \
-  --prompt="Write a haiku" \
-  --model="gpt-4o-mini" \
-  --temperature=0.3 \
-  --max_tokens=50 \
-  --system="You are a poet"
-```
+````markdown
+### greet
 
-### In a workflow:
-```bash
-# Read file and summarize
-pflow read-file --path=document.txt >> llm --prompt="Summarize: ${content}"
-```
+Greet the user.
+
+- type: llm
+- prompt: Hello, world!
+````
+
+### With a specific model
+
+````markdown
+### summarize
+
+Summarize the document.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt: Summarize this in three sentences:\n\n${read.content}
+````
+
+Provider prefixes the LLM node accepts:
+
+- `openai/gpt-5.2`, `openai/gpt-4o-mini`
+- `anthropic/claude-sonnet-4-5`, `anthropic/claude-opus-4-5`
+- `gemini/gemini-3-flash-preview`, `gemini/gemini-2.5-pro`
+- `ollama/<model-name>` (local Ollama)
+- See https://docs.litellm.ai/docs/providers for the full list.
+
+### With more parameters
+
+````markdown
+### haiku
+
+Write a haiku about pflow.
+
+- type: llm
+- model: openai/gpt-4o-mini
+- system: You are a haiku poet. Reply in 5-7-5 syllables.
+- temperature: 0.3
+- max_tokens: 50
+- prompt: Write a haiku about workflow automation.
+````
+
+### Reading from another node
+
+The shared store flows naturally between steps via `${node.field}`:
+
+````markdown
+### read
+
+Read the source file.
+
+- type: file
+- path: document.txt
+
+### summarize
+
+Summarize what was read.
+
+- type: llm
+- prompt: Summarize this in three sentences:\n\n${read.content}
+````
 
 ## Image Support
 
-The LLM node supports multimodal models by accepting images via URLs or file paths. Images are passed to models that support vision capabilities (like GPT-4o, Claude 3.5 Sonnet, Gemini Flash).
+The LLM node supports multimodal models by accepting images via URLs or
+file paths. Images are passed to models that support vision capabilities
+(GPT-4o, Claude 3.5+ Sonnet, Gemini Flash, etc.).
 
-### Basic usage with a single image:
-```bash
-# From URL
-pflow llm --prompt="Describe this image" \
-  --images="https://example.com/cat.jpg"
+### Single URL image
 
-# From local file
-pflow llm --prompt="What's in this image?" \
-  --images="photo.jpg"
-```
+````markdown
+### describe
 
-### Multiple images:
-```bash
-pflow llm \
-  --prompt="Compare these two images" \
-  --images="image1.jpg" \
-  --images="https://example.com/image2.png"
-```
+Describe the image.
 
-### In workflows:
-```bash
-# Simple workflow with image
-pflow read-file --path=data.json >> llm \
-  --prompt="Analyze this data and this chart: ${content}" \
-  --images="chart.png"
-```
+- type: llm
+- model: openai/gpt-4o-mini
+- prompt: Describe this image.
+- images: https://example.com/cat.jpg
+````
 
-### Supported formats:
+### Multiple images (mixed URLs and local paths)
+
+````markdown
+### compare
+
+Compare two images.
+
+- type: llm
+- model: openai/gpt-4o-mini
+- prompt: Compare these two images.
+- images:
+  - ./local-image.jpg
+  - https://example.com/remote.png
+````
+
+Local paths are resolved against the working directory at run time.
+
+### Supported formats
+
 LiteLLM forwards these image formats to vision-capable models:
+
 - **JPEG/JPG** (image/jpeg)
 - **PNG** (image/png)
 - **GIF** (image/gif)
 - **WebP** (image/webp)
 - **PDF** (application/pdf)
 
-### Notes:
-- Images are optional - the node works with text-only prompts
-- You can mix URLs and file paths in the same call
-- URL images are fetched at runtime (network errors will trigger retries)
-- Local file paths are validated before execution (missing files fail immediately)
-- Not all models support images - check the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for vision-capable models
+### Notes
+
+- Images are optional — the node works with text-only prompts.
+- You can mix URLs and file paths in the same call.
+- URL images are fetched at runtime (network errors trigger retries).
+- Local file paths are validated before execution (missing files fail immediately).
+- Not all models support images — check the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for vision-capable models.
 
 ## Available Models
 
@@ -122,8 +171,8 @@ To see pflow's configured models and resolution order:
 pflow settings llm show
 ```
 
-Common models:
-- **OpenAI**: `gpt-4o-mini`, `gpt-5.2`, `gpt-4o`
+Common models (always include the provider prefix — bare names route via Vertex/etc. or fail):
+- **OpenAI**: `openai/gpt-4o-mini`, `openai/gpt-5.2`, `openai/gpt-4o`
 - **Anthropic**: `anthropic/claude-sonnet-4-5`, `anthropic/claude-opus-4-5`, `anthropic/claude-haiku-4-5`
 - **Google**: `gemini/gemini-3-flash-preview`, `gemini/gemini-2.5-pro`
 - **OpenRouter**: `openrouter/<provider>/<model>` — see https://openrouter.ai/models
@@ -184,7 +233,7 @@ Without `output_schema`, behavior is unchanged — `shared["response"]` is alway
 The node tracks token usage in `shared["llm_usage"]`:
 ```json
 {
-  "model": "gpt-4o-mini",
+  "model": "openai/gpt-4o-mini",
   "input_tokens": 150,
   "output_tokens": 75,
   "total_tokens": 225,

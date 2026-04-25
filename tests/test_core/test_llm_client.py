@@ -5,10 +5,11 @@ contract is:
 
 1. Build the right ``messages`` and kwargs for LiteLLM
 2. Translate Anthropic reasoning kwargs to LiteLLM-native shape
-3. Translate every deterministic LiteLLM exception
-   (``BadRequestError``, ``AuthenticationError``, ``NotFoundError``,
-   ``PermissionDeniedError``) into a typed ``LLMCallError`` subclass —
-   ``UnknownModelError`` / ``MissingApiKeyError`` / ``InvalidRequestError``
+3. Translate every LiteLLM exception (the catch is structural over
+   ``openai.OpenAIError``, the actual base of LiteLLM's exception
+   hierarchy) into a typed ``LLMCallError`` subclass —
+   ``UnknownModelError`` / ``MissingApiKeyError`` /
+   ``LLMResponseParseError`` / ``LLMTransientError`` / ``InvalidRequestError``
 4. Normalize the response into a stable shape across providers
 5. Invoke ``trace_hook`` before and after the call
 
@@ -30,6 +31,7 @@ import pytest
 from pflow.core.exceptions import (
     InvalidRequestError,
     LLMCallError,
+    LLMResponseParseError,
     LLMTransientError,
     MissingApiKeyError,
     UnknownModelError,
@@ -580,6 +582,153 @@ class TestCompleteErrorPaths:
         assert isinstance(exc_info.value, LLMCallError)
 
 
+# --------------------------------------------------------------------------
+# Architectural seal contract — every classified LiteLLM exception must
+# wrap to LLMCallError. Parametrized so adding a new LiteLLM exception
+# class without updating _classify_litellm_error fails this test loudly.
+# --------------------------------------------------------------------------
+
+
+def _make_bad_request(msg="bad", model="m", provider="openai"):
+    return litellm.exceptions.BadRequestError(message=msg, model=model, llm_provider=provider)
+
+
+def _make_auth(msg="invalid key", model="gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.AuthenticationError(message=msg, model=model, llm_provider=provider)
+
+
+def _make_not_found(model="anthropic/claude-foo-99", provider="anthropic"):
+    return litellm.exceptions.NotFoundError(message="model not found", model=model, llm_provider=provider)
+
+
+def _make_permission_denied(model="gpt-4o-mini", provider="openai"):
+    resp = httpx.Response(403, request=httpx.Request("POST", "https://x"))
+    return litellm.exceptions.PermissionDeniedError(
+        message="lacks permission", model=model, llm_provider=provider, response=resp
+    )
+
+
+def _make_no_provider_prefix(model="gibberish"):
+    return litellm.exceptions.BadRequestError(
+        message="LLM Provider NOT provided. Pass in the LLM provider...",
+        model=model,
+        llm_provider="",
+    )
+
+
+def _make_timeout(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.Timeout(message="timed out", model=model, llm_provider=provider)
+
+
+def _make_rate_limit(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.RateLimitError(message="429", model=model, llm_provider=provider)
+
+
+def _make_internal_server(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.InternalServerError(message="upstream 500", model=model, llm_provider=provider)
+
+
+def _make_api_connection(model="gemini/gemini-3-flash-preview", provider="gemini"):
+    # The Phase A review's central finding: this class previously leaked raw
+    # past the seam because the old enumerative catch tuple didn't include it.
+    return litellm.exceptions.APIConnectionError(message="network down", model=model, llm_provider=provider)
+
+
+def _make_service_unavailable(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.ServiceUnavailableError(message="503 unavailable", model=model, llm_provider=provider)
+
+
+def _make_bad_gateway(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.BadGatewayError(message="502 bad gateway", model=model, llm_provider=provider)
+
+
+def _make_api_response_validation(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.APIResponseValidationError(
+        message="invalid response shape", model=model, llm_provider=provider
+    )
+
+
+def _make_context_window(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.ContextWindowExceededError(message="too many tokens", model=model, llm_provider=provider)
+
+
+def _make_content_policy(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.ContentPolicyViolationError(
+        message="policy violation", model=model, llm_provider=provider
+    )
+
+
+def _make_unsupported_params(model="openai/gpt-4o-mini", provider="openai"):
+    return litellm.exceptions.UnsupportedParamsError(message="unsupported param", model=model, llm_provider=provider)
+
+
+# Every entry asserts the structural contract: the LiteLLM exception class
+# is wrapped in the named pflow subclass (which IS-A LLMCallError, so the
+# umbrella catches it for graceful degradation). Adding a new branch to
+# _classify_litellm_error means adding a row here. Adding a new LiteLLM
+# subclass that maps to the default fallback is also expected to be
+# represented (treated as InvalidRequestError).
+_SEAL_CONTRACT_CASES = [
+    pytest.param(_make_bad_request, InvalidRequestError, id="bad_request_to_invalid_request"),
+    pytest.param(_make_auth, MissingApiKeyError, id="auth_to_missing_api_key"),
+    pytest.param(_make_not_found, UnknownModelError, id="not_found_to_unknown_model"),
+    pytest.param(_make_permission_denied, MissingApiKeyError, id="permission_denied_to_missing_api_key"),
+    pytest.param(_make_no_provider_prefix, UnknownModelError, id="no_provider_prefix_to_unknown_model"),
+    pytest.param(_make_timeout, LLMTransientError, id="timeout_to_transient"),
+    pytest.param(_make_rate_limit, LLMTransientError, id="rate_limit_to_transient"),
+    pytest.param(_make_internal_server, LLMTransientError, id="internal_server_to_transient"),
+    pytest.param(_make_api_connection, LLMTransientError, id="api_connection_to_transient"),
+    pytest.param(_make_service_unavailable, LLMTransientError, id="service_unavailable_to_transient"),
+    pytest.param(_make_bad_gateway, LLMTransientError, id="bad_gateway_to_transient"),
+    pytest.param(_make_api_response_validation, LLMResponseParseError, id="api_response_validation_to_parse_error"),
+    pytest.param(_make_context_window, InvalidRequestError, id="context_window_to_invalid_request"),
+    pytest.param(_make_content_policy, InvalidRequestError, id="content_policy_to_invalid_request"),
+    pytest.param(_make_unsupported_params, InvalidRequestError, id="unsupported_params_to_invalid_request"),
+]
+
+
+class TestAdapterSealContract:
+    """The adapter is the single seam where LiteLLM exceptions cross into pflow.
+
+    Every LiteLLM exception we know about MUST be caught and wrapped as
+    ``LLMCallError`` (or a subclass). If a new LiteLLM class appears that
+    we forgot to classify, the structural ``openai.OpenAIError`` catch in
+    ``complete()`` still wraps it via the default branch (treats as
+    ``InvalidRequestError`` — fail-fast). This parametrized contract is
+    the regression guard for both halves: every named case wraps to the
+    specific subclass we expect, and the umbrella ``LLMCallError`` catches
+    all of them so consumers like ``smart_filter`` can degrade gracefully.
+    """
+
+    @pytest.mark.parametrize(("factory", "expected_pflow_exc"), _SEAL_CONTRACT_CASES)
+    @patch("litellm.completion")
+    def test_litellm_exception_wraps_to_typed_pflow_exception(self, mock_completion, factory, expected_pflow_exc):
+        mock_completion.side_effect = factory()
+        with pytest.raises(expected_pflow_exc) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        # IS-A LLMCallError: the umbrella catch in smart_filter / discovery
+        # MUST cover every classified exception.
+        assert isinstance(exc_info.value, LLMCallError)
+        # Underlying LiteLLM exception is preserved as __cause__ for tracebacks.
+        assert exc_info.value.__cause__ is not None
+
+    @patch("litellm.completion")
+    def test_unknown_openai_error_subclass_wraps_to_invalid_request(self, mock_completion):
+        # Synthesize an unknown ``openai.OpenAIError`` subclass — represents a
+        # future LiteLLM exception class we haven't taught the classifier
+        # about. The default branch must wrap it so it never leaks raw.
+        import openai
+
+        class _SyntheticUnknownError(openai.OpenAIError):
+            pass
+
+        mock_completion.side_effect = _SyntheticUnknownError("uncharted territory")
+        with pytest.raises(InvalidRequestError) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert isinstance(exc_info.value, LLMCallError)
+        assert "_SyntheticUnknownError" in str(exc_info.value)
+
+
 class TestCompleteTraceHook:
     @patch("litellm.completion")
     def test_invoked_before_and_after_on_success(self, mock_completion):
@@ -756,15 +905,63 @@ class TestNormalizeEmptyResponseWarning:
         response = complete(model="openai/gpt-4o-mini", prompt="hi")
         assert response.warnings == []
 
+    # --- Zero-output-tokens cases ---
+    # Pre-Phase-A-review-fix the gate was ``if text or output_tokens <= 0:
+    # return []`` — every zero-token case fell silently, including the ones
+    # below where the empty response IS the signal worth surfacing.
+
     @patch("litellm.completion")
-    def test_no_warning_when_zero_tokens_and_empty(self, mock_completion):
-        # No tokens generated AND empty text — provider didn't produce
-        # anything; this is a different failure mode (e.g. immediate refusal)
-        # that doesn't match the empty-content heuristic.
+    def test_content_filter_with_zero_tokens_warns(self, mock_completion):
+        # Provider blocked output before any tokens were emitted.
+        # Pre-fix this returned warnings == [] because of the
+        # ``output_tokens <= 0`` short-circuit; agents lost the signal that
+        # the provider explicitly refused the request.
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=0,
+            finish_reason="content_filter",
+        )
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        warning = response.warnings[0]
+        assert warning["kind"] == "llm_empty_response_content_filter"
+        assert "blocked" in warning["text"].lower()
+
+    @patch("litellm.completion")
+    def test_stop_with_zero_tokens_warns(self, mock_completion):
+        # Model chose to stop with zero output. Anomalous; surface it.
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=0,
+            finish_reason="stop",
+        )
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        assert response.warnings[0]["kind"] == "llm_empty_response_stop"
+
+    @patch("litellm.completion")
+    def test_none_finish_reason_with_zero_tokens_warns(self, mock_completion):
+        # Provider returned nothing AND didn't say why — investigate.
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=0,
+            finish_reason=None,
+        )
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        assert response.warnings[0]["kind"] == "llm_empty_response_unknown"
+
+    @patch("litellm.completion")
+    def test_length_with_zero_tokens_warns(self, mock_completion):
+        # Anomalous (a real provider should not return finish_reason=length
+        # with zero completion tokens), but still worth surfacing — the
+        # message says "0 tokens consumed" so the user can see the oddity.
         mock_completion.return_value = make_litellm_response(
             text=None,
             completion_tokens=0,
             finish_reason="length",
         )
         response = complete(model="openai/gpt-4o-mini", prompt="hi")
-        assert response.warnings == []
+        assert response.warnings
+        assert response.warnings[0]["kind"] == "llm_empty_response_max_tokens"
+        assert "0 tokens consumed" in response.warnings[0]["text"]

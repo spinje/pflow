@@ -59,11 +59,13 @@ See [LLM model settings](/reference/cli/settings#llm-model-settings) for the ful
 
 These providers are included with pflow - just set your API key:
 
+Always include the provider prefix in the `model:` field — bare names route inconsistently (Gemini bare names try Vertex; OpenAI bare names usually work but aren't future-proof).
+
 | Provider | Example models |
 |----------|---------------|
-| OpenAI | `gpt-5.2`, `gpt-5.1`, `gpt-4o` |
-| Anthropic | `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-4-5` |
-| Google | `gemini-3.0-pro`, `gemini-2.5-flash` |
+| OpenAI | `openai/gpt-5.2`, `openai/gpt-5.1`, `openai/gpt-4o` |
+| Anthropic | `anthropic/claude-opus-4-5`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-haiku-4-5` |
+| Google | `gemini/gemini-3.0-pro`, `gemini/gemini-2.5-flash` |
 
 ```bash
 # Set API keys (stored in ~/.pflow/settings.json)
