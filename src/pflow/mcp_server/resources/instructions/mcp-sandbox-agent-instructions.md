@@ -2059,9 +2059,9 @@ workflow_describe(name="workflow-name")                                   # Show
 ```
 
 **No CLI access in sandbox.** Guide users to run these on their machine:
-- `pflow settings set-env KEY_NAME "value"` — Store credentials
+- `pflow settings set-env KEY_NAME "value"` — Store credentials / LLM API keys
 - `pflow settings show` — View settings
-- `llm keys set provider` — Set LLM keys
+- `pflow settings llm show` — View configured LLM models
 
 ### Template Variable Quick Reference
 

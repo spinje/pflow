@@ -134,7 +134,7 @@ pflow settings set-env GITHUB_TOKEN "ghp_..."
   **Security:** Always set API keys yourself - never let AI agents run this command.
 </Warning>
 
-**Alternative:** If you use [Simon Willison's llm](https://llm.datasette.io/), pflow will use those keys automatically. Run `llm keys set anthropic` instead.
+**Alternative:** Set the key as a shell environment variable instead — pflow (via LiteLLM) reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and provider-specific equivalents directly from `os.environ`.
 
 ## pflow settings unset-env
 
@@ -461,9 +461,8 @@ pflow uses the same resolution order for all LLM usage (discovery, filtering, an
 
 1. Explicit setting (workflow params or feature-specific setting)
 2. `default_model` from settings
-3. `llm` library default (`llm models default`)
-4. Auto-detect from API keys
-5. Error with setup instructions
+3. Auto-detect from configured API keys (Anthropic → Google → OpenAI)
+4. Error with setup instructions
 
 **Auto-detected defaults by provider:**
 

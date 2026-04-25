@@ -32,7 +32,7 @@ Your AI agent (Claude Code, Cursor, Windsurf) uses pflow to build and run workfl
     ```
   </Step>
   <Step title="Set up your API key">
-    pflow uses an LLM for **discovery** — finding the right workflows and nodes without your agent needing to load everything into context. You can use any provider supported by [Simon Willison's llm](https://llm.datasette.io/).
+    pflow uses an LLM for **discovery** — finding the right workflows and nodes without your agent needing to load everything into context. You can use any provider supported by [LiteLLM](https://docs.litellm.ai/docs/providers) (OpenAI, Anthropic, Google, OpenRouter, Ollama, and 100+ more).
 
     ```bash
     # OpenAI
@@ -48,7 +48,7 @@ Your AI agent (Claude Code, Cursor, Windsurf) uses pflow to build and run workfl
     pflow auto-detects your provider and selects a default model (Claude Sonnet 4.5 for Anthropic, Gemini 3 Flash for Google, GPT-5.2 for OpenAI).
 
     <Tip>
-    If you already have `llm` installed and configured (`llm keys set openai`), pflow will use those keys automatically.
+    Shell environment variables work too — anything `export ANTHROPIC_API_KEY=...` exports is picked up automatically.
     </Tip>
 
     <Accordion title="Choose a specific model (optional)">

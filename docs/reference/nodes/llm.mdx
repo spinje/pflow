@@ -8,7 +8,7 @@ icon: "sparkles"
   **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
 </Note>
 
-The LLM node calls AI models using [Simon Willison's llm library](https://llm.datasette.io/). Use it when a step needs reasoning — summarization, classification, extraction, anything a Python expression can't handle. It supports multiple providers (OpenAI, Anthropic, Google, local models) through a unified interface.
+The LLM node calls AI models using [LiteLLM](https://docs.litellm.ai/). Use it when a step needs reasoning — summarization, classification, extraction, anything a Python expression can't handle. It supports many providers (OpenAI, Anthropic, Google, OpenRouter, Ollama, and 100+ more) through a unified interface.
 
 ## Parameters
 
@@ -72,54 +72,15 @@ pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
 pflow settings set-env GEMINI_API_KEY "..."
 ```
 
-<Tip>
-  Run `llm models` to see all available models on your system.
-</Tip>
+## Other providers
 
-## Extending with plugins
+LiteLLM is built into pflow and recognizes 100+ providers natively — no plugin install needed. Set the appropriate API key (or omit it for Ollama) and reference the model with its provider prefix.
 
-pflow uses [Simon Willison's llm library](https://llm.datasette.io/), which supports plugins for additional providers and local models.
-
-### Installing plugins
-
-If you installed pflow with `uv tool`, include plugins during installation:
+### OpenRouter
 
 ```bash
-uv tool install --with llm-openrouter pflow-cli
+pflow settings set-env OPENROUTER_API_KEY "sk-or-..."
 ```
-
-If you installed with `pipx`, use inject to add plugins:
-
-```bash
-pipx inject pflow-cli llm-openrouter
-```
-
-<Note>
-  Plugins must be installed in pflow's environment. Running `llm install` separately won't work with isolated installations.
-</Note>
-
-### Popular plugins
-
-| Plugin | Install flag | Use case |
-|--------|--------------|----------|
-| `llm-openrouter` | `--with llm-openrouter` | Access Claude, GPT, Llama, Mistral via [OpenRouter](https://openrouter.ai) |
-| `llm-ollama` | `--with llm-ollama` | Run models locally with [Ollama](https://ollama.ai) |
-
-After installing, set up credentials:
-
-```bash
-# OpenRouter - get key from https://openrouter.ai/keys
-llm keys set openrouter
-
-# Ollama - no API key needed
-brew install ollama
-ollama serve
-ollama pull llama3.2
-```
-
-### Using plugin models
-
-OpenRouter models use the `openrouter/provider/model` format:
 
 ````markdown
 ### summarize
@@ -131,7 +92,13 @@ Summarize content using OpenRouter.
 - prompt: Summarize this
 ````
 
-Ollama models use the model name directly:
+### Ollama (local models)
+
+```bash
+brew install ollama
+ollama serve
+ollama pull llama3.2
+```
 
 ````markdown
 ### summarize
@@ -139,11 +106,11 @@ Ollama models use the model name directly:
 Summarize content using a local model.
 
 - type: llm
-- model: llama3.2
+- model: ollama/llama3.2
 - prompt: Summarize this
 ````
 
-See the [llm plugin directory](https://llm.datasette.io/en/stable/plugins/directory.html) for more providers including Mistral, Bedrock, and other local model options.
+See the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for the full set of supported providers (Mistral, Bedrock, Azure OpenAI, Vertex AI, vLLM, and more).
 
 ## Image support
 
@@ -257,8 +224,8 @@ Analyze source code for issues.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| Unknown model | Model ID not recognized | Run `llm models` to see available models |
-| API key required | Missing credentials | Set up with `llm keys set <provider>` or env var |
+| Unknown model | Model ID not recognized | Run `pflow settings llm show` to see configured models, or check the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for supported model strings |
+| API key required | Missing credentials | Set with `pflow settings set-env <PROVIDER>_API_KEY <value>` or `export <PROVIDER>_API_KEY=...` |
 | Rate limit | Too many requests | Wait and retry automatically (built-in retry) |
 
 The node retries transient failures automatically (3 attempts, 1 second wait).

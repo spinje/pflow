@@ -2,41 +2,40 @@
 
 General-purpose LLM node for text processing in pflow workflows.
 
-## Installation
+## Provider support
 
-The LLM node uses Simon Willison's `llm` library, which is included with pflow. However, to use specific LLM providers, you need to install their plugins separately:
+The LLM node calls AI models through [LiteLLM](https://docs.litellm.ai/), which is bundled with pflow. LiteLLM speaks to 100+ providers natively (OpenAI, Anthropic, Google, OpenRouter, Ollama, Mistral, Bedrock, Azure OpenAI, vLLM, ...) — no plugin install required.
 
-### For Anthropic Claude models:
+### Set provider API keys
+
 ```bash
-pip install llm-anthropic
-# or
-uv pip install llm-anthropic
-
-# Then set your API key:
-export ANTHROPIC_API_KEY="your-key-here"
-# or
-llm keys set anthropic
+# Stored in ~/.pflow/settings.json
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+pflow settings set-env OPENAI_API_KEY "sk-..."
+pflow settings set-env GEMINI_API_KEY "..."
+pflow settings set-env OPENROUTER_API_KEY "sk-or-..."
 ```
 
-### For OpenAI models (GPT-4, etc.):
+Or as plain shell environment variables (LiteLLM picks them up directly):
+
 ```bash
-# OpenAI support is built into the base llm library
-# Just set your API key:
-export OPENAI_API_KEY="your-key-here"
-# or
-llm keys set openai
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
 ```
 
-### For local models:
+### Local models via Ollama
+
 ```bash
-pip install llm-gpt4all  # For GPT4All models
-pip install llm-ollama    # For Ollama
-pip install llm-mlc       # For MLC LLM
+brew install ollama
+ollama serve
+ollama pull llama3.2
 ```
 
-### Install all supported LLM providers:
-```bash
-pip install pflow[all-llms]
+Then reference Ollama models with the `ollama/` prefix in your workflow:
+
+```yaml
+- type: llm
+- model: ollama/llama3.2
 ```
 
 ## Usage
@@ -48,16 +47,17 @@ pflow llm --prompt="Hello, world!"
 
 ### With a specific model:
 ```bash
-pflow llm --prompt="Hello" --model="claude-4-sonnet"
-pflow llm --prompt="Hello" --model="gpt-5-nano"
-pflow llm --prompt="Hello" --model="llama2:latest"  # Ollama
+pflow llm --prompt="Hello" --model="anthropic/claude-sonnet-4-5"
+pflow llm --prompt="Hello" --model="gpt-5.2"
+pflow llm --prompt="Hello" --model="gemini/gemini-3-flash-preview"
+pflow llm --prompt="Hello" --model="ollama/llama3.2"
 ```
 
 ### With parameters:
 ```bash
 pflow llm \
   --prompt="Write a haiku" \
-  --model="gpt-4" \
+  --model="gpt-4o-mini" \
   --temperature=0.3 \
   --max_tokens=50 \
   --system="You are a poet"
@@ -101,7 +101,7 @@ pflow read-file --path=data.json >> llm \
 ```
 
 ### Supported formats:
-The llm library supports these image formats (model support may vary):
+LiteLLM forwards these image formats to vision-capable models:
 - **JPEG/JPG** (image/jpeg)
 - **PNG** (image/png)
 - **GIF** (image/gif)
@@ -113,24 +113,26 @@ The llm library supports these image formats (model support may vary):
 - You can mix URLs and file paths in the same call
 - URL images are fetched at runtime (network errors will trigger retries)
 - Local file paths are validated before execution (missing files fail immediately)
-- Not all models support images - check model capabilities with `llm models`
+- Not all models support images - check the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for vision-capable models
 
 ## Available Models
 
-To see all available models (based on installed plugins):
+To see pflow's configured models and resolution order:
 ```bash
-llm models
+pflow settings llm show
 ```
 
 Common models:
-- **OpenAI**: `gpt-4o-mini` (default), `gpt-4`, `gpt-3.5-turbo`
-- **Anthropic**: `anthropic/claude-sonnet-4-0`, `anthropic/claude-opus-4-0`
-- **Local**: Depends on installed plugins
+- **OpenAI**: `gpt-4o-mini`, `gpt-5.2`, `gpt-4o`
+- **Anthropic**: `anthropic/claude-sonnet-4-5`, `anthropic/claude-opus-4-5`, `anthropic/claude-haiku-4-5`
+- **Google**: `gemini/gemini-3-flash-preview`, `gemini/gemini-2.5-pro`
+- **OpenRouter**: `openrouter/<provider>/<model>` — see https://openrouter.ai/models
+- **Ollama (local)**: `ollama/<model-name>` — depends on what you've pulled
 
 ## Parameters
 
 - `prompt`: Text prompt to send to the model (required)
-- `model`: Model to use (default: `gemini-3-flash-preview`)
+- `model`: Model to use (default: auto-detected from configured keys)
 - `temperature`: Sampling temperature 0.0-2.0 (default: 1.0)
 - `system`: System prompt for behavior guidance (optional)
 - `max_tokens`: Maximum response tokens (optional)
@@ -187,17 +189,18 @@ The node tracks token usage in `shared["llm_usage"]`:
   "output_tokens": 75,
   "total_tokens": 225,
   "cache_creation_input_tokens": 0,
-  "cache_read_input_tokens": 0
+  "cache_read_input_tokens": 0,
+  "cost_usd": 0.000115
 }
 ```
 
-This enables cost analysis and optimization of workflows.
+Cost is populated from LiteLLM's `response_cost` (`None` for models LiteLLM doesn't have pricing for, e.g. custom endpoints or new releases). This enables cost analysis and optimization of workflows.
 
 ## Error Handling
 
 The node provides helpful error messages:
-- **Unknown model**: Suggests running `llm models` to see available models
-- **Missing API key**: Suggests using `llm keys set <provider>` to configure
+- **Unknown model**: Suggests checking the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) and running `pflow settings llm show`
+- **Missing API key**: Suggests `pflow settings set-env <PROVIDER>_API_KEY <value>` or `export <PROVIDER>_API_KEY=...`
 - **API failures**: Includes retry count and model information
 
 ## Philosophy

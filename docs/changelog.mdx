@@ -5,6 +5,38 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="April 2026" description="Unreleased" tags={["Improvements", "Breaking changes"]}>
+  ## LLM library swap: Simon Willison's `llm` → LiteLLM
+
+  pflow's LLM node now calls models through [LiteLLM](https://docs.litellm.ai/) instead of Simon Willison's `llm` library. LiteLLM speaks to 100+ providers natively (OpenAI, Anthropic, Google, OpenRouter, Ollama, Mistral, Bedrock, Azure, vLLM, ...) — no plugin install required for additional providers. Cost reporting (`llm_usage.cost_usd` in traces and CLI output) now comes from LiteLLM's pricing data, which is more current and comprehensive than the per-model table pflow used to maintain.
+
+  Existing workflows run identically. Response shape, error messages, retry semantics, and the `llm_usage` dict are all preserved.
+
+  **Improvements**
+  - Built-in support for OpenRouter, Ollama, Mistral, Bedrock, Vertex AI, vLLM, and 100+ more providers without plugin installation. Use the model with its provider prefix (e.g. `openrouter/anthropic/claude-sonnet-4-5`, `ollama/llama3.2`).
+  - Cost reporting (`cost_usd` in traces and `pflow report`) is sourced from LiteLLM and stays current with provider pricing changes — no more `$0.00` for newly-released models.
+
+  **Breaking changes**
+  - **API keys must come from environment variables or `pflow settings set-env`.** pflow no longer reads keys stored via `llm keys set <provider>` — Simon Willison's `llm` CLI subprocess is gone. If you previously stored keys with `llm keys set ...`, transfer them:
+    ```bash
+    pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+    pflow settings set-env OPENAI_API_KEY "sk-..."
+    pflow settings set-env GEMINI_API_KEY "..."
+    ```
+    Or as plain shell env vars (LiteLLM picks them up directly):
+    ```bash
+    export ANTHROPIC_API_KEY="sk-ant-..."
+    ```
+  - Plugin packages `llm`, `llm-anthropic`, and `llm-gemini` are no longer pflow dependencies. If you depended on them transitively, install them explicitly.
+
+  <Accordion title="What stays the same">
+    - All existing `.pflow.md` workflow files run identically — model names, parameters, output shape, error messages.
+    - The `cache: bool` per-node memoization opt-out is unchanged.
+    - Image attachments, structured output (`output_schema`), reasoning (`reasoning_effort` / `reasoning_max_tokens`), and timeouts work the same way.
+    - `pflow settings llm show` / `set-default` / `set-discovery` / `set-filtering` work the same way.
+  </Accordion>
+</Update>
+
 <Update label="April 2026" description="v0.12.0" tags={["New releases", "Improvements", "Breaking changes"]}>
   ## Execution previews and planning
 

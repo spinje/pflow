@@ -945,14 +945,15 @@ pflow settings set-env GITHUB_TOKEN "ghp_xyz789..."
 pflow settings show
 ```
 
-**For LLM providers (using Simon Willison's llm tool):**
+**For LLM providers (env vars or pflow settings):**
 ```bash
-# Interactive setup
-llm keys set anthropic
-llm keys set openai
+# Stored in ~/.pflow/settings.json (recommended for cross-shell persistence)
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+pflow settings set-env OPENAI_API_KEY "sk-..."
+pflow settings set-env GEMINI_API_KEY "..."
 
-# Or direct
-llm keys set anthropic --key "sk-ant-..."
+# Or as plain shell env vars (LiteLLM picks them up directly)
+export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
 **Critical**: Settings variables and env variables must be declared as inputs (not auto-available):
@@ -2073,9 +2074,9 @@ workflow_describe(name="workflow-name")                                   # Show
 
 ```bash
 # Settings & Auth (MCP settings tools are disabled — use CLI)
-pflow settings set-env KEY_NAME "value"             # Store credential
+pflow settings set-env KEY_NAME "value"             # Store credential / API key
 pflow settings show                                 # View settings
-llm keys set provider                               # Set LLM keys
+pflow settings llm show                             # View configured LLM models
 
 # Trace Debugging
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'   # Inspect trace (for debugging)
