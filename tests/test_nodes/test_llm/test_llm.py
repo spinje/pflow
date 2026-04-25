@@ -229,7 +229,7 @@ class TestLLMNode:
 
         The new adapter raises ``litellm.exceptions.AuthenticationError`` for
         missing/invalid API keys (was ``llm.NeedsKeyException``). The user-
-        facing error text now references ``pflow settings env set`` instead of
+        facing error text now references ``pflow settings set-env`` instead of
         ``llm keys set``.
         """
 
@@ -250,7 +250,7 @@ class TestLLMNode:
         assert "error" in shared
         error_msg = shared["error"]
         assert "API key required" in error_msg
-        assert "pflow settings env set" in error_msg
+        assert "pflow settings set-env" in error_msg
         # Verify empty response and usage as per spec
         assert shared["response"] == ""
         assert shared["llm_usage"] == {}

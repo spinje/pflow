@@ -55,7 +55,7 @@ class LLMNode(Node):
         - total_tokens: int  # Total tokens (input + output)
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
-        - cost_usd: float  # Estimated cost in USD (None if model not in pricing table)
+        - cost_usd: float  # Estimated cost in USD (None when LiteLLM has no pricing data — e.g. Ollama, custom endpoints, brand-new models)
     - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)
@@ -333,11 +333,14 @@ class LLMNode(Node):
                 error_detail = (
                     f"Unknown model: {prep_res['model']}. "
                     f"Tip: Your API key supports '{detected_model}'. "
-                    f"Run 'pflow settings llm show' to see configured models."
+                    f"See https://docs.litellm.ai/docs/providers for valid model strings, "
+                    f"or run 'pflow settings llm show' to see your configured defaults."
                 )
             else:
                 error_detail = (
-                    f"Unknown model: {prep_res['model']}. Run 'pflow settings llm show' to see configured models."
+                    f"Unknown model: {prep_res['model']}. "
+                    f"See https://docs.litellm.ai/docs/providers for valid model strings, "
+                    f"or run 'pflow settings llm show' to see your configured defaults."
                 )
         elif isinstance(exc, litellm.exceptions.AuthenticationError):
             # Was NeedsKeyException under the llm library — wrong or missing key.
@@ -345,7 +348,7 @@ class LLMNode(Node):
                 f"API key required for model: {prep_res['model']}. "
                 f"Set the appropriate environment variable "
                 f"(e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) "
-                f"or configure via 'pflow settings env set'."
+                f"or run 'pflow settings set-env <KEY> <value>'."
             )
         elif isinstance(exc, litellm.exceptions.BadRequestError) and "LLM Provider NOT provided" in error_msg:
             # Unknown provider prefix — looks like an unknown model to the user.
