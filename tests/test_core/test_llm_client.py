@@ -5,7 +5,10 @@ contract is:
 
 1. Build the right ``messages`` and kwargs for LiteLLM
 2. Translate Anthropic reasoning kwargs to LiteLLM-native shape
-3. Catch ``BadRequestError`` and return an error-marked ``AdapterResponse``
+3. Translate every deterministic LiteLLM exception
+   (``BadRequestError``, ``AuthenticationError``, ``NotFoundError``,
+   ``PermissionDeniedError``) into a typed ``LLMCallError`` subclass —
+   ``UnknownModelError`` / ``MissingApiKeyError`` / ``InvalidRequestError``
 4. Normalize the response into a stable shape across providers
 5. Invoke ``trace_hook`` before and after the call
 
@@ -20,10 +23,16 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import litellm.exceptions
 import pytest
 
-from pflow.core.exceptions import LLMCallError
+from pflow.core.exceptions import (
+    InvalidRequestError,
+    LLMCallError,
+    MissingApiKeyError,
+    UnknownModelError,
+)
 from pflow.core.llm_client import (
     AdapterResponse,
     Attachment,
@@ -46,6 +55,7 @@ def make_litellm_response(
     cache_creation: int | None = None,
     cache_read: int | None = None,
     cached_tokens_details: int | None = None,
+    reasoning_tokens: int | None = None,
     response_cost: float | None = 0.001,
     finish_reason: str | None = "stop",
 ) -> SimpleNamespace:
@@ -57,7 +67,9 @@ def make_litellm_response(
 
     Pass ``text=None`` to mimic the reasoning-model empty-output case
     (provider returns ``message.content=None``); the adapter normalizes
-    this to ``text=""``.
+    this to ``text=""``. Pass ``reasoning_tokens=N`` to populate
+    ``usage.completion_tokens_details.reasoning_tokens`` (the LiteLLM-
+    standardized field for thinking-token counts across providers).
     """
     message = SimpleNamespace(content=text, reasoning_content=None)
     choice = SimpleNamespace(message=message, finish_reason=finish_reason)
@@ -71,6 +83,8 @@ def make_litellm_response(
         usage_kwargs["cache_read_input_tokens"] = cache_read
     if cached_tokens_details is not None:
         usage_kwargs["prompt_tokens_details"] = SimpleNamespace(cached_tokens=cached_tokens_details)
+    if reasoning_tokens is not None:
+        usage_kwargs["completion_tokens_details"] = SimpleNamespace(reasoning_tokens=reasoning_tokens)
     usage = SimpleNamespace(**usage_kwargs)
     hidden = {"response_cost": response_cost} if response_cost is not None else {}
     return SimpleNamespace(choices=[choice], usage=usage, _hidden_params=hidden)
@@ -387,24 +401,140 @@ class TestCompleteUsageNormalization:
         response = complete(model="gpt-4o-mini", prompt="hi")
         assert isinstance(response.usage["cost_usd"], float)
 
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_thinking_tokens_zero_when_no_reasoning(self, mock_completion):
+        # Non-reasoning model — no completion_tokens_details on usage.
+        mock_completion.return_value = make_litellm_response(prompt_tokens=10, completion_tokens=5)
+        response = complete(model="gpt-4o-mini", prompt="hi")
+        assert response.usage["thinking_tokens"] == 0
+        assert response.usage["thinking_budget"] == 0
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_thinking_tokens_extracted_from_completion_details(self, mock_completion):
+        # LiteLLM standardizes the per-call reasoning-token count to
+        # usage.completion_tokens_details.reasoning_tokens regardless of
+        # provider (Anthropic extended thinking, OpenAI o1/o3, Gemini 2.5/3).
+        mock_completion.return_value = make_litellm_response(
+            prompt_tokens=23,
+            completion_tokens=157,
+            reasoning_tokens=144,
+        )
+        response = complete(model="gemini/gemini-3-flash-preview", prompt="hi")
+        assert response.usage["thinking_tokens"] == 144
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_thinking_budget_mirrored_from_anthropic_request_kwargs(self, mock_completion):
+        # Anthropic uses kwargs["thinking"]={"type":"enabled","budget_tokens":N}.
+        # Adapter mirrors the budget into the response usage dict so the
+        # metrics layer can compute thinking-utilization without needing
+        # LLMNode to thread request kwargs into outputs.
+        mock_completion.return_value = make_litellm_response(reasoning_tokens=512)
+        response = complete(
+            model="anthropic/claude-opus-4-5",
+            prompt="hi",
+            reasoning_kwargs={"thinking_effort": "medium"},
+        )
+        # 'medium' resolves to 0.5 * 16000 = 8000 budget per the EFFORT_RATIOS map
+        assert response.usage["thinking_budget"] == 8000
+        assert response.usage["thinking_tokens"] == 512
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_thinking_budget_mirrored_from_gemini_top_level(self, mock_completion):
+        # Gemini 2.5 uses top-level kwargs["thinking_budget"] instead of the
+        # nested Anthropic shape. Adapter handles both paths.
+        mock_completion.return_value = make_litellm_response(reasoning_tokens=200)
+        response = complete(
+            model="gemini-2.5-flash",
+            prompt="hi",
+            reasoning_kwargs={"thinking_budget": 1024},
+        )
+        assert response.usage["thinking_budget"] == 1024
+        assert response.usage["thinking_tokens"] == 200
+
 
 class TestCompleteErrorPaths:
+    """The adapter translates every deterministic LiteLLM exception into a
+    typed pflow subclass; non-deterministic ones propagate raw so the
+    caller's retry loop can decide. Each subclass IS-A ``LLMCallError``,
+    so consumers that catch the base class continue to work.
+    """
+
     @patch("pflow.core.llm_client.litellm.completion")
-    def test_bad_request_raises_llm_call_error(self, mock_completion):
-        # PATTERN EXCEPTION: deterministic error → typed LLMCallError raised
-        # at the adapter boundary so LLMNode can convert at its single seam
-        # (preventing the Node retry loop from burning N attempts). The
-        # underlying provider message is preserved so it stays actionable.
+    def test_bad_request_raises_invalid_request_error(self, mock_completion):
+        # Generic BadRequestError (anything that isn't an unknown-model case)
+        # → InvalidRequestError. Catches via the LLMCallError base too.
         mock_completion.side_effect = litellm.exceptions.BadRequestError(
-            message="Invalid model: 'gpt-fake'",
-            model="gpt-fake",
-            llm_provider="openai",
+            message="temperature may only be set to 1 when thinking is enabled",
+            model="anthropic/claude-opus-4-5",
+            llm_provider="anthropic",
         )
-        with pytest.raises(LLMCallError) as exc_info:
-            complete(model="gpt-fake", prompt="hi")
-        assert "gpt-fake" in str(exc_info.value)
+        with pytest.raises(InvalidRequestError) as exc_info:
+            complete(model="anthropic/claude-opus-4-5", prompt="hi")
+        assert "Invalid request" in str(exc_info.value)
+        assert "anthropic/claude-opus-4-5" in str(exc_info.value)
+        # IS-A LLMCallError — the base catch still works.
+        assert isinstance(exc_info.value, LLMCallError)
         # Underlying exception preserved as cause for traceback context.
         assert isinstance(exc_info.value.__cause__, litellm.exceptions.BadRequestError)
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_not_found_raises_unknown_model_error(self, mock_completion):
+        mock_completion.side_effect = litellm.exceptions.NotFoundError(
+            message="Model not found",
+            model="anthropic/claude-foo-99",
+            llm_provider="anthropic",
+        )
+        with pytest.raises(UnknownModelError) as exc_info:
+            complete(model="anthropic/claude-foo-99", prompt="hi")
+        assert "anthropic/claude-foo-99" in str(exc_info.value)
+        # Structured discriminator pins which sub-case fired.
+        assert exc_info.value.reason == "unknown_name"
+        assert isinstance(exc_info.value, LLMCallError)
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_no_provider_prefix_raises_unknown_model_error(self, mock_completion):
+        # Regression: bare model name (no provider prefix) used to surface as
+        # a raw JSON envelope wrapped in LLMCallError. The substring detector
+        # now translates it to UnknownModelError(reason="missing_prefix") so
+        # consumers can build a precise "missing prefix" message without
+        # re-parsing the message text.
+        mock_completion.side_effect = litellm.exceptions.BadRequestError(
+            message="LLM Provider NOT provided. Pass in the LLM provider...",
+            model="gibberish",
+            llm_provider="",
+        )
+        with pytest.raises(UnknownModelError) as exc_info:
+            complete(model="gibberish", prompt="hi")
+        assert "no provider prefix" in str(exc_info.value)
+        # Structured discriminator distinguishes this from an unknown-name case.
+        assert exc_info.value.reason == "missing_prefix"
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_authentication_error_raises_missing_api_key_error(self, mock_completion):
+        mock_completion.side_effect = litellm.exceptions.AuthenticationError(
+            message="invalid key",
+            model="gpt-4o-mini",
+            llm_provider="openai",
+        )
+        with pytest.raises(MissingApiKeyError) as exc_info:
+            complete(model="gpt-4o-mini", prompt="hi")
+        assert "gpt-4o-mini" in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, litellm.exceptions.AuthenticationError)
+
+    @patch("pflow.core.llm_client.litellm.completion")
+    def test_permission_denied_raises_missing_api_key_error(self, mock_completion):
+        # PermissionDeniedError requires an httpx.Response — provide a minimal
+        # one so the constructor accepts it.
+        resp = httpx.Response(403, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+        mock_completion.side_effect = litellm.exceptions.PermissionDeniedError(
+            message="key lacks permission",
+            model="gpt-4o-mini",
+            llm_provider="openai",
+            response=resp,
+        )
+        with pytest.raises(MissingApiKeyError) as exc_info:
+            complete(model="gpt-4o-mini", prompt="hi")
+        assert "gpt-4o-mini" in str(exc_info.value)
 
     @patch("pflow.core.llm_client.litellm.completion")
     def test_timeout_propagates(self, mock_completion):
@@ -415,16 +545,6 @@ class TestCompleteErrorPaths:
             llm_provider="openai",
         )
         with pytest.raises(litellm.exceptions.Timeout):
-            complete(model="gpt-4o-mini", prompt="hi")
-
-    @patch("pflow.core.llm_client.litellm.completion")
-    def test_authentication_error_propagates(self, mock_completion):
-        mock_completion.side_effect = litellm.exceptions.AuthenticationError(
-            message="invalid key",
-            model="gpt-4o-mini",
-            llm_provider="openai",
-        )
-        with pytest.raises(litellm.exceptions.AuthenticationError):
             complete(model="gpt-4o-mini", prompt="hi")
 
 

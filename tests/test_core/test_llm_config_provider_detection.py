@@ -2,8 +2,8 @@
 
 These tests verify that:
 1. API keys from pflow settings are injected into os.environ
-2. Provider detection checks env vars, settings, and llm CLI in order
-3. Priority is respected (env > settings > llm CLI)
+2. Provider detection checks env vars and settings (in that order)
+3. Priority is respected (env > settings)
 """
 
 import os

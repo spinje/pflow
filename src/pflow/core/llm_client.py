@@ -8,9 +8,10 @@ discovery callsites) operates on `AdapterResponse`, not on
 - Translating reasoning kwargs from the provider-neutral shape produced by
   ``llm_reasoning_map`` into LiteLLM-native shapes (e.g. Anthropic's
   ``thinking={"type":"enabled","budget_tokens":N}``)
-- Raising ``LLMCallError`` on deterministic ``BadRequestError`` (preserves
-  the PATTERN EXCEPTION pattern that was previously in
-  ``nodes/llm/llm.py:298-311`` for Pydantic ``ValidationError``)
+- Translating every deterministic LiteLLM exception
+  (``BadRequestError``, ``AuthenticationError``, ``NotFoundError``,
+  ``PermissionDeniedError``) into a typed ``LLMCallError`` subclass so
+  consumers never import ``litellm.exceptions`` to discriminate
 - Normalizing the response shape to a stable ``AdapterResponse``
 - Reading ``response_cost`` from LiteLLM's ``_hidden_params`` so consumers
   get cost without a separate pricing computation (Phase 0 outcome A)
@@ -33,7 +34,12 @@ from typing import Any, Callable, Literal
 import litellm
 import litellm.exceptions
 
-from pflow.core.exceptions import LLMCallError
+from pflow.core.exceptions import (
+    InvalidRequestError,
+    LLMCallError,
+    MissingApiKeyError,
+    UnknownModelError,
+)
 from pflow.core.llm_reasoning_map import DEFAULT_MAX_TOKENS_BASE, EFFORT_RATIOS
 
 logger = logging.getLogger(__name__)
@@ -125,16 +131,23 @@ def complete(
 ) -> AdapterResponse:
     """Execute an LLM call via LiteLLM and return a normalized response.
 
-    On success, returns an ``AdapterResponse``. On deterministic errors
-    (bad params, bad model, schema rejection, content policy — anything
-    LiteLLM raises as ``BadRequestError`` or a subclass), raises
-    ``LLMCallError``. The caller should NOT retry — these are the
-    LiteLLM-era equivalent of the Pydantic ``ValidationError`` PATTERN
-    EXCEPTION at the previous ``nodes/llm/llm.py:298-311``. LLMNode catches
-    ``LLMCallError`` at its ``_call_llm`` boundary so the Node retry loop
+    On success, returns an ``AdapterResponse``. On deterministic errors,
+    raises a typed ``LLMCallError`` subclass:
+
+    - ``UnknownModelError`` for ``NotFoundError`` and bare-model-name
+      ``BadRequestError`` (no provider prefix)
+    - ``MissingApiKeyError`` for ``AuthenticationError`` and
+      ``PermissionDeniedError``
+    - ``InvalidRequestError`` for any other ``BadRequestError`` (schema
+      mismatch, content policy, context-window overflow, ...)
+
+    The caller should NOT retry these — they are the LiteLLM-era
+    equivalent of the Pydantic ``ValidationError`` PATTERN EXCEPTION at
+    the previous ``nodes/llm/llm.py:298-311``. LLMNode catches the typed
+    subclasses at its ``_call_llm`` boundary so the Node retry loop
     doesn't burn three attempts on a permanent failure.
 
-    Other exceptions (timeout, auth, network, rate limit, internal server
+    Other exceptions (timeout, network, rate limit, internal server
     error) propagate unwrapped. The caller's retry loop decides.
 
     Args:
@@ -169,7 +182,10 @@ def complete(
         AdapterResponse on success.
 
     Raises:
-        LLMCallError: deterministic provider error (4xx that retrying won't fix).
+        UnknownModelError: model identifier not recognized.
+        MissingApiKeyError: API key missing, wrong, or insufficient permission.
+        InvalidRequestError: any other deterministic 4xx (catches via the
+            ``LLMCallError`` base for consumers that don't discriminate).
     """
     messages = _build_messages(system=system, prompt=prompt, attachments=attachments)
 
@@ -198,32 +214,75 @@ def complete(
     if model_options:
         kwargs.update(model_options)
 
+    # Capture the request-side thinking budget so _normalize can include it
+    # in the response usage dict. Lets MetricsCollector compute thinking
+    # utilization (tokens used / budget) without needing the LLMNode to
+    # mirror request kwargs into outputs.
+    thinking_budget = _extract_thinking_budget(kwargs)
+
     _emit_trace(trace_hook, {"event": "before_call", "model": model, "prompt": prompt})
 
     try:
         raw_response = litellm.completion(**kwargs)
-    except litellm.exceptions.BadRequestError as e:
+    except (
+        litellm.exceptions.BadRequestError,
+        litellm.exceptions.AuthenticationError,
+        litellm.exceptions.NotFoundError,
+        litellm.exceptions.PermissionDeniedError,
+    ) as e:
         # PATTERN EXCEPTION: deterministic server-side rejection. Retrying
         # the same bad request will produce the same error, so we raise a
         # typed pflow exception that LLMNode catches at its _call_llm
         # boundary (preventing the Node retry loop from burning three
-        # attempts). Mirrors the behavior at the previous
-        # nodes/llm/llm.py:298-311 (which caught Pydantic ValidationError
-        # under the llm-library path) but at a single, typed seam.
-        err_msg = f"Invalid request for model '{model}': {e}"
+        # attempts). _classify_litellm_error picks the right subclass so
+        # consumers can construct precise messages without importing
+        # litellm.exceptions themselves.
+        typed = _classify_litellm_error(e, model=model)
         _emit_trace(
             trace_hook,
-            {"event": "after_call", "model": model, "error": err_msg},
+            {"event": "after_call", "model": model, "error": str(typed)},
         )
-        raise LLMCallError(err_msg) from e
+        raise typed from e
 
     # Success path: normalize and emit after_call trace
-    response = _normalize(raw_response, model=model, has_schema=schema is not None)
+    response = _normalize(
+        raw_response,
+        model=model,
+        has_schema=schema is not None,
+        thinking_budget=thinking_budget,
+    )
     _emit_trace(trace_hook, {"event": "after_call", "model": model, "response": response})
     return response
 
 
 # Internals ------------------------------------------------------------------
+
+
+def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
+    """Translate a deterministic LiteLLM exception to a typed pflow subclass.
+
+    The adapter is the single place where ``litellm.exceptions`` types are
+    mapped to pflow types. Consumers receive ``UnknownModelError`` /
+    ``MissingApiKeyError`` / ``InvalidRequestError`` and never need to
+    import ``litellm.exceptions`` to discriminate.
+    """
+    if isinstance(exc, litellm.exceptions.NotFoundError):
+        return UnknownModelError(f"Unknown model: {model}", reason="unknown_name")
+    if isinstance(exc, litellm.exceptions.AuthenticationError):
+        return MissingApiKeyError(f"API key required for model '{model}'")
+    if isinstance(exc, litellm.exceptions.PermissionDeniedError):
+        return MissingApiKeyError(f"API key for model '{model}' lacks permission for this request")
+    # BadRequestError and its subclasses. The "LLM Provider NOT provided"
+    # substring fires when a user passes a bare model name with no provider
+    # prefix — distinct sub-case of UnknownModelError. Substring detection
+    # only happens here at the LiteLLM boundary; consumers branch on the
+    # structured ``reason`` attribute rather than re-parsing the message.
+    if "LLM Provider NOT provided" in str(exc):
+        return UnknownModelError(
+            f"Model '{model}' has no provider prefix",
+            reason="missing_prefix",
+        )
+    return InvalidRequestError(f"Invalid request for model '{model}': {exc}")
 
 
 def _build_messages(
@@ -326,11 +385,27 @@ def _is_anthropic(model: str) -> bool:
     return "anthropic/" in name or "claude-" in name or name.startswith("claude")
 
 
+def _extract_thinking_budget(kwargs: dict[str, Any]) -> int:
+    """Return the thinking-token budget set on the request, or 0 if none.
+
+    Anthropic uses ``thinking={"type":"enabled","budget_tokens":N}``;
+    Gemini 2.5 uses top-level ``thinking_budget=N``. OpenAI's
+    ``reasoning_effort`` and Gemini 3's ``thinking_level`` are categorical
+    levels with no token-level budget — we return 0 there so utilization
+    metrics simply omit the section for those providers.
+    """
+    thinking = kwargs.get("thinking")
+    if isinstance(thinking, dict):
+        return _safe_int(thinking.get("budget_tokens"))
+    return _safe_int(kwargs.get("thinking_budget"))
+
+
 def _normalize(
     raw: Any,
     *,
     model: str,
     has_schema: bool,
+    thinking_budget: int = 0,
 ) -> AdapterResponse:
     """Convert ``litellm.ModelResponse`` to ``AdapterResponse``.
 
@@ -343,12 +418,18 @@ def _normalize(
       (which we surface as ``cache_read_input_tokens``;
       ``cache_creation_input_tokens`` stays 0 — those providers don't
       distinguish creation from reads in the response).
+
+    Reasoning-token surface: LiteLLM standardizes the per-call reasoning
+    count to ``usage.completion_tokens_details.reasoning_tokens`` (Anthropic
+    extended thinking, OpenAI o1/o3, Gemini 2.5/3). Surfaced as
+    ``thinking_tokens``; paired with ``thinking_budget`` mirrored from the
+    request kwargs so consumers can compute utilization.
     """
     msg = raw.choices[0].message
     text = msg.content or ""
-    # Note: ``msg.reasoning_content`` carries thinking output separately when
-    # reasoning is enabled. We do not surface it in AdapterResponse (matches
-    # legacy LLMNode behavior); a future enhancement could expose it.
+    # Note: ``msg.reasoning_content`` carries thinking output (the reasoning
+    # text itself) separately. We surface only the token COUNT here, not the
+    # text — exposing the text is a future enhancement when a consumer needs it.
 
     usage_obj = raw.usage
 
@@ -362,6 +443,13 @@ def _normalize(
 
     input_tokens = _safe_int(getattr(usage_obj, "prompt_tokens", None))
     output_tokens = _safe_int(getattr(usage_obj, "completion_tokens", None))
+
+    # Reasoning tokens: LiteLLM-standardized field for thinking/reasoning
+    # token count. Populated for any reasoning model regardless of provider.
+    thinking_tokens = 0
+    completion_details = getattr(usage_obj, "completion_tokens_details", None)
+    if completion_details is not None:
+        thinking_tokens = _safe_int(getattr(completion_details, "reasoning_tokens", None))
 
     # Detect the reasoning-model trap: tokens consumed but no visible text.
     # Phase 0 surfaced this on gemini-3-flash-preview with max_tokens=16 —
@@ -396,6 +484,8 @@ def _normalize(
         "total_tokens": input_tokens + output_tokens,
         "cache_creation_input_tokens": cache_creation,
         "cache_read_input_tokens": cache_read,
+        "thinking_tokens": thinking_tokens,
+        "thinking_budget": thinking_budget,
         "cost_usd": cost_usd,
     }
 

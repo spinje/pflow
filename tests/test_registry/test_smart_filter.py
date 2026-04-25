@@ -193,15 +193,20 @@ class TestFallbackBehavior:
     """Test error handling and fallback to original fields."""
 
     def test_llm_failure_returns_original(self, monkeypatch):
-        """LLM API failure should return original fields unfiltered."""
+        """Deterministic adapter failure (LLMCallError) → fallback to unfiltered fields.
+
+        smart_filter narrows its catch to documented degradation modes so
+        programming errors surface loudly. LLMCallError is what the adapter
+        raises for any deterministic provider failure (bad request, bad
+        schema, parse failure, etc.) — that's the case where falling back
+        to unfiltered display is the right UX.
+        """
+        from pflow.core.exceptions import LLMCallError
+
         fields = [(f"field{i}", "string") for i in range(100)]
 
-        # Simulate LLM failure by making the adapter raise exception.
-        # Patches `pflow.registry.smart_filter.complete` (the binding the
-        # production code calls) — not `llm.get_model`, which is the dead
-        # legacy seam since Task 158 Phase A.7.
         def mock_complete_error(**kwargs):
-            raise RuntimeError("API rate limit exceeded")
+            raise LLMCallError("Invalid request for model 'X': bad parameter")
 
         monkeypatch.setattr("pflow.registry.smart_filter.complete", mock_complete_error)
 
@@ -229,12 +234,18 @@ class TestFallbackBehavior:
         assert len(result) == 100
 
     def test_malformed_llm_response_returns_original(self, monkeypatch):
-        """Parsing errors should fallback to original fields."""
+        """Parse failures (LLMCallError from parse_structured_response) → fallback.
+
+        Real ``parse_structured_response`` raises ``LLMCallError`` (not bare
+        ``ValueError``) for empty/garbage/schema-violating responses — so the
+        mock mirrors that contract.
+        """
+        from pflow.core.exceptions import LLMCallError
+
         fields = [(f"field{i}", "string") for i in range(100)]
 
-        # Simulate parsing failure by making parse_structured_response raise exception
         def mock_parse_error(response, schema):
-            raise ValueError("Response did not match expected schema")
+            raise LLMCallError("Response text is not valid JSON: ...")
 
         monkeypatch.setattr("pflow.registry.smart_filter.parse_structured_response", mock_parse_error)
 
@@ -242,6 +253,58 @@ class TestFallbackBehavior:
 
         assert result == fields
         assert len(result) == 100
+
+    def test_programming_error_propagates(self, monkeypatch):
+        """Programming errors (AttributeError, TypeError, etc.) propagate.
+
+        smart_filter narrows its catch deliberately so genuine bugs surface
+        as test failures rather than silent UX degradation. If a refactor
+        introduces an AttributeError inside the try block, the user will see
+        a real traceback rather than just "filter failed, here are 200
+        fields" with no clue what broke.
+        """
+        fields = [(f"field{i}", "string") for i in range(100)]
+
+        def mock_complete_bug(**kwargs):
+            # Simulate a typo / refactor mishap inside the call path
+            raise AttributeError("'NoneType' object has no attribute 'foo'")
+
+        monkeypatch.setattr("pflow.registry.smart_filter.complete", mock_complete_bug)
+
+        with pytest.raises(AttributeError, match="'NoneType' object has no attribute 'foo'"):
+            smart_filter_fields(fields, threshold=50)
+
+    def test_warning_logged_on_graceful_fallback(self, monkeypatch, caplog):
+        """The graceful-degradation path emits a WARNING with diagnostic context.
+
+        Pins the user-visibility contract: under default CLI logging
+        (WARNING level), a probe that hits an LLMCallError must surface a
+        visible warning with the error type and message in the ``extra``
+        dict so operators can diagnose without enabling DEBUG logging.
+        """
+        import logging
+
+        from pflow.core.exceptions import LLMCallError
+
+        fields = [(f"field{i}", "string") for i in range(60)]
+
+        def mock_complete_error(**kwargs):
+            raise LLMCallError("API key required for model: gpt-4o-mini")
+
+        monkeypatch.setattr("pflow.registry.smart_filter.complete", mock_complete_error)
+
+        with caplog.at_level(logging.WARNING, logger="pflow.registry.smart_filter"):
+            result = smart_filter_fields(fields, threshold=50)
+
+        assert result == fields
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("Smart filter failed" in r.message for r in warning_records), (
+            "expected WARNING about smart_filter graceful fallback"
+        )
+        # Diagnostic context attached for operators
+        target = next(r for r in warning_records if "Smart filter failed" in r.message)
+        assert target.error_type == "LLMCallError"
+        assert "API key required" in target.error_message
 
     def test_network_error_returns_original(self, monkeypatch):
         """Network errors should fallback gracefully."""

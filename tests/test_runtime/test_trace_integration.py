@@ -730,3 +730,48 @@ class TestParallelBatchSubWorkflowTrace:
 
         # Each worker resolved its own item; prompts must all differ
         assert sorted(seen_prompts) == ["Process item A.", "Process item B.", "Process item C."]
+
+
+class TestParallelBatchOfLLMs:
+    """Parallel batch where each item is a direct LLM call (no sub-workflow wrapper).
+
+    Pre-fix: WorkflowTraceCollector.llm_prompts is keyed by node_id only, so all
+    parallel workers writing to the same batch wrapper id overwrote each other.
+    Per-item llm_prompt was either missing or non-deterministic (last-write-wins).
+
+    Fix (LLMNode.post writes shared["prompt"]): each item's NamespacedSharedStore
+    routes the rendered prompt to ``shared[node_id]["prompt"]``, which the batch
+    executor's _capture_item_trace mapping ``("prompt", "llm_prompt")`` already
+    expects. Each batch_items[i] now carries its own resolved prompt.
+    """
+
+    def test_each_batch_item_llm_captures_own_rendered_prompt(self, mock_llm_client):
+        ir = {
+            "ir_version": "0.1.0",
+            "inputs": {"items": {"type": "array", "description": "items to fan out over"}},
+            "nodes": [
+                {
+                    "id": "scorer",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "prompt": "Score this: ${item}",
+                    },
+                    "batch": {
+                        "items": "${items}",
+                        "as": "item",
+                        "parallel": True,
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        _, collector = _run_with_trace(ir, initial_params={"items": ["red", "green", "blue"]})
+
+        scorer_event = next(e for e in collector.events if e["node_id"] == "scorer")
+        batch_items = scorer_event.get("batch_items", [])
+        assert len(batch_items) == 3, f"expected 3 batch items, got {len(batch_items)}"
+
+        seen_prompts = sorted(item.get("llm_prompt") for item in batch_items)
+        assert seen_prompts == ["Score this: blue", "Score this: green", "Score this: red"]

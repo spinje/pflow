@@ -1479,3 +1479,217 @@ ad58d856 test(llm): add Opus 4.5 precedence, cost mirror, smart_filter Gemini co
 Code review (deferred to another agent). Then PR. After merge, write `implementation/plan-phase-B-through-G.md` for the actual prompt-caching feature work.
 
 ---
+
+## 32. Session 2026-04-25 (cont.) — Phase A code-review item #6 implemented (typed-error translation completed)
+
+### Context
+
+This session implemented the final outstanding architectural item from §31's code review: **#6 — adapter as true seam, with typed exception translation for every deterministic LiteLLM error**. The deferred-findings file at `.taskmaster/tasks/task_158/starting-context/deferred-findings-from-phase-A-review-2026-04-25.md` enumerated this; the plan was approved out-of-band and pasted in at session start.
+
+The session ran in **two passes**:
+
+- **Pass 1** — implement the plan as written (~9 tasks). Result: working but with two real loose ends I didn't see at first.
+- **Pass 2** — after the user asked me to be honest about loose ends, I admitted one (LLMNode-level test for `InvalidRequestError`'s third typed-catch branch was missing), added it. Then ran `/code-review staged --agents 3`, which surfaced **two more critical findings I had missed** (discriminator loss across the adapter→LLMNode seam) plus several worth-doing improvements. Implemented all of them. Then caught a *third* loose end myself (the new `error_class` field was dead — added to the internal dict but not surfaced to `shared`).
+
+The two-pass shape is the lesson: even a clean-looking implementation of a clean-looking plan had subtle UX regressions that only became visible under critical review. The plan's principle "adapter raises terse exceptions; LLMNode builds friendly text" is correct, but creates a trap (next subsection).
+
+### The discriminator-loss bug pattern (central insight)
+
+The plan's architecture: `_classify_litellm_error` translates LiteLLM exceptions to typed pflow subclasses with terse messages; LLMNode catches each subclass and builds a rich user-facing message.
+
+**The trap**: when `_classify_litellm_error` carefully encodes a sub-case discriminator into the *message text* (e.g. `"Unknown model: gibberish (no provider prefix)"`) and LLMNode catches `except UnknownModelError:` *without* `as e`, the discriminator gets discarded. Two structurally distinct failures collapse to identical user-facing text, sending agents down the wrong fix path.
+
+Concrete instance caught by `review-agent-ux`:
+
+| LiteLLM exception | Adapter message | LLMNode message (Pass 1) | Problem |
+|---|---|---|---|
+| `NotFoundError` (model name wrong, prefix valid: `anthropic/claude-foo-99`) | `"Unknown model: anthropic/claude-foo-99"` | `"Unknown model: ... Use a provider prefix like 'anthropic/...' ..."` | Misleading — agent already used a prefix |
+| `BadRequestError("LLM Provider NOT provided")` (prefix missing: `gibberish`) | `"Unknown model: gibberish (no provider prefix)"` | `"Unknown model: ... Use a provider prefix like 'anthropic/...' ..."` | Correct, but indistinguishable from above |
+
+Same trap on `MissingApiKeyError` — `AuthenticationError` (set a key) vs `PermissionDeniedError` (request access / change tier) need *different* remediations, but both rendered the same env-var-setup hint.
+
+### The fix: structured discriminator at the API boundary, not substring-matching across it
+
+Two ways to preserve the discriminator:
+1. Catch `as e`, substring-match `"(no provider prefix)"` in `str(e)` to branch — fragile, couples LLMNode to the adapter's message format
+2. Add a structured attribute (`reason: str`) on `UnknownModelError`, set it once at the LiteLLM boundary, branch on it in LLMNode — clean
+
+Picked option 2. Pattern that emerged:
+
+> **Substring detection happens *once*, at the LiteLLM boundary, inside `_classify_litellm_error`.** Past that boundary, consumers branch on structured exception attributes — never on message text. Crossing the seam loses any signal that isn't part of the typed contract.
+
+`UnknownModelError(message, *, reason: str = "unknown_name")` was added (`core/exceptions.py:166-181`). `reason ∈ {"unknown_name", "missing_prefix"}`. The adapter sets it; LLMNode branches on `e.reason`. The two messages now lead with their respective precise diagnoses ("Model 'X' is missing a provider prefix" vs "Unknown model: X. The provider didn't recognize this model name.").
+
+For `MissingApiKeyError`, the chosen approach was lighter: catch `as e`, append `f"Detail: {e}"` to the friendly message. Reason: the friendly remediation hint stays useful for the common case (set an env var); the appended Detail line surfaces the discriminator wording the adapter encoded ("lacks permission" vs "API key required") for the agent. No structured attribute needed because the message divergence is shallow.
+
+**Future agents extending the typed exception system MUST follow this pattern.** If you add a new sub-case to a typed exception, don't encode it in the message text — add a structured attribute. If you catch a typed exception in LLMNode (or any other consumer), ALWAYS catch `as e` so future discriminators don't get silently discarded.
+
+### Pass 1: implementing the plan as written
+
+Plan was a clean spec: 6 steps + tests. Executed in order:
+
+1. Add 3 `LLMCallError` subclasses (`UnknownModelError`, `MissingApiKeyError`, `InvalidRequestError`) — `core/exceptions.py`.
+2. Expand the adapter's catch tuple from `BadRequestError` only to `(BadRequestError, AuthenticationError, NotFoundError, PermissionDeniedError)`. Add `_classify_litellm_error(exc, *, model)` helper.
+3. Rewrite `LLMNode._call_llm` exception handling: typed catches for `UnknownModelError` / `MissingApiKeyError`; generic `except LLMCallError` for the catch-all (handles `InvalidRequestError` and any future subclass).
+4. Shrink `exec_fallback` from 4 isinstance branches (~50 lines) to a single generic message (~10 lines) — deterministic errors are now caught at `_call_llm`.
+5. Drop `import litellm.exceptions` from `nodes/llm/llm.py`. Architectural seal.
+6. Update tests: rewrite the auth test to assert `MissingApiKeyError`; add tests for NotFound, no-provider-prefix, PermissionDenied; rewrite the two LLMNode error tests to raise typed pflow exceptions.
+
+`make test` 5297 green, `make check` clean. Pass 1 done.
+
+### What I missed (caught by my own honesty pass)
+
+User asked "FULLY happy?" and I caught one gap: `InvalidRequestError` (the third typed-catch branch in `_call_llm`) had no LLMNode-level test — the adapter test verified the typed exception is raised, but nothing asserted that LLMNode preserves `str(e)` in `shared["error"]`. Added `test_invalid_request_error_preserves_provider_message`.
+
+That's when 158 tests went green and I claimed "fully happy" — prematurely.
+
+### Pass 2: code-review-driven UX fixes
+
+Ran `/code-review staged --agents 3` with deliberately scoped subagents:
+
+- **`review-impact-completeness`** — `LLMCallError` is the modified shared pattern; verify all `except LLMCallError` consumers handle subclasses correctly via IS-A subsumption.
+- **`review-test-fidelity`** — tests were rewired to raise typed pflow exceptions instead of LiteLLM's; verify they still test production-faithful behavior.
+- **`review-agent-ux`** — friendly error messages are user-facing; verify they're agent-actionable.
+
+`review-impact-completeness` returned clean — all consumers (`parse_structured_response`, `smart_filter`'s narrowed catch, both discovery callers, LLMNode itself) handle the subclasses correctly via IS-A. Zero ad-hoc reimplementations of the LiteLLM exception ladder outside the adapter.
+
+`review-test-fidelity` flagged the dual-coverage redundancy: my new `test_no_provider_prefix_shows_friendly_message` mocked `UnknownModelError` directly — same contract as the existing `test_unknown_model_error_handling`. The substring-detector regression itself was tested in `test_llm_client.py`. Recommended either rewriting the LLMNode test to raise the real `litellm.exceptions.BadRequestError` (closing both the redundancy and the integrated-path coverage gap) OR deleting the redundant test.
+
+`review-agent-ux` surfaced **two critical findings** I had missed:
+1. `UnknownModelError` discriminator (`(no provider prefix)`) silently discarded by LLMNode — **discriminator-loss bug pattern above**.
+2. `MissingApiKeyError` collapses auth-vs-permission — same pattern.
+
+Plus six more findings, of which I implemented:
+- Restore Timeout-specific message in `exec_fallback` (was a regression — generic message after retry exhaustion was strictly less actionable than the in-thread timeout's specific hint).
+- Improve no-keys tip text — was empty string, now suggests setting up a key (the empty tip silently buried the root cause when `get_default_llm_model()` returns None).
+- Add `error_class` field to error dict for machine-parseable cause.
+- Add docs URL to `MissingApiKeyError` branch.
+
+Deferred (with reasons):
+- `category` enum for `InvalidRequestError` sub-cases (content-policy, schema, context-window) — plan explicitly scoped out: "add finer types only when a consumer needs to discriminate them."
+- Mock fidelity for `thinking_budget` — no test relies on it, would be premature.
+- Defensive `try/except` around the lazy `get_default_llm_model` import — pre-existing risk, defensive coding violates "trust internal code" principle.
+
+### The dead-field bug pattern (third loose end I caught)
+
+Then user asked again "any loose ends?" and I caught a third:
+
+I had added `error_class` to the internal `_error_dict` shape — but `LLMNode.post()` doesn't surface it to `shared`. The whole point of the field (per agent-ux finding #8) was so agents reading the shared store as JSON output can branch on cause without parsing prose. As shipped, the field was buried in the internal `exec_res` dict that no consumer outside the node lifecycle ever sees. Dead code.
+
+Bug pattern worth remembering:
+
+> **When extending an internal contract (a dict, a return shape) with a new field, trace where it gets consumed. If consumers see only a subset of the dict's keys, the new field is dead unless explicitly forwarded across the boundary.** A test that calls the internal function directly will pass; the user-facing test fails because the field isn't there.
+
+Fix: surface `shared["error_class"] = exec_res["error_class"]` in `post()`. The test was simplified from `node.run(shared); prep_res = node.prep({}); _call_llm(prep_res)` (awkward double-call) to a clean `node.run(shared); assert shared["error_class"] == "..."`. Then `error_class` assertions were added to **all 5 error-path tests** so the contract is pinned end-to-end:
+
+| Path | error_class | Test |
+|---|---|---|
+| `_call_llm` UnknownModelError catch | `"UnknownModelError"` | `test_unknown_model_surfaces_error_class` |
+| `_call_llm` MissingApiKeyError catch | `"MissingApiKeyError"` | `test_needs_key_exception_handling`, `test_permission_denied_preserves_lacks_permission_detail` |
+| `_call_llm` generic `LLMCallError as e` catch | `type(e).__name__` (today: `"InvalidRequestError"`) | `test_invalid_request_error_preserves_provider_message` |
+| `exec()` `FuturesTimeoutError` catch | `"TimeoutError"` | `test_timeout_raises_timeout_error` |
+| `exec_fallback` substring match on `"timed out"` | `"TimeoutError"` | (covered transitively by retry-exhaustion paths in suite) |
+| `exec_fallback` generic | `type(exc).__name__` | `test_generic_exception_handling` |
+
+### Testing trap: the autouse mock skip pattern is path-substring-based
+
+I tried to write an integrated test (`test_no_provider_prefix_integrated_path`) that would raise a real `litellm.exceptions.BadRequestError`, flow through the real `_classify_litellm_error`, and verify LLMNode's catch handles it. The test failed: `action == "default"` instead of `"error"` — `complete()` returned a mock response.
+
+Root cause: `tests/conftest.py:23-26` skips the autouse `mock_llm_client` fixture for tests under paths containing the substring `/llm/`. My test's path is `tests/test_nodes/test_llm/test_llm.py` — substring `/llm/` does *not* appear (the path has `_llm/`, not `/llm/`). So the autouse mock applied, replacing `pflow.core.llm_client.complete` with the mock, and `from pflow.core.llm_client import complete as real_complete` inside the test got the mocked function (the import happened *after* the autouse setattr).
+
+The skip pattern was meant for tests under `tests/test_nodes/test_llm/llm/` (a hypothetical sub-dir for real-API tests) or `test_llm_integration.py` paths that DO contain `/llm/` as a substring. Files at `tests/test_nodes/test_llm/test_llm.py` are unit tests by design.
+
+I deleted the integrated test. The coverage it would have provided is already there:
+- Adapter side (`test_llm_client.py`): real LiteLLM exception → typed pflow exception with correct `reason` attribute ✓
+- LLMNode side (this file): typed pflow exception → friendly message construction ✓
+- Class identity across the seam: guaranteed by Python imports + mypy
+
+A future agent wanting a true integrated test needs to either move the test to a path matching `/llm/`, add a marker + per-test opt-out in conftest, or use `importlib.reload(pflow.core.llm_client)` before the autouse mock applies (heavyweight).
+
+### Architectural seal verification
+
+After this work, the only `litellm.exceptions` references in `src/pflow/` are:
+
+```
+src/pflow/core/llm_client.py:35:import litellm.exceptions      ← the seam (expected)
+src/pflow/nodes/llm/llm.py:449:        ... ``litellm.exceptions.Timeout`` ...   ← informational docstring (not a code dep)
+```
+
+Verification grep:
+
+```bash
+grep -rn 'import litellm\.exceptions\|from litellm\.exceptions' src/pflow/
+# Expected: only `src/pflow/core/llm_client.py:35`
+```
+
+The catch tuple in `_classify_litellm_error` covers 4 LiteLLM exception classes:
+- `BadRequestError` (and its subclasses: `UnsupportedParamsError`, `ContentPolicyViolationError`, `ContextWindowExceededError`, `RejectedRequestError` — verified via `issubclass()` to all flow through to `InvalidRequestError`)
+- `AuthenticationError` → `MissingApiKeyError`
+- `NotFoundError` → `UnknownModelError(reason="unknown_name")`
+- `PermissionDeniedError` → `MissingApiKeyError`
+
+NOT in the tuple (propagate raw to the Node retry loop):
+- `Timeout` — retriable
+- `RateLimitError` — retriable
+- `InternalServerError` — retriable
+- `JSONSchemaValidationError` (NOT a `BadRequestError` subclass — verified) — propagates to `exec_fallback` after retries
+- `APIResponseValidationError` (also not a `BadRequestError` subclass) — same
+
+The "LLM Provider NOT provided" substring fires inside the `BadRequestError` branch and produces `UnknownModelError(reason="missing_prefix")`. This substring detection is the **only** place in the seal where the message text is parsed — past `_classify_litellm_error`, consumers use structured attributes.
+
+### What's deliberately NOT in this implementation
+
+1. **`category` enum on `InvalidRequestError`** for content-policy / schema / context-window discrimination. Plan explicitly scoped out: "add finer types only when a consumer needs to discriminate them."
+2. **`JSONSchemaValidationError` / `APIResponseValidationError` translation.** Not `BadRequestError` subclasses; rare in practice (`parse_structured_response` already handles malformed JSON). Add when a real failure surfaces.
+3. **Mock fidelity for `thinking_budget`** — the `MockLLMClient` returns `thinking_budget=0` regardless of `reasoning_kwargs`. No test relies on this; would be designing for hypothetical future.
+4. **Defensive `try/except` around the lazy `get_default_llm_model` import in `_call_llm`'s UnknownModelError branch.** The lazy import was already in `exec_fallback` before this work — pre-existing risk, defensive coding around it would violate "trust internal code; don't add error handling for scenarios that can't happen."
+5. **Pre-validation of Anthropic temperature+thinking constraint.** Already covered in §31 item 9 — Anthropic's `BadRequestError` is exemplary; pre-validation would duplicate a server-side rule.
+6. **Restoring `import litellm.exceptions` for `exec_fallback`'s timeout isinstance check.** Considered re-importing for the cleanest type check, but substring detection on `"timed out" in str(exc).lower()` preserves the architectural seal AND keeps the actionable message. Substring is fragile but doesn't introduce coupling. Trade accepted.
+
+### Verification (after pass 2 + dead-field fix)
+
+```bash
+uv run pytest tests/test_execution/test_plan_drift.py -q              # 32 passed (sacred)
+uv run pytest tests/test_core/test_llm_client.py tests/test_nodes/test_llm/ -q   # 162 passed
+make test                                                              # 5301 passed
+make check                                                             # ruff + ruff-format + mypy + deptry all green
+grep -rn 'litellm\.exceptions' src/pflow/nodes/                       # 1 docstring mention only
+```
+
+### Production code changes summary
+
+- **`src/pflow/core/exceptions.py`** — added `UnknownModelError` (with structured `reason` attribute), `MissingApiKeyError`, `InvalidRequestError` as subclasses of `LLMCallError`. Updated `LLMCallError` docstring.
+- **`src/pflow/core/llm_client.py`** — expanded catch tuple in `complete()` from `BadRequestError` only to all 4 deterministic LiteLLM exception classes. Added `_classify_litellm_error(exc, *, model) -> LLMCallError` helper. Updated module + `complete()` docstrings.
+- **`src/pflow/nodes/llm/llm.py`** — dropped `import litellm.exceptions`. Added module-level `_error_dict(model, error_class, message)` helper (deduplicates 5 inline error-dict constructions) and `_api_key_tip(detected_model)` helper. Rewrote `_call_llm` exception handling with 3 typed-catch branches (UnknownModel, MissingApiKey, generic LLMCallError); each branch builds a precise message via the helpers. Shrunk `exec_fallback` from ~50 lines to ~10 (substring-based timeout detection preserves the actionable hint). Updated `post()` to surface `shared["error_class"]`.
+- **`src/pflow/core/CLAUDE.md`** — added the 3 new subclasses to the exception hierarchy diagram + a row in the "When to use which exception" table.
+- **`docs/changelog.mdx`** — added a bullet under Unreleased about typed-error translation + the friendly no-prefix message.
+
+### Test changes summary
+
+- **`tests/test_core/test_llm_client.py`** — flipped `test_authentication_error_propagates` → `test_authentication_error_raises_missing_api_key_error`; added 4 new translation tests (`test_not_found_raises_unknown_model_error`, `test_no_provider_prefix_raises_unknown_model_error` with `reason="missing_prefix"` assertion, `test_permission_denied_raises_missing_api_key_error` requires real `httpx.Response` for the constructor); renamed `test_bad_request_raises_llm_call_error` → `test_bad_request_raises_invalid_request_error` (asserts `IS-A LLMCallError` + `__cause__`).
+- **`tests/test_nodes/test_llm/test_llm.py`** — rewrote `test_unknown_model_error_handling` to test the unknown-name branch with assertion on no-keys-detected tip variant; added `test_unknown_model_with_detected_key_shows_supports_tip` (mocks `get_default_llm_model` to verify the detected-key branch — otherwise unreachable in tests because PYTEST_CURRENT_TEST disables key detection); added `test_missing_prefix_branch_message` (no-prefix branch with assertions distinguishing it from unknown-name); rewrote `test_needs_key_exception_handling` to verify `Detail:` line + docs URL; added `test_permission_denied_preserves_lacks_permission_detail` (the discriminator that survives via the `Detail:` line); added `test_invalid_request_error_preserves_provider_message` (third typed-catch branch); added `test_unknown_model_surfaces_error_class` (the surfaced `error_class` field). Strengthened `error_class` assertions across `test_needs_key_exception_handling`, `test_permission_denied_preserves_lacks_permission_detail`, `test_invalid_request_error_preserves_provider_message`, `test_timeout_raises_timeout_error`, `test_generic_exception_handling`.
+
+### Key files / line numbers (as of HEAD before commit)
+
+- Adapter seam: `src/pflow/core/llm_client.py:225-251` (the 4-class catch + classify call) and `:261-282` (`_classify_litellm_error`)
+- Typed exception hierarchy: `src/pflow/core/exceptions.py:148-200` (`LLMCallError` + 3 subclasses)
+- LLMNode error handling: `src/pflow/nodes/llm/llm.py:33-66` (helpers), `:243-300` (typed-catch chain in `_call_llm`), `:387-419` (`exec_fallback` with substring timeout detection)
+- error_class surfacing: `src/pflow/nodes/llm/llm.py:359-368` (in `post()`)
+
+### What the next agent should know
+
+1. **The architectural seal is complete and verifiable.** The grep `grep -rn 'import litellm\.exceptions\|from litellm\.exceptions' src/pflow/` should return exactly one line (`core/llm_client.py:35`). If a future change adds a second match in `src/pflow/nodes/`, the seal has been broken.
+
+2. **The `reason` attribute pattern on `UnknownModelError` is the template for any future typed exception that needs sub-case discrimination.** Don't encode discriminators in message text; structured attributes survive across the seam, message text doesn't (because LLMNode catches without `as e` for terseness).
+
+3. **`error_class` is a public field of the LLM node's error contract.** It's documented in `_error_dict`'s docstring. Any new error path in `LLMNode` MUST populate it. Today's classification for unmapped exceptions uses `type(exc).__name__` — this is the established convention.
+
+4. **`exec_fallback` uses substring detection on `"timed out"`** to keep the timeout-specific message actionable after retry exhaustion, without re-importing `litellm.exceptions`. If a future LiteLLM Timeout subclass changes its `str()` representation, this substring breaks silently. Mitigation: the test suite has explicit assertions on the timeout message in `test_timeout_raises_timeout_error` (in-thread path); a regression in retry-exhaustion timeout messages would require manual verification of the substring contract.
+
+5. **The autouse `mock_llm_client` fixture skip pattern is path-substring-based** (`/llm/`). Files at `tests/test_nodes/test_llm/test_llm.py` and `test_llm_images.py` get the mock because their paths don't contain `/llm/` as a substring. This is by design — those are unit tests. Tests under `tests/test_nodes/test_llm/test_llm_integration.py` ALSO get the mock applied; the file gates real LLM calls via `RUN_LLM_TESTS=1` + `pytest.mark.skipif`. If you write a test that needs the real adapter, mocking it out at the test level (as `monkeypatch.setattr("pflow.core.llm_client.litellm.completion", ...)`) doesn't work because the autouse already replaced `complete` itself. Solutions: move test path to match `/llm/`, or use `importlib.reload` (heavyweight).
+
+6. **Five error_class paths are pinned by tests** — the table above. New error paths in LLMNode must extend the table.
+
+After this commit lands, Phase A is fully complete (all 12 review items resolved). Next step is the actual prompt-caching feature work (Phase B–G).
+
+---

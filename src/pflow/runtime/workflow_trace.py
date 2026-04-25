@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -14,6 +15,71 @@ logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
 TRACE_FORMAT_VERSION = "2.0.0"
+
+
+@dataclass
+class _LLMSummaryAccumulator:
+    """Accumulator for ``WorkflowTraceCollector._collect_llm_summary``.
+
+    Lives at module level to keep the recursive collector small (ruff C901).
+    Mirrors ``MetricsCollector.calculate_costs`` semantics: when any leaf
+    has ``cost_usd: None``, ``total_cost_usd`` becomes ``None`` and we surface
+    ``partial_cost_usd`` + ``unavailable_models`` + ``pricing_available: False``.
+    """
+
+    total_calls: int = 0
+    total_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    priced_cost: float = 0.0
+    models: set[str] = field(default_factory=set)
+    unavailable_models: set[str] = field(default_factory=set)
+
+    def add_leaf(self, call: dict[str, Any]) -> None:
+        self.total_calls += 1
+        self.total_tokens += call.get("total_tokens", 0)
+        self.total_input_tokens += call.get("input_tokens", 0)
+        self.total_output_tokens += call.get("output_tokens", 0)
+        cost = call.get("cost_usd")
+        if cost is None:
+            self.unavailable_models.add(call.get("model") or "unknown")
+        else:
+            self.priced_cost += cost
+        model = call.get("model")
+        if model:
+            self.models.add(model)
+
+    def merge_sub(self, sub: dict[str, Any]) -> None:
+        self.total_calls += sub.get("total_calls", 0)
+        self.total_tokens += sub.get("total_tokens", 0)
+        self.total_input_tokens += sub.get("total_input_tokens", 0)
+        self.total_output_tokens += sub.get("total_output_tokens", 0)
+        # Child contributes its priced cost (whether reported as total_cost_usd
+        # or partial_cost_usd) and any unavailable models.
+        if sub.get("total_cost_usd") is not None:
+            self.priced_cost += sub["total_cost_usd"]
+        elif sub.get("partial_cost_usd") is not None:
+            self.priced_cost += sub["partial_cost_usd"]
+        self.unavailable_models.update(sub.get("unavailable_models", []))
+        self.models.update(sub.get("models_used", []))
+
+    def as_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "total_calls": self.total_calls,
+            "total_tokens": self.total_tokens,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "models_used": sorted(self.models),
+        }
+        if self.unavailable_models:
+            result["total_cost_usd"] = None
+            result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None
+            result["unavailable_models"] = sorted(self.unavailable_models)
+            result["pricing_available"] = False
+        else:
+            result["total_cost_usd"] = round(self.priced_cost, 6)
+            result["pricing_available"] = True
+        return result
 
 
 def final_events_by_node(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -370,75 +436,29 @@ class WorkflowTraceCollector:
         NOTE: Keep tree traversal in sync with _collect_llm_calls_from_events() — same structure.
         See that method's docstring for the batch item llm_call/events mutual exclusivity invariant.
 
-        Args:
-            events: List of trace events (may contain nested batch_items/sub_workflow_events)
-
-        Returns:
-            Summary dict with total_calls, total_tokens, total_input_tokens,
-            total_output_tokens, total_cost_usd, models_used
+        Cost contract mirrors ``MetricsCollector.calculate_costs``: when any
+        observed call has ``cost_usd: None`` (LiteLLM has no pricing data for
+        that model — Ollama, custom endpoints, brand-new models),
+        ``total_cost_usd`` is ``None`` and the summary carries
+        ``partial_cost_usd`` (sum of priced calls only) + ``unavailable_models``
+        + ``pricing_available: False``. When all priced, ``total_cost_usd`` is
+        the float total and ``pricing_available: True``.
         """
-        total_calls = 0
-        total_tokens = 0
-        total_input_tokens = 0
-        total_output_tokens = 0
-        total_cost = 0.0
-        models: set[str] = set()
-
+        agg = _LLMSummaryAccumulator()
         for event in events:
             if event.get("cached"):
                 continue  # Cached nodes incurred no cost this run
-
             if "llm_call" in event:
-                total_calls += 1
-                total_tokens += event["llm_call"].get("total_tokens", 0)
-                total_input_tokens += event["llm_call"].get("input_tokens", 0)
-                total_output_tokens += event["llm_call"].get("output_tokens", 0)
-                total_cost += event["llm_call"].get("cost_usd", 0) or 0
-                model = event["llm_call"].get("model")
-                if model:
-                    models.add(model)
-
-            # Recurse into batch items
-            # Invariant: items have llm_call XOR events, never both (see _collect_llm_calls_from_events)
+                agg.add_leaf(event["llm_call"])
             for item in event.get("batch_items", []):
-                # Leaf item with direct LLM call
                 if "llm_call" in item:
-                    total_calls += 1
-                    total_tokens += item["llm_call"].get("total_tokens", 0)
-                    total_input_tokens += item["llm_call"].get("input_tokens", 0)
-                    total_output_tokens += item["llm_call"].get("output_tokens", 0)
-                    total_cost += item["llm_call"].get("cost_usd", 0) or 0
-                    model = item["llm_call"].get("model")
-                    if model:
-                        models.add(model)
-                # Sub-workflow item with nested events
-                sub = self._collect_llm_summary(item.get("events", []))
-                total_calls += sub.get("total_calls", 0)
-                total_tokens += sub.get("total_tokens", 0)
-                total_input_tokens += sub.get("total_input_tokens", 0)
-                total_output_tokens += sub.get("total_output_tokens", 0)
-                total_cost += sub.get("total_cost_usd", 0)
-                models.update(sub.get("models_used", []))
-
-            # Recurse into sub-workflow events
+                    agg.add_leaf(item["llm_call"])
+                # Sub-workflow item with nested events (mutually exclusive with llm_call)
+                agg.merge_sub(self._collect_llm_summary(item.get("events", [])))
             sub_events = event.get("sub_workflow_events", [])
             if sub_events:
-                sub = self._collect_llm_summary(sub_events)
-                total_calls += sub.get("total_calls", 0)
-                total_tokens += sub.get("total_tokens", 0)
-                total_input_tokens += sub.get("total_input_tokens", 0)
-                total_output_tokens += sub.get("total_output_tokens", 0)
-                total_cost += sub.get("total_cost_usd", 0)
-                models.update(sub.get("models_used", []))
-
-        return {
-            "total_calls": total_calls,
-            "total_tokens": total_tokens,
-            "total_input_tokens": total_input_tokens,
-            "total_output_tokens": total_output_tokens,
-            "total_cost_usd": total_cost,
-            "models_used": sorted(models),
-        }
+                agg.merge_sub(self._collect_llm_summary(sub_events))
+        return agg.as_dict()
 
     def save_to_file(self) -> Path:
         """Save trace to JSON file in ~/.pflow/debug/.

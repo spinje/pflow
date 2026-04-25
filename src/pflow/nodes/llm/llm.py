@@ -8,11 +8,9 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any
 
-import litellm.exceptions
-
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-from pflow.core.exceptions import LLMCallError
+from pflow.core.exceptions import LLMCallError, MissingApiKeyError, UnknownModelError
 from pflow.core.llm_client import Attachment, TraceHook, complete, enrich_llm_usage_with_cost
 from pflow.core.llm_reasoning_map import (
     DEFAULT_MAX_TOKENS_BASE,
@@ -32,6 +30,42 @@ __all__ = [
 ]
 
 
+def _error_dict(model: str, error_class: str, message: str) -> dict[str, Any]:
+    """Build the standard error-dict shape returned from LLMNode error paths.
+
+    ``error_class`` is the typed exception name (``"UnknownModelError"``,
+    ``"MissingApiKeyError"``, ``"InvalidRequestError"``, ``"TimeoutError"``,
+    or ``type(exc).__name__`` for unclassified failures). It gives JSON-mode
+    consumers and downstream nodes a machine-parseable cause field without
+    forcing them to substring-match the human-readable message.
+    """
+    return {
+        "response": "",
+        "error": message,
+        "error_class": error_class,
+        "model": model,
+        "usage": {},
+        "status": "error",
+    }
+
+
+def _api_key_tip(detected_model: str | None) -> str:
+    """Build the per-call API-key tip line.
+
+    When LiteLLM has detected at least one configured key, surface which
+    model that key supports so the agent can pivot to a known-good
+    identifier. Otherwise tell the agent to set one up — the no-keys case
+    used to print an empty tip, which silently buried the root cause.
+    """
+    if detected_model:
+        return f"Tip: Your API key supports '{detected_model}'."
+    return (
+        "Tip: No LLM keys detected. "
+        "Run 'pflow settings set-env ANTHROPIC_API_KEY <value>' "
+        "(or OPENAI_API_KEY / GEMINI_API_KEY) to configure one."
+    )
+
+
 class LLMNode(Node):
     """
     General-purpose LLM node for text processing and AI reasoning or data transformation.
@@ -48,6 +82,7 @@ class LLMNode(Node):
     - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional, overrides reasoning params if keys overlap)
     - Writes: shared["response"]: str|dict  # Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
     - Writes: shared["error"]: str  # Error message if LLM call or JSON parsing failed
+    - Writes: shared["prompt"]: str  # Rendered prompt actually sent to the model (populated for tracing/audit, including per-item batch traces)
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
         - input_tokens: int  # Number of input tokens consumed
@@ -55,6 +90,8 @@ class LLMNode(Node):
         - total_tokens: int  # Total tokens (input + output)
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
+        - thinking_tokens: int  # Reasoning/thinking tokens consumed (0 for non-reasoning models)
+        - thinking_budget: int  # Reasoning token budget set on the request (0 when not configured or provider uses categorical levels)
         - cost_usd: float  # Estimated cost in USD (None when LiteLLM has no pricing data — e.g. Ollama, custom endpoints, brand-new models)
     - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
@@ -157,6 +194,12 @@ class LLMNode(Node):
             if img.startswith(("http://", "https://")):
                 attachments.append(Attachment(kind="image_url", value=img))
             else:
+                # Image paths are inputs (not workflow assets) — stored verbatim.
+                # Relative paths are resolved against the current working
+                # directory at file-open time by the adapter (Python's open()
+                # semantics). This contrasts with code-block file refs
+                # (`code: @./helper.py`) which resolve relative to the workflow
+                # file because they're part of the workflow definition.
                 path = Path(img)
                 if not path.exists():
                     raise ValueError(
@@ -213,12 +256,14 @@ class LLMNode(Node):
             prep_res.get("max_tokens"),
         )
 
-        # The adapter handles the PATTERN EXCEPTION (deterministic
-        # BadRequestError → error-marked response, no retry burned).
-        # See pflow.core.llm_client.complete docstring.
+        # The adapter raises typed LLMCallError subclasses for deterministic
+        # provider failures. Catch each at this single boundary so the Node
+        # retry loop sees a normal return and doesn't burn three attempts on
+        # a permanent failure. See pflow.core.llm_client.complete docstring.
+        model = prep_res["model"]
         try:
             adapter_response = complete(
-                model=prep_res["model"],
+                model=model,
                 prompt=prep_res["prompt"],
                 system=prep_res["system"],
                 temperature=prep_res["temperature"],
@@ -230,20 +275,56 @@ class LLMNode(Node):
                 timeout=prep_res.get("timeout"),
                 trace_hook=trace_hook,
             )
+        except UnknownModelError as e:
+            # Lazy import keeps llm_config off the LLMNode import graph for
+            # the common (non-error) path.
+            from pflow.core.llm_config import get_default_llm_model
+
+            tip = _api_key_tip(get_default_llm_model())
+            if e.reason == "missing_prefix":
+                # Model name may be valid; the prefix is what's missing.
+                # Lead with the precise diagnosis so the agent doesn't waste
+                # an iteration trying a different model name.
+                message = (
+                    f"Model '{model}' is missing a provider prefix. "
+                    f"Try a prefixed identifier like 'openai/{model}', "
+                    f"'anthropic/claude-sonnet-4-5', or 'gemini/gemini-2.5-flash'. "
+                    f"{tip} "
+                    f"See https://docs.litellm.ai/docs/providers for the full "
+                    f"list of supported providers."
+                )
+            else:
+                # Prefix is recognized; the model name doesn't exist there.
+                message = (
+                    f"Unknown model: {model}. "
+                    f"The provider didn't recognize this model name. "
+                    f"{tip} "
+                    f"See https://docs.litellm.ai/docs/providers for supported "
+                    f"models, or run 'pflow settings llm show' to see your "
+                    f"configured defaults."
+                )
+            return _error_dict(model, "UnknownModelError", message)
+        except MissingApiKeyError as e:
+            # Append str(e) so a permission-denied case ("API key for model
+            # 'X' lacks permission ...") isn't drowned out by the env-var
+            # advice — the remediation differs (request access vs set a key).
+            return _error_dict(
+                model,
+                "MissingApiKeyError",
+                f"API key required for model: {model}. "
+                f"Set the appropriate environment variable "
+                f"(e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) "
+                f"or run 'pflow settings set-env <KEY> <value>'. "
+                f"Detail: {e} "
+                f"See https://docs.litellm.ai/docs/providers for "
+                f"provider-specific key names (Bedrock, Azure, Vertex, ...).",
+            )
         except LLMCallError as e:
-            # PATTERN EXCEPTION: deterministic provider error (bad params,
-            # bad model, schema rejection). Convert to error-marked output
-            # at this single boundary so the Node retry loop sees a normal
-            # return and doesn't burn three attempts. The adapter raised a
-            # typed exception precisely so this conversion lives here, with
-            # the one consumer that needs it, not inside the adapter.
-            return {
-                "response": "",
-                "error": str(e),
-                "model": prep_res["model"],
-                "usage": {},
-                "status": "error",
-            }
+            # InvalidRequestError and any future LLMCallError subclass without
+            # a dedicated branch. Preserves str(e) so the provider's message
+            # reaches the user (e.g. "temperature may only be set to 1 when
+            # thinking is enabled").
+            return _error_dict(model, type(e).__name__, str(e))
 
         return {
             "response": adapter_response.text,
@@ -278,27 +359,40 @@ class LLMNode(Node):
             )
             # Return error dict instead of raising — prevents PocketFlow retry.
             # Retrying timeouts is harmful: the orphan thread from this attempt
-            # is still running model.prompt(), so retry would create duplicate
-            # in-flight API calls (wasting money and adding rate-limit pressure).
-            return {
-                "response": "",
-                "error": (
-                    f"LLM call timed out after {timeout}s. "
-                    f"Model: {prep_res['model']}. "
-                    f"Increase timeout or check API connectivity."
-                ),
-                "model": prep_res["model"],
-                "usage": {},
-                "status": "error",
-            }
+            # is still running the API call, so retry would create duplicate
+            # in-flight requests (wasting money and adding rate-limit pressure).
+            return _error_dict(
+                prep_res["model"],
+                "TimeoutError",
+                f"LLM call timed out after {timeout}s. "
+                f"Model: {prep_res['model']}. "
+                f"Increase timeout or check API connectivity.",
+            )
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store."""
+        # Surface the rendered prompt for tracing/audit. Critical for per-item
+        # batch traces: WorkflowTraceCollector keys llm_prompts by node_id only,
+        # so parallel batch workers all overwrite the same slot. The batch
+        # executor's _capture_item_trace falls back to node_output["prompt"]
+        # for per-item visibility — populating it here is the seam.
+        rendered_prompt = prep_res.get("prompt")
+        if isinstance(rendered_prompt, str):
+            shared["prompt"] = rendered_prompt
+
         # Check for error first
         if isinstance(exec_res, dict) and exec_res.get("status") == "error":
             shared["error"] = exec_res.get("error", "Unknown error")
+            # Surface the machine-parseable cause field so JSON-mode consumers
+            # and downstream nodes can branch on the exception type without
+            # parsing prose ("UnknownModelError" / "MissingApiKeyError" /
+            # "InvalidRequestError" / "TimeoutError" / type(exc).__name__ for
+            # unclassified failures from exec_fallback).
+            error_class = exec_res.get("error_class")
+            if error_class is not None:
+                shared["error_class"] = error_class
             shared["response"] = ""
             shared["llm_usage"] = {}
             return "error"  # Return error action so workflow error handling can respond
@@ -318,6 +412,8 @@ class LLMNode(Node):
                 "total_tokens": usage_dict.get("total_tokens", 0) or 0,
                 "cache_creation_input_tokens": usage_dict.get("cache_creation_input_tokens", 0) or 0,
                 "cache_read_input_tokens": usage_dict.get("cache_read_input_tokens", 0) or 0,
+                "thinking_tokens": usage_dict.get("thinking_tokens", 0) or 0,
+                "thinking_budget": usage_dict.get("thinking_budget", 0) or 0,
             }
             # Adapter populates cost_usd from LiteLLM's response_cost. Carry it
             # through if present so enrich_llm_usage_with_cost can no-op.
@@ -345,61 +441,32 @@ class LLMNode(Node):
         return "default"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Handle errors after all retries exhausted."""
-        error_msg = str(exc)
+        """Handle errors after all retries exhausted.
 
-        # Timeout check first — isinstance is more reliable than string matching
-        if isinstance(exc, (TimeoutError, FuturesTimeoutError, litellm.exceptions.Timeout)):
-            timeout = prep_res.get("timeout", 120)
-            error_detail = (
-                f"LLM call timed out after {timeout}s. "
-                f"Model: {prep_res['model']}. "
-                f"Increase timeout or check API connectivity."
-            )
-        elif isinstance(exc, litellm.exceptions.NotFoundError):
-            # Was UnknownModelError under the llm library — model exists but
-            # provider doesn't recognize it.
-            from pflow.core.llm_config import get_default_llm_model
+        Only fires for non-deterministic failures that escape ``_call_llm``.
+        Deterministic provider errors (``UnknownModelError``,
+        ``MissingApiKeyError``, ``InvalidRequestError``) are caught and
+        converted to error dicts at the ``_call_llm`` boundary, so they
+        never reach this path. Network timeouts after retry exhaustion,
+        rate limits after retry exhaustion, and other transient errors that
+        didn't recover land here.
 
-            detected_model = get_default_llm_model()
-            if detected_model:
-                error_detail = (
-                    f"Unknown model: {prep_res['model']}. "
-                    f"Tip: Your API key supports '{detected_model}'. "
-                    f"See https://docs.litellm.ai/docs/providers for valid model strings, "
-                    f"or run 'pflow settings llm show' to see your configured defaults."
-                )
-            else:
-                error_detail = (
-                    f"Unknown model: {prep_res['model']}. "
-                    f"See https://docs.litellm.ai/docs/providers for valid model strings, "
-                    f"or run 'pflow settings llm show' to see your configured defaults."
-                )
-        elif isinstance(exc, litellm.exceptions.AuthenticationError):
-            # Was NeedsKeyException under the llm library — wrong or missing key.
-            error_detail = (
-                f"API key required for model: {prep_res['model']}. "
-                f"Set the appropriate environment variable "
-                f"(e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) "
-                f"or run 'pflow settings set-env <KEY> <value>'."
+        The timeout case keeps its specific "Increase timeout or check API
+        connectivity" hint because that's the actionable remediation —
+        without it, an agent retrying the workflow would just hit the same
+        wall. Substring detection avoids re-importing ``litellm.exceptions``
+        for what's already a string-typed concept across providers.
+        """
+        model = prep_res.get("model", "unknown")
+        if "timed out" in str(exc).lower():
+            return _error_dict(
+                model,
+                "TimeoutError",
+                f"LLM call timed out after {self.max_retries} attempts. "
+                f"Model: {model}. Increase timeout or check API connectivity.",
             )
-        elif isinstance(exc, litellm.exceptions.BadRequestError) and "LLM Provider NOT provided" in error_msg:
-            # Unknown provider prefix — looks like an unknown model to the user.
-            error_detail = (
-                f"Unknown model/provider: {prep_res['model']}. "
-                f"Use a provider prefix (e.g., 'anthropic/claude-sonnet-4-5', "
-                f"'openai/gpt-4o-mini', 'gemini/gemini-2.5-flash')."
-            )
-        else:
-            error_detail = (
-                f"LLM call failed after {self.max_retries} attempts. Model: {prep_res['model']}. Error: {error_msg}"
-            )
-
-        # Return error dict instead of raising
-        return {
-            "response": "",
-            "error": error_detail,
-            "model": prep_res.get("model", "unknown"),
-            "usage": {},
-            "status": "error",
-        }
+        return _error_dict(
+            model,
+            type(exc).__name__,
+            f"LLM call failed after {self.max_retries} attempts. Model: {model}. Error: {exc}",
+        )

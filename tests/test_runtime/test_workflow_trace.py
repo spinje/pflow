@@ -810,6 +810,68 @@ class TestWorkflowTraceCollector:
             assert summary["total_calls"] == 2
             assert summary["total_tokens"] == 150
             assert summary["total_cost_usd"] == pytest.approx(0.08)
+            assert summary["pricing_available"] is True
+
+    def test_llm_summary_unpriced_call_surfaces_as_none(self, collector, temp_home):
+        """Regression: when any call has cost_usd=None (unknown-pricing model),
+        total_cost_usd is None and partial_cost_usd carries the priced subset.
+
+        Mirrors MetricsCollector.calculate_costs semantics. Pre-fix the unpriced
+        cost silently collapsed to 0 and was summed away.
+        """
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-priced",
+                node_type="LLMNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "gpt-4", "total_tokens": 100, "cost_usd": 0.05},
+                },
+            )
+            collector.record_node_execution(
+                node_id="llm-unpriced",
+                node_type="LLMNode",
+                duration_ms=50.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "ollama/llama3.2", "total_tokens": 50, "cost_usd": None},
+                },
+            )
+
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            assert summary["total_calls"] == 2
+            assert summary["total_cost_usd"] is None
+            assert summary["pricing_available"] is False
+            assert summary["partial_cost_usd"] == pytest.approx(0.05)
+            assert summary["unavailable_models"] == ["ollama/llama3.2"]
+
+    def test_llm_summary_all_unpriced_no_partial(self, collector, temp_home):
+        """When every call is unpriced, partial_cost_usd is None (not 0.0)."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-1",
+                node_type="LLMNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "ollama/llama3.2", "total_tokens": 50, "cost_usd": None},
+                },
+            )
+
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            assert summary["total_cost_usd"] is None
+            assert summary["partial_cost_usd"] is None
+            assert summary["pricing_available"] is False
+            assert summary["unavailable_models"] == ["ollama/llama3.2"]
 
     def test_llm_summary_includes_input_output_tokens(self, collector, temp_home):
         """Test that _collect_llm_summary accumulates input/output token breakdown."""

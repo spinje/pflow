@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from pflow.core.exceptions import LLMCallError
 from pflow.core.llm_client import complete
 from pflow.core.llm_utils import parse_structured_response
 
@@ -220,8 +221,14 @@ Return ONLY the field paths (without type annotations) that the agent needs to s
 
         return filtered
 
-    except Exception as e:
-        # Fallback on any error: LLM API failure, network issues, parsing errors
+    except (LLMCallError, ConnectionError, TimeoutError, OSError) as e:
+        # Graceful degradation for the failure modes filtering can't avoid:
+        # - LLMCallError: deterministic provider rejection (bad model, bad key,
+        #   schema validation, parse failure from parse_structured_response)
+        # - ConnectionError / OSError: network or socket failure
+        # - TimeoutError: request didn't return in time
+        # Programming errors (AttributeError, TypeError, KeyError, etc.)
+        # propagate so they get fixed instead of silently degrading UX.
         logger.warning(
             f"Smart filter failed, returning all {len(fields)} fields unfiltered: {e}",
             extra={"error_type": type(e).__name__, "error_message": str(e)},

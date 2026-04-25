@@ -15,6 +15,8 @@ rss: true
   **Improvements**
   - Built-in support for OpenRouter, Ollama, Mistral, Bedrock, Vertex AI, vLLM, and 100+ more providers without plugin installation. Use the model with its provider prefix (e.g. `openrouter/anthropic/claude-sonnet-4-5`, `ollama/llama3.2`).
   - Cost reporting (`cost_usd` in traces and `pflow report`) is sourced from LiteLLM and stays current with provider pricing changes — no more `$0.00` for newly-released models.
+  - Trace events now include `llm_prompt` for every literal-prompt LLM call, and `pflow report` renders a `## Prompt` section per LLM node — making it easier to audit what was actually sent to each model.
+  - Deterministic LLM provider errors (unknown model, missing API key, schema rejection) now short-circuit at the adapter boundary instead of burning three retries — the CLI surfaces the friendly fix message in ~1 second instead of ~30. A bare model name with no provider prefix (e.g. `pflow run --model gibberish`) now produces the "use a provider prefix like `anthropic/...`" hint instead of a raw provider JSON envelope.
 
   **Breaking changes**
   - **API keys must come from environment variables or `pflow settings set-env`.** pflow no longer reads keys stored via `llm keys set <provider>` — Simon Willison's `llm` CLI subprocess is gone. If you previously stored keys with `llm keys set ...`, transfer them:

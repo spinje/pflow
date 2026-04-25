@@ -11,9 +11,9 @@ import time
 from typing import ClassVar
 from unittest.mock import patch
 
-import litellm.exceptions
 import pytest
 
+from pflow.core.exceptions import InvalidRequestError, MissingApiKeyError, UnknownModelError
 from pflow.core.llm_client import AdapterResponse
 from pflow.nodes.llm import LLMNode
 
@@ -190,55 +190,105 @@ class TestLLMNode:
 
         assert action == "default"
 
-    # Test Criteria 14: NotFoundError raised → Returns error action with helpful message
+    # Test Criteria 14: UnknownModelError(reason="unknown_name") → unknown-name branch
     def test_unknown_model_error_handling(self, monkeypatch):
-        """Test that LiteLLM's NotFoundError is handled correctly with error action.
+        """The unknown-name sub-case (prefix is valid, model name is not).
 
-        The new adapter raises ``litellm.exceptions.NotFoundError`` for unknown
-        models (was ``llm.UnknownModelError`` under the old library). The user-
-        facing error text now references ``pflow settings llm show`` instead of
-        ``llm models``.
+        Adapter translates ``litellm.exceptions.NotFoundError`` to
+        ``UnknownModelError(reason="unknown_name")`` (verified in
+        ``test_llm_client.py``). LLMNode discriminates on the ``reason``
+        attribute to construct the right user-facing message.
         """
 
-        def raise_not_found(**kwargs):
-            raise litellm.exceptions.NotFoundError(
-                message="Model not found", model=kwargs.get("model", "unknown"), llm_provider="anthropic"
+        def raise_unknown_model(**kwargs):
+            raise UnknownModelError(
+                f"Unknown model: {kwargs.get('model', 'unknown')}",
+                reason="unknown_name",
             )
 
-        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_not_found)
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_unknown_model)
 
         node = LLMNode(wait=0)  # No wait between retries for faster tests
-        node.set_params({"prompt": "Test", "model": "bad-model"})
+        node.set_params({"prompt": "Test", "model": "anthropic/claude-foo-99"})
         shared = {}
 
-        # Node should return "error" action and set error in shared
         action = node.run(shared)
 
         assert action == "error"
-        assert "error" in shared
         error_msg = shared["error"]
-        assert "Unknown model: bad-model" in error_msg
+        # Unknown-name path leads with the verbatim model name and routes the
+        # agent to the configured-defaults command (not the missing-prefix hint).
+        assert "Unknown model: anthropic/claude-foo-99" in error_msg
+        assert "didn't recognize this model name" in error_msg
         assert "pflow settings llm show" in error_msg
-        # Verify empty response and usage as per spec
+        # Tip is always present — under PYTEST_CURRENT_TEST get_default_llm_model
+        # returns None, so the no-keys variant fires.
+        assert "Tip:" in error_msg
+        assert "No LLM keys detected" in error_msg
+        # Machine-parseable cause field
+        # (covered by test_unknown_model_error_class_field below).
         assert shared["response"] == ""
         assert shared["llm_usage"] == {}
 
-    # Test Criteria 15: AuthenticationError raised → Returns error action with helpful message
-    def test_needs_key_exception_handling(self, monkeypatch):
-        """Test that LiteLLM's AuthenticationError is handled with error action.
+    def test_unknown_model_surfaces_error_class(self, monkeypatch):
+        """``shared["error_class"]`` exposes the typed exception name to agents.
 
-        The new adapter raises ``litellm.exceptions.AuthenticationError`` for
-        missing/invalid API keys (was ``llm.NeedsKeyException``). The user-
-        facing error text now references ``pflow settings set-env`` instead of
-        ``llm keys set``.
+        Lets JSON-mode consumers branch on cause without parsing the prose
+        message — useful when an agent retries with a different model on
+        ``UnknownModelError`` but escalates on ``InvalidRequestError``.
         """
 
-        def raise_auth(**kwargs):
-            raise litellm.exceptions.AuthenticationError(
-                message="API key required", model=kwargs.get("model", "unknown"), llm_provider="anthropic"
-            )
+        def raise_unknown_model(**kwargs):
+            raise UnknownModelError("Unknown model: x", reason="unknown_name")
 
-        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_auth)
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_unknown_model)
+
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "model": "anthropic/x"})
+        shared = {}
+        node.run(shared)
+
+        assert shared["error_class"] == "UnknownModelError"
+
+    def test_unknown_model_with_detected_key_shows_supports_tip(self, monkeypatch):
+        """When an API key IS configured, the tip names the model that key supports.
+
+        Pins the tip's "discovered key" branch (otherwise unreachable in tests
+        because PYTEST_CURRENT_TEST disables key detection in llm_config).
+        """
+        monkeypatch.setattr(
+            "pflow.core.llm_config.get_default_llm_model",
+            lambda: "anthropic/claude-sonnet-4-5",
+        )
+
+        def raise_unknown_model(**kwargs):
+            raise UnknownModelError("Unknown model: x", reason="unknown_name")
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_unknown_model)
+
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "model": "anthropic/x"})
+        shared = {}
+        node.run(shared)
+
+        error_msg = shared["error"]
+        assert "Tip: Your API key supports 'anthropic/claude-sonnet-4-5'" in error_msg
+        assert "No LLM keys detected" not in error_msg
+
+    # Test Criteria 15: MissingApiKeyError → friendly message + Detail line
+    def test_needs_key_exception_handling(self, monkeypatch):
+        """The auth sub-case (key missing or wrong).
+
+        Adapter translates ``litellm.exceptions.AuthenticationError`` to
+        ``MissingApiKeyError`` (verified in ``test_llm_client.py``). LLMNode
+        appends ``str(e)`` as a Detail line so the discriminator the adapter
+        encoded survives to the user.
+        """
+
+        def raise_missing_key(**kwargs):
+            raise MissingApiKeyError(f"API key required for model '{kwargs.get('model', 'unknown')}'")
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_missing_key)
 
         node = LLMNode(wait=0)  # No wait between retries for faster tests
         node.set_params({"prompt": "Test"})
@@ -247,13 +297,120 @@ class TestLLMNode:
         action = node.run(shared)
 
         assert action == "error"
-        assert "error" in shared
         error_msg = shared["error"]
         assert "API key required" in error_msg
         assert "pflow settings set-env" in error_msg
+        # Detail line preserves the adapter's discriminator
+        assert "Detail: API key required for model" in error_msg
+        # Docs URL helps users find provider-specific key names (Bedrock, Azure)
+        assert "https://docs.litellm.ai/docs/providers" in error_msg
+        # Machine-parseable cause field for JSON-mode consumers
+        assert shared["error_class"] == "MissingApiKeyError"
         # Verify empty response and usage as per spec
         assert shared["response"] == ""
         assert shared["llm_usage"] == {}
+
+    def test_permission_denied_preserves_lacks_permission_detail(self, monkeypatch):
+        """The permission-denied sub-case: key works, but lacks model access.
+
+        Different remediation than missing-key (request access / change tier
+        vs set an env var). The Detail line carries the adapter's
+        "lacks permission" wording so the agent doesn't waste an iteration
+        re-setting an already-valid env var.
+        """
+
+        def raise_permission_denied(**kwargs):
+            raise MissingApiKeyError(f"API key for model '{kwargs['model']}' lacks permission for this request")
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_permission_denied)
+
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "model": "openai/gpt-5-pro"})
+        shared = {}
+
+        action = node.run(shared)
+
+        assert action == "error"
+        error_msg = shared["error"]
+        # The remediation hint stays (covers the common case)
+        assert "pflow settings set-env" in error_msg
+        # The discriminator survives to the user
+        assert "lacks permission" in error_msg
+        assert "openai/gpt-5-pro" in error_msg
+        # Same error_class as the auth case — agents discriminate via the
+        # message Detail line, not the class name (both are MissingApiKey).
+        assert shared["error_class"] == "MissingApiKeyError"
+
+    def test_invalid_request_error_preserves_provider_message(self, monkeypatch):
+        """The third typed-catch branch: ``InvalidRequestError`` (and any
+        future ``LLMCallError`` subclass without a dedicated handler) passes
+        ``str(e)`` through verbatim so the provider's actionable message
+        reaches the user (e.g. Anthropic's "temperature may only be set to
+        1 when thinking is enabled" includes a docs link).
+        """
+
+        def raise_invalid_request(**kwargs):
+            raise InvalidRequestError(
+                f"Invalid request for model '{kwargs['model']}': "
+                f"temperature may only be set to 1 when thinking is enabled"
+            )
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_invalid_request)
+
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "model": "anthropic/claude-opus-4-5"})
+        shared = {}
+
+        action = node.run(shared)
+
+        assert action == "error"
+        error_msg = shared["error"]
+        assert "Invalid request" in error_msg
+        assert "temperature may only be set to 1" in error_msg
+        # Generic LLMCallError catch uses type(e).__name__ — for any future
+        # LLMCallError subclass without a dedicated branch, the class name
+        # surfaces directly so agents can discriminate.
+        assert shared["error_class"] == "InvalidRequestError"
+        assert shared["response"] == ""
+        assert shared["llm_usage"] == {}
+
+    def test_missing_prefix_branch_message(self, monkeypatch):
+        """The missing-prefix sub-case: model has no provider prefix.
+
+        Adapter translates ``BadRequestError("LLM Provider NOT provided")`` to
+        ``UnknownModelError(reason="missing_prefix")`` (verified in
+        ``test_llm_client.py``). LLMNode's missing-prefix branch leads with
+        the precise diagnosis — not a generic "Unknown model" prefix that
+        would send the agent down the wrong fix path (trying a different name
+        when the name is fine).
+        """
+
+        def raise_missing_prefix(**kwargs):
+            raise UnknownModelError(
+                f"Model '{kwargs['model']}' has no provider prefix",
+                reason="missing_prefix",
+            )
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_missing_prefix)
+
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "model": "gibberish"})
+        shared = {}
+
+        action = node.run(shared)
+
+        assert action == "error"
+        error_msg = shared["error"]
+        # Missing-prefix diagnosis, not "Unknown model"
+        assert "missing a provider prefix" in error_msg
+        assert "gibberish" in error_msg
+        # Suggests prefixed alternatives — including the verbatim model name
+        # with a prefix, since the name itself may be valid.
+        assert "openai/gibberish" in error_msg
+        assert "anthropic/" in error_msg
+        # Distinct from the unknown-name branch — must NOT mislead the agent
+        # into thinking the model name itself is wrong.
+        assert "didn't recognize this model name" not in error_msg
 
     # Test Criteria 16: Generic exception → Returns error action with retry count
     def test_generic_exception_handling(self, monkeypatch):
@@ -274,6 +431,9 @@ class TestLLMNode:
         assert "error" in shared
         error_msg = shared["error"]
         assert "failed after 2 attempts" in error_msg
+        # exec_fallback uses type(exc).__name__ for unclassified exceptions
+        # so agents can distinguish RuntimeError from ConnectionError etc.
+        assert shared["error_class"] == "RuntimeError"
         # Verify empty response and usage as per spec
         assert shared["response"] == ""
         assert shared["llm_usage"] == {}
@@ -366,6 +526,8 @@ class TestLLMNode:
             "total_tokens": 225,
             "cache_creation_input_tokens": 10,
             "cache_read_input_tokens": 20,
+            "thinking_tokens": 0,
+            "thinking_budget": 0,
             "cost_usd": 0.00966,
         }
 
@@ -902,6 +1064,9 @@ class TestTimeout:
 
         assert action == "error"
         assert "timed out" in shared["error"]
+        # In-thread timeout (FuturesTimeoutError caught by exec()) classifies
+        # as TimeoutError so agents can branch on it without parsing prose.
+        assert shared["error_class"] == "TimeoutError"
 
     def test_normal_execution_within_timeout(self, mock_llm_client):
         """LLM call completing within timeout succeeds normally."""

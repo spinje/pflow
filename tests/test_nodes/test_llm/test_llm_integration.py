@@ -24,7 +24,11 @@ def has_openai_api_key():
 
 @pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), reason="Set RUN_LLM_TESTS=1 to run real LLM tests")
 @pytest.mark.skipif(
-    not has_openai_api_key(), reason="OpenAI API key not available. Run 'llm keys set openai' or set OPENAI_API_KEY"
+    not has_openai_api_key(),
+    reason=(
+        "OpenAI API key not available. Set OPENAI_API_KEY env var or run "
+        "'pflow settings set-env OPENAI_API_KEY <value>'."
+    ),
 )
 class TestLLMNodeIntegration:
     """Integration tests with real LLM API calls."""
@@ -194,17 +198,21 @@ class TestLLMNodeIntegration:
 
 
 @pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), reason="Set RUN_LLM_TESTS=1 to run real LLM tests")
-def test_missing_api_key_error():
-    """Test that missing API key produces helpful error."""
-    # This test won't work if key is set via 'llm keys set'
-    # So we test with a model that definitely doesn't have a key
+def test_unknown_model_produces_helpful_error():
+    """Pflow surfaces a helpful error when the model identifier is unrecognized.
+
+    Use a model name without a provider prefix so LiteLLM rejects the request
+    regardless of which API keys are configured. After Phase A, LLMNode.run()
+    returns the ``"error"`` action and stores the message in ``shared["error"]``
+    rather than raising.
+    """
     node = LLMNode()
     node.set_params({"model": "some-nonexistent-model-xyz123"})
     shared = {"prompt": "test"}
 
-    with pytest.raises(ValueError) as exc_info:
-        node.run(shared)
+    action = node.run(shared)
 
-    # Should have helpful message about unknown model
-    error_msg = str(exc_info.value)
-    assert "Unknown model" in error_msg or "llm models" in error_msg
+    assert action == "error"
+    error_msg = shared.get("error", "")
+    assert "some-nonexistent-model-xyz123" in error_msg
+    assert "Unknown model" in error_msg or "pflow settings" in error_msg

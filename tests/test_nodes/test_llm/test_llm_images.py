@@ -181,7 +181,14 @@ def test_images_with_system_and_max_tokens(temp_image, mock_llm_client):
 
 
 def test_relative_file_path(tmp_path, mock_llm_client):
-    """Relative paths resolve against the current working directory."""
+    """Relative image paths are stored verbatim and resolved against cwd at open time.
+
+    Image paths are workflow inputs, not workflow assets — pflow stores the
+    string the user provided without resolving it. Python's ``open()`` then
+    handles cwd-relative resolution when the adapter base64-encodes the file.
+    (Code-block file refs like ``code: @./helper.py`` follow a different
+    convention — they resolve relative to the workflow file.)
+    """
     image_file = tmp_path / "relative.jpg"
     image_file.write_bytes(b"test")
 
@@ -201,5 +208,7 @@ def test_relative_file_path(tmp_path, mock_llm_client):
         attachments = mock_llm_client.call_history[-1]["attachments"]
         assert len(attachments) == 1
         assert attachments[0].kind == "image_path"
+        # Verbatim input — no .resolve() applied.
+        assert attachments[0].value == "relative.jpg"
     finally:
         os.chdir(original_cwd)

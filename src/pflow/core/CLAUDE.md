@@ -63,6 +63,10 @@ PflowError(Exception)                    <- base for all pflow errors
   |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint)
   |- WorkflowExistsError                 <- duplicate workflow save
   |- CriticalDiscoveryError              <- discovery abort (node_name, reason)
+  |- LLMCallError                        <- LLM adapter base for deterministic 4xx (raised by llm_client)
+  |   |- UnknownModelError               <- model identifier not recognized (NotFoundError, no provider prefix)
+  |   |- MissingApiKeyError              <- AuthenticationError, PermissionDeniedError
+  |   |- InvalidRequestError             <- any other BadRequestError (schema, content policy, ...)
   |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions)
   |   |- MCPError                        <- user_errors.py
   |   |- OutputResolutionError           <- user_errors.py (failures list)
@@ -80,6 +84,7 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 | Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
 | Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[Diagnostic(...), ...]` |
 | Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
+| LLM adapter — deterministic provider error (4xx that retry won't fix) | `LLMCallError` subclass — `UnknownModelError`, `MissingApiKeyError`, or `InvalidRequestError` | terse `str(e)` carries the provider message; LLMNode catches the typed subclass to construct the user-facing hint |
 | User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |
 | MCP tool availability errors | `MCPError` (subclass of `UserFriendlyError`) | same + defaults |
 | Output resolution failures (branch-dependent outputs) | `OutputResolutionError` (subclass of `UserFriendlyError`) | `failures=[{...}]` |

@@ -231,6 +231,10 @@ class MockLLMClient:
         # ``set_response(..., cost_usd=...)``. Mirrors production behavior
         # for unknown-pricing models (LiteLLM returns None there too).
         input_tokens = max(1, len(prompt.split()))
+        # Mirror the adapter's stable usage shape exactly. ``thinking_tokens``
+        # / ``thinking_budget`` default to 0 (matching non-reasoning calls);
+        # tests that need specific reasoning-token values can construct an
+        # AdapterResponse directly via monkeypatch.
         usage = {
             "model": model,
             "input_tokens": input_tokens,
@@ -238,6 +242,8 @@ class MockLLMClient:
             "total_tokens": input_tokens + 50,
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
+            "thinking_tokens": 0,
+            "thinking_budget": 0,
             "cost_usd": self._get_cost(model, schema),
         }
 

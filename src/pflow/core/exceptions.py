@@ -148,17 +148,60 @@ class CriticalDiscoveryError(PflowError):
 class LLMCallError(PflowError):
     """Raised by the LLM adapter for deterministic provider errors.
 
-    Used when the provider returned a 4xx that retrying cannot fix —
-    bad params, unknown model, schema rejected, content policy, etc.
-    Currently raised for ``litellm.exceptions.BadRequestError`` and its
-    subclasses; non-deterministic errors (Timeout, RateLimitError, network)
-    propagate unwrapped so the caller's retry loop can decide.
+    Used when the provider returned a 4xx that retrying cannot fix.
+    Subclasses discriminate the specific failure mode so consumers can
+    construct precise user-facing messages without importing
+    ``litellm.exceptions``:
 
-    Consumers in the Node retry loop (LLMNode) catch this at the
-    ``_call_llm`` boundary and convert to an error-marked output dict, so
-    the retry loop doesn't burn three attempts on a permanent failure.
-    Consumers outside a retry loop (registry/discovery callers) let it
-    propagate.
+    - ``UnknownModelError``: model identifier not recognized
+      (``NotFoundError``, or ``BadRequestError`` with the
+      "LLM Provider NOT provided" substring).
+    - ``MissingApiKeyError``: API key missing or rejected
+      (``AuthenticationError``, ``PermissionDeniedError``).
+    - ``InvalidRequestError``: any other deterministic 4xx (bad params,
+      schema violation, content policy, context-window overflow, etc.).
+
+    Consumers in the Node retry loop (LLMNode) catch the typed subclasses
+    at the ``_call_llm`` boundary to convert to error-marked output dicts
+    so the retry loop doesn't burn three attempts on a permanent failure.
+    Consumers outside a retry loop (registry/discovery callers,
+    smart_filter) let them propagate or catch the base ``LLMCallError``
+    for graceful degradation.
+
+    Non-deterministic errors (``Timeout``, ``RateLimitError``, network
+    errors) propagate unwrapped so the caller's retry loop can decide.
+    """
+
+
+class UnknownModelError(LLMCallError):
+    """Provider doesn't recognize the model identifier.
+
+    ``reason`` discriminates the two sub-cases the adapter detects:
+
+    - ``"unknown_name"``: prefix is recognized, model name is wrong
+      (e.g. ``anthropic/claude-foo-99``). User needs a different name.
+    - ``"missing_prefix"``: model has no provider prefix
+      (e.g. ``gpt-4o-mini``). User needs to add ``openai/`` (or similar).
+
+    Consumers branch on this attribute to construct precise remediation
+    messages — substring-matching on the message text would be fragile.
+    """
+
+    def __init__(self, message: str, *, reason: str = "unknown_name") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class MissingApiKeyError(LLMCallError):
+    """API key missing, wrong, or lacks permission for the requested model."""
+
+
+class InvalidRequestError(LLMCallError):
+    """Request was rejected by the provider for any other deterministic reason.
+
+    Covers schema violations (response_format mismatch), content-policy
+    rejections, context-window overflow, and any other ``BadRequestError``
+    that isn't an unknown-model case.
     """
 
 
