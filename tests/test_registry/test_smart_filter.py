@@ -5,7 +5,10 @@ This test suite verifies:
 2. LLM integration and response parsing
 3. Fallback behavior on errors
 4. Type preservation through filtering
+5. Gemini-specific reasoning kwargs flow through model_options
 """
+
+import pytest
 
 from pflow.registry.smart_filter import (
     SMART_FILTER_THRESHOLD,
@@ -541,3 +544,78 @@ class TestSmartFilterCaching:
         # Should return all fields (no filtering, no LLM call)
         assert len(result) == 3
         assert result == fields
+
+
+class TestGeminiThinkingHeuristics:
+    """Smart-filter forwards Gemini-specific reasoning kwargs via ``model_options``.
+
+    Field filtering is a trivial classification task. A Gemini reasoning
+    model would otherwise spend tokens (and money) on internal thinking
+    before answering — making smart-filter calls 5-10x more expensive on
+    Gemini. Pflow forwards reasoning-disable kwargs via ``model_options``
+    so the adapter passes them to LiteLLM verbatim.
+
+    These tests pin the wiring: a silent regression in
+    ``smart_filter.py:174-180`` would make Gemini-driven smart-filtering
+    quietly burn through token budgets without any test failure.
+    """
+
+    @pytest.mark.parametrize(
+        "model,expected_options",
+        [
+            ("gemini-3-flash-preview", {"thinking_level": "minimal"}),
+            ("gemini-2.5-pro", {"thinking_budget": 0}),
+            ("gemini-2.5-flash", {"thinking_budget": 0}),
+        ],
+    )
+    def test_gemini_models_get_thinking_minimized(self, monkeypatch, mock_llm_client, model, expected_options):
+        monkeypatch.setattr("pflow.core.llm_config.get_model_for_feature", lambda _f: model)
+        mock_llm_client.set_response(
+            "*",
+            FilteredFields,
+            {"included_fields": ["field0"], "reasoning": "test"},
+        )
+        fields = [(f"field{i}", "string") for i in range(60)]
+        smart_filter_fields(fields, threshold=50)
+
+        last_call = mock_llm_client.call_history[-1]
+        assert last_call["model"] == model
+        assert last_call["model_options"] == expected_options
+
+    def test_gemini_lite_gets_no_model_options(self, monkeypatch, mock_llm_client):
+        # Lite variants have no thinking — heuristic skips them, so the
+        # adapter should receive model_options=None (avoid passing an
+        # empty dict that LiteLLM might choke on).
+        monkeypatch.setattr(
+            "pflow.core.llm_config.get_model_for_feature",
+            lambda _f: "gemini-2.5-flash-lite",
+        )
+        mock_llm_client.set_response(
+            "*",
+            FilteredFields,
+            {"included_fields": ["field0"], "reasoning": "test"},
+        )
+        fields = [(f"field{i}", "string") for i in range(60)]
+        smart_filter_fields(fields, threshold=50)
+
+        last_call = mock_llm_client.call_history[-1]
+        assert last_call["model_options"] is None
+
+    def test_non_gemini_models_get_no_model_options(self, monkeypatch, mock_llm_client):
+        # Non-Gemini models don't have the silent-thinking-cost problem —
+        # no kwargs needed. Anthropic's reasoning is opt-in via
+        # reasoning_effort/reasoning_max_tokens, not on by default.
+        monkeypatch.setattr(
+            "pflow.core.llm_config.get_model_for_feature",
+            lambda _f: "anthropic/claude-sonnet-4-5",
+        )
+        mock_llm_client.set_response(
+            "*",
+            FilteredFields,
+            {"included_fields": ["field0"], "reasoning": "test"},
+        )
+        fields = [(f"field{i}", "string") for i in range(60)]
+        smart_filter_fields(fields, threshold=50)
+
+        last_call = mock_llm_client.call_history[-1]
+        assert last_call["model_options"] is None

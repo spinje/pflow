@@ -40,7 +40,7 @@ class TestDetectCapabilitiesAnthropic:
         assert "thinking_effort" in caps
 
     def test_opus_45_dated_variant(self):
-        # Real model id used by pflow's pricing table includes a date suffix
+        # Real Anthropic model ids include a date suffix (e.g. -20251101)
         caps = _detect_capabilities("anthropic/claude-opus-4-5-20251101")
         assert "thinking_effort" in caps
 
@@ -184,6 +184,17 @@ class TestMapReasoningMaxTokens:
     def test_max_tokens_takes_precedence_over_effort(self):
         result = map_reasoning_options("anthropic/claude-sonnet-4-5", "high", 8000, None)
         assert result == {"thinking": True, "thinking_budget": 8000}
+
+    def test_opus_45_max_tokens_takes_precedence_over_effort(self):
+        # Opus 4.5 is the only model with BOTH thinking_effort capability
+        # (used when only effort is provided) AND thinking_budget capability
+        # (used for direct budget). When both inputs are given, max_tokens
+        # wins per map_reasoning_options' contract — the thinking_budget
+        # shape is returned, NOT the thinking_effort shape. Easy to break
+        # by reordering the precedence dispatch in map_reasoning_options.
+        result = map_reasoning_options("anthropic/claude-opus-4-5", "high", 8000, None)
+        assert result == {"thinking": True, "thinking_budget": 8000}
+        assert "thinking_effort" not in result
 
 
 class TestMapReasoningEffortNone:

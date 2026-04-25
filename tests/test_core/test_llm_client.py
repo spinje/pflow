@@ -29,6 +29,7 @@ from pflow.core.llm_client import (
     _build_messages,
     _translate_reasoning_for_litellm,
     complete,
+    enrich_llm_usage_with_cost,
 )
 
 # --------------------------------------------------------------------------
@@ -471,3 +472,54 @@ class TestCompleteTraceHook:
         mock_completion.return_value = make_litellm_response()
         # Should not raise
         complete(model="gpt-4o-mini", prompt="hi", trace_hook=None)
+
+
+# --------------------------------------------------------------------------
+# enrich_llm_usage_with_cost — cost-key normalization
+# --------------------------------------------------------------------------
+
+
+class TestEnrichLlmUsageWithCost:
+    """Three branches of the cost-key contract:
+
+    1. ``cost_usd`` already set → preserved verbatim.
+    2. ``cost_usd`` missing, ``total_cost_usd`` present (Claude Code SDK
+       path) → mirrored to ``cost_usd``.
+    3. Neither present → ``cost_usd`` set to ``None`` so consumers can rely
+       on the key being there.
+
+    Branch 2 was previously covered by the deleted
+    ``tests/test_core/test_llm_pricing.py``; this class is the regression
+    guard after the deletion.
+    """
+
+    def test_preserves_existing_cost_usd(self):
+        usage = {"model": "gpt-4o", "cost_usd": 0.05}
+        enrich_llm_usage_with_cost(usage)
+        assert usage["cost_usd"] == 0.05
+
+    def test_preserves_existing_cost_usd_even_when_none(self):
+        # Explicit None must not be overwritten by the total_cost_usd mirror
+        usage = {"model": "gpt-4o", "cost_usd": None, "total_cost_usd": 0.99}
+        enrich_llm_usage_with_cost(usage)
+        assert usage["cost_usd"] is None
+
+    def test_mirrors_total_cost_usd_to_cost_usd(self):
+        # Claude Code SDK path: SDK populates total_cost_usd; the wrapper
+        # mirrors it so downstream consumers have a single key to read.
+        usage = {"model": "claude-code", "total_cost_usd": 0.02}
+        enrich_llm_usage_with_cost(usage)
+        assert usage["cost_usd"] == 0.02
+        # Source key kept intact
+        assert usage["total_cost_usd"] == 0.02
+
+    def test_sets_none_when_neither_cost_key_present(self):
+        # Adapter path for unknown-pricing models (Ollama, custom endpoints)
+        usage = {"model": "ollama/llama3", "input_tokens": 100}
+        enrich_llm_usage_with_cost(usage)
+        assert usage["cost_usd"] is None
+
+    def test_total_cost_usd_none_falls_through_to_none(self):
+        usage = {"model": "claude-code", "total_cost_usd": None}
+        enrich_llm_usage_with_cost(usage)
+        assert usage["cost_usd"] is None
