@@ -11,7 +11,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pflow.core.exceptions import LLMCallError, LLMTransientError
-from pflow.core.llm_client import Attachment, TraceHook, complete, enrich_llm_usage_with_cost
+from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_reasoning_map import (
     DEFAULT_MAX_TOKENS_BASE,
     EFFORT_RATIOS,
@@ -431,11 +431,10 @@ class LLMNode(Node):
                 "thinking_tokens": usage_dict.get("thinking_tokens", 0) or 0,
                 "thinking_budget": usage_dict.get("thinking_budget", 0) or 0,
             }
-            # Adapter populates cost_usd from LiteLLM's response_cost. Carry it
-            # through if present so enrich_llm_usage_with_cost can no-op.
+            # Adapter populates cost_usd from LiteLLM's response_cost (None
+            # when LiteLLM has no pricing data for the model).
             if "cost_usd" in usage_dict:
                 llm_usage["cost_usd"] = usage_dict["cost_usd"]
-            enrich_llm_usage_with_cost(llm_usage)
             shared["llm_usage"] = llm_usage
         else:
             # Empty dict per spec when usage unavailable

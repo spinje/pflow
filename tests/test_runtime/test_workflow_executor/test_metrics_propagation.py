@@ -22,8 +22,7 @@ from pflow.runtime.workflow_executor import WorkflowExecutor
 class MockLLMNode(BaseNode):
     """Simulates an LLM node by writing llm_usage to the shared store.
 
-    InstrumentedNodeWrapper enriches llm_usage with cost via _enrich_llm_cost(),
-    then the trace collector captures it via _record_trace() → _add_llm_data().
+    The trace collector captures llm_usage via _record_trace() → _add_llm_data().
     """
 
     def prep(self, shared):

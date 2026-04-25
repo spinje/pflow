@@ -14,7 +14,6 @@ import time
 from typing import Any, Optional
 
 from pflow.core.exceptions import MaxNodeVisitsError
-from pflow.core.llm_client import enrich_llm_usage_with_cost
 
 from .types import BatchConfig
 
@@ -407,17 +406,6 @@ def record_trace(
         sub_workflow_events=child_trace_events,
         cached=cached,
     )
-
-
-def enrich_llm_cost(node_id: str, shared: dict) -> None:
-    """Add cost data to llm_usage. Checks both root and namespaced locations."""
-    llm_usage = None
-    if "llm_usage" in shared:
-        llm_usage = shared["llm_usage"]
-    elif node_id in shared and isinstance(shared[node_id], dict):
-        llm_usage = shared[node_id].get("llm_usage")
-    if isinstance(llm_usage, dict):
-        enrich_llm_usage_with_cost(llm_usage)
 
 
 # --- Progress Callbacks ---

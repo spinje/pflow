@@ -40,7 +40,6 @@ from pflow.core.llm_client import (
     _build_messages,
     _translate_reasoning_for_litellm,
     complete,
-    enrich_llm_usage_with_cost,
 )
 
 # --------------------------------------------------------------------------
@@ -234,7 +233,7 @@ class TestTranslateReasoningForOpenAI:
 
 
 class TestCompleteHappyPath:
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_text_only_call(self, mock_completion):
         mock_completion.return_value = make_litellm_response(text="hello world")
 
@@ -255,7 +254,7 @@ class TestCompleteHappyPath:
         # `.text` is an attribute, not callable (different from llm library)
         assert not callable(response.text)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_with_system_and_max_tokens(self, mock_completion):
         mock_completion.return_value = make_litellm_response()
         complete(
@@ -271,7 +270,7 @@ class TestCompleteHappyPath:
         ]
         assert call_kwargs["max_tokens"] == 512
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_with_schema(self, mock_completion):
         mock_completion.return_value = make_litellm_response(text='{"status":"OK"}')
         schema = {
@@ -289,7 +288,7 @@ class TestCompleteHappyPath:
         }
         assert response.has_schema is True
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_with_attachment_url(self, mock_completion):
         mock_completion.return_value = make_litellm_response()
         complete(
@@ -300,7 +299,7 @@ class TestCompleteHappyPath:
         messages = mock_completion.call_args.kwargs["messages"]
         assert isinstance(messages[-1]["content"], list)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_with_reasoning_kwargs_anthropic_translation(self, mock_completion):
         mock_completion.return_value = make_litellm_response()
         complete(
@@ -314,7 +313,7 @@ class TestCompleteHappyPath:
         # Map-shape keys must NOT leak through
         assert "thinking_budget" not in call_kwargs
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_with_reasoning_kwargs_gemini_passthrough(self, mock_completion):
         mock_completion.return_value = make_litellm_response()
         complete(
@@ -325,7 +324,7 @@ class TestCompleteHappyPath:
         call_kwargs = mock_completion.call_args.kwargs
         assert call_kwargs["thinking_budget"] == 4000
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_with_model_options_overrides(self, mock_completion):
         mock_completion.return_value = make_litellm_response()
         # User-set top_p; adapter shouldn't strip it
@@ -338,7 +337,7 @@ class TestCompleteHappyPath:
         assert call_kwargs["top_p"] == 0.9
         assert call_kwargs["temperature"] == 0.7
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_timeout_passed_through(self, mock_completion):
         mock_completion.return_value = make_litellm_response()
         complete(model="gpt-4o-mini", prompt="hi", timeout=30.0)
@@ -346,7 +345,7 @@ class TestCompleteHappyPath:
 
 
 class TestCompleteUsageNormalization:
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_anthropic_cache_fields(self, mock_completion):
         # Anthropic populates cache_creation_input_tokens and cache_read_input_tokens
         mock_completion.return_value = make_litellm_response(
@@ -366,7 +365,7 @@ class TestCompleteUsageNormalization:
         assert response.usage["cache_read_input_tokens"] == 1345
         assert response.usage["cost_usd"] == 0.003
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_gemini_cache_fallback_to_prompt_tokens_details(self, mock_completion):
         # Gemini does NOT set cache_creation_input_tokens/cache_read_input_tokens.
         # It populates prompt_tokens_details.cached_tokens, which the adapter
@@ -381,7 +380,7 @@ class TestCompleteUsageNormalization:
         assert response.usage["cache_creation_input_tokens"] == 0
         assert response.usage["cache_read_input_tokens"] == 1226
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_no_cache_tokens_zeroed(self, mock_completion):
         # Cold OpenAI call — no cache fields populate
         mock_completion.return_value = make_litellm_response(prompt_tokens=100, completion_tokens=20)
@@ -389,20 +388,20 @@ class TestCompleteUsageNormalization:
         assert response.usage["cache_creation_input_tokens"] == 0
         assert response.usage["cache_read_input_tokens"] == 0
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_cost_none_when_response_cost_missing(self, mock_completion):
         # _hidden_params has no response_cost (e.g. unknown model)
         mock_completion.return_value = make_litellm_response(response_cost=None)
         response = complete(model="some/exotic-model", prompt="hi")
         assert response.usage["cost_usd"] is None
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_cost_coerced_to_float(self, mock_completion):
         mock_completion.return_value = make_litellm_response(response_cost=0.0123456789)
         response = complete(model="gpt-4o-mini", prompt="hi")
         assert isinstance(response.usage["cost_usd"], float)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_thinking_tokens_zero_when_no_reasoning(self, mock_completion):
         # Non-reasoning model — no completion_tokens_details on usage.
         mock_completion.return_value = make_litellm_response(prompt_tokens=10, completion_tokens=5)
@@ -410,7 +409,7 @@ class TestCompleteUsageNormalization:
         assert response.usage["thinking_tokens"] == 0
         assert response.usage["thinking_budget"] == 0
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_thinking_tokens_extracted_from_completion_details(self, mock_completion):
         # LiteLLM standardizes the per-call reasoning-token count to
         # usage.completion_tokens_details.reasoning_tokens regardless of
@@ -423,7 +422,7 @@ class TestCompleteUsageNormalization:
         response = complete(model="gemini/gemini-3-flash-preview", prompt="hi")
         assert response.usage["thinking_tokens"] == 144
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_thinking_budget_mirrored_from_anthropic_request_kwargs(self, mock_completion):
         # Anthropic uses kwargs["thinking"]={"type":"enabled","budget_tokens":N}.
         # Adapter mirrors the budget into the response usage dict so the
@@ -439,7 +438,7 @@ class TestCompleteUsageNormalization:
         assert response.usage["thinking_budget"] == 8000
         assert response.usage["thinking_tokens"] == 512
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_thinking_budget_mirrored_from_gemini_top_level(self, mock_completion):
         # Gemini 2.5 uses top-level kwargs["thinking_budget"] instead of the
         # nested Anthropic shape. Adapter handles both paths.
@@ -460,7 +459,7 @@ class TestCompleteErrorPaths:
     so consumers that catch the base class continue to work.
     """
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_bad_request_raises_invalid_request_error(self, mock_completion):
         # Generic BadRequestError (anything that isn't an unknown-model case)
         # → InvalidRequestError. Catches via the LLMCallError base too.
@@ -478,7 +477,7 @@ class TestCompleteErrorPaths:
         # Underlying exception preserved as cause for traceback context.
         assert isinstance(exc_info.value.__cause__, litellm.exceptions.BadRequestError)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_not_found_raises_unknown_model_error(self, mock_completion):
         mock_completion.side_effect = litellm.exceptions.NotFoundError(
             message="Model not found",
@@ -492,7 +491,7 @@ class TestCompleteErrorPaths:
         assert exc_info.value.reason == "unknown_name"
         assert isinstance(exc_info.value, LLMCallError)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_no_provider_prefix_raises_unknown_model_error(self, mock_completion):
         # Regression: bare model name (no provider prefix) used to surface as
         # a raw JSON envelope wrapped in LLMCallError. The substring detector
@@ -510,7 +509,7 @@ class TestCompleteErrorPaths:
         # Structured discriminator distinguishes this from an unknown-name case.
         assert exc_info.value.reason == "missing_prefix"
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_authentication_error_raises_missing_api_key_error(self, mock_completion):
         mock_completion.side_effect = litellm.exceptions.AuthenticationError(
             message="invalid key",
@@ -522,7 +521,7 @@ class TestCompleteErrorPaths:
         assert "gpt-4o-mini" in str(exc_info.value)
         assert isinstance(exc_info.value.__cause__, litellm.exceptions.AuthenticationError)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_permission_denied_raises_missing_api_key_error(self, mock_completion):
         # PermissionDeniedError requires an httpx.Response — provide a minimal
         # one so the constructor accepts it.
@@ -537,7 +536,7 @@ class TestCompleteErrorPaths:
             complete(model="gpt-4o-mini", prompt="hi")
         assert "gpt-4o-mini" in str(exc_info.value)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_timeout_raises_llm_transient_error(self, mock_completion):
         # Transient errors (Timeout, RateLimitError, InternalServerError)
         # are wrapped in LLMTransientError so the architectural seal stays
@@ -558,7 +557,7 @@ class TestCompleteErrorPaths:
         # Underlying exception preserved for traceback.
         assert isinstance(exc_info.value.__cause__, litellm.exceptions.Timeout)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_rate_limit_raises_llm_transient_error(self, mock_completion):
         mock_completion.side_effect = litellm.exceptions.RateLimitError(
             message="rate limit exceeded",
@@ -569,7 +568,7 @@ class TestCompleteErrorPaths:
             complete(model="openai/gpt-4o-mini", prompt="hi")
         assert isinstance(exc_info.value, LLMCallError)
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_internal_server_error_raises_llm_transient_error(self, mock_completion):
         mock_completion.side_effect = litellm.exceptions.InternalServerError(
             message="upstream 500",
@@ -582,7 +581,7 @@ class TestCompleteErrorPaths:
 
 
 class TestCompleteTraceHook:
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_invoked_before_and_after_on_success(self, mock_completion):
         mock_completion.return_value = make_litellm_response(text="OK")
         events: list[dict] = []
@@ -598,7 +597,7 @@ class TestCompleteTraceHook:
         assert events[1]["event"] == "after_call"
         assert events[1]["response"].text == "OK"
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_invoked_after_on_bad_request(self, mock_completion):
         # The trace_hook MUST fire after_call before the LLMCallError raises
         # so the trace captures the failure. Otherwise an error path silently
@@ -618,7 +617,7 @@ class TestCompleteTraceHook:
         assert events[1]["error"] is not None
         assert "m" in events[1]["error"]
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_hook_exception_does_not_break_call(self, mock_completion):
         mock_completion.return_value = make_litellm_response(text="OK")
 
@@ -629,7 +628,7 @@ class TestCompleteTraceHook:
         response = complete(model="gpt-4o-mini", prompt="hi", trace_hook=boom)
         assert response.text == "OK"
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_hook_none_is_no_op(self, mock_completion):
         mock_completion.return_value = make_litellm_response()
         # Should not raise
@@ -637,7 +636,7 @@ class TestCompleteTraceHook:
 
 
 # --------------------------------------------------------------------------
-# enrich_llm_usage_with_cost — cost-key normalization
+# Empty-response warning detection
 # --------------------------------------------------------------------------
 
 
@@ -660,7 +659,7 @@ class TestNormalizeEmptyResponseWarning:
     when the model wanted tools instead of text).
     """
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_reasoning_model_emits_dual_remediation(self, mock_completion):
         # Reasoning model: thinking_tokens > 0 AND text empty AND finish_reason=length
         mock_completion.return_value = make_litellm_response(
@@ -680,7 +679,7 @@ class TestNormalizeEmptyResponseWarning:
         assert warning["context"]["finish_reason"] == "length"
         assert warning["context"]["thinking_tokens"] == 13
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_non_reasoning_model_emits_max_tokens_remediation(self, mock_completion):
         # Non-reasoning model: thinking_tokens == 0 AND thinking_budget == 0.
         # Just an output-budget exhaustion; no reasoning_effort to lower.
@@ -698,7 +697,7 @@ class TestNormalizeEmptyResponseWarning:
         # No reasoning_effort hint — would mislead for a non-reasoning model
         assert "reasoning_effort" not in warning["text"]
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_content_filter_finish_reason(self, mock_completion):
         mock_completion.return_value = make_litellm_response(
             text=None,
@@ -711,7 +710,7 @@ class TestNormalizeEmptyResponseWarning:
         assert warning["kind"] == "llm_empty_response_content_filter"
         assert "blocked" in warning["text"].lower()
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_stop_with_empty_content(self, mock_completion):
         mock_completion.return_value = make_litellm_response(
             text=None,
@@ -723,7 +722,7 @@ class TestNormalizeEmptyResponseWarning:
         warning = response.warnings[0]
         assert warning["kind"] == "llm_empty_response_stop"
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_none_finish_reason(self, mock_completion):
         mock_completion.return_value = make_litellm_response(
             text=None,
@@ -735,7 +734,7 @@ class TestNormalizeEmptyResponseWarning:
         warning = response.warnings[0]
         assert warning["kind"] == "llm_empty_response_unknown"
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_tool_calls_finish_reason_is_silent(self, mock_completion):
         # tool_calls: model wanted tools, no content. Expected shape, not a warning.
         mock_completion.return_value = make_litellm_response(
@@ -746,7 +745,7 @@ class TestNormalizeEmptyResponseWarning:
         response = complete(model="openai/gpt-4o-mini", prompt="hi")
         assert response.warnings == []
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_no_warning_when_text_present(self, mock_completion):
         # Successful call — never warn even if finish_reason is unusual
         mock_completion.return_value = make_litellm_response(
@@ -757,7 +756,7 @@ class TestNormalizeEmptyResponseWarning:
         response = complete(model="openai/gpt-4o-mini", prompt="hi")
         assert response.warnings == []
 
-    @patch("pflow.core.llm_client.litellm.completion")
+    @patch("litellm.completion")
     def test_no_warning_when_zero_tokens_and_empty(self, mock_completion):
         # No tokens generated AND empty text — provider didn't produce
         # anything; this is a different failure mode (e.g. immediate refusal)
@@ -769,49 +768,3 @@ class TestNormalizeEmptyResponseWarning:
         )
         response = complete(model="openai/gpt-4o-mini", prompt="hi")
         assert response.warnings == []
-
-
-class TestEnrichLlmUsageWithCost:
-    """Three branches of the cost-key contract:
-
-    1. ``cost_usd`` already set → preserved verbatim.
-    2. ``cost_usd`` missing, ``total_cost_usd`` present (Claude Code SDK
-       path) → mirrored to ``cost_usd``.
-    3. Neither present → ``cost_usd`` set to ``None`` so consumers can rely
-       on the key being there.
-
-    Branch 2 was previously covered by the deleted
-    ``tests/test_core/test_llm_pricing.py``; this class is the regression
-    guard after the deletion.
-    """
-
-    def test_preserves_existing_cost_usd(self):
-        usage = {"model": "gpt-4o", "cost_usd": 0.05}
-        enrich_llm_usage_with_cost(usage)
-        assert usage["cost_usd"] == 0.05
-
-    def test_preserves_existing_cost_usd_even_when_none(self):
-        # Explicit None must not be overwritten by the total_cost_usd mirror
-        usage = {"model": "gpt-4o", "cost_usd": None, "total_cost_usd": 0.99}
-        enrich_llm_usage_with_cost(usage)
-        assert usage["cost_usd"] is None
-
-    def test_mirrors_total_cost_usd_to_cost_usd(self):
-        # Claude Code SDK path: SDK populates total_cost_usd; the wrapper
-        # mirrors it so downstream consumers have a single key to read.
-        usage = {"model": "claude-code", "total_cost_usd": 0.02}
-        enrich_llm_usage_with_cost(usage)
-        assert usage["cost_usd"] == 0.02
-        # Source key kept intact
-        assert usage["total_cost_usd"] == 0.02
-
-    def test_sets_none_when_neither_cost_key_present(self):
-        # Adapter path for unknown-pricing models (Ollama, custom endpoints)
-        usage = {"model": "ollama/llama3", "input_tokens": 100}
-        enrich_llm_usage_with_cost(usage)
-        assert usage["cost_usd"] is None
-
-    def test_total_cost_usd_none_falls_through_to_none(self):
-        usage = {"model": "claude-code", "total_cost_usd": None}
-        enrich_llm_usage_with_cost(usage)
-        assert usage["cost_usd"] is None

@@ -32,9 +32,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-import litellm
-import litellm.exceptions
-
 from pflow.core.exceptions import (
     InvalidRequestError,
     LLMCallError,
@@ -47,9 +44,23 @@ from pflow.core.llm_reasoning_map import DEFAULT_MAX_TOKENS_BASE, EFFORT_RATIOS
 logger = logging.getLogger(__name__)
 
 
-# Belt-and-suspenders: LiteLLM 1.82.6 is quiet by default, but this guards
-# against future verbosity regressions and ensures clean test output.
-litellm.suppress_debug_info = True
+# `litellm` is lazy-imported inside complete() and _classify_litellm_error
+# (the only two call sites that need it). Importing it costs ~700ms because
+# LiteLLM eagerly loads handlers and Pydantic types for every provider it
+# supports. Keeping the import inside the call sites means CLI invocations
+# that never call the LLM (pflow validate, --dry-run, fully-cached runs,
+# the future analyze-cache command) skip the cost entirely. The only path
+# that pays it is an actual LLM call — and there the cost is amortized.
+#
+# Side effect: the first complete() call in a process pays ~700ms which
+# lands inside the first LLM node's recorded duration. For multi-call
+# workflows this affects 1 of N nodes; for single-call workflows the user
+# sees one node ~700ms slower than the underlying API call. Cost predictions
+# (token-based) and total wall-clock are unaffected.
+#
+# Tests patch `litellm.completion` (the litellm module path), not
+# `pflow.core.llm_client.litellm.completion` — the latter would fail at
+# decoration time because `litellm` is no longer a module attribute here.
 
 
 # Public types ---------------------------------------------------------------
@@ -236,6 +247,15 @@ def complete(
 
     _emit_trace(trace_hook, {"event": "before_call", "model": model, "prompt": prompt})
 
+    # Lazy litellm import — see module docstring at top. First call pays
+    # ~700ms; subsequent calls resolve from sys.modules instantly.
+    # Setting suppress_debug_info every call is idempotent and cheaper
+    # than gating on a flag.
+    import litellm
+    import litellm.exceptions
+
+    litellm.suppress_debug_info = True
+
     try:
         raw_response = litellm.completion(**kwargs)
     except (
@@ -291,6 +311,10 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     (the "LLM Provider NOT provided" check). Past this boundary, consumers
     branch on structured attributes (``reason``, ``kind``) — never on text.
     """
+    # Lazy import — only called from complete()'s except handler, so litellm
+    # is already loaded by this point. The import resolves from sys.modules.
+    import litellm.exceptions
+
     # Transient errors (timeout, rate limit, 5xx). Marker subclass; LLMNode's
     # _call_llm re-raises rather than catching, so the Node retry loop fires.
     if isinstance(
@@ -653,32 +677,3 @@ def _emit_trace(hook: TraceHook | None, event: dict[str, Any]) -> None:
         hook(event)
     except Exception as exc:
         logger.debug("trace_hook raised %s: %s", type(exc).__name__, exc)
-
-
-def enrich_llm_usage_with_cost(llm_usage: dict[str, Any]) -> None:
-    """Ensure ``llm_usage`` has a ``cost_usd`` key (may be ``None``).
-
-    Cost determination is LiteLLM's responsibility — the adapter populates
-    ``cost_usd`` from ``response._hidden_params['response_cost']`` when
-    LiteLLM has pricing data for the model, and leaves it absent (or sets
-    it to ``None``) when LiteLLM doesn't know the model.
-
-    This wrapper exists for two cases the adapter doesn't cover:
-
-    1. ClaudeCodeNode produces ``total_cost_usd`` (from the SDK) instead of
-       ``cost_usd``; mirror it into ``cost_usd`` so downstream consumers
-       have a single key to read.
-    2. Defensive programming: any ``llm_usage`` dict that reaches the
-       runtime without ``cost_usd`` set (e.g. older cached entries, custom
-       node implementations) gets ``None`` so consumers can rely on the
-       key being present.
-
-    Modifies ``llm_usage`` in place.
-    """
-    if "cost_usd" in llm_usage:
-        return
-    total_cost = llm_usage.get("total_cost_usd")
-    if total_cost is not None:
-        llm_usage["cost_usd"] = total_cost
-        return
-    llm_usage["cost_usd"] = None

@@ -37,7 +37,6 @@ from .instrumentation import (
     call_completion_callback,
     call_start_callback,
     enforce_loop_guard,
-    enrich_llm_cost,
     handle_api_warning,
     handle_cached_execution,
     initialize_execution_state,
@@ -432,9 +431,6 @@ class WorkflowEngine:
             if self.metrics:
                 self.metrics.record_node_execution(config.node_id, duration_ms)
 
-            # 15. LLM cost
-            enrich_llm_cost(config.node_id, shared)
-
             # Pre-compute trace error for action="error" happy-path failures
             # (no exception raised, but the trace event should still carry the
             # actual error text so --report and other trace consumers don't
@@ -504,8 +500,6 @@ class WorkflowEngine:
 
             if self.metrics:
                 self.metrics.record_node_execution(config.node_id, duration_ms)
-
-            enrich_llm_cost(config.node_id, shared)
 
             # Extract partial resolutions from template errors (attached by resolve_templates)
             error_resolutions = getattr(e, "_pflow_partial_resolutions", None) or last_resolutions

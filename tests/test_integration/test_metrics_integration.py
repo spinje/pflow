@@ -596,7 +596,7 @@ class TestWrapperIntegration:
 
         # CRITICAL: Verify the complete cost chain works end-to-end.
         # This is the path that produces "Cost: $X.XXXX" in CLI output:
-        # LLM node → _enrich_llm_cost → trace event → collect_llm_calls() → get_summary()
+        # LLM adapter populates cost_usd → trace event → collect_llm_calls() → get_summary()
         # If any link breaks, costs silently become $0.00.
         llm_calls = trace.collect_llm_calls()
         assert len(llm_calls) == 3, f"Expected 3 LLM calls from trace, got {len(llm_calls)}"

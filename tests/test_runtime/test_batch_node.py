@@ -1761,7 +1761,7 @@ class TestParallelThreadSafety:
                         "total_tokens": 650,
                         "cache_creation_input_tokens": 100,
                         "cache_read_input_tokens": 50,
-                        "total_cost_usd": 0.0123,
+                        "cost_usd": 0.0123,
                     },
                 }
                 return "default"
@@ -1781,7 +1781,6 @@ class TestParallelThreadSafety:
             assert llm_call["total_tokens"] == 650
             assert llm_call["cache_creation_input_tokens"] == 100
             assert llm_call["cache_read_input_tokens"] == 50
-            assert llm_call["total_cost_usd"] == 0.0123
             assert llm_call["cost_usd"] == 0.0123
             assert entry["index"] == i
 

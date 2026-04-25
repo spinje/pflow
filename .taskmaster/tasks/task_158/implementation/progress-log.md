@@ -2017,6 +2017,183 @@ The original `LLMNode.post()` had error-handling logic inlined in three places (
 
 ---
 
+## 35. Session 2026-04-25 (cont.) — Performance regression diagnosis + two-stage fix
+
+### Context
+
+User noticed `make test` had grown from ~20s on main to ~1 minute on this branch (86s sequential, 55s+ via xdist after Phase A). Asked to investigate root cause. Investigation revealed a single misplaced import dragging litellm into pflow's eager CLI startup chain — affecting **every** pflow invocation, not just LLM workflows.
+
+### Diagnosis
+
+Profiled `pflow --version` startup with `python -X importtime`:
+
+- Main: 0.27s
+- Branch: 1.17-1.92s — **~1s slower per CLI invocation**
+
+The 700ms cumulative cost was traced to `litellm` being eagerly imported. Tracing back the import chain:
+
+```
+pflow.cli.main → pflow.runtime.engine → batch_executor.py:21
+  from pflow.core.llm_client import enrich_llm_usage_with_cost
+    → llm_client.py:35: import litellm  (700ms)
+```
+
+`batch_executor.py` is in the eager engine load path. It only needed a 10-line dict-manipulation helper (`enrich_llm_usage_with_cost`) — but importing it dragged in the entire LiteLLM machinery.
+
+**The historical mistake:** A.10 deleted `llm_pricing.py` and moved `enrich_llm_usage_with_cost` into `llm_client.py` (its only nearby home). At the time the helper still had a real job (mirror `total_cost_usd → cost_usd` for ClaudeCodeNode). But in a subsequent (separate) change, ClaudeCodeNode (`claude_code.py:883`) was updated to write `cost_usd` directly at the producer — making the helper's mirror code path obsolete. The helper kept living in the heavy `llm_client.py` module, dragging litellm into the engine for no live behavior.
+
+### Subprocess test multiplier
+
+Per-CLI `pflow` startup × ~30 subprocess tests at 1-2s each = ~30-60s of pure CLI startup overhead in the test suite. Identified as the dominant cause of the 20s → 86s regression.
+
+### Stage 1 fix: Delete the helper entirely
+
+User pushed back on initial proposals: "we should prioritize simplicity of the FINAL code" and "what's the right solution that the top 10% of codebases similar to this one would implement?"
+
+Reframed analysis revealed the helper was already obsolete:
+
+1. ClaudeCodeNode writes `cost_usd` at line 883 (producer-side mirror). Reason #1 in the helper's docstring no longer applied.
+2. LLMNode writes `cost_usd` from the adapter response. No mirroring needed.
+3. **All consumers use `.get("cost_usd")`** (verified via grep). The helper's "defensive" branch (set `None` if absent) was duplicating what `.get()` does.
+
+**Decision: delete `enrich_llm_usage_with_cost` entirely.** This violates a project principle (CLAUDE.md: "Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees").
+
+Files changed:
+- DELETED `enrich_llm_usage_with_cost` from `core/llm_client.py` (~30 lines)
+- DELETED `enrich_llm_cost` wrapper from `runtime/engine/instrumentation.py` (~10 lines)
+- DELETED 4 callsites + their imports: `nodes/llm/llm.py`, `runtime/engine/batch_executor.py`, `runtime/engine/instrumentation.py`, `core/metrics.py` (the latter undid a lazy-import workaround)
+- DELETED 2 calls in `runtime/engine/engine.py` (steps 15 and exception path)
+- DELETED `TestEnrichLlmUsageWithCost` (5 tests)
+- Test fixtures updated: `test_batch_node.py:1764` rewritten to write `cost_usd` directly (matches producer convention)
+- Stale comments updated in `test_metrics_integration.py`, `test_metrics_propagation.py`, `claude_code.py`
+- CLAUDE.md updates: aligned `core/CLAUDE.md` and `runtime/engine/CLAUDE.md` with new contract; encoded architectural rule "engine modules MUST NOT import `llm_client.py`" (heavy-import module at leaf of dependency graph)
+
+**Stage 1 results:**
+- CLI startup: 1.17s → 0.29s ✓
+- Non-LLM workflow: 1.05s → 0.27s ✓
+- Test suite (sequential `pytest`): 86s → 48.7s
+- Test suite (`make test` with `-n 4`): ~18-20s
+- litellm in eager CLI chain: 779 hits → **0 hits**
+- Tests passing: 5305 (was 5306; one helper test deleted)
+- All architectural rules verified: `grep 'import litellm' src/pflow/` → 1 match (`llm_client.py:35`)
+
+### Stage 2 question: --dry-run and analyze-cache still pay 700ms on LLM workflows
+
+After Stage 1, paths that need litellm via LLMNode (real LLM workflows) still paid the 700ms during compilation (since `nodes/llm/llm.py` imports from `llm_client.py` which has top-level `import litellm`). User asked: "would it be any way to avoid dryrun and maybe analyze-cache when we build it to avoid this overhead?"
+
+Investigation confirmed the goal was achievable: lazy-import litellm INSIDE `complete()` and `_classify_litellm_error()`. Module-level `llm_client.py` becomes light; only paths that actually call `complete()` pay the import cost.
+
+### Stage 2 verification of compatibility
+
+Before committing, audited every concern:
+
+| Check | Result |
+|---|---|
+| Module-level side effects on litellm beyond import | Only `litellm.suppress_debug_info = True` — trivially moved into function body |
+| Type annotations referencing litellm | Zero in production code |
+| Doctests in `llm_client.py` | None |
+| Other modules importing litellm | Zero — `llm_client.py` is sole importer |
+| Tests patching `pflow.core.llm_client.litellm.completion` | 20 occurrences in `test_llm_client.py` — would break (the path no longer exists as a module attribute) |
+| pytest-xdist worker isolation | Confirmed safe — workers are independent processes, no shared `sys.modules` |
+
+**Migration path:** rewrite the 20 test patches: `"pflow.core.llm_client.litellm.completion"` → `"litellm.completion"`. The decorator's `_get_target` calls `importlib.import_module("litellm")`, which forces import once per worker (cached in `sys.modules`).
+
+### Stage 2 architectural debate: per-node timing fidelity
+
+Lazy import means the first `complete()` call in a process pays ~700ms inside the engine's per-node timing block. That 700ms gets attributed to the first LLM node's `duration_ms` in:
+- `pflow report` per-node timing
+- `MetricsCollector` summary
+- Memo cache `__pflow_stats__["duration_ms"]`
+- Future `--dry-run` duration estimates (which read from memo cache historicals)
+
+Three options considered:
+
+| Option | Wins | Loses |
+|---|---|---|
+| A: Lazy + accept distortion | Fast --dry-run, fast cached runs, fast non-LLM | First LLM node's recorded duration includes 700ms; memo cache records inflated value |
+| B: Lazy + pre-warm at engine.run() | Accurate per-node timing | Cached runs pay 700ms even with no API calls (regresses iteration loop) |
+| C: Lazy + subtract-via-shared-store | Accurate per-node timing AND fast cached runs | +17 lines of coordination across 3 files; new `__setup_overhead_ms__` shared key; thread-local state in adapter |
+
+User asked: "is it worth the complexity?"
+
+Honest answer: for a real workflow like the lyrics-generator (~181 LLM calls per run), exactly **one** call gets inflated — 0.55% of LLM nodes, below typical noise. For dry-run cost predictions, the user-visible impact is minor (cost is token-based; only duration estimates inflate by 14-30% on one node). The 17-line subtraction mechanism was technically nicer but the complexity-to-value ratio was poor.
+
+**Decision: Option A. Lazy import + accept distortion + document explicitly.**
+
+### Stage 2 implementation
+
+Files changed:
+- `core/llm_client.py`:
+  - Removed top-level `import litellm`, `import litellm.exceptions`, `litellm.suppress_debug_info = True`
+  - Added these inside `complete()` (with `litellm.suppress_debug_info = True` set every call — idempotent and cheaper than a guard check)
+  - Added `import litellm.exceptions` inside `_classify_litellm_error()` body (resolves from `sys.modules`)
+  - Added module-level docstring explaining the lazy-import pattern + the test-patching implication
+- `tests/test_core/test_llm_client.py`: 20 patches rewritten via `sed -i '' 's|@patch("pflow\.core\.llm_client\.litellm\.completion")|@patch("litellm.completion")|g'`
+- `core/CLAUDE.md`: added paragraph documenting lazy-import design, the timing distortion, and test-patching requirement
+
+### Implementation gotcha
+
+First implementation used `complete._litellm_silenced = True` as a one-time-init guard. This failed under the autouse `mock_llm_client` fixture: the autouse replaces `pflow.core.llm_client.complete` (the module attribute) with a bound method on `MockLLMClient`. Inside `complete()`'s body, the name `complete` resolved (via Python scoping rules) to the module attribute — which after autouse setup is the bound method. Bound methods don't have `__dict__`. AttributeError.
+
+Lesson: **don't reference a function by name inside its own body when you might be patched.** Setting `litellm.suppress_debug_info = True` every call is idempotent and avoids the issue entirely. Cleaner anyway.
+
+### Final measured results (using `make test` parallel — the canonical command)
+
+| Metric | Main | Pre-fix | After both stages |
+|---|---|---|---|
+| `pflow --version` | 0.27s | 1.17-1.92s | **0.25-0.34s** ✓ |
+| Non-LLM workflow run | 0.27s | 1.05-1.66s | **0.27-0.29s** ✓ |
+| `pflow validate` | 0.26s | 1.04s | **0.28s** ✓ |
+| `pflow --dry-run` (LLM workflow) | 0.30s | 1.08-1.53s | **0.26-0.30s** ✓ |
+| Cached LLM workflow run | 0.29s | 1.06-1.28s | **0.28-0.31s** ✓ |
+| `make test` (parallel `-n 4`) | ~24s | ~55s+ | **18-20s** ✓ (faster than main) |
+| litellm in eager CLI chain | 0 hits | 779 hits | **0 hits** |
+| Tests passing | 5240 | 5306 | **5305** (one helper test deleted) |
+| `make check` | green | green | green |
+
+### Architectural rules encoded
+
+Two new rules in CLAUDE.md files prevent regression:
+
+1. **`runtime/engine/CLAUDE.md`**: "Heavy `llm_client.py` MUST NOT be imported by the engine. Engine modules (`instrumentation.py`, `batch_executor.py`, `engine.py`) only need cost-key normalization that the producer (LLMNode/ClaudeCodeNode) handles directly. Importing `llm_client` re-introduces the 700ms litellm cost into every CLI startup."
+
+2. **`core/CLAUDE.md` `llm_client.py` section**: "Litellm is lazy-imported inside `complete()` and `_classify_litellm_error()`. The first call in a process pays the import; subsequent calls resolve from `sys.modules`. The first LLM node's recorded duration is inflated by ~700ms. Tests must patch `litellm.completion` directly (NOT `pflow.core.llm_client.litellm.completion` — the latter no longer exists as a module attribute)."
+
+### Side-objective note (the older 10s→20s drift on main)
+
+User mentioned the test suite has gone from 10s to 20s over the past weeks/months on main, despite only adding ~400 tests. Not investigated as part of this work, but noted: subprocess tests (`test_progress_streaming_subprocess.py`, `test_dual_mode_*.py`) dominate the slow tail at 0.3-0.6s each. **Subprocess tests amortize CLI startup poorly**, and any pflow startup-time creep multiplies through them. Same root-cause pattern as this branch's regression — different driver.
+
+### Commit summary
+
+Single commit covering both stages:
+- 14 files changed (5 source, 5 test, 4 docs/CLAUDE.md)
+- ~92 insertions, ~210 deletions (net -118 lines)
+- All `test_plan_drift.py` 32 sacred parity tests green throughout
+- `grep -rn 'import litellm' src/pflow/` → 1 match (`llm_client.py:235` inside `complete()`)
+
+### What the next agent should know
+
+1. **The architectural seal verifications:**
+   - `grep -rn 'import litellm' src/pflow/` should return exactly 2 matches: inside `complete()` and inside `_classify_litellm_error()` in `llm_client.py`.
+   - `python -X importtime $(which pflow) --version 2>&1 | grep -c litellm` should return `0`.
+   - Importing `pflow.nodes.llm.llm` should NOT trigger litellm load (verify with `python -X importtime -c "import pflow.nodes.llm.llm" 2>&1 | grep -c litellm` → `0`).
+
+2. **Pre-existing limitation now documented:** first LLM call's `duration_ms` includes ~700ms of one-time framework init. For multi-call workflows this affects 1/N nodes; for single-call workflows it affects the only LLM node. Cost predictions (token-based) and total wall-clock are unaffected.
+
+3. **Phase B-G implication:** when adding new node types with heavy lazy initialization (e.g. if `claude_code` later grows expensive imports), follow the same pattern — module-level imports for cheap types/data, function-body imports for the heavy machinery. Don't optimize timing fidelity until/unless multiple node types share the issue and a generic mechanism is justified.
+
+### Branch summary (since `8349df88` baseline — full Phase A + perf fixes)
+
+```
+8349df88 ready for phase 0 + a    ← baseline
+[15 commits §27-§33]
+5a070312 refactor(llm): complete adapter seam — typed exception translation
+0ce7b838 refactor(llm): complete typed-exception architecture across error pipeline
+[this commit] perf(llm): make litellm lazy + delete obsolete cost-key helper
+```
+
+---
+
 ## 35. Session 2026-04-25 (cont.) — Final Phase A loose-ends pass, focused review, follow-up issues
 
 ### Context
