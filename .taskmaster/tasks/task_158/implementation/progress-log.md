@@ -1079,3 +1079,138 @@ Recommended handoff point. Phase A.1-A.8 finishes the structural migration; A.9-
 A handoff braindump similar to `braindump-phase-0-and-A-handoff-2026-04-24.md` would help — covering what's still pending, the A.10 decision, the deletion checklist, and the surprises from A.1-A.8 (litellm 1.83.x click pin downgrade, the `cost_usd` mock subtlety, the git lock incident).
 
 ---
+
+## 30. Session 2026-04-25 — Phase A.9–A.12 + end-of-task cleanup landed
+
+User authorized continuation: commits at milestones, real-API integration tests skipped (`RUN_LLM_TESTS=1`), use `pflow settings env --help` to verify the actual command name, status updates only at milestones. Per-step task tracking via `TaskCreate`/`TaskUpdate` to keep state visible across the long session. **6 commits landed across A.9–A.12 + cleanup. `tests/test_execution/test_plan_drift.py` (32 sacred parity tests) green at every step.**
+
+### A.9 — `llm_config.py` and `settings.py` cleanup (commit `5d0e0a9b`)
+
+- **Spec deviation discovered: the actual command is `pflow settings set-env`, NOT `pflow settings env set` as both braindumps assumed.** Verified via `pflow settings --help` before writing any help-text copy. Used the real command name throughout.
+- `src/pflow/core/llm_config.py`: dropped `_has_llm_key()` (~46 lines, the `llm keys get` subprocess), `get_llm_cli_default_model()` (~40 lines, the `llm models default` subprocess), `_get_validated_llm_path()`, `LLM_COMMAND` and `_LLM_KEYS_SUBCOMMAND` constants, plus the `subprocess` and `shutil` imports. `_has_provider_key()` simplified to two sources (env + pflow settings). `_detect_default_model()` lost its `PYTEST_CURRENT_TEST` guard — the guard existed to prevent subprocess hangs and there's no subprocess to guard. `inject_settings_env_vars()` UNCHANGED (still preserves the test guard for env-pollution prevention — asymmetry intentional and documented in its docstring).
+- Help text: `get_llm_setup_help()` and `get_model_not_configured_help()` rewritten to use `pflow settings set-env <KEY> <value>` and shell `export` instead of `llm keys set <provider>`. `get_default_workflow_model()` now resolves: settings → auto-detect → None (3 tiers, was 4 with the dead llm-CLI step).
+- `src/pflow/cli/commands/settings.py`: settings group docstring no longer mentions Simon Willison; `_get_resolved_model()` dropped its `get_llm_cli_default_model` import; `llm_show` resolution-order text and `llm_unset` "default" message updated.
+- `pyproject.toml`: dropped the `S603` per-file ignore for `llm_config.py` (no subprocess remains in the file).
+- Tests: 9 dead tests removed (`TestGetLlmCliDefaultModel` class entirely; 3 `TestGetDefaultWorkflowModel` tests for the llm-CLI fallback chain; `test_pytest_environment_skips_detection`; `test_falls_back_to_llm_cli`). Two replacement tests written (`test_detection_only_uses_env_and_settings`, `test_returns_false_when_neither_env_nor_settings_have_key`). `TestGetModelNotConfiguredHelp` rewritten to expect `pflow settings` guidance and reject the removed `llm models default`/`llm keys list` text. `tests/test_runtime/test_compiler_llm_model.py` got the same help-text assertion update.
+- Manual verification: `pflow settings llm show` and `pflow settings --help` produce sensible output with no llm-CLI references.
+
+### A.10 — Delete `llm_pricing.py` (commit `8247ae2a`)
+
+The one step in A.9-A.12 with a real architectural question. **The user pushed back on my initial framing** — "what's the right solution that the top 10% of codebases similar to this one would implement, have we considered it yet?" — and asked for the simplest end-state, not the easiest migration.
+
+Reframed the decision. Initial options I'd offered:
+- **(a)** Mock returns `cost_usd: 0.0` → tests inject custom AdapterResponse where they care
+- **(b)** Mock returns fake-but-nonzero cost via formula
+
+Both are fictions. Production never returns `0.0` for a real call, and pflow has no formula like (b). The user's framing surfaced a third option that matches what production actually does:
+
+- **(c) Mock default is `cost_usd: None`. Tests that care set it explicitly via `set_response(..., cost_usd=...)`.** Mirrors real production behavior when LiteLLM has no pricing data (custom endpoints, brand-new models, Ollama).
+
+User picked (c). Implementation:
+- DELETE `src/pflow/core/llm_pricing.py` (188 lines: `MODEL_PRICING`, `MODEL_ALIASES`, `calculate_llm_cost`, `get_model_pricing`, the inline `enrich_llm_usage_with_cost` math).
+- MOVE `enrich_llm_usage_with_cost` to `pflow.core.llm_client` as a 10-line wrapper. Single responsibility: ensure `cost_usd` key is present (preserve when set; mirror Claude Code SDK's `total_cost_usd`; otherwise None). No pricing math.
+- Production callers (`metrics.py`, `nodes/llm/llm.py`, `runtime/engine/instrumentation.py`, `runtime/engine/batch_executor.py`) updated to import from the new location.
+- `core/__init__.py` docstring updated.
+- `MockLLMClient.set_response()` extended with optional `cost_usd=None` kwarg; `_get_cost()` lookup mirrors `get_response()`'s resolution chain. Default usage dict has `cost_usd: None`.
+- 15 test failures from the production deletion, all fixed in the same commit:
+  - `test_metrics.py`: rewrote 4 tests, removed `test_cost_calculation_for_different_models`
+  - `test_metrics_thinking_cache.py`: removed 2 pricing-math tests, updated 1
+  - `test_metrics_integration.py`: updated 2 tests, removed `test_cost_calculation_accuracy`
+  - `test_unknown_model_user_experience.py::test_mixed_models_shows_partial_cost_clearly` renamed to `test_mixed_priced_unpriced_shows_partial_cost_clearly` (the relevant split is now "has cost_usd vs doesn't", not "known vs unknown model")
+  - `test_instrumented_wrapper.py`: rewrote 2 tests to verify the new contract (cost preserved when set, None when not)
+  - `test_plan_drift.py::test_plan_cost_nested_rollup` now takes the `mock_llm_client` fixture and pins exact cost (sharper than the prior `> 0` checks)
+- `core/CLAUDE.md`: replaced the `llm_pricing.py` section with a new `llm_client.py` section that documents the cost-from-LiteLLM contract. Removed the "46+ models" / "Broken aliases" claims.
+- Test pytest.skip pattern: `tests/test_core/test_llm_pricing.py` skipped at module level pending deletion (matches the A.5 `test_llm_reasoning.py` pattern).
+
+### A.11 — Drop `llm`/`llm-anthropic`/`llm-gemini` deps (commit `4becef96`)
+
+Mechanical. Dropped the three packages from `[project] dependencies`, removed the temporary `DEP002 = ["llm", "llm-anthropic", "llm-gemini", "PyYAML"]` ignore entries (left just `["PyYAML"]`), removed the obsolete commented-out `[project.optional-dependencies]` stub, regenerated `uv.lock` via `uv sync`. `uv pip list | grep -iE '^(llm|llm-)'` returns empty (only `litellm 1.82.6` remains). `grep -rn 'import llm$|from llm import' src/ tests/` returns zero hits.
+
+### A.12 — Docs pass + CHANGELOG (commit `6222697f`)
+
+Eight files touched:
+- `docs/quickstart.mdx`: dropped the now-invalid "If you already have llm installed and configured" tip; replaced the "Simon Willison's llm" pointer with LiteLLM's provider list; added a tip showing the env-var path works too.
+- `docs/reference/nodes/llm.mdx`: rewrote the intro and replaced the "Extending with plugins" section (which described `llm-openrouter` / `llm-ollama` plugin install) with a simpler "Other providers" section noting that LiteLLM speaks 100+ providers natively. OpenRouter and Ollama get concrete examples without plugin install.
+- `docs/reference/cli/settings.mdx`: dropped the "If you use Simon Willison's llm" alternative; removed the `llm models default` step from the model-resolution chain.
+- `docs/roadmap.mdx`: updated the "Unified model support" current-status line to credit LiteLLM and note 100+ provider count.
+- `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` and `mcp-sandbox-agent-instructions.md`: rewrote the "For LLM providers" blocks to use `pflow settings set-env` and shell env vars; replaced `llm keys set provider` cheatsheet line with `pflow settings llm show`.
+- `src/pflow/nodes/llm/README.md`: end-to-end rewrite of the installation section. Provider keys via `pflow settings set-env` or shell env vars; OpenRouter and Ollama first-class without plugin install. Token-usage example updated to show `cost_usd`.
+- `docs/changelog.mdx`: added `<Update label="April 2026" description="Unreleased">` entry at the top documenting the swap, the breaking change for `llm keys set` users, and an accordion enumerating what stays the same.
+
+Two intentional retentions documented in the commit message:
+- `src/pflow/core/llm_reasoning_map.py:4` — historical context explaining *why* the file exists (the `llm` library's introspection contract LiteLLM doesn't replicate). Removing this would erase the design rationale.
+- `docs/changelog.mdx:907` — historical entry from a past release. Don't rewrite history.
+
+### Migration: user's `llm`-stored keys into pflow settings
+
+Outside of Phase A scope but the user asked, so we did it. Used the original `/Users/andfal/projects/pflow` worktree (where the `llm` CLI is still installed) to fetch keys via `uv run llm keys get <provider>`, piped each into shell variables, then `pflow settings set-env <KEY_NAME> "$VAR"`. Three keys migrated: `ANTHROPIC_API_KEY` (overwrote prior pflow settings entry), `GEMINI_API_KEY` (new), `OPENAI_API_KEY` (new). Used shell variables to keep secret values out of command history.
+
+### Smoke test on real Gemini-3-flash-preview
+
+User asked for end-to-end verification despite the "skip integration tests" guidance. Wrote a minimal `/tmp/smoke-task158.pflow.md` workflow with one LLM step that tells Gemini to reply `"SMOKE_OK"`. Total spend: ~$0.0005.
+
+**First run uncovered a pre-existing UX issue (NOT a Phase A regression):** Gemini-3-flash-preview is a reasoning model. With `max_tokens: 16`, all 13 emitted tokens went to internal reasoning (`reasoning_tokens: 13, text_tokens: 0, finish_reason: length`) — `response.choices[0].message.content` was None and the adapter normalized it to `""`. pflow surfaced this as `result.result == ""` with no warning. The same call pre-Phase-A would have hit identical behavior — it's the model architecture, not the adapter — but the UX is poor. Worth a follow-up issue to detect "reasoning model + low max_tokens + zero text_tokens" and emit a clear warning.
+
+Second run with `max_tokens: 1024` and `reasoning_effort: minimal` succeeded:
+- Real LiteLLM call: 1.4s, $0.000483 ($0.0001 from `pflow report`)
+- Response text: `'SMOKE_OK'` end-to-end through `result.result`
+- `cost_usd` from LiteLLM `_hidden_params['response_cost']`: `0.0004825`
+- Token counts: 23 input + 157 output (13 visible + 144 reasoning)
+- Trace populated: `llm_call`, `llm_response` ('SMOKE_OK'), `node_output.response` ('SMOKE_OK'), `cost_usd` matched
+- `total_cost_usd` rolled up correctly to top-level metrics
+- `reasoning_effort: minimal` flowed cleanly through `llm_reasoning_map` → adapter → Gemini
+- `models_used: ["gemini/gemini-3-flash-preview"]`
+
+Phase A's adapter, tracing redesign, and cost-from-LiteLLM contract all verified end-to-end on a real provider call.
+
+### End-of-task cleanup (commit `ac257fc6`)
+
+User asked for the deletion checklist + rename to land before PR. All 5 items processed in one commit (1041 lines deleted, 55 added):
+
+1. DELETED `tests/test_nodes/test_llm/test_llm_reasoning.py` — entire file. Coverage already migrated to `test_llm_reasoning_map.py` + new classes in `test_llm.py`.
+2. DELETED `tests/test_core/test_llm_pricing.py` — entire file. Production module gone; nothing to test.
+3. DELETED `MockLLMModel`, `MockGetModel`, `create_mock_get_model` from `tests/shared/llm_mock.py`. Kept the shared `_DEFAULT_RESPONSES` table and `_schema_name()` helper. Updated `tests/shared/README.md` to document the new state (replaced the legacy mock entries with `MockLLMClient` documentation).
+4. Dropped the two `[tool.ruff.lint.per-file-ignores]` entries (F821, F401) for the deleted test files.
+5. Renamed `WorkflowTraceCollector.setup_llm_interception` → `register_for_llm_call` and `cleanup_llm_interception` → `unregister_from_llm_call`. Same rename for the module-level engine wrapper in `runtime/engine/instrumentation.py`. Updated the 3 callsites: `runtime/engine/engine.py` (import + call), `execution/runner.py` (cleanup `hasattr` + call). Docstring touch-ups in `nodes/llm/llm.py::_active_trace_hook`, `runtime/workflow_trace.py::get_trace_hook`, and `runtime/engine/CLAUDE.md` (lifecycle diagram + registration entry). The renamed methods carry a docstring note explaining the prior name as historical context.
+
+Two retained references are intentional historical context documenting *why* the current code looks the way it does:
+- `runtime/workflow_trace.py:566` — the renamed method's docstring mentions `setup_llm_interception` to explain the rename.
+- `tests/test_integration/test_metrics_integration.py:21` — comment referencing the obsolete `mock_llm` fixture that was removed in A.5.
+
+### Final state at handoff
+
+- `make test` — 5266 passed, 0 skipped, 0 failed
+- `make check` — ruff, ruff-format, mypy, deptry all green
+- `tests/test_execution/test_plan_drift.py` — 32 passed (sacred parity invariant intact across all 6 Phase A.9-A.12+cleanup commits)
+- `uv pip list | grep -iE '^(llm|llm-)'` — empty (only `litellm 1.82.6` present)
+- `grep -rn 'import llm$|from llm import' src/pflow/ tests/` — zero hits
+- Real-API smoke test on Gemini-3-flash-preview confirmed end-to-end behavior matches design
+
+### Branch summary (since `8349df88` baseline)
+
+```
+8349df88 ready for phase 0 + a    ← baseline
+7babf9e5 A.1: install LiteLLM
+0a2eb798 A.2 + A.3: reasoning_map + adapter
+a38afa6d A.4 + A.5: mock + LLMNode rewire
+40b74f8e A.6 + A.7 + A.8: tracing + discovery + cleanup
+5d0e0a9b A.9: drop llm CLI subprocess paths
+8247ae2a A.10: delete llm_pricing.py
+4becef96 A.11: drop llm/llm-anthropic/llm-gemini deps
+6222697f A.12: docs pass + CHANGELOG
+ac257fc6 end-of-task cleanup     ← current HEAD
+```
+
+### Loose ends acknowledged but not blockers
+
+1. **CHANGELOG entry labeled "Unreleased"** — convention unclear whether Phase A merges with its own version bump or waits for the full Task 158 (Phases B-G) to ship. Existing changelog entries all have version numbers. User to decide before PR merge.
+2. **Memoization cache transient regression** — old cached `llm_usage` entries lacking `cost_usd` will surface as `cost_basis: upper_bound` / `estimated_cost_usd: null` in dry-run plans for ~24h post-upgrade until the cache TTL flushes. Self-healing.
+3. **Gemini-3 reasoning-model UX** — `max_tokens` too small for a reasoning model silently produces empty content. Pre-existing behavior, not Phase A regression. Worth a follow-up issue.
+
+### Next step
+
+Phase A is feature-complete and ready for review. The next agent's job is to review this implementation before PR merge. A `braindump-phase-A-review-handoff-2026-04-25.md` covering review angles, risks to scrutinize, and verification commands is being written separately.
+
+After review approval and PR merge, the next work is writing the `implementation/plan-phase-B-through-G.md` informed by the concrete LiteLLM behavior observed during Phase A.
+
+---
