@@ -2386,6 +2386,102 @@ After fix: same command succeeds (settings inject as designed).
 
 ---
 
+## 42. Session 2026-04-26 (cont.) — PR #356 review evaluation + 4 follow-up commits
+
+### Context
+
+`claude[bot]` posted a code review on PR #356 with **9 warnings + 9 suggestions**. The reviewer's verdict was "ship after addressing the warnings (especially #1 GOOGLE_API_KEY alias, #2 Literal discriminators, #3 _normalize exception envelope, and #4–5 missing tests). The rest is cleanup and can land separately."
+
+User invoked `/evaluate-review` against the PR comment URL. Six parallel `pflow-codebase-searcher` agents verified the most consequential findings against the actual code before any judgment. Every warning the reviewer raised held up under verification.
+
+### Findings disposition
+
+All 9 warnings confirmed; landed across 3 focused commits (Tier A/B/C). A 4th commit fixed a pre-existing UX bug surfaced during discussion — not in the review proper but adjacent to it.
+
+| Tier | Commit | What landed |
+|---|---|---|
+| A — correctness | `7236aeb1` | (1) `ProviderInfo.env_vars: tuple[str, ...]` (Gemini surfaces both `GEMINI_API_KEY` and `GOOGLE_API_KEY`; `llm_config.PROVIDER_ENV_VARS` consolidated into the registry — single source of truth). (2) `Literal[...]` typing on `reason`/`kind` discriminators. (3) `_normalize` call wrapped in try/except → `LLMResponseParseError` with `after_call` trace emit. |
+| B — coverage | `1e8d459b` | (1) `tests/test_cli/test_lazy_imports.py` — subprocess test pinning `litellm` out of `sys.modules` for non-LLM CLI paths. (2) `test_llm_failure_in_one_item_does_not_corrupt_siblings` — failure-path complement to the existing parallel-batch + sub-workflow + LLM success test. |
+| C — hygiene | `7212977d` | (1) `pyproject.toml`: `openai>=1.0` floor. (2) Auto-prefix rule documented in 3 set-* docstrings + a `<Note>` block in `settings.mdx`. (3) `scratchpads/task-158-spike/*` removed (~15k lines including the 2.1MB `spike_4_output.txt` with a developer macOS home-path leak). |
+| Bonus — UX | `dcd19117` | `MissingApiKeyError` for unknown providers no longer suggests `ANTHROPIC_API_KEY`. Three branches: known (registry hit, precise), unknown-with-prefix (heuristic + disclaimer + `likely_env_var` ctx field), no-prefix (pure docs link). |
+
+### The Literal typing immediately earned its keep
+
+The first `make check` after tightening `reason`/`kind` to `Literal[...]` failed with:
+
+```
+src/pflow/core/llm_client.py:507: error: Argument "kind" to "LLMTransientError" has incompatible type "str"; expected "Literal['timeout', 'rate_limit', 'server_error', 'connection']"
+```
+
+`_classify_transient_kind` had been declared `-> str`. The Literal alias forced it to commit to the actual return shape. Tightening to `-> LLMTransientKind` fixed it; mypy now refuses any new branch that returns a typo or unintended kind value. **This is exactly the failure mode the reviewer named** — the typing change wasn't theoretical safety, it caught a real lurking inconsistency on the first run.
+
+### The unknown-provider fix wasn't in the review proper
+
+The reviewer's #1 was about Gemini's `GOOGLE_API_KEY` alias. The fix that landed in Tier A also exposed a deeper bug: the `or "ANTHROPIC_API_KEY"` literal at the end of the missing_key suggestion list was a *placeholder* that became user-facing for any provider absent from the registry. A user calling `together_ai/llama-3-70b` who hit auth failure saw "set ANTHROPIC_API_KEY" — wrong, confidently.
+
+User flagged it during discussion ("why can't we just pass the real suggestion?"). The fix split the missing_key path into three principled branches:
+
+1. **Known provider (registry hit)** — precise canonical + aliases (Tier A behavior, kept).
+2. **Unknown provider with parseable prefix** — defer to `provider_message` (LiteLLM's own error usually names the var), surface heuristic `<PROVIDER>_API_KEY` as "likely candidate" with explicit disclaimer for cloud-meta providers (Bedrock/Vertex/Azure need multi-key auth; the heuristic underspecifies them). New `context["likely_env_var"]` structured field for agents.
+3. **No parseable prefix** — pure docs link, no fabricated env var.
+
+New primitive `extract_provider_prefix(model)` lives in `llm_providers.py` (provider parsing belongs there); the env-var heuristic `_likely_env_var_for_unknown_provider` lives in `exceptions.py` since it's diagnostic-UX-specific.
+
+**Pattern**: when you find yourself writing `or <SOMETHING_SPECIFIC>` as a fallback for "we don't know," verify that the `<SOMETHING_SPECIFIC>` is actually right for the unknown case. If it's a placeholder that just happens to be a registry entry, it's a bug waiting to surface.
+
+### Verification methodology that worked well
+
+Six parallel `pflow-codebase-searcher` agents — one per concern (or pair of related concerns). Each got a sharp, narrow brief: "verify the reviewer's claim that X is at file:line, quote the actual code, check Y in the litellm vendored source, report 250 words." All 6 returned focused factual reports; the synthesis happened in the main thread. **Crucially, the agents reported back with actual quotes** (e.g. confirming LiteLLM's `gemini/common_utils.py` checks `GOOGLE_API_KEY` first), which made the judgment calls fast.
+
+Then I read the most consequential code (`_normalize`'s control flow, `MissingApiKeyError.to_diagnostics()`) myself before judging. Two findings were confirmed by my direct read despite agent verification — agents reported the structure correctly, my read confirmed the implications.
+
+### Numbers at the close
+
+- 5388 → 5393 tests passing (+5 new — 3 for `_normalize` envelope, 1 each for the unknown-provider Tier-A and the new bonus fix; the seal-contract `connection`-kind regression test; lazy-import subprocess; parallel-batch-failure-path)
+- Sacred `test_plan_drift.py` 32/32 green at every commit
+- `make check` clean (ruff, ruff-format, mypy, deptry)
+- Architectural seal verified: `grep -rn 'litellm.exceptions\|^import openai\|^from openai' src/pflow/` → matches only in `core/llm_client.py` (and incidental docstring mentions in `core/exceptions.py`)
+- 6 commits ahead of remote: 4 today + the 2 from the §41 task-review push
+
+### What the next agent (PR re-review or merge prep) should know
+
+1. **Literal typing is now a real enforcement layer.** Adding a new `kind`/`reason` value requires updating the type alias in `exceptions.py`. mypy refuses bare-string typos at construction sites.
+
+2. **`ProviderInfo.env_vars` is `tuple[str, ...]` (canonical first, aliases follow).** When extending the registry for a new provider, list LiteLLM's accepted aliases — not just the canonical one. Gemini's `("GEMINI_API_KEY", "GOOGLE_API_KEY")` is the template.
+
+3. **`MissingApiKeyError.to_diagnostics()` has three branches now.** Don't collapse them — each represents a distinct epistemic state ("we know precisely" vs "we have a heuristic" vs "we have nothing"). The `or "ANTHROPIC_API_KEY"` placeholder bug is a cautionary tale for any future "fallback for unknown."
+
+4. **`_normalize` is wrapped at the call site, not inside the function.** This keeps `_normalize` as a pure success-shape transformer; the failure-shape envelope lives at the seam where the trace contract is also enforced. Three test cases in `TestNormalizeMalformedResponse` pin the envelope (empty choices, missing usage, after_call still fires).
+
+5. **Lazy-import contract is now test-pinned.** `tests/test_cli/test_lazy_imports.py` runs the CLI entry point in a subprocess and asserts `litellm` doesn't enter `sys.modules`. A future hoisting of `import litellm` to module top would fail this test.
+
+6. **Parallel-batch sub-workflow + LLM failure is pinned end-to-end.** The §31 worker-thread bug had this exact shape; only the success path was previously tested. The new test patches the LLMNode binding for one specific item, asserts each worker reports its own outcome, sibling success traces are intact, and the typed `_diagnostic_context` propagates through the worker boundary.
+
+### Branch summary (since `8349df88` baseline — full Phase A + perf fixes + reviews + this evaluation)
+
+```
+8349df88 ready for phase 0 + a    ← baseline
+[~30 commits from §27-§41]
+fdf1ebd1 docs(task-158): add task review document
+7236aeb1 refactor(llm): tighten typed-exception seal — Literal discriminators, GOOGLE_API_KEY alias, _normalize envelope
+1e8d459b test(llm): pin lazy-import contract + parallel-batch failure path
+7212977d chore(task-158): hygiene — openai floor, auto-prefix docs, drop spike artifacts
+dcd19117 fix(llm): MissingApiKeyError no longer suggests ANTHROPIC_API_KEY for unknown providers
+                                                             ← current HEAD
+```
+
+### What is genuinely deferred
+
+Suggestions S1–S9 from the review are deliberately not addressed:
+- S2 (`EFFORT_RATIOS.get` silent fallback) is subsumed by the Tier A Literal typing.
+- S6 (connection-kind discriminator coverage) was added alongside Tier A.
+- S1, S3, S4, S5, S7, S8 are minor polish — unrelated to the structural seal, can land separately when there's reason to.
+- S9 (CLAUDE.md guidance moved out of place) was unrelated to the PR's content.
+
+The reviewer's diagnosis was sharp and mostly actionable. The 4-commit response covers everything that mattered for shipping.
+
+---
+
 ## End of Task 158 implementation log
 
 This branch is feature-complete and verified end-to-end. Phase A migration plus six review-driven follow-up commits plus end-to-end verification plus the §41 verification-driven `inject_settings_env_vars` fix = the contents of this branch. Open follow-up GH issues #347–#352 (filed during Phase A reviews) and #353–#355 (filed at end of session §40) capture deferred review findings that don't block merge.
