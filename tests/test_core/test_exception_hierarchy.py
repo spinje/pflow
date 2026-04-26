@@ -5,7 +5,6 @@ import pytest
 from pflow.core.exceptions import (
     _PFLOW_EXCEPTION_ANNOTATIONS,
     CompilationError,
-    CriticalDiscoveryError,
     MarkdownParseError,
     MaxNodeVisitsError,
     PflowError,
@@ -30,7 +29,6 @@ class TestExceptionHierarchy:
             WorkflowValidationError("test"),
             WorkflowNotFoundError("test"),
             WorkflowExistsError(),
-            CriticalDiscoveryError("node", "reason"),
             UserFriendlyError("title", "explanation"),
             MCPError(),
             OutputResolutionError(failures=[]),

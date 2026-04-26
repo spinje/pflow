@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pflow.core.llm_providers import detect_provider, model_name_without_provider
+
 # OpenRouter-style effort-to-token-budget ratios. Moved verbatim from the
 # previous nodes/llm/llm.py:22-32. Five levels intentional (matches what
 # pflow accepts as `reasoning_effort` parameter input).
@@ -49,41 +51,53 @@ def _detect_capabilities(model: str) -> set[str]:
     The returned set drives `_map_effort` and `_map_direct_budget` dispatch
     below — same logic as the previous implementation.
     """
-    name = model.lower()
+    provider = detect_provider(model)
 
     # Anthropic Opus 4.5 — supports thinking_effort (precedence!), plus
     # thinking and thinking_budget for direct-budget callers.
-    if "claude-opus-4-5" in name or "claude-opus-4.5" in name:
-        return {"thinking_effort", "thinking", "thinking_budget"}
+    if provider is not None and provider.name == "anthropic":
+        provider_model = model_name_without_provider(model, provider)
+        if "claude-opus-4-5" in provider_model or "claude-opus-4.5" in provider_model:
+            return {"thinking_effort", "thinking", "thinking_budget"}
 
-    # Other Anthropic models (Sonnet 4.x, Opus 4.0/4.1, older Sonnet,
-    # Haiku, etc.) — extended thinking via thinking + thinking_budget.
-    if "anthropic/" in name or "claude-" in name or name.startswith("claude"):
+        # Other Anthropic models (Sonnet 4.x, Opus 4.0/4.1, older Sonnet,
+        # Haiku, etc.) — extended thinking via thinking + thinking_budget.
         return {"thinking", "thinking_budget"}
 
-    # Gemini 3 family — categorical thinking_level.
-    if "gemini-3" in name:
-        return {"thinking_level"}
+    if provider is not None and provider.name == "gemini":
+        provider_model = model_name_without_provider(model, provider)
+        # Gemini 3 family — categorical thinking_level.
+        if "gemini-3" in provider_model:
+            return {"thinking_level"}
 
-    # Gemini 2.5 (non-lite) — token-budget thinking.
-    # Lite variants (gemini-2.5-flash-lite) have no thinking support; the
-    # `lite` substring check matches existing pflow heuristic in
-    # registry/smart_filter.py:178.
-    if "gemini-2.5" in name and "lite" not in name:
-        return {"thinking_budget"}
+        # Gemini 2.5 (non-lite) — token-budget thinking.
+        # Lite variants (gemini-2.5-flash-lite) have no thinking support; the
+        # `lite` substring check matches existing pflow heuristic in
+        # registry/smart_filter.py:178.
+        if "gemini-2.5" in provider_model and "lite" not in provider_model:
+            return {"thinking_budget"}
 
-    # Gemini 2.5 lite, gemini-2.0-*, gemini-1.5-*, etc. — no reasoning.
-    if "gemini" in name:
+        # Gemini 2.5 lite, gemini-2.0-*, gemini-1.5-*, etc. — no reasoning.
         return set()
 
-    # OpenAI reasoning models: gpt-5* family, o1*, o3*. Detected by family
-    # substring. Preserves the previous llm-openai plugin's contract that
-    # exposed reasoning_effort and reasoning_max_tokens as Options fields.
-    if "gpt-5" in name or "/o1" in name or "/o3" in name or name.startswith(("o1", "o3")):
-        return {"reasoning_effort", "reasoning_max_tokens"}
+    if provider is not None and provider.name == "openai":
+        provider_model = model_name_without_provider(model, provider)
+        # OpenAI reasoning models: gpt-5* family, o1*, o3*, o4*. Preserves
+        # the previous llm-openai plugin's contract that exposed
+        # reasoning_effort and reasoning_max_tokens as Options fields.
+        if provider_model.startswith("gpt-5") or _matches_openai_o_family(provider_model):
+            return {"reasoning_effort", "reasoning_max_tokens"}
 
-    # GPT-4* and unknown models — no reasoning support.
+        # GPT-4* and unknown OpenAI models — no reasoning support.
+        return set()
+
+    # Unknown providers — no reasoning support until explicitly modeled.
     return set()
+
+
+def _matches_openai_o_family(model_name: str) -> bool:
+    """Return true for known OpenAI o-series reasoning model families."""
+    return any(model_name == family or model_name.startswith(f"{family}-") for family in ("o1", "o3", "o4"))
 
 
 def _map_direct_budget(option_fields: set[str], reasoning_max_tokens: int) -> dict[str, Any]:
@@ -182,6 +196,9 @@ def map_reasoning_options(
             return {"thinking": False}
         if "thinking_budget" in option_fields:
             return {"thinking_budget": 0}
+        if "thinking_level" in option_fields:
+            # Gemini 3 has no off-switch; "minimal" is the lowest equivalent.
+            return {"thinking_level": "minimal"}
         return {}
 
     return _map_effort(option_fields, effort, max_tokens)

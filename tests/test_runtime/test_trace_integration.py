@@ -775,3 +775,9 @@ class TestParallelBatchOfLLMs:
 
         seen_prompts = sorted(item.get("llm_prompt") for item in batch_items)
         assert seen_prompts == ["Score this: blue", "Score this: green", "Score this: red"]
+
+        # The aggregate batch wrapper stores only one representative prompt
+        # because WorkflowTraceCollector.llm_prompts is keyed by node_id. In
+        # parallel mode this is last-writer-wins by design; the per-item
+        # prompts above are the authoritative data.
+        assert scorer_event.get("llm_prompt") in seen_prompts

@@ -18,13 +18,6 @@ from pflow.core.metrics import MetricsCollector
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 from tests.shared.markdown_utils import ir_to_markdown
 
-# OBSOLETE: the bespoke `mock_llm` fixture (which wrapped `MockLLMModel` to
-# add a `configure_with_usage` helper) is no longer needed. All three tests
-# that depended on it (`test_llm_cost_calculation`, `test_llm_accumulation_across_nodes`,
-# `test_trace_captures_llm_calls`) now monkeypatch `pflow.nodes.llm.llm.complete`
-# directly with hand-built `AdapterResponse` returns. Pending fixture deletion
-# tracked in the Phase A end-of-task checklist.
-
 
 @pytest.fixture
 def temp_home(tmp_path):
@@ -235,6 +228,8 @@ class TestMetricsCollection:
                 "total_tokens": in_tokens + out_tokens,
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 0,
+                "thinking_tokens": 0,
+                "thinking_budget": 0,
                 "cost_usd": cost,
             }
             return AdapterResponse(text=text, usage=usage, model=model, has_schema=False)
@@ -369,6 +364,8 @@ class TestTraceGeneration:
                 "total_tokens": in_tok + out_tok,
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 0,
+                "thinking_tokens": 0,
+                "thinking_budget": 0,
             }
             return AdapterResponse(text=text, usage=usage, model=model, has_schema=False)
 
@@ -565,6 +562,8 @@ class TestWrapperIntegration:
                 "total_tokens": in_tokens + out_tokens,
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 0,
+                "thinking_tokens": 0,
+                "thinking_budget": 0,
                 "cost_usd": cost,
             }
             return AdapterResponse(text=response_text, usage=usage, model=model, has_schema=False)

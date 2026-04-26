@@ -87,7 +87,7 @@ class TestDetectCapabilitiesGemini:
 
 
 class TestDetectCapabilitiesOpenAI:
-    """gpt-5* and o1/o3 reasoning models; gpt-4* and below get nothing."""
+    """gpt-5* and o1/o3/o4 reasoning models; gpt-4* and below get nothing."""
 
     def test_gpt_5_mini(self):
         caps = _detect_capabilities("gpt-5-mini")
@@ -109,8 +109,16 @@ class TestDetectCapabilitiesOpenAI:
         caps = _detect_capabilities("o3")
         assert caps == {"reasoning_effort", "reasoning_max_tokens"}
 
+    def test_o4_bare(self):
+        caps = _detect_capabilities("o4-mini")
+        assert caps == {"reasoning_effort", "reasoning_max_tokens"}
+
     def test_openai_o1_prefixed(self):
         caps = _detect_capabilities("openai/o1")
+        assert caps == {"reasoning_effort", "reasoning_max_tokens"}
+
+    def test_openai_o4_prefixed(self):
+        caps = _detect_capabilities("openai/o4-mini")
         assert caps == {"reasoning_effort", "reasoning_max_tokens"}
 
     def test_gpt_4o_no_reasoning(self):
@@ -135,6 +143,9 @@ class TestDetectCapabilitiesUnknown:
     def test_ollama(self):
         # Ollama-prefixed local models have no reasoning kwargs in this map
         assert _detect_capabilities("ollama/llama3.1") == set()
+
+    def test_openrouter_anthropic_path_is_not_anthropic(self):
+        assert _detect_capabilities("openrouter/anthropic/claude-sonnet-4-5") == set()
 
 
 # --------------------------------------------------------------------------
@@ -208,9 +219,16 @@ class TestMapReasoningEffortNone:
         result = map_reasoning_options("gemini-2.5-pro", "none", None, None)
         assert result == {"thinking_budget": 0}
 
+    def test_disable_gemini_3(self):
+        # Gemini 3 has no off-switch — capability is `thinking_level` (categorical).
+        # 'none' maps to the lowest level so callers expressing "minimum reasoning
+        # cost" get the cheapest setting Gemini 3 supports.
+        result = map_reasoning_options("gemini-3-flash-preview", "none", None, None)
+        assert result == {"thinking_level": "minimal"}
+
     def test_disable_openai_returns_empty(self):
-        # OpenAI has no `thinking`/`thinking_budget` field in the capability set,
-        # so 'none' falls through to {}
+        # OpenAI has no `thinking`/`thinking_budget`/`thinking_level` field in
+        # the capability set, so 'none' falls through to {}
         result = map_reasoning_options("gpt-5-mini", "none", None, None)
         assert result == {}
 

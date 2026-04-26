@@ -251,6 +251,11 @@ class TestTranslateReasoningForAnthropic:
     def test_empty_passthrough(self):
         assert _translate_reasoning_for_litellm("anthropic/claude-sonnet-4-5", {}) == {}
 
+    def test_thinking_true_without_budget_raises(self):
+        with pytest.raises(InvalidRequestError) as exc_info:
+            _translate_reasoning_for_litellm("anthropic/claude-sonnet-4-5", {"thinking": True})
+        assert "thinking=True requires thinking_budget or thinking_effort" in str(exc_info.value)
+
 
 class TestTranslateReasoningForGemini:
     """Gemini reasoning kwargs pass through unchanged."""
@@ -390,6 +395,17 @@ class TestCompleteHappyPath:
         call_kwargs = mock_completion.call_args.kwargs
         assert call_kwargs["top_p"] == 0.9
         assert call_kwargs["temperature"] == 0.7
+
+    @patch("litellm.completion")
+    def test_model_options_reject_reasoning_keys(self, mock_completion):
+        with pytest.raises(InvalidRequestError) as exc_info:
+            complete(
+                model="anthropic/claude-sonnet-4-5",
+                prompt="hi",
+                model_options={"thinking": True},
+            )
+        assert "reasoning option keys" in str(exc_info.value)
+        mock_completion.assert_not_called()
 
     @patch("litellm.completion")
     def test_timeout_passed_through(self, mock_completion):
@@ -606,6 +622,7 @@ class TestCompleteErrorPaths:
         with pytest.raises(LLMTransientError) as exc_info:
             complete(model="openai/gpt-4o-mini", prompt="hi")
         assert exc_info.value.model == "openai/gpt-4o-mini"
+        assert exc_info.value.kind == "timeout"
         # IS-A LLMCallError — base catch still works for graceful degradation.
         assert isinstance(exc_info.value, LLMCallError)
         # Underlying exception preserved for traceback.
@@ -621,6 +638,7 @@ class TestCompleteErrorPaths:
         with pytest.raises(LLMTransientError) as exc_info:
             complete(model="openai/gpt-4o-mini", prompt="hi")
         assert isinstance(exc_info.value, LLMCallError)
+        assert exc_info.value.kind == "rate_limit"
 
     @patch("litellm.completion")
     def test_internal_server_error_raises_llm_transient_error(self, mock_completion):
@@ -632,6 +650,7 @@ class TestCompleteErrorPaths:
         with pytest.raises(LLMTransientError) as exc_info:
             complete(model="openai/gpt-4o-mini", prompt="hi")
         assert isinstance(exc_info.value, LLMCallError)
+        assert exc_info.value.kind == "server_error"
 
 
 # --------------------------------------------------------------------------
@@ -788,11 +807,91 @@ class TestAdapterSealContract:
         class _SyntheticUnknownError(openai.OpenAIError):
             pass
 
-        mock_completion.side_effect = _SyntheticUnknownError("uncharted territory")
+        upstream = _SyntheticUnknownError("uncharted territory")
+        mock_completion.side_effect = upstream
         with pytest.raises(InvalidRequestError) as exc_info:
             complete(model="openai/gpt-4o-mini", prompt="hi")
         assert isinstance(exc_info.value, LLMCallError)
         assert "_SyntheticUnknownError" in str(exc_info.value)
+        # provider_message is preserved on the default branch too — even for
+        # exception classes we haven't classified. Future-tolerant: a new
+        # LiteLLM class arriving without an explicit branch still carries
+        # its raw text into the diagnostic context.
+        assert exc_info.value.provider_message == str(upstream)
+
+    @pytest.mark.parametrize(("factory", "expected_pflow_exc"), _SEAL_CONTRACT_CASES)
+    @patch("litellm.completion")
+    def test_seam_threads_provider_message_to_every_classification(self, mock_completion, factory, expected_pflow_exc):
+        # Every classified exception MUST carry the raw upstream text as
+        # ``provider_message`` so agents can discriminate sub-cases beyond
+        # the typed kind/reason. The wrapped pflow ``str(self)`` is for the
+        # WHAT (Diagnostic.message); ``provider_message`` is for the WHY.
+        # A regression that drops provider_message= on any classification
+        # branch would silently revert structured discrimination — this
+        # parametrized check fails loudly instead.
+        upstream = factory()
+        mock_completion.side_effect = upstream
+        with pytest.raises(expected_pflow_exc) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert exc_info.value.provider_message == str(upstream)
+        # And the diagnostic context surfaces it so JSON consumers see it.
+        diagnostic = exc_info.value.to_diagnostics()[0]
+        assert diagnostic.context["provider_message"] == str(upstream)
+
+
+class TestLLMDiagnostics:
+    def test_o4_missing_key_uses_openai_env_var(self):
+        exc = MissingApiKeyError("API key required", model="o4-mini", kind="missing_key")
+        diagnostic = exc.to_diagnostics()[0]
+        assert diagnostic.context["env_var"] == "OPENAI_API_KEY"
+        assert "OPENAI_API_KEY" in diagnostic.suggestions[0]
+
+    def test_missing_sdk_diagnostic_preserves_provider_message(self):
+        raw = "Google Cloud SDK not found. Install it with: pip install 'litellm[google]'"
+        exc = MissingSdkError(
+            raw,
+            model="vertex_ai/gemini-2.0-flash",
+            package="litellm[google]",
+            provider_message=raw,
+        )
+        diagnostic = exc.to_diagnostics()[0]
+        assert diagnostic.context["provider_message"] == raw
+        assert "Google Cloud SDK not found" in diagnostic.context["provider_message"]
+
+    def test_transient_error_diagnostic_includes_kind_and_suggestions(self):
+        exc = LLMTransientError("rate limit exceeded", model="openai/gpt-4o-mini", kind="rate_limit")
+        diagnostic = exc.to_diagnostics()[0]
+        assert diagnostic.title == "Transient LLM Failure"
+        assert diagnostic.context["kind"] == "rate_limit"
+        assert any("rate limit" in suggestion.lower() for suggestion in diagnostic.suggestions)
+
+    def test_provider_message_carries_raw_text_when_set(self):
+        """provider_message is the raw upstream text, distinct from Diagnostic.message.
+
+        For UnknownModelError and MissingApiKeyError, the constructor message
+        is pflow-wrapped framing ("Unknown model: X", "API key required for X").
+        The raw provider text ("Quota exceeded", "Region not allowed") only
+        survives when threaded explicitly via provider_message=. The seam
+        (_classify_litellm_error) does this for every classification.
+        """
+        raw = "Quota exceeded for free tier"
+        exc = MissingApiKeyError(
+            "API key required for model 'openai/gpt-4o-mini'",
+            model="openai/gpt-4o-mini",
+            kind="missing_key",
+            provider_message=raw,
+        )
+        diagnostic = exc.to_diagnostics()[0]
+        # Diagnostic.message is the pflow-wrapped framing (the WHAT).
+        assert diagnostic.message == "API key required for model 'openai/gpt-4o-mini'"
+        # provider_message is the raw upstream text (the WHY).
+        assert diagnostic.context["provider_message"] == raw
+
+    def test_provider_message_is_none_when_not_set(self):
+        """Direct construction without provider_message yields None — honest signal."""
+        exc = UnknownModelError("Unknown model", model="openai/nope")
+        diagnostic = exc.to_diagnostics()[0]
+        assert diagnostic.context["provider_message"] is None
 
 
 class TestCompleteTraceHook:
@@ -833,15 +932,17 @@ class TestCompleteTraceHook:
         assert "m" in events[1]["error"]
 
     @patch("litellm.completion")
-    def test_hook_exception_does_not_break_call(self, mock_completion):
+    def test_hook_exception_does_not_break_call(self, mock_completion, caplog):
         mock_completion.return_value = make_litellm_response(text="OK")
 
         def boom(_event):
             raise RuntimeError("trace bug")
 
         # Should still return a successful response despite the hook blowing up
+        caplog.set_level("WARNING", logger="pflow.core.llm_client")
         response = complete(model="gpt-4o-mini", prompt="hi", trace_hook=boom)
         assert response.text == "OK"
+        assert "trace_hook raised RuntimeError: trace bug" in caplog.text
 
     @patch("litellm.completion")
     def test_hook_none_is_no_op(self, mock_completion):
@@ -869,6 +970,8 @@ class TestNormalizeEmptyResponseWarning:
     * ``llm_empty_response_content_filter`` — provider blocked output
     * ``llm_empty_response_stop`` — model chose to stop without content
     * ``llm_empty_response_unknown`` — provider didn't report finish_reason
+    * ``llm_empty_response_unrecognized_finish_reason`` — future provider
+      finish_reason with no content
 
     ``finish_reason="tool_calls"`` is intentionally silent (expected shape
     when the model wanted tools instead of text).
@@ -948,6 +1051,19 @@ class TestNormalizeEmptyResponseWarning:
         assert response.warnings
         warning = response.warnings[0]
         assert warning["kind"] == "llm_empty_response_unknown"
+
+    @patch("litellm.completion")
+    def test_unrecognized_finish_reason_warns(self, mock_completion):
+        mock_completion.return_value = make_litellm_response(
+            text=None,
+            completion_tokens=5,
+            finish_reason="future_reason",
+        )
+        response = complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert response.warnings
+        warning = response.warnings[0]
+        assert warning["kind"] == "llm_empty_response_unrecognized_finish_reason"
+        assert warning["context"]["finish_reason"] == "future_reason"
 
     @patch("litellm.completion")
     def test_tool_calls_finish_reason_is_silent(self, mock_completion):

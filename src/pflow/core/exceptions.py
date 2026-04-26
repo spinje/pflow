@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Any
 
 from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
+from pflow.core.llm_providers import detect_provider
 
 # Canonical list of dynamic attributes the engine/runner attach to exceptions
 # for cross-boundary context threading.  Used by copy_pflow_annotations() and
@@ -126,25 +127,6 @@ class WorkflowValidationError(PflowError):
         ]
 
 
-class CriticalDiscoveryError(PflowError):
-    """Raised when a critical discovery call fails and cannot provide meaningful fallback.
-
-    This error indicates discovery should abort immediately as continuing
-    would produce nonsensical or invalid results.
-    """
-
-    def __init__(self, node_name: str, reason: str, original_error: Exception | None = None):
-        self.node_name = node_name
-        self.reason = reason
-        self.original_error = original_error
-
-        message = f"{node_name} encountered a critical failure: {reason}"
-        if original_error:
-            message = f"{message}\nOriginal error: {original_error!s}"
-
-        super().__init__(message)
-
-
 class LLMCallError(PflowError):
     """Raised by the LLM adapter for provider errors.
 
@@ -169,11 +151,11 @@ class LLMCallError(PflowError):
     **Transient subclass** (5xx and rate limits — retry may help):
 
     - ``LLMTransientError``: ``Timeout``, ``RateLimitError``,
-      ``InternalServerError``. Marker subclass — its presence signals
-      "the Node retry loop should retry; smart_filter / discovery callers
-      should swallow." LLMNode's ``_call_llm`` re-raises it (rather than
-      catching like the deterministic subclasses) so the retry loop can
-      retry the call.
+      ``InternalServerError``. Carries ``kind`` (``timeout``,
+      ``rate_limit``, ``server_error``, ``connection``) so consumers outside
+      a retry loop can surface targeted remediation. LLMNode's ``_call_llm``
+      re-raises it (rather than catching like the deterministic subclasses)
+      so the retry loop can retry the call.
 
     Consumers outside a retry loop (registry/discovery callers,
     smart_filter) catch the base ``LLMCallError`` for graceful
@@ -181,15 +163,54 @@ class LLMCallError(PflowError):
 
     The structured ``model`` attribute (set on every instance) carries the
     model identifier as a typed field instead of embedding it in the
-    message. ``to_diagnostics()`` overrides on each subclass produce rich
+    message. The ``provider_message`` attribute carries the raw upstream
+    LiteLLM/provider exception text — distinct from ``str(self)`` (which
+    is the pflow-wrapped diagnostic framing) — so agents can discriminate
+    sub-cases beyond the typed ``reason``/``kind`` (e.g. "Quota exceeded"
+    vs "Invalid key" inside the same ``MissingApiKeyError(kind="missing_key")``
+    bucket). ``to_diagnostics()`` overrides on each subclass produce rich
     Diagnostics with structured context (``error_class``, ``model``,
-    ``reason``/``kind``) plus user-facing remediation suggestions — the
-    single source of truth for what each error means in pflow.
+    ``reason``/``kind``, ``provider_message``) plus user-facing remediation
+    suggestions — the single source of truth for what each error means in
+    pflow.
     """
 
-    def __init__(self, message: str, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        provider_message: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.model = model
+        # Raw provider/LiteLLM exception text captured at the seam, distinct
+        # from ``str(self)`` (the pflow-wrapped diagnostic prose). Carries the
+        # actionable WHY ("Quota exceeded", "Region not allowed", "Model
+        # retired on 2026-01-01") that the wrapper would otherwise discard.
+        # ``None`` when no upstream exception was present (e.g. constructed
+        # in-pflow rather than translated from LiteLLM).
+        self.provider_message = provider_message
+
+    def diagnostic_context(self, **extra: Any) -> dict[str, Any]:
+        """Return invariant structured context for LLM provider errors.
+
+        ``provider_message`` is the raw upstream text when available — distinct
+        from ``Diagnostic.message`` (pflow-wrapped framing) and from
+        ``error_class``/``model``/``reason``/``kind`` (structured discriminators).
+        Agents discriminating sub-cases beyond the typed kind/reason should
+        read this field; ``None`` when the error originated inside pflow.
+        """
+        context = {
+            "category": LLM_FAILURE_CATEGORY,
+            "error_class": type(self).__name__,
+            "model": self.model,
+            "provider_message": self.provider_message,
+        }
+        for key, value in extra.items():
+            if value is not None:
+                context[key] = value
+        return context
 
     def to_diagnostics(self) -> list[Diagnostic]:
         # Returns a single-element list (PflowError convention; LLMNode
@@ -200,11 +221,7 @@ class LLMCallError(PflowError):
                 message=str(self),
                 title="LLM Call Failed",
                 source="runtime",
-                context={
-                    "category": LLM_FAILURE_CATEGORY,
-                    "error_class": type(self).__name__,
-                    "model": self.model,
-                },
+                context=self.diagnostic_context(),
                 see_also=["llm"],
             )
         ]
@@ -224,8 +241,15 @@ class UnknownModelError(LLMCallError):
     messages — substring-matching on the message text would be fragile.
     """
 
-    def __init__(self, message: str, *, model: str | None = None, reason: str = "unknown_name") -> None:
-        super().__init__(message, model=model)
+    def __init__(
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        reason: str = "unknown_name",
+        provider_message: str | None = None,
+    ) -> None:
+        super().__init__(message, model=model, provider_message=provider_message)
         self.reason = reason
 
     def to_diagnostics(self) -> list[Diagnostic]:
@@ -267,12 +291,7 @@ class UnknownModelError(LLMCallError):
                 title="Unknown Model",
                 suggestions=suggestions,
                 source="runtime",
-                context={
-                    "category": LLM_FAILURE_CATEGORY,
-                    "error_class": type(self).__name__,
-                    "model": self.model,
-                    "reason": self.reason,
-                },
+                context=self.diagnostic_context(reason=self.reason),
                 see_also=["llm"],
             )
         ]
@@ -298,8 +317,9 @@ class MissingApiKeyError(LLMCallError):
         *,
         model: str | None = None,
         kind: str = "missing_key",
+        provider_message: str | None = None,
     ) -> None:
-        super().__init__(message, model=model)
+        super().__init__(message, model=model, provider_message=provider_message)
         self.kind = kind
 
     def to_diagnostics(self) -> list[Diagnostic]:
@@ -322,14 +342,7 @@ class MissingApiKeyError(LLMCallError):
                 "(Bedrock, Azure, Vertex, etc.).",
             ]
 
-        ctx: dict[str, Any] = {
-            "category": LLM_FAILURE_CATEGORY,
-            "error_class": type(self).__name__,
-            "model": self.model,
-            "kind": self.kind,
-        }
-        if env_var is not None:
-            ctx["env_var"] = env_var
+        ctx = self.diagnostic_context(kind=self.kind, env_var=env_var)
 
         return [
             Diagnostic(
@@ -364,12 +377,7 @@ class InvalidRequestError(LLMCallError):
                     "The provider's message above typically identifies the offending parameter.",
                 ],
                 source="runtime",
-                context={
-                    "category": LLM_FAILURE_CATEGORY,
-                    "error_class": type(self).__name__,
-                    "model": self.model,
-                    "provider_message": str(self),
-                },
+                context=self.diagnostic_context(),
                 see_also=["llm"],
             )
         ]
@@ -378,17 +386,64 @@ class InvalidRequestError(LLMCallError):
 class LLMTransientError(LLMCallError):
     """Transient LLM provider error (timeout, rate limit, 5xx).
 
-    Marker subclass — no extra attributes. Its presence signals "the Node
-    retry loop should retry this; consumers outside a retry loop should
-    swallow it gracefully." LLMNode's ``_call_llm`` re-raises this rather
-    than catching it (unlike the deterministic ``LLMCallError`` subclasses)
-    so the retry loop sees an exception and can retry.
+    ``kind`` discriminates the transient sub-case so callers outside a retry
+    loop can surface specific remediation instead of a generic LLM failure.
+    LLMNode's ``_call_llm`` re-raises this rather than catching it (unlike
+    the deterministic ``LLMCallError`` subclasses) so the retry loop sees an
+    exception and can retry.
 
     Translated from LiteLLM's ``Timeout``, ``RateLimitError``, and
     ``InternalServerError`` at the adapter seam (``llm_client.complete``).
     Note: this is distinct from pflow's inner-pool ``FuturesTimeoutError``
     (the LLMNode-level timeout that orphan-protects the worker thread).
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        kind: str = "connection",
+        provider_message: str | None = None,
+    ) -> None:
+        super().__init__(message, model=model, provider_message=provider_message)
+        self.kind = kind
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        suggestions_by_kind = {
+            "timeout": [
+                "Retry the workflow; provider timeouts are usually transient.",
+                "If this repeats, increase the LLM node timeout or reduce prompt/output size.",
+                "Check the provider status page for ongoing incidents.",
+            ],
+            "rate_limit": [
+                "Retry later after the provider rate limit resets.",
+                "Reduce parallel LLM calls or batch size for this workflow.",
+                "Use a lower-throughput model or provider tier if this happens repeatedly.",
+            ],
+            "server_error": [
+                "Retry the workflow; provider 5xx errors are usually transient.",
+                "Check the provider status page before repeated retries.",
+                "Try a different model or provider if the incident persists.",
+            ],
+            "connection": [
+                "Retry the workflow; network failures are often transient.",
+                "Check local network connectivity and provider availability.",
+                "If using a custom endpoint, verify the base URL and transport settings.",
+            ],
+        }
+        suggestions = suggestions_by_kind.get(self.kind, suggestions_by_kind["connection"])
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Transient LLM Failure",
+                suggestions=suggestions,
+                source="runtime",
+                context=self.diagnostic_context(kind=self.kind),
+                see_also=["llm"],
+            )
+        ]
 
 
 class MissingSdkError(LLMCallError):
@@ -399,8 +454,15 @@ class MissingSdkError(LLMCallError):
     (retrying won't install the package).
     """
 
-    def __init__(self, message: str, *, model: str | None = None, package: str | None = None) -> None:
-        super().__init__(message, model=model)
+    def __init__(
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        package: str | None = None,
+        provider_message: str | None = None,
+    ) -> None:
+        super().__init__(message, model=model, provider_message=provider_message)
         self.package = package
 
     def to_diagnostics(self) -> list[Diagnostic]:
@@ -422,12 +484,7 @@ class MissingSdkError(LLMCallError):
                 title="Missing Provider SDK",
                 suggestions=suggestions,
                 source="runtime",
-                context={
-                    "category": LLM_FAILURE_CATEGORY,
-                    "error_class": type(self).__name__,
-                    "model": self.model,
-                    "package": self.package,
-                },
+                context=self.diagnostic_context(package=self.package),
                 see_also=["llm"],
             )
         ]
@@ -455,11 +512,7 @@ class LLMResponseParseError(LLMCallError):
                     "Consider simplifying the schema if the model consistently fails to match it.",
                 ],
                 source="runtime",
-                context={
-                    "category": LLM_FAILURE_CATEGORY,
-                    "error_class": type(self).__name__,
-                    "model": self.model,
-                },
+                context=self.diagnostic_context(),
                 see_also=["llm"],
             )
         ]
@@ -472,16 +525,8 @@ def _derive_env_var_for_model(model: str | None) -> str | None:
     expected env-var name. Returns None when the prefix is unrecognized
     or absent — caller falls back to a generic example.
     """
-    if not model:
-        return None
-    name = model.lower()
-    if name.startswith("anthropic/") or name.startswith("claude-"):
-        return "ANTHROPIC_API_KEY"
-    if name.startswith("openai/") or name.startswith("gpt-") or name.startswith("o1") or name.startswith("o3"):
-        return "OPENAI_API_KEY"
-    if name.startswith("gemini/") or name.startswith("gemini-"):
-        return "GEMINI_API_KEY"
-    return None
+    provider = detect_provider(model)
+    return provider.env_var if provider is not None else None
 
 
 class SchemaValidationError(PflowError):

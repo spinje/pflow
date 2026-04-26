@@ -1974,9 +1974,395 @@ Pre-existing issue (confirmed on main), but trivial to fix: one lazy import + on
 
 ---
 
+## 39. Session 2026-04-26 — Structural review-fix pass after Task 158 code review
+
+### Context
+
+After the Task 158 code review, the first instinct was to apply narrow fixes: add `o4-*` in two missing places, add a warning for unknown empty responses, add a few diagnostics tests, and clean up fixtures. User pushed back with the right frame: optimize for the final code, not the easiest patch. The re-evaluation showed several review findings were symptoms of duplicated contracts:
+
+- Provider metadata lived in three independent places:
+  - `core/llm_client.py::_BARE_MODEL_PREFIX_MAP`
+  - `core/llm_reasoning_map.py::_detect_capabilities`
+  - `core/exceptions.py::_derive_env_var_for_model`
+- Transient provider failures were structurally classified at the adapter seam, then collapsed into an untyped `LLMTransientError`.
+- LLM diagnostics repeated context dictionaries by hand, so some subclasses preserved provider messages and others dropped them.
+- Reasoning options had two paths: dedicated `reasoning_kwargs` and raw `model_options`, making it possible to bypass the adapter's provider-specific reasoning validation.
+- `parse_structured_response()` promised typed schema failures but still returned raw invalid dicts after Pydantic validation failed.
+
+Decision: do the structural fixes now while the adapter seam is already under review, rather than leaving future provider/model additions to rediscover the same drift.
+
+### Decisions made
+
+#### 1. New canonical provider registry
+
+Added `src/pflow/core/llm_providers.py` with a dependency-free `ProviderInfo` registry:
+
+- `name`
+- `provider_prefix`
+- `bare_prefixes`
+- `env_var`
+
+Current registry:
+
+- Anthropic: `anthropic/`, bare `claude-`, env `ANTHROPIC_API_KEY`
+- OpenAI: `openai/`, bare `gpt-`, `o1`, `o3`, `o4`, env `OPENAI_API_KEY`
+- Gemini: `gemini/`, bare `gemini-`, env `GEMINI_API_KEY`
+
+The registry exposes:
+
+- `detect_provider(model)`
+- `normalize_model_name(model)`
+- `model_name_without_provider(model, provider)`
+
+Trust boundary:
+
+- **Verified**: used by model normalization, missing-key env hints, reasoning capability detection, and Anthropic reasoning translation.
+- **Intentional behavior**: provider-prefixed matching is exact `startswith(provider_prefix)`. `openrouter/anthropic/claude-sonnet-4-5` is not classified as Anthropic. If pflow later supports OpenRouter/Bedrock-specific reasoning, those should become explicit provider entries or explicit routing rules rather than substring matches.
+
+Outcome: the `o4-*` issue is fixed structurally. Adding `o5` later should be one registry-line plus any family-specific reasoning decision, not a hunt through adapter, diagnostics, and reasoning code.
+
+#### 2. LLM diagnostic context is now a base-class invariant
+
+Added `LLMCallError.diagnostic_context(**extra)` in `core/exceptions.py`.
+
+Every LLM diagnostic now includes:
+
+- `category`
+- `error_class`
+- `model`
+- `provider_message`
+
+Subclasses extend that base context with structured fields such as `reason`, `kind`, `env_var`, or `package`. This removes the "InvalidRequestError remembered provider_message, MissingSdkError forgot it" failure mode.
+
+Important detail: `provider_message` is currently `str(self)`, i.e. the pflow-wrapped provider message. This is the stable message that reaches users and diagnostics. It is not a raw LiteLLM object.
+
+#### 3. `LLMTransientError` now has `kind`
+
+`LLMTransientError` now mirrors the established typed-discriminator pattern used by:
+
+- `UnknownModelError(reason=...)`
+- `MissingApiKeyError(kind=...)`
+
+Transient kinds:
+
+- `timeout`
+- `rate_limit`
+- `server_error`
+- `connection`
+
+`_classify_litellm_error()` maps LiteLLM/OpenAI exception classes to these kinds:
+
+- `litellm.exceptions.Timeout` -> `timeout`
+- `openai.RateLimitError` -> `rate_limit`
+- `openai.InternalServerError`, `ServiceUnavailableError`, `BadGatewayError` -> `server_error`
+- other `APIConnectionError` -> `connection`, unless the exception chain indicates missing SDK
+
+`LLMTransientError.to_diagnostics()` now has targeted suggestions. `LLMNode.exec_fallback()` preserves the transient subtype after retry exhaustion as:
+
+- `kind: retry_exhausted`
+- `transient_kind: <timeout|rate_limit|server_error|connection>`
+
+This keeps retry-loop semantics unchanged while giving downstream agents actionable cause data.
+
+#### 4. `model_options` cannot carry reasoning keys
+
+Rejected reasoning-shaped keys in raw `model_options` at the adapter boundary:
+
+- `thinking`
+- `thinking_budget`
+- `thinking_effort`
+- `reasoning_effort`
+- `reasoning_max_tokens`
+- `thinking_level`
+
+Reason: pflow already has dedicated `reasoning_effort` and `reasoning_max_tokens` channels. Letting `model_options` override or bypass them makes provider-specific translation and validation ambiguous.
+
+Decision: hard-fail with `InvalidRequestError`, not warn-and-merge.
+
+Rationale:
+
+- Failing fast is simpler than merging two sources with precedence rules.
+- It preserves one reasoning path through `map_reasoning_options()` and `_translate_reasoning_for_litellm()`.
+- It prevents silent user-intent drops, especially Anthropic `thinking=True` without a budget.
+
+Also added an internal invariant in `_translate_reasoning_for_litellm()`: Anthropic `thinking=True` without `thinking_budget` or `thinking_effort` raises `InvalidRequestError` instead of silently returning `{}`.
+
+#### 5. Empty response fallback now matches its own contract
+
+`_detect_empty_response_warnings()` already documented the desired invariant:
+
+- text present -> success, no warning
+- `finish_reason == "tool_calls"` -> expected no-content shape, no warning
+- every other empty-text response -> anomaly worth surfacing
+
+The code previously returned `[]` for any future unrecognized finish reason. That was a silent empty success. Added:
+
+- `kind: llm_empty_response_unrecognized_finish_reason`
+- context with `model`, `finish_reason`, token counts, and thinking fields
+
+This keeps the adapter future-tolerant without hiding suspicious empty responses.
+
+#### 6. Structured response validation now fails typed
+
+`parse_structured_response()` now raises `LLMResponseParseError` when:
+
+- JSON parses but fails Pydantic validation for the expected schema
+- JSON is valid but not an object for the expected Pydantic schema
+
+Previous behavior logged validation failures and returned raw dicts, which let callers fail later with confusing `KeyError` or `TypeError`. The function now matches its own docstring and the exception hierarchy's promise: schema parse/validation failures are LLM response parse failures.
+
+Discovery and smart-filter tests stayed green after this stricter behavior.
+
+#### 7. Batch top-level prompt race was intentionally not refactored
+
+Review noted that `WorkflowTraceCollector.llm_prompts` is keyed by `node_id`, so direct parallel batch LLM calls can only store one aggregate prompt for the batch wrapper. Per-item prompt capture is correct via each item output's `prompt` field and `batch_items[i].llm_prompt`.
+
+Decision: do not refactor trace storage to `(node_id, item_index)` or lists in this task.
+
+Rationale:
+
+- The aggregate prompt is representative only.
+- Per-item prompt data is the authoritative batch trace surface.
+- Changing the aggregate storage shape would touch broader trace consumers for little practical value.
+
+Added/kept an invariant test that asserts:
+
+- every batch item has its own prompt
+- aggregate `llm_prompt` is one of those prompts, not a deterministic per-item source
+
+### Files changed in this pass
+
+| File | Important change |
+|------|------------------|
+| `src/pflow/core/llm_providers.py` | New canonical provider metadata registry |
+| `src/pflow/core/llm_client.py` | Uses provider registry, rejects reasoning keys in `model_options`, classifies transient kinds, warns on unknown empty `finish_reason`, warning-level trace-hook failures |
+| `src/pflow/core/llm_reasoning_map.py` | Uses provider registry for provider detection; `o4-*` reasoning support now coherent |
+| `src/pflow/core/exceptions.py` | Base LLM diagnostic context invariant, transient diagnostics, env-var hints from provider registry |
+| `src/pflow/core/llm_utils.py` | Pydantic validation failures now raise `LLMResponseParseError` |
+| `src/pflow/nodes/llm/llm.py` | Retry exhaustion preserves `LLMTransientError.kind` as `transient_kind` |
+| `src/pflow/core/CLAUDE.md` | Documents `llm_providers.py` in the core module map |
+| `tests/test_core/test_llm_providers.py` | New provider registry tests |
+| `tests/test_core/test_llm_utils.py` | New structured-response validation tests |
+| `tests/test_core/test_llm_client.py` | New diagnostics, reasoning-key validation, transient-kind, unknown-finish-reason, trace-hook logging tests |
+| `tests/test_core/test_llm_reasoning_map.py` | `o4-*` and OpenRouter false-positive regression tests |
+| `tests/test_nodes/test_llm/test_llm.py` | LLMTransientError retry-exhaustion regression; fixture usage shape cleanup |
+| `tests/test_integration/test_metrics_integration.py` | Fixture usage shape cleanup; stale mock comment removed |
+| `tests/test_runtime/test_trace_integration.py` | Batch aggregate prompt invariant documented/tested |
+
+### Verification
+
+Focused suites:
+
+- `uv run pytest tests/test_core/test_llm_client.py tests/test_core/test_llm_providers.py tests/test_core/test_llm_utils.py tests/test_core/test_llm_reasoning_map.py tests/test_nodes/test_llm/test_llm.py tests/test_integration/test_metrics_integration.py tests/test_runtime/test_trace_integration.py`
+- Result: 275 passed
+
+Discovery/error related suites:
+
+- `uv run pytest tests/test_registry/test_smart_filter.py tests/test_registry/test_component_discovery.py tests/test_execution/test_executor_service_llm.py`
+- Result: 41 passed
+
+Repository checks:
+
+- `make check`: passed
+  - ruff
+  - ruff-format
+  - mypy: no issues in 184 source files
+  - deptry
+
+Full suite:
+
+- `make test`: 5361 passed
+
+### Critical information for future agents
+
+1. **Provider metadata now has one canonical home.** Do not add model-family prefixes directly to `llm_client.py`, `llm_reasoning_map.py`, or `exceptions.py`. Add provider facts to `llm_providers.py`, then add family-specific capability logic only where needed.
+
+2. **Prefix matching is deliberately exact.** `openrouter/anthropic/...` is not Anthropic for pflow's purposes. Do not reintroduce `"anthropic/" in name` substring checks unless OpenRouter semantics are explicitly designed and tested.
+
+3. **`model_options` is no longer a reasoning escape hatch.** Reasoning options must use `reasoning_effort` or `reasoning_max_tokens`. Raw provider kwargs are still allowed for non-reasoning options like `top_p`.
+
+4. **Every LLM diagnostic should include `provider_message`.** Use `LLMCallError.diagnostic_context()` when adding subclasses. Do not hand-build LLM diagnostic context dicts unless there is a documented reason.
+
+5. **Transient failures are typed twice.** During provider classification, `LLMTransientError.kind` captures the provider failure subtype. After LLMNode retry exhaustion, diagnostic context uses `kind="retry_exhausted"` and preserves the original subtype as `transient_kind`.
+
+6. **Structured response validation is now strict.** Callers of `parse_structured_response()` should expect `LLMResponseParseError` when the model returns valid JSON with invalid schema shape. This is intentional.
+
+7. **Trace-hook errors are warning-level logs.** This makes trace capture regressions visible without breaking workflows. If this becomes noisy, fix the trace hook bug rather than lowering visibility silently.
+
+### Review findings closed by this pass
+
+- `o4-*` prefix drift between normalization, reasoning, and diagnostics
+- Missing `provider_message` in `MissingSdkError` diagnostics
+- Generic `LLMTransientError` diagnostics
+- `model_options` reasoning-key bypass and Anthropic `thinking=True` silent drop
+- Unknown empty-response `finish_reason` silent success
+- Pydantic validation swallow in `parse_structured_response()`
+- Batch top-level prompt semantics documented/tested without broad trace churn
+- Fixture usage shape drift (`thinking_tokens` / `thinking_budget`)
+- Stale test comment about removed `mock_llm` fixture
+
+### Follow-up dead-code deletion: `CriticalDiscoveryError`
+
+After the structural review-fix pass, we did a focused grep/read pass for `CriticalDiscoveryError` because its remaining CLI handler looked like legacy Anthropic-specific discovery auth handling.
+
+Findings:
+
+- `CriticalDiscoveryError` was not raised anywhere in production code.
+- Its only live production reference was an unreachable branch in `src/pflow/cli/find_errors.py`.
+- LLM discovery failures now propagate through `LLMCallError` and each exception's own `to_diagnostics()` implementation, so keeping a parallel discovery-specific exception path would reintroduce duplicated remediation text and stale provider assumptions.
+- Test coverage only instantiated the class to prove hierarchy membership, which was evidence of dead code rather than active behavior.
+
+Action:
+
+- Deleted `CriticalDiscoveryError` from `src/pflow/core/exceptions.py`.
+- Removed the unreachable branch and import from `src/pflow/cli/find_errors.py`.
+- Removed the class from `src/pflow/core/CLAUDE.md` and exception hierarchy tests.
+
+Verification:
+
+- `rg "CriticalDiscoveryError" src/pflow tests`: no matches.
+- `uv run pytest tests/test_core/test_exception_hierarchy.py`: 10 passed.
+
+---
+
+## 40. Session 2026-04-26 — Post-§39 review caught two regressions and a half-truth
+
+After §39 landed, an evaluation pass over the structural review-fix work surfaced three issues the §39 author hadn't caught — including one production regression that the §39 changes themselves *introduced*. Each fix is small in code but architecturally consequential.
+
+### Issue 1: `_validate_model_options` rejected smart_filter's actual usage (production regression)
+
+§39 added `_validate_model_options` to enforce "model_options is for non-reasoning kwargs only." The validator rejects `thinking`, `thinking_budget`, `thinking_effort`, `reasoning_effort`, `reasoning_max_tokens`, `thinking_level` keys — exactly what `src/pflow/registry/smart_filter.py` was passing to disable reasoning on Gemini-3 (`thinking_level=minimal`) and Gemini-2.5 (`thinking_budget=0`).
+
+The autouse `mock_llm_client` fixture in `tests/conftest.py` patches `pflow.core.llm_client.complete` directly, bypassing the real `_validate_model_options`. So the existing `TestGeminiThinkingHeuristics` tests happily passed assertions against the mock while production would have crashed with `InvalidRequestError` on the first Gemini-3 / Gemini-2.5 filtering call.
+
+**Why this matters as a class of bug**: any production validation we add inside `complete()` is invisible to tests using the autouse mock. The autouse mock is necessary (real LLM calls in unit tests = $$$ + flake), but it widens the class of "structural bugs that pass tests." Mitigation: when adding validation at the seam, also add at least one test that patches `litellm.completion` (one layer below `complete()`) to exercise the real validation pipeline. The seal-contract tests in `test_llm_client.py` already do this.
+
+**The fix** routes smart_filter through the canonical reasoning channel — the same channel user-facing LLM nodes use:
+
+- `src/pflow/registry/smart_filter.py`: deleted the `gemini-3` / `gemini-2.5` substring heuristic. Replaced with `reasoning_kwargs=map_reasoning_options(filtering_model, "none", None, None) or None`. The translator handles per-provider mapping; smart_filter doesn't duplicate provider detection.
+- `src/pflow/core/llm_reasoning_map.py::map_reasoning_options`: extended the `effort="none"` branch to handle `thinking_level` capability (Gemini 3 has no off-switch — `"minimal"` is the lowest equivalent). This is a latent gap independently: a user passing `reasoning_effort: none` to a Gemini 3 LLM node previously got default expensive thinking, silently. Now they get `thinking_level=minimal` consistently with the disable-where-possible semantics.
+- Tests rewritten: `TestGeminiThinkingHeuristics` → `TestSmartFilterMinimizesReasoning`. Assertions moved from `last_call["model_options"]` to `last_call["reasoning_kwargs"]`. Added explicit `assert last_call["model_options"] is None` regression guard in every parametrized case so a future pattern that re-introduces the bypass fails loudly. Added a new `test_disable_gemini_3` case in `test_llm_reasoning_map.py` to pin the new `effort="none" + thinking_level` mapping.
+
+### Issue 2: `_diagnostic_context["provider_message"]` lied about its contents
+
+§39 introduced `LLMCallError.diagnostic_context()` as a base-class invariant that includes `"provider_message": str(self)`. This was correct for the four subclasses that pass `str(exc)` as their constructor message (`MissingSdkError`, `LLMTransientError`, `LLMResponseParseError`, `InvalidRequestError`) — `str(self)` IS the raw provider text in those cases.
+
+But two subclasses construct a pflow-wrapped message and discard the raw upstream text:
+
+- `MissingApiKeyError("API key required for model 'X'", ...)` — `str(self)` is the wrapper, NOT the provider's "Quota exceeded" / "Invalid key" / "Account suspended" text.
+- `UnknownModelError("Unknown model: X", ...)` — `str(self)` is the wrapper, NOT the provider's "model retired on Y" / "not available in your region" text.
+
+The base-class `diagnostic_context["provider_message"]` was therefore a half-truth: agents reading it for two of six subclasses got pflow's own framing dressed up as if it were the provider's message. Real failure modes that need different remediation (quota vs invalid-key, retired-model vs typo, region-restricted vs missing) collapsed to identical generic suggestions.
+
+**The fix** makes `provider_message` an explicit typed field on `LLMCallError`:
+
+- `src/pflow/core/exceptions.py::LLMCallError.__init__`: new optional kwarg `provider_message: str | None = None`, stored as `self.provider_message`.
+- `LLMCallError.diagnostic_context()`: surfaces `self.provider_message` honestly (no more `str(self)` masquerade). `None` when no upstream exception was present (e.g. constructed inside pflow rather than translated from LiteLLM) — an honest signal rather than a lie.
+- All four wrapping subclasses (`UnknownModelError`, `MissingApiKeyError`, `LLMTransientError`, `MissingSdkError`) take and forward `provider_message` to the base. `InvalidRequestError` and `LLMResponseParseError` inherit the kwarg automatically (no `__init__` override needed).
+- `src/pflow/core/llm_client.py::_classify_litellm_error`: threads `provider_message=str(exc)` to every classification branch (8 sites including the default fallback for unknown OpenAI subclasses). Captures `raw = str(exc)` once at the top of the function so every branch uses the same text.
+- `src/pflow/core/CLAUDE.md`: updated the "When to use which exception" table to document `provider_message` as a structured discriminator distinct from pflow-wrapped `Diagnostic.message`.
+
+**Pattern worth keeping**: the `Diagnostic.message` (WHAT) and `context.provider_message` (WHY) split is the right shape for typed exceptions that wrap. Don't cram both purposes into one string. The wrapped form makes the diagnostic readable; the raw form makes it actionable.
+
+### Issue 3: parametrized seal-contract tests didn't assert `provider_message` was threaded
+
+The §39 seal-contract test (`test_litellm_exception_wraps_to_typed_pflow_exception`) verified every classified LiteLLM exception became some `LLMCallError` subclass. It did NOT verify the seam threaded `provider_message=str(exc)` to that subclass — a regression dropping `provider_message=` on any classification branch would silently revert structured discrimination without failing any test.
+
+**The fix**: added `test_seam_threads_provider_message_to_every_classification` to `TestAdapterSealContract`, parametrized over the same `_SEAL_CONTRACT_CASES`. Asserts `exc_info.value.provider_message == str(upstream)` AND that `to_diagnostics()[0].context["provider_message"] == str(upstream)` for every classification (auth, permission, unknown-model, missing-prefix, transient, content-policy, schema-validation, etc.). Plus the unknown-future-subclass test now asserts the same on the default branch.
+
+### Decisions made
+
+- **`provider_message` as optional kwarg, not positional.** Constructed-inside-pflow `LLMCallError` instances (e.g. `LLMResponseParseError` raised by `parse_structured_response`'s JSON parse failure path) correctly default to `provider_message=None` — there's no upstream exception to capture. Honest about absence.
+- **Did not have suggestions consume `provider_message` text** for finer remediation. e.g. `MissingApiKeyError` with `provider_message` containing "quota" could surface a billing-review hint. That's substring-matching across the abstraction boundary — exactly what the structural pass tried to avoid. The right way to discriminate quota-vs-key is a typed sub-discriminator (`MissingApiKeyError(kind="quota_exceeded")`) detected at the seam. Out of scope; provider_message exposing the raw text already lets agents read the WHY directly.
+- **Did not rename `provider_message`** to `upstream_message`. For the `LiteLLMUnknownProvider` case the message is technically LiteLLM-side rather than provider-side, but the field captures "raw upstream exception text" generally and the established naming is fine. Bikeshedding boundary.
+
+### What this fix exposes about the autouse-mock testing pattern
+
+The smart_filter regression slipped past §39's tests because the autouse mock at `pflow.core.llm_client.complete` replaces the function entirely. Tests asserting on `mock_llm_client.call_history[-1][...]` see the kwargs passed to the mock — the mock doesn't run validation, doesn't raise on bad inputs, and doesn't simulate the production seal.
+
+**Mitigation pattern documented in `tests/CLAUDE.md` already** — "patch `litellm.completion` (one layer below)" gives real-adapter behavior. The seal-contract tests use this pattern. New validation added at the adapter seam should follow suit if test coverage matters for that validation.
+
+This issue surfaces a broader question about cross-layer testing for the adapter seam — but the answer is "use the existing seal-contract test pattern", not "rebuild test infrastructure."
+
+### Files changed in this pass
+
+| File | Change |
+|------|--------|
+| `src/pflow/core/llm_reasoning_map.py` | Added `thinking_level` branch to `effort="none"` mapping |
+| `src/pflow/registry/smart_filter.py` | Routed reasoning kwargs through canonical channel; deleted Gemini substring heuristics; removed unused `Any` import |
+| `src/pflow/core/exceptions.py` | Added `provider_message` field on `LLMCallError`; threaded through 4 subclass `__init__` overrides; updated base `diagnostic_context()` to surface it honestly; class docstring updated |
+| `src/pflow/core/llm_client.py` | `_classify_litellm_error` passes `provider_message=str(exc)` to every classification branch |
+| `src/pflow/core/CLAUDE.md` | Updated typed-exception table to document `provider_message` as a structured discriminator |
+| `tests/test_core/test_llm_reasoning_map.py` | Added `test_disable_gemini_3` |
+| `tests/test_registry/test_smart_filter.py` | Renamed `TestGeminiThinkingHeuristics` → `TestSmartFilterMinimizesReasoning`; assertions moved to `reasoning_kwargs`; `model_options is None` regression guards added |
+| `tests/test_core/test_llm_client.py` | Test fixtures now pass `provider_message=` explicitly; new `test_provider_message_carries_raw_text_when_set`, `test_provider_message_is_none_when_not_set`, `test_seam_threads_provider_message_to_every_classification` (parametrized over all seal cases); unknown-future-subclass test asserts on `provider_message` |
+| `tests/test_nodes/test_llm/test_llm.py` | `LLMTransientError` retry-exhaustion test fixture passes `provider_message=`; `InvalidRequestError` test fixture passes `provider_message=` |
+| `tests/test_execution/test_executor_service_llm.py` | All three parametrized error fixtures now pass realistic provider text via `provider_message=` (e.g. "Quota exceeded for free tier", "model retired on 2026-01-01", "Property 'foo' is required but missing") and assert it appears in the runtime diagnostic context |
+
+### Verification
+
+```bash
+uv run pytest -n 4 -q     # 5379 passed, 9 skipped (was 5361 before this pass)
+make check                # ruff, ruff-format, mypy, deptry — all green
+```
+
+End-to-end smoke (real production code path through `complete()`, mocking only `litellm.completion`):
+
+- `litellm.AuthenticationError("Quota exceeded for free tier; upgrade at https://billing.example/")` →
+  - `Diagnostic.message` = `"API key required for model 'openai/gpt-4o-mini'"` (pflow framing, the WHAT)
+  - `context.provider_message` = `"litellm.AuthenticationError: Quota exceeded for free tier; upgrade at https://billing.example/"` (raw, the WHY)
+- `litellm.NotFoundError("Model claude-2.1 was retired on 2026-01-01 — use claude-sonnet-4.5 instead")` →
+  - `Diagnostic.message` = `"Unknown model: anthropic/claude-2.1"` (pflow framing)
+  - `context.provider_message` = `"litellm.NotFoundError: Model claude-2.1 was retired on 2026-01-01 — use claude-sonnet-4.5 instead"` (raw)
+
+Architectural seal: `grep -rn 'litellm\.exceptions' src/pflow/` returns 2 hits in `core/llm_client.py` only. No consumer outside the adapter imports it. Same for `openai`.
+
+### What the next agent should know
+
+1. **The `provider_message` field is the single source of truth for raw upstream text.** Don't reconstruct it from `str(self)` — that's the wrapped form. Don't substring-match into it from consumer code; if you need a finer discriminator, add a typed `kind`/`reason` enum on the relevant subclass and detect it at the seam.
+
+2. **Smart_filter's reasoning channel is canonical now.** Future internal callers wanting "minimum reasoning" should call `map_reasoning_options(model, "none", None, None)` and pass the result via `reasoning_kwargs`, NOT via `model_options`. The `_validate_model_options` invariant rejects reasoning keys in `model_options` and that's intentional — it prevents two reasoning paths from drifting.
+
+3. **The autouse-mock testing pattern has a blind spot for adapter-seam validation.** When adding validation inside `complete()`, also add a seal-contract-style test that patches `litellm.completion` (one layer below `complete()`) so the real validation runs. The seal-contract test class in `test_llm_client.py` is the template.
+
+4. **Three review findings ago I claimed "FULLY happy"; ended up not.** Each "are you happy?" prompt from the user surfaced a real loose end. The pattern: claiming-done is a useful forcing function, but the next prompt always finds something. Build the habit of asking it twice before claiming done.
+
+### High-value test added (the only one worth the cost)
+
+Considered two end-to-end tests after thinking about which bug classes still aren't pinned:
+
+**Added** — `tests/test_execution/test_executor_service_llm.py::test_real_litellm_exception_provider_message_reaches_runner_diagnostics`. Patches `litellm.completion` (one layer below the autouse mock) to raise a real `litellm.exceptions.AuthenticationError("Quota exceeded for free tier...")`. Restores the real `pflow.core.llm_client.complete` for LLMNode's binding so the actual `_classify_litellm_error` runs. Asserts the raw provider text appears end-to-end in `result.errors[0].context["provider_message"]`. Pins the full pipeline:
+
+```
+real LiteLLM exception
+  -> _classify_litellm_error (sets provider_message=str(exc))
+  -> typed pflow exception raised
+  -> LLMNode._call_llm catch
+  -> _error_dict_from_exception (preserves diagnostic.context)
+  -> _propagate_error_to_shared (writes _diagnostic_context to shared)
+  -> mark_node_failed (archives to __failures__)
+  -> executor_service._enrich_error_from_node_output (lifts to runtime Diagnostic)
+  -> ExecutionResult.errors[i].context
+```
+
+Existing seal-contract tests cover the seam-side. Existing `test_llm_call_error_context_reaches_runner_diagnostics` covers the runner-side with hand-constructed exceptions. The middle (4-5 layers of error-dict conversion + shared-store propagation + failure archiving + diagnostic enrichment) was uncovered against a *real* upstream exception. A regression dropping `provider_message` in any of those layers would now fail this test loudly.
+
+**Considered but dropped** — smart_filter under real `_validate_model_options`. Investigation showed the regression I'd want to catch (smart_filter forwarding reasoning keys via `model_options` again) is already pinned by `assert last_call["model_options"] is None` in `TestSmartFilterMinimizesReasoning` parametrized cases. Bypassing the autouse mock in this test path is genuinely tricky (the test-file-collection-time `from pflow.core.llm_client import complete` captures whatever the binding is at that moment, which may be the mock if any prior test ran). The autouse-mock-bypass complexity wasn't worth the marginal coverage. Filed as GH #355 instead — the recurring "autouse-mock-bypass blind spot" pattern deserves codification, not a one-off test.
+
+### Follow-up GH issues filed at the end of this session
+
+After thinking about which review findings warrant tracking beyond this branch:
+
+- **#353** — Typed sub-discriminators for `MissingApiKeyError` sub-cases (quota_exceeded / account_suspended / region_restricted / etc.). Today's `kind="missing_key"` collapses real distinct failure modes that need different remediations. The `provider_message` field exposes the raw text but agents would have to substring-match it — the structural pattern is typed discriminators detected at the seam.
+- **#354** — Enrich LLM diagnostic suggestions from `provider_message` text. Lighter-touch UX improvement: when `provider_message` contains stable patterns (`"retired"`, `"context length"`, `"content policy"`), append targeted suggestions. Complementary to #353, not alternative.
+- **#355** — Codify the autouse-mock-bypass test pattern in `tests/CLAUDE.md`. Two regressions in this branch (smart_filter validation, trace_hook thread-id mismatch) shipped past tests because the autouse mock at `pflow.core.llm_client.complete` bypassed real validation. The seal-contract tests in `test_llm_client.py` are the existing template; documenting the pattern prevents the next regression as the seam grows.
+- **Comment on #348** — `llm_providers.py` substantially closes the duplication-elimination half of #348. The remaining "extend to OpenRouter / Bedrock / Azure / Vertex / Mistral / Cohere" half is gated on actual user demand. Recommended re-scoping to "add providers as needed" rather than closing entirely.
+
+---
+
 ## End of Task 158 implementation log
 
-This branch is feature-complete and verified end-to-end. Phase A migration plus six review-driven follow-up commits plus end-to-end verification = the contents of this branch. Open follow-up GH issues #347–#352 capture deferred review findings that don't block merge.
+This branch is feature-complete and verified end-to-end. Phase A migration plus six review-driven follow-up commits plus end-to-end verification = the contents of this branch. Open follow-up GH issues #347–#352 (filed during Phase A reviews) and #353–#355 (filed at end of session §40) capture deferred review findings that don't block merge.
 
 **For the prompt-caching feature work (Phase B–G) that this migration enables:** see Task 159 (`.taskmaster/tasks/task_159/`). The original Task 158 spec and design discussion are preserved in Task 159 (sections §1–§25 of `task_159/implementation/progress-log.md`); the migration was extracted into this task once Phase A's scope crystallized into something architecturally significant on its own.
 

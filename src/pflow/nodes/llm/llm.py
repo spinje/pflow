@@ -91,11 +91,25 @@ def _error_dict_for_generic_failure(model: str, exc: Exception, attempts: int) -
     """Build the error-dict for ``exec_fallback`` after retry exhaustion.
 
     Catches non-deterministic failures that escaped ``_call_llm`` AND any
-    ``LLMTransientError`` whose retry budget was exhausted. We can't call
-    ``to_diagnostics()`` because the caught exception may be any type
-    (network errors, future LiteLLM exception classes, etc.).
+    ``LLMTransientError`` whose retry budget was exhausted.
     """
     from pflow.core.diagnostic import LLM_FAILURE_CATEGORY
+
+    if isinstance(exc, LLMTransientError):
+        diagnostic = exc.to_diagnostics()[0]
+        message = f"LLM call failed after {attempts} attempts. Model: {model}. Error: {exc}"
+        context = dict(diagnostic.context or {})
+        context["kind"] = "retry_exhausted"
+        context["transient_kind"] = exc.kind
+        return {
+            "response": "",
+            "error": message,
+            "error_class": type(exc).__name__,
+            "model": model,
+            "usage": {},
+            "status": "error",
+            "_diagnostic_context": context,
+        }
 
     if "timed out" in str(exc).lower():
         message = (
@@ -136,7 +150,7 @@ class LLMNode(Node):
     - Params: output_schema: dict  # JSON Schema for structured output (optional)
     - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
     - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
-    - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional, overrides reasoning params if keys overlap)
+    - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
     - Writes: shared["response"]: str|dict  # Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
     - Writes: shared["error"]: str  # Error message if LLM call or JSON parsing failed
     - Writes: shared["prompt"]: str  # Rendered prompt actually sent to the model (populated for tracing/audit, including per-item batch traces)

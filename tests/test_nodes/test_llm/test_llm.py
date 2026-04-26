@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pflow.core.exceptions import InvalidRequestError, MissingApiKeyError, UnknownModelError
+from pflow.core.exceptions import InvalidRequestError, LLMTransientError, MissingApiKeyError, UnknownModelError
 from pflow.core.llm_client import AdapterResponse
 from pflow.nodes.llm import LLMNode
 
@@ -376,6 +376,7 @@ class TestLLMNode:
                 f"Invalid request for model '{kwargs['model']}': "
                 f"temperature may only be set to 1 when thinking is enabled",
                 model=kwargs["model"],
+                provider_message="temperature may only be set to 1 when thinking is enabled",
             )
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", raise_invalid_request)
@@ -391,8 +392,9 @@ class TestLLMNode:
         assert ctx["category"] == "llm_failure"
         assert ctx["error_class"] == "InvalidRequestError"
         assert ctx["model"] == "anthropic/claude-opus-4-5"
-        # InvalidRequestError surfaces the provider message in context
-        assert ctx["provider_message"]
+        # provider_message in context is the raw provider text (the WHY) —
+        # distinct from the pflow-wrapped Diagnostic.message (the WHAT).
+        assert ctx["provider_message"] == "temperature may only be set to 1 when thinking is enabled"
         # Prose preserves the provider's actionable text
         error_msg = shared["error"]
         assert "Invalid request" in error_msg
@@ -530,6 +532,8 @@ class TestLLMNode:
                     "total_tokens": 225,
                     "cache_creation_input_tokens": 10,
                     "cache_read_input_tokens": 20,
+                    "thinking_tokens": 0,
+                    "thinking_budget": 0,
                     "cost_usd": 0.00966,
                 },
                 model="gpt-4",
@@ -612,6 +616,35 @@ class TestLLMNode:
         assert action == "default"
         assert shared["response"] == "Success after retry"
         assert call_count["n"] == 3
+
+    def test_llm_transient_error_retry_exhaustion_preserves_transient_kind(self, monkeypatch):
+        """LLMTransientError retries, then fallback keeps the transient subtype."""
+        call_count = {"n": 0}
+
+        def rate_limited_complete(**kwargs):
+            call_count["n"] += 1
+            raise LLMTransientError(
+                "rate limit exceeded",
+                model=kwargs.get("model"),
+                kind="rate_limit",
+                provider_message="rate limit exceeded",
+            )
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", rate_limited_complete)
+
+        node = LLMNode(max_retries=2, wait=0)
+        node.set_params({"prompt": "Test", "model": "openai/gpt-4o-mini"})
+        shared = {}
+
+        action = node.run(shared)
+
+        assert action == "error"
+        assert call_count["n"] == 2
+        assert shared["error_class"] == "LLMTransientError"
+        ctx = shared["_diagnostic_context"]
+        assert ctx["kind"] == "retry_exhausted"
+        assert ctx["transient_kind"] == "rate_limit"
+        assert ctx["provider_message"] == "rate limit exceeded"
 
 
 class TestStripCodeBlock:
@@ -903,6 +936,8 @@ class TestStructuredOutput:
                     "total_tokens": 150,
                     "cache_creation_input_tokens": 0,
                     "cache_read_input_tokens": 0,
+                    "thinking_tokens": 0,
+                    "thinking_budget": 0,
                     "cost_usd": None,
                 },
                 model=kwargs.get("model", "test"),
@@ -1006,6 +1041,8 @@ class TestStructuredOutput:
                     "total_tokens": 275,
                     "cache_creation_input_tokens": 0,
                     "cache_read_input_tokens": 0,
+                    "thinking_tokens": 0,
+                    "thinking_budget": 0,
                     "cost_usd": None,
                 },
                 model=kwargs.get("model", "test"),

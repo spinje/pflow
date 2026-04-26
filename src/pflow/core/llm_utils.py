@@ -7,7 +7,7 @@ structured output from any provider (Anthropic, OpenAI, Gemini, etc.).
 import logging
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pflow.core.exceptions import LLMCallError, LLMResponseParseError
 
@@ -68,27 +68,30 @@ def parse_structured_response(
                 model=model,
             ) from e
 
-        # CRITICAL: Validate through Pydantic model and dump with aliases
+        # CRITICAL: Validate through Pydantic model and dump with aliases.
         # This ensures "from_node"/"to_node" get converted to "from"/"to"
+        # and rejects schema-shaped but semantically invalid model output at
+        # the LLM boundary instead of letting a later caller fail with a
+        # confusing KeyError/TypeError.
         if isinstance(result, dict):
-            # Validate through the expected Pydantic model
             try:
                 model_obj = expected_type.model_validate(result)
-                # Dump with aliases to get correct format
                 validated_result: dict[str, Any] = model_obj.model_dump(by_alias=True, exclude_none=True)
                 return validated_result
-            except Exception as e:
-                # If validation fails, log and return raw result
-                logger.warning(f"Failed to validate result through {expected_type.__name__}: {e}")
-                return result
+            except ValidationError as e:
+                raise LLMResponseParseError(
+                    f"Response JSON does not match expected schema {expected_type.__name__}: {e}",
+                    model=model,
+                ) from e
         elif hasattr(result, "model_dump"):
             # Already a Pydantic model (shouldn't happen but handle it)
             pydantic_result: dict[str, Any] = result.model_dump(by_alias=True, exclude_none=True)
             return pydantic_result
         else:
-            # Fallback: return as-is
-            fallback_result: dict[str, Any] = result
-            return fallback_result
+            raise LLMResponseParseError(
+                f"Response JSON must be an object for schema {expected_type.__name__}, got {type(result).__name__}",
+                model=model,
+            )
 
     except LLMCallError:
         # Already a typed parsing error — let it propagate without re-wrapping.

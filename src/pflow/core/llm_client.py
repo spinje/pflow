@@ -50,32 +50,27 @@ from pflow.core.exceptions import (
     MissingSdkError,
     UnknownModelError,
 )
+from pflow.core.llm_providers import detect_provider, normalize_model_name
 from pflow.core.llm_reasoning_map import DEFAULT_MAX_TOKENS_BASE, EFFORT_RATIOS
 
 logger = logging.getLogger(__name__)
 
-# Bare model names (no provider prefix) route inconsistently via LiteLLM.
-# e.g. "gemini-3-flash-preview" → Vertex AI (needs Google Cloud SDK),
-#      "gemini/gemini-3-flash-preview" → Google AI Studio (uses GEMINI_API_KEY).
-# The adapter normalizes at the seam so the rest of pflow never worries.
-_BARE_MODEL_PREFIX_MAP: dict[str, str] = {
-    "claude-": "anthropic/",
-    "gemini-": "gemini/",
-    "gpt-": "openai/",
-    "o1-": "openai/",
-    "o3-": "openai/",
-    "o4-": "openai/",
-}
+_REASONING_MODEL_OPTION_KEYS = frozenset({
+    "thinking",
+    "thinking_budget",
+    "thinking_effort",
+    "reasoning_effort",
+    "reasoning_max_tokens",
+    "thinking_level",
+})
 
 
 def _normalize_model_name(model: str) -> str:
     """Add a provider prefix to bare model names when the provider is unambiguous."""
-    if "/" in model:
-        return model
-    for bare_prefix, provider_prefix in _BARE_MODEL_PREFIX_MAP.items():
-        if model.startswith(bare_prefix):
-            return provider_prefix + model
-    return model
+    normalized = normalize_model_name(model)
+    if normalized != model:
+        logger.debug("Normalized bare model name %r to %r", model, normalized)
+    return normalized
 
 
 # `litellm` is lazy-imported inside complete() and _classify_litellm_error
@@ -236,8 +231,11 @@ def complete(
             ``llm_reasoning_map.map_reasoning_options(...)``. The adapter
             translates Anthropic-specific shapes to LiteLLM-native form;
             other providers pass through.
-        model_options: User-provided extra kwargs merged last (overrides
-            adapter-built kwargs on key collision).
+        model_options: User-provided extra kwargs merged last. Reasoning
+            keys are rejected here because pflow has dedicated
+            ``reasoning_effort`` / ``reasoning_max_tokens`` channels; letting
+            raw model options bypass that path silently drops provider-specific
+            validation and translation.
         timeout: Per-request timeout in seconds. None disables.
         trace_hook: Optional callable; see ``TraceHook`` docstring. Fires
             ``after_call`` with ``error`` set before any ``LLMCallError`` is
@@ -275,9 +273,8 @@ def complete(
     translated_reasoning = _translate_reasoning_for_litellm(model, reasoning_kwargs or {})
     kwargs.update(translated_reasoning)
 
-    # User-provided model_options merged last so they can override anything
-    # the adapter built. Matches existing pflow LLMNode behavior.
     if model_options:
+        _validate_model_options(model, model_options)
         kwargs.update(model_options)
 
     # Capture the request-side thinking budget so _normalize can include it
@@ -410,33 +407,51 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     import litellm.exceptions as le
     import openai
 
+    # Capture the raw provider/LiteLLM exception text once so every typed
+    # subclass below carries it as ``provider_message``. This is the WHY
+    # (provider's own diagnosis: "Quota exceeded", "Region not allowed",
+    # "Model retired") that pflow's wrapped message would otherwise discard.
+    # Diagnostic.message stays as the pflow-wrapped framing (the WHAT);
+    # provider_message exposes the raw detail for agents that need to
+    # discriminate sub-cases beyond the typed kind/reason.
+    raw = str(exc)
+
     # 1. Auth (specific status-code classes; check before other 4xx).
     if isinstance(exc, openai.AuthenticationError):
         return MissingApiKeyError(
             f"API key required for model '{model}'",
             model=model,
             kind="missing_key",
+            provider_message=raw,
         )
     if isinstance(exc, openai.PermissionDeniedError):
         return MissingApiKeyError(
             f"API key for model '{model}' lacks permission for this request",
             model=model,
             kind="lacks_permission",
+            provider_message=raw,
         )
 
     # 2. Model name issues (must check before the generic BadRequestError
     # branch — LiteLLMUnknownProvider IS-A BadRequestError).
-    if isinstance(exc, le.LiteLLMUnknownProvider) or "LLM Provider NOT provided" in str(exc):
+    if isinstance(exc, le.LiteLLMUnknownProvider) or "LLM Provider NOT provided" in raw:
         return UnknownModelError(
             f"Model '{model}' has no provider prefix",
             model=model,
             reason="missing_prefix",
+            provider_message=raw,
         )
     if isinstance(exc, openai.NotFoundError):
-        return UnknownModelError(f"Unknown model: {model}", model=model, reason="unknown_name")
+        return UnknownModelError(
+            f"Unknown model: {model}",
+            model=model,
+            reason="unknown_name",
+            provider_message=raw,
+        )
 
-    # 3. Transient (network, rate-limit, 5xx). Marker subclass; LLMNode's
-    # _call_llm re-raises rather than catching, so the Node retry loop fires.
+    # 3. Transient (network, rate-limit, 5xx). LLMTransientError carries a
+    # kind discriminator; LLMNode's _call_llm re-raises rather than catching,
+    # so the Node retry loop fires.
     # APIConnectionError covers Timeout (Timeout IS-A APITimeoutError IS-A
     # APIConnectionError). ServiceUnavailableError / BadGatewayError have
     # no openai-side mirror — referenced via litellm.exceptions.
@@ -457,11 +472,17 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     ):
         if isinstance(exc, openai.APIConnectionError) and _has_import_error_cause(exc):
             return MissingSdkError(
-                str(exc),
+                raw,
                 model=model,
                 package=_extract_missing_package(exc),
+                provider_message=raw,
             )
-        return LLMTransientError(str(exc), model=model)
+        return LLMTransientError(
+            raw,
+            model=model,
+            kind=_classify_transient_kind(exc),
+            provider_message=raw,
+        )
 
     # 4. Response validation — LiteLLM rejected the provider's response
     # shape (e.g. ``JSONSchemaValidationError`` against an output schema).
@@ -470,12 +491,17 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
         return LLMResponseParseError(
             f"Provider response failed validation for model '{model}': {exc}",
             model=model,
+            provider_message=raw,
         )
 
     # 5. Bad request (covers schema, content policy, context window,
     # unsupported params, image fetch, rejected request).
     if isinstance(exc, openai.BadRequestError):
-        return InvalidRequestError(f"Invalid request for model '{model}': {exc}", model=model)
+        return InvalidRequestError(
+            f"Invalid request for model '{model}': {exc}",
+            model=model,
+            provider_message=raw,
+        )
 
     # 6. Default: unrecognized OpenAIError subclass. Treat as deterministic
     # so we don't infinite-retry an unknown server condition. Add explicit
@@ -483,6 +509,7 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     return InvalidRequestError(
         f"Unrecognized LiteLLM error for model '{model}' ({type(exc).__name__}): {exc}",
         model=model,
+        provider_message=raw,
     )
 
 
@@ -510,6 +537,20 @@ def _extract_missing_package(exc: BaseException) -> str | None:
     return match.group(1) if match else None
 
 
+def _classify_transient_kind(exc: Exception) -> str:
+    """Return a stable discriminator for retryable LiteLLM failures."""
+    import litellm.exceptions as le
+    import openai
+
+    if isinstance(exc, le.Timeout):
+        return "timeout"
+    if isinstance(exc, openai.RateLimitError):
+        return "rate_limit"
+    if isinstance(exc, (openai.InternalServerError, le.ServiceUnavailableError, le.BadGatewayError)):
+        return "server_error"
+    return "connection"
+
+
 def _build_messages(
     *,
     system: str | None,
@@ -534,6 +575,21 @@ def _build_messages(
         messages.append({"role": "user", "content": prompt})
 
     return messages
+
+
+def _validate_model_options(model: str, model_options: dict[str, Any]) -> None:
+    """Reject reasoning kwargs from the raw provider-options escape hatch."""
+    reasoning_keys = sorted(set(model_options).intersection(_REASONING_MODEL_OPTION_KEYS))
+    if not reasoning_keys:
+        return
+
+    joined = ", ".join(reasoning_keys)
+    raise InvalidRequestError(
+        f"Invalid model_options for model '{model}': reasoning option keys "
+        f"({joined}) must use pflow's dedicated reasoning_effort or "
+        f"reasoning_max_tokens parameters instead of model_options.",
+        model=model,
+    )
 
 
 def _attachment_to_content_block(attachment: Attachment) -> dict[str, Any]:
@@ -588,6 +644,13 @@ def _translate_reasoning_for_litellm(model: str, kwargs: dict[str, Any]) -> dict
     elif thinking_flag is True and thinking_budget is not None:
         # Older Anthropic path (Sonnet 4.x, Opus 4.0/4.1)
         out["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+    elif thinking_flag is True:
+        raise InvalidRequestError(
+            f"Invalid reasoning options for model '{model}': thinking=True requires "
+            "thinking_budget or thinking_effort. Use reasoning_effort or "
+            "reasoning_max_tokens on the LLM node instead of raw model_options.",
+            model=model,
+        )
     elif thinking_flag is False:
         # Disable: omit thinking entirely (Anthropic default is no thinking).
         # The caller may have other reasoning kwargs we should keep; fall
@@ -606,8 +669,8 @@ def _translate_reasoning_for_litellm(model: str, kwargs: dict[str, Any]) -> dict
 
 def _is_anthropic(model: str) -> bool:
     """Match the same provider-detection used by ``llm_reasoning_map``."""
-    name = model.lower()
-    return "anthropic/" in name or "claude-" in name or name.startswith("claude")
+    provider = detect_provider(model)
+    return provider is not None and provider.name == "anthropic"
 
 
 def _extract_thinking_budget(kwargs: dict[str, Any]) -> int:
@@ -814,9 +877,22 @@ def _detect_empty_response_warnings(
                 "context": {"model": model, "finish_reason": None},
             }
         ]
-    # Any other future finish_reason value: silent (we'd need a real case
-    # to know whether it's a success or anomaly).
-    return []
+    return [
+        {
+            "kind": "llm_empty_response_unrecognized_finish_reason",
+            "text": (
+                f"Empty response from {model}: provider returned an unrecognized "
+                f"finish_reason={finish_reason!r} with no content. Investigate the response shape."
+            ),
+            "context": {
+                "model": model,
+                "finish_reason": finish_reason,
+                "output_tokens": output_tokens,
+                "thinking_budget": thinking_budget,
+                "thinking_tokens": thinking_tokens,
+            },
+        }
+    ]
 
 
 def _safe_int(value: int | float | None) -> int:
@@ -832,12 +908,12 @@ def _safe_int(value: int | float | None) -> int:
 def _emit_trace(hook: TraceHook | None, event: dict[str, Any]) -> None:
     """Invoke a trace hook, swallowing any exception.
 
-    Tracing must never break user workflows. Exceptions are logged at
-    DEBUG level and discarded.
+    Tracing must never break user workflows. Exceptions are logged and
+    discarded.
     """
     if hook is None:
         return
     try:
         hook(event)
     except Exception as exc:
-        logger.debug("trace_hook raised %s: %s", type(exc).__name__, exc)
+        logger.warning("trace_hook raised %s: %s", type(exc).__name__, exc)

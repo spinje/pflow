@@ -16,12 +16,12 @@ Caching:
 import hashlib
 import logging
 from functools import lru_cache
-from typing import Any
 
 from pydantic import BaseModel
 
 from pflow.core.exceptions import LLMCallError
 from pflow.core.llm_client import complete
+from pflow.core.llm_reasoning_map import map_reasoning_options
 from pflow.core.llm_utils import parse_structured_response
 
 logger = logging.getLogger(__name__)
@@ -168,17 +168,12 @@ Return ONLY the field paths (without type annotations) that the agent needs to s
 
         filtering_model = get_model_for_feature("filtering")
 
-        # Reduce thinking for Gemini models - filtering is a simple task.
-        # Note: uses heuristic based on Google's current naming (gemini-3,
-        # gemini-2.5). The values land in `model_options`, which the adapter
-        # forwards to LiteLLM verbatim — Gemini accepts these top-level kwargs.
-        model_options: dict[str, Any] = {}
-        if "gemini-3" in filtering_model:
-            model_options["thinking_level"] = "minimal"
-            logger.debug(f"Applied thinking_level=minimal for {filtering_model}")
-        elif "gemini-2.5" in filtering_model and "lite" not in filtering_model:
-            model_options["thinking_budget"] = 0
-            logger.debug(f"Applied thinking_budget=0 for {filtering_model}")
+        # Trivial classification — request minimum reasoning. The canonical
+        # translator handles per-provider mapping (thinking_budget=0 on Gemini
+        # 2.5, thinking_level=minimal on Gemini 3, thinking=False on Anthropic,
+        # no-op on non-reasoning models), so we don't duplicate provider
+        # detection here.
+        reasoning_kwargs = map_reasoning_options(filtering_model, "none", None, None)
 
         # Pydantic class → JSON Schema dict (the adapter accepts only dicts).
         response = complete(
@@ -186,7 +181,7 @@ Return ONLY the field paths (without type annotations) that the agent needs to s
             prompt=prompt,
             temperature=0.0,
             schema=FilteredFields.model_json_schema(),
-            model_options=model_options or None,
+            reasoning_kwargs=reasoning_kwargs or None,
         )
 
         # Parse structured response

@@ -641,29 +641,36 @@ class TestSmartFilterCaching:
         assert result == fields
 
 
-class TestGeminiThinkingHeuristics:
-    """Smart-filter forwards Gemini-specific reasoning kwargs via ``model_options``.
+class TestSmartFilterMinimizesReasoning:
+    """Smart-filter requests minimum reasoning via the canonical channel.
 
-    Field filtering is a trivial classification task. A Gemini reasoning
-    model would otherwise spend tokens (and money) on internal thinking
-    before answering — making smart-filter calls 5-10x more expensive on
-    Gemini. Pflow forwards reasoning-disable kwargs via ``model_options``
-    so the adapter passes them to LiteLLM verbatim.
+    Field filtering is a trivial classification task. A reasoning model
+    would otherwise spend tokens (and money) on internal thinking before
+    answering — making smart-filter calls 5-10x more expensive. Pflow
+    expresses "minimum reasoning" via ``reasoning_effort="none"`` routed
+    through ``map_reasoning_options``, the same translator user-facing
+    LLM nodes use. Provider detection lives in one place; smart_filter
+    does NOT duplicate it.
 
-    These tests pin the wiring: a silent regression in
-    ``smart_filter.py:174-180`` would make Gemini-driven smart-filtering
-    quietly burn through token budgets without any test failure.
+    These tests pin two contracts:
+    1. Reasoning-disable kwargs flow via ``reasoning_kwargs`` (canonical),
+       NOT ``model_options`` (which the adapter rejects for reasoning keys).
+    2. Provider mapping matches what ``map_reasoning_options(..., "none", ...)``
+       produces for each capability.
     """
 
     @pytest.mark.parametrize(
-        "model,expected_options",
+        "model,expected_reasoning_kwargs",
         [
             ("gemini-3-flash-preview", {"thinking_level": "minimal"}),
             ("gemini-2.5-pro", {"thinking_budget": 0}),
             ("gemini-2.5-flash", {"thinking_budget": 0}),
+            ("anthropic/claude-sonnet-4-5", {"thinking": False}),
         ],
     )
-    def test_gemini_models_get_thinking_minimized(self, monkeypatch, mock_llm_client, model, expected_options):
+    def test_reasoning_models_get_minimum_reasoning(
+        self, monkeypatch, mock_llm_client, model, expected_reasoning_kwargs
+    ):
         monkeypatch.setattr("pflow.core.llm_config.get_model_for_feature", lambda _f: model)
         mock_llm_client.set_response(
             "*",
@@ -675,12 +682,17 @@ class TestGeminiThinkingHeuristics:
 
         last_call = mock_llm_client.call_history[-1]
         assert last_call["model"] == model
-        assert last_call["model_options"] == expected_options
+        assert last_call["reasoning_kwargs"] == expected_reasoning_kwargs
+        # Critical regression guard: reasoning kwargs must NEVER flow via
+        # model_options. The adapter's _validate_model_options rejects
+        # exactly these keys, so a regression here would crash production
+        # despite the autouse mock making this assertion silently pass.
+        assert last_call["model_options"] is None
 
-    def test_gemini_lite_gets_no_model_options(self, monkeypatch, mock_llm_client):
-        # Lite variants have no thinking — heuristic skips them, so the
-        # adapter should receive model_options=None (avoid passing an
-        # empty dict that LiteLLM might choke on).
+    def test_non_reasoning_models_pass_no_reasoning_kwargs(self, monkeypatch, mock_llm_client):
+        # Non-reasoning models (gemini-2.5-flash-lite, gpt-4o, etc.) get
+        # reasoning_kwargs=None: map_reasoning_options returns {} for them,
+        # which smart_filter coerces to None to avoid passing an empty dict.
         monkeypatch.setattr(
             "pflow.core.llm_config.get_model_for_feature",
             lambda _f: "gemini-2.5-flash-lite",
@@ -694,23 +706,5 @@ class TestGeminiThinkingHeuristics:
         smart_filter_fields(fields, threshold=50)
 
         last_call = mock_llm_client.call_history[-1]
-        assert last_call["model_options"] is None
-
-    def test_non_gemini_models_get_no_model_options(self, monkeypatch, mock_llm_client):
-        # Non-Gemini models don't have the silent-thinking-cost problem —
-        # no kwargs needed. Anthropic's reasoning is opt-in via
-        # reasoning_effort/reasoning_max_tokens, not on by default.
-        monkeypatch.setattr(
-            "pflow.core.llm_config.get_model_for_feature",
-            lambda _f: "anthropic/claude-sonnet-4-5",
-        )
-        mock_llm_client.set_response(
-            "*",
-            FilteredFields,
-            {"included_fields": ["field0"], "reasoning": "test"},
-        )
-        fields = [(f"field{i}", "string") for i in range(60)]
-        smart_filter_fields(fields, threshold=50)
-
-        last_call = mock_llm_client.call_history[-1]
+        assert last_call["reasoning_kwargs"] is None
         assert last_call["model_options"] is None
