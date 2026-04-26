@@ -18,7 +18,6 @@ from typing import Any, Callable, Optional
 
 from pflow.core.exceptions import CompilationError
 from pflow.core.json_utils import try_parse_json
-from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .types import BatchConfig, NodeConfig
@@ -669,7 +668,6 @@ def _capture_item_trace(
     if isinstance(node_output, dict):
         llm_usage = node_output.get("llm_usage")
         if isinstance(llm_usage, dict):
-            enrich_llm_usage_with_cost(llm_usage)
             item_event["llm_call"] = llm_usage
         for src_key, dst_key in [("response", "llm_response"), ("prompt", "llm_prompt")]:
             value = node_output.get(src_key)

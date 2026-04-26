@@ -2,8 +2,8 @@
 
 These tests verify that:
 1. API keys from pflow settings are injected into os.environ
-2. Provider detection checks env vars, settings, and llm CLI in order
-3. Priority is respected (env > settings > llm CLI)
+2. Provider detection checks env vars and settings (in that order)
+3. Priority is respected (env > settings)
 """
 
 import os
@@ -125,22 +125,18 @@ class TestHasProviderKey:
 
             assert _has_provider_key("openai") is True
 
-    def test_falls_back_to_llm_cli(self, monkeypatch):
-        """Falls back to llm CLI when env and settings empty."""
+    def test_returns_false_when_neither_env_nor_settings_have_key(self, monkeypatch):
+        """Returns False when no env var and no pflow settings entry."""
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
         mock_manager = MagicMock()
         mock_manager.get_env.return_value = None
 
-        with (
-            patch("pflow.core.settings.SettingsManager", return_value=mock_manager),
-            patch("pflow.core.llm_config._has_llm_key", return_value=True) as mock_llm,
-        ):
+        with patch("pflow.core.settings.SettingsManager", return_value=mock_manager):
             from pflow.core.llm_config import _has_provider_key
 
-            assert _has_provider_key("gemini") is True
-            mock_llm.assert_called_once_with("gemini")
+            assert _has_provider_key("gemini") is False
 
     def test_env_var_checked_before_settings(self, monkeypatch):
         """Env var is found without checking settings."""
@@ -187,11 +183,7 @@ class TestDetectDefaultModel:
 
     def test_priority_order(self):
         """Anthropic > Gemini > OpenAI priority."""
-        with (
-            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
-            patch("pflow.core.llm_config._has_provider_key") as mock_has_key,
-        ):
-            del os.environ["PYTEST_CURRENT_TEST"]
+        with patch("pflow.core.llm_config._has_provider_key") as mock_has_key:
             mock_has_key.return_value = True
 
             from pflow.core.llm_config import _detect_default_model, clear_model_cache
@@ -206,11 +198,7 @@ class TestDetectDefaultModel:
 
     def test_skips_to_next_when_no_key(self):
         """Skips provider without key, uses next available."""
-        with (
-            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
-            patch("pflow.core.llm_config._has_provider_key") as mock_has_key,
-        ):
-            del os.environ["PYTEST_CURRENT_TEST"]
+        with patch("pflow.core.llm_config._has_provider_key") as mock_has_key:
             mock_has_key.side_effect = lambda p: p == "openai"
 
             from pflow.core.llm_config import _detect_default_model, clear_model_cache
@@ -218,4 +206,5 @@ class TestDetectDefaultModel:
             clear_model_cache()
             result = _detect_default_model()
 
-            assert result == "gpt-5.2"
+            # Provider prefix is required — LiteLLM rejects bare model names
+            assert result == "openai/gpt-5.2"

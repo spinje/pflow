@@ -163,56 +163,89 @@ def _compute_outlier_threshold(values: list[float]) -> float | None:
     return q3 + 1.5 * iqr
 
 
+def _accumulate_call_cost(call: dict[str, Any] | None, state: list[Any]) -> None:
+    """Fold a single ``llm_call`` dict into ``state = [total, found_any, has_unpriced]``."""
+    if not isinstance(call, dict) or "cost_usd" not in call:
+        return
+    cost = call.get("cost_usd")
+    state[1] = True  # found_any
+    if cost is None:
+        state[2] = True  # has_unpriced
+    else:
+        state[0] += cost  # total
+
+
+def _accumulate_child_cost(child_event: dict[str, Any], state: list[Any]) -> None:
+    """Fold a recursive child cost into ``state``."""
+    child_cost = _compute_event_cost(child_event)
+    if child_cost is None:
+        # Could mean "no data" or "unpriced". Distinguish by scanning the
+        # subtree: if any llm_call exists, the None reflects an unpriced leaf
+        # (propagate). If not, the subtree contributes nothing.
+        if _has_any_cost_data(child_event):
+            state[1] = True
+            state[2] = True
+    else:
+        state[0] += child_cost
+        state[1] = True
+
+
 def _compute_event_cost(event: dict[str, Any]) -> float | None:
     """Recursively compute total cost for an event (including children).
 
-    Returns None if no cost data exists anywhere in the tree.
-    Returns 0.0 if cost data exists but all costs are zero.
+    Returns None when:
+      - no cost data exists anywhere in the tree, OR
+      - any leaf has ``cost_usd: None`` (LiteLLM has no pricing for that
+        model — Ollama, custom endpoints, brand-new models). The unpriced
+        case propagates as None so the report displays "—" rather than a
+        misleading sum that silently drops the unpriced contribution.
+
+    Returns 0.0 only when every leaf is explicitly priced at zero.
 
     NOTE: This traverses the same tree structure as _collect_llm_summary() in
     workflow_trace.py. If the trace event shape changes, both must be updated.
     """
-    total = 0.0
-    found_any = False
+    state: list[Any] = [0.0, False, False]  # [total, found_any, has_unpriced]
 
-    # Direct LLM cost on this event
-    llm_call = event.get("llm_call")
-    if isinstance(llm_call, dict) and "cost_usd" in llm_call:
-        total += llm_call["cost_usd"] or 0.0
-        found_any = True
+    _accumulate_call_cost(event.get("llm_call"), state)
 
     # Recurse into batch items
     # Invariant (D9): batch items have llm_call XOR events, never both.
-    # If both were present, this would double-count. See workflow_trace.py docstring.
     for item in event.get("batch_items", []):
-        # Leaf item with direct LLM call
-        item_llm = item.get("llm_call")
-        if isinstance(item_llm, dict) and "cost_usd" in item_llm:
-            total += item_llm["cost_usd"] or 0.0
-            found_any = True
-        # Sub-workflow item with nested events
+        _accumulate_call_cost(item.get("llm_call"), state)
         for child_event in item.get("events", []):
-            child_cost = _compute_event_cost(child_event)
-            if child_cost is not None:
-                total += child_cost
-                found_any = True
+            _accumulate_child_cost(child_event, state)
 
-    # Recurse into sub-workflow events
     for child_event in event.get("sub_workflow_events", []):
-        child_cost = _compute_event_cost(child_event)
-        if child_cost is not None:
-            total += child_cost
-            found_any = True
+        _accumulate_child_cost(child_event, state)
 
-    # Recurse into "events" — used by sub-workflow batch items
-    # (batch items store child events under "events", not "sub_workflow_events")
+    # "events" — used by sub-workflow batch items (they store child events
+    # under "events", not "sub_workflow_events").
     for child_event in event.get("events", []):
-        child_cost = _compute_event_cost(child_event)
-        if child_cost is not None:
-            total += child_cost
-            found_any = True
+        _accumulate_child_cost(child_event, state)
 
-    return total if found_any else None
+    total, found_any, has_unpriced = state
+    if not found_any or has_unpriced:
+        return None
+    return float(total)
+
+
+def _has_any_cost_data(event: dict[str, Any]) -> bool:
+    """Quick scan: does this event tree carry an ``llm_call`` anywhere?
+
+    Used by _compute_event_cost to distinguish "child has no cost data
+    (skip)" from "child has cost data but is unpriced (propagate None)".
+    """
+    if isinstance(event.get("llm_call"), dict):
+        return True
+    if any(
+        isinstance(item.get("llm_call"), dict) or any(_has_any_cost_data(c) for c in item.get("events", []))
+        for item in event.get("batch_items", [])
+    ):
+        return True
+    if any(_has_any_cost_data(c) for c in event.get("sub_workflow_events", [])):
+        return True
+    return any(_has_any_cost_data(c) for c in event.get("events", []))
 
 
 def _format_cost(cost: float | None) -> str:
@@ -553,9 +586,18 @@ def _build_summary(
         elif llm.get("total_tokens", 0):
             # Fallback for traces generated before input/output breakdown was added
             lines.append(f"- Tokens: {llm['total_tokens']:,}")
-        cost = llm.get("total_cost_usd", 0)
+        cost = llm.get("total_cost_usd")
         if cost is not None and cost > 0:
             lines.append(f"- Total cost: ${cost:.4f}")
+        elif llm.get("pricing_available") is False:
+            partial = llm.get("partial_cost_usd")
+            unavailable = llm.get("unavailable_models", [])
+            if partial is not None and partial > 0:
+                lines.append(
+                    f"- Total cost: — (pricing unavailable for {', '.join(unavailable)}; partial cost ${partial:.4f})"
+                )
+            else:
+                lines.append(f"- Total cost: — (pricing unavailable for {', '.join(unavailable)})")
         models = llm.get("models_used", [])
         if models:
             lines.append(f"- Models: {', '.join(models)}")

@@ -20,7 +20,6 @@ from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.instrumentation import (
     call_completion_callback,
     call_start_callback,
-    enrich_llm_cost,
     initialize_execution_state,
     record_trace,
 )
@@ -272,59 +271,28 @@ class TestLLMUsageTracking:
         assert "llm_call" not in trace.events[0]
         assert trace.events[0]["node_id"] == "regular_node"
 
-    def test_llm_usage_enriched_with_cost_in_shared_store(self):
-        """After enrichment, shared store's llm_usage dict should have cost_usd added.
-
-        Uses input_tokens/output_tokens keys (the standard keys enrich_llm_usage_with_cost reads).
-        """
-        node_id = "llm_cost"
-        shared: dict[str, Any] = {
-            node_id: {
-                "llm_usage": {
-                    "model": "gpt-4",
-                    "input_tokens": 1000,
-                    "output_tokens": 500,
-                },
-            },
-            "llm_usage": {
-                "model": "gpt-4",
-                "input_tokens": 1000,
-                "output_tokens": 500,
-            },
-        }
-
-        enrich_llm_cost(node_id, shared)
-
-        # Both root-level and namespaced llm_usage should be enriched
-        assert "cost_usd" in shared["llm_usage"]
-        # gpt-4: $30/1M input, $60/1M output
-        # 1000 input = 0.03, 500 output = 0.03 => total = 0.06
-        assert isinstance(shared["llm_usage"]["cost_usd"], float)
-        assert shared["llm_usage"]["cost_usd"] == 0.06
-
     def test_trace_event_has_cost_usd(self):
-        """The trace event's llm_call should contain cost_usd from enrichment.
+        """The trace event's ``llm_call`` carries the ``cost_usd`` set upstream.
 
-        In real execution, the node writes llm_usage into its namespaced output.
-        enrich_llm_cost finds it at shared[node_id]["llm_usage"] and enriches
-        it in-place. record_trace then reads the same dict via shared[node_id].
+        The adapter populates ``cost_usd`` on the node's namespaced
+        ``llm_usage`` dict from LiteLLM's ``response_cost``. ``record_trace``
+        reads the same dict and emits it on ``event['llm_call']``.
         """
         trace = WorkflowTraceCollector("test")
         import time
 
         node_id = "llm_cost"
-        # Single shared usage dict (as in real namespaced execution)
+        # Single shared usage dict (as in real namespaced execution); cost_usd
+        # set as the adapter would set it from LiteLLM's response_cost.
         usage = {
             "model": "gpt-4",
             "input_tokens": 1000,
             "output_tokens": 500,
+            "cost_usd": 0.06,
         }
         shared: dict[str, Any] = {
             node_id: {"llm_usage": usage},
         }
-
-        # Enrich cost first (engine does this before record_trace)
-        enrich_llm_cost(node_id, shared)
 
         record_trace(
             node_id=node_id,
@@ -342,12 +310,10 @@ class TestLLMUsageTracking:
         assert len(trace.events) == 1
         event = trace.events[0]
         assert "llm_call" in event
-        assert "cost_usd" in event["llm_call"]
-        assert isinstance(event["llm_call"]["cost_usd"], float)
         assert event["llm_call"]["cost_usd"] == 0.06
 
-    def test_llmnode_post_enriches_cost_before_memo_write(self, tmp_path):
-        """LLMNode memoized output must include cost_usd, not just live shared state."""
+    def test_llmnode_post_writes_cost_usd_to_memo_cache(self, tmp_path):
+        """LLMNode memoized output includes cost_usd as set by the adapter."""
         cache = MemoizationCache(db_path=tmp_path / "cache.db")
         shared, action = _run_single_node_workflow(
             "llm",

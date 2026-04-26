@@ -61,13 +61,19 @@ def format_execution_success(
 
     # Add metrics from collector
     if metrics_collector:
-        trace = shared_storage.get("_trace_collector") if shared_storage else None
+        trace = shared_storage.get("__trace_collector__") if shared_storage else None
         llm_calls = trace.collect_llm_calls() if trace else []
         metrics_summary = metrics_collector.get_summary(llm_calls)
 
-        # Add top-level metrics (CLI structure)
+        # Add top-level metrics (CLI structure). When pricing is unavailable
+        # for any LLM call (LiteLLM doesn't recognize the model — Ollama,
+        # custom endpoints, brand-new releases), surface the tri-state
+        # discriminators alongside the bare null cost so JSON consumers can
+        # distinguish "no LLM calls" from "LLM calls happened but pricing
+        # data missing."
         result["duration_ms"] = metrics_summary.get("duration_ms")
         result["total_cost_usd"] = metrics_summary.get("total_cost_usd")
+        _mirror_pricing_tri_state(result, metrics_summary)
 
         # Extract workflow node count
         workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
@@ -113,6 +119,27 @@ def format_execution_success(
         result["trace_path"] = trace_path
 
     return result
+
+
+def _mirror_pricing_tri_state(result: dict[str, Any], metrics_summary: dict[str, Any]) -> None:
+    """Mirror the pricing tri-state (partial_cost_usd / pricing_available /
+    unavailable_models) from metrics_summary to top-level result keys.
+
+    When pricing is unavailable for any LLM call, the bare top-level
+    ``total_cost_usd: null`` is ambiguous — agents can't tell "no LLM calls"
+    from "calls happened but pricing data missing." Mirroring the
+    discriminators alongside makes the cause obvious without drilling into
+    ``result["metrics"]["total"]``.
+    """
+    if metrics_summary.get("pricing_available") is not False:
+        return
+    result["pricing_available"] = False
+    partial_cost = metrics_summary.get("partial_cost_usd")
+    if partial_cost is not None:
+        result["partial_cost_usd"] = partial_cost
+    unavailable = metrics_summary.get("unavailable_models")
+    if unavailable:
+        result["unavailable_models"] = list(unavailable)
 
 
 def _collect_outputs(
@@ -250,7 +277,7 @@ def format_success_as_text(  # noqa: C901
         if partial is not None:
             lines.append(f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_str})")
         else:
-            lines.append(f"⚠️  Cost unavailable — model not in pricing table: {models_str}")
+            lines.append(f"⚠️  Cost unavailable — pricing data missing for: {models_str}")
     elif total_cost and total_cost > 0:
         workflow_metrics = metrics.get("workflow", {})
         total_tokens = workflow_metrics.get("total_tokens", 0)

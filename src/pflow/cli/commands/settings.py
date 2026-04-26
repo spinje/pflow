@@ -36,9 +36,9 @@ def settings() -> None:
       pflow settings set-env GITHUB_TOKEN "ghp-..."
       pflow settings show                          Verify stored values
     \b
-    LLM provider keys (via Simon Willison's llm tool):
-      llm keys set anthropic
-      llm keys set openai
+    LLM provider keys (via environment variables or pflow settings):
+      export ANTHROPIC_API_KEY=sk-ant-...
+      pflow settings set-env OPENAI_API_KEY "sk-..."
     \b
     Stored credentials are available as fallbacks for declared workflow inputs.
     Precedence: CLI params > shell env > settings env > workflow defaults.
@@ -396,19 +396,16 @@ def _get_resolved_model(setting_name: str, configured_value: str | None, default
     Returns:
         String describing the resolved value and its source
     """
-    from pflow.core.llm_config import (
-        get_default_llm_model,
-        get_llm_cli_default_model,
-    )
+    from pflow.core.llm_config import get_default_llm_model
 
     if configured_value:
         return f"{configured_value} (configured)"
 
-    # For default_model, resolution is: settings → llm CLI → error
+    # For default_model, resolution is: settings → auto-detect → error
     if setting_name == "default":
-        llm_cli_default = get_llm_cli_default_model()
-        if llm_cli_default:
-            return f"(llm CLI default → {llm_cli_default})"
+        detected = get_default_llm_model()
+        if detected:
+            return f"(auto-detect → {detected})"
         return "(not configured - will error if LLM node used)"
 
     # For discovery/filtering, resolution is: feature → default_model → auto-detect → fallback
@@ -448,7 +445,7 @@ def llm_show() -> None:
     click.echo(f"  filtering_model:  {filtering_resolved}")
 
     click.echo("\nResolution order:")
-    click.echo("  default:    workflow params → default_model → llm CLI default → error")
+    click.echo("  default:    workflow params → default_model → auto-detect → error")
     click.echo("  discovery:  discovery_model → default_model → auto-detect → fallback")
     click.echo("  filtering:  filtering_model → default_model → auto-detect → fallback")
 
@@ -456,6 +453,27 @@ def llm_show() -> None:
     click.echo("  pflow settings llm set-default <model>")
     click.echo("  pflow settings llm set-discovery <model>")
     click.echo("  pflow settings llm set-filtering <model>")
+
+
+def _normalize_and_warn_model(model: str) -> str:
+    """Normalize bare model names and warn on unrecognized patterns.
+
+    LiteLLM requires provider-prefixed model names (e.g. ``gemini/gemini-3-flash-preview``).
+    Bare names route inconsistently — e.g. ``gemini-3-flash-preview`` routes to Vertex AI
+    instead of Google AI Studio.
+    """
+    from pflow.core.llm_client import _normalize_model_name
+
+    normalized = _normalize_model_name(model)
+    if normalized != model:
+        click.echo(f"  Normalized: {normalized}", err=True)
+    elif "/" not in model:
+        click.echo(
+            f"  ⚠ '{model}' doesn't match any known provider (anthropic/, gemini/, openai/).\n"
+            f"    If this is a custom or self-hosted model, it will be passed to LiteLLM as-is.",
+            err=True,
+        )
+    return normalized
 
 
 @llm.command(name="set-default")
@@ -468,11 +486,17 @@ def llm_set_default(model: str) -> None:
     - Discovery commands (when discovery_model not set)
     - Smart filtering (when filtering_model not set)
 
+    Bare names from known providers are auto-prefixed (e.g.
+    ``gpt-4o-mini`` → ``openai/gpt-4o-mini``); a "Normalized:" line
+    confirms the rewrite. Unknown bare names pass through with a
+    warning so custom or self-hosted models still work.
+
     Example:
-        pflow settings llm set-default gpt-5.2
+        pflow settings llm set-default openai/gpt-5.2
         pflow settings llm set-default anthropic/claude-sonnet-4-5
-        pflow settings llm set-default gemini-3-flash-preview
+        pflow settings llm set-default gemini/gemini-3-flash-preview
     """
+    model = _normalize_and_warn_model(model)
     manager = SettingsManager()
     current_settings = manager.load()
     current_settings.llm.default_model = model
@@ -486,12 +510,15 @@ def llm_set_default(model: str) -> None:
 def llm_set_discovery(model: str) -> None:
     """Set the model for discovery commands.
 
-    Used by 'pflow mcp find' and 'pflow find'.
+    Used by 'pflow mcp find' and 'pflow find'. Bare names are
+    auto-prefixed (e.g. ``claude-sonnet-4-5`` → ``anthropic/claude-sonnet-4-5``);
+    unknown bare names pass through with a warning.
 
     Example:
         pflow settings llm set-discovery anthropic/claude-sonnet-4-5
-        pflow settings llm set-discovery gemini-3-flash-preview
+        pflow settings llm set-discovery gemini/gemini-3-flash-preview
     """
+    model = _normalize_and_warn_model(model)
     manager = SettingsManager()
     current_settings = manager.load()
     current_settings.llm.discovery_model = model
@@ -506,11 +533,15 @@ def llm_set_filtering(model: str) -> None:
     """Set the model for smart field filtering.
 
     Used for structure-only mode when filtering large LLM responses.
+    Bare names are auto-prefixed (e.g. ``gpt-4o-mini`` →
+    ``openai/gpt-4o-mini``); unknown bare names pass through with a
+    warning.
 
     Example:
-        pflow settings llm set-filtering gemini-2.5-flash-lite
-        pflow settings llm set-filtering gpt-4o-mini
+        pflow settings llm set-filtering gemini/gemini-2.5-flash-lite
+        pflow settings llm set-filtering openai/gpt-4o-mini
     """
+    model = _normalize_and_warn_model(model)
     manager = SettingsManager()
     current_settings = manager.load()
     current_settings.llm.filtering_model = model
@@ -552,7 +583,7 @@ def llm_unset(setting: str) -> None:
         else:
             current_settings.llm.default_model = None
             manager.save(current_settings)
-            click.echo("✓ Removed default_model (will use llm CLI default or error)")
+            click.echo("✓ Removed default_model (will use auto-detection or error)")
     elif setting == "discovery":
         if current_settings.llm.discovery_model is None:
             click.echo("discovery_model is not set")

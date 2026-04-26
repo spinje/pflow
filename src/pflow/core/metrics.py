@@ -36,9 +36,9 @@ class MetricsCollector:
     def calculate_costs(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
         """Sum pre-calculated costs from accumulated LLM calls.
 
-        Each entry's cost_usd is set by the runtime wrappers
-        (InstrumentedNodeWrapper / PflowBatchNode) via enrich_llm_usage_with_cost().
-        Entries missing cost_usd are enriched here as a fallback.
+        Cost determination is LiteLLM's responsibility — the adapter populates
+        ``cost_usd`` per call (or ``None`` when LiteLLM has no pricing data).
+        Calls without a ``cost_usd`` key are treated the same as ``None``.
 
         Args:
             llm_calls: List of LLM call data from trace.collect_llm_calls()
@@ -46,18 +46,12 @@ class MetricsCollector:
         Returns:
             Dict with total_cost_usd and pricing availability info
         """
-        from pflow.core.llm_pricing import enrich_llm_usage_with_cost
-
         total_cost = 0.0
         unavailable_models: set[str] = set()
 
         for call in llm_calls:
             if not call:
                 continue
-
-            # Enrich if wrapper didn't (e.g., direct calculate_costs call)
-            if "cost_usd" not in call:
-                enrich_llm_usage_with_cost(call)
 
             cost = call.get("cost_usd")
             if cost is not None:

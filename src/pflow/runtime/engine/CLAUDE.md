@@ -22,10 +22,13 @@ src/pflow/runtime/engine/
 
 ```
 WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_string
+  ├── install self.trace into shared["__trace_collector__"] (save+restore for nested sub-workflows)
   └── for each node in graph:
       _execute_node(node, config, shared) → action
         ┌─ OUTSIDE try (always runs):
-        │  1. setup_llm_interception
+        │  (Step 1 — LLM trace registration — removed in Task 158 Phase A
+        │   post-cleanup; LLMNode.prep now reads shared["__trace_collector__"]
+        │   + self.node_id directly. Numbering preserved for cross-reference.)
         │  2. initialize_execution_state
         │  3. enforce_loop_guard       (clears stale __failures__ on revisit)
         │
@@ -35,18 +38,18 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │  9. execute: batch → execute_batch() | single → node._run(namespaced_store)
         │  10. detect_api_warning → handle_api_warning if found (returns "error")
         │  11. cache_result, 12. write_memo_cache (SKIP when cache_enabled=False)
-        │  13-17. duration, metrics, enrich_llm_cost, record_trace, call_completion_callback
+        │  13-17. duration, metrics, record_trace, call_completion_callback
         │  17.5. if action starts with "error": mark_node_failed (archive to __failures__,
         │        + warning= when error successor exists → triggers DEGRADED, GH #246)
         │
         └─ EXCEPT (error path):
-           metrics, enrich_llm_cost, record_trace(error=e),
+           metrics, record_trace(error=e),
            call_completion_callback(action="error", error=e),
            mark_node_failed (archive to __failures__),
            annotate e._pflow_node_id, re-raise
 ```
 
-**Step 17.5 is the LAST thing on the happy path for failed nodes.** It runs AFTER `record_trace`, `call_completion_callback`, and `enrich_llm_cost` — those consumers still read `shared[node_id]` directly with the data in its original location. After step 17.5, the data lives in `shared["__failures__"][node_id].data` and any subsequent reader must use `node_state.get_node_output`. When the failed node has an error successor (`node.successors.get("error")`), step 17.5 passes `warning=` to `mark_node_failed` so the recovery is visible in `__warnings__` → DEGRADED status + WARNING diagnostic (GH #246). When there is no error successor, `warning=None` and behavior is unchanged.
+**Step 17.5 is the LAST thing on the happy path for failed nodes.** It runs AFTER `record_trace` and `call_completion_callback` — those consumers still read `shared[node_id]` directly with the data in its original location. After step 17.5, the data lives in `shared["__failures__"][node_id].data` and any subsequent reader must use `node_state.get_node_output`. When the failed node has an error successor (`node.successors.get("error")`), step 17.5 passes `warning=` to `mark_node_failed` so the recovery is visible in `__warnings__` → DEGRADED status + WARNING diagnostic (GH #246). When there is no error successor, `warning=None` and behavior is unchanged.
 
 **Steps 1-4 outside try, 5-17.5 inside try** so strict-mode template `ValueError` raised during step 5 still gets trace recording on the error path.
 
@@ -246,8 +249,7 @@ Builds a deterministic config dict for cache key computation:
 ### Trace and metrics
 
 - `record_trace(...)` — receives all data directly (no chain traversal). Computes shared store mutations (added/removed keys, system keys filtered). `success` parameter takes precedence over `error is None`.
-- `enrich_llm_cost(node_id, shared)` — checks both root and namespaced locations for `llm_usage`
-- `setup_llm_interception(...)` — activates if trace collector present AND (class name contains "llm" OR params contain "prompt"/"model"). **Known limitation**: if `prompt` is in template_params (not static), the params check misses it — the class name fallback catches LLM nodes.
+- **LLM trace_hook plumbing**: Engine.run installs `self.trace` into `shared["__trace_collector__"]` for the duration of the run (save+restore handles nested sub-workflow runs). LLMNode.prep reads the collector + `self.node_id` from shared, builds the per-call trace hook via `collector.get_trace_hook(node_id)`, stores it in `prep_res["_trace_hook"]`. LLMNode.exec captures the hook before submitting to its inner ThreadPoolExecutor — explicit-arg passing survives the worker-thread boundary, unlike the previous thread-local registry approach.
 
 ### Progress callbacks
 
@@ -290,7 +292,7 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 - `runtime/cache.py`: used by `instrumentation.py` (`_deterministic_json`, `compute_node_cache_key`, `compute_batch_cache_key`)
 - `core/json_utils.py`: used by `template_resolution.py`, `batch_executor.py`
 - `core/param_coercion.py`: used by `template_resolution.py`
-- `core/llm_pricing.py`: used by `instrumentation.py`, `batch_executor.py`
+- `core/llm_client.py`: heavy LiteLLM import — only `nodes/llm/llm.py` and the discovery callsites depend on it. The engine (`instrumentation.py`, `batch_executor.py`) MUST NOT import from this module to keep CLI startup fast.
 - `core/exceptions.py`: `CompilationError`, `MaxNodeVisitsError`
 
 ## Gotchas

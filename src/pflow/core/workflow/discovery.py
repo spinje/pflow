@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-import llm
 from pydantic import BaseModel
 
 from pflow.core.exceptions import WorkflowNotFoundError
+from pflow.core.llm_client import complete
 from pflow.core.llm_utils import parse_structured_response
 from pflow.core.prompt_utils import format_prompt, load_prompt
 from pflow.core.workflow.context import build_workflows_context
@@ -81,10 +81,14 @@ def find_workflow(
     prompt_template = load_prompt(_PROMPT_PATH)
     formatted_prompt = format_prompt(prompt_template, {"discovery_context": discovery_context, "user_input": query})
 
-    # LLM call
-    model = llm.get_model(resolved_model)
-    response = model.prompt(formatted_prompt, schema=WorkflowDecision)
-    result = parse_structured_response(response, WorkflowDecision)
+    # LLM call via the pflow-owned LiteLLM adapter.
+    # Pydantic class → JSON Schema dict (the adapter accepts only dicts).
+    response = complete(
+        model=resolved_model,
+        prompt=formatted_prompt,
+        schema=WorkflowDecision.model_json_schema(),
+    )
+    result = parse_structured_response(response, WorkflowDecision, model=resolved_model)
 
     logger.info(
         f"find_workflow: found={result['found']}, "

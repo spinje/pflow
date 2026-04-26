@@ -21,7 +21,7 @@ Analyze data with specific criteria.
 
 - type: llm
 - temperature: 0.7
-- model: gpt-4
+- model: openai/gpt-4
 
 ```yaml output_schema
 type: object

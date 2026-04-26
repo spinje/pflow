@@ -58,18 +58,25 @@ class TestUnknownModelUserExperience:
 
         # This proves the workflow completed successfully despite unknown model
 
-    def test_mixed_models_shows_partial_cost_clearly(self):
-        """Test that mixed known/unknown models show partial costs clearly."""
+    def test_mixed_priced_unpriced_shows_partial_cost_clearly(self):
+        """Calls with ``cost_usd`` set surface as partial cost; calls without
+        end up in ``unavailable_models``.
+
+        Post-Task-158 cost determination is LiteLLM's responsibility — pflow
+        no longer maintains a per-model pricing table. The "known vs
+        unknown" split now manifests as "has cost_usd vs doesn't".
+        """
         collector = MetricsCollector()
 
         llm_calls = [
-            # Known model
+            # Adapter populated cost_usd from LiteLLM's response_cost
             {
                 "model": "gpt-4o-mini",
                 "input_tokens": 1000,
                 "output_tokens": 500,
+                "cost_usd": 0.00045,
             },
-            # Unknown model
+            # LiteLLM returned None for response_cost (unknown model, custom endpoint, etc.)
             {
                 "model": "future-gpt-5",
                 "input_tokens": 2000,
@@ -79,15 +86,15 @@ class TestUnknownModelUserExperience:
 
         cost_data = collector.calculate_costs(llm_calls)
 
-        # Should indicate pricing is unavailable overall
+        # Pricing is unavailable overall (one call lacks cost_usd)
         assert cost_data["pricing_available"] is False
         assert cost_data["total_cost_usd"] is None
 
-        # But should show partial cost from known models
+        # Partial cost from priced calls is still surfaced
         assert cost_data["partial_cost_usd"] is not None
-        assert cost_data["partial_cost_usd"] > 0
+        assert cost_data["partial_cost_usd"] == 0.00045
 
-        # Should list which models are unavailable
+        # The unpriced model is listed as unavailable; the priced one is not
         assert "future-gpt-5" in cost_data["unavailable_models"]
         assert "gpt-4o-mini" not in cost_data["unavailable_models"]
 
@@ -109,9 +116,9 @@ class TestUnknownModelUserExperience:
         assert cost_data["unavailable_models"] == ["anthropic/claude-4-ultra"]
 
         # With this info, user knows to:
-        # 1. Check if model name is correct
-        # 2. Update MODEL_PRICING if it's a new model
-        # 3. File an issue if it's a legitimate new model
+        # 1. Check if the model name is correct
+        # 2. If the model is new/custom, LiteLLM doesn't have pricing for it —
+        #    cost reporting will show as unavailable (this is expected, not a bug)
 
     def test_unknown_model_surfaced_in_unavailable_models(self):
         """Test that unknown models are surfaced via unavailable_models field.

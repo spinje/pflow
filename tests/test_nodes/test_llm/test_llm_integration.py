@@ -12,33 +12,23 @@ from pflow.nodes.llm import LLMNode
 
 
 def has_openai_api_key():
-    """Check if OpenAI API key is available."""
-    try:
-        import llm
+    """Check if OpenAI API key is available.
 
-        # OpenAI is built into llm, no plugin needed
-        try:
-            llm.get_model("gpt-4o-mini")
-            # Check if we can get the model (key will be checked on actual use)
-            if os.getenv("OPENAI_API_KEY"):
-                return True
-            # Try to get the key from llm's config
-            return True  # If model loaded, key must be configured
-        except Exception as e:
-            error_msg = str(e)
-            if "NeedsKeyException" in error_msg or "API key" in error_msg:
-                # No key configured
-                return False
-            # Other errors - assume we can't test
-            return False
-    except ImportError:
-        # llm library not installed (shouldn't happen)
-        return False
+    Post-Task 158 Phase A.5 the LiteLLM adapter resolves keys exclusively
+    from environment variables (or `pflow settings env`). For this gating
+    check we just look at the env var directly — keeps the file
+    importable after A.11 removes the legacy llm library.
+    """
+    return bool(os.getenv("OPENAI_API_KEY"))
 
 
 @pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), reason="Set RUN_LLM_TESTS=1 to run real LLM tests")
 @pytest.mark.skipif(
-    not has_openai_api_key(), reason="OpenAI API key not available. Run 'llm keys set openai' or set OPENAI_API_KEY"
+    not has_openai_api_key(),
+    reason=(
+        "OpenAI API key not available. Set OPENAI_API_KEY env var or run "
+        "'pflow settings set-env OPENAI_API_KEY <value>'."
+    ),
 )
 class TestLLMNodeIntegration:
     """Integration tests with real LLM API calls."""
@@ -208,17 +198,21 @@ class TestLLMNodeIntegration:
 
 
 @pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), reason="Set RUN_LLM_TESTS=1 to run real LLM tests")
-def test_missing_api_key_error():
-    """Test that missing API key produces helpful error."""
-    # This test won't work if key is set via 'llm keys set'
-    # So we test with a model that definitely doesn't have a key
+def test_unknown_model_produces_helpful_error():
+    """Pflow surfaces a helpful error when the model identifier is unrecognized.
+
+    Use a model name without a provider prefix so LiteLLM rejects the request
+    regardless of which API keys are configured. After Phase A, LLMNode.run()
+    returns the ``"error"`` action and stores the message in ``shared["error"]``
+    rather than raising.
+    """
     node = LLMNode()
     node.set_params({"model": "some-nonexistent-model-xyz123"})
     shared = {"prompt": "test"}
 
-    with pytest.raises(ValueError) as exc_info:
-        node.run(shared)
+    action = node.run(shared)
 
-    # Should have helpful message about unknown model
-    error_msg = str(exc_info.value)
-    assert "Unknown model" in error_msg or "llm models" in error_msg
+    assert action == "error"
+    error_msg = shared.get("error", "")
+    assert "some-nonexistent-model-xyz123" in error_msg
+    assert "Unknown model" in error_msg or "pflow settings" in error_msg

@@ -8,7 +8,7 @@ import json
 import tempfile
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -16,43 +16,7 @@ from click.testing import CliRunner
 from pflow.cli.main import main as cli
 from pflow.core.metrics import MetricsCollector
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
-from tests.shared.llm_mock import create_mock_get_model
 from tests.shared.markdown_utils import ir_to_markdown
-
-
-@pytest.fixture
-def mock_llm():
-    """Create a mock LLM that tracks usage data."""
-    mock_get_model = create_mock_get_model()
-
-    # Configure LLM response with usage data
-    def configure_with_usage(model: str, schema: Any, response: dict, input_tokens: int = 100, output_tokens: int = 50):
-        """Configure response and add usage tracking."""
-        mock_get_model.set_response(model, schema, response)
-
-        # Patch the MockLLMModel to include proper usage
-        original_prompt = mock_get_model(model).prompt
-
-        def prompt_with_usage(prompt_text: str, schema_arg: Any = None, **kwargs):
-            result = original_prompt(prompt_text, schema_arg, **kwargs)
-
-            # Add usage data that LLMNode expects - as an object with .input and .output attributes
-            # Create a simple object that mimics the llm library's usage format
-            class Usage:
-                def __init__(self, input_val, output_val):
-                    self.input = input_val
-                    self.output = output_val
-                    self.details = {}  # LLMNode may check for details
-
-            # Make usage a method that returns the usage object
-            usage_obj = Usage(input_tokens, output_tokens)
-            result.usage = lambda: usage_obj
-            return result
-
-        mock_get_model(model).prompt = prompt_with_usage
-
-    mock_get_model.configure_with_usage = configure_with_usage
-    return mock_get_model
 
 
 @pytest.fixture
@@ -226,32 +190,58 @@ class TestMetricsCollection:
         finally:
             Path(workflow_file).unlink()
 
-    def test_llm_cost_calculation(self, temp_home, temp_registry, llm_workflow, mock_llm):
-        """Test that LLM usage is tracked and costs calculated correctly."""
+    def test_llm_cost_calculation(self, temp_home, temp_registry, llm_workflow, monkeypatch):
+        """Test that LLM usage is tracked and aggregated costs flow through.
+
+        Cost determination is LiteLLM's responsibility — the adapter populates
+        ``cost_usd`` on each response from ``response._hidden_params``. This
+        test sets ``cost_usd`` directly on the mocked usage dicts (mirroring
+        what the real adapter does) and asserts the summation works end-to-end.
+        """
+        from pflow.core.llm_client import AdapterResponse
+
         runner = CliRunner()
 
-        # Configure mock LLM responses with usage data
-        mock_llm.configure_with_usage(
-            "gpt-4o-mini",
-            None,
-            {"response": "Code flows like water\nBits and bytes dance on the screen\nBugs hide in shadows"},
-            input_tokens=20,
-            output_tokens=30,
-        )
-        mock_llm.configure_with_usage(
-            "anthropic/claude-3-haiku-20240307",
-            None,
-            {"response": "Le code coule comme l'eau\nLes bits et octets dansent\nLes bugs se cachent"},
-            input_tokens=40,
-            output_tokens=25,
-        )
+        # Mock per-model with known cost_usd values that the adapter would
+        # have set from LiteLLM's response_cost.
+        per_model = {
+            "gpt-4o-mini": (
+                "Code flows like water\nBits and bytes dance on the screen\nBugs hide in shadows",
+                20,
+                30,
+                0.000021,  # cost_usd
+            ),
+            "anthropic/claude-3-haiku-20240307": (
+                "Le code coule comme l'eau\nLes bits et octets dansent\nLes bugs se cachent",
+                40,
+                25,
+                0.000042,  # cost_usd
+            ),
+        }
+
+        def mock_complete(*, model: str, prompt: str, **kwargs):
+            text, in_tokens, out_tokens, cost = per_model.get(model, ("default", 10, 5, 0.0))
+            usage = {
+                "model": model,
+                "input_tokens": in_tokens,
+                "output_tokens": out_tokens,
+                "total_tokens": in_tokens + out_tokens,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "thinking_tokens": 0,
+                "thinking_budget": 0,
+                "cost_usd": cost,
+            }
+            return AdapterResponse(text=text, usage=usage, model=model, has_schema=False)
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", mock_complete)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(llm_workflow))
             workflow_file = f.name
 
         try:
-            with patch.dict("os.environ", {"HOME": str(temp_home)}), patch("llm.get_model", mock_llm):
+            with patch.dict("os.environ", {"HOME": str(temp_home)}):
                 result = runner.invoke(cli, ["--output-format", "json", workflow_file], env={"HOME": str(temp_home)})
 
             if result.exit_code != 0:
@@ -260,13 +250,9 @@ class TestMetricsCollection:
             assert result.exit_code == 0
             output = json.loads(result.stdout)
 
-            # Check cost calculation
-            # gpt-4o-mini: 20 tokens @ $0.15/M + 30 tokens @ $0.60/M = $0.000021
-            # claude-haiku: 40 tokens @ $0.25/M + 25 tokens @ $1.25/M = $0.0000413
-            # Total: ~$0.0000623
+            # Check cost summation: 0.000021 + 0.000042 = 0.000063
             assert "total_cost_usd" in output
-            assert output["total_cost_usd"] > 0
-            assert output["total_cost_usd"] < 0.001  # Less than 1/10 cent
+            assert output["total_cost_usd"] == pytest.approx(0.000063, rel=1e-6)
 
             # Check token counts - verify they're positive and consistent
             total_in = output["metrics"]["total"]["tokens_input"]
@@ -358,16 +344,32 @@ class TestTraceGeneration:
         finally:
             Path(workflow_file).unlink()
 
-    def test_trace_captures_llm_calls(self, temp_home, temp_registry, llm_workflow, mock_llm):
+    def test_trace_captures_llm_calls(self, temp_home, temp_registry, llm_workflow, monkeypatch):
         """Trace files should capture LLM call details by default."""
+        from pflow.core.llm_client import AdapterResponse
+
         runner = CliRunner()
 
-        mock_llm.configure_with_usage(
-            "gpt-4o-mini", None, {"response": "Test haiku"}, input_tokens=20, output_tokens=10
-        )
-        mock_llm.configure_with_usage(
-            "anthropic/claude-3-haiku-20240307", None, {"response": "Haiku de test"}, input_tokens=15, output_tokens=8
-        )
+        per_model = {
+            "gpt-4o-mini": ("Test haiku", 20, 10),
+            "anthropic/claude-3-haiku-20240307": ("Haiku de test", 15, 8),
+        }
+
+        def mock_complete(*, model: str, prompt: str, **kwargs):
+            text, in_tok, out_tok = per_model.get(model, ("default", 10, 5))
+            usage = {
+                "model": model,
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "total_tokens": in_tok + out_tok,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "thinking_tokens": 0,
+                "thinking_budget": 0,
+            }
+            return AdapterResponse(text=text, usage=usage, model=model, has_schema=False)
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", mock_complete)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(llm_workflow))
@@ -377,7 +379,7 @@ class TestTraceGeneration:
         debug_dir = Path(temp_home) / ".pflow" / "debug"
 
         try:
-            with patch.dict("os.environ", {"HOME": str(temp_home)}), patch("llm.get_model", mock_llm):
+            with patch.dict("os.environ", {"HOME": str(temp_home)}):
                 result = runner.invoke(cli, [workflow_file], env={"HOME": str(temp_home)})
 
                 assert result.exit_code == 0
@@ -513,7 +515,7 @@ class TestWrapperIntegration:
         assert trace.events[0]["node_id"] == "shell1"
         assert trace.events[0]["success"] is True
 
-    def test_llm_accumulation_across_nodes(self, temp_home, temp_registry, mock_llm):
+    def test_llm_accumulation_across_nodes(self, temp_home, temp_registry, monkeypatch):
         """Test that LLM usage metrics accumulate correctly across multiple nodes.
 
         This tests behavior, not internal data structures:
@@ -521,6 +523,7 @@ class TestWrapperIntegration:
         - Total costs are calculated correctly
         - Token counts accumulate properly
         """
+        from pflow.core.llm_client import AdapterResponse
         from pflow.registry import Registry
         from pflow.runtime import compile_workflow
         from pflow.runtime.engine import WorkflowEngine
@@ -536,44 +539,37 @@ class TestWrapperIntegration:
             "start_node": "llm1",
         }
 
-        # Configure mock responses with proper usage data
-        responses = [("Response 1", 10, 5), ("Response 2", 20, 10), ("Response 3", 30, 15)]
-
-        # Track call count for sequential responses
+        # Sequential mock responses with controlled token counts AND cost_usd.
+        # The adapter sets cost_usd from LiteLLM's response_cost in production;
+        # the mock sets it directly here so the test can pin the summed total.
+        responses = [
+            ("Response 1", 10, 5, 0.001),
+            ("Response 2", 20, 10, 0.002),
+            ("Response 3", 30, 15, 0.003),
+        ]
         call_count = [0]
 
-        # Create a mock function that returns different responses each time
-        def mock_get_model_with_responses(model_name: str):
-            # Return a mock model
-            mock_model = Mock()
+        def mock_complete(*, model: str, prompt: str, **kwargs):
+            idx = call_count[0]
+            call_count[0] += 1
+            response_text, in_tokens, out_tokens, cost = (
+                responses[idx] if idx < len(responses) else ("Fallback response", 10, 5, 0.0001)
+            )
+            usage = {
+                "model": model,
+                "input_tokens": in_tokens,
+                "output_tokens": out_tokens,
+                "total_tokens": in_tokens + out_tokens,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "thinking_tokens": 0,
+                "thinking_budget": 0,
+                "cost_usd": cost,
+            }
+            return AdapterResponse(text=response_text, usage=usage, model=model, has_schema=False)
 
-            def prompt_func(prompt_text: str, **kwargs):
-                idx = call_count[0]
-                call_count[0] += 1
-                if idx < len(responses):
-                    response_text, in_tokens, out_tokens = responses[idx]
-                    # Create proper mock response
-                    mock_response = Mock()
-                    mock_response.text = Mock(return_value=response_text)
-                    usage_mock = Mock()
-                    # LLMNode expects .input and .output properties
-                    usage_mock.input = in_tokens
-                    usage_mock.output = out_tokens
-                    usage_mock.details = {}
-                    mock_response.usage = Mock(return_value=usage_mock)
-                    return mock_response
-                # Fallback response
-                mock_response = Mock()
-                mock_response.text = Mock(return_value="Fallback response")
-                usage_mock = Mock()
-                usage_mock.input = 10
-                usage_mock.output = 5
-                usage_mock.details = {}
-                mock_response.usage = Mock(return_value=usage_mock)
-                return mock_response
-
-            mock_model.prompt = prompt_func
-            return mock_model
+        # Patch the adapter at the LLMNode's import site
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", mock_complete)
 
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
@@ -581,12 +577,11 @@ class TestWrapperIntegration:
         metrics = MetricsCollector()
         trace = WorkflowTraceCollector("test")
 
-        with patch("llm.get_model", mock_get_model_with_responses):
-            workflow = compile_workflow(workflow_ir, registry)
-            shared: dict[str, Any] = dict(workflow.resolved_defaults)
-            shared["_trace_collector"] = trace
-            engine = WorkflowEngine(metrics_collector=metrics, trace_collector=trace)
-            engine.run(workflow, shared)
+        workflow = compile_workflow(workflow_ir, registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        shared["__trace_collector__"] = trace
+        engine = WorkflowEngine(metrics_collector=metrics, trace_collector=trace)
+        engine.run(workflow, shared)
 
         # Test behavior: All three LLM nodes executed
         assert "llm1" in metrics.workflow_nodes
@@ -600,7 +595,7 @@ class TestWrapperIntegration:
 
         # CRITICAL: Verify the complete cost chain works end-to-end.
         # This is the path that produces "Cost: $X.XXXX" in CLI output:
-        # LLM node → _enrich_llm_cost → trace event → collect_llm_calls() → get_summary()
+        # LLM adapter populates cost_usd → trace event → collect_llm_calls() → get_summary()
         # If any link breaks, costs silently become $0.00.
         llm_calls = trace.collect_llm_calls()
         assert len(llm_calls) == 3, f"Expected 3 LLM calls from trace, got {len(llm_calls)}"
@@ -611,9 +606,12 @@ class TestWrapperIntegration:
         assert total_input == 10 + 20 + 30, f"Expected 60 input tokens, got {total_input}"
         assert total_output == 5 + 10 + 15, f"Expected 30 output tokens, got {total_output}"
 
-        # Cost should be calculated and positive (gpt-4o-mini has pricing)
+        # Cost summation should equal sum of injected per-call cost_usd:
+        # 0.001 + 0.002 + 0.003 = 0.006
         summary = metrics.get_summary(llm_calls)
-        assert summary["total_cost_usd"] > 0, "Cost chain broken: total_cost_usd is 0"
+        assert summary["total_cost_usd"] == pytest.approx(0.006, rel=1e-6), (
+            "Cost chain broken: per-call cost_usd not summed correctly"
+        )
 
 
 class TestCLIFlags:
@@ -823,47 +821,13 @@ class TestMetricsAccuracy:
         finally:
             Path(workflow_file).unlink()
 
-    def test_cost_calculation_accuracy(self, temp_home, temp_registry, mock_llm):
-        """Test accurate cost calculation for different models."""
-        from pflow.core.metrics import MetricsCollector
-
-        collector = MetricsCollector()
-
-        # Test various model costs
-        test_cases = [
-            {
-                "model": "gpt-4o-mini",
-                "input_tokens": 1000,
-                "output_tokens": 500,
-                "expected_cost": 0.00045,  # $0.15/M + $0.30/M
-            },
-            {
-                "model": "anthropic/claude-3-haiku-20240307",
-                "input_tokens": 2000,
-                "output_tokens": 1000,
-                "expected_cost": 0.00175,  # $0.25/M + $1.25/M
-            },
-            {
-                "model": "gpt-4",
-                "input_tokens": 500,
-                "output_tokens": 250,
-                "expected_cost": 0.03,  # $30/M + $60/M
-            },
-        ]
-
-        for case in test_cases:
-            llm_calls = [
-                {"model": case["model"], "input_tokens": case["input_tokens"], "output_tokens": case["output_tokens"]}
-            ]
-
-            cost_data = collector.calculate_costs(llm_calls)
-
-            # Check pricing is available
-            assert cost_data["pricing_available"] is True
-            cost = cost_data["total_cost_usd"]
-
-            # Check within 10% accuracy (floating point)
-            assert abs(cost - case["expected_cost"]) < case["expected_cost"] * 0.1
+    # Removed `test_cost_calculation_accuracy` — Task 158 Phase A.10 deleted
+    # `pflow.core.llm_pricing`. Pricing is now LiteLLM's responsibility (via
+    # `litellm.completion_cost`); pflow no longer maintains a per-model
+    # pricing table. The `MetricsCollector.calculate_costs` summation logic
+    # is exercised in `tests/test_core/test_metrics.py::TestMetricsCollector`
+    # against explicit per-call `cost_usd` values — the contract that matches
+    # how the production adapter actually populates the field.
 
     def test_node_count_accuracy(self, temp_home, temp_registry):
         """Test that node counts are accurate."""

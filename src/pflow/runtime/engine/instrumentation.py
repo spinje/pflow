@@ -14,7 +14,6 @@ import time
 from typing import Any, Optional
 
 from pflow.core.exceptions import MaxNodeVisitsError
-from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 
 from .types import BatchConfig
 
@@ -407,31 +406,6 @@ def record_trace(
         sub_workflow_events=child_trace_events,
         cached=cached,
     )
-
-
-def enrich_llm_cost(node_id: str, shared: dict) -> None:
-    """Add cost data to llm_usage. Checks both root and namespaced locations."""
-    llm_usage = None
-    if "llm_usage" in shared:
-        llm_usage = shared["llm_usage"]
-    elif node_id in shared and isinstance(shared[node_id], dict):
-        llm_usage = shared[node_id].get("llm_usage")
-    if isinstance(llm_usage, dict):
-        enrich_llm_usage_with_cost(llm_usage)
-
-
-def setup_llm_interception(node_id: str, node_type_name: str, node_params: dict, trace_collector: Any) -> None:
-    """Set up LLM prompt/response capture if trace collector present."""
-    if not trace_collector or not hasattr(trace_collector, "setup_llm_interception"):
-        return
-
-    node_type_lower = node_type_name.lower()
-    is_llm_node = "llm" in node_type_lower
-    has_prompt_param = "prompt" in node_params
-    has_model_param = "model" in node_params
-
-    if is_llm_node or has_prompt_param or has_model_param:
-        trace_collector.setup_llm_interception(node_id)
 
 
 # --- Progress Callbacks ---

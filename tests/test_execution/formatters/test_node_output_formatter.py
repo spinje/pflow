@@ -573,7 +573,7 @@ class TestSmartFilteringIntegration:
     with the formatter, triggering only when field count exceeds threshold.
     """
 
-    def test_large_field_set_triggers_smart_filtering(self, mock_llm_calls):
+    def test_large_field_set_triggers_smart_filtering(self, mock_llm_client):
         """Large field sets (>50) should trigger smart filtering and show count."""
         from pflow.execution.formatters.node_output_formatter import format_node_output
         from pflow.registry.smart_filter import FilteredFields
@@ -596,7 +596,7 @@ class TestSmartFilteringIntegration:
         registry.get_nodes_metadata.return_value = node_metadata
 
         # Mock LLM to filter to 10 fields
-        mock_llm_calls.set_response(
+        mock_llm_client.set_response(
             "*",
             FilteredFields,
             {
@@ -729,7 +729,7 @@ class TestSmartFilteringIntegration:
         # Create outputs matching the structure
         outputs = {"result": {f"field{i}": f"value{i}" for i in range(100)}}
 
-        # Note: NO mock_llm_calls setup - if filtering were triggered, this would fail
+        # Note: NO mock_llm_client setup - if filtering were triggered, this would fail
         result = format_node_output(
             node_type="test-large-node",
             action="success",

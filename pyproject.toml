@@ -26,19 +26,14 @@ classifiers = [
 dependencies = [
     "click", # CLI framework (more flexible than Typer)
     "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
-    "llm>=0.29", # Simon Willison's LLM library for text processing
-    "llm-anthropic==0.25", # Anthropic Claude models (provides anthropic as transitive dep)
     "pydantic", # IR/metadata validation
     "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
     "claude-agent-sdk>=0.1.17", # Claude Agent SDK for agentic development node
     "PyYAML>=6.0.0", # YAML parsing for markdown workflow format params and frontmatter
-    "llm-gemini>=0.30", # Google Gemini models including Gemini 3 Flash
+    "litellm==1.82.6", # Provider-unified LLM client (the sole LLM seam — see src/pflow/core/llm_client.py). Pinned <1.83 because 1.83.x hard-pins click==8.1.8 which conflicts with our CliRunner stderr-separation tests.
+    "openai>=1.0", # Already a transitive dep via litellm; declared directly because the LLM adapter catches `openai.OpenAIError` (the real base of LiteLLM's exception hierarchy — see src/pflow/core/llm_client.py). 1.0 is the floor where the modern openai exception hierarchy stabilized.
 ]
-
-# Optional dependencies can be added here for future LLM providers
-# [project.optional-dependencies]
-# openai = ["llm-openai>=0.1"]
 
 [project.scripts]
 pflow = "pflow.cli:cli_main"
@@ -174,11 +169,9 @@ ignore = [
 "tests/*" = ["S101"]
 "tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
 "src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
-# S603: Safe subprocess use - hardcoded commands, no user input
-"src/pflow/core/llm_config.py" = ["S603"]
 
 [tool.ruff.format]
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser
+DEP002 = ["PyYAML"]  # PyYAML used by markdown parser via lazy import.

@@ -17,8 +17,10 @@ src/pflow/core/
 ├── types.py                 # TypeSpec, CANONICAL_TYPES, PYTHON_ALIASES_AT_S1 — single source of truth for S1 vocabulary
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection
+├── llm_client.py            # pflow LiteLLM adapter (single seam for all LLM calls)
+├── llm_providers.py         # Canonical provider metadata (prefixes, env vars)
+├── llm_reasoning_map.py     # Provider/model → reasoning kwargs map
 ├── markdown_parser.py       # .pflow.md → IR dict parser
-├── llm_pricing.py           # LLM pricing and cost calculations
 ├── metrics.py               # Execution metrics collection
 ├── output_controller.py     # Interactive vs non-interactive output
 ├── param_coercion.py        # Type coercion: MCP (dict→JSON str) and CLI (str→declared type)
@@ -61,7 +63,12 @@ PflowError(Exception)                    <- base for all pflow errors
   |- WorkflowValidationError             <- pre-execution validation (summary, validation_errors)
   |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint)
   |- WorkflowExistsError                 <- duplicate workflow save
-  |- CriticalDiscoveryError              <- discovery abort (node_name, reason)
+  |- LLMCallError                        <- LLM adapter base for ALL provider errors (raised by llm_client)
+  |   |- UnknownModelError               <- model identifier not recognized (reason="unknown_name"|"missing_prefix")
+  |   |- MissingApiKeyError              <- AuthenticationError or PermissionDeniedError (kind="missing_key"|"lacks_permission")
+  |   |- InvalidRequestError             <- any other BadRequestError (schema, content policy, context window, ...)
+  |   |- LLMTransientError               <- Timeout, RateLimitError, InternalServerError (retry loop catches)
+  |   |- LLMResponseParseError           <- response doesn't parse against output_schema
   |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions)
   |   |- MCPError                        <- user_errors.py
   |   |- OutputResolutionError           <- user_errors.py (failures list)
@@ -79,6 +86,8 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 | Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
 | Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[Diagnostic(...), ...]` |
 | Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
+| LLM adapter — deterministic provider error (4xx that retry won't fix) | `LLMCallError` subclass — `UnknownModelError(reason)`, `MissingApiKeyError(kind)`, `InvalidRequestError`, or `LLMResponseParseError` | structured `model`, `reason`/`kind`, `provider_message` (raw upstream text — distinct from the pflow-wrapped `Diagnostic.message`); each subclass overrides `to_diagnostics()` to produce rich Diagnostics. LLMNode catches at `_call_llm` (preventing retry burn) and lifts `_diagnostic_context` into shared. |
+| LLM adapter — transient error (timeout, rate limit, 5xx that retry may help) | `LLMTransientError` (subclass of `LLMCallError`) | carries `kind` discriminator + `provider_message`; LLMNode re-raises so the Node retry loop fires. Smart_filter / discovery callers catch the `LLMCallError` umbrella for graceful degradation. |
 | User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |
 | MCP tool availability errors | `MCPError` (subclass of `UserFriendlyError`) | same + defaults |
 | Output resolution failures (branch-dependent outputs) | `OutputResolutionError` (subclass of `UserFriendlyError`) | `failures=[{...}]` |
@@ -175,23 +184,21 @@ Memory limit configurable via `PFLOW_STDIN_MEMORY_LIMIT`.
 
 See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeline, data flow algorithm, skill publishing, known issues).
 
-### llm_pricing.py
+### llm_client.py
 
-46+ models (Anthropic, OpenAI, Google). 20+ aliases.
+The pflow-owned LiteLLM adapter — single seam for all LLM calls (LLMNode + 3 discovery callsites). Wraps `litellm.completion`. Owns: messages-list construction, reasoning-kwarg translation (delegating shape detection to `llm_reasoning_map`), `cache_control` placement (Phase B-G), translation of every LiteLLM exception to a typed `LLMCallError` subclass (deterministic → `UnknownModelError`/`MissingApiKeyError`/`InvalidRequestError`; transient → `LLMTransientError`), and response normalization to a stable `AdapterResponse` (with structured `warnings` for empty-content cases that surface to `__warnings__`).
 
-**Pricing rules** (Anthropic's model): Cache creation = 2x input rate. Cache reads = 0.1x input rate. Thinking tokens = output rate.
+**Cost determination is LiteLLM's responsibility**: the adapter reads `cost_usd` from `response._hidden_params["response_cost"]` (LiteLLM populates this from its built-in pricing data). When LiteLLM doesn't recognize the model (custom endpoints, brand-new releases), `cost_usd` is `None` — consumers handle that case via `.get("cost_usd")`. ClaudeCodeNode mirrors `total_cost_usd` (Claude SDK convention) into `cost_usd` at its own producer boundary, so every LLM-producing node writes the same key.
 
-**🐛 Broken aliases**: `"claude-3.5-haiku"` and `"claude-4-opus"` point to non-existent pricing entries.
+**Litellm is lazy-imported**: `import litellm` costs ~700ms (it eagerly loads handlers and Pydantic types for every provider it supports). To keep CLI invocations that don't need LLM calls fast (`pflow validate`, `--dry-run`, fully-cached runs, the future `analyze-cache`), the import lives inside `complete()` and `_classify_litellm_error()` — not at module top. The first `complete()` call in a process pays the import; subsequent calls resolve from `sys.modules` instantly. Side effect: the first LLM node's recorded duration is inflated by ~700ms (one node out of N per process). Cost predictions are token-based and unaffected; total wall-clock is honest. Tests must patch `litellm.completion` directly (NOT `pflow.core.llm_client.litellm.completion` — that path no longer exists as a module attribute).
 
 ### llm_config.py
 
-**Two different resolution chains** — easy to call the wrong one:
+**Two resolution chains** — easy to call the wrong one:
 - `get_model_for_feature("discovery"|"filtering")`: feature setting → `default_model` → auto-detect (Anthropic → Gemini → OpenAI) → hardcoded fallback. **Never returns None.**
-- `get_default_workflow_model()`: `default_model` → llm CLI default (`llm models default`) → auto-detect → **None** (caller must handle).
+- `get_default_workflow_model()`: `default_model` → auto-detect → **None** (caller must handle).
 
-**`inject_settings_env_vars()`**: Called early in CLI/MCP startup. Injects `settings.json` env vars into `os.environ` so `llm` library finds API keys. User's actual environment takes priority (won't override existing vars). Idempotent.
-
-**Test guard**: All LLM detection skipped when `PYTEST_CURRENT_TEST` is set (prevents subprocess hangs from `llm keys get`).
+**Key sources** (auto-detect): `os.environ` first, then `~/.pflow/settings.json` env section. LiteLLM reads from `os.environ` natively, so `inject_settings_env_vars()` (called early in CLI/MCP startup) pushes settings-stored keys into the environment for LiteLLM to find. User's actual environment takes priority over settings (won't override existing vars). Idempotent. Skipped under `PYTEST_CURRENT_TEST`.
 
 **Module-level caching**: `get_default_llm_model()` caches result after first detection. Call `clear_model_cache()` in tests.
 
@@ -333,8 +340,6 @@ The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Imp
 ## Critical Issues
 
 **🚨 Security**: Parameter validation gaps — template variables, node params, LLM/MCP params not validated for shell special characters.
-
-**🐛 Broken**: Two LLM pricing aliases point to non-existent entries.
 
 ## Testing and Examples
 

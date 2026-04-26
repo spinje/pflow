@@ -73,7 +73,7 @@ class LLMSettings(BaseModel):
     - Smart filtering (filtering_model)
 
     Resolution order:
-    - LLM nodes:  workflow params → default_model → llm CLI default → error
+    - LLM nodes:  workflow params → default_model → auto-detect → error
     - discovery:  discovery_model → default_model → auto-detect → fallback
     - filtering:  filtering_model → default_model → auto-detect → fallback
 
@@ -82,11 +82,11 @@ class LLMSettings(BaseModel):
 
     Examples:
         # Set default model for everything (LLM nodes, discovery, filtering)
-        {"default_model": "gemini-3-flash-preview"}
+        {"default_model": "gemini/gemini-3-flash-preview"}
 
         # Override just discovery while using default for others
         {
-            "default_model": "gemini-3-flash-preview",
+            "default_model": "gemini/gemini-3-flash-preview",
             "discovery_model": "anthropic/claude-sonnet-4-5"
         }
     """

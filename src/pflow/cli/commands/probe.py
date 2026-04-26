@@ -41,7 +41,9 @@ def probe_cmd(ctx: click.Context, node_type: str, params: tuple[str, ...], outpu
         pflow probe shell command="git log --oneline -5"
     """
     from pflow.cli.commands._probe_impl import execute_single_node
+    from pflow.core.llm_config import inject_settings_env_vars
 
+    inject_settings_env_vars()
     verbose = ctx.obj.get("verbose", False) if ctx.obj else False
     execute_single_node(
         node_type=node_type,

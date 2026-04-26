@@ -464,7 +464,7 @@ class TestPrepFailureRoutesThroughErrorAction:
         shared = dict(workflow.resolved_defaults)
         shared["__registry__"] = registry
         trace = WorkflowTraceCollector(workflow_name="parent")
-        shared["_trace_collector"] = trace
+        shared["__trace_collector__"] = trace
         engine = WorkflowEngine(trace_collector=trace)
         engine.run(workflow, shared)
 

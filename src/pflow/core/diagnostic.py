@@ -152,6 +152,43 @@ def format_child_provenance(step_id: str, message: str) -> str:
     return f"In step '{step_id}' sub-workflow: {message}"
 
 
+def normalize_runtime_warning(warning: Any) -> tuple[str, dict[str, Any]]:
+    """Normalize a shared-store runtime warning to display text + context.
+
+    ``__warnings__`` started as a string-only channel. LLM adapter warnings
+    are structured dicts (``kind``/``text``/``context``) so agents can inspect
+    the non-fatal condition programmatically. Consumers should call this helper
+    instead of assuming either shape.
+    """
+    if isinstance(warning, dict):
+        text = warning.get("text")
+        message = text if isinstance(text, str) and text else str(warning)
+
+        raw_context = warning.get("context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        kind = warning.get("kind")
+        if isinstance(kind, str) and kind:
+            context.setdefault("kind", kind)
+        return message, context
+
+    return str(warning), {}
+
+
+# LLM failure category — single source of truth for the string used by both
+# the typed-exception path (LLMCallError.to_diagnostics() overrides, fired on
+# the pre-execution path via cli/error_output.py::_format_from_exception) AND
+# the runtime path (executor_service._FAILURE_CATEGORY_MAP[FAILURE_CATEGORY_LLM]
+# fired via __failures__). Both paths must produce the same category string;
+# referencing this constant from both prevents silent drift.
+LLM_FAILURE_CATEGORY = "llm_failure"
+
+# LLM warning category — for non-fatal LLM runtime conditions (e.g. empty
+# response from a reasoning model whose output budget went entirely to
+# thinking). Distinct from LLM_FAILURE_CATEGORY because the workflow
+# continues; the call returned a valid (if empty) response.
+LLM_WARNING_CATEGORY = "llm_warning"
+
+
 CATEGORY_TITLES: dict[str, str] = {
     "compilation": "Compilation Failed",
     "max_visits": "Infinite Loop Detected",
@@ -165,6 +202,8 @@ CATEGORY_TITLES: dict[str, str] = {
     "template_error": "Template Resolution Failed",
     "mcp": "MCP Error",
     "cli": "Error",
+    LLM_FAILURE_CATEGORY: "LLM Call Failed",
+    LLM_WARNING_CATEGORY: "LLM Warning",
 }
 
 

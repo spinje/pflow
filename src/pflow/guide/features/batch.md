@@ -106,10 +106,10 @@ Compare quality across different settings.
 ```yaml batch
 items:
   - data: ${report}
-    model: claude-opus-4-5
+    model: anthropic/claude-opus-4-5
     effort: high
   - data: ${report}
-    model: gpt-5.4
+    model: openai/gpt-5.4
     effort: medium
 parallel: true
 ```

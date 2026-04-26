@@ -19,6 +19,7 @@ from pflow.core.exceptions import CompilationError
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
     FAILURE_CATEGORY_HTTP,
+    FAILURE_CATEGORY_LLM,
     FAILURE_CATEGORY_MCP,
     FAILURE_CATEGORY_NODE_ERROR,
     FAILURE_CATEGORY_ROUTING,
@@ -36,13 +37,11 @@ from .instrumentation import (
     call_completion_callback,
     call_start_callback,
     enforce_loop_guard,
-    enrich_llm_cost,
     handle_api_warning,
     handle_cached_execution,
     initialize_execution_state,
     invalidate_cache,
     record_trace,
-    setup_llm_interception,
     write_memo_cache,
 )
 from .namespaced_store import NamespacedSharedStore
@@ -57,6 +56,7 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
     "ShellNode": FAILURE_CATEGORY_SHELL,
     "HttpNode": FAILURE_CATEGORY_HTTP,
     "MCPNode": FAILURE_CATEGORY_MCP,
+    "LLMNode": FAILURE_CATEGORY_LLM,
 }
 
 
@@ -157,7 +157,37 @@ class WorkflowEngine:
                 shared.pop("_pflow_child_only_node", None)
 
     def run(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
-        """Execute a compiled workflow. Returns action string."""
+        """Execute a compiled workflow. Returns action string.
+
+        Installs ``self.trace`` into ``shared["__trace_collector__"]`` for the
+        duration of the run, so LLMNode.prep() can resolve a per-call trace
+        hook from the active engine's collector. The save/restore pattern
+        correctly handles nested sub-workflow runs (parent's collector is
+        restored after a child engine.run completes) for both ``mapped`` and
+        ``shared`` storage modes.
+        """
+        # Install this engine's trace collector so LLMNode.prep() can find
+        # it. Save+restore handles nested sub-workflow runs (parent's
+        # collector reinstated after a child engine.run completes) for both
+        # storage_mode=mapped and storage_mode=shared.
+        #
+        # Write-back form (not .pop()) because shared may be a
+        # NamespacedSharedStore (sub-workflow path) which doesn't implement
+        # pop. All consumers of __trace_collector__ use .get() (verified by
+        # grep — runner.py, success_formatter.py, error_formatter.py,
+        # cli/error_output.py, workflow_executor.py), so writing None back
+        # when the key was originally absent is indistinguishable from
+        # absence to every reader.
+        saved_trace = shared.get("__trace_collector__")
+        if self.trace is not None:
+            shared["__trace_collector__"] = self.trace
+        try:
+            return self._run_inner(workflow, shared)
+        finally:
+            shared["__trace_collector__"] = saved_trace
+
+    def _run_inner(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
+        """Run body — split out so run() can wrap with save/restore cleanly."""
         this_only, child_only = parse_only_path(self.only_node)
 
         # 0. Validate --only target
@@ -289,8 +319,11 @@ class WorkflowEngine:
         start_time = time.perf_counter()
         shared_keys_before = set(shared.keys()) if (self.trace or self.metrics) else set()
 
-        # 1. LLM interception
-        setup_llm_interception(config.node_id, config.node_type_name, node.params, self.trace)
+        # (Step 1 — LLM trace registration — removed in Task 158 Phase A
+        # post-cleanup. The trace collector is now installed by `run()`
+        # into ``shared["__trace_collector__"]`` and resolved by
+        # ``LLMNode.prep()`` directly. Lifecycle step numbers below
+        # preserved for cross-reference with engine/CLAUDE.md.)
 
         # 2. Execution state
         initialize_execution_state(shared)
@@ -398,9 +431,6 @@ class WorkflowEngine:
             if self.metrics:
                 self.metrics.record_node_execution(config.node_id, duration_ms)
 
-            # 15. LLM cost
-            enrich_llm_cost(config.node_id, shared)
-
             # Pre-compute trace error for action="error" happy-path failures
             # (no exception raised, but the trace event should still carry the
             # actual error text so --report and other trace consumers don't
@@ -470,8 +500,6 @@ class WorkflowEngine:
 
             if self.metrics:
                 self.metrics.record_node_execution(config.node_id, duration_ms)
-
-            enrich_llm_cost(config.node_id, shared)
 
             # Extract partial resolutions from template errors (attached by resolve_templates)
             error_resolutions = getattr(e, "_pflow_partial_resolutions", None) or last_resolutions

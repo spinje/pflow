@@ -3,11 +3,11 @@
 import json
 import logging
 import re
-import threading
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Optional
+from typing import Any, Callable, Optional
 
 from pflow.core.diagnostic import Diagnostic
 
@@ -15,6 +15,71 @@ logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
 TRACE_FORMAT_VERSION = "2.0.0"
+
+
+@dataclass
+class _LLMSummaryAccumulator:
+    """Accumulator for ``WorkflowTraceCollector._collect_llm_summary``.
+
+    Lives at module level to keep the recursive collector small (ruff C901).
+    Mirrors ``MetricsCollector.calculate_costs`` semantics: when any leaf
+    has ``cost_usd: None``, ``total_cost_usd`` becomes ``None`` and we surface
+    ``partial_cost_usd`` + ``unavailable_models`` + ``pricing_available: False``.
+    """
+
+    total_calls: int = 0
+    total_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    priced_cost: float = 0.0
+    models: set[str] = field(default_factory=set)
+    unavailable_models: set[str] = field(default_factory=set)
+
+    def add_leaf(self, call: dict[str, Any]) -> None:
+        self.total_calls += 1
+        self.total_tokens += call.get("total_tokens", 0)
+        self.total_input_tokens += call.get("input_tokens", 0)
+        self.total_output_tokens += call.get("output_tokens", 0)
+        cost = call.get("cost_usd")
+        if cost is None:
+            self.unavailable_models.add(call.get("model") or "unknown")
+        else:
+            self.priced_cost += cost
+        model = call.get("model")
+        if model:
+            self.models.add(model)
+
+    def merge_sub(self, sub: dict[str, Any]) -> None:
+        self.total_calls += sub.get("total_calls", 0)
+        self.total_tokens += sub.get("total_tokens", 0)
+        self.total_input_tokens += sub.get("total_input_tokens", 0)
+        self.total_output_tokens += sub.get("total_output_tokens", 0)
+        # Child contributes its priced cost (whether reported as total_cost_usd
+        # or partial_cost_usd) and any unavailable models.
+        if sub.get("total_cost_usd") is not None:
+            self.priced_cost += sub["total_cost_usd"]
+        elif sub.get("partial_cost_usd") is not None:
+            self.priced_cost += sub["partial_cost_usd"]
+        self.unavailable_models.update(sub.get("unavailable_models", []))
+        self.models.update(sub.get("models_used", []))
+
+    def as_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "total_calls": self.total_calls,
+            "total_tokens": self.total_tokens,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "models_used": sorted(self.models),
+        }
+        if self.unavailable_models:
+            result["total_cost_usd"] = None
+            result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None
+            result["unavailable_models"] = sorted(self.unavailable_models)
+            result["pricing_available"] = False
+        else:
+            result["total_cost_usd"] = round(self.priced_cost, 6)
+            result["pricing_available"] = True
+        return result
 
 
 def final_events_by_node(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -59,13 +124,6 @@ class WorkflowTraceCollector:
     - No value truncation (only internal key filtering and binary replacement)
     """
 
-    # Class-level attributes for thread-safe LLM interception
-    _llm_lock: ClassVar[threading.Lock] = threading.Lock()
-    _llm_interception_count: ClassVar[int] = 0
-    _original_get_model: ClassVar[Optional[Callable[..., Any]]] = None
-    _active_collectors: ClassVar[dict[int, "WorkflowTraceCollector"]] = {}  # thread_id -> collector
-    _thread_local: ClassVar[threading.local] = threading.local()  # per-thread current_node
-
     def __init__(self, workflow_name: str = "workflow"):
         """Initialize the trace collector.
 
@@ -76,11 +134,9 @@ class WorkflowTraceCollector:
         self.execution_id = str(uuid.uuid4())
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
-        self.llm_prompts: dict[str, str] = {}  # Store prompts by node_id
-        self._llm_interceptor_installed = False
+        self.llm_prompts: dict[str, str] = {}  # populated by trace_hook fired from the adapter; keyed by node_id
         self.json_output: dict[str, Any] | None = None  # Store final JSON output if generated
         self.execution_warnings: list[dict[str, Any]] | None = None  # Runtime warnings
-        self.enable_llm_interception = True  # Set False for child collectors
 
     def record_node_execution(
         self,
@@ -161,10 +217,15 @@ class WorkflowTraceCollector:
         if isinstance(llm_usage, dict):
             event["llm_call"] = llm_usage
 
-        # Look for prompt via interception first, then node_output.
-        # Note: child collectors (enable_llm_interception=False) won't have intercepted prompts.
-        # For those, the prompt is in template_resolutions["prompt"]["resolved"] (not llm_prompt).
-        # The LLM node does NOT write "prompt" to shared, so node_output fallback rarely fires.
+        # Look for prompt via the trace_hook capture first, then node_output.
+        # The LLM adapter calls collector.get_trace_hook(node_id) to get a
+        # writer that populates self.llm_prompts[node_id] on before_call.
+        # Sub-workflow LLM events end up in their own collector's
+        # llm_prompts dict (each engine.run installs its own collector into
+        # shared["__trace_collector__"]); the parent's WorkflowExecutor event
+        # then aggregates child events via sub_workflow_events.
+        # The LLM node does NOT write "prompt" to shared, so the
+        # node_output fallback only fires for legacy/external callers.
         prompt = self.llm_prompts.get(node_id)
         if not prompt and isinstance(node_output, dict):
             prompt = node_output.get("prompt")
@@ -249,7 +310,7 @@ class WorkflowTraceCollector:
                 # Skip internal keys
                 if isinstance(key, str) and key.startswith("__") and key not in ("__metrics__",):
                     continue
-                if key in ("_trace_collector", "_debug_context", "_batch_trace"):
+                if key in ("__trace_collector__", "_debug_context", "_batch_trace"):
                     continue
                 result[key] = self._sanitize_for_json(value)
             return result
@@ -375,75 +436,29 @@ class WorkflowTraceCollector:
         NOTE: Keep tree traversal in sync with _collect_llm_calls_from_events() — same structure.
         See that method's docstring for the batch item llm_call/events mutual exclusivity invariant.
 
-        Args:
-            events: List of trace events (may contain nested batch_items/sub_workflow_events)
-
-        Returns:
-            Summary dict with total_calls, total_tokens, total_input_tokens,
-            total_output_tokens, total_cost_usd, models_used
+        Cost contract mirrors ``MetricsCollector.calculate_costs``: when any
+        observed call has ``cost_usd: None`` (LiteLLM has no pricing data for
+        that model — Ollama, custom endpoints, brand-new models),
+        ``total_cost_usd`` is ``None`` and the summary carries
+        ``partial_cost_usd`` (sum of priced calls only) + ``unavailable_models``
+        + ``pricing_available: False``. When all priced, ``total_cost_usd`` is
+        the float total and ``pricing_available: True``.
         """
-        total_calls = 0
-        total_tokens = 0
-        total_input_tokens = 0
-        total_output_tokens = 0
-        total_cost = 0.0
-        models: set[str] = set()
-
+        agg = _LLMSummaryAccumulator()
         for event in events:
             if event.get("cached"):
                 continue  # Cached nodes incurred no cost this run
-
             if "llm_call" in event:
-                total_calls += 1
-                total_tokens += event["llm_call"].get("total_tokens", 0)
-                total_input_tokens += event["llm_call"].get("input_tokens", 0)
-                total_output_tokens += event["llm_call"].get("output_tokens", 0)
-                total_cost += event["llm_call"].get("cost_usd", 0) or 0
-                model = event["llm_call"].get("model")
-                if model:
-                    models.add(model)
-
-            # Recurse into batch items
-            # Invariant: items have llm_call XOR events, never both (see _collect_llm_calls_from_events)
+                agg.add_leaf(event["llm_call"])
             for item in event.get("batch_items", []):
-                # Leaf item with direct LLM call
                 if "llm_call" in item:
-                    total_calls += 1
-                    total_tokens += item["llm_call"].get("total_tokens", 0)
-                    total_input_tokens += item["llm_call"].get("input_tokens", 0)
-                    total_output_tokens += item["llm_call"].get("output_tokens", 0)
-                    total_cost += item["llm_call"].get("cost_usd", 0) or 0
-                    model = item["llm_call"].get("model")
-                    if model:
-                        models.add(model)
-                # Sub-workflow item with nested events
-                sub = self._collect_llm_summary(item.get("events", []))
-                total_calls += sub.get("total_calls", 0)
-                total_tokens += sub.get("total_tokens", 0)
-                total_input_tokens += sub.get("total_input_tokens", 0)
-                total_output_tokens += sub.get("total_output_tokens", 0)
-                total_cost += sub.get("total_cost_usd", 0)
-                models.update(sub.get("models_used", []))
-
-            # Recurse into sub-workflow events
+                    agg.add_leaf(item["llm_call"])
+                # Sub-workflow item with nested events (mutually exclusive with llm_call)
+                agg.merge_sub(self._collect_llm_summary(item.get("events", [])))
             sub_events = event.get("sub_workflow_events", [])
             if sub_events:
-                sub = self._collect_llm_summary(sub_events)
-                total_calls += sub.get("total_calls", 0)
-                total_tokens += sub.get("total_tokens", 0)
-                total_input_tokens += sub.get("total_input_tokens", 0)
-                total_output_tokens += sub.get("total_output_tokens", 0)
-                total_cost += sub.get("total_cost_usd", 0)
-                models.update(sub.get("models_used", []))
-
-        return {
-            "total_calls": total_calls,
-            "total_tokens": total_tokens,
-            "total_input_tokens": total_input_tokens,
-            "total_output_tokens": total_output_tokens,
-            "total_cost_usd": total_cost,
-            "models_used": sorted(models),
-        }
+                agg.merge_sub(self._collect_llm_summary(sub_events))
+        return agg.as_dict()
 
     def save_to_file(self) -> Path:
         """Save trace to JSON file in ~/.pflow/debug/.
@@ -517,85 +532,23 @@ class WorkflowTraceCollector:
 
         return filepath
 
-    def setup_llm_interception(self, node_id: str) -> None:
-        """Thread-safe setup of LLM interception to capture prompts.
+    def get_trace_hook(self, node_id: str) -> Callable[[dict[str, Any]], None]:
+        """Return a callable that the LLM adapter invokes around its API call.
 
-        Args:
-            node_id: The node that will make LLM calls
+        The new pflow-owned LiteLLM adapter (`pflow.core.llm_client.complete`)
+        accepts a `trace_hook` parameter. When a workflow trace is active, the
+        LLMNode passes `collector.get_trace_hook(node_id)` to the adapter.
+        On `before_call` the hook captures the rendered prompt into
+        `self.llm_prompts[node_id]` — same destination the legacy
+        ``llm.get_model`` monkey-patch wrote to before Task 158 Phase A.6
+        replaced it with this hook. Same downstream consumer
+        (`_attach_llm_call_to_event` at line 168 of this file).
         """
-        if not self.enable_llm_interception:
-            return
 
-        import llm
+        def hook(event: dict[str, Any]) -> None:
+            if event.get("event") == "before_call":
+                prompt = event.get("prompt")
+                if isinstance(prompt, str):
+                    self.llm_prompts[node_id] = prompt
 
-        # Store current node for prompt capture (thread-local to avoid race in parallel batch)
-        WorkflowTraceCollector._thread_local.current_node = node_id
-
-        with WorkflowTraceCollector._llm_lock:
-            # Register this collector for the current thread
-            thread_id = threading.current_thread().ident
-            if thread_id:
-                WorkflowTraceCollector._active_collectors[thread_id] = self
-
-            # Only install interceptor if this is the first one
-            if WorkflowTraceCollector._llm_interception_count == 0:
-                # Save the original function
-                WorkflowTraceCollector._original_get_model = llm.get_model
-
-                def intercept_get_model(*args: Any, **kwargs: Any) -> Any:
-                    # Get the original function
-                    if WorkflowTraceCollector._original_get_model is None:
-                        raise RuntimeError("Original get_model not set")
-                    model = WorkflowTraceCollector._original_get_model(*args, **kwargs)
-                    original_prompt = model.prompt
-
-                    def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
-                        # Find the collector for this thread
-                        thread_id = threading.current_thread().ident
-                        if thread_id and thread_id in WorkflowTraceCollector._active_collectors:
-                            collector = WorkflowTraceCollector._active_collectors[thread_id]
-                            current_node = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
-                            if current_node:
-                                collector.llm_prompts[current_node] = prompt_text
-                                logger.debug(f"Captured prompt for node {current_node} in thread {thread_id}")
-
-                        # Call original prompt method
-                        return original_prompt(prompt_text, **prompt_kwargs)
-
-                    model.prompt = intercept_prompt
-                    return model
-
-                llm.get_model = intercept_get_model
-                logger.debug("LLM interception installed globally")
-
-            # Increment the reference count
-            WorkflowTraceCollector._llm_interception_count += 1
-            self._llm_interceptor_installed = True
-            logger.debug(f"LLM interception reference count: {WorkflowTraceCollector._llm_interception_count}")
-
-    def cleanup_llm_interception(self) -> None:
-        """Thread-safe cleanup of LLM interception."""
-        if not self._llm_interceptor_installed:
-            return
-
-        with WorkflowTraceCollector._llm_lock:
-            # Unregister this collector from the current thread
-            thread_id = threading.current_thread().ident
-            if thread_id and thread_id in WorkflowTraceCollector._active_collectors:
-                del WorkflowTraceCollector._active_collectors[thread_id]
-                logger.debug(f"Unregistered collector for thread {thread_id}")
-
-            # Decrement the reference count
-            WorkflowTraceCollector._llm_interception_count -= 1
-            logger.debug(f"LLM interception reference count: {WorkflowTraceCollector._llm_interception_count}")
-
-            # If this was the last one, restore the original function
-            if WorkflowTraceCollector._llm_interception_count == 0:
-                import llm
-
-                if WorkflowTraceCollector._original_get_model:
-                    llm.get_model = WorkflowTraceCollector._original_get_model
-                    WorkflowTraceCollector._original_get_model = None
-                    logger.debug("LLM interception removed globally")
-
-            self._llm_interceptor_installed = False
+        return hook

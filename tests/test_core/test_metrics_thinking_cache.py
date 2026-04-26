@@ -1,7 +1,5 @@
 """Test metrics collection for thinking and caching tokens."""
 
-import pytest
-
 from pflow.core.metrics import MetricsCollector
 
 
@@ -140,6 +138,7 @@ class TestMetricsThinkingCache:
                 "model": "anthropic/claude-3-5-sonnet-20241022",
                 "input_tokens": 1000,
                 "output_tokens": 500,
+                "cost_usd": 0.0105,  # adapter sets this from LiteLLM's response_cost
                 "node_id": "SomeNode",
             },
         ]
@@ -155,47 +154,6 @@ class TestMetricsThinkingCache:
         assert "cache_performance" not in summary
         assert "thinking_performance" not in summary
 
-        # But the basic metrics should still work
-        assert summary["total_cost_usd"] > 0
+        # Basic metrics still work — cost flows through, tokens accumulate
+        assert summary["total_cost_usd"] == 0.0105
         assert summary["metrics"]["workflow"]["tokens_total"] == 1500
-
-    def test_thinking_cost_calculation(self):
-        """Test that thinking tokens are properly included in cost calculation."""
-        collector = MetricsCollector()
-
-        llm_calls = [
-            {
-                "model": "anthropic/claude-3-5-sonnet-20241022",
-                "input_tokens": 1000,  # $0.003
-                "output_tokens": 500,  # $0.0075
-                "thinking_tokens": 1000,  # $0.015 (billed at output rate)
-                "node_id": "PlanningNode",
-            },
-        ]
-
-        cost_data = collector.calculate_costs(llm_calls)
-
-        # Expected: 0.003 + 0.0075 + 0.015 = 0.0255
-        assert cost_data["pricing_available"] is True
-        assert cost_data["total_cost_usd"] == pytest.approx(0.0255, rel=1e-5)
-
-    def test_cache_cost_calculation(self):
-        """Test that cache tokens affect cost calculation correctly."""
-        collector = MetricsCollector()
-
-        llm_calls = [
-            {
-                "model": "anthropic/claude-3-5-sonnet-20241022",
-                "input_tokens": 1000,  # Regular input: $0.003
-                "output_tokens": 500,  # Output: $0.0075
-                "cache_creation_input_tokens": 1000,  # Cache creation: $0.006 (2x cost)
-                "cache_read_input_tokens": 1000,  # Cache read: $0.0003 (10% cost)
-                "node_id": "PlanningNode",
-            },
-        ]
-
-        cost_data = collector.calculate_costs(llm_calls)
-
-        # Expected: 0.003 + 0.0075 + 0.006 + 0.0003 = 0.0168
-        assert cost_data["pricing_available"] is True
-        assert cost_data["total_cost_usd"] == pytest.approx(0.0168, rel=1e-5)

@@ -2,124 +2,102 @@
 
 ## Quick Start (No Setup Required)
 
-Just run the standard tests - they're fully mocked:
+The standard tests are fully mocked — no API keys, no provider setup:
+
 ```bash
 make test
-# or
+# or just the LLM tests:
 pytest tests/test_nodes/test_llm/test_llm.py -v
 ```
 
-These tests:
-- ✅ Cover all 22 specification criteria
-- ✅ Run without any API keys
-- ✅ Run without any LLM plugins installed
-- ✅ Always run in CI/CD
+These tests cover the full LLMNode contract (prep validation, attachment
+handling, structured output, reasoning kwargs, error paths, retry
+semantics) using `MockLLMClient`, which patches the adapter seam at
+`pflow.core.llm_client.complete`.
 
 ## Integration Testing (Optional)
 
-If you want to test with real LLM APIs:
+If you want to exercise real provider APIs (costs real money):
 
-### 1. Install the plugin for your provider
+### 1. Configure API keys
 
-```bash
-# For Anthropic Claude models (used in our integration tests):
-uv pip install llm-anthropic
-
-# For other providers:
-# (OpenAI is built-in, no plugin needed)
-uv pip install llm-gpt4all    # Local models
-uv pip install llm-ollama      # Ollama
-```
-
-### 2. Configure API keys
+Either via environment variables:
 
 ```bash
-# Option A: Using llm CLI (RECOMMENDED - persistent)
-llm keys set anthropic
-# Enter your key when prompted: sk-ant-...
-
-llm keys set openai
-# Enter your key when prompted: sk-...
-
-# Option B: Environment variable (temporary - for CI/CD or testing)
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
+export GEMINI_API_KEY="..."
 ```
 
-### 3. Run integration tests
+Or via `pflow settings set-env` (persisted in `~/.pflow/settings.json`):
 
 ```bash
-# Enable real API tests
-export RUN_LLM_TESTS=1
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+pflow settings set-env OPENAI_API_KEY "sk-..."
+pflow settings set-env GEMINI_API_KEY "..."
+```
 
-# Run integration tests
+LiteLLM picks up env vars natively; `pflow settings` injects them into
+`os.environ` at startup so both paths work the same way.
+
+### 2. Run integration tests
+
+```bash
+export RUN_LLM_TESTS=1
 pytest tests/test_nodes/test_llm/test_llm_integration.py -v
 ```
 
-## What This Means for Development
+The `RUN_LLM_TESTS=1` gate also disables the autouse `mock_llm_client`
+fixture for tests under `/llm/` — they hit the real LiteLLM call path.
 
-### For pflow developers:
-1. **Primary development** uses mocked tests only - no plugins needed
-2. **Integration testing** is optional - install plugins only if you need them
-3. **CI/CD** runs mocked tests only - fast and free
+## Testing different providers
 
-### For pflow users:
-1. **Install pflow** - gets base `llm` library
-2. **Install plugins** for their preferred LLM provider
-3. **Use any model** from any installed plugin
-
-### Testing different providers:
-
-If you want to test with different models, just modify the integration test:
+LiteLLM speaks 100+ providers natively — no plugin install required. Use
+the model with its provider prefix:
 
 ```python
-# Test with OpenAI (no extra plugin needed)
-node.set_params({"model": "gpt-4"})
-
-# Test with local model (needs llm-gpt4all)
-node.set_params({"model": "orca-mini-3b"})
-
-# Test with Ollama (needs llm-ollama)
-node.set_params({"model": "llama2:latest"})
+node.set_params({"model": "anthropic/claude-sonnet-4-5"})  # Anthropic
+node.set_params({"model": "openai/gpt-4o-mini"})           # OpenAI
+node.set_params({"model": "gemini/gemini-2.5-flash"})      # Google Gemini
+node.set_params({"model": "ollama/llama3.2"})              # Local Ollama
+node.set_params({"model": "openrouter/anthropic/claude-sonnet-4-5"})
 ```
+
+See [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for
+the full set.
 
 ## CI/CD Setup
 
-For GitHub Actions or other CI/CD:
-
 ```yaml
-# Basic tests (always run)
+# Mocked tests (always run, no keys needed)
 - name: Run tests
   run: make test
 
-# Optional integration tests (only if you want to pay for API calls)
+# Optional integration tests (real API calls; skip on PRs to keep costs down)
 - name: Run LLM integration tests
   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     RUN_LLM_TESTS: "1"
-  run: |
-    pip install llm-anthropic  # Install plugin
-    pytest tests/test_nodes/test_llm/test_llm_integration.py -v
+  run: pytest tests/test_nodes/test_llm/test_llm_integration.py -v
 ```
 
 ## Common Issues
 
 ### "Unknown model" error
-- **Cause**: Plugin for that provider not installed
-- **Fix**: Install the appropriate plugin (e.g., `pip install llm-anthropic`)
+
+LiteLLM rejected the model string. Either the provider prefix is missing
+(use `anthropic/claude-sonnet-4-5`, not `claude-sonnet-4-5`) or the
+specific model name is wrong. See
+[LiteLLM provider list](https://docs.litellm.ai/docs/providers).
 
 ### "API key required" error
-- **Cause**: Plugin installed but no API key configured
-- **Fix**: Set the API key via environment variable or `llm keys set`
+
+The provider's env var (e.g. `ANTHROPIC_API_KEY`) isn't set, and
+`pflow settings set-env` doesn't have an entry for it either. Set one of
+the two and rerun.
 
 ### Integration tests skipped
-- **Cause**: `RUN_LLM_TESTS` not set or plugin/key missing
-- **Fix**: Set `RUN_LLM_TESTS=1` and ensure plugin + key are configured
 
-## Summary
-
-The key insight: **Separation of concerns**
-- pflow provides the LLM node infrastructure
-- Users choose and install their LLM providers
-- Tests work at both levels: mocked (always) and real (optional)
+`RUN_LLM_TESTS` isn't set to `1`, or the required env var for the model
+under test isn't configured.

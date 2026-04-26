@@ -8,7 +8,7 @@ icon: "sparkles"
   **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
 </Note>
 
-The LLM node calls AI models using [Simon Willison's llm library](https://llm.datasette.io/). Use it when a step needs reasoning — summarization, classification, extraction, anything a Python expression can't handle. It supports multiple providers (OpenAI, Anthropic, Google, local models) through a unified interface.
+The LLM node calls AI models using [LiteLLM](https://docs.litellm.ai/). Use it when a step needs reasoning — summarization, classification, extraction, anything a Python expression can't handle. It supports many providers (OpenAI, Anthropic, Google, OpenRouter, Ollama, and 100+ more) through a unified interface.
 
 ## Parameters
 
@@ -46,7 +46,7 @@ See [LLM model settings](/reference/cli/settings#llm-model-settings) for the ful
 
 ```json
 {
-  "model": "gpt-5.2",
+  "model": "openai/gpt-5.2",
   "input_tokens": 150,
   "output_tokens": 89,
   "total_tokens": 239,
@@ -59,11 +59,13 @@ See [LLM model settings](/reference/cli/settings#llm-model-settings) for the ful
 
 These providers are included with pflow - just set your API key:
 
+Always include the provider prefix in the `model:` field — bare names route inconsistently (Gemini bare names try Vertex; OpenAI bare names usually work but aren't future-proof).
+
 | Provider | Example models |
 |----------|---------------|
-| OpenAI | `gpt-5.2`, `gpt-5.1`, `gpt-4o` |
-| Anthropic | `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-4-5` |
-| Google | `gemini-3.0-pro`, `gemini-2.5-flash` |
+| OpenAI | `openai/gpt-5.2`, `openai/gpt-5.1`, `openai/gpt-4o` |
+| Anthropic | `anthropic/claude-opus-4-5`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-haiku-4-5` |
+| Google | `gemini/gemini-3.0-pro`, `gemini/gemini-2.5-flash` |
 
 ```bash
 # Set API keys (stored in ~/.pflow/settings.json)
@@ -72,54 +74,15 @@ pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
 pflow settings set-env GEMINI_API_KEY "..."
 ```
 
-<Tip>
-  Run `llm models` to see all available models on your system.
-</Tip>
+## Other providers
 
-## Extending with plugins
+LiteLLM is built into pflow and recognizes 100+ providers natively — no plugin install needed. Set the appropriate API key (or omit it for Ollama) and reference the model with its provider prefix.
 
-pflow uses [Simon Willison's llm library](https://llm.datasette.io/), which supports plugins for additional providers and local models.
-
-### Installing plugins
-
-If you installed pflow with `uv tool`, include plugins during installation:
+### OpenRouter
 
 ```bash
-uv tool install --with llm-openrouter pflow-cli
+pflow settings set-env OPENROUTER_API_KEY "sk-or-..."
 ```
-
-If you installed with `pipx`, use inject to add plugins:
-
-```bash
-pipx inject pflow-cli llm-openrouter
-```
-
-<Note>
-  Plugins must be installed in pflow's environment. Running `llm install` separately won't work with isolated installations.
-</Note>
-
-### Popular plugins
-
-| Plugin | Install flag | Use case |
-|--------|--------------|----------|
-| `llm-openrouter` | `--with llm-openrouter` | Access Claude, GPT, Llama, Mistral via [OpenRouter](https://openrouter.ai) |
-| `llm-ollama` | `--with llm-ollama` | Run models locally with [Ollama](https://ollama.ai) |
-
-After installing, set up credentials:
-
-```bash
-# OpenRouter - get key from https://openrouter.ai/keys
-llm keys set openrouter
-
-# Ollama - no API key needed
-brew install ollama
-ollama serve
-ollama pull llama3.2
-```
-
-### Using plugin models
-
-OpenRouter models use the `openrouter/provider/model` format:
 
 ````markdown
 ### summarize
@@ -131,7 +94,13 @@ Summarize content using OpenRouter.
 - prompt: Summarize this
 ````
 
-Ollama models use the model name directly:
+### Ollama (local models)
+
+```bash
+brew install ollama
+ollama serve
+ollama pull llama3.2
+```
 
 ````markdown
 ### summarize
@@ -139,11 +108,11 @@ Ollama models use the model name directly:
 Summarize content using a local model.
 
 - type: llm
-- model: llama3.2
+- model: ollama/llama3.2
 - prompt: Summarize this
 ````
 
-See the [llm plugin directory](https://llm.datasette.io/en/stable/plugins/directory.html) for more providers including Mistral, Bedrock, and other local model options.
+See the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for the full set of supported providers (Mistral, Bedrock, Azure OpenAI, Vertex AI, vLLM, and more).
 
 ## Image support
 
@@ -156,7 +125,7 @@ Describe the contents of a photo.
 
 - type: llm
 - prompt: What's in this image?
-- model: gpt-5.2
+- model: openai/gpt-5.2
 - images: ["photo.jpg"]
 ````
 
@@ -177,7 +146,7 @@ Summarize the content from the previous step.
 
 - type: llm
 - prompt: Summarize: ${read.content}
-- model: gpt-4o-mini
+- model: openai/gpt-4o-mini
 ````
 
 ### With system prompt
@@ -236,7 +205,7 @@ Analyze the contents of a user-provided image.
 
 - type: llm
 - prompt: Describe the main elements in this image
-- model: gpt-5.2
+- model: openai/gpt-5.2
 - images: ["${file_path}"]
 ````
 
@@ -257,8 +226,8 @@ Analyze source code for issues.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| Unknown model | Model ID not recognized | Run `llm models` to see available models |
-| API key required | Missing credentials | Set up with `llm keys set <provider>` or env var |
+| Unknown model | Model ID not recognized | Run `pflow settings llm show` to see configured models, or check the [LiteLLM provider list](https://docs.litellm.ai/docs/providers) for supported model strings |
+| API key required | Missing credentials | Set with `pflow settings set-env <PROVIDER>_API_KEY <value>` or `export <PROVIDER>_API_KEY=...` |
 | Rate limit | Too many requests | Wait and retry automatically (built-in retry) |
 
 The node retries transient failures automatically (3 attempts, 1 second wait).

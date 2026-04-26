@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, ClassVar, Optional
 
-from pflow.core.diagnostic import Diagnostic, format_child_provenance
+from pflow.core.diagnostic import Diagnostic, format_child_provenance, normalize_runtime_warning
 from pflow.core.exceptions import (
     MarkdownParseError,
     PflowError,
@@ -122,7 +122,7 @@ class WorkflowExecutor(BaseNode):
         "__warnings__",
         "__parser_diagnostics__",
         "__memoization_cache__",
-        "_trace_collector",
+        "__trace_collector__",
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
@@ -334,13 +334,12 @@ class WorkflowExecutor(BaseNode):
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
         # Create child trace collector for sub-workflow visibility
-        parent_trace = parent_shared.get("_trace_collector")
+        parent_trace = parent_shared.get("__trace_collector__")
         child_trace = None
         if parent_trace:
             from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
             child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
-            child_trace.enable_llm_interception = False
 
         # Compile (with compile-once caching)
         compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)
@@ -513,7 +512,8 @@ class WorkflowExecutor(BaseNode):
                     return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {error}"
             warning = child_storage.get("__warnings__", {}).get(failed_node)
             if warning:
-                return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {warning}"
+                message, _context = normalize_runtime_warning(warning)
+                return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {message}"
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:

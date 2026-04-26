@@ -110,7 +110,7 @@ Runtime node for nested workflow execution. Child outputs auto-expose via namesp
 - **Compile-once cache**: `_compiled_workflow_cache` (dict keyed by resolved workflow path) + `_loaded_ir_cache` (dict keyed by raw workflow ref) — compiles once per unique child, reuses for sequential batch items. Heterogeneous batches (`${item.workflow}` varies per item) correctly cache each child independently.
 - **Circular detection** via `_pflow_stack`, **max depth** via `_pflow_depth` (default 10).
 - **Relative paths** resolve from parent workflow directory via `_pflow_workflow_file`.
-- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` — `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `_trace_collector`. Per-workflow keys (`__execution__`, `__cache_hits__`, `__template_errors__`, `__failures__`) NOT propagated — child gets its own. Adding `__failures__` here would leak child node IDs into parent state.
+- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` — `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `__trace_collector__`. Per-workflow keys (`__execution__`, `__cache_hits__`, `__template_errors__`, `__failures__`) NOT propagated — child gets its own. Adding `__failures__` here would leak child node IDs into parent state.
 - **`error_action` covers BOTH prep and exec failures** (GH #284). Prep-time failures (missing required inputs, undeclared extras, non-dict `inputs:`, missing file, circular ref, max depth) are captured into a `_prep_error` marker in `prep_res` so `exec()`/`post()` dispatch them uniformly through `error_action`. The recoverable exception set is `_PREP_RECOVERABLE` — `CompilationError` is explicitly excluded (broken workflow definitions are not routable). One caveat: if the failure text matches `api_warning_detector` patterns (e.g. "not found"), the engine's API warning layer overrides the action back to `"error"` regardless of `error_action` — pre-existing engine behavior, applies to all node types. Tracked as GH #301.
 
 ### MemoizationCache (`cache.py`)
@@ -127,7 +127,7 @@ Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
 - **Format 2.0.0**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events`
-- **Thread-safe LLM interception**: Reference counting + per-thread collector lookup. Child collectors skip interception.
+- **LLM prompt capture**: Engine.run installs `self.trace` into `shared["__trace_collector__"]`; LLMNode.prep resolves a per-node `trace_hook` via `collector.get_trace_hook(node_id)` and threads it explicitly through the inner ThreadPoolExecutor. The hook writes to `self.llm_prompts[node_id]`; `_add_llm_data` reads from there. Save+restore around `engine.run` swaps in child collectors for sub-workflows so child LLM calls land in the child's `llm_prompts` dict.
 - **Batch item tracing**: via `_batch_trace` shared-store accumulator (GIL-safe for parallel)
 - **Sub-workflow tracing**: Child collectors created by `WorkflowExecutor`, events embedded as `sub_workflow_events`
 - **Per-node aggregation rule — "last event per `node_id` = final state"**: Status determination and the `failed_node_ids` list (written to the trace file by `save_to_file`) both derive from `final_events_by_node(events)` (module-level helper, also imported by `core/trace_report.py::_collect_errors`). Loop recovery records two events for the same node_id; only the later one counts for workflow-level aggregation. Single source of truth — if the rule changes, it changes in one place. See GH #240.
@@ -164,7 +164,7 @@ shared["__failures__"] = {
 }
 
 # System keys
-shared["_trace_collector"] = WorkflowTraceCollector
+shared["__trace_collector__"] = WorkflowTraceCollector
 shared["__progress_callback__"] = func
 shared["__warnings__"] = {}               # Node warnings → DEGRADED status
 shared["__cache_hits__"] = []             # Nodes served from cache

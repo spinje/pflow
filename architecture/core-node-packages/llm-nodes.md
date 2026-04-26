@@ -20,9 +20,9 @@ The `LLM` node provides:
 
 * **General-purpose text processing** - handles any prompt-based task
 * **Consistent interface** - prompt via params, writes `response` and `llm_usage`
-* **Simon Willison's llm library** - wraps the `llm` library for model management
+* **LiteLLM adapter** - routes provider-prefixed model calls through `pflow.core.llm_client`
 * **Smart exception design** - prevents proliferation of similar prompt nodes
-* **Auto-detection** - model is auto-detected via `llm` library when not specified
+* **Auto-detection** - default model is selected from pflow settings or configured provider keys
 
 ---
 
@@ -57,7 +57,7 @@ shared["llm_usage"] = {"input_tokens": 15, "output_tokens": 42, "model": "gpt-4o
 
 | Param         | Type    | Default    | Description                                                    |
 | ------------- | ------- | ---------- | -------------------------------------------------------------- |
-| `model`       | `str`   | `"auto"`   | Auto-detected via `llm` library (uses default model)          |
+| `model`       | `str`   | `"auto"`   | Auto-detected from pflow settings/provider keys when omitted |
 | `temperature` | `float` | `0.7`      | Sampling temperature for creativity control                    |
 | `system`      | `str?`  | `None`     | Optional system prompt for behavior guidance                   |
 | `max_tokens`  | `int?`  | `None`     | Optional output limit (model-dependent)                       |
@@ -149,15 +149,15 @@ pflow read-file research.md => \
 
 ---
 
-## 🔮 Current Implementation: Simon Willison's LLM Library
+## 🔮 Current Implementation: LiteLLM Adapter
 
-The LLM node is built on [Simon Willison's `llm` library](https://github.com/simonw/llm):
+The LLM node calls pflow's `pflow.core.llm_client` adapter, which wraps [LiteLLM](https://docs.litellm.ai/) and normalizes provider responses:
 
 ### Implemented Features
-- **Model Auto-Detection**: Uses `llm`'s default model when none specified
-- **Multi-Provider Support**: OpenAI, Anthropic, local models, and more via plugins
-- **Plugin Ecosystem**: Access to LLM plugins for additional models
-- **Token Tracking**: Usage metrics captured in `shared["llm_usage"]`
+- **Model Auto-Detection**: Uses pflow settings or detected provider keys when no model is specified
+- **Multi-Provider Support**: OpenAI, Anthropic, Gemini, OpenRouter, Ollama, and other LiteLLM providers
+- **Typed Errors**: LiteLLM provider errors are translated into pflow `LLMCallError` subclasses with structured diagnostics
+- **Token and Cost Tracking**: Usage metrics and LiteLLM `response_cost` are captured in `shared["llm_usage"]`
 
 ### Usage Examples
 ```bash
@@ -165,7 +165,7 @@ The LLM node is built on [Simon Willison's `llm` library](https://github.com/sim
 pflow llm --prompt="Summarize this text"
 
 # With explicit model
-pflow llm --model=gpt-4o --prompt="Analyze this code"
+pflow llm --model=openai/gpt-4o --prompt="Analyze this code"
 ```
 
 ### llm_usage Output
@@ -174,7 +174,8 @@ The node writes token usage metrics to `shared["llm_usage"]`:
 {
     "input_tokens": 150,    # Tokens in prompt
     "output_tokens": 42,    # Tokens in response
-    "model": "gpt-4o-mini"  # Model used for generation
+    "model": "openai/gpt-4o-mini",  # Model used for generation
+    "cost_usd": 0.00042             # LiteLLM response_cost when available
 }
 ```
 
@@ -187,7 +188,7 @@ The node writes token usage metrics to `shared["llm_usage"]`:
 | **General-purpose approach** | Prevents node proliferation while maintaining flexibility |
 | **Simple prompt interface** | Keeps MVP focused, templates can come later |
 | **Params-only pattern** | All inputs via params, outputs to shared store |
-| **llm library integration** | Leverages existing ecosystem instead of rebuilding |
+| **LiteLLM adapter seam** | Keeps provider quirks, typed errors, cost extraction, and future prompt-cache rendering in one place |
 | **Conservative defaults** | Temperature 0.7 balances creativity and consistency |
 
 ---

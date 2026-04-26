@@ -9,7 +9,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, exception_to_diagnostics
+from pflow.core.diagnostic import (
+    LLM_WARNING_CATEGORY,
+    Diagnostic,
+    Severity,
+    deduplicate_diagnostics,
+    exception_to_diagnostics,
+    normalize_runtime_warning,
+)
 from pflow.core.exceptions import (
     CompilationError,
     MarkdownParseError,
@@ -266,7 +273,7 @@ class WorkflowRunner:
         duration = time.perf_counter() - start_time
         self._update_metadata(success, workflow_manager, workflow_name, params, duration)
 
-        trace_collector = shared_store.get("_trace_collector", trace_collector)
+        trace_collector = shared_store.get("__trace_collector__", trace_collector)
         if trace_collector:
             trace_collector.set_warnings([
                 diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
@@ -487,7 +494,7 @@ class WorkflowRunner:
 
         shared_store["__mcp_pool__"] = mcp_pool
         shared_store["__memoization_cache__"] = cache
-        shared_store["_trace_collector"] = trace_collector
+        shared_store["__trace_collector__"] = trace_collector
 
         return shared_store
 
@@ -541,7 +548,8 @@ class WorkflowRunner:
         """Extract runtime warnings from shared store."""
         warnings: list[Diagnostic] = []
         failures = shared_store.get("__failures__", {})
-        for node_id, message in shared_store.get("__warnings__", {}).items():
+        for node_id, raw_message in shared_store.get("__warnings__", {}).items():
+            message, warning_context = normalize_runtime_warning(raw_message)
             failure = failures.get(node_id)
             is_recovery = (
                 failure is not None
@@ -565,6 +573,10 @@ class WorkflowRunner:
                     )
                 )
             else:
+                context = {"type": "api_warning"}
+                context.update(warning_context)
+                if "kind" in warning_context:
+                    context.setdefault("category", LLM_WARNING_CATEGORY)
                 warnings.append(
                     Diagnostic(
                         severity=Severity.WARNING,
@@ -575,7 +587,7 @@ class WorkflowRunner:
                         ],
                         node_id=node_id,
                         source="runtime",
-                        context={"type": "api_warning"},
+                        context=context,
                     )
                 )
         for node_id, error_data in shared_store.get("__template_errors__", {}).items():
@@ -704,12 +716,6 @@ class WorkflowRunner:
                 mcp_pool.shutdown()
             except Exception:
                 logger.debug("MCP pool shutdown error", exc_info=True)
-
-        if trace_collector and hasattr(trace_collector, "cleanup_llm_interception"):
-            try:
-                trace_collector.cleanup_llm_interception()
-            except Exception:
-                logger.debug("LLM interception cleanup failed", exc_info=True)
 
         if metrics_collector is not None:
             with contextlib.suppress(Exception):

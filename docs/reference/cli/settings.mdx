@@ -85,7 +85,7 @@ Current settings:
     }
   },
   "llm": {
-    "default_model": "gpt-5.2",
+    "default_model": "openai/gpt-5.2",
     "discovery_model": null,
     "filtering_model": null
   },
@@ -134,7 +134,7 @@ pflow settings set-env GITHUB_TOKEN "ghp_..."
   **Security:** Always set API keys yourself - never let AI agents run this command.
 </Warning>
 
-**Alternative:** If you use [Simon Willison's llm](https://llm.datasette.io/), pflow will use those keys automatically. Run `llm keys set anthropic` instead.
+**Alternative:** Set the key as a shell environment variable instead — pflow (via LiteLLM) reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and provider-specific equivalents directly from `os.environ`.
 
 ## pflow settings unset-env
 
@@ -328,11 +328,14 @@ pflow settings llm show
 ```
 LLM Model Settings:
 
-  default_model:    gpt-5.2 (configured)
-  discovery_model:  (using default_model → gpt-5.2)
-  filtering_model:  (using default_model → gpt-5.2)
+  default_model:    openai/gpt-5.2 (configured)
+  discovery_model:  (using default_model → openai/gpt-5.2)
+  filtering_model:  (using default_model → openai/gpt-5.2)
 
-Resolution: setting → default_model → llm CLI default → auto-detect → error
+Resolution order:
+  default:    workflow params → default_model → auto-detect → error
+  discovery:  discovery_model → default_model → auto-detect → fallback
+  filtering:  filtering_model → default_model → auto-detect → fallback
 
 To configure:
   pflow settings llm set-default <model>
@@ -349,7 +352,7 @@ pflow settings llm set-default <MODEL>
 ```
 
 **Arguments:**
-- `MODEL` - Model identifier (e.g., `gpt-5.2`, `anthropic/claude-sonnet-4-5`, `gemini-3-flash-preview`)
+- `MODEL` - Model identifier (e.g., `openai/gpt-5.2`, `anthropic/claude-sonnet-4-5`, `gemini/gemini-3-flash-preview`). LiteLLM requires the provider prefix.
 
 When set, this model is used instead of auto-detection for:
 - LLM nodes in workflows (when no model specified in params)
@@ -360,18 +363,33 @@ When set, this model is used instead of auto-detection for:
 
 ```bash
 # Set OpenAI model
-pflow settings llm set-default gpt-5.2
+pflow settings llm set-default openai/gpt-5.2
 
 # Set Anthropic model
 pflow settings llm set-default anthropic/claude-sonnet-4-5
 
 # Set Google model
-pflow settings llm set-default gemini-3-flash-preview
+pflow settings llm set-default gemini/gemini-3-flash-preview
 ```
 
 <Tip>
   This is optional - pflow auto-detects a model based on your API keys. Use this if you want a specific model instead of the auto-detected one.
 </Tip>
+
+<Note>
+  **Bare model names are auto-prefixed.** Bare names from known providers
+  (`gpt-*`, `o1*`, `o3*`, `o4*`, `claude-*`, `gemini-*`) are rewritten to
+  the canonical `<provider>/<name>` form at write time, with a
+  `Normalized:` line confirming the rewrite. Unknown bare names pass
+  through with a warning so custom or self-hosted models still work.
+  This applies to all three `set-*` commands below.
+
+  ```bash
+  $ pflow settings llm set-default gemini-3-flash-preview
+    Normalized: gemini/gemini-3-flash-preview
+  ✓ Set default_model: gemini/gemini-3-flash-preview
+  ```
+</Note>
 
 ### pflow settings llm set-discovery
 
@@ -388,7 +406,7 @@ pflow settings llm set-discovery <MODEL>
 
 ```bash
 # Use a fast, cheap model for discovery
-pflow settings llm set-discovery gemini-3-flash-preview
+pflow settings llm set-discovery gemini/gemini-3-flash-preview
 ```
 
 ### pflow settings llm set-filtering
@@ -406,7 +424,7 @@ pflow settings llm set-filtering <MODEL>
 
 ```bash
 # Use a fast, cheap model for filtering
-pflow settings llm set-filtering gemini-2.5-flash-lite
+pflow settings llm set-filtering gemini/gemini-2.5-flash-lite
 ```
 
 <Tip>
@@ -416,17 +434,17 @@ pflow settings llm set-filtering gemini-2.5-flash-lite
 
   | Provider | Model | Overhead | Notes |
   |----------|-------|----------|-------|
-  | Google | `gemini-2.5-flash-lite` | ~2-3s | Best budget option |
-  | OpenAI | `gpt-5-mini` | ~1-2s | Runner-up budget |
-  | Anthropic | `claude-haiku-4-5` | ~1-2s | Third place budget |
+  | Google | `gemini/gemini-2.5-flash-lite` | ~2-3s | Best budget option |
+  | OpenAI | `openai/gpt-5-mini` | ~1-2s | Runner-up budget |
+  | Anthropic | `anthropic/claude-haiku-4-5` | ~1-2s | Third place budget |
 
   **Alternative (higher cost):**
 
   | Provider | Model | Overhead | Notes |
   |----------|-------|----------|-------|
-  | Anthropic | `claude-sonnet-4-5` | ~1-2s | Best premium option |
-  | Google | `gemini-3-flash-preview` | ~2-3s | Runner-up premium |
-  | OpenAI | `gpt-5.2` | ~5-6s | Slower, not recommended |
+  | Anthropic | `anthropic/claude-sonnet-4-5` | ~1-2s | Best premium option |
+  | Google | `gemini/gemini-3-flash-preview` | ~2-3s | Runner-up premium |
+  | OpenAI | `openai/gpt-5.2` | ~5-6s | Slower, not recommended |
 
   All models produce equivalent quality for this task. Timings are approximate and vary with network latency.
 </Tip>
@@ -461,9 +479,8 @@ pflow uses the same resolution order for all LLM usage (discovery, filtering, an
 
 1. Explicit setting (workflow params or feature-specific setting)
 2. `default_model` from settings
-3. `llm` library default (`llm models default`)
-4. Auto-detect from API keys
-5. Error with setup instructions
+3. Auto-detect from configured API keys (Anthropic → Google → OpenAI)
+4. Error with setup instructions
 
 **Auto-detected defaults by provider:**
 
@@ -471,7 +488,7 @@ pflow uses the same resolution order for all LLM usage (discovery, filtering, an
 |----------|---------------|
 | Anthropic | `anthropic/claude-sonnet-4-5` |
 | Google | `gemini/gemini-3-flash-preview` |
-| OpenAI | `gpt-5.2` |
+| OpenAI | `openai/gpt-5.2` |
 
 <Note>
   Most users just need an API key configured. pflow auto-detects the appropriate model. Use these commands only to override the auto-detected model.

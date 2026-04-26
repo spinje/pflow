@@ -2,14 +2,17 @@
 
 This module provides intelligent default model selection based on available
 API keys, eliminating the need for hardcoded defaults throughout the codebase.
+
+Key resolution sources (in priority order):
+    1. Environment variables (os.environ)
+    2. pflow settings (~/.pflow/settings.json env section)
 """
 
 import logging
 import os
-import shutil
-import subprocess
 from typing import Optional
 
+from pflow.core.llm_providers import PROVIDERS
 from pflow.core.settings import SettingsManager
 
 logger = logging.getLogger(__name__)
@@ -19,104 +22,28 @@ _cached_default_model: Optional[str] = None
 # Flag to track if detection has been completed (even if result is None)
 _detection_complete: bool = False
 
-# Constant for the llm CLI command name
-LLM_COMMAND = "llm"
+# Provider to environment variable mapping derived from the canonical
+# `llm_providers` registry. The registry's tuple of env vars carries
+# canonical-first ordering plus any provider-accepted aliases (e.g. Gemini
+# accepts both GEMINI_API_KEY and GOOGLE_API_KEY).
+PROVIDER_ENV_VARS: dict[str, list[str]] = {p.name: list(p.env_vars) for p in PROVIDERS}
 
-# Allowlist of trusted LLM providers
-ALLOWED_PROVIDERS = frozenset({"anthropic", "gemini", "openai"})
-
-# Provider to environment variable mapping
-# Some providers accept multiple variable names (e.g., Gemini accepts both)
-PROVIDER_ENV_VARS: dict[str, list[str]] = {
-    "anthropic": ["ANTHROPIC_API_KEY"],
-    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    "openai": ["OPENAI_API_KEY"],
-}
-
-# Constant command args (security: prevents injection)
-_LLM_KEYS_SUBCOMMAND = ["keys", "get"]
-
-
-def _get_validated_llm_path() -> str | None:
-    """Get validated path to llm executable.
-
-    Returns:
-        Full path to llm executable, or None if not found
-
-    Security:
-        Uses shutil.which() to resolve full path, avoiding
-        execution of untrusted partial paths.
-    """
-    return shutil.which(LLM_COMMAND)
-
-
-def _has_llm_key(provider: str) -> bool:
-    """Check if an LLM provider key is configured.
-
-    Uses Simon Willison's llm CLI to check for configured keys.
-
-    Args:
-        provider: Provider name ("anthropic", "gemini", "openai")
-
-    Returns:
-        True if key exists and is configured
-
-    Security:
-        - Validates provider against ALLOWED_PROVIDERS allowlist
-        - Uses validated full executable path from _get_validated_llm_path()
-        - No shell expansion (shell=False, list-based args)
-    """
-    # Security: Validate provider name to prevent command injection
-    if provider not in ALLOWED_PROVIDERS:
-        # Don't log untrusted provider name - could contain control characters
-        logger.debug("Provider validation failed")
-        return False
-
-    llm_path = _get_validated_llm_path()
-    if not llm_path:
-        logger.debug(f"{LLM_COMMAND} command not found in PATH")
-        return False
-
-    # Build command from constants and validated inputs
-    command = [llm_path, *_LLM_KEYS_SUBCOMMAND, provider]
-
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,  # Explicitly close stdin to prevent hang
-            timeout=1,  # Reduced from 2s for security
-            check=False,
-        )
-        # Key exists if command succeeds and returns non-empty output
-        return result.returncode == 0 and bool(result.stdout.strip())
-    except subprocess.TimeoutExpired:
-        logger.debug(f"Timeout checking {provider} key")
-        return False
-    except Exception as e:
-        logger.debug(f"Failed to check {provider} key: {e}")
-        return False
+# Allowlist of trusted LLM providers — derived from the same registry.
+ALLOWED_PROVIDERS = frozenset(PROVIDER_ENV_VARS.keys())
 
 
 def _has_provider_key(provider: str) -> bool:
-    """Check if an LLM provider key is configured from ANY source.
+    """Check if an LLM provider key is configured from any source.
 
     Checks in order (stops at first found):
     1. Environment variables (os.environ)
     2. pflow settings (settings.json env section)
-    3. llm CLI keys (llm keys get)
 
     Args:
         provider: Provider name ("anthropic", "gemini", "openai")
 
     Returns:
         True if key is configured in any source
-
-    Note:
-        This function is intentionally lenient - it checks multiple sources
-        to maximize the chance of finding a configured key and providing
-        helpful model suggestions in error messages.
     """
     if provider not in ALLOWED_PROVIDERS:
         logger.debug("Provider validation failed")
@@ -142,11 +69,10 @@ def _has_provider_key(provider: str) -> bool:
                 logger.debug(f"Found {provider} key in pflow settings ({var})")
                 return True
     except Exception as e:
-        # Settings might not exist or be corrupt - continue to next source
+        # Settings might not exist or be corrupt — graceful degradation
         logger.debug(f"Failed to check pflow settings for {provider}: {e}")
 
-    # 3. Fall back to llm CLI check
-    return _has_llm_key(provider)
+    return False
 
 
 def _detect_default_model() -> Optional[str]:
@@ -160,11 +86,6 @@ def _detect_default_model() -> Optional[str]:
     Returns:
         Model name string, or None if no keys configured
     """
-    # Skip detection entirely in test environment to avoid subprocess hangs
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        logger.debug("Skipping LLM detection in test environment")
-        return None
-
     # Try Anthropic first (best overall quality)
     if _has_provider_key("anthropic"):
         logger.debug("Using Anthropic Claude (key detected)")
@@ -175,10 +96,12 @@ def _detect_default_model() -> Optional[str]:
         logger.debug("Using Google Gemini (key detected)")
         return "gemini/gemini-3-flash-preview"
 
-    # Try OpenAI last (common fallback)
+    # Try OpenAI last (common fallback). Provider prefix is required —
+    # LiteLLM rejects bare model names with a "LLM Provider NOT provided"
+    # BadRequestError that pflow surfaces as UnknownModelError(reason="missing_prefix").
     if _has_provider_key("openai"):
         logger.debug("Using OpenAI GPT (key detected)")
-        return "gpt-5.2"
+        return "openai/gpt-5.2"
 
     logger.debug("No LLM API keys detected")
     return None
@@ -227,13 +150,13 @@ def get_llm_setup_help() -> str:
         "No LLM API keys configured. Please configure at least one:\n\n"
         "  Anthropic (recommended):\n"
         "    export ANTHROPIC_API_KEY=your-key\n"
-        "    OR: llm keys set anthropic\n\n"
+        "    OR: pflow settings set-env ANTHROPIC_API_KEY your-key\n\n"
         "  Google Gemini (cheaper alternative):\n"
-        "    llm keys set gemini\n\n"
+        "    export GEMINI_API_KEY=your-key\n"
+        "    OR: pflow settings set-env GEMINI_API_KEY your-key\n\n"
         "  OpenAI (common fallback):\n"
         "    export OPENAI_API_KEY=your-key\n"
-        "    OR: llm keys set openai\n\n"
-        "See: https://llm.datasette.io/en/stable/setup.html"
+        "    OR: pflow settings set-env OPENAI_API_KEY your-key"
     )
 
 
@@ -250,9 +173,10 @@ def clear_model_cache() -> None:
 def inject_settings_env_vars() -> None:
     """Inject env vars from pflow settings into os.environ.
 
-    This allows the llm library (and other tools) to find API keys
-    stored in pflow settings. Only injects if the key isn't already
-    set in os.environ (user's actual environment takes priority).
+    This allows LiteLLM (and other tools) to find API keys stored in
+    pflow settings via the standard env-var resolution path. Only injects
+    if the key isn't already set in os.environ (user's actual environment
+    takes priority).
 
     Should be called early in CLI/MCP server startup, before any LLM operations.
 
@@ -345,56 +269,13 @@ def get_model_for_feature(feature: str) -> str:
     return _DEFAULT_FALLBACK_MODEL
 
 
-def get_llm_cli_default_model() -> Optional[str]:
-    """Get the default model configured in llm CLI.
-
-    Runs `llm models default` to check if user has configured
-    a default model in Simon Willison's llm library.
-
-    Returns:
-        Model name string or None if not configured
-
-    Note:
-        Returns None (not error) if llm CLI not installed or fails.
-        This is a fallback, not a requirement.
-    """
-    # Skip in test environment to avoid subprocess issues
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return None
-
-    llm_path = _get_validated_llm_path()
-    if not llm_path:
-        return None
-
-    try:
-        result = subprocess.run(
-            [llm_path, "models", "default"],
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=2,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            default_model = result.stdout.strip()
-            logger.debug(f"Found llm CLI default model: {default_model}")
-            return default_model
-    except subprocess.TimeoutExpired:
-        logger.debug("Timeout checking llm default model")
-    except Exception as e:
-        logger.debug(f"Failed to check llm default model: {e}")
-
-    return None
-
-
 def get_default_workflow_model() -> Optional[str]:
     """Get the default model for user workflow LLM nodes.
 
     Resolution order:
     1. settings.llm.default_model (pflow settings)
-    2. llm CLI default model (llm models default)
-    3. Auto-detect from API keys (Anthropic → Gemini → OpenAI)
-    4. None (caller should fail with helpful error)
+    2. Auto-detect from API keys (Anthropic → Gemini → OpenAI)
+    3. None (caller should fail with helpful error)
 
     Returns:
         Model name string or None if nothing configured
@@ -413,19 +294,13 @@ def get_default_workflow_model() -> Optional[str]:
     except Exception as e:
         logger.debug(f"Failed to load settings for default_model: {e}")
 
-    # 2. Check llm CLI default
-    llm_default = get_llm_cli_default_model()
-    if llm_default:
-        logger.debug(f"Using llm CLI default model: {llm_default}")
-        return llm_default
-
-    # 3. Auto-detect from API keys (matches discovery/filtering behavior)
+    # 2. Auto-detect from API keys (matches discovery/filtering behavior)
     detected = get_default_llm_model()
     if detected:
         logger.debug(f"Using auto-detected model from API keys: {detected}")
         return detected
 
-    # 4. Nothing configured
+    # 3. Nothing configured
     logger.debug("No default workflow model configured or detected")
     return None
 
@@ -450,16 +325,15 @@ Configure using one of these methods:
      pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
      pflow settings set-env GEMINI_API_KEY "..."
 
+     Or via shell environment:
+     export ANTHROPIC_API_KEY=sk-ant-...
+
   2. Specify model in workflow (per-node, in .pflow.md):
      ### {node_id}
      - type: llm
-     - model: gpt-5.2
+     - model: openai/gpt-5.2
 
   3. Set pflow default model (overrides auto-detection):
-     pflow settings llm set-default gpt-5.2
+     pflow settings llm set-default openai/gpt-5.2
 
-  4. Set llm library default:
-     llm models default gpt-5.2
-
-To see available models: llm models list
-To see configured keys: llm keys list"""
+To see configured pflow models: pflow settings llm show"""

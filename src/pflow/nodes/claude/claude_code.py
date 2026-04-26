@@ -879,7 +879,9 @@ class ClaudeCodeNode(Node):
                 "total_tokens": base_input + total_output,
                 "cache_creation_input_tokens": cache_creation,
                 "cache_read_input_tokens": cache_read,
-                # cost_usd set directly from SDK — enrich_llm_usage_with_cost will skip
+                # ClaudeCodeNode mirrors total_cost_usd (Claude SDK convention)
+                # into cost_usd at its producer boundary so the rest of the
+                # pipeline reads a single key (matching LLMNode/LiteLLM output).
                 "cost_usd": metadata.get("total_cost_usd"),
                 "duration_ms": metadata.get("duration_ms"),
                 "num_turns": metadata.get("num_turns"),

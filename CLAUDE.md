@@ -82,7 +82,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ### Technology Stack
 
-**Core**: Python 3.10+, click, pydantic, llm (Simon Willison's library)
+**Core**: Python 3.10+, click, pydantic, LiteLLM via pflow's `llm_client` adapter
 
 **Development** (ALWAYS use `uv` instead of `pip`):
 - `uv` - Package manager (`uv pip`, `uv run pytest`)
@@ -158,7 +158,8 @@ pflow/
 - Create scratch pads in `scratchpads/<conversation-subject>/` for deep thinking
 
 **Utilizing subagents**:
-- Use `pflow-codebase-searcher` for gathering information, research, and verifying assumptions (avoids exhausting context window)
+- Use `pflow-codebase-searcher` for gathering information, research, and verifying assumptions (avoids exhausting context window). **Never use the `Explore` agent**
+- Read files directly with the `Read` tool when the path is known or when the user explicitly asks you to read something.
 - Use `test-writer-fixer` for writing/fixing tests (small tasks, one file at a time, comprehensive context)
 - Use `code-implementer` for small, isolated features/fixes that need no deep codebase knowledge
 - Deploy subagents in **parallel** (one function call block), never sequentially
@@ -220,10 +221,12 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 154: Type Vocabulary Coherence
 - ✅ Task 156: Add `--dry-run` flag with cache plan and cost/duration estimates
 - ✅ Task 157: Fix Dry-Run Batch Sub-Workflow Recursion
+- ✅ Task 158: Replace `llm` Library with LiteLLM
 
 ### Planned Features (in order of priority)
 
-**Next — CLI Restructure (agent-first redesign)**
+**Next**
+- Task 159: Prompt Caching
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**

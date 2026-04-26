@@ -163,7 +163,7 @@ class TestWorkflowTraceCollector:
             duration_ms=5.0,
             success=True,
             node_output={
-                "_trace_collector": "internal",
+                "__trace_collector__": "internal",
                 "_debug_context": "internal",
                 "_batch_trace": "internal",
                 "user_data": "keep_this",
@@ -171,7 +171,7 @@ class TestWorkflowTraceCollector:
         )
 
         filtered_output = collector.events[0]["node_output"]
-        assert "_trace_collector" not in filtered_output
+        assert "__trace_collector__" not in filtered_output
         assert "_debug_context" not in filtered_output
         assert "_batch_trace" not in filtered_output
         assert filtered_output["user_data"] == "keep_this"
@@ -810,6 +810,68 @@ class TestWorkflowTraceCollector:
             assert summary["total_calls"] == 2
             assert summary["total_tokens"] == 150
             assert summary["total_cost_usd"] == pytest.approx(0.08)
+            assert summary["pricing_available"] is True
+
+    def test_llm_summary_unpriced_call_surfaces_as_none(self, collector, temp_home):
+        """Regression: when any call has cost_usd=None (unknown-pricing model),
+        total_cost_usd is None and partial_cost_usd carries the priced subset.
+
+        Mirrors MetricsCollector.calculate_costs semantics. Pre-fix the unpriced
+        cost silently collapsed to 0 and was summed away.
+        """
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-priced",
+                node_type="LLMNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "gpt-4", "total_tokens": 100, "cost_usd": 0.05},
+                },
+            )
+            collector.record_node_execution(
+                node_id="llm-unpriced",
+                node_type="LLMNode",
+                duration_ms=50.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "ollama/llama3.2", "total_tokens": 50, "cost_usd": None},
+                },
+            )
+
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            assert summary["total_calls"] == 2
+            assert summary["total_cost_usd"] is None
+            assert summary["pricing_available"] is False
+            assert summary["partial_cost_usd"] == pytest.approx(0.05)
+            assert summary["unavailable_models"] == ["ollama/llama3.2"]
+
+    def test_llm_summary_all_unpriced_no_partial(self, collector, temp_home):
+        """When every call is unpriced, partial_cost_usd is None (not 0.0)."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-1",
+                node_type="LLMNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "ollama/llama3.2", "total_tokens": 50, "cost_usd": None},
+                },
+            )
+
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            assert summary["total_cost_usd"] is None
+            assert summary["partial_cost_usd"] is None
+            assert summary["pricing_available"] is False
+            assert summary["unavailable_models"] == ["ollama/llama3.2"]
 
     def test_llm_summary_includes_input_output_tokens(self, collector, temp_home):
         """Test that _collect_llm_summary accumulates input/output token breakdown."""
@@ -852,14 +914,6 @@ class TestWorkflowTraceCollector:
             assert summary["total_input_tokens"] == 800
             assert summary["total_output_tokens"] == 350
             assert summary["total_tokens"] == 1150
-
-    def test_enable_llm_interception_attribute(self, collector):
-        """Test that enable_llm_interception defaults to True."""
-        assert collector.enable_llm_interception is True
-
-        # Can be set to False (e.g., for child collectors)
-        collector.enable_llm_interception = False
-        assert collector.enable_llm_interception is False
 
     def test_optional_fields_omitted_when_none(self, collector):
         """Test that optional fields (node_params, mutations, etc.) are omitted when not provided."""
@@ -1208,35 +1262,6 @@ class TestCachedNodeEvent:
             success=True,
         )
         assert "cached" not in collector.events[0]
-
-
-class TestThreadLocalCurrentNode:
-    """D1: Verify _current_node uses thread-local storage."""
-
-    def test_current_node_is_thread_local(self) -> None:
-        """Setting current_node in one thread doesn't affect another."""
-        import threading
-
-        results: dict[str, str | None] = {}
-
-        def thread_fn(node_name: str) -> None:
-            WorkflowTraceCollector._thread_local.current_node = node_name
-            # Small sleep to let other thread also set its value
-            import time
-
-            time.sleep(0.01)
-            results[node_name] = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
-
-        t1 = threading.Thread(target=thread_fn, args=("node-A",))
-        t2 = threading.Thread(target=thread_fn, args=("node-B",))
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-
-        # Each thread should see its own value, not the other's
-        assert results["node-A"] == "node-A"
-        assert results["node-B"] == "node-B"
 
 
 class TestFinalEventsByNode:
