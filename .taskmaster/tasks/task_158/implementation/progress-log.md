@@ -94,7 +94,7 @@ Three pflow-codebase-searcher agents launched in parallel against the worktree t
 
 **Two findings contradict the spec — flagged in plan:**
 
-1. **`~/.config/io.datasette.llm/keys.json` direct read.** Spec says "optionally read for users migrating from `llm`". Codebase grep confirms pflow does NOT currently read this file — all key discovery is via `llm keys get` subprocess. So adding direct read is NEW functionality, not migration of existing behavior. Plan defers this to v1.x follow-up. Phase A migration story: env vars only, with a CHANGELOG note for users who currently use Simon's keys.json to migrate manually.
+1. **`~/.config/io.datasette.llm/keys.json` direct read.** Spec says "optionally read for users migrating from `llm`". Codebase grep confirms pflow does NOT currently read this file — all key discovery is via `llm keys get` subprocess. So adding direct read is NEW functionality, not migration of existing behavior. Plan defers this to v1.x follow-up. Phase A migration story: env vars only; users who currently use Simon's keys.json must migrate manually.
 
 2. **Cache-write multiplier.** Spec assumes Anthropic-style 1.25× (5-min) and 2× (1-hour) write multipliers. Current `core/llm_pricing.py:168` has hardcoded `2.0` only — no per-TTL distinction. Becomes load-bearing in Phase E (when 1h TTL becomes selectable in `## Cache` blocks), not Phase A. Note in Phase 0 spike outcome but no Phase A change needed.
 
@@ -116,7 +116,7 @@ Three pflow-codebase-searcher agents launched in parallel against the worktree t
   - A.9 — `llm_config.py` and `settings.py` cleanup (drop subprocess paths)
   - A.10 — Pricing decision + cleanup (outcome-dependent on Phase 0)
   - A.11 — Remove `llm`/`llm-anthropic`/`llm-gemini` from `pyproject.toml`
-  - A.12 — Documentation and CHANGELOG note
+  - A.12 — Documentation
 - **Critical files** + **Existing utilities to reuse** — explicit listings.
 - **Spec corrections discovered** — the two contradictions above plus the CLAUDE.md drift.
 - **Verification** — separate criteria for Phase 0 and Phase A; `test_plan_drift.py` is sacred; smoke test against `lyrics-generator` end-to-end.
@@ -484,7 +484,7 @@ Items pending user-approved deletion at end of Phase A:
   - **(b)** Mock returns a fake-but-nonzero cost. Keeps tests roughly working but is a fiction.
   - **User input requested before implementing.** Don't flip a coin.
 - **A.11** — Drop `llm` / `llm-anthropic` / `llm-gemini` from `pyproject.toml`, drop the temporary DEP002 entries, `uv sync`. Mechanical, low risk. Verify with `uv pip list | grep -E '^(llm|llm-)'` returns nothing.
-- **A.12** — Documentation pass. Update `core/CLAUDE.md` (remove the "46+ models" claim and the `llm_pricing.py` section), `nodes/llm/CLAUDE.md` (point at the adapter), grep mintlify docs for `llm keys` / `llm models` references, write a CHANGELOG migration note. Pure text editing.
+- **A.12** — Documentation pass. Update `core/CLAUDE.md` (remove the "46+ models" claim and the `llm_pricing.py` section), `nodes/llm/CLAUDE.md` (point at the adapter), grep mintlify docs for `llm keys` / `llm models` references. Pure text editing.
 
 ### Next step
 
@@ -540,20 +540,18 @@ User picked (c). Implementation:
 
 Mechanical. Dropped the three packages from `[project] dependencies`, removed the temporary `DEP002 = ["llm", "llm-anthropic", "llm-gemini", "PyYAML"]` ignore entries (left just `["PyYAML"]`), removed the obsolete commented-out `[project.optional-dependencies]` stub, regenerated `uv.lock` via `uv sync`. `uv pip list | grep -iE '^(llm|llm-)'` returns empty (only `litellm 1.82.6` remains). `grep -rn 'import llm$|from llm import' src/ tests/` returns zero hits.
 
-### A.12 — Docs pass + CHANGELOG (commit `6222697f`)
+### A.12 — Docs pass (commit `6222697f`)
 
-Eight files touched:
+Seven files touched:
 - `docs/quickstart.mdx`: dropped the now-invalid "If you already have llm installed and configured" tip; replaced the "Simon Willison's llm" pointer with LiteLLM's provider list; added a tip showing the env-var path works too.
 - `docs/reference/nodes/llm.mdx`: rewrote the intro and replaced the "Extending with plugins" section (which described `llm-openrouter` / `llm-ollama` plugin install) with a simpler "Other providers" section noting that LiteLLM speaks 100+ providers natively. OpenRouter and Ollama get concrete examples without plugin install.
 - `docs/reference/cli/settings.mdx`: dropped the "If you use Simon Willison's llm" alternative; removed the `llm models default` step from the model-resolution chain.
 - `docs/roadmap.mdx`: updated the "Unified model support" current-status line to credit LiteLLM and note 100+ provider count.
 - `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` and `mcp-sandbox-agent-instructions.md`: rewrote the "For LLM providers" blocks to use `pflow settings set-env` and shell env vars; replaced `llm keys set provider` cheatsheet line with `pflow settings llm show`.
 - `src/pflow/nodes/llm/README.md`: end-to-end rewrite of the installation section. Provider keys via `pflow settings set-env` or shell env vars; OpenRouter and Ollama first-class without plugin install. Token-usage example updated to show `cost_usd`.
-- `docs/changelog.mdx`: added `<Update label="April 2026" description="Unreleased">` entry at the top documenting the swap, the breaking change for `llm keys set` users, and an accordion enumerating what stays the same.
 
-Two intentional retentions documented in the commit message:
+One intentional retention documented in the commit message:
 - `src/pflow/core/llm_reasoning_map.py:4` — historical context explaining *why* the file exists (the `llm` library's introspection contract LiteLLM doesn't replicate). Removing this would erase the design rationale.
-- `docs/changelog.mdx:907` — historical entry from a past release. Don't rewrite history.
 
 ### Migration: user's `llm`-stored keys into pflow settings
 
@@ -611,15 +609,14 @@ a38afa6d A.4 + A.5: mock + LLMNode rewire
 5d0e0a9b A.9: drop llm CLI subprocess paths
 8247ae2a A.10: delete llm_pricing.py
 4becef96 A.11: drop llm/llm-anthropic/llm-gemini deps
-6222697f A.12: docs pass + CHANGELOG
+6222697f A.12: docs pass
 ac257fc6 end-of-task cleanup     ← current HEAD
 ```
 
 ### Loose ends acknowledged but not blockers
 
-1. **CHANGELOG entry labeled "Unreleased"** — convention unclear whether Phase A merges with its own version bump or waits for the full Task 158 (Phases B-G) to ship. Existing changelog entries all have version numbers. User to decide before PR merge.
-2. **Memoization cache transient regression** — old cached `llm_usage` entries lacking `cost_usd` will surface as `cost_basis: upper_bound` / `estimated_cost_usd: null` in dry-run plans for ~24h post-upgrade until the cache TTL flushes. Self-healing.
-3. **Gemini-3 reasoning-model UX** — `max_tokens` too small for a reasoning model silently produces empty content. Pre-existing behavior, not Phase A regression. Worth a follow-up issue.
+1. **Memoization cache transient regression** — old cached `llm_usage` entries lacking `cost_usd` will surface as `cost_basis: upper_bound` / `estimated_cost_usd: null` in dry-run plans for ~24h post-upgrade until the cache TTL flushes. Self-healing.
+2. **Gemini-3 reasoning-model UX** — `max_tokens` too small for a reasoning model silently produces empty content. Pre-existing behavior, not Phase A regression. Worth a follow-up issue.
 
 ### Next step
 
@@ -660,7 +657,7 @@ Items 1, 4, 5, 6, 7, 8, 11, 12 — trivial doc/test fixes, batched into commits 
 | 9 | Anthropic temperature+thinking pre-validation | **DROPPED** after spike — see "Item 9 dropped" below |
 | 10 | Empty-response warning for reasoning models | Added warning in `_normalize` when `text == "" and output_tokens > 0 and finish_reason in ("length", "max_tokens")` |
 | 11 | Unknown-model error: include LiteLLM provider list URL | Added `https://docs.litellm.ai/docs/providers` in `NotFoundError` tip |
-| 12 | CHANGELOG note about 24h memo cache transient | Added `<Note>` to changelog Unreleased entry |
+| 12 | Note on 24h memo cache transient | Captured in this progress log (loose ends section) — no docs change required |
 
 ### Item 2 design pivot — Option F (adapter raises typed exception)
 
@@ -749,8 +746,6 @@ These were flagged by reviewers but explicitly deferred:
 
 5. **Dead `thinking_tokens` aggregation** in `core/metrics.py:110, 156, 188-197, 250-252` — reads from `llm_usage["thinking_tokens"]` and `["thinking_budget"]`, but no production code WRITES those keys. Pre-existing dead code. Worth a separate cleanup task.
 
-6. **CHANGELOG note about `pflow report` improvement** — item 3 plan mentions adding a CHANGELOG entry for the new `## Prompt` section appearing where it didn't before. NOT added in this session — the existing Unreleased entry already covers the LiteLLM swap; the trace_hook fix could be appended but the user wanted to defer the broader code review first.
-
 ### Key file changes by commit
 
 **`96f5f3dd` — fix(llm): correct settings command name + LiteLLM URL**:
@@ -763,7 +758,6 @@ These were flagged by reviewers but explicitly deferred:
 - `tests/test_registry/test_smart_filter.py` — `TestGeminiThinkingHeuristics` class (5 parametrized tests)
 
 **`3aa7ed8f` — docs(llm): purge stale references**:
-- `docs/changelog.mdx` — `<Note>` about 24h cache transient
 - `docs/reference/cli/settings.mdx:335` — corrected `pflow settings llm show` example output
 - `src/pflow/cli/workflow_output.py:464` + `src/pflow/execution/formatters/success_formatter.py:253` — "model not in pricing table" → "pricing data missing for"
 - `src/pflow/core/CLAUDE.md:21` — directory tree (added `llm_client.py`, `llm_reasoning_map.py`; removed `llm_pricing.py`)
@@ -811,7 +805,7 @@ a38afa6d A.4 + A.5: mock + LLMNode rewire
 5d0e0a9b A.9: drop llm CLI subprocess paths
 8247ae2a A.10: delete llm_pricing.py
 4becef96 A.11: drop llm/llm-anthropic/llm-gemini deps
-6222697f A.12: docs pass + CHANGELOG
+6222697f A.12: docs pass
 ac257fc6 end-of-task cleanup     ← end of Phase A proper
 c1f417c1 docs(task-158): progress log §30 + Phase A review handoff braindump
 96f5f3dd fix(llm): correct settings command name and improve unknown-model error tip
@@ -836,8 +830,7 @@ ad58d856 test(llm): add Opus 4.5 precedence, cost mirror, smart_filter Gemini co
 
 1. **Code review of full implementation deferred** — user said "another agent will handle that." No further commits without explicit permission.
 2. **Pre-existing limitations** (carried over from previous handoff + this session's reviewers): parallel batch LLM per-item prompts (last-item-wins), PATTERN EXCEPTION scope (only `BadRequestError` caught), smart_filter silent degradation on errors, trace JSON `total_cost_usd` None coercion, dead `thinking_tokens` aggregation. None are regressions.
-3. **CHANGELOG entry for `pflow report` `## Prompt` improvement** not added — the trace_hook fix produces a user-visible improvement (the section appears where it didn't before) that arguably warrants a CHANGELOG note. Could be added in a future docs touch-up.
-4. **Plan file** at `/Users/andfal/.claude/plans/magical-swinging-taco.md` documents the item 3 design + plan-review refinements. Worth referencing if questions arise about the design decisions.
+3. **Plan file** at `/Users/andfal/.claude/plans/magical-swinging-taco.md` documents the item 3 design + plan-review refinements. Worth referencing if questions arise about the design decisions.
 
 ### Files NOT to delete despite being unreferenced (intentional retention)
 
@@ -1076,7 +1069,6 @@ grep -rn 'litellm\.exceptions' src/pflow/nodes/                       # 1 docstr
 - **`src/pflow/core/llm_client.py`** — expanded catch tuple in `complete()` from `BadRequestError` only to all 4 deterministic LiteLLM exception classes. Added `_classify_litellm_error(exc, *, model) -> LLMCallError` helper. Updated module + `complete()` docstrings.
 - **`src/pflow/nodes/llm/llm.py`** — dropped `import litellm.exceptions`. Added module-level `_error_dict(model, error_class, message)` helper (deduplicates 5 inline error-dict constructions) and `_api_key_tip(detected_model)` helper. Rewrote `_call_llm` exception handling with 3 typed-catch branches (UnknownModel, MissingApiKey, generic LLMCallError); each branch builds a precise message via the helpers. Shrunk `exec_fallback` from ~50 lines to ~10 (substring-based timeout detection preserves the actionable hint). Updated `post()` to surface `shared["error_class"]`.
 - **`src/pflow/core/CLAUDE.md`** — added the 3 new subclasses to the exception hierarchy diagram + a row in the "When to use which exception" table.
-- **`docs/changelog.mdx`** — added a bullet under Unreleased about typed-error translation + the friendly no-prefix message.
 
 ### Test changes summary
 
@@ -1151,7 +1143,6 @@ These shaped the design decisions and are worth keeping for the next round:
 | A1 | `tests/test_core/test_llm_config_provider_detection.py:1-7` | Module docstring updated from "env vars, settings, and llm CLI in order" to "env vars and settings (in that order)" — A.9 removed the llm-CLI tier; only the docstring lagged. |
 | A2 | `tests/test_nodes/test_llm/test_llm_integration.py:27, 199-200, 210` | Skip-reason text + comment + dead `or "llm models"` OR-branch all updated to post-Phase-A reality. **Plus**: `test_missing_api_key_error` rewritten end-to-end (was using `pytest.raises(ValueError)` which never fires — see methodology surprise #1). Renamed to `test_unknown_model_produces_helpful_error` and rewritten to assert `action == "error"` + `shared["error"]` substring. |
 | A3 + B9 | `src/pflow/core/llm_utils.py` | Bundled: deleted dead `callable(response.text)` branch (`AdapterResponse.text` is always a `str` attribute now); rewrote stale "the LLM library normalizes responses to have a text() method" docstring/comments; converted all 5 `ValueError` raise sites to `LLMCallError`. Discovery callers and smart_filter (post-C8) catch the typed exception cleanly. |
-| A5 | `docs/changelog.mdx` Unreleased | Added bullet about `event["llm_prompt"]` populating in trace JSON for every literal-prompt LLM call + `pflow report ## Prompt` section visibility (the user-visible improvement from §31's item-3 trace_hook fix). |
 | A16 | `src/pflow/nodes/llm/llm.py::exec_fallback` | Consolidated NotFoundError two sub-branches; deleted the unreachable BadRequestError "LLM Provider NOT provided" branch (later superseded by #6's `_classify_litellm_error` which surfaces the same UX at the right layer). |
 
 ### Group B — 3 real bugs (B7, B11 bundled into commit `5a070312`)
@@ -1202,7 +1193,7 @@ The previously-dead `metrics.py` aggregation (which the verification round confi
 |---|---|---|
 | **Closed (12)** | #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #16 | All bundled into commit `5a070312`. |
 | **Verified-and-deferred (4)** | #12 (AdapterResponse `finish_reason`/`reasoning_content`), #13 (`_normalize` IndexError guard), #14 (`model_options` overrides reasoning_kwargs silently — documented), #15 (`LLMCallError` JSON envelope wrapping — minor UX polish) | Each deliberately scoped out as "no current consumer needs it" or "defensive code where the trade isn't worth it." Documented in §32 / this section. |
-| **User decision (2)** | #17 (CHANGELOG version label "Unreleased" vs version bump), #18 (Gemini PR #15226 fix verification on 1.82.6 — release-date-inferred, never spike-verified) | Surface for PR prep. |
+| **User decision (1)** | #18 (Gemini PR #15226 fix verification on 1.82.6 — release-date-inferred, never spike-verified) | Surface for PR prep. |
 
 ### Testing-trap addendum to §32
 
@@ -1223,7 +1214,7 @@ This means: any test that wants to verify the real adapter's behavior (not the m
 
 2. **The deferred-findings doc is now mostly historical** — it described work to do; that work is done. The remaining "verified-and-deferred" items (#12-#15) are explicitly low-value or future-feature-driven; they don't block Phase B-G.
 
-3. **Two open user-decision items before merge:** the CHANGELOG version label (#17) and the Gemini PR #15226 fix re-verification on 1.82.6 (#18, ~$0.001 spike if the user wants the audit-trail conversion).
+3. **One open user-decision item before merge:** the Gemini PR #15226 fix re-verification on 1.82.6 (#18, ~$0.001 spike if the user wants the audit-trail conversion).
 
 4. **Phase B-G plan can now be written informed by concrete LiteLLM behavior.** The Phase 0 spike (§27) confirmed cache_control mechanics; Phase A confirmed the adapter shape, the typed exception hierarchy, the trace seam, and the pricing flow. Open questions for Phase B-G planning that Phase A didn't answer: how `## Cache` block parsing slots into the markdown parser (parser is line-by-line state machine, NOT a markdown library), how cache rendering interacts with `prep_res["prompt"]` (the rendered prompt today is a flat string by the time `_call_llm` sees it — cache rendering would split it into content blocks at the adapter layer), and the validation-time data-flow rules for `prompt_cache:` order checking.
 
@@ -1330,10 +1321,6 @@ Each step verified via `make test` and `make check` before moving to the next.
 - 7 mintlify docs: `docs/quickstart.mdx`, `docs/guides/debugging.mdx`, `docs/reference/cli/settings.mdx` (8+ examples updated), `docs/reference/configuration.mdx`, `docs/how-it-works/template-variables.mdx`, `docs/how-it-works/batch-processing.mdx`, `docs/reference/nodes/llm.mdx` (4 examples updated).
 - 4 example workflows: `examples/test_llm_templates.pflow.md`, `examples/test-worktree.pflow.md`, `examples/real-workflows/release-announcements/workflow.pflow.md` (3 model refs), `examples/real-workflows/vision-scraper/workflow.pflow.md`.
 - CLAUDE.md updates: `core/CLAUDE.md` exception hierarchy table refreshed (added `LLMTransientError`/`LLMResponseParseError`, structured discriminator notes); adapter section rewritten to reflect the now-translates-everything contract; "When to use which exception" table gains a row for transient.
-- CHANGELOG (`docs/changelog.mdx`) Unreleased entry expanded with 3 new bullets:
-  - Structured LLM error context in JSON output (`error_class`, `model`, `reason`/`kind`, `category="llm_failure"`).
-  - Empty-response warnings now surface in JSON + DEGRADED status.
-  - Top-level cost tri-state.
 
 ### Lint complexity refactor
 
@@ -1418,7 +1405,7 @@ The original `LLMNode.post()` had error-handling logic inlined in three places (
 
 4. **Phase A code review #2 closure state:** all 3 critical findings + 7 high-value findings addressed; 6 polish items deliberately deferred (documented in the loose-ends doc).
 
-5. **Two open user-decisions still open from §33:** CHANGELOG version label (`Unreleased` vs version bump) and Gemini PR #15226 fix re-verification on 1.82.6 (~$0.001 spike). Neither blocks Phase B-G plan writing.
+5. **One open user-decision still open from §33:** Gemini PR #15226 fix re-verification on 1.82.6 (~$0.001 spike). Doesn't block Phase B-G plan writing.
 
 ### Branch summary (since `8349df88` baseline — full Phase A)
 
@@ -1717,9 +1704,8 @@ Also verified focused tests during the pass:
 - All Phase A code-review #2 work from §34 plus final loose-ends fixes from §36 are in the working tree.
 - `scratchpads/task-158-phase-A-completion-loose-ends.md` now records LE-1 through LE-5 as fixed.
 - Follow-up issues #347-#352 capture the remaining non-blocking review findings.
-- The two user decisions remain open:
-  1. CHANGELOG version label (`Unreleased` vs version bump).
-  2. Optional Gemini PR #15226 fix re-verification on LiteLLM `1.82.6`.
+- One user decision remains open:
+  1. Optional Gemini PR #15226 fix re-verification on LiteLLM `1.82.6`.
 
 ### What the next agent should know
 
