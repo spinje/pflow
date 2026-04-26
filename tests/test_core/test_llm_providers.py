@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from pflow.core.llm_providers import PROVIDERS, detect_provider, normalize_model_name
+from pflow.core.llm_providers import (
+    PROVIDERS,
+    detect_provider,
+    extract_provider_prefix,
+    normalize_model_name,
+)
 
 
 def test_detect_provider_known_prefixed_models() -> None:
@@ -46,3 +51,18 @@ def test_normalize_model_name_uses_registry() -> None:
     assert normalize_model_name("o4-mini") == "openai/o4-mini"
     assert normalize_model_name("claude-sonnet-4-5") == "anthropic/claude-sonnet-4-5"
     assert normalize_model_name("openrouter/anthropic/claude-sonnet-4-5") == ("openrouter/anthropic/claude-sonnet-4-5")
+
+
+def test_extract_provider_prefix_returns_first_segment() -> None:
+    """Used by exception diagnostics for unknown providers — extracts the
+    LiteLLM routing prefix without consulting the registry."""
+    assert extract_provider_prefix("together_ai/llama-3-70b") == "together_ai"
+    assert extract_provider_prefix("mistral/mistral-large") == "mistral"
+    # Multi-segment prefixes (OpenRouter) take only the first segment.
+    assert extract_provider_prefix("openrouter/anthropic/claude-sonnet-4-5") == "openrouter"
+
+
+def test_extract_provider_prefix_returns_none_for_bare_or_empty() -> None:
+    assert extract_provider_prefix("gpt-4o-mini") is None
+    assert extract_provider_prefix("") is None
+    assert extract_provider_prefix(None) is None

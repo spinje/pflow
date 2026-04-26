@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import Any, Literal
 
 from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
-from pflow.core.llm_providers import detect_provider
+from pflow.core.llm_providers import detect_provider, extract_provider_prefix
 
 # Typed discriminators for LLMCallError subclasses. Carried as Literal so
 # typos at construction sites (e.g. ``kind="rate_limt"``) fail mypy at the
@@ -332,6 +332,7 @@ class MissingApiKeyError(LLMCallError):
     def to_diagnostics(self) -> list[Diagnostic]:
         # Returns single-element list (PflowError convention).
         env_vars = _derive_env_vars_for_model(self.model)
+        likely_env_var: str | None = None
         if self.kind == "lacks_permission":
             suggestions = [
                 "Verify the API key has access to this specific model "
@@ -339,9 +340,9 @@ class MissingApiKeyError(LLMCallError):
                 "Check whether your provider tier supports this model.",
                 "Try a different model your key is known to support.",
             ]
-        else:
-            # missing_key
-            canonical = env_vars[0] if env_vars else "ANTHROPIC_API_KEY"
+        elif env_vars:
+            # Known provider — registry has precise env-var names.
+            canonical = env_vars[0]
             suggestions = [
                 f"Set the provider API key as an environment variable (e.g. 'export {canonical}=...').",
                 f"Alternatively, run 'pflow settings set-env {canonical} <value>' to store it in pflow settings.",
@@ -351,8 +352,38 @@ class MissingApiKeyError(LLMCallError):
             if len(env_vars) > 1:
                 aliases = ", ".join(env_vars[1:])
                 suggestions.append(f"This provider also accepts: {aliases}.")
+        else:
+            # Unknown provider — registry has no entry for this model's prefix.
+            # The provider's authentication error (rendered above suggestions
+            # via ``context['provider_message']``) typically names the expected
+            # env var; that is the authoritative signal. Our prefix-uppercase
+            # heuristic is a starting point only — multi-key providers (AWS
+            # Bedrock, Azure, Vertex AI) need additional credentials beyond a
+            # single API key, so we present the candidate as "likely" not
+            # authoritative.
+            likely_env_var = _likely_env_var_for_unknown_provider(self.model)
+            suggestions = [
+                "The provider's authentication error above usually names the "
+                "expected environment variable — set that in your shell or "
+                "store it via 'pflow settings set-env <KEY> <value>'.",
+            ]
+            if likely_env_var:
+                suggestions.append(
+                    f"Most LiteLLM providers follow the '<PROVIDER>_API_KEY' "
+                    f"convention; for this model that's likely "
+                    f"'{likely_env_var}'. Multi-key providers (AWS Bedrock, "
+                    f"Azure, Vertex AI) need additional credentials — see "
+                    f"the LiteLLM docs for the specific provider."
+                )
+            suggestions.append(
+                "See https://docs.litellm.ai/docs/providers for the full provider list and provider-specific key names."
+            )
 
-        ctx = self.diagnostic_context(kind=self.kind, env_vars=list(env_vars))
+        ctx = self.diagnostic_context(
+            kind=self.kind,
+            env_vars=list(env_vars),
+            likely_env_var=likely_env_var,
+        )
 
         return [
             Diagnostic(
@@ -534,10 +565,32 @@ def _derive_env_vars_for_model(model: str | None) -> tuple[str, ...]:
     Used by ``MissingApiKeyError.to_diagnostics()`` to surface the
     expected env-var names (canonical first; aliases follow). Returns
     an empty tuple when the prefix is unrecognized or absent — caller
-    falls back to a generic example.
+    handles that branch via ``_likely_env_var_for_unknown_provider``.
     """
     provider = detect_provider(model)
     return provider.env_vars if provider is not None else ()
+
+
+def _likely_env_var_for_unknown_provider(model: str | None) -> str | None:
+    """Heuristic env-var guess for providers absent from pflow's registry.
+
+    Most LiteLLM providers follow the ``<PROVIDER_UPPER>_API_KEY`` convention
+    (Mistral, Cohere, Groq, DeepSeek, Together, OpenRouter, Anyscale, ...).
+    The heuristic uppercases the slash-prefix from the model identifier:
+    ``together_ai/llama-3-70b`` -> ``TOGETHER_AI_API_KEY``.
+
+    Returns ``None`` when the model has no parseable prefix. The caller
+    MUST frame the result as a likely candidate, not authoritative —
+    multi-key providers (AWS Bedrock, Azure, Vertex AI) need additional
+    credentials beyond a single API key, and the heuristic underspecifies
+    them. The authoritative signal for unknown providers is the
+    ``provider_message`` field on the exception (the raw upstream text
+    LiteLLM produces, which usually names the missing var).
+    """
+    prefix = extract_provider_prefix(model)
+    if prefix is None:
+        return None
+    return f"{prefix.upper()}_API_KEY"
 
 
 class SchemaValidationError(PflowError):

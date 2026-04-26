@@ -82,6 +82,23 @@ def model_name_without_provider(model: str, provider: ProviderInfo) -> str:
     return name
 
 
+def extract_provider_prefix(model: str | None) -> str | None:
+    """Return the LiteLLM provider prefix for a slash-prefixed model.
+
+    The prefix is the segment before the first slash — what LiteLLM uses
+    to route to a provider handler (e.g. ``together_ai`` from
+    ``together_ai/llama-3-70b``). Returns ``None`` for bare model names
+    or absent input. Distinct from ``detect_provider``: this primitive
+    does NOT consult the registry; it just parses the string. Used for
+    best-effort env-var derivation when a model's provider isn't in
+    pflow's registry but we still want to give a user actionable
+    remediation.
+    """
+    if not model or "/" not in model:
+        return None
+    return model.split("/", 1)[0]
+
+
 def _matches_bare_prefix(name: str, prefix: str) -> bool:
     """Match either exact family names or dash-prefixed model families."""
     if prefix.endswith("-"):

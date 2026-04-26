@@ -884,6 +884,79 @@ class TestLLMDiagnostics:
         joined = " ".join(diagnostic.suggestions)
         assert "GOOGLE_API_KEY" in joined
 
+    def test_unknown_provider_with_prefix_surfaces_likely_env_var(self):
+        """Provider isn't in the registry but the model has a parseable prefix.
+
+        The fix (was: hardcoded ANTHROPIC_API_KEY fallback): defer to the
+        provider_message and surface a heuristic likely candidate, framed
+        as "likely" rather than authoritative. Agents reading the JSON get
+        the structured ``likely_env_var`` field; humans see the heuristic
+        in the suggestions plus the raw provider error rendered above.
+        """
+        exc = MissingApiKeyError(
+            "API key required for model 'together_ai/llama-3-70b'",
+            model="together_ai/llama-3-70b",
+            kind="missing_key",
+            provider_message="TogetherAIException: 'TOGETHER_API_KEY' is not set",
+        )
+        diagnostic = exc.to_diagnostics()[0]
+        # No registry entry → empty env_vars list.
+        assert diagnostic.context["env_vars"] == []
+        # Heuristic surfaces as a structured field for agents to read.
+        assert diagnostic.context["likely_env_var"] == "TOGETHER_AI_API_KEY"
+        # Primary suggestion does NOT fabricate a wrong-but-confident env var
+        # (the old bug suggested ANTHROPIC_API_KEY here).
+        joined = " ".join(diagnostic.suggestions).upper()
+        assert "ANTHROPIC_API_KEY" not in joined
+        # Suggestions defer to the provider_message as authoritative source.
+        assert "above" in diagnostic.suggestions[0].lower()
+        # Heuristic appears as a "likely" candidate, not authoritative.
+        assert any("likely" in s.lower() and "TOGETHER_AI_API_KEY" in s for s in diagnostic.suggestions)
+        # provider_message survives so the agent can read it directly.
+        assert "TOGETHER_API_KEY" in diagnostic.context["provider_message"]
+
+    def test_unknown_provider_disclaims_multi_key_cloud_providers(self):
+        """The heuristic underspecifies Bedrock/Vertex/Azure; the suggestion
+        text must explicitly disclaim that to prevent a wrong-but-confident
+        fix path."""
+        exc = MissingApiKeyError(
+            "API key required for model 'bedrock/anthropic.claude-3-sonnet'",
+            model="bedrock/anthropic.claude-3-sonnet",
+            kind="missing_key",
+            provider_message="Bedrock authentication failed",
+        )
+        diagnostic = exc.to_diagnostics()[0]
+        assert diagnostic.context["likely_env_var"] == "BEDROCK_API_KEY"
+        # Even though the heuristic produces "BEDROCK_API_KEY", the suggestion
+        # mentions multi-key cloud providers explicitly so the user doesn't
+        # spend time on a single env var when AWS creds are needed.
+        joined = " ".join(diagnostic.suggestions)
+        assert "Bedrock" in joined
+        assert "additional credentials" in joined or "multi-key" in joined.lower()
+
+    def test_unknown_provider_no_prefix_falls_back_to_docs(self):
+        """No parseable prefix and no registry entry: pure docs link.
+
+        No more ANTHROPIC_API_KEY fabrication when we have nothing to go on.
+        """
+        exc = MissingApiKeyError(
+            "API key required for model 'something-weird'",
+            model="something-weird",
+            kind="missing_key",
+            provider_message=None,
+        )
+        diagnostic = exc.to_diagnostics()[0]
+        assert diagnostic.context["env_vars"] == []
+        # No likely_env_var when there's no prefix to base it on; the field
+        # is omitted from ctx (None values are filtered by diagnostic_context).
+        assert "likely_env_var" not in diagnostic.context
+        # Suggestions don't fabricate a wrong-but-specific env var.
+        joined = " ".join(diagnostic.suggestions).upper()
+        assert "ANTHROPIC_API_KEY" not in joined
+        assert "OPENAI_API_KEY" not in joined
+        # Docs link is always present as the floor.
+        assert any("docs.litellm.ai" in s for s in diagnostic.suggestions)
+
     def test_missing_sdk_diagnostic_preserves_provider_message(self):
         raw = "Google Cloud SDK not found. Install it with: pip install 'litellm[google]'"
         exc = MissingSdkError(
