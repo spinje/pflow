@@ -731,6 +731,173 @@ class TestParallelBatchSubWorkflowTrace:
         # Each worker resolved its own item; prompts must all differ
         assert sorted(seen_prompts) == ["Process item A.", "Process item B.", "Process item C."]
 
+    def test_llm_failure_in_one_item_does_not_corrupt_siblings(self, tmp_path, monkeypatch):
+        """The failure-path complement to the success test above.
+
+        The §31 worker-thread bug had the same shape on both success and
+        failure: workers run inside ``ThreadPoolExecutor`` and the trace
+        seam must work for both. The success path is pinned above; this
+        pins the failure path.
+
+        A regression in the per-worker save/restore could:
+          (a) silently drop the failure (the typed exception escapes
+              without ``__failures__`` recording it),
+          (b) cross-contaminate siblings (the failing worker's trace
+              state leaks into a sibling's collector), or
+          (c) bury the LLM error under a generic engine error, losing
+              the structured ``_diagnostic_context`` (``category``,
+              ``error_class``, ``model``) the JSON output contract needs.
+
+        Configuration: parallel batch + sub-workflow + LLM. One item
+        ("FAIL") raises ``MissingApiKeyError``; the other two succeed.
+        ``error_handling: continue`` lets the batch complete so we can
+        inspect every worker's outcome.
+        """
+        from pathlib import Path
+
+        from pflow.core.exceptions import MissingApiKeyError
+        from pflow.core.llm_client import AdapterResponse
+
+        def fake_complete(*, model, prompt, **kwargs):
+            # Simulate a typed seam exception for the "FAIL" item only.
+            # Sibling workers must still get a successful AdapterResponse.
+            if "FAIL" in prompt:
+                raise MissingApiKeyError(
+                    f"API key required for model {model!r}",
+                    model=model,
+                    kind="missing_key",
+                    provider_message="Quota exceeded for free tier",
+                )
+            return AdapterResponse(
+                text="ok",
+                usage={
+                    "model": model,
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "thinking_tokens": 0,
+                    "thinking_budget": 0,
+                    "cost_usd": None,
+                },
+                model=model,
+                has_schema=False,
+                warnings=[],
+            )
+
+        # Override the autouse mock_llm_client at the LLMNode binding so the
+        # real LLMNode failure path runs end-to-end (typed exception ->
+        # _propagate_error_to_shared -> __failures__ -> trace).
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", fake_complete)
+
+        child_md = Path(tmp_path) / "child.pflow.md"
+        child_md.write_text(
+            "# Child\n\nProcesses one item.\n\n"
+            "## Inputs\n\n"
+            "### item\n\nThe input item.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### child-llm\n\nLLM call inside the child.\n\n"
+            "- type: llm\n"
+            "- model: anthropic/claude-sonnet-4-5\n"
+            "- prompt: Process item ${item}.\n",
+            encoding="utf-8",
+        )
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child_md),
+                        "inputs": {"item": "${item}"},
+                    },
+                    "batch": {
+                        "items": ["A", "FAIL", "B"],
+                        "as": "item",
+                        "parallel": True,
+                        "error_handling": "continue",
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        shared, parent_collector = _run_with_trace(parent_ir)
+
+        # Batch summary reflects the per-item outcomes — failure didn't
+        # crash the batch, didn't poison sibling results.
+        batch_output = shared["fanout"]
+        assert batch_output["count"] == 3
+        assert batch_output["success_count"] == 2
+        assert batch_output["error_count"] == 1
+        assert batch_output["errors"][0]["item"] == "FAIL"
+
+        # Each child's trace event survives independently. The failing
+        # item's child-llm event must carry the typed error context;
+        # successful items must carry their resolved prompts (no
+        # cross-contamination from the failing worker).
+        fanout_event = next(e for e in parent_collector.events if e["node_id"] == "fanout")
+        batch_items = fanout_event.get("batch_items", [])
+        assert len(batch_items) == 3
+
+        outcomes_by_item = {}
+        for batch_item in batch_items:
+            sub_events = batch_item.get("events", [])
+            llm_event = next((e for e in sub_events if e.get("node_id") == "child-llm"), None)
+            outcomes_by_item[batch_item.get("item")] = (batch_item, llm_event)
+
+        # Successful siblings: each item has its own resolved prompt
+        # captured via the trace seam (the §31 fix). The two surviving
+        # workers must have run their full success path through the
+        # save/restore boundary.
+        a_batch_item, a_llm = outcomes_by_item["A"]
+        b_batch_item, b_llm = outcomes_by_item["B"]
+        assert a_batch_item["success"] is True
+        assert b_batch_item["success"] is True
+        assert a_llm is not None and a_llm.get("llm_prompt") == "Process item A."
+        assert b_llm is not None and b_llm.get("llm_prompt") == "Process item B."
+
+        # Failing item: success=False at the batch-item boundary; child's
+        # internal child-llm trace event records the failure.
+        fail_batch_item, fail_llm = outcomes_by_item["FAIL"]
+        assert fail_batch_item["success"] is False
+        assert fail_llm is not None
+        assert fail_llm.get("success") is False
+
+        # The structured ``_diagnostic_context`` (category="llm_failure",
+        # error_class, model) is what JSON output consumers filter on.
+        # It travels from the typed exception through
+        # _propagate_error_to_shared into the child's namespaced
+        # _diagnostic_context, which the runtime archives. Inspect both
+        # the trace event's node_output and the parent-side errors list
+        # — either path carrying the structured fields satisfies the
+        # contract.
+        node_output = fail_llm.get("node_output", {})
+        ctx = node_output.get("_diagnostic_context", {}) if isinstance(node_output, dict) else {}
+        item_errors = batch_output.get("errors", [])
+        # Locate the failing item's recorded error.
+        fail_error = next((e for e in item_errors if e.get("item") == "FAIL"), {})
+        # The category lives on either the per-item trace's
+        # _diagnostic_context (the LLMNode-side write) OR on the
+        # batch-item's recorded error (the parent-side surface). At
+        # least one path must carry the typed discriminator.
+        carries_llm_category = (
+            ctx.get("category") == "llm_failure"
+            or ctx.get("error_class") == "MissingApiKeyError"
+            or fail_error.get("error_class") == "MissingApiKeyError"
+            or "MissingApiKeyError" in str(fail_error.get("error", ""))
+        )
+        assert carries_llm_category, (
+            "Typed LLM failure context must propagate through the worker "
+            "boundary into the user-facing surface — neither the trace's "
+            "_diagnostic_context nor the batch error surfaces "
+            f"MissingApiKeyError. ctx={ctx}; fail_error={fail_error}"
+        )
+
 
 class TestParallelBatchOfLLMs:
     """Parallel batch where each item is a direct LLM call (no sub-workflow wrapper).
