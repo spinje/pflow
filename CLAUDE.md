@@ -221,10 +221,12 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 154: Type Vocabulary Coherence
 - ✅ Task 156: Add `--dry-run` flag with cache plan and cost/duration estimates
 - ✅ Task 157: Fix Dry-Run Batch Sub-Workflow Recursion
+- ✅ Task 158: Replace `llm` Library with LiteLLM
 
 ### Planned Features (in order of priority)
 
-**Next — CLI Restructure (agent-first redesign)**
+**Next**
+- Task 159: Prompt Caching
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**
