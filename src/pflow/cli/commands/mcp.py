@@ -704,8 +704,10 @@ def sync(name: Optional[str], all_servers: bool, verbose: bool) -> None:
 def find_tools(query: str) -> None:
     """Search MCP tools by intent using LLM."""
     from pflow.cli.find_errors import handle_discovery_error, validate_discovery_query
+    from pflow.core.llm_config import inject_settings_env_vars
     from pflow.registry.discovery import find_components
 
+    inject_settings_env_vars()
     validated_query = validate_discovery_query(query, "mcp find")
     registrar = MCPRegistrar()
     entries = _load_mcp_registry_entries(registrar)

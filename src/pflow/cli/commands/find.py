@@ -23,12 +23,14 @@ def find_cmd(query: str) -> None:
       pflow find "workflow for sending slack notifications"
     """
     from pflow.cli.find_errors import handle_discovery_error, validate_discovery_query
+    from pflow.core.llm_config import inject_settings_env_vars
     from pflow.core.workflow.discovery import find_workflow
     from pflow.execution.formatters.discovery_formatter import (
         format_discovery_result,
         format_no_matches_with_suggestions,
     )
 
+    inject_settings_env_vars()
     validated_query = validate_discovery_query(query, "find")
     workflow_manager = WorkflowManager()
 

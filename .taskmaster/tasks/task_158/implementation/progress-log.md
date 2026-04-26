@@ -2360,9 +2360,35 @@ After thinking about which review findings warrant tracking beyond this branch:
 
 ---
 
+## 41. Session 2026-04-26 (cont.) — Independent verification pass + `inject_settings_env_vars` audit fix
+
+Adversarial end-to-end verification pass against the full branch. Built a battery of `.pflow.md` workflows exercising real-API paths (Anthropic, Gemini, OpenAI; ~$0.0001 spend), JSON output, sub-workflows, parallel batch, and every typed exception path. Every documented design intent verified live: bare-name auto-prefix (workflow + adapter both layers), `event["llm_prompt"]` populates in trace JSON (the §31 critical fix), `cost_usd` from LiteLLM rolls up correctly, `category="llm_failure"` + `error_class` + `provider_message` reach JSON output, `_validate_model_options` rejects reasoning-key bypass attempts, sub-workflow LLM cost rollup, parallel batch per-item prompt capture (§33 B11), `pflow probe llm` with all 9 stable usage keys.
+
+**One real bug surfaced**: `pflow find` and `pflow mcp find` were missing `inject_settings_env_vars()`. The §38 audit caught this for `probe.py` but didn't sweep other LLM-using commands. Users who stored API keys via `pflow settings set-env` (the recommended migration path per §30) couldn't use `pflow find` even though `pflow run` worked for the same env. Failure mode is louder than usual: `pflow find` is the FIRST command the help text recommends ("First Action: Check for existing workflows before building: `pflow find ...`"). `pflow find` returns exit 0 on this failure (deliberate fallback-to-alternatives design), so error monitoring wouldn't catch it either.
+
+**Fix**: 4 lines across 2 files matching the probe.py pattern.
+
+- `src/pflow/cli/commands/find.py` — `inject_settings_env_vars` import + call before `find_workflow`.
+- `src/pflow/cli/commands/mcp.py::find_tools` — same before `find_components`.
+
+Repro before fix:
+```bash
+env -i HOME="$HOME" PATH="$PATH" pflow find "github"
+# Error: API Key Missing or Insufficient
+# (same env: pflow workflow.pflow.md works because run.py injects)
+```
+
+After fix: same command succeeds (settings inject as designed).
+
+**Verification**: `make test` 5380 passed, `make check` clean, 249 targeted find/probe/mcp tests green. Repro now passes.
+
+**Pattern worth keeping**: the audit-and-fix loop missed `find.py` because §38 was looking specifically at `probe.py`'s key-resolution failure. When a CLI command joins the LLM path (current consumers: `run.py`, `probe.py`, `find.py`, `mcp.py::find_tools`), it must call `inject_settings_env_vars()` before invoking the adapter. Pre-existing `cli/CLAUDE.md` line claims "Injected into `os.environ` at CLI startup (`_inject_settings_env_vars` in `commands/run.py`)" — that's misleading; injection is per-command. Architecturally cleaner option (hoist to the `cli` group callback) is a follow-up — out of scope for this fix.
+
+---
+
 ## End of Task 158 implementation log
 
-This branch is feature-complete and verified end-to-end. Phase A migration plus six review-driven follow-up commits plus end-to-end verification = the contents of this branch. Open follow-up GH issues #347–#352 (filed during Phase A reviews) and #353–#355 (filed at end of session §40) capture deferred review findings that don't block merge.
+This branch is feature-complete and verified end-to-end. Phase A migration plus six review-driven follow-up commits plus end-to-end verification plus the §41 verification-driven `inject_settings_env_vars` fix = the contents of this branch. Open follow-up GH issues #347–#352 (filed during Phase A reviews) and #353–#355 (filed at end of session §40) capture deferred review findings that don't block merge.
 
 **For the prompt-caching feature work (Phase B–G) that this migration enables:** see Task 159 (`.taskmaster/tasks/task_159/`). The original Task 158 spec and design discussion are preserved in Task 159 (sections §1–§25 of `task_159/implementation/progress-log.md`); the migration was extracted into this task once Phase A's scope crystallized into something architecturally significant on its own.
 
