@@ -318,8 +318,8 @@ class TestLLMNode:
         assert ctx["error_class"] == "MissingApiKeyError"
         assert ctx["kind"] == "missing_key"
         assert ctx["model"] == "openai/gpt-4o-mini"
-        # env_var derived from model prefix
-        assert ctx["env_var"] == "OPENAI_API_KEY"
+        # env_vars derived from model prefix; canonical first, aliases follow
+        assert ctx["env_vars"] == ["OPENAI_API_KEY"]
         # Prose carries the remediation hints
         error_msg = shared["error"]
         assert "OPENAI_API_KEY" in error_msg

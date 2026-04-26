@@ -12,6 +12,7 @@ import logging
 import os
 from typing import Optional
 
+from pflow.core.llm_providers import PROVIDERS
 from pflow.core.settings import SettingsManager
 
 logger = logging.getLogger(__name__)
@@ -21,16 +22,14 @@ _cached_default_model: Optional[str] = None
 # Flag to track if detection has been completed (even if result is None)
 _detection_complete: bool = False
 
-# Allowlist of trusted LLM providers
-ALLOWED_PROVIDERS = frozenset({"anthropic", "gemini", "openai"})
+# Provider to environment variable mapping derived from the canonical
+# `llm_providers` registry. The registry's tuple of env vars carries
+# canonical-first ordering plus any provider-accepted aliases (e.g. Gemini
+# accepts both GEMINI_API_KEY and GOOGLE_API_KEY).
+PROVIDER_ENV_VARS: dict[str, list[str]] = {p.name: list(p.env_vars) for p in PROVIDERS}
 
-# Provider to environment variable mapping
-# Some providers accept multiple variable names (e.g., Gemini accepts both)
-PROVIDER_ENV_VARS: dict[str, list[str]] = {
-    "anthropic": ["ANTHROPIC_API_KEY"],
-    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    "openai": ["OPENAI_API_KEY"],
-}
+# Allowlist of trusted LLM providers — derived from the same registry.
+ALLOWED_PROVIDERS = frozenset(PROVIDER_ENV_VARS.keys())
 
 
 def _has_provider_key(provider: str) -> bool:

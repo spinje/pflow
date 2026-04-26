@@ -12,18 +12,29 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ProviderInfo:
-    """Static metadata for one LiteLLM provider family."""
+    """Static metadata for one LiteLLM provider family.
+
+    ``env_vars`` lists every API-key environment variable LiteLLM accepts
+    for this provider, canonical first. Multiple entries reflect the
+    provider's actual aliasing (e.g. LiteLLM's Gemini path checks both
+    ``GEMINI_API_KEY`` and ``GOOGLE_API_KEY``); the canonical entry is
+    what pflow surfaces as the recommended setup target.
+    """
 
     name: str
     provider_prefix: str
     bare_prefixes: tuple[str, ...]
-    env_var: str
+    env_vars: tuple[str, ...]
 
 
 PROVIDERS: tuple[ProviderInfo, ...] = (
-    ProviderInfo("anthropic", "anthropic/", ("claude-",), "ANTHROPIC_API_KEY"),
-    ProviderInfo("openai", "openai/", ("gpt-", "o1", "o3", "o4"), "OPENAI_API_KEY"),
-    ProviderInfo("gemini", "gemini/", ("gemini-",), "GEMINI_API_KEY"),
+    ProviderInfo("anthropic", "anthropic/", ("claude-",), ("ANTHROPIC_API_KEY",)),
+    ProviderInfo("openai", "openai/", ("gpt-", "o1", "o3", "o4"), ("OPENAI_API_KEY",)),
+    # LiteLLM checks GOOGLE_API_KEY first then GEMINI_API_KEY for the Gemini
+    # path (see litellm/llms/gemini/common_utils.py). pflow's canonical is
+    # GEMINI_API_KEY for naming consistency with the provider prefix; the
+    # alias is honored at every layer.
+    ProviderInfo("gemini", "gemini/", ("gemini-",), ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
 )
 
 

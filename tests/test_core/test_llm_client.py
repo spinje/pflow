@@ -652,6 +652,22 @@ class TestCompleteErrorPaths:
         assert isinstance(exc_info.value, LLMCallError)
         assert exc_info.value.kind == "server_error"
 
+    @patch("litellm.completion")
+    def test_api_connection_error_raises_llm_transient_with_connection_kind(self, mock_completion):
+        # Pin the fourth LLMTransientKind value end-to-end at the seam.
+        # The other three (timeout, rate_limit, server_error) are pinned
+        # above; without this case a regression in the "connection"
+        # classifier branch would slip through.
+        mock_completion.side_effect = litellm.exceptions.APIConnectionError(
+            message="network down",
+            model="gemini/gemini-2.5-flash",
+            llm_provider="gemini",
+        )
+        with pytest.raises(LLMTransientError) as exc_info:
+            complete(model="gemini/gemini-2.5-flash", prompt="hi")
+        assert isinstance(exc_info.value, LLMCallError)
+        assert exc_info.value.kind == "connection"
+
 
 # --------------------------------------------------------------------------
 # Architectural seal contract — every classified LiteLLM exception must
@@ -843,8 +859,30 @@ class TestLLMDiagnostics:
     def test_o4_missing_key_uses_openai_env_var(self):
         exc = MissingApiKeyError("API key required", model="o4-mini", kind="missing_key")
         diagnostic = exc.to_diagnostics()[0]
-        assert diagnostic.context["env_var"] == "OPENAI_API_KEY"
+        # Canonical env var is surfaced in ctx as a list (canonical first).
+        assert diagnostic.context["env_vars"] == ["OPENAI_API_KEY"]
         assert "OPENAI_API_KEY" in diagnostic.suggestions[0]
+
+    def test_gemini_missing_key_lists_both_aliases(self):
+        """LiteLLM's Gemini path accepts both GEMINI_API_KEY and GOOGLE_API_KEY.
+        The diagnostic must surface both so a user with only GOOGLE_API_KEY
+        set sees the alias rather than a misleading "set GEMINI_API_KEY"
+        suggestion. Canonical is GEMINI_API_KEY (first); GOOGLE_API_KEY is
+        listed as an accepted alternate.
+        """
+        exc = MissingApiKeyError(
+            "API key required",
+            model="gemini/gemini-2.5-flash",
+            kind="missing_key",
+        )
+        diagnostic = exc.to_diagnostics()[0]
+        assert diagnostic.context["env_vars"] == ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        # Primary suggestion uses canonical.
+        assert "GEMINI_API_KEY" in diagnostic.suggestions[0]
+        # The alias is surfaced in a follow-up suggestion so users with
+        # GOOGLE_API_KEY set know it's accepted.
+        joined = " ".join(diagnostic.suggestions)
+        assert "GOOGLE_API_KEY" in joined
 
     def test_missing_sdk_diagnostic_preserves_provider_message(self):
         raw = "Google Cloud SDK not found. Install it with: pip install 'litellm[google]'"
@@ -949,6 +987,76 @@ class TestCompleteTraceHook:
         mock_completion.return_value = make_litellm_response()
         # Should not raise
         complete(model="gpt-4o-mini", prompt="hi", trace_hook=None)
+
+
+# --------------------------------------------------------------------------
+# Malformed response shape — preserves the typed-exception seal AND the
+# trace contract. The openai.OpenAIError catch in complete() covers
+# litellm.completion failures, but does NOT cover failures that occur
+# during the success-path normalization. Without an envelope, an empty
+# choices list or missing usage attribute would escape as raw IndexError /
+# AttributeError and the after_call trace event would never fire.
+# --------------------------------------------------------------------------
+
+
+class TestNormalizeMalformedResponse:
+    @patch("litellm.completion")
+    def test_empty_choices_raises_response_parse_error(self, mock_completion):
+        # Provider returned a successful HTTP response but an empty choices
+        # list. _normalize hits raw.choices[0] → IndexError. The adapter
+        # must translate this to LLMResponseParseError so the typed-exception
+        # seal stays intact.
+        mock_completion.return_value = SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(prompt_tokens=0, completion_tokens=0),
+            _hidden_params={},
+        )
+        with pytest.raises(LLMResponseParseError) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        # IS-A LLMCallError — umbrella catches still work.
+        assert isinstance(exc_info.value, LLMCallError)
+        assert exc_info.value.model == "openai/gpt-4o-mini"
+        # provider_message captures the underlying IndexError text so agents
+        # see the WHY, not just the wrapped framing.
+        assert exc_info.value.provider_message is not None
+
+    @patch("litellm.completion")
+    def test_missing_usage_attribute_raises_response_parse_error(self, mock_completion):
+        # Provider returned content but no usage object. _normalize hits
+        # raw.usage → AttributeError. Same envelope contract.
+        message = SimpleNamespace(content="ok", reasoning_content=None)
+        choice = SimpleNamespace(message=message, finish_reason="stop")
+        mock_completion.return_value = SimpleNamespace(
+            choices=[choice],
+            # No `usage` attribute.
+            _hidden_params={},
+        )
+        with pytest.raises(LLMResponseParseError) as exc_info:
+            complete(model="openai/gpt-4o-mini", prompt="hi")
+        assert isinstance(exc_info.value, LLMCallError)
+
+    @patch("litellm.completion")
+    def test_malformed_response_fires_after_call_with_error(self, mock_completion):
+        # Trace contract: every before_call has a matching after_call,
+        # success or failure. If _normalize raises and the envelope is
+        # missing, after_call would silently not fire — breaking trace
+        # consumers that count begin/end pairs.
+        mock_completion.return_value = SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(prompt_tokens=0, completion_tokens=0),
+            _hidden_params={},
+        )
+        events: list[dict] = []
+        with pytest.raises(LLMResponseParseError):
+            complete(
+                model="openai/gpt-4o-mini",
+                prompt="hi",
+                trace_hook=events.append,
+            )
+        assert len(events) == 2
+        assert events[0]["event"] == "before_call"
+        assert events[1]["event"] == "after_call"
+        assert events[1]["error"] is not None
 
 
 # --------------------------------------------------------------------------

@@ -46,6 +46,7 @@ from pflow.core.exceptions import (
     LLMCallError,
     LLMResponseParseError,
     LLMTransientError,
+    LLMTransientKind,
     MissingApiKeyError,
     MissingSdkError,
     UnknownModelError,
@@ -329,13 +330,37 @@ def complete(
         )
         raise typed from e
 
-    # Success path: normalize and emit after_call trace
-    response = _normalize(
-        raw_response,
-        model=model,
-        has_schema=schema is not None,
-        thinking_budget=thinking_budget,
-    )
+    # Success path: normalize and emit after_call trace.
+    #
+    # _normalize accesses the top-level response shape (``raw.choices[0]``
+    # and ``raw.usage``) directly. A malformed LiteLLM response (empty
+    # choices list, missing usage) raises ``IndexError`` / ``AttributeError``
+    # — neither is an ``openai.OpenAIError`` subclass, so the call-site
+    # except above does not cover them. Without this envelope, those
+    # errors would escape the typed-exception seal AND skip the
+    # ``after_call`` trace emit, breaking both invariants this adapter
+    # owns. Translating to ``LLMResponseParseError`` keeps the seal
+    # intact and preserves the "every before_call has an after_call"
+    # trace contract.
+    try:
+        response = _normalize(
+            raw_response,
+            model=model,
+            has_schema=schema is not None,
+            thinking_budget=thinking_budget,
+        )
+    except (IndexError, AttributeError) as e:
+        typed = LLMResponseParseError(
+            f"LiteLLM returned a malformed response shape for model {model!r}: {e}",
+            model=model,
+            provider_message=str(e),
+        )
+        _emit_trace(
+            trace_hook,
+            {"event": "after_call", "model": model, "error": str(typed)},
+        )
+        raise typed from e
+
     _emit_trace(trace_hook, {"event": "after_call", "model": model, "response": response})
     return response
 
@@ -537,7 +562,7 @@ def _extract_missing_package(exc: BaseException) -> str | None:
     return match.group(1) if match else None
 
 
-def _classify_transient_kind(exc: Exception) -> str:
+def _classify_transient_kind(exc: Exception) -> LLMTransientKind:
     """Return a stable discriminator for retryable LiteLLM failures."""
     import litellm.exceptions as le
     import openai

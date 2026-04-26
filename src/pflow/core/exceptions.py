@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
 from pflow.core.llm_providers import detect_provider
+
+# Typed discriminators for LLMCallError subclasses. Carried as Literal so
+# typos at construction sites (e.g. ``kind="rate_limt"``) fail mypy at the
+# raise site rather than silently falling through to a default branch.
+UnknownModelReason = Literal["unknown_name", "missing_prefix"]
+MissingApiKeyKind = Literal["missing_key", "lacks_permission"]
+LLMTransientKind = Literal["timeout", "rate_limit", "server_error", "connection"]
 
 # Canonical list of dynamic attributes the engine/runner attach to exceptions
 # for cross-boundary context threading.  Used by copy_pflow_annotations() and
@@ -246,11 +253,11 @@ class UnknownModelError(LLMCallError):
         message: str,
         *,
         model: str | None = None,
-        reason: str = "unknown_name",
+        reason: UnknownModelReason = "unknown_name",
         provider_message: str | None = None,
     ) -> None:
         super().__init__(message, model=model, provider_message=provider_message)
-        self.reason = reason
+        self.reason: UnknownModelReason = reason
 
     def to_diagnostics(self) -> list[Diagnostic]:
         # Returns single-element list (PflowError convention).
@@ -316,15 +323,15 @@ class MissingApiKeyError(LLMCallError):
         message: str,
         *,
         model: str | None = None,
-        kind: str = "missing_key",
+        kind: MissingApiKeyKind = "missing_key",
         provider_message: str | None = None,
     ) -> None:
         super().__init__(message, model=model, provider_message=provider_message)
-        self.kind = kind
+        self.kind: MissingApiKeyKind = kind
 
     def to_diagnostics(self) -> list[Diagnostic]:
         # Returns single-element list (PflowError convention).
-        env_var = _derive_env_var_for_model(self.model)
+        env_vars = _derive_env_vars_for_model(self.model)
         if self.kind == "lacks_permission":
             suggestions = [
                 "Verify the API key has access to this specific model "
@@ -334,15 +341,18 @@ class MissingApiKeyError(LLMCallError):
             ]
         else:
             # missing_key
-            example_var = env_var or "ANTHROPIC_API_KEY"
+            canonical = env_vars[0] if env_vars else "ANTHROPIC_API_KEY"
             suggestions = [
-                f"Set the provider API key as an environment variable (e.g. 'export {example_var}=...').",
-                f"Alternatively, run 'pflow settings set-env {example_var} <value>' to store it in pflow settings.",
+                f"Set the provider API key as an environment variable (e.g. 'export {canonical}=...').",
+                f"Alternatively, run 'pflow settings set-env {canonical} <value>' to store it in pflow settings.",
                 "See https://docs.litellm.ai/docs/providers for provider-specific key names "
                 "(Bedrock, Azure, Vertex, etc.).",
             ]
+            if len(env_vars) > 1:
+                aliases = ", ".join(env_vars[1:])
+                suggestions.append(f"This provider also accepts: {aliases}.")
 
-        ctx = self.diagnostic_context(kind=self.kind, env_var=env_var)
+        ctx = self.diagnostic_context(kind=self.kind, env_vars=list(env_vars))
 
         return [
             Diagnostic(
@@ -403,11 +413,11 @@ class LLMTransientError(LLMCallError):
         message: str,
         *,
         model: str | None = None,
-        kind: str = "connection",
+        kind: LLMTransientKind = "connection",
         provider_message: str | None = None,
     ) -> None:
         super().__init__(message, model=model, provider_message=provider_message)
-        self.kind = kind
+        self.kind: LLMTransientKind = kind
 
     def to_diagnostics(self) -> list[Diagnostic]:
         suggestions_by_kind = {
@@ -518,15 +528,16 @@ class LLMResponseParseError(LLMCallError):
         ]
 
 
-def _derive_env_var_for_model(model: str | None) -> str | None:
-    """Best-effort derivation of the provider env-var name from a model identifier.
+def _derive_env_vars_for_model(model: str | None) -> tuple[str, ...]:
+    """Best-effort derivation of the provider env-var names for a model.
 
     Used by ``MissingApiKeyError.to_diagnostics()`` to surface the
-    expected env-var name. Returns None when the prefix is unrecognized
-    or absent — caller falls back to a generic example.
+    expected env-var names (canonical first; aliases follow). Returns
+    an empty tuple when the prefix is unrecognized or absent — caller
+    falls back to a generic example.
     """
     provider = detect_provider(model)
-    return provider.env_var if provider is not None else None
+    return provider.env_vars if provider is not None else ()
 
 
 class SchemaValidationError(PflowError):

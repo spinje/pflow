@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pflow.core.llm_providers import detect_provider, normalize_model_name
+from pflow.core.llm_providers import PROVIDERS, detect_provider, normalize_model_name
 
 
 def test_detect_provider_known_prefixed_models() -> None:
@@ -12,6 +12,21 @@ def test_detect_provider_known_prefixed_models() -> None:
     assert anthropic is not None and anthropic.name == "anthropic"
     assert openai is not None and openai.name == "openai"
     assert gemini is not None and gemini.name == "gemini"
+
+
+def test_provider_env_vars_canonical_first() -> None:
+    """Each provider's env_vars tuple must be non-empty with the canonical first.
+
+    Gemini specifically must include both GEMINI_API_KEY (canonical, matches
+    the provider prefix for naming consistency) and GOOGLE_API_KEY (the
+    alias LiteLLM checks first in its Gemini auth path).
+    """
+    by_name = {p.name: p for p in PROVIDERS}
+    assert by_name["anthropic"].env_vars == ("ANTHROPIC_API_KEY",)
+    assert by_name["openai"].env_vars == ("OPENAI_API_KEY",)
+    assert by_name["gemini"].env_vars == ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+    for provider in PROVIDERS:
+        assert provider.env_vars  # non-empty
 
 
 def test_detect_provider_known_bare_models() -> None:
