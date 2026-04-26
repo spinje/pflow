@@ -486,6 +486,11 @@ def llm_set_default(model: str) -> None:
     - Discovery commands (when discovery_model not set)
     - Smart filtering (when filtering_model not set)
 
+    Bare names from known providers are auto-prefixed (e.g.
+    ``gpt-4o-mini`` → ``openai/gpt-4o-mini``); a "Normalized:" line
+    confirms the rewrite. Unknown bare names pass through with a
+    warning so custom or self-hosted models still work.
+
     Example:
         pflow settings llm set-default openai/gpt-5.2
         pflow settings llm set-default anthropic/claude-sonnet-4-5
@@ -505,7 +510,9 @@ def llm_set_default(model: str) -> None:
 def llm_set_discovery(model: str) -> None:
     """Set the model for discovery commands.
 
-    Used by 'pflow mcp find' and 'pflow find'.
+    Used by 'pflow mcp find' and 'pflow find'. Bare names are
+    auto-prefixed (e.g. ``claude-sonnet-4-5`` → ``anthropic/claude-sonnet-4-5``);
+    unknown bare names pass through with a warning.
 
     Example:
         pflow settings llm set-discovery anthropic/claude-sonnet-4-5
@@ -526,6 +533,9 @@ def llm_set_filtering(model: str) -> None:
     """Set the model for smart field filtering.
 
     Used for structure-only mode when filtering large LLM responses.
+    Bare names are auto-prefixed (e.g. ``gpt-4o-mini`` →
+    ``openai/gpt-4o-mini``); unknown bare names pass through with a
+    warning.
 
     Example:
         pflow settings llm set-filtering gemini/gemini-2.5-flash-lite

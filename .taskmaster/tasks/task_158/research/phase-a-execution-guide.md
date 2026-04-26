@@ -34,16 +34,13 @@
 | `.taskmaster/tasks/task_158/starting-context/braindump-phase-0-and-A-handoff-2026-04-24.md` | Tacit knowledge, 2026-04-24 | What changed in the last session, design shifts since the first braindump |
 | `.taskmaster/tasks/task_158/research/phase-a-execution-guide.md` | **This document** | Start here once you've read the above |
 
-### Where the spike artifacts live
+### Where the spike artifacts lived
 
-| Path | Purpose |
-|---|---|
-| `scratchpads/task-158-spike/_common.py` | Key-loading + context-block helpers (not committed) |
-| `scratchpads/task-158-spike/spike_{1..5}_*.py` | Five spike scripts (not committed) |
-| `scratchpads/task-158-spike/spike_{1..5}_output.txt` | Raw outputs (not committed) |
-| `scratchpads/task-158-spike/dep_audit.txt` | Clean-venv LiteLLM dep audit |
-
-The spike scripts are throwaway. Feel free to delete them when Phase A lands. They are useful as runnable documentation if you want to re-verify any finding.
+The spike scripts and their outputs were always intended as throwaway runnable
+documentation, never committed. They were briefly tracked during the migration
+and removed before merge — the Phase 0 report in `progress-log.md` §27 captures
+every finding the spike produced. To re-verify any finding, write a fresh
+script using the patterns described in §27; the originals are not preserved.
 
 ### Current git state (worktree, branch `feat/prompt-caching-lite-llm`)
 

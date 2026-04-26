@@ -376,6 +376,21 @@ pflow settings llm set-default gemini/gemini-3-flash-preview
   This is optional - pflow auto-detects a model based on your API keys. Use this if you want a specific model instead of the auto-detected one.
 </Tip>
 
+<Note>
+  **Bare model names are auto-prefixed.** Bare names from known providers
+  (`gpt-*`, `o1*`, `o3*`, `o4*`, `claude-*`, `gemini-*`) are rewritten to
+  the canonical `<provider>/<name>` form at write time, with a
+  `Normalized:` line confirming the rewrite. Unknown bare names pass
+  through with a warning so custom or self-hosted models still work.
+  This applies to all three `set-*` commands below.
+
+  ```bash
+  $ pflow settings llm set-default gemini-3-flash-preview
+    Normalized: gemini/gemini-3-flash-preview
+  ✓ Set default_model: gemini/gemini-3-flash-preview
+  ```
+</Note>
+
 ### pflow settings llm set-discovery
 
 Set the model for discovery commands (`pflow mcp find`, `pflow find`).

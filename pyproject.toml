@@ -32,7 +32,7 @@ dependencies = [
     "claude-agent-sdk>=0.1.17", # Claude Agent SDK for agentic development node
     "PyYAML>=6.0.0", # YAML parsing for markdown workflow format params and frontmatter
     "litellm==1.82.6", # Provider-unified LLM client (the sole LLM seam — see src/pflow/core/llm_client.py). Pinned <1.83 because 1.83.x hard-pins click==8.1.8 which conflicts with our CliRunner stderr-separation tests.
-    "openai", # Already a transitive dep via litellm; declared directly because the LLM adapter catches `openai.OpenAIError` (the real base of LiteLLM's exception hierarchy — see src/pflow/core/llm_client.py).
+    "openai>=1.0", # Already a transitive dep via litellm; declared directly because the LLM adapter catches `openai.OpenAIError` (the real base of LiteLLM's exception hierarchy — see src/pflow/core/llm_client.py). 1.0 is the floor where the modern openai exception hierarchy stabilized.
 ]
 
 [project.scripts]
