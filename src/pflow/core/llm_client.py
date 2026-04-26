@@ -47,11 +47,35 @@ from pflow.core.exceptions import (
     LLMResponseParseError,
     LLMTransientError,
     MissingApiKeyError,
+    MissingSdkError,
     UnknownModelError,
 )
 from pflow.core.llm_reasoning_map import DEFAULT_MAX_TOKENS_BASE, EFFORT_RATIOS
 
 logger = logging.getLogger(__name__)
+
+# Bare model names (no provider prefix) route inconsistently via LiteLLM.
+# e.g. "gemini-3-flash-preview" → Vertex AI (needs Google Cloud SDK),
+#      "gemini/gemini-3-flash-preview" → Google AI Studio (uses GEMINI_API_KEY).
+# The adapter normalizes at the seam so the rest of pflow never worries.
+_BARE_MODEL_PREFIX_MAP: dict[str, str] = {
+    "claude-": "anthropic/",
+    "gemini-": "gemini/",
+    "gpt-": "openai/",
+    "o1-": "openai/",
+    "o3-": "openai/",
+    "o4-": "openai/",
+}
+
+
+def _normalize_model_name(model: str) -> str:
+    """Add a provider prefix to bare model names when the provider is unambiguous."""
+    if "/" in model:
+        return model
+    for bare_prefix, provider_prefix in _BARE_MODEL_PREFIX_MAP.items():
+        if model.startswith(bare_prefix):
+            return provider_prefix + model
+    return model
 
 
 # `litellm` is lazy-imported inside complete() and _classify_litellm_error
@@ -228,6 +252,7 @@ def complete(
         InvalidRequestError: any other deterministic 4xx (catches via the
             ``LLMCallError`` base for consumers that don't discriminate).
     """
+    model = _normalize_model_name(model)
     messages = _build_messages(system=system, prompt=prompt, attachments=attachments)
 
     kwargs: dict[str, Any] = {
@@ -277,6 +302,12 @@ def complete(
     import openai
 
     litellm.suppress_debug_info = True
+    # LiteLLM's ERROR logger writes tracebacks to stderr (e.g. Vertex
+    # credential failures) before the exception reaches our handler.
+    # The adapter's typed exception system is the single error surface;
+    # redundant logs just produce noise. CRITICAL lets truly fatal
+    # messages through while suppressing the redundant ERROR tracebacks.
+    logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 
     try:
         raw_response = litellm.completion(**kwargs)
@@ -409,6 +440,11 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     # APIConnectionError covers Timeout (Timeout IS-A APITimeoutError IS-A
     # APIConnectionError). ServiceUnavailableError / BadGatewayError have
     # no openai-side mirror — referenced via litellm.exceptions.
+    #
+    # Exception: APIConnectionError caused by a missing SDK install (e.g.
+    # "Google Cloud SDK not found. Install it with: pip install ...") is
+    # permanent — retrying won't install the package. Detect via the
+    # exception chain: ImportError in __cause__ is the reliable signal.
     if isinstance(
         exc,
         (
@@ -419,6 +455,12 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
             le.BadGatewayError,
         ),
     ):
+        if isinstance(exc, openai.APIConnectionError) and _has_import_error_cause(exc):
+            return MissingSdkError(
+                str(exc),
+                model=model,
+                package=_extract_missing_package(exc),
+            )
         return LLMTransientError(str(exc), model=model)
 
     # 4. Response validation — LiteLLM rejected the provider's response
@@ -442,6 +484,30 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
         f"Unrecognized LiteLLM error for model '{model}' ({type(exc).__name__}): {exc}",
         model=model,
     )
+
+
+def _has_import_error_cause(exc: BaseException) -> bool:
+    """Detect a missing SDK install in the exception chain.
+
+    LiteLLM wraps provider errors without ``raise from``, so the
+    ``ImportError`` lands on ``__context__`` (implicit chaining), not
+    ``__cause__`` (explicit). We walk both chains.
+    """
+    for attr in ("__cause__", "__context__"):
+        current = getattr(exc, attr, None)
+        while current is not None:
+            if isinstance(current, (ImportError, ModuleNotFoundError)):
+                return True
+            current = getattr(current, attr, None)
+    return False
+
+
+def _extract_missing_package(exc: BaseException) -> str | None:
+    """Extract the package name from LiteLLM's 'pip install <pkg>' hint."""
+    import re
+
+    match = re.search(r"pip install ['\"]?([^'\";\s]+)['\"]?", str(exc))
+    return match.group(1) if match else None
 
 
 def _build_messages(

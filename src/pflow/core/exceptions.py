@@ -391,6 +391,48 @@ class LLMTransientError(LLMCallError):
     """
 
 
+class MissingSdkError(LLMCallError):
+    """A provider requires an SDK that is not installed in pflow's environment.
+
+    Translated from ``APIConnectionError`` when the exception chain contains
+    an ``ImportError`` — a reliable signal that the failure is permanent
+    (retrying won't install the package).
+    """
+
+    def __init__(self, message: str, *, model: str | None = None, package: str | None = None) -> None:
+        super().__init__(message, model=model)
+        self.package = package
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        suggestions = [
+            "Most providers (OpenAI, Anthropic, Google AI Studio, Ollama) work "
+            "without extra installs — check the model prefix is correct.",
+        ]
+        if self.package:
+            suggestions.insert(
+                0,
+                f"Install the required package into pflow's environment:\n"
+                f"  uv tool install --with '{self.package}' pflow-cli\n"
+                f"  pipx inject pflow-cli '{self.package}'",
+            )
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=f"Model '{self.model}' requires a provider SDK that is not installed.",
+                title="Missing Provider SDK",
+                suggestions=suggestions,
+                source="runtime",
+                context={
+                    "category": LLM_FAILURE_CATEGORY,
+                    "error_class": type(self).__name__,
+                    "model": self.model,
+                    "package": self.package,
+                },
+                see_also=["llm"],
+            )
+        ]
+
+
 class LLMResponseParseError(LLMCallError):
     """Model response could not be parsed against the requested schema.
 

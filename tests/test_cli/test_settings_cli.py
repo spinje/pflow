@@ -554,14 +554,15 @@ class TestLLMShowCommand:
     def test_llm_show_default_used_as_fallback(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that show displays when default_model is used as fallback for discovery/filtering."""
         # Set only default_model, not discovery or filtering
+        # Bare "gemini-*" is normalized to "gemini/gemini-*" at write time
         runner.invoke(settings, ["llm", "set-default", "gemini-3-flash-preview"])
 
         result = runner.invoke(settings, ["llm", "show"])
 
         assert result.exit_code == 0
-        assert "gemini-3-flash-preview (configured)" in result.output
+        assert "gemini/gemini-3-flash-preview (configured)" in result.output
         # Discovery and filtering should show they're using default_model
-        assert "(using default_model → gemini-3-flash-preview)" in result.output
+        assert "(using default_model → gemini/gemini-3-flash-preview)" in result.output
 
 
 class TestLLMSetDefaultCommand:
@@ -569,15 +570,16 @@ class TestLLMSetDefaultCommand:
 
     def test_set_default_model(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test setting default model."""
+        # Bare "gpt-*" is normalized to "openai/gpt-*" at write time
         result = runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
 
         assert result.exit_code == 0
-        assert "✓ Set default_model: gpt-5.2" in result.output
+        assert "✓ Set default_model: openai/gpt-5.2" in result.output
 
-        # Verify it was saved
+        # Verify the normalized name was saved
         manager = SettingsManager(settings_path=isolated_settings)
         loaded = manager.load()
-        assert loaded.llm.default_model == "gpt-5.2"
+        assert loaded.llm.default_model == "openai/gpt-5.2"
 
     def test_set_default_model_with_provider_prefix(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test setting model with provider prefix."""
@@ -634,14 +636,15 @@ class TestLLMSetFilteringCommand:
 
     def test_set_filtering_model(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test setting filtering model."""
+        # Bare "gemini-*" is normalized to "gemini/gemini-*" at write time
         result = runner.invoke(settings, ["llm", "set-filtering", "gemini-2.5-flash-lite"])
 
         assert result.exit_code == 0
-        assert "✓ Set filtering_model: gemini-2.5-flash-lite" in result.output
+        assert "✓ Set filtering_model: gemini/gemini-2.5-flash-lite" in result.output
 
         manager = SettingsManager(settings_path=isolated_settings)
         loaded = manager.load()
-        assert loaded.llm.filtering_model == "gemini-2.5-flash-lite"
+        assert loaded.llm.filtering_model == "gemini/gemini-2.5-flash-lite"
 
     def test_set_filtering_overwrites_existing(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that setting filtering model overwrites existing value."""
@@ -762,7 +765,8 @@ class TestLLMSettingsPersistence:
 
     def test_settings_persist_across_reloads(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that settings persist across manager reloads."""
-        # Set values
+        # Set values — bare "gpt-*" is normalized to "openai/gpt-*" at write time;
+        # already-prefixed names pass through unchanged
         runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
         runner.invoke(settings, ["llm", "set-discovery", "anthropic/claude-sonnet-4-5"])
 
@@ -770,19 +774,20 @@ class TestLLMSettingsPersistence:
         manager = SettingsManager(settings_path=isolated_settings)
         loaded = manager.load()
 
-        assert loaded.llm.default_model == "gpt-5.2"
+        assert loaded.llm.default_model == "openai/gpt-5.2"
         assert loaded.llm.discovery_model == "anthropic/claude-sonnet-4-5"
 
     def test_llm_settings_in_show_output(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that LLM settings appear in global settings show."""
+        # Bare "gpt-*" is normalized to "openai/gpt-*" at write time
         runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
 
         result = runner.invoke(settings, ["show"])
 
         assert result.exit_code == 0
-        # The llm section should be in the JSON output
+        # The llm section should be in the JSON output with the normalized name
         assert '"llm"' in result.output
-        assert '"default_model": "gpt-5.2"' in result.output
+        assert '"default_model": "openai/gpt-5.2"' in result.output
 
 
 # ============================================================================

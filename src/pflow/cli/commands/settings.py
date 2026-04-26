@@ -455,6 +455,27 @@ def llm_show() -> None:
     click.echo("  pflow settings llm set-filtering <model>")
 
 
+def _normalize_and_warn_model(model: str) -> str:
+    """Normalize bare model names and warn on unrecognized patterns.
+
+    LiteLLM requires provider-prefixed model names (e.g. ``gemini/gemini-3-flash-preview``).
+    Bare names route inconsistently — e.g. ``gemini-3-flash-preview`` routes to Vertex AI
+    instead of Google AI Studio.
+    """
+    from pflow.core.llm_client import _normalize_model_name
+
+    normalized = _normalize_model_name(model)
+    if normalized != model:
+        click.echo(f"  Normalized: {normalized}", err=True)
+    elif "/" not in model:
+        click.echo(
+            f"  ⚠ '{model}' doesn't match any known provider (anthropic/, gemini/, openai/).\n"
+            f"    If this is a custom or self-hosted model, it will be passed to LiteLLM as-is.",
+            err=True,
+        )
+    return normalized
+
+
 @llm.command(name="set-default")
 @click.argument("model")
 def llm_set_default(model: str) -> None:
@@ -470,6 +491,7 @@ def llm_set_default(model: str) -> None:
         pflow settings llm set-default anthropic/claude-sonnet-4-5
         pflow settings llm set-default gemini/gemini-3-flash-preview
     """
+    model = _normalize_and_warn_model(model)
     manager = SettingsManager()
     current_settings = manager.load()
     current_settings.llm.default_model = model
@@ -489,6 +511,7 @@ def llm_set_discovery(model: str) -> None:
         pflow settings llm set-discovery anthropic/claude-sonnet-4-5
         pflow settings llm set-discovery gemini/gemini-3-flash-preview
     """
+    model = _normalize_and_warn_model(model)
     manager = SettingsManager()
     current_settings = manager.load()
     current_settings.llm.discovery_model = model
@@ -508,6 +531,7 @@ def llm_set_filtering(model: str) -> None:
         pflow settings llm set-filtering gemini/gemini-2.5-flash-lite
         pflow settings llm set-filtering openai/gpt-4o-mini
     """
+    model = _normalize_and_warn_model(model)
     manager = SettingsManager()
     current_settings = manager.load()
     current_settings.llm.filtering_model = model

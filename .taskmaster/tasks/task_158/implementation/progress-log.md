@@ -2470,5 +2470,104 @@ All six fixed. Lesson: the first audit pass focused on the reviewer's named site
 a7d8c777 braindump + progress log updates
 83e90598 fix(llm): close Phase A diagnostic warning gaps
 a913437c perf(llm): remove litellm from eager CLI path; lazy-import inside complete()
-[this commit] refactor(llm): widen adapter seal to openai.OpenAIError + simplify empty-response gate    ← current HEAD
+bb51a3cb refactor(llm): widen adapter seal to openai.OpenAIError + simplify empty-response gate
+1b21b0f9 agent instructions
 ```
+
+---
+
+## 37. Session 2026-04-26 — End-to-end verification + 3 fixes from bare-model-name regression
+
+### Context
+
+Independent verification session against the full Phase A branch. Goal: try to break the implementation, not confirm it works. Ran 35 manual end-to-end tests across all providers (Anthropic, Gemini, OpenAI), all node types, batch, sub-workflows, error paths, `--report`, `--dry-run`, `--no-cache`, `--validate-only`, structured output, extended thinking, and pre-Phase-A trace backwards compatibility.
+
+### Verification results (31 passing, 1 finding)
+
+All core functionality verified working with no regressions:
+- CLI startup: 0.3s (no litellm drag)
+- All 3 providers: Anthropic, Gemini, OpenAI real API calls succeed
+- Structured output + thinking composition works
+- Batch LLM (3 items, parallel) with per-item prompt capture in traces
+- Sub-workflow with LLM: cost rolls up, trace captures child LLM prompts
+- `--report` across all scenarios: chain, batch, nested, error, thinking, pre-Phase-A traces
+- `--dry-run`: 0.37s, no litellm import cost
+- `--validate-only`: 0.5s
+- Error paths: `UnknownModelError` with discriminator, `MissingApiKeyError` with actionable remediation
+- `cache: false` memoization opt-out still works
+- Example workflows all validate
+- Guide and settings help text: no stale `llm` library references
+- Architectural seal: zero `import llm` / `from llm import` in codebase; litellm only in `llm_client.py`
+- `make test`: 5325 passed, `make check`: all green
+
+### The finding: bare model names in settings → wrong provider routing
+
+User's settings had `gemini-3-flash-preview` (bare, no prefix). LiteLLM routes bare Gemini names to Vertex AI (needs Google Cloud SDK) instead of Google AI Studio (uses `GEMINI_API_KEY`). Three symptoms:
+
+1. **Wrong routing** — bare `gemini-3-flash-preview` → Vertex AI path → `APIConnectionError: Google Cloud SDK not found`
+2. **3 retries on permanent failure** — `APIConnectionError` classified as `LLMTransientError` → retry loop burns 3 attempts on an error that will never succeed (missing SDK install)
+3. **Massive stderr noise** — LiteLLM's ERROR logger dumps 3 × 40-line Vertex credential tracebacks before the adapter exception handler fires
+
+Root cause: the adapter didn't fully abstract LiteLLM's model-naming convention from the rest of pflow. Three fixes, all in the adapter seam:
+
+### Fix 1: Auto-prefix bare model names
+
+**Two layers:**
+
+- **Settings CLI** (`cli/commands/settings.py`): new `_normalize_and_warn_model()` shared by all 3 `set-*` commands. Normalizes at write time with user feedback:
+  ```
+  $ pflow settings llm set-default gemini-3-flash-preview
+    Normalized: gemini/gemini-3-flash-preview
+  ✓ Set default_model: gemini/gemini-3-flash-preview
+
+  $ pflow settings llm set-default banana
+    ⚠ 'banana' doesn't match any known provider (anthropic/, gemini/, openai/).
+      If this is a custom or self-hosted model, it will be passed to LiteLLM as-is.
+  ✓ Set default_model: banana
+
+  $ pflow settings llm set-default anthropic/claude-sonnet-4-5
+  ✓ Set default_model: anthropic/claude-sonnet-4-5
+  ```
+
+- **Adapter** (`core/llm_client.py`): `_normalize_model_name()` called at the top of `complete()` as a safety net for model names from workflow files. Maps `claude-*` → `anthropic/`, `gemini-*` → `gemini/`, `gpt-*`/`o1-*`/`o3-*`/`o4-*` → `openai/`. Already-prefixed names and unknown bare names pass through unchanged.
+
+### Fix 2: Permanent `APIConnectionError` from missing SDK → no retry
+
+In `_classify_litellm_error()`: before classifying `APIConnectionError` as `LLMTransientError`, check for `ImportError` in the `__cause__` chain via `_has_import_error_cause()`. Missing SDK installs are permanent failures — retrying won't install the package. Classified as `InvalidRequestError` with the install hint extracted by `_extract_install_hint()`.
+
+Result: one clean error, zero retries, ~0.8s instead of ~3s.
+
+### Fix 3: Silence LiteLLM's redundant ERROR logger
+
+`logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)` inside `complete()`, alongside the existing `suppress_debug_info`. The adapter's typed exception system is the single error surface; the logged tracebacks are redundant noise that reaches stderr before the adapter can produce a clean message.
+
+### Bonus: probe command missing `inject_settings_env_vars`
+
+Pre-existing issue (confirmed on main), but trivial to fix: one lazy import + one function call in `probe.py`. Now `pflow probe llm prompt="..."` works with settings-stored API keys.
+
+### Verification after fixes
+
+- `make test`: 5342 passed (5325 original + 17 new `TestNormalizeModelName` tests)
+- `make check`: all green
+- Manual: bare model name in workflow file → auto-prefixed → works
+- Manual: `vertex_ai/` model with missing SDK → one clean error, no retries, no stderr noise
+- Manual: `pflow probe llm` → works with settings-stored keys
+- Manual: settings normalization UX for all 3 cases (known bare, unknown bare, prefixed)
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `src/pflow/core/llm_client.py` | `_normalize_model_name()`, `_has_import_error_cause()`, `_extract_install_hint()`, LiteLLM logger → CRITICAL |
+| `src/pflow/cli/commands/settings.py` | `_normalize_and_warn_model()` shared by all 3 set commands |
+| `src/pflow/cli/commands/probe.py` | `inject_settings_env_vars()` call |
+| `tests/test_core/test_llm_client.py` | 2 assertion fixes + 17 new normalization tests |
+| `tests/test_cli/test_settings_cli.py` | 5 assertion fixes |
+
+### Patterns worth noting for Phase B-G
+
+1. **Normalize at the seam, not scattered.** Model-name normalization belongs in the adapter (where pflow meets LiteLLM). The settings CLI normalizes at write time for immediate user feedback, but the adapter is the safety net.
+
+2. **Walk `__cause__` for permanent-vs-transient classification.** `APIConnectionError` from a missing `import` is permanent; from a network timeout is transient. The exception chain distinguishes them. This pattern generalizes to any wrapper exception that conflates permanent and transient causes.
+
+3. **Own your dependency's logging surface.** LiteLLM's ERROR logger writes to stderr before exceptions reach the adapter. Setting the logger to CRITICAL lets the adapter's typed exception system be the single error surface.

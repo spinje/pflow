@@ -34,12 +34,14 @@ from pflow.core.exceptions import (
     LLMResponseParseError,
     LLMTransientError,
     MissingApiKeyError,
+    MissingSdkError,
     UnknownModelError,
 )
 from pflow.core.llm_client import (
     AdapterResponse,
     Attachment,
     _build_messages,
+    _normalize_model_name,
     _translate_reasoning_for_litellm,
     complete,
 )
@@ -157,6 +159,56 @@ class TestBuildMessages:
 
 
 # --------------------------------------------------------------------------
+# _normalize_model_name
+# --------------------------------------------------------------------------
+
+
+class TestNormalizeModelName:
+    """Auto-prefix bare model names with the correct provider slug."""
+
+    @pytest.mark.parametrize(
+        ("bare", "expected"),
+        [
+            ("gpt-4o-mini", "openai/gpt-4o-mini"),
+            ("gpt-5.2", "openai/gpt-5.2"),
+            ("o1-preview", "openai/o1-preview"),
+            ("o3-mini", "openai/o3-mini"),
+            ("o4-mini", "openai/o4-mini"),
+            ("claude-sonnet-4-5", "anthropic/claude-sonnet-4-5"),
+            ("claude-opus-4-5", "anthropic/claude-opus-4-5"),
+            ("gemini-2.5-flash", "gemini/gemini-2.5-flash"),
+            ("gemini-3-flash-preview", "gemini/gemini-3-flash-preview"),
+        ],
+    )
+    def test_known_bare_names_get_prefixed(self, bare: str, expected: str) -> None:
+        assert _normalize_model_name(bare) == expected
+
+    @pytest.mark.parametrize(
+        "already_prefixed",
+        [
+            "openai/gpt-4o-mini",
+            "anthropic/claude-sonnet-4-5",
+            "gemini/gemini-2.5-flash",
+            "ollama/llama3",
+            "together_ai/some-model",
+        ],
+    )
+    def test_already_prefixed_names_pass_through(self, already_prefixed: str) -> None:
+        assert _normalize_model_name(already_prefixed) == already_prefixed
+
+    @pytest.mark.parametrize(
+        "unknown",
+        [
+            "llama3",
+            "mistral-large",
+            "qwen-72b",
+        ],
+    )
+    def test_unknown_bare_names_pass_through(self, unknown: str) -> None:
+        assert _normalize_model_name(unknown) == unknown
+
+
+# --------------------------------------------------------------------------
 # _translate_reasoning_for_litellm
 # --------------------------------------------------------------------------
 
@@ -241,9 +293,9 @@ class TestCompleteHappyPath:
 
         response = complete(model="gpt-4o-mini", prompt="Say hello.")
 
-        # Verify call kwargs
+        # Verify call kwargs — model is normalized (bare "gpt-*" → "openai/gpt-*")
         call_kwargs = mock_completion.call_args.kwargs
-        assert call_kwargs["model"] == "gpt-4o-mini"
+        assert call_kwargs["model"] == "openai/gpt-4o-mini"
         assert call_kwargs["messages"] == [{"role": "user", "content": "Say hello."}]
         assert call_kwargs["temperature"] == 0.0
         assert call_kwargs["stream"] is False
@@ -251,7 +303,7 @@ class TestCompleteHappyPath:
         # Verify response shape
         assert isinstance(response, AdapterResponse)
         assert response.text == "hello world"
-        assert response.model == "gpt-4o-mini"
+        assert response.model == "openai/gpt-4o-mini"
         assert response.has_schema is False
         # `.text` is an attribute, not callable (different from llm library)
         assert not callable(response.text)
@@ -634,6 +686,19 @@ def _make_api_connection(model="gemini/gemini-3-flash-preview", provider="gemini
     return litellm.exceptions.APIConnectionError(message="network down", model=model, llm_provider=provider)
 
 
+def _make_api_connection_missing_sdk(model="vertex_ai/gemini-2.0-flash", provider="vertex_ai"):
+    # Missing SDK install — permanent failure, not transient. LiteLLM uses
+    # implicit chaining (raise X inside except Y), so ImportError lands on
+    # __context__, not __cause__. The detector walks both chains.
+    outer = litellm.exceptions.APIConnectionError(
+        message="Google Cloud SDK not found. Install it with: pip install 'litellm[google]'",
+        model=model,
+        llm_provider=provider,
+    )
+    outer.__context__ = ImportError("No module named 'google'")
+    return outer
+
+
 def _make_service_unavailable(model="openai/gpt-4o-mini", provider="openai"):
     return litellm.exceptions.ServiceUnavailableError(message="503 unavailable", model=model, llm_provider=provider)
 
@@ -678,6 +743,7 @@ _SEAL_CONTRACT_CASES = [
     pytest.param(_make_rate_limit, LLMTransientError, id="rate_limit_to_transient"),
     pytest.param(_make_internal_server, LLMTransientError, id="internal_server_to_transient"),
     pytest.param(_make_api_connection, LLMTransientError, id="api_connection_to_transient"),
+    pytest.param(_make_api_connection_missing_sdk, MissingSdkError, id="api_connection_missing_sdk_to_missing_sdk"),
     pytest.param(_make_service_unavailable, LLMTransientError, id="service_unavailable_to_transient"),
     pytest.param(_make_bad_gateway, LLMTransientError, id="bad_gateway_to_transient"),
     pytest.param(_make_api_response_validation, LLMResponseParseError, id="api_response_validation_to_parse_error"),
@@ -741,7 +807,7 @@ class TestCompleteTraceHook:
         )
         assert len(events) == 2
         assert events[0]["event"] == "before_call"
-        assert events[0]["model"] == "gpt-4o-mini"
+        assert events[0]["model"] == "openai/gpt-4o-mini"  # normalized from bare "gpt-4o-mini"
         assert events[0]["prompt"] == "rendered prompt text"
         assert events[1]["event"] == "after_call"
         assert events[1]["response"].text == "OK"
