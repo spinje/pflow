@@ -118,7 +118,7 @@ LiteLLM exposes `prompt_cache_key` for OpenAI routing consistency. In parallel b
 
 ### Parallel-batch cache write race (informed prewarm decision)
 
-All N batch calls fire simultaneously, all pay cache-write cost. Pre-warming fixes it. Without prewarm (the `prewarm: false` case in v1), `analyze-cache` should flag this for large N. The spec resolves this by gating auto-batch-prefix on `prewarm: true` and emitting a hard validation error for large batches without an explicit prewarm choice.
+All N batch calls fire simultaneously, all pay cache-write cost. Pre-warming fixes it. Without prewarm (the `prewarm: false` case in v1), `analyze-cache` should flag this for large N. Resolved per DD#33 / DD#36: savings-ratio-based emission, advisory only — `cache.batch-prewarm-recommended` warning emitted by `analyze-cache` and `--dry-run`, never blocks `pflow run`. (Earlier framing of "hard validation error for large batches" was rejected — expensive analysis doesn't belong in the runtime validation path.)
 
 ### `list | str` shape for inputs/outputs in some old workflows — UNVERIFIED
 
@@ -157,7 +157,7 @@ Some older workflows have `inputs:` or `outputs:` declared as either a list or a
 
 - **Workflow-importing-workflow cross-cache hits.** If a parent's `## Cache` references values that the child also caches with the same name — no collision (different scopes) but incidental byte match = cross-workflow cache hit. Documented in spec but worth an integration test in Phase C or F.
 
-- **Tier 2 verification (cross-workflow cache-hit prediction)** — flagged for Phase B–G plan-writing investigation. If the mechanical part (parse parent + child cache blocks, compare prose-before-each-var) is cheap AND the data-flow tracing for "same logical value across boundary" is also cheap, include in v1; else defer to v1b.
+- **Tier 2 verification (cross-workflow cache-hit prediction)** — resolved per DD#26: in-by-default for v1. Walker is ~50 LOC mirroring the mermaid renderer's traversal pattern; rename detection (`cache.cross-workflow-rename-detected`) and prose-mismatch warnings (`cache.cross-workflow-prose-mismatch`) ship in v1. Auto-fix suggestions ("which prose canonicalizes?") deferred to v1b — picking the canonical prose has no clearly right answer.
 
 - **`pflow analyze-cache` graceful degradation for unknown models.** Estimates depend on LiteLLM's pricing data. For custom endpoints, brand-new models, self-hosted Ollama, or anything LiteLLM doesn't have pricing for, `completion_cost()` returns `None`. The CLI must degrade gracefully — show "estimates unavailable for this model" not crash and not show $0. Task 158 established the `pricing_available: False` / `partial_cost_usd` / `unavailable_models` tri-state for runtime cost reporting; `analyze-cache` should mirror that shape for its dollar estimates.
 
@@ -267,7 +267,7 @@ These were braindump items that worried me at design time. Phase A resolved them
 - Per-item TTL (follow-up)
 - Multi-breakpoint placement beyond v1 strategy (follow-up — Anthropic-only)
 - Direct read of `~/.config/io.datasette.llm/keys.json` (deferred to v1.x)
-- Tier 2 cross-workflow verification UNLESS the plan-writing investigation shows it's <1 day (then include in v1)
+- (Tier 2 cross-workflow verification was resolved in-by-default for v1 — see DD#26.)
 
 **The user cares most about:**
 1. Agent-readable syntax (they quote this principle)

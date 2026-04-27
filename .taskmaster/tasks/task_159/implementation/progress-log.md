@@ -634,3 +634,222 @@ The previous spec was internally consistent but had unaddressed gaps. Each was r
 ### Next step
 
 Deside on the final output format of the analyze-cache command then write the implementation plan for the caching feature. Prerequisites are now in place: the design braindump and spec are current, and the LiteLLM substrate (Task 158's adapter, typed exceptions, diagnostic pipeline, tracing seam) has shipped. The plan should be informed by concrete LiteLLM behavior observed during Task 158's implementation — see Task 158's progress log §27 for the Phase 0 spike findings (`cache_control` composition with thinking + structured output, pricing accuracy, etc.) and §38 for end-to-end verification results.
+
+---
+
+## 26. Session 2026-04-27 — Output format synthesis, verification pass, three-tier architecture
+
+This session picked up where §25 left off: design was complete; the analyze-cache output format was the unresolved blocker before plan-writing. The session went deeper than expected — three rounds of user pushback surfaced architectural issues that reshaped DDs and produced the biggest single contribution to the spec since §25 (additions of DD#26-36 and a substantially restructured analyze-cache requirements section).
+
+The spec captures *what was decided*. This entry captures *why* — including the dead ends, the user pushback that caught my drift, and the verification surprises that adjusted plan-writing scope.
+
+### Code investigation, Round 1 — five lookups before mockup synthesis
+
+Goal: don't invent shapes the implementation can't deliver. Five parallel `pflow-codebase-searcher` subagents on:
+
+1. **`Diagnostic` class shape.** Surprise: no stable-ID convention exists. The output mockups (alt-1 and alt-2) had been assuming IDs as a top-level field; the code doesn't have it. This forced a Phase B prerequisite decision (extend `Diagnostic`).
+2. **`MemoizationCache` return shape.** Confirmed: stores full output blob (zlib-compressed JSON). Prior `llm_usage.input_tokens` reachable but no metadata-only API. No new SQLite schema needed for v1.
+3. **Token estimator.** Surprise: pflow has *zero* token-counting infrastructure. No `tiktoken`, no `len // 4` fallback. Forced choice between (a) adding tiktoken dep, (b) using `litellm.token_counter` (already transitively installed via LiteLLM), (c) inventing a char heuristic. Picked (b) — lowest friction, model-aware, offline.
+4. **Sub-workflow graph walk.** Confirmed: `resolve_sub_workflow()` exists as standalone primitive. No existing function returns `parent → list[(child_path, input_mapping)]`; new ~50 LOC walker required, mirroring mermaid renderer's traversal pattern. Tier 2 is feasible.
+5. **Per-model capabilities table.** Surprise: doesn't exist. Task 158 created `llm_providers.py` (4 fields, no per-model data). Task 159 must introduce `llm_capabilities.py` from scratch as Phase B work. LiteLLM's `model_cost` dict has *some* of the data but coverage and field names are unverified — wrapping it deferred to v1.x.
+
+These findings shaped DD#27 (Diagnostic id field), DD#31 (token estimation tier), DD#32 (capabilities table as new module).
+
+### Output format synthesis (v3 → folded into spec)
+
+Read existing alt-1 and alt-2 mockups under `research/`.
+
+**alt-1 strengths:** dollar amounts at the top, score-choruses-style mechanical fix detail (file + line + exact text to move + projected post-fix ratio), batch pre-warming as dedicated section with latency/savings tradeoff, sub-workflow per-invocation scoping notes.
+
+**alt-2 strengths:** confidence indicator at top, stable warning IDs introduced as concept (with `cache.<category>` namespace), severity vocabulary aligned with `Diagnostic`, action-ordered "Top opportunities" section, full JSON schema mockup.
+
+**Decision:** alt-2 as skeleton + alt-1's specific details (mechanical-precision warning copy, pre-warming detail, per-invocation scoping note). Add what neither had: Tier 2 cross-workflow alignment section, `--from-trace` mode mockup, already-optimal mode, output for steady-state (workflow already has `## Cache` declared).
+
+Wrote v3 doc as research artifact, then folded contract-level content into the spec when the user clarified that future agents should read only the spec. v3 marked deprecated with header pointing to `task-159.md`.
+
+### Three principle clarifications (user pushback that reshaped DDs)
+
+These are the most important entries in this session. Each one caught me drifting toward overengineering or sloppy thinking.
+
+#### Clarification 1 — `FixAction` overlap with `suggestions` (DD#28)
+
+I had proposed extending `Diagnostic` with a typed `fix: FixAction` substructure carrying `action: str`, `description: str`, `applicability: Literal[...]`, `args: dict`. User pushback:
+
+> "doesn't 'FixAction' seem to have overlap with the existing 'suggestion'? Also do we need this complex structure, lets take a step back and examine what we need and why."
+
+Reconsidered honestly:
+- `FixAction.description` IS `suggestions[0]`. Same content, same purpose, just renamed.
+- Net delta over `suggestions` is `action: str` (typed enum) + `applicability` + `args`.
+- Each needs its own justification.
+
+**The mental-model error I'd made:** lumped "top 10% diagnostic systems" into one bucket. Actually two distinct categories:
+- **Auto-applying tools** (rustc, ruff, eslint, prettier): typed fixes are first-class because `--fix` is a primary product. Applicability gates "is this safe to auto-apply." Args carry edit primitives. Need structured fixes because they execute them.
+- **Analyzer tools** (mypy, pylint, shellcheck): prose suggestions plus stable IDs. No typed fix machinery, because nothing programmatically applies them.
+
+pflow analyze-cache in v1 is the second category. `pflow cache apply` is deferred to v1b. mypy is the right analog, not rustc.
+
+**Resolution:** drop `FixAction`. Existing `suggestions: list[str]` for prose, existing `context: dict` for structured raw data. Cost: ~10 LOC instead of ~40 LOC. No new dataclass, no new enum.
+
+**Insight to carry forward:** when proposing a structured type, ask "do we have a programmatic consumer?" If no, prose + context dict is enough. Prematurely typed structures cost reader attention without buying anything.
+
+#### Clarification 2 — Trace data conflation (DD#34, four-source labels)
+
+I had labeled per-call confidence as `trace` / `estimator` / `heuristic`, where `trace` meant *either* MemoizationCache prior `llm_usage` OR explicit trace JSON file. User pushback:
+
+> "cant this be loaded automatically if available? when would you not want to use trace when it exists? also when you say trace do you mean the db or where does the data live?"
+
+That last sentence caught a real spec sloppiness. Two distinct data sources I had conflated under one label:
+
+1. **MemoizationCache** at `~/.pflow/cache.db` (SQLite). Stores prior node outputs including `llm_usage.input_tokens`. Always queryable when workflow has been run before.
+2. **Trace JSON files** at `~/.pflow/debug/workflow-trace-*.json`. Format 2.1.0 carries per-event cache metadata (`cache_creation_input_tokens`, `cache_age_sec`, `cache_key`). Required for `--from-trace` discrepancy analysis.
+
+These have different fidelities and different code paths. Conflating them masked the auto-load opportunity.
+
+**Resolution:**
+- 4-level per-call source labels: `trace` / `memo` / `estimator` / `heuristic`.
+- 3-level aggregate: `high_from_trace` / `medium_from_memo` / `low_no_data`.
+- Auto-load most recent matching trace from `~/.pflow/debug/` when present. `--from-trace <path>` is explicit override; `--no-trace` opts out.
+
+**Insight to carry forward:** distinguish data sources by *storage location AND fidelity*, not by a generic label. Words like "trace" overload across SQLite + JSON + in-memory state without semantic distinction; pick names that point at the actual artifact.
+
+#### Clarification 3 — Savings ratio as the right threshold (DD#33)
+
+I had proposed absolute dollar floors for prewarm thresholds (`size > 10 AND prefix > 2k tokens`). User pushed:
+
+> "we could probably use % of cost instead, so for example if the costsaving would be more than 20% this would trigger or something"
+
+Initial reaction: % alone won't filter, because for prewarm specifically the savings ratio is always high (Anthropic's 1.25× write vs 0.1× read math gives >40% for any batch ≥2). Replied with "absolute floor is needed."
+
+User pushed harder:
+
+> "shouldnt the improvements be procentual based on cost with and without caching? something going from 0.002 -> 0.001 is a BIG procentual change in cost, and it can compound based on the batchsize and how many times the user intents to run it"
+
+This made me re-examine the math. I had been assuming P >> D (prefix dominates the prompt). When D is significant:
+
+```
+savings_ratio = (N-1) × 1.15 × P / (N × (1.25P + D))
+```
+
+When P >> D: ratio ≈ (N-1) × 1.15 / (N × 1.25) → high.
+When P << D: ratio is small (P / (P+D) dominates). ← this is the case % threshold filters.
+
+So my "always >40%" claim was wrong. Ratio is high *only* when prefix dominates the prompt. When dynamic content dominates, ratio drops below 5%, and a % threshold correctly filters. The user's instinct that "% feels right" was capturing the structural property — what fraction of the batch is actually cacheable — that absolute thresholds miss.
+
+**Resolution:** drop both arbitrary thresholds (`size > 10`, `prefix > 2k`). Single rule: `ratio < 5%` silent skip, `ratio ≥ 5%` emits `cache.batch-prewarm-recommended`. No absolute dollar floor — small absolute savings compound across reruns; pflow can't predict run frequency, so user reads `savings_pct` and `savings_usd` and decides themselves.
+
+**Insight to carry forward:** when a user's instinct points at a clean rule, work the math first instead of arguing from assumed cases. My original "absolute floor" argument was missing the structural property they were pointing at; the math made it visible.
+
+### The biggest architectural reframe — three-tier validation/analysis (DD#36)
+
+After the % threshold landed, I drafted spec edits making `cache.batch-prewarm-recommended` an `error` severity that blocks `pflow run` for batches above 20% savings. User pushback was the most consequential of the session:
+
+> "having cache.batch-prewarm-required error and block pflow run wouldnt that mean we have to load historical data before every run? im not sure this is good... stop and lets dsicuss"
+
+Confirmed: yes. Computing savings ratio at validation time requires:
+- Token counts (via `litellm.token_counter` — loads tokenizer files, latency)
+- Historical run data (via `MemoizationCache.get_latest_for_node()`)
+- Cross-batch-item resolution
+
+That's expensive analysis on every `pflow run`. Validation should be **fast, deterministic, no I/O beyond reading the workflow file**. Forcing tokenizer loading and historical state into the runtime path is wrong.
+
+User then proposed the cleaner architectural distinction:
+
+> "--dry-run could be allowed to be a little slower and read state right?"
+
+Yes — that's the right line to draw. `--dry-run` is the user opting into analysis. Three tiers:
+
+1. **`pflow run` validation** — structural cache checks only (parser, references, order). Fast, deterministic. Blocks on structural errors.
+2. **`pflow run --dry-run`** — opt-in, can be slow. Full analytical pass: token counting, historical state, savings ratios, Tier 2 walking. Emits one-line nudge with real numbers. Doesn't block (no execution to gate).
+3. **`pflow analyze-cache`** — dedicated command. Same analysis, full sectioned output, `--from-trace` discrepancy mode.
+
+ALL cache analytical findings become advisory. No blocking semantics on `cache.batch-prewarm-*`, `cache.dynamic-before-static`, `cache.padding-advisory`, etc. Only structural errors (`cache.order-mismatch`, reference-resolution failures) block.
+
+This collapsed the two prewarm IDs into one (`cache.batch-prewarm-recommended` with warning severity), simplified the catalog from 10 to 9 entries, and dropped the "forcing function via blocking validation" framing entirely.
+
+**Insight to carry forward:** "forcing function via blocking validation" was a misframe. Standard tooling pattern (mypy, ruff, pylint) is opt-in analysis with prose output — agents who care run the analyzer; agents who skip it run unhindered. The cost of expensive validation paths in the runtime is too high. Keep `pflow run` fast and deterministic.
+
+### Code investigation, Round 2 — verification pass (items A-H)
+
+Eight specific spec assumptions verified in parallel. Most held; three surprises:
+
+**Confirmed (no spec change):**
+- B: `MemoizationCache.get_with_age()` already exists at `cache.py:224-262`. Spec had hedged "needs adding" — wrong; it's there. Removed the hedge.
+- C: `shared["_pflow_workflow_file"]` exists, reliably set by `runner._prepare_workflow` for every run via `setdefault`. Caveat: inline runs use a synthetic `ir-hash:<md5>` identifier, not a filesystem path.
+- E: `LLMNode._call_llm` integration is structurally correct — inside ThreadPoolExecutor timeout AND retry loop (for `LLMTransientError` re-raise path).
+- G: `data_flow.py::validate_data_flow()` is genuinely shared. Both validators call into it; `check_inputs=True` (run-time path) vs `False` (compile path). Severity filter differs at the boundary (compiler keeps only ERROR).
+- H: `_FAILURE_CATEGORY_MAP` at `executor_service.py:29-44`. Adding `"cache_failure": "cache_failure"` is a one-line dict insertion plus required co-edit to `CATEGORY_TITLES` in `core/diagnostic.py`.
+
+**Surprise 1: `complete()` signature can't accept structured system content today.**
+Today's signature: `system: str | None`. Messages built internally via `_build_messages()` with scalar `content: <str>`. Cache feature is the FIRST to need `[{"type":"text","text":"...","cache_control":{"type":"ephemeral"}},...]` system content blocks. Phase C must extend the adapter signature: new `cache_blocks` parameter or widen `system` to `str | list[ContentBlock]`. Plan-level decision; spec now mandates the parameter shape be specified, not which alternative wins.
+
+**Surprise 2: `compute_node_config` uses key `"batch"` not `"batch_config"`.**
+The conditional inclusion pattern is: `if batch_config: config["batch"] = {...}`. Spec previously called this `batch_config` everywhere — wrong key name. `prompt_cache` follows the same pattern: `if prompt_cache_content: config["prompt_cache"] = ...`. Pattern is robust — 3 conditional inclusions in same function (`static_params`, `template_params`, `batch_config`).
+
+**Surprise 3 (most consequential): `LLMNode` does NOT have access to its `NodeConfig`.**
+Spec assumed auto batch-prefix detection happens in `LLMNode.prep()` reading the unresolved template at `config.template_config.template_params["prompt"]`. That attribute path exists (verified at `runtime/engine/types.py:12-46`), but `LLMNode` only sees `shared` and resolved `self.params` — no handle on its `NodeConfig`. The unresolved template is preserved on `NodeConfig` but never reaches the leaf node.
+
+Three options for Phase D plan-writing:
+- (a) Engine injects unresolved batch-bearing template under reserved key in `node.params` before `node._run`. Minimal plumbing.
+- (b) Engine passes `NodeConfig` to LLMNode via reserved `shared` key. Broader access, arguably overscopes.
+- (c) Detection moves out of LLMNode entirely into `runtime/engine/batch_executor.py` where `template_config.template_params` is already in scope. Recommended — natural home for "what's the static prefix across this batch?"
+
+Spec updated to flag this as a real Phase D plumbing decision, with option (c) recommended absent counter-argument.
+
+**Insight to carry forward:** code-shape verification before plan-writing catches assumption drift cheaply. The "LLMNode reads unresolved template" assumption had been in the spec since §25; would have surfaced as a Phase D blocker if not caught now.
+
+### Other spec changes folded in this session
+
+(Not exhaustive — spec is the source of truth. These are the categories of change.)
+
+- DD#26-36 added (Tier 2 in-by-default, Diagnostic id field, no FixAction, closed warning catalog, four-level confidence, token estimation tier, capabilities table, savings ratio, auto-load trace, optional inputs, three-tier architecture).
+- New requirements subsections: Stable Warning ID Catalog, Output Format — Text, Output Format — JSON, Confidence Labeling Algorithm, Cross-Workflow Walker, Token Estimation Strategy, Per-Model Capabilities Table, Diagnostic Extension.
+- `pflow analyze-cache` Command requirements section restructured: drop `fix.action` references, update confidence to 4-level, move Tier 2 from "out of v1" to "in v1," reflect auto-load trace and optional inputs.
+- `--dry-run` Cache Nudge section: full analytical pass (was: shared module call only).
+- `Auto Batch-Prefix Caching` section: savings-ratio rule replaces size/token thresholds.
+- `Out of Scope (v1)`: removed Tier 2 verification (now in v1); added FixAction, cross-workflow auto-fix suggestions, n-gram detection, `pflow cache apply`, per-tier projections, per-provider breakdown, graph viz, `--diff` mode.
+- `Files to Modify`: added Diagnostic extension, `core/llm_capabilities.py`, `core/cache_analysis/` package with submodules.
+- `Test Infrastructure`: added 5 new test files including golden-file outputs for analyze-cache modes.
+
+### What's deliberately NOT in the spec (kept here / in research)
+
+- The journey of how decisions evolved — this entry.
+- Rejected alternatives (alt-1 / alt-2 mockups) — preserved in `research/output-draft-alt-1.md` and `output-draft-alt-2.md`.
+- v3 synthesis doc — preserved in `research/output-format-v3.md` with deprecation header.
+- Code investigation subagent reports — captured in conversation; not in spec.
+- The "% threshold math" reasoning that made the user's intuition correct — captured here, not in spec (the spec has the formula and triggers; the reasoning for *why* belongs here).
+
+### Open threads for Phase B-G plan-writing
+
+These are the spec-level decisions deferred to the implementation plan, not decided in this session:
+
+1. **Adapter `complete()` extension shape** (Phase C). New `cache_blocks` parameter vs widening `system` to `str | list[ContentBlock]`. Trade-off: new parameter is more explicit but adds signature surface; widened type is API-cleaner but requires runtime-shape branching inside the adapter. Plan-writing decision.
+
+2. **Auto batch-prefix detection placement** (Phase D). Three options surfaced in verification pass; option (c) — detection in `batch_executor.py` — is recommended. Plan-writing should confirm or counter-argue with concrete reasoning.
+
+3. **Tier 2 prose-mismatch detection algorithm** (Phase F). When child input is renamed (e.g., `concept_brief → creative_brief`), tracing back to parent value via input mapping. Algorithm: walk `node.params.inputs[child_input] → ${parent_expr}`, extract tail of `parent_expr`, compare to chunk identifiers in both files' `## Cache` blocks.
+
+4. **`cache.cross-workflow-prose-mismatch` "which prose wins?" heuristic** (Phase F or v1b). v1 emits the warning without auto-fix; v1b decision based on observed real-world prose-mismatch patterns.
+
+5. **`--from-trace` matching strategy for 2.0.0 traces** (Phase F). 2.1.0 traces carry `workflow_path` (auto-load uses this). 2.0.0 traces don't — for auto-load to work on legacy traces, need a filename heuristic OR skip auto-load for 2.0.0.
+
+6. **Padding-advisory algorithm** (Phase F). v1 surfaces unambiguously net-positive opportunities. Cross-call optimization (full prefix-tree) deferred to v1b.
+
+7. **Diagnostic `id` field migration** (Phase B). New field is optional; existing diagnostics don't need migration. But: should validators emitting cache-related errors (e.g., `cache.order-mismatch`) be required to set `id`, or can they fall back to `(severity, source, node_id, message)` identity tuple? Probably: cache-namespaced emitters always set id; legacy emitters add it as they're touched. Plan-writing should specify the migration policy.
+
+### Where things stand at session end
+
+- Spec at v36 is contract-ready and self-contained. No `output-format-v3.md` references; v3 marked deprecated.
+- All decisions documented as DDs (#26-36 added this session).
+- Verification pass complete; spec corrections applied for items D, F, A, H.
+- 7 open threads identified for Phase B-G plan-writing — none are spec-level ambiguities; all are plan-level patch-ordering and implementation choices.
+
+### Next step
+
+Phase B-G implementation plan writing. Use the spec as the contract; this progress log entry as the journey/insight reference. Plan should:
+- Be informed by the verification pass findings (especially the `LLMNode` plumbing gap and the `complete()` signature extension)
+- Address the 7 open threads above as concrete patch decisions
+- Specify file-level patches in execution order
+- Define gating conditions per phase (what must pass before next phase can land)
+- Reference Task 158's progress log §27 (Phase 0 spike findings) and §38 (end-to-end verification) for concrete LiteLLM behavior
+
+Before plan-writing begins, optional: `/ultrareview` on the spec to catch issues this session may have introduced.
