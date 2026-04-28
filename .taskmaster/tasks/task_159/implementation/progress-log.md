@@ -1156,3 +1156,86 @@ Plan-writing decisions captured in `starting-context/agent-handoff.md` (not in s
 ### Next step
 
 Plan-writing. The next agent opens spec + this progress log + agent-handoff in that order. Plan target: `.taskmaster/tasks/task_159/implementation/plan-phase-B-through-G.md`. Estimated length 1000–1300 lines covering 13 sub-phases with file-level patch ordering, gating tests per phase, and regression invariants (`test_plan_drift.py` foremost).
+
+---
+
+## 31. Session 2026-04-28 (continued) — Plan-writing + 8-agent review + architectural consolidation
+
+Plan written end-to-end (1132 lines), reviewed via the `/code-review` skill (8 specialized agents in parallel), and substantially restructured around a single architectural decision before approval. Approved plan now lives at `.taskmaster/tasks/task_159/implementation/implementation-plan.md`.
+
+### What this entry covers (and what it doesn't)
+
+- **In the plan**: file-level patch ordering, phase gates, test specifications, the `CacheRenderContext` design.
+- **In the §31 braindump** at `starting-context/braindump-2026-04-28-plan-writing-and-review.md`: the journey, exact user phrasings, ASSUMPTIONS/UNCLEAR flags, defensive guards.
+- **In this entry**: the pivot itself + why it landed where it did. Don't repeat plan content.
+
+### The pivot
+
+V1 plan draft followed progress log §27 option (a): inject `prompt_cache_items` / `unresolved_batch_template` / `prewarm` into `node.params` via reserved dunder keys at `engine.py:386`, plus `__pflow_cache_block__` / `__pflow_batch_alias__` / `__pflow_last_cache_meta__` in `shared`. Six reserved keys total, scattered across two namespaces.
+
+The 8-agent review surfaced ~40 findings; deduped to 22 critical. Findings 3, 4, 5 (concurrency review) all stemmed from the same root: scattered `node.params` injection doesn't compose with parallel batch's deepcopy + pre-warm `node.params = original_params` reset. I presented the action plan as "8 critical fixes including 3 concurrency races."
+
+User pushback was the load-bearing moment of the session — three operational questions back-to-back:
+
+> *"do you need to investigate more about fix 6 or reserved-key consolidation?"*
+> *"whats the right solution that the top 10% of codebases similar to this one would implement, have we considered it yet?"*
+> *"Are we prioritizing simplicity of the final code, not how easy it is to get there?"*
+
+These forced the right reframing: **single typed context object, single delivery channel, single save/restore boundary.** Top-10% comparable systems (Temporal SDK `Context`, Prefect `RunContext`, Dagster, gRPC, LangGraph) all do this. pflow's existing `__trace_collector__` precedent does this exactly.
+
+The "option (b)" framing in §27 (pass NodeConfig via reserved key) had been rejected for the wrong reason: "ripples through plan_node callers." That ripple only happens if you change `plan_node`'s signature. If the data lives in `shared` (like trace_collector), no caller ripple.
+
+### Resolution: `CacheRenderContext`
+
+Replaced 6 reserved keys with: one frozen dataclass `CacheRenderContext` (cache_block, subset, prewarm, unresolved_batch_prompt, batch_alias) delivered via `shared["__pflow_cache_render__"]: dict[node_id, CacheRenderContext]`. Engine builds at `run()` entry; save/restore at the engine boundary mirrors `__trace_collector__` exactly (always-install + write-back-not-pop). LLMNode reads in `prep()`. Frozen dataclass + immutable tuple = read-only-shared = parallel-batch-safe by construction.
+
+Cache trace metadata (`cache_key`, `cache_source`, `cache_age_sec`) routes through the existing `llm_usage` channel that `LLMNode.post()` already populates — same path `cache_creation_input_tokens` takes. No sidecar `__pflow_last_cache_meta__` dict. Per-item batch granularity preserved by construction.
+
+Collapses 4 of 5 concurrency-critical findings into one structural decision.
+
+### Other corrections applied during review
+
+Eight non-architectural fixes also landed (full list in plan's "Summary of plan corrections" section). Highlights:
+- `plan_node` reordered: `resolve_templates` before `compute_config_hash` (was opposite in current code).
+- Batch-node `prompt_cache` hash inclusion now explicit — chunks resolve from `shared` directly (validated as non-batch in B2.3).
+- B3 regression baseline must be generated on `main` BEFORE B3 patches and committed as `golden_config_hashes.json`. The earlier "compare new code paths to itself" framing was a tautology.
+- Min-token threshold check moved entirely from runtime to analytical tier — DD#36 forbids tokenizer at validation time. Earlier draft contradicted this.
+- B2.2: validation-reach gap closed — `FLOW_IR_SCHEMA` only runs through `WorkflowValidator._validate_structure`, not through `_prepare_compilation`. Structural cache-shape checks therefore live in `_validate_cache_block` (which both paths reach) AS WELL AS the schema.
+- F1 warning catalog SSoT table specifies per-ID source split (`validator` for structural, `cache_analyzer` for analytical), context-key contract, suggestions templates, nullable cost keys.
+- Token estimation tier order corrected to `trace → memo → estimator → heuristic` per DD#31 (earlier draft missed `trace`).
+- D.1 auto-batch-prefix gate fires on `prewarm: true` ALONE per spec DD#9 (earlier draft incorrectly required `prompt_cache:` too).
+
+### Verification of Fix 6 (test_plan_drift parity)
+
+review-test-fidelity raised parity as "structurally at risk." Read `tests/test_execution/test_plan_drift.py:45–172` — the test compares `build_plan` and `_run` paths against the SAME memo cache state, not cross-mode (predicted-vs-actual). Both render from same memo'd values; hashes match. The cross-mode divergence (predicted ≠ actual when upstream changes) is an inherent dry-run property, not a Task 159 regression. Folded into F3.3 as a documentation note.
+
+### Two open user decisions
+
+Both flagged in the plan; neither is critical-path enough to block plan approval, but each must be resolved before the affected phase ships:
+
+1. **`cache.discrepancy` ID** (used in spec mode-4 from-trace example) — not in the v1 closed catalog. Add as 9th entry under `cache_advisory` (DD#29 design review) OR emit as generic Diagnostic without stable id? Recommended: 9th entry. Surface before F1.
+
+2. **Cache rendering errors in batch + sub-workflow + `error_handling: continue`** — `template_error` (current plan) or `cache_failure` (currently dead-code per review-impact-completeness W8)? Recommended: stay with `template_error`. Surface before B2.3 / C1.2.
+
+### Where things stand at session end
+
+- Plan approved. 1132 lines, 13 sub-phases, file-level patch ordering, gating tests per phase.
+- Plan + braindump are the load-bearing handoff artifacts for the implementing agent.
+- Two user decisions documented as open; recommendations included; not critical-path.
+- Implementation has not started.
+
+### Insights
+
+- **The user's three operational questions are a cheat code for plan quality.** Top-10% codebases / simplicity of FINAL code / "considered it yet?" — every drift toward "minimum-diff" gets caught. Without the questions I'd have shipped a 6-reserved-key plan with the parallel-batch race intact.
+- **Drift toward minimum-diff is a real pull.** Each scattered key was individually defensible ("smallest delta from current code"). The aggregate produced bugs only visible when you stand back. The forcing function is asking what the FINAL code reads like, not the diff.
+- **Verify-don't-trust applies to review agents too.** review-test-fidelity C2 was framed as a structural risk; reading the actual test file revealed it as a documentation point. Five-minute file read prevented re-architecting around a non-issue.
+- **Spec language vs DD language.** Spec prose says "validation-time warning" for min-token; DD#36 says "no tokenizer at validation time." Plan resolves toward DD#36 (analytical-tier-only). When prose and DD diverge, DD wins — but surface to user, don't silently re-resolve.
+
+### Next step
+
+Implementation. The implementing agent opens (in order):
+1. The plan at `implementation/implementation-plan.md` — start with the "Architectural backbone — `CacheRenderContext`" section near the top.
+2. The braindump at `starting-context/braindump-2026-04-28-plan-writing-and-review.md` — for journey + ASSUMPTIONS/UNCLEAR flags + the "what I'd tell myself" notes.
+3. Spec + this progress log only as the contract reference.
+
+Single load-bearing gate: B3's no-`prompt_cache` hash regression test. STOP if it fails.
