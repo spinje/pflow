@@ -853,3 +853,195 @@ Phase B-G implementation plan writing. Use the spec as the contract; this progre
 - Reference Task 158's progress log §27 (Phase 0 spike findings) and §38 (end-to-end verification) for concrete LiteLLM behavior
 
 Before plan-writing begins, optional: `/ultrareview` on the spec to catch issues this session may have introduced.
+
+---
+
+## 27. Session 2026-04-28 — Pre-plan-writing spec consistency pass
+
+User asked for a focused critical-read of the spec before plan-writing began. The session caught a substantive internal contradiction left over from the §26 framing shift (DD#33 + DD#36 invalidating earlier prewarm-validation-error language without all the dependent paragraphs being rewritten), plus seven smaller decisions deferred by §26 as "open threads" that needed resolution before Phase B-G plans could be written.
+
+### Critical contradiction caught and fixed (item 1)
+
+**DD#18 + Per-Node `prewarm:` field description + Out of Scope prewarm bullet + Test Infrastructure + Phase D summary** all still carried "hard validation error demanding an explicit choice" / "v1 starts conservative (e.g. batch size > 10 AND prefix > 2k tokens)" language even though §26's DD#33 (savings-ratio rule, no absolute thresholds) and DD#36 (analytical findings never block `pflow run`) had logically replaced them. Five sites updated this session:
+
+- DD#18 (line 77) rewritten to defer to DD#33 + DD#36; absolute thresholds dropped.
+- Per-Node `prewarm:` field description (line 159) drops "validation error" framing.
+- Out of Scope prewarm bullet (line 800) drops same.
+- Test Infrastructure `test_batch_cache_prefix.py` description retargets to "savings-ratio threshold (DD#33)".
+- Phase D summary in Implementation Phasing clarifies advisory emission belongs to Phase F (analyze-cache + dry-run), NOT Phase D.
+
+Lesson: when a load-bearing DD is added late in spec evolution (DD#33, DD#36 in §26), grep for the framing it replaces — every prior paragraph carrying the old framing needs reconciliation, even if the new DD is internally consistent.
+
+### Code investigation, Round 3 — five parallel pflow-codebase-searcher subagents
+
+Five questions, dispatched in parallel:
+
+1. **`MockLLMClient.call_history_full` actually exists?** → YES, at `tests/shared/llm_mock.py:105`, populated unconditionally on every call. Class docstring explicitly notes it was added during Task 158 in anticipation of Phase B/C cache-structure tests. The "Add untruncated-prompt mode to the mock" bullet in Test Infrastructure was stale — removed. DD#23 reframed "fully in place from Task 158."
+
+2. **`Diagnostic.source` field convention?** → `source` is *only* used for dedup identity (`__eq__`/`__hash__` at `core/diagnostic.py:84,92`). Renderers ignore it. Existing analytical-tier precedent: `pflow plan` uses `source="planner"` regardless of CLI vs MCP caller (six sites in `execution/plan.py`). Decision: cache analytical findings use `source="cache_analyzer"` for both `pflow analyze-cache` and `pflow run --dry-run`. Folded into Validation Location section.
+
+3. **`complete()` signature extension shape?** → `_build_messages()` at `llm_client.py:579-602` already does scalar-or-list-of-blocks for the **user** message content (when attachments present). Decision: widen `system: str | None` to `system: str | list[ContentBlock] | None`. Mirrors existing user-side pattern. Mirrors LiteLLM/Anthropic SDK/OpenAI SDK convention. The line `messages.append({"role": "system", "content": system})` works unchanged for both shapes — type hint widens, runtime logic doesn't change. Rejected (a) "new `cache_blocks` parameter" — invents parallel channel that has to merge with `system` inside `_build_messages`, more code, more docs, more edge cases. Folded into Cache Rendering section.
+
+4. **Trace filename pattern + inline-run identifier?** → Filename: `workflow-trace-<safe_name>-<YYYYmmdd-HHMMSS>.json` where `safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", workflow_name)[:30]` (`workflow_trace.py:473-486`). Inline runs: `_synthesize_inline_workflow_id(ir)` returns `"ir-hash:<32-char-md5>"` (`runner.py:36-53`); already used by `MemoizationCache.workflow_path`. Decision: `trace["workflow_path"]` carries the absolute path for file/library runs and the `"ir-hash:<md5>"` synthetic identifier for inline runs — symmetric with cache layer. Folded into DD#22 + Trace Format section.
+
+5. **Hash function for OpenAI `prompt_cache_key` + parser shape options?** → MD5 is pflow's uniform convention for content identity (5 sites: `cache.py:85,111,344`, `instrumentation.py:178`, `smart_filter.py:71`, `runner.py:52`, all with `# noqa: S324`). SHA-256 is reserved for security-relevant change detection (2 MCP-config-drift sites). Decision: `prompt_cache_key = hashlib.md5(_deterministic_json(rendered_cache_content).encode()).hexdigest()` — mirrors `compute_config_hash`. Folded into Cache Rendering section.
+
+   Parser shape: today the markdown parser allows `- key:` params and tagged code blocks **only inside `### entities`** (`markdown_parser.py:271-274,422-447` — orphan content under `##` is an error). The spec's `## Cache` shape (inline `- ttl: 5m` + a single ` ```cache ` block, NO `### entities`) is a NEW structural rule. Two options surfaced:
+   - (A) Entity-based: each chunk gets a `### concept` heading; reuses all existing parser machinery, zero new structural rules — but redundant ceremony (chunk identifier already comes from the template path) and breaks the spec's syntax.
+   - (B) Section-level: matches the spec exactly but extends parser to accept `- key:` and code blocks directly under `## Cache`.
+
+   Decision: Option B. Reasons: (1) agent-readability principle — Option A's `### chunk-name` heading is redundant when chunk identifier comes from `${var}` stripping; (2) "simplicity of FINAL code" — Option B is more parser work but the resulting workflow file is simpler; we optimize for the long tail of agents reading workflows, not the one-time parser extension. Folded into Files to Modify markdown parser bullet.
+
+### Decisions deferred to plan-writing
+
+User explicitly accepted these as plan-writing-time decisions, not spec-level:
+
+- **Heterogeneous-batch detection in cross-workflow walker** (`_enumerate_child_calls` contract): plan-writer reads the function and encodes the actual semantics.
+- **Tier 2 prose-mismatch algorithm details**: spec specifies the high-level rule (compare prose-before-`${var}` byte-by-byte when names match across boundary) and the rename-precedence rule (prose-mismatch suppressed when rename detected for same chunk). Algorithm-level edge cases (whitespace-only differences, encoding) deferred to Phase F implementation.
+
+### Smaller decisions taken this session
+
+- **Auto-load only matches 2.1.0 traces** (DD#34 update). 2.0.0 traces require explicit `--from-trace`. Filename-based fallback rejected — collision risk via the 30-char-truncated-stem sanitizer; cleaner to require the new format. 2.1.0 traces accumulate fast in practice.
+- **Cross-workflow rename precedence** (Cross-Workflow Walker section): rename detection takes precedence over prose-mismatch — never double-emit on a renamed chunk. Prose-mismatch fires only when names are identical AND prose differs.
+- **Sparse memo aggregate confidence** (Confidence Labeling Algorithm): aggregate label gains coverage detail. Text mode: `Confidence: medium_from_memo (3 of 30 nodes have prior run data)`. JSON adds `estimate_confidence_coverage: {trace, memo, estimator, heuristic, total}` sibling field.
+- **Gemini multi-marker collapse** (Breakpoint Limit Handling): added explicit note. v1's 2-marker max degrades correctly on Gemini because the latest marker's prefix is always a superset of the earlier marker's prefix.
+- **Golden test pattern** (Test Infrastructure): follow `test_mermaid_golden.py` — parametrized cases, byte-exact equality, regen command in failure message. Synthetic minimal workflows under `tests/test_cli/golden_analyze_cache/`, NOT lyrics-generator (reserved for smoke tests). Cost values pinned via `MockLLMClient.set_response(cost_usd=...)` for stable goldens across LiteLLM pricing updates.
+
+### Items deferred per user direction
+
+- **Item 11** (`litellm.token_counter` coverage): use as-is, don't pre-validate.
+- **Item 13** (Anthropic per-TTL pricing accuracy): re-verify in Phase E only when 1h TTL ships.
+- **Item 14, 15** (`pflow save` round-trip preservation, `pflow publish` skill cache preservation): defer; skill workflow will be reworked separately.
+- **Item 16** (`--strict` CI gating): skip.
+
+### What's still NOT in the spec
+
+The exact Phase B-G implementation plan. Spec is the contract; plan is the patch ordering and file-level dispatch. Plan-writing begins next. Plan should reference DD#18 (rewritten this session), DD#33, DD#36 as the load-bearing prewarm-semantics triad; DD#34 as the auto-load contract; DD#28 as the rationale for "no `FixAction`"; the new `source="cache_analyzer"` convention; the Option B parser extension scope; the widened `system` parameter shape; and the Gemini collapse note for cache-rendering tests.
+
+### Where things stand at session end
+
+- Spec passes a self-consistency grep — no remaining "validation error" / "hard error" prewarm references.
+- All 7 §26 open threads either resolved this session or explicitly deferred to plan-writing with rationale.
+- 5 codebase-research findings folded into spec.
+- progress-log.md captures the journey here; spec captures the contract.
+
+### Next step
+
+Write the Phase B-G implementation plan. The plan should:
+- Open with a phase-by-phase patch ordering, file-by-file
+- Define gating conditions per phase
+- Reference §27 decisions as load-bearing context
+- Re-verify any spec assumption that's still hedged ("approximate," "needs verification," etc.) before encoding it as a patch instruction
+- Address the 7 §26 open threads — most are now resolved spec-side; remaining ones are plan-level patch-ordering choices
+
+---
+
+## 28. Session 2026-04-28 (continued) — Last-pass scan of starting-context braindumps
+
+User asked: "anything left in these files we need to decide or investigate?" referring to `starting-context/braindump-2026-04-27-supplementary.md` and `starting-context/braindump-design-complete.md`. Walked both files end-to-end and identified two remaining spec gaps plus several already-deferred or implementation-time items.
+
+### Two spec gaps caught and fixed
+
+#### Gemini TTL — turned a punt into a uniform contract
+
+Original framing in spec: *"TTL translates to Anthropic's extended cache (via LiteLLM's passthrough of `ttl` when supported)"* — silent on Gemini. My first pass through the supplementary braindump recommended a "best-effort, document the limitation" framing. User correctly pushed back: *"why is this not supported by litellm? seems weird? is the default ttl we are setting supported (5m)?"*
+
+Re-investigated via WebFetch on LiteLLM's caching docs and Vertex provider docs. Finding: LiteLLM **does** support Gemini TTL, just with a different wire format than Anthropic. Anthropic accepts human-readable strings (`ttl: "1h"`, `ttl: "5m"` — its native API syntax); Gemini's `cachedContents` requires seconds notation (`ttl: "3600s"`, `ttl: "300s"`). When `cache_control` is sent without a `ttl` field, each provider uses its native default (Anthropic 5 min, Gemini's `cachedContents` default, OpenAI auto).
+
+This means pflow can ship a uniform `- ttl: 5m | 1h` workflow surface that works across providers — the adapter does a tiny per-provider translation table:
+
+| Workflow `- ttl:` | Anthropic wire | Gemini wire | OpenAI |
+|---|---|---|---|
+| (omitted) | no `ttl` field (5m default) | no `ttl` field (provider default) | ignored |
+| `5m` | `ttl: "5m"` | `ttl: "300s"` | ignored |
+| `1h` | `ttl: "1h"` | `ttl: "3600s"` | ignored |
+
+Spec edit applied to the Cache Rendering section. The "out of scope" Gemini lifecycle exclusion remains (we don't manage cache deletion, idempotent-create semantics, or storage-cost optimization) — only the TTL emission was punted, and it shouldn't have been.
+
+**Lesson:** when WebFetched docs are scant on a feature, double-check by fetching the provider-specific page. The general LiteLLM caching docs don't surface Anthropic TTL syntax (because it's just "whatever Anthropic accepts"); the Vertex page explicitly documents Gemini's seconds notation. Different docs serve different audiences. User's "seems weird" instinct caught this.
+
+#### Cost-estimate degradation for unknown models — silent gap in analyze-cache contract
+
+`braindump-design-complete.md` flagged: *"Task 158 established the `pricing_available: False` / `partial_cost_usd` / `unavailable_models` tri-state for runtime cost reporting; `analyze-cache` should mirror that shape for its dollar estimates."* The spec was silent — neither the JSON nor the text output specified what happens when `litellm.completion_cost()` returns `None` for a model.
+
+Spec edit applied to the `pflow analyze-cache` Command section: missing pricing → partial cost estimates with `partial_cost_usd: bool` and `unavailable_models: list[str]` in JSON, text shows `~$0.84 (partial — 2 of 23 nodes use unpriced models)` with a footer note listing the unpriced models. Never crash, never show `$0.00` for unpriced models. Not a failure mode (exit 0); structural recommendations are still valuable.
+
+### Items confirmed addressed (no action)
+
+- Walker emission plumbing (option c → adapter marker emission): already flagged in Non-Obvious Integration Points; Phase D plan-writing decision.
+- OpenAI `prompt_cache_key` routing behavior: Phase D spike.
+- Gemini implicit-vs-explicit break-even warning: Planned Follow-Ups.
+- `list | str` shape for older workflow inputs/outputs: Phase C edge-case test territory.
+- `pflow save` round-trip / `pflow publish` skill cache preservation: deferred per user direction.
+- `litellm.token_counter` coverage: use as-is, don't pre-validate.
+- Anthropic per-TTL pricing accuracy via `completion_cost()`: Phase E verify when 1h ships.
+- Diagnostic.id field doesn't break existing tests: Phase B verify (`make test`).
+- `test_plan_drift.py` stays green: load-bearing invariant.
+- Tier 2 walker actual LOC: plan-writing validates against real code.
+- `NodeConfig.prompt_cache_items` field name: implicit at line 220 of spec; plan-writing makes it explicit.
+
+### Where things stand at session end (revised)
+
+Spec is now genuinely contract-ready. Two real gaps fixed (TTL translation table; cost-estimate degradation contract). All other items from the starting-context braindumps are either (a) already in spec, (b) deferred per user direction, or (c) plan-writing/implementation-time decisions that don't belong in the spec.
+
+Remaining work before code: write the Phase B-G implementation plan.
+
+---
+
+## 29. Session 2026-04-28 (continued) — Pre-handoff verification round
+
+After consolidating the starting-context braindumps into `agent-handoff.md`, user asked: *"anything you want to verify using parallel pflow searcher subagents before we conclude this session?"* Strong instinct that several claims in the spec/handoff hadn't been directly verified by reading code. Dispatched one verification agent across five claims plus a WebFetch on Anthropic's TTL syntax. Three of five claims came back WRONG, plus the Anthropic WebFetch surfaced one more wrong claim. This is the value of verifying assumptions before plan-writing — these errors would have cost real implementation time.
+
+### Findings and corrections applied
+
+**WRONG #1: Anthropic does not accept `ttl: "5m"` as an explicit value.**
+WebFetch on Anthropic's prompt-caching docs (now redirected to platform.claude.com): only two states are documented — omit `ttl` for the 5-min default, or set `ttl: "1h"` for extended. No other values mentioned (no `"30m"`, no `"2h"`, no explicit `"5m"`).
+
+Spec's TTL translation table previously said `cache_control: {type: ephemeral, ttl: "5m"}` for Anthropic on `- ttl: 5m`. **Corrected:** `cache_control: {type: ephemeral}` (omit ttl, use 5-min default). Gemini still uses `"300s"` and `"3600s"` (those ARE its native syntax). OpenAI still ignored. Translation table now reflects each provider's actual accepted-values vocabulary.
+
+**WRONG #2: Phase D option (c) is structurally wrong.**
+Spec previously recommended moving auto batch-prefix detection to `runtime/engine/batch_executor.py`. Codebase verification revealed:
+- `batch_executor.py` exists at `src/pflow/runtime/engine/batch_executor.py` (813 lines).
+- Public entry: `execute_batch(node, config, shared, execute_single_fn)`.
+- It only resolves the OUTER `items_template` via `resolve_batch_items` / `TemplateResolver.resolve_template`.
+- Per-item template resolution happens in the callback (`engine._execute_single_node`), NOT in batch_executor.
+- The static prefix portion of the LLM prompt template is therefore not in batch_executor's scope.
+
+Spec's Non-Obvious Integration Points and agent-handoff's "hardest piece" section both updated to **mark option (c) as REJECTED** and recommend option (a) instead: engine injects the unresolved batch-bearing template under a reserved key in `node.params` before `node._run`; LLMNode does detection during `prep()`. Suggested key name: `__prompt_cache_unresolved_template__`.
+
+**WRONG #3: `_attach_llm_call_to_event` does not exist.**
+The function is `_add_llm_data` at `src/pflow/runtime/workflow_trace.py:202`. Reads `node_output["llm_usage"]`, assigns `event["llm_call"] = llm_usage`, attaches `event["llm_prompt"]` and `event["llm_response"]`. Single integration point for trace 2.1.0 cache fields.
+
+Bonus finding: a stale comment in the codebase itself at `workflow_trace.py:545` references the wrong function name. Out of scope for Task 159 to fix that comment, but flagged in the spec's updated trace-seam reference.
+
+**WRONG #4: The `executor_service.py:33-37` comment was mischaracterized as a `_FAILURE_CATEGORY_MAP` ↔ `CATEGORY_TITLES` invariant.**
+The actual comment is about syncing `_FAILURE_CATEGORY_MAP["llm_failure"]`'s VALUE string with the `LLM_FAILURE_CATEGORY` string constant in `core/diagnostic.py` — both must be the literal `"llm_failure"`. `CATEGORY_TITLES` is imported but not mentioned in the comment.
+
+Adding cache categories actually requires THREE coordinated entries (not one dual invariant):
+1. String constant in `core/diagnostic.py` (e.g., `CACHE_FAILURE_CATEGORY = "cache_failure"`).
+2. `_FAILURE_CATEGORY_MAP` entry — only for categories that flow from typed exceptions (`cache_failure`); analyzer-emitted `cache_warning` / `cache_advisory` skip this.
+3. `CATEGORY_TITLES` entry for the renderer title.
+
+Spec Files-to-Modify section and agent-handoff "co-edit gotcha" section both updated.
+
+**Wrong-but-harmless: `scratchpads/task-158-spike/` was cleaned up.**
+Three references in agent-handoff pointed at this directory as the "spike template." It no longer exists. Updated to describe the spike pattern (minimal Python file calling `complete()` directly under `scratchpads/`, ~$0.10/run) without claiming a specific template path.
+
+### Confirmed claims (no change needed)
+
+- `MockLLMClient.set_response()` accepts `cost_usd` parameter (`tests/shared/llm_mock.py:110-118`). Default `None`. Costs stored in `_costs` dict, surfaced in returned `usage`. agent-handoff's golden-test cost-pinning recommendation is sound.
+- Inline-run `"ir-hash:<md5>"` flows from `_synthesize_inline_workflow_id` (`runner.py:36-53`) through `_pflow_workflow_file` to `MemoizationCache.workflow_path` (verified at `runtime/cache.py:154,265-294` and `instrumentation.py:323,327`). Trace 2.1.0's `workflow_path` symmetry with the cache layer is real.
+- `batch_executor.py` exists (just not where detection should live).
+
+### Lesson
+
+Verification round caught what felt like solid claims — they were stale or mischaracterized. The handoff document was written with care but couldn't catch its own errors without code. **Recommendation for next session's plan-writer**: re-verify any spec claim about line numbers, function names, or "the comment at X documents Y" before encoding it as a patch instruction. Five of five verifications would have been hours of debug-then-fix during implementation; thirty minutes of verification now saved that.
+
+### Where things stand at session end (final)
+
+- Spec corrections applied: TTL translation table (Anthropic 5m row), Phase D plumbing (option (a) recommended), trace seam function name (`_add_llm_data`), Files-to-Modify Diagnostic-extension co-edit characterization.
+- Agent-handoff corrections applied: Phase D plumbing section rewritten, co-edit gotcha rewritten, three spike-script path references replaced.
+- Five WRONG claims fixed; four CONFIRMED claims preserved.
+- Spec + progress log + handoff are now genuinely consistent with the verified code shape.
+
+Plan-writing is the next step.
