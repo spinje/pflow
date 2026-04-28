@@ -102,7 +102,12 @@ Two tightly-coupled changes, shipped together because neither provides value alo
 
 31. **Token estimation tier order.** Greenfield analysis uses `litellm.token_counter(model, text)` — already transitively installed via LiteLLM, model-aware, offline, ±5% accurate. Run history uses `MemoizationCache.get_latest_for_node()` to read prior `llm_usage.input_tokens` from the cached output blob. Character heuristic (`len(text) // 4`) is a last-resort fallback when both fail (unknown model + no history); it's the only place pflow uses a char-based heuristic and is tagged in confidence labeling so agents see when they're getting low-fidelity numbers.
 
-32. **Per-model capabilities table is a new module.** Phase B introduces `core/llm_capabilities.py` with hardcoded per-model min-cache-token thresholds (Anthropic Sonnet/Opus 1024, Anthropic Haiku 2048, Gemini Pro/Flash 1024 implicit / 4k explicit, OpenAI 1024). LiteLLM's `model_cost` dict has some of this data but coverage and field names need verification — wrapping it is deferred to v1.x if hardcoded data proves stale.
+32. **Per-model capabilities table is a new module.** Phase B introduces `core/llm_capabilities.py` with hardcoded per-model min-cache-token thresholds. Anthropic minimums are version-specific (Anthropic prompt-caching docs, April 2026; see progress log §30):
+    - Sonnet 4.5, Opus 4.1, Opus 4, Sonnet 4, Sonnet 3.7: **1024**
+    - Sonnet 4.6, Haiku 3.5: **2048**
+    - Opus 4.7, Opus 4.6, Opus 4.5, Haiku 4.5: **4096**
+
+    Gemini Pro/Flash: 1024 implicit / 4k explicit. OpenAI: 1024 (auto-cache threshold). LiteLLM's `model_cost` dict carries `supports_prompt_caching` but per-model min-token coverage is uneven; v1 hardcodes; v1.x may wrap LiteLLM. Fallback for unknown models: conservative floor 4096 recommended (plan-writer locks exact value).
 
 33. **Prewarm thresholds are savings-ratio-based, not size-or-token-based.** Earlier framing ("size > 10 AND prefix > 2k tokens") used arbitrary proxies. Replaced with a savings-ratio rule: compute `savings_ratio = (N-1) × 1.15 × P / (N × (1.25P + D))` where `P` = static prefix tokens, `D` = dynamic suffix tokens. Ratio captures the structural property "what fraction of this batch is actually cacheable" — naturally scales with prefix-to-total ratio AND batch size N. Two-tier triggering: < 5% silent skip; ≥ 5% emits `cache.batch-prewarm-recommended` (warning severity, advisory only — see DD#36). The single warning carries `context.savings_pct` and `context.savings_usd` so agents reason about magnitude themselves. No absolute dollar floor: small absolute savings compound across reruns, and pflow can't predict run frequency.
 
@@ -115,6 +120,8 @@ Two tightly-coupled changes, shipped together because neither provides value alo
    - **`pflow run --dry-run` (opt-in, can be slow).** Structural checks + full analytical pass: token counting via `litellm.token_counter`, historical state via `MemoizationCache`, savings ratio computation, Tier 2 cross-workflow walking. Emits the one-line `cache.opportunities-available` nudge with real numbers. Doesn't block (no execution to gate).
    - **`pflow analyze-cache` (dedicated, slow OK).** Same analysis as `--dry-run`, full sectioned output (text or JSON), `--from-trace` discrepancy mode.
    Rationale: validation must stay fast and deterministic so `pflow run` doesn't load tokenizers or read historical state. Analytical findings are advisory — agents who care run `analyze-cache` or `--dry-run` first; agents who skip both run unhindered. Aligns with mypy / ruff / pylint pattern (analysis is opt-in). The forcing-function effect of "agent must declare prewarm" relies on agents seeing the warning; if they skip both opt-in paths, default behavior (no prewarm, parallel writes) is documented as legal-but-suboptimal.
+
+37. **OpenAI extended cache retention via `prompt_cache_retention`.** OpenAI's auto-cache exposes `prompt_cache_retention` accepting `"in_memory"` (default; 5–10 min idle, max 1h) or `"24h"` (extended via GPU-local-storage offload). Pflow maps `- ttl:` to this two-bucket vocabulary: omitted/`5m` → no parameter (default `in_memory`); `- ttl: 1h` → `prompt_cache_retention: "24h"`. The 24h overshoot is intentional — `in_memory`'s 5–10 min idle expiry would silently violate the user's `1h` opt-in (per DD#2's "no silent behavior changes" principle). See progress log §30 for verification.
 
 ## Dependencies
 
@@ -167,18 +174,18 @@ Related but explicitly out of scope:
 - For each LLM node with a declared `prompt_cache:` list, pflow renders the cache content as a system-message prefix:
   - One content block per `[prose + ${var}]` chunk, in declaration order filtered to the node's subset.
   - Anthropic/Gemini: a `cache_control: {type: ephemeral}` marker on the final chunk (v1 single-breakpoint strategy).
-  - OpenAI: content is the prefix; no markers needed. Optionally emit a `prompt_cache_key` computed as `hashlib.md5(_deterministic_json(rendered_cache_content).encode()).hexdigest()` — mirrors `compute_config_hash` (`runtime/engine/instrumentation.py:173-178`) and the project's MD5-for-content-identity convention (`runtime/cache.py:85,111,344`, `runner.py:52`). Improves routing consistency across parallel batch calls.
+  - OpenAI: content is the prefix; no markers needed. **Emit** `prompt_cache_key = hashlib.md5(_deterministic_json(rendered_cache_content).encode()).hexdigest()` whenever the node has a non-empty `prompt_cache:` subset — mirrors `compute_config_hash` (`runtime/engine/instrumentation.py:173-178`) and the project's MD5-for-content-identity convention (`runtime/cache.py:85,111,344`, `runner.py:52`). Sticky-routes requests sharing the key to the same backend, improving hit rate on parallel batch fan-out (verified — see progress log §30). **Soft cap caveat:** ~15 RPM per backend per prefix; bursts above that overflow to additional machines (graceful degradation — first 15 hit cache, remainder pay write cost). For batches N > 15, expect degraded but non-zero hit rate.
 - **TTL wire-format translation per provider.** pflow's workflow-facing TTL is uniform (`- ttl: 5m` or `- ttl: 1h`); providers each have different wire formats and accepted values, so the adapter translates before emission:
 
   | Workflow `- ttl:` | Anthropic wire | Gemini (Vertex) wire | OpenAI |
   |---|---|---|---|
-  | (omitted) | `cache_control: {type: ephemeral}` (5 min provider default) | `cache_control: {type: ephemeral}` (provider default) | ignored |
-  | `5m` | `cache_control: {type: ephemeral}` (5 min IS the default — Anthropic does NOT accept an explicit `ttl: "5m"`; only `"1h"` is documented as an explicit value) | `cache_control: {type: ephemeral, ttl: "300s"}` | ignored |
-  | `1h` | `cache_control: {type: ephemeral, ttl: "1h"}` | `cache_control: {type: ephemeral, ttl: "3600s"}` | ignored |
+  | (omitted) | `cache_control: {type: ephemeral}` (5 min provider default) | `cache_control: {type: ephemeral}` (provider default) | no `prompt_cache_retention` (default `in_memory`, 5–10 min idle, max 1h) |
+  | `5m` | `cache_control: {type: ephemeral}` (5 min IS the default — Anthropic does NOT accept an explicit `ttl: "5m"`; only `"1h"` is documented as an explicit value) | `cache_control: {type: ephemeral, ttl: "300s"}` | no `prompt_cache_retention` (matches default `in_memory`) |
+  | `1h` | `cache_control: {type: ephemeral, ttl: "1h"}` | `cache_control: {type: ephemeral, ttl: "3600s"}` | `prompt_cache_retention: "24h"` (per DD#37) |
 
-  Anthropic's API only documents two states: omit `ttl` for 5-min default, or set `ttl: "1h"` for extended. Gemini's `cachedContents` API requires seconds notation with `"s"` suffix (LiteLLM Vertex docs). OpenAI's automatic cache exposes no TTL field on `cache_control` (separate `prompt_cache_retention` parameter exists — see follow-up note). Translation lives in `src/pflow/core/llm_client.py` alongside the cache-rendering logic — small lookup keyed by `model` provider prefix. Out-of-vocabulary providers omit the TTL field (graceful no-op).
+  Anthropic's API only documents two states: omit `ttl` for 5-min default, or set `ttl: "1h"` for extended. Gemini's `cachedContents` API requires seconds notation with `"s"` suffix (LiteLLM Vertex docs). OpenAI's `prompt_cache_retention` accepts only `"in_memory"` (default) and `"24h"` (extended); `cache_control` markers themselves are no-op on OpenAI — the retention parameter sits separately on the request body (per DD#37). Translation lives in `src/pflow/core/llm_client.py` alongside the cache-rendering logic — small lookup keyed by `model` provider prefix. Out-of-vocabulary providers omit the TTL field (graceful no-op).
 - The node's `prompt:` (the task) is rendered as the user message, after the cacheable system prefix.
-- If the rendered cache content is below the provider's minimum token threshold (1024 for Anthropic sonnet/opus, 2048 for haiku), pflow issues a validation-time warning but does not fail the call — provider silently no-ops.
+- If the rendered cache content is below the provider's minimum token threshold (looked up via `core/llm_capabilities.py::get_min_cache_tokens(model)` — see DD#32 for per-version Anthropic numbers), pflow issues a validation-time warning but does not fail the call — provider silently no-ops.
 - Rendering failures (template resolution error on a cache item) follow the existing `build_template_error_diagnostic` pattern, returning an error-dict from the adapter to avoid wasted retries.
 
 ### Auto Batch-Prefix Caching
@@ -660,9 +667,10 @@ Three-tier strategy (DD#31):
 
 New module: `src/pflow/core/llm_capabilities.py` introduced in Phase B.
 
-- v1 hardcodes per-model min-cache-token thresholds:
-  - Anthropic Sonnet/Opus: 1024
-  - Anthropic Haiku: 2048
+- v1 hardcodes per-model min-cache-token thresholds. Anthropic minimums are version-specific per DD#32; condensed:
+  - Anthropic Sonnet 4.5 / Opus 4.1 / Opus 4 / Sonnet 4 / Sonnet 3.7: **1024**
+  - Anthropic Sonnet 4.6 / Haiku 3.5: **2048**
+  - Anthropic Opus 4.7 / Opus 4.6 / Opus 4.5 / Haiku 4.5: **4096**
   - Gemini 2.5 Flash: 1024 implicit / ~4k explicit
   - Gemini 2.5 Pro: 2048 implicit / higher explicit
   - OpenAI: 1024 (automatic caching threshold)
@@ -670,7 +678,7 @@ New module: `src/pflow/core/llm_capabilities.py` introduced in Phase B.
 - Used by:
   - `cache.below-min-tokens` warning emission (looks up the threshold for the node's model).
   - Auto batch-prefix detection (skips when prefix is below threshold).
-- Lookup: `get_min_cache_tokens(model: str) -> int` returns the threshold, falling back to a conservative 1024 for unknown models.
+- Lookup: `get_min_cache_tokens(model: str) -> int` returns the threshold. Fallback for unknown models per DD#32 (recommended floor: 4096).
 
 ### Diagnostic Extension (Phase B prerequisite)
 
@@ -764,7 +772,7 @@ Required for v1. ~10 LOC change to `core/diagnostic.py`.
 - `pflow report` surfaces per-node cached-token counts via existing trace-rendering machinery.
 - **Gemini cost caveat:** LiteLLM had a Gemini cache double-counting bug (filed Sept 2025) that reported ~4× inflated costs. Closed via PR #15226 on 2025-10-07. Confirm the fix is present in the LiteLLM version pinned by this task, and add a regression test that exercises a Gemini cache hit and verifies the reported cost matches hand-calculation from raw tokens. If the fix is present and verified, `response_cost` is safe for Gemini; if not, fall back to computing from raw `cache_creation_input_tokens` / `cache_read_input_tokens` via our own pricing path. Outcome flows from Phase A.0 pricing investigation.
 - **Gemini observability gap:** `cached_tokens` in LiteLLM responses populates for BOTH implicit caching (Gemini's free automatic mode) and explicit caching (what our `cache_control` markers trigger). They cannot be distinguished from the API response alone — only via GCP billing dashboard. `pflow analyze-cache --from-trace` should note this limitation in its Gemini output.
-- **Model-specific minimum token thresholds:** the 1024-token minimum is generic but varies by provider/model. Anthropic Sonnet/Opus: 1024; Anthropic Haiku: 2048; Gemini 2.5 Flash: 1024 implicit / ~4k explicit; Gemini 2.5 Pro: 2048 implicit / higher for explicit. Validation should look up the threshold for the node's model via the capabilities table rather than hard-coding 1024.
+- **Model-specific minimum token thresholds:** vary materially by provider/model — Anthropic Opus 4.5+ and Haiku 4.5 require 4096 tokens (much higher than older Sonnet/Opus 1024). Validation looks up the threshold via `core/llm_capabilities.py::get_min_cache_tokens(model)` per DD#32; never hard-coded.
 
 ### Agent-Facing Documentation (`pflow guide`)
 
@@ -784,7 +792,7 @@ Required for v1. ~10 LOC change to `core/diagnostic.py`.
 - `tests/conftest.py` root fixture (`mock_llm_client`) already patches `pflow.core.llm_client.complete` (Task 158); preserves the `/llm/` path skip for real-API integration tests. No changes for Task 159.
 - New tests added:
   - `tests/test_core/test_diagnostic_id_field.py` — Phase B prerequisite: `Diagnostic.id` field, identity tuple update, `to_dict()` emission, category constants.
-  - `tests/test_core/test_llm_capabilities.py` — per-model min-cache-token threshold lookup; fallback to 1024 for unknown models.
+  - `tests/test_core/test_llm_capabilities.py` — per-model min-cache-token threshold lookup (per-version Anthropic numbers per DD#32); unknown-model fallback.
   - `tests/test_core/test_cache_block_parser.py` — parse valid/invalid `## Cache` blocks.
   - `tests/test_core/test_prompt_cache_validation.py` — reference resolution, order enforcement, subset validity, batch-scoped reference rejection, unused-chunk warning.
   - `tests/test_core/test_cache_analysis_warnings.py` — closed warning ID catalog: each ID emits exactly when expected, with the right severity and `context` payload.
@@ -994,7 +1002,7 @@ These are facts the implementation plan must respect; specific file paths and li
 
 Per provider:
 
-- **Anthropic:** cache write 1.25× (5-min TTL) or 2× (1-hour TTL); cache read 0.1×. Max 4 cache_control markers per request. Min 1024 tokens for sonnet/opus, 2048 for haiku.
+- **Anthropic:** cache write 1.25× (5-min TTL) or 2× (1-hour TTL); cache read 0.1×. Max 4 cache_control markers per request. Per-model minimum cacheable tokens: see DD#32 (1024 / 2048 / 4096 depending on version).
 - **OpenAI:** cache write 1× (no surcharge); cache read 0.5× (50% discount). Automatic at ≥1024 tokens. Routing hint via `prompt_cache_key`.
 - **Gemini:** via LiteLLM's translation; pricing follows Google's `cachedContents` model. Min 1024 tokens.
 

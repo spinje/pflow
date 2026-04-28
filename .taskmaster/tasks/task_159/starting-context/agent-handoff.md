@@ -180,8 +180,8 @@ The gap: OpenAI's auto-cache default retention is short (~5–10 min per OpenAI'
 These were hedged at 70% confidence in earlier braindumps. Plan-writing/implementation should validate before encoding as patches:
 
 - **Diagnostic.id field doesn't break existing tests.** Identity tuple falls back to `id or message` when `id is None` — should preserve legacy diagnostic dedup. **Verify**: run `make test` after the Phase B Diagnostic edit; pay attention to `tests/test_core/test_diagnostic.py` and any diagnostic-equality tests elsewhere.
-- **Tier 2 walker LOC.** Spec says ~50 LOC mirroring the mermaid renderer's traversal pattern (`core/workflow/mermaid/_render.py:50-130`). Realistic estimate: closer to ~150 LOC including detection rules (rename, prose-mismatch, value-flow). Still small. Plan-writing should validate against the actual code shape.
-- **`core/llm_capabilities.py` mirrors `core/llm_providers.py`.** Same dataclass-tuple pattern, same dependency-free constraint. Not stated in spec but follows pflow's structural-mirroring convention.
+- ~~**Tier 2 walker LOC.** Spec says ~50 LOC mirroring the mermaid renderer's traversal pattern.~~ **Resolved §30:** verified ~130–240 LOC for skeleton + three analyses + cycle detection + result dataclass. Plan-writer encodes the realistic range.
+- ~~**`core/llm_capabilities.py` mirrors `core/llm_providers.py`.**~~ **Resolved §30:** mirror pattern confirmed (frozen dataclass-tuple, dependency-free, `from __future__ import annotations` + `from dataclasses import dataclass`, module-level constant tuple, lookup helpers as plain functions).
 - **`pflow save` round-trip preserves `## Cache` sections.** Assumed: save writes original markdown atomically. Not verified. **Test in Phase B**: round-trip a workflow with `## Cache` through save/load and confirm declarations survive byte-for-byte.
 - **`WorkflowExecutor._compiled_workflow_cache` interaction with sub-workflow `## Cache`.** Wave 1 research suggested compile cache captures the compiled form (which includes the cache block) so it's fine — but worth a Phase C integration test where a sub-workflow's `## Cache` differs across two invocations within one run.
 - **`list | str` shape for inputs/outputs in older workflows.** Some older test workflows declare `inputs:` / `outputs:` as either list or string. Cache renderer might interact oddly with that shape variation when `${var}` resolves to a value whose type depends on the declaration. Worth Phase C edge-case tests in `tests/test_integration/`.
@@ -249,4 +249,67 @@ The same three-place pattern applies to `cache_warning` and `cache_advisory` if 
 
 ---
 
-> Read this file fully before code. Then check the spec is still in the state §28 left it, scan the latest progress-log entries for any new sessions, and verify with the user that they want to proceed. Don't start coding without authorization.
+### Pre-plan-writing outcomes (session 2026-04-28, progress log §30)
+
+Operational state going into plan-writing. Spec corrections applied this session live in the spec; the journey lives in progress log §30. Below: only operational context the plan-writer needs that doesn't fit elsewhere.
+
+**Spec corrections applied (cross-ref only):** DD#32 per-version Anthropic thresholds; DD#37 added (OpenAI `prompt_cache_retention`); TTL translation table OpenAI column; Cache Rendering threshold reference; Per-Model Capabilities Table; Tracing and Cost Reporting; Cost Model Reference; OpenAI `prompt_cache_key` (now "emit", with 15 RPM soft-cap); Test Infrastructure llm_capabilities. Read the spec for current values.
+
+**13-phase split (recommended; not locked).** Spec keeps high-level B–G framing. Operational sub-split:
+
+- **B1** — Foundations: `Diagnostic.id` field + `core/llm_capabilities.py`. Independent; parallel.
+- **B2** — Markdown parser state-machine extension + IR schema + `data_flow.py` cache validation. Interdependent; land together.
+- **B3** — Memo hash conditional inclusion (`if prompt_cache_content: config["prompt_cache"] = ...`). Gated by no-`prompt_cache` hash-stability regression test (DD#19). STOP if the regression test fails.
+- **C0** — Gemini explicit `cache_control` verification spike (~$0.10). Phase C blocker only for the Gemini code path; Anthropic and OpenAI can ship in C1 in parallel.
+- **C1** — Adapter `complete()` signature widening (`system: str | list[ContentBlock] | None`) + Anthropic cache-rendering path.
+- **C2** — Gemini cache-rendering path (gated on C0 spike outcome).
+- **C3** — OpenAI cache-rendering path (`prompt_cache_key` MD5 + `prompt_cache_retention` per DD#37).
+- **D** — Engine plumbing for unresolved-template injection (option (a), reserved key suggestion `__prompt_cache_unresolved_template__`) + auto-batch-prefix detection in `LLMNode.prep()` + prewarm execution (serialize-first-then-fan-out). Includes Phase D OpenAI `prompt_cache_key` parallel-batch verification spike (~$0.10).
+- **E** — Trace 2.1.0: bump constant + extend `_add_llm_data` for `cache_key`, `cache_source`, `cache_age_sec`, `workflow_path`. Plan-level decision: extend `llm_usage` keyset (LLMNode writes) vs parallel dict (`_add_llm_data` merges) — recommendation: extend `llm_usage` keyset (mirrors how `cache_creation_input_tokens` already flows).
+- **F1** — `cache_analysis` package skeleton: `warning_catalog.py`, `token_estimation.py`, `cross_workflow.py` walker (Tier 2), `padding_advisor.py`.
+- **F2** — Analyzer engine: `analyze.py` + `summarize.py` + text/JSON renderers (`render_text.py`) + golden-file tests (mirror `test_mermaid_golden.py`).
+- **F3** — CLI command (`cli/commands/analyze_cache.py`) + MCP parity (`execution_service.analyze_cache` + `@mcp.tool()` registration) + `--dry-run` nudge wiring.
+- **G** — Deterministic serialization helper + `pflow guide caching` page + cross-references on `cache: bool` vs `prompt_cache:`.
+
+C and D may parallelize after B3 lands. F gates on B + C + E. G wraps. Each sub-phase is a PR-sized chunk.
+
+**In-phase paid spikes (~$0.30 total budget).** Three remaining; all are Phase-internal blockers, not pre-plan blockers:
+
+| Spike | When | What to verify | If it fails |
+|---|---|---|---|
+| **C0 — Gemini explicit cache_control** | Phase C entry | Gemini call with explicit `cache_control: {type: ephemeral, ttl: "300s"}` actually fires `cachedContents` (returns `cache_creation_input_tokens > 0` on call 1, `cache_read_input_tokens > 0` on call 2). Distinguish from Gemini's IMPLICIT auto-cache (which fires regardless of markers). | Document Gemini explicit-cache as best-effort; ship anyway with caveat in `analyze-cache` Gemini output. |
+| **D — OpenAI `prompt_cache_key` parallel-batch routing** | Phase D | 4–8 parallel calls with same `prompt_cache_key`: do most calls hit cache after the first one writes? (~15 RPM soft cap is documented; verify graceful degradation on small batches.) | Document degraded hit rate; emit `prompt_cache_key` regardless (it never hurts). |
+| **E — Anthropic per-TTL pricing precision** | Phase E (only when 1h TTL ships) | Does LiteLLM's `completion_cost()` distinguish 1.25× (5-min) from 2× (1h) cache writes? | Compute write cost from raw `cache_creation_input_tokens` × per-provider rate; override `cost_usd` for cache-write events. |
+
+Spike pattern: minimal Python file under `scratchpads/`, calling `litellm.completion()` directly (or pflow's `complete()` once Phase C signature widening lands), printing usage breakdown. Inject keys via `SettingsManager().load().env`. ~$0.10/run.
+
+**Spike pattern (no template — write fresh):** minimal Python file under `scratchpads/`; inject API keys via `from pflow.core.settings import SettingsManager; for k,v in (SettingsManager().load().env or {}).items(): if v and k not in os.environ: os.environ[k] = v`; call `litellm.completion()` directly (or pflow's `complete()` post-Phase-C); print `response.usage` breakdown. Round 3 of progress log §30 verified the pattern works on a 4-scenario sweep at ~$0.50.
+
+**Code-shape findings the plan-writer needs (not in spec or progress log values):**
+
+- **Markdown parser extension (Phase B2)** is structurally novel — today the parser allows `- key:` params and tagged code blocks ONLY inside `### entities` (`markdown_parser.py:271-274,422-447`). `## Cache`'s shape (section-level params + section-level code block, no entities) is a NEW section mode. Estimated **40–70 LOC** in `markdown_parser.py` + **~10 LOC** in `ir_schema.py`. Plan-writer reads the orphan-content rejection path before designing the patch. Adding `_SectionType.CACHE`, registering in `_KNOWN_SECTIONS`, adding `_SECTION_DISPLAY_NAMES` + `_SECTION_SYNTAX_HINTS`, and extending the H2 transition state at `:310-327` to permit section-level YAML + a single tagged code block.
+
+- **5-place co-edit pattern for typed cache failures.** When introducing a typed exception for cache failures (mirroring `LLMCallError`):
+  1. `runtime/node_state.py` — `FAILURE_CATEGORY_*` constant.
+  2. `core/diagnostic.py` — `*_CATEGORY = "..."` string constant.
+  3. `core/diagnostic.py::CATEGORY_TITLES` — title entry.
+  4. `execution/executor_service.py::_FAILURE_CATEGORY_MAP` — value string identical to #2.
+  5. Typed-exception subclass with `to_diagnostics()` override (only if the failure flows through an exception path; v1 may emit cache validation directly via `Diagnostic` and skip this).
+
+  For `cache_warning` and `cache_advisory` (validator/analyzer-emitted, no typed exception), only #2 + #3 apply. Plan-writer chooses per-category whether all 5 places or only the title-side 2 places matter.
+
+- **`MockLLMClient.complete()` signature widening.** Today: `system: Optional[str] = None`. For Phase C cache-structure tests asserting on `system: list[ContentBlock]`, widen to `Optional[Union[str, list[dict]]]`. One-line type change; assertions read `mock.call_history_full[-1]["system"]` directly. Plan-writer adds this as a Phase C test-infra prerequisite.
+
+- **`LLMNode` cache rendering split: `prep()` assembles, `_call_llm` passes through.** Today `prep_res["system"]` carries a raw string from `self.params.get("system")` (`llm.py:309`). Phase C: assemble `prep_res["system_blocks"]` (structured) in `prep()` from rendered cache content, then pass to `complete()` via the widened parameter. The `_call_llm` integration point (`llm.py:332-390`) is correct — inside ThreadPoolExecutor timeout AND inside retry loop boundary. `LLMCallError` deterministic errors short-circuit at the boundary; `LLMTransientError` re-raises for retry.
+
+- **Trace 2.1.0 fields land via `_add_llm_data`** (`runtime/workflow_trace.py:202-238`) — single integration site that reads `node_output["llm_usage"]` and writes `event["llm_call"]`. New cache fields (`cache_key`, `cache_source`, `cache_age_sec`, `workflow_path`) flow by extending the `llm_usage` keyset (LLMNode writes them) — mirrors how `cache_creation_input_tokens` already flows. **`format_version` bump is one-line** at `runtime/workflow_trace.py:17`. Note: stale comment at `workflow_trace.py:545` references `_attach_llm_call_to_event` (the old name). Out of scope to fix that comment; flag in Phase E plan if Phase E touches the file.
+
+- **`_synthesize_inline_workflow_id`** lives at `src/pflow/execution/runner.py:36-53` (NOT `runtime/runner.py` — there is no such file). Inline runs produce `"ir-hash:<32-char-md5>"`; trace 2.1.0 `workflow_path` carries this for inline runs, symmetric with `MemoizationCache.workflow_path` scoping.
+
+- **`MemoizationCache.get_with_age` returns epoch, not age.** Signature: `Optional[tuple[action, output, created_at_epoch]]`. For trace 2.1.0 `cache_age_sec`, caller computes `time.time() - created_at` at the integration site (one-line at `_add_llm_data`).
+
+For other open hedged claims see the "Hedged claims to verify during implementation" section above (two entries resolved this session, four still open as Phase-internal verifications).
+
+---
+
+> Read this file fully before code. Then check the spec is still in the state §30 left it, scan the latest progress-log entries for any new sessions, and verify with the user that they want to proceed. Don't start coding without authorization.

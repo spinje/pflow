@@ -1045,3 +1045,114 @@ Verification round caught what felt like solid claims — they were stale or mis
 - Spec + progress log + handoff are now genuinely consistent with the verified code shape.
 
 Plan-writing is the next step.
+
+---
+
+## 30. Session 2026-04-28 (continued) — Pre-plan-writing verification round + spec corrections
+
+User asked to start plan-writing; this session ran one more round of verification before drafting and surfaced two material corrections to the spec. Pattern continues from §27/§29: verify-don't-trust applies recursively, even to claims left by careful prior sessions.
+
+### Open threads enumerated at session start
+
+The spec's outstanding plan-level decisions (per §26-§29 deferrals):
+1. Reserved param key for engine-injected unresolved batch template (Phase D).
+2. Tier 2 prose-mismatch detection algorithm (Phase F).
+3. OpenAI `prompt_cache_retention` mapping for `- ttl: 1h` (Phase C).
+4. OpenAI `prompt_cache_key` parallel-batch routing semantics (Phase D).
+5. `pflow save` round-trip for `## Cache` (Phase B test).
+6. `WorkflowExecutor._compiled_workflow_cache` ↔ sub-workflow `## Cache` (Phase C test).
+
+Items 1–2 were already plan-level (no spec change needed). Items 3–4 needed verification before plan-writing could lock semantics. Items 5–6 became Phase-internal test gates.
+
+### Round 1 — free docs verification
+
+WebFetch + WebSearch on OpenAI prompt-caching docs, LiteLLM caching docs, and Anthropic prompt-caching docs in parallel. All four open OpenAI/Anthropic questions resolved without paid API calls:
+
+- **OpenAI `prompt_cache_retention`** — accepts only `"in_memory"` (default) or `"24h"`. Two discrete buckets, no continuous TTL. Pflow's `- ttl: 1h` has no exact match; mapping to `"24h"` overshoots but matches the user's intent (the alternative — staying on default `in_memory` — silently expires after 5–10 min idle, violating the `1h` opt-in).
+- **OpenAI `prompt_cache_key`** — sticky-routing confirmed: "requests with the same cache key are routed to the same backend." Soft per-prefix limit ~15 RPM per backend; bursts above overflow to additional machines (graceful degradation, not failure).
+- **LiteLLM cache_control TTL passthrough** — Anthropic and Gemini wire formats confirmed via Vertex docs (Gemini uses seconds-suffix notation). LiteLLM's general caching doc is silent on per-provider TTL handling, but the provider-specific pages cover it.
+- **Anthropic TTL syntax** — only `"1h"` accepted as explicit value; omitted = 5-min default. Spec was already correct here post-§29.
+
+### Round 2 — code-shape verification subagent
+
+One pflow-codebase-searcher subagent dispatched on 10 plan-critical claims to lock the patch instructions before plan-writing. Findings shifted several plan-level expectations:
+
+**Confirmed:** `core/llm_providers.py` mirror pattern works for `core/llm_capabilities.py`. `compute_node_config` shape matches the spec's `batch_config` precedent (dict key `"batch"`, lines 139-170). `resolve_sub_workflow` primitive returns `Optional[SubWorkflowResult]` with `(ir, path, warnings)` shape. `MemoizationCache.get_with_age` exists with `(action, output, created_at_epoch)` return shape.
+
+**Corrections applied (handoff updated):**
+- Tier 2 walker LOC estimate bumped from spec's "~50 LOC" to **~130–240 LOC** (skeleton + three analyses + cycle detection + result dataclass). Spec's mermaid-mirror framing held; the LOC was optimistic.
+- `_FAILURE_CATEGORY_MAP` co-edit pattern is **5 places, not 3** when introducing a typed exception (handoff said 3): `runtime/node_state.py` `FAILURE_CATEGORY_*` constant + `core/diagnostic.py` constant + `CATEGORY_TITLES` entry + `_FAILURE_CATEGORY_MAP` entry + optional `LLMCallError`-style typed-exception subclass with `to_diagnostics()` override. For Task 159's `cache_warning` and `cache_advisory` (validator-emitted, not exception-driven), only 2 of the 5 places apply.
+- `MockLLMClient.complete()`'s `system` parameter is typed `Optional[str]` — needs widening to `Optional[Union[str, list[dict]]]` for Phase C cache-structure tests. Plan-level patch instruction.
+- `LLMNode._call_llm` integration confirmed at lines 332-390 inside ThreadPoolExecutor timeout AND retry boundary. Cache rendering assembles in `prep()` (sets `prep_res["system_blocks"]`), passes through to `complete()`. Plan-level patch shape now explicit.
+- Trace 2.1.0 `format_version` is one constant (`TRACE_FORMAT_VERSION = "2.0.0"` at `runtime/workflow_trace.py:17`). Cache fields land via `_add_llm_data` (line 202-238) extending the `llm_usage` keyset.
+
+**Most consequential finding — Task 158's §27 cache_control verification:** the subagent confirmed Anthropic + thinking + cache spike DID find `cache_creation_input_tokens=0` for Opus 4.5 with a 1380-token prompt. Two hypotheses: (a) Opus has a higher per-model threshold than Sonnet's documented 1024, OR (b) thinking silently disables cache_control markers on Opus. Required a paid spike to distinguish.
+
+### Round 3 — paid Anthropic spike (3 sub-rounds, ~$0.50 total)
+
+**3.1 Initial test** (Opus 4.5/4.6/4.7 + thinking + cache, Sonnet 4.5 control):
+- Sonnet 4.5 + thinking + cache at 1072 cacheable tokens → caches ✓.
+- Opus 4.5 + thinking + cache at 1097 tokens → no cache ✗ (Task 158 finding reproduced).
+- Opus 4.6 + thinking + cache at 1097 tokens → no cache ✗ (counter to user's hypothesis that 4.6 fixed it).
+- Opus 4.7 → API error: `thinking.type.enabled` not supported, requires `thinking.type=adaptive` + `output_config.effort` (out of scope for Task 159; Task 158 follow-up for `llm_reasoning_map.py`).
+
+**3.2 Threshold-vs-thinking distinguish** (Opus 4.5/4.7 with NO thinking + cache):
+- Opus 4.5 + cache at 1097 tokens → no cache ✗.
+- Opus 4.7 + cache at 1600 tokens → no cache ✗.
+
+This RULED OUT thinking as the cause. Both Opus 4.5 and 4.7 fail to cache without thinking at the same prompt sizes that work on Sonnet — pointing at a higher per-model token threshold.
+
+**3.3 Threshold confirmation** (Opus 4.5/4.7 + 4× prefix size):
+- Sonnet 4.5 + cache at 4289 tokens → caches ✓ (control).
+- Opus 4.5 + cache at 4289 tokens → caches ✓.
+- Opus 4.7 + cache at 6258 tokens → caches ✓.
+
+Threshold theory confirmed. Search for Anthropic's official per-model minimums returned the April 2026 Anthropic docs:
+
+| Model family | Minimum |
+|---|---|
+| Sonnet 4.5, Opus 4.1, Opus 4, Sonnet 4, Sonnet 3.7 | 1024 |
+| Sonnet 4.6, Haiku 3.5 | 2048 |
+| Opus 4.7, Opus 4.6, Opus 4.5, Haiku 4.5 | 4096 |
+
+Anthropic docs explicit: "Any requests to cache fewer than this number of tokens will be processed without caching, and no error is returned."
+
+**Task 158's §27 finding was a misdiagnosis.** "Opus 4.5 + thinking + cache fails" was actually "Opus 4.5 prompt below 4096-token threshold silently no-ops." Thinking unrelated. The earlier spike's 1380-token prompt was below Opus's 4096 threshold; the cache_control marker was silently dropped per Anthropic's documented behavior.
+
+### Spec changes applied this session
+
+Sections updated (values in spec; rationale via `see progress log §30` cross-ref):
+- **DD#32** (Per-Model Capabilities Table is a new module) — corrected per-version Anthropic thresholds.
+- **DD#37 added** (OpenAI extended cache retention via `prompt_cache_retention`) — locks the `- ttl: 1h` → `prompt_cache_retention: "24h"` mapping.
+- **TTL translation table** in Cache Rendering section — OpenAI column populated with retention parameter values (was: "ignored").
+- **Cache Rendering threshold reference** — now cites DD#32 instead of inline numbers.
+- **Per-Model Capabilities Table** section — bullet list updated; fallback recommendation noted.
+- **Tracing and Cost Reporting** model-specific minimums bullet — corrected.
+- **Cost Model Reference** Anthropic line — corrected.
+- **OpenAI `prompt_cache_key`** in Cache Rendering — bumped from "Optionally emit" to "Emit when subset non-empty"; added 15 RPM soft-cap caveat.
+- **Test Infrastructure** `test_llm_capabilities.py` description — small tweak.
+
+No new requirements; no contract scope change. Just corrections to numerically-wrong claims and a previously-deferred OpenAI-retention decision now resolved.
+
+### Phase split + in-phase verifications decided
+
+Plan-writing decisions captured in `starting-context/agent-handoff.md` (not in spec — operational, not contract):
+- 13-phase sub-split (B1/B2/B3, C0–C3, D, E, F1/F2/F3, G).
+- Three in-phase paid spikes (~$0.30 total) deferred from this session: Phase C0 Gemini explicit cache_control verification, Phase D OpenAI `prompt_cache_key` parallel-batch routing under live load, Phase E Anthropic per-TTL pricing precision (only when 1h ships).
+
+### Insights
+
+- **Verify-don't-trust applies recursively.** §29 caught five wrong claims in the spec/handoff that earlier sessions had introduced; this session caught a misdiagnosis that had survived from Task 158 §27 → Task 159 spec → agent-handoff. Each verification round catches errors prior rounds didn't surface — the budget for "one more round" pays off when the surface area is large.
+- **Misdiagnosis cost economics.** ~$0.50 spent on the paid spike. If the misdiagnosis had survived into Phase C plan-writing, it would have produced a per-model thinking fallback in `llm_capabilities.py` that solved the wrong problem and missed the actual fix (per-model token thresholds). Time saved: ~hours of rework when the first end-to-end test on Opus would have shown the warning fire on the wrong condition.
+- **Public docs over inferred behavior.** The Anthropic April 2026 docs page gave the exact per-model threshold table. The user's instinct that 4.6 was fixed turned out to be wrong (4.6 has the same 4096 minimum as 4.5) — but the docs answered the question definitively, removing speculation.
+
+### Where things stand at session end
+
+- Spec is contract-correct on per-model thresholds and OpenAI retention. No more silent under-warnings on Opus.
+- Progress log captures the journey + the misdiagnosis correction.
+- Agent-handoff updated with phase-split, in-phase spikes, code-shape findings.
+- Spike script preserved at `scratchpads/task-159-opus-thinking-cache-spike.py` for reference (clean up after plan-writing).
+
+### Next step
+
+Plan-writing. The next agent opens spec + this progress log + agent-handoff in that order. Plan target: `.taskmaster/tasks/task_159/implementation/plan-phase-B-through-G.md`. Estimated length 1000–1300 lines covering 13 sub-phases with file-level patch ordering, gating tests per phase, and regression invariants (`test_plan_drift.py` foremost).
