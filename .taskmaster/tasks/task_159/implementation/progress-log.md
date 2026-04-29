@@ -1507,4 +1507,110 @@ Round 5 prediction: pseudo-code precision in Round-4-introduced code (`_resolve_
 
 ### Next step
 
-The implementing agent runs the three pre-authorized paid spikes first, records outcomes as §35, updates plan sections per the Spike contingencies table if needed, then begins B1.1. The single load-bearing gate (B3 baseline fixture) remains unchanged.
+The implementing agent runs the three pre-authorized paid spikes first, records outcomes as **§36** (§35 is now Rounds 5+6 review), updates plan sections per the Spike contingencies table if needed, then begins B1.1. The single load-bearing gate (B3 baseline fixture) remains unchanged.
+
+---
+
+## 35. Session 2026-04-29 (continued) — Rounds 5 + 6 review + diminishing-returns analysis
+
+Two more `/code-review` passes after §34: Round 5 (5 targeted agents — review-plan, review-silent-failures, review-validation-consistency, review-impact-completeness, review-test-fidelity), Round 6 (4 targeted agents — same minus review-plan, since architecture is closed). Plan grew 1813 → 2104 lines (after end-of-Round-6 collapse of redundant history into this progress log entry). All fixes encoded inline in the plan; this entry captures the bug classes, the meta-lessons, and the user-driven decision to STOP at Round 6 in favor of implementation-time review.
+
+### What this entry covers (and what it doesn't)
+
+- **In the plan**: every Round 5 + 6 fix encoded inline at the relevant phase section (`implementation-plan.md`'s top "Plan refinement history" pointer is a 10-line summary referring back here for the *why*).
+- **In this entry**: the bug classes each round caught + the meta-lessons reusable across future pflow features + the explicit diminishing-returns analysis the user forced.
+- **Not duplicated here**: the fix-by-fix list (lives inline in the plan); architectural decisions (Round 1-2, in §31-§32); pseudo-code precision corrections (Round 4, in §34).
+
+### What Round 5 caught (the layer-placement and defensive-bypass round)
+
+Round 4's prediction was Round 5 would find ≤2 Critical in pseudo-code precision class. Empirical: **7 Critical + 11 High-Priority** — bug class shifted, didn't shrink. The key finding shapes:
+
+1. **Layer-placement violation in shared helper home.** Round 4 placed `_resolve_chunk_value` in `runtime/engine/plan_node.py` (the file where the helper was first sketched). Round 5 verified `nodes/llm/llm.py:13-20` only imports `pflow.core.*` AND F1's `core/cache_analysis/` package explicitly bans `runtime/` imports. The implied home was structurally illegal from two consumers. Fix: new `core/cache_render.py` module with lazy `runtime/template_resolver` imports inside function bodies. **Reusable lesson**: when a shared helper has 3+ consumer paths, verify ALL consumers' import boundaries before placing the helper. Round 4 verified the pseudo-code's symbols against actual code; Round 5 had to verify the consumer paths' import policies.
+
+2. **Defensive bypass via `_make_serializable`.** Round 4 added `_CHUNK_ABSENT.__repr__/__str__` raising `TypeError` as the "fail-loud" defense if a caller forgot to filter the sentinel. Round 5 verified `runtime/cache.py:25-51`'s `_make_serializable` falls through to `f"<{type(obj).__module__}.{type(obj).__name__}>"` — using `type()` directly, NOT `__repr__`/`__str__`. The defense never fires on the actual hash path. **Reusable lesson**: a defense that doesn't fire on the path it's meant to protect is *worse* than no defense — it produces false confidence. Verify defenses fire by reading the consumer code path, not just the producer.
+
+3. **Error-path injection at builder vs caller.** Round 4 said "extend `_error_dict_from_exception` to populate `cache_chunks_skipped` from `prep_res`." Round 5 verified the function signature is `(exc: LLMCallError) -> dict` — no `prep_res` access. The fix was to wrap the result at the *caller* (which has `prep_res` in scope), NOT widen the builder signature (cross-cutting change touching every existing caller). **Reusable lesson**: when a side-channel needs to flow through an error path, identify the call site that has the side-channel data in scope, NOT the helper that constructs the error shape.
+
+4. **Format-string trap in spec compliance.** Spec requires `[concept, concept_brief]` (bare identifiers); Python's `str(['concept', 'concept_brief'])` produces `"['concept', 'concept_brief']"` (single-quoted). Catalog `message_template` using `{declared}` would silently produce wrong format vs spec. Fix: catalog row carries both `{declared_str}` (caller pre-formats bare) AND `context["declared"]` (typed list for agent dispatch). **Reusable lesson**: if a spec example uses non-default formatting, the catalog must explicitly carry the formatted-string variant — Python's default str-coercions are NOT the spec's contract.
+
+5. **Mock with hardcoded zeros.** Round 4 added the `MockLLMClient` extension prose; Round 5 verified `tests/shared/llm_mock.py:258-259` hardcodes `cache_creation_input_tokens: 0` / `cache_read_input_tokens: 0`. The Round-4 prose ("populate the returned `usage` dict") was insufficient — needed the full parallel-dict pattern + resolver chain + `reset()` extension spec'd. **Reusable lesson**: when extending a mock that has a hardcoded production-mirror value, the plan must enumerate the parallel-dict pattern + every method that needs the new keys; bare prose creates ambiguity that the implementing agent resolves by writing ad-hoc monkey-patches per test.
+
+### What Round 6 caught (the factual-errors-in-Round-5-fixes round)
+
+Round 6 prediction: 1-2 Critical in Round-5-introduced material. Empirical: **6 Critical + 3 High-Priority** — same bug-rate as prior rounds, but every finding was a *factual error* in a Round-5 fix. The "fix-N introduces bug-N+1" pattern continued.
+
+1. **`tuple("string")` silent splat.** Round 5's `try/except TypeError` wrap caught non-iterable values but missed iterable-but-wrong-shape (`prompt_cache: "concept"` → `tuple("concept") == ('c','o','n','c','e','p','t')`, no exception). Fix: explicit `isinstance(raw, list)` precondition + parametrized test over 6 malformed shapes. **Reusable lesson**: `try/except TypeError` around a constructor catches one failure mode; for shape validation use `isinstance` + content checks, not type-error fishing.
+
+2. **Off-by-N consumer count.** Round 5 widening table for `apply_memo_hit` enumerated 2 callers; Round 6 grep verification found 3 (`execution/plan.py:862` was missed — the dry-run planner's `_cached_memo_entry` builder). The plan would have shipped a signature-mismatch CI failure. **Reusable lesson**: "all consumers" claims need grep verification *every round*, not just the round they were introduced. Each round operates on a post-fix codebase the prior round didn't see.
+
+3. **Off-by-2 enumeration.** Round 5 inline comment said `_PROPAGATED_KEYS` has 5 entries; actual is 7 (`__parser_diagnostics__` and `__memoization_cache__` were missed). The comment would have been merged with stale enumeration. **Reusable lesson**: prose enumerations of code constants are a regression class — every prose count needs a code-read verification per round.
+
+4. **Spec strict-vs-permissive contradiction.** Round 5 implemented F2 confidence aggregation as permissive (`if any(src == "trace")`). Round 6 read DD#34 line 634 verbatim: *"All rows `trace` → `high_from_trace`"* — strict. Round 5's default contradicted the spec. **Reusable lesson**: when a spec says "All X → Y", verify the implementation uses `all()`, not `any()`. The wording is precise; permissive-by-default is a bias.
+
+5. **Missed 4th wrap site.** Round 5 enumerated 3 error-path wrap sites for `cache_chunks_skipped` injection. Round 6 verified `post()` at `llm.py:511` ALSO calls `_error_dict_from_exception` for `LLMResponseParseError` — missed. **Reusable lesson**: when the pattern is "wrap this builder at every caller," grep for the builder name across the file (not just the obvious sites). One missed call site = one silent-data-loss path at runtime.
+
+6. **Test specification missing.** Round 5 spec'd `MockLLMClient` cache-tokens parallel-dict pattern in 30+ lines of detail but never required a test. Implementation could silently ignore the new args. **Reusable lesson**: every infrastructure extension needs an explicit unit test specification in the plan (not just "the existing mock tests will catch it") — otherwise the implementation can return defaults that pass downstream tests by coincidence.
+
+### The diminishing-returns analysis (the user's question and the honest answer)
+
+User asked at the start of Round 6: *"how come we are never reaching diminishing returns on these reviews? how complex is this feature?"* The right question — forcing function for honest accounting.
+
+**Empirical bug-class evolution across 6 rounds:**
+
+| Round | Critical found | Plan growth | Bug class | Cost-saved-per-fix |
+|---|---|---|---|---|
+| 1 | ~7 | +33 lines | Architecture (scattered keys → typed context) | ~2 hours |
+| 2 | ~7 | +158 lines | Concurrency (frozen IR, MappingProxyType, save/restore None-trap) | ~2 hours |
+| 3 | ~7 | +155 lines | Correctness gaps (validator reach, ABSENT symmetry, prewarm vagueness) | ~1 hour |
+| 4 | ~6 | +368 lines | Symbol/signature precision (NodeStatus.ABSENT, 5-tuple destructure) | ~1 hour |
+| 5 | 7 | +326 lines | Layer placement + defensive bypass + API-shape | ~1 hour |
+| 6 | 6 | +193 lines | Factual errors + missed enumerations + spec strictness | ~30 min |
+
+**Returns are NOT flattening by Critical-finding count** — every round found 6-7 Criticals. The dimension that changed:
+
+1. **Bug class shifts each round.** Each round's fixes introduce a new surface that the next round reviews. Round-N reviewers see fresh material; their claims of completeness ("all consumers use canonical pattern") need fresh verification on Round-N+1's post-fix codebase.
+
+2. **Cost-saved-per-fix is dropping.** Architecture bugs save days if caught early. Pseudo-code precision saves hours. Factual errors (off-by-N enumerations, missed callers) save minutes — they'd surface within 30-60 minutes of running the implementation.
+
+3. **Plan-time review reads PROSE; the remaining bug class is verifiable only by reading actual code.** Round 6 caught `apply_memo_hit` 3rd caller via grep — the same grep an implementing agent runs in their first 5 minutes. Round 6 caught `_PROPAGATED_KEYS` count via direct file read — same as the implementing agent. Plan-time review used subagent verification to compensate, but the marginal value is now LOWER than implementation-time review.
+
+**The decision (made jointly with user)**: STOP plan-stage review at Round 6. Switch to implementation-time review (`/code-review` mode against staged code, after each phase merges). The remaining bugs are local correctness — exactly what TDD red-green cycles surface immediately.
+
+**Reusable rule of thumb for future pflow features**: 4 plan-review rounds is a reasonable upper bound for high-complexity features (this task at 13 sub-phases, 2104-line plan, 12-entry catalog is among the largest pflow has attempted). Beyond that, each round costs more than it saves vs running the implementation. The exit criterion: when one round's findings shift to mostly-factual and mostly-verifiable-by-grep, stop.
+
+### Methodology that worked across Rounds 5 + 6 (preserve for future feature reviews)
+
+- **Verify reviewer claims against actual code before encoding fixes.** Round 5 ran 5 parallel verification reads (cache.py, llm.py, batch_executor.py, llm_mock.py, instrumentation.py). Round 6 ran 5 parallel verifications too (apply_memo_hit callers grep, `_PROPAGATED_KEYS` content, DD#34 wording, `format_child_provenance` modification, post() error path). 100% of Round 6 reviewer claims were factually correct — the discipline pays off, but it requires actually doing the verification, not assuming.
+- **Targeted reviews (5 → 4 agents) work for late rounds.** Skipping `review-plan` (Round 6) when architecture is closed cost nothing and saved one agent's runtime. Concurrency/feature-interactions/agent-ux were already closed by Round 2-3 — re-running them in Round 5+6 would have been pure overhead.
+- **Mark dependent failures as `xfail` with surface-to-user message.** Round 6's V6 sub-workflow dedup test will fail on first run by design (`format_child_provenance` modifies message; identity tuple includes message; dedup breaks). Marking `@pytest.mark.xfail(strict=False)` with explicit reason locks the tripwire intent — without xfail, the implementing agent silently weakens or skips the test.
+- **Phase-ordering dependencies between tests are real.** Round 6 caught that several B3.4 tests depend on C1.2 production code (`LLMNode.prep` rendering messages). Solution: skip-then-unmark pattern (`@pytest.mark.skip(reason="ships with C1.2")` at B3.4-merge, removed at C1.2-merge). Tests in the wrong phase fail-loud at merge — wastes implementing-agent time.
+
+### Useful info for future agents (what to load-bear from Rounds 5 + 6)
+
+1. **`core/cache_render.py` is the canonical home** for `_resolve_chunk_value`, `_resolve_static_prefix_for_cache`, `_CHUNK_ABSENT`. Lazy-imports `TemplateResolver` and `NodeStatus` from runtime. Three consumers (`plan_node.py`, `nodes/llm/llm.py`, `core/cache_analysis/analyze.py`) all import from there. Don't move it.
+2. **`_make_serializable` defense fires at the rejection branch, NOT via sentinel `__repr__`.** The branch lives in `runtime/cache.py` (Round 5 added). Future agents touching `cache.py` must preserve this branch — without it, leaked sentinels silently produce stable-but-wrong cache hashes.
+3. **`cache_chunks_skipped` flows through 4 wrap sites + 1 success path** (in `LLMNode`): `_call_llm` deterministic-error wrapper, `_call_llm` timeout wrapper, `exec_fallback` retry-exhausted wrapper, `post()` JSON-parse-error wrapper, and the success-path `post()` write. Plus persistence via `write_memo_cache` and round-trip via `apply_memo_hit`. If any one is missed, the trace channel silently degrades.
+4. **F2 confidence aggregation is STRICT** (matches DD#34 line 634 verbatim — `all(src == "trace")`). If you change it to permissive, surface to user — it changes golden test fixtures.
+5. **V6 sub-workflow dedup test fails on first run by design** — it's an `xfail` tripwire. Fix-shape decision is open: either granular dedup tuple (touches `Diagnostic` identity contract) or special-case per-id dedup (more fragile). User picks.
+6. **Catalog has 12 entries; never hardcode the integer.** Always read `len(CACHE_WARNING_CATALOG.keys())` or `EXPECTED_CATALOG_COUNT`. Round-2 added 1, Round-3 added 2 — the count drifts.
+
+### What's NOT load-bearing (don't waste time re-reading)
+
+- The fix-by-fix list (already inline in the plan at the relevant phase section).
+- The Round-1 / Round-2 / Round-3 architectural backbone arguments (`§31`, `§32`, `§33` — read only if you're considering an architectural change).
+- The Round-4 V5/V6 fix-shape rationale (`§34` — read only if extending the catalog or modifying validator-reach behavior).
+
+### Where things stand at session end
+
+- Plan is 2104 lines, refined across 6 review rounds, no unmerged corrections.
+- Architectural backbone: `CacheRenderContext` + frozen `CacheBlockIR` + `MappingProxyType` outer wrap + `_CHUNK_ABSENT` sentinel + shared `core/cache_render.py` helpers + 4-site error-path wrapping. All closed.
+- 13 sub-phases, 12-entry warning catalog, ~50 enumerated tests. All concrete.
+- Two open user decisions documented (F2 strictness; V6 dedup outcome). Both surface during their respective phase, not blocking.
+- Three pre-authorized paid spikes (~$0.30) pending — run before B1.1.
+- Stop criterion met for plan-stage review: bug class shifted to "verifiable by grep within 30 minutes of implementation." Switch to implementation-time review (`/code-review` after each phase merges).
+
+### Next step
+
+The implementing agent runs the three pre-authorized paid spikes, records outcomes as §36, updates plan sections per the Spike contingencies table if any spike contradicts encoded decisions, then begins B1.1. After each phase merges, run `/code-review` in code-review mode (7 agents, no `review-plan`) against staged changes — that's where the remaining bug class surfaces fastest.
+
+The B3 baseline-fixture-before-B3.1-patches gate is the single load-bearing TDD-shaped catch. STOP if it fails.

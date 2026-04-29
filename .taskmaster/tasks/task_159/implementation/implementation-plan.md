@@ -77,6 +77,22 @@ Single try/finally mirrors the `__trace_collector__` precedent at `engine.py:181
 
 The remainder of this plan reflects this consolidation. Phases B3, C1.2, D, and E describe rendering and consumption against `CacheRenderContext`, not against scattered keys.
 
+## Shared cache-rendering helpers — module placement
+
+**Decision (post-Round-5):** `_resolve_chunk_value`, `_resolve_static_prefix_for_cache`, `_CHUNK_ABSENT`, and `_deterministic_serialize` live in a NEW module **`src/pflow/core/cache_render.py`**. Three call sites import from there:
+
+- `src/pflow/runtime/engine/plan_node.py` (B3.3 — hash-time chunk rendering).
+- `src/pflow/nodes/llm/llm.py` (C1.2 — message-time chunk rendering, plus D.1 static-prefix resolution).
+- `src/pflow/core/cache_analysis/analyze.py` (F2 — predicted cache_key rendering for `cache.discrepancy`).
+
+**Why `core/` and not `runtime/engine/`:** verified `nodes/llm/llm.py:13-20` only imports `pflow.core.*` — never `runtime/`. F1's package discipline (line ~1320) explicitly bans `core/cache_analysis/` from importing `runtime/`. A helper home in `runtime/engine/plan_node.py` (the implied location in earlier drafts) would force two layer inversions: `nodes/` → `runtime/` AND `core/cache_analysis/` → `runtime/`. Placing the helper in `core/cache_render.py` is the only legal home reachable from all three call sites.
+
+**Lazy-imports inside the helper bodies** for `pflow.runtime.template_resolver.TemplateResolver` and `pflow.runtime.node_state` (`NodeStatus`, `get_node_status`). Mirrors `core/llm_client.py`'s lazy LiteLLM import — keeps `core/cache_render.py` import-cheap and prevents circular-import surprises if `runtime/template_resolver.py` ever grows a dependency on a `core/` symbol that imports `cache_render`. The lazy imports cost ~1 µs per call; the helper is on the cache path, not the per-token path, so cost is irrelevant.
+
+**Module-level state**: `_CHUNK_ABSENT` (the sentinel) is a module constant; safe to import at module level since the class definition has no runtime dependencies. `_deterministic_serialize` may be imported from `core/cache_analysis/serialization.py` (G.1) — same layer.
+
+**The divergence-injection test** (B3.4) uses per-site `monkeypatch.setattr("pflow.runtime.engine.plan_node._resolve_chunk_value", ...)` AND `monkeypatch.setattr("pflow.nodes.llm.llm._resolve_chunk_value", ...)` — works because each consumer creates its own local module binding via `from pflow.core.cache_render import _resolve_chunk_value`. Source location change does NOT affect the test mechanism.
+
 Task 158 (LiteLLM migration, typed exceptions, diagnostic pipeline, trace seam, `MockLLMClient.call_history_full`, `MemoizationCache.get_with_age`) shipped. This plan covers Phases B–G and is the HOW: file-level patch ordering and implementation specifics. Read in conjunction with:
 
 1. Spec (contract): `.taskmaster/tasks/task_159/task-159.md` — DDs, requirements, output formats, warning catalog.
@@ -302,9 +318,9 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
 
 ### Save bundling integration test (`dependency_discovery` walker × cache chunks)
 
-`pflow save` runs `dependency_discovery.discover_dependencies` (see `core/workflow/dependency_discovery.py`) which walks node params for file references and bundles them. Cache chunks contain `${var}` template references — NOT file paths — so the walker should ignore them. Verify with an integration test:
+**Round-5 verification**: `dependency_discovery.discover_dependencies` (`core/workflow/dependency_discovery.py:66-75`) iterates `node.get("params", {})` ONLY. Cache chunks live at top-level `workflow_ir["cache"]["items"][...]["var"]` (B2.1 IR shape — NOT inside any node's params). The walker is structurally incapable of seeing cache `${var}` references — there is no fix-required-in-`dependency_discovery` scenario for v1's IR shape. The integration test below is therefore a regression sanity check (locks the IR shape against future drift), not a fix-needed test:
 
-- `tests/test_integration/test_save_with_cache_block.py` (new): a workflow with `## Cache` referencing values + a node with `prompt: ./external.prompt.md` (a real file ref). Save the workflow. Assert: (a) cache block survives byte-for-byte, (b) `external.prompt.md` is bundled correctly, (c) no spurious file-not-found errors from the walker mistaking `${concept-brief.response}` for a file path. If the walker DOES treat cache chunks as file refs, a fix is required in `dependency_discovery` to skip the `cache.items[].var` and `cache.items[].prose_before` fields explicitly. **This test is the verification gate for the deferred phase-internal item "review-impact-completeness 15."**
+- `tests/test_integration/test_save_with_cache_block.py` (new): a workflow with `## Cache` referencing values + a node with `prompt: ./external.prompt.md` (a real file ref). Save the workflow. Assert: (a) cache block survives byte-for-byte, (b) `external.prompt.md` is bundled correctly, (c) no spurious file-not-found errors from the walker mistaking `${concept-brief.response}` for a file path (this assertion will pass trivially today; it locks the contract for future IR refactors). The test is regression-grade: if a future refactor moves cache items into `node.params` (e.g., per-node cache blocks), the walker WOULD start seeing them, and the test would fail loudly — surfacing the interaction.
 
 ## B2.2 — IR schema (with validation-reach gap closure)
 
@@ -347,10 +363,31 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
     - Per-node `prompt_cache: [...]` references that don't appear in `## Cache.items` → ERROR with `find_similar_items`-driven "Did you mean?" suggestions.
     - Per-node `prompt_cache: [a, c, b]` doesn't match `## Cache` declaration order → ERROR with `id="cache.order-mismatch"`. Message must match the format in spec's "Strict Order Validation" section verbatim (declared / you wrote / fix).
     - **Per-node `prompt_cache:` or `prewarm:` declared on a non-LLM node** (any `type` other than `"llm"`) → ONE ERROR per offending node (NOT per offending field — see V6 fix in F1 catalog) with `id="cache.invalid-on-non-llm"`. This is the load-bearing check for the validator-step-8 reach gap (see B2.2). Walk every node in `workflow_ir["nodes"]`; for each non-LLM node, compute `invalid_fields = [k for k in ("prompt_cache", "prewarm") if k in node]`. If non-empty, emit ONE Diagnostic via `make_diagnostic("cache.invalid-on-non-llm", ...)` with `invalid_fields`, `invalid_fields_csv`, `is_or_are`, `plural_s` populated per F1 catalog spec. **Skip nodes with missing/empty `type`** — those are structural errors caught upstream (schema requires `type` per `ir_schema.py:185`); skipping them here avoids rendering "type: " or "type: None" in the cache diagnostic. The new ID `cache.invalid-on-non-llm` is added to the F1 catalog as an 11th entry (severity: ERROR, source: validator, category: cache_failure).
-    - **Skip semantic checks on shape-malformed nodes** (V5 defense — Round 4 high-value fix #4 enumerates the guards explicitly so the implementer doesn't have to derive them):
+    - **Skip semantic checks on shape-malformed nodes — but ONLY AFTER non-LLM-type rejection runs** (V5 defense — Round 4 high-value fix #4 + Round 5 ordering fix). The `cache.invalid-on-non-llm` check is shape-agnostic (it tests `node.get("type") != "llm"` and `"prompt_cache" in node` — pure key-presence + type-string discrimination). It MUST run BEFORE the defensive shape skip; otherwise a `type: shell` node with `prompt_cache: 5` (wrong type) gets silently `continue`d via `logger.warning` and never emits `cache.invalid-on-non-llm` — user sees a bare downstream NodeConfig error instead of the structured "prompt_cache is only valid on type: llm" message:
       ```python
-      # At the top of the per-node loop in _validate_cache_block, BEFORE any
-      # semantic check that assumes well-formed shape:
+      # In _validate_cache_block's per-node loop:
+      # STEP 1 (FIRST — shape-agnostic, no defensive skip): non-LLM-type rejection.
+      # Walk top-level node keys for prompt_cache / prewarm presence.
+      # Emit cache.invalid-on-non-llm per V6 combined-diagnostic shape.
+      # Round 6 hardening: tighten to isinstance(..., str) — without this,
+      # a malformed type=["llm"] (list — structural error) would satisfy
+      # `["llm"] != "llm"` (True) and fire cache.invalid-on-non-llm against
+      # a node whose REAL problem is the schema-required-string-failure on `type`.
+      # The user would see a confusing cache error before the deeper structural
+      # error surfaces. isinstance gate restricts the check to well-shaped types.
+      node_type = node.get("type")
+      if isinstance(node_type, str) and node_type != "" and node_type != "llm":
+          invalid_fields = [k for k in ("prompt_cache", "prewarm") if k in node]
+          if invalid_fields:
+              # Emit via make_diagnostic per F1 catalog row (V6 shape — see F1).
+              # NOTE: missing/empty/malformed `type` is intentionally skipped here —
+              # let the structural error from schema-required string `type` surface
+              # separately. The cache.invalid-on-non-llm rule applies only to
+              # well-formed-but-wrong-target node types.
+              ...emit cache.invalid-on-non-llm...
+              continue   # to next node — non-LLM rejection is terminal for this node
+
+      # STEP 2 (SECOND — shape-defensive skip for LLM nodes that survived STEP 1):
       prompt_cache_val = node.get("prompt_cache")
       if prompt_cache_val is not None and (
           not isinstance(prompt_cache_val, list)
@@ -358,7 +395,7 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
       ):
           logger.warning(
               "cache validation skipped node %s: malformed prompt_cache shape (%s); "
-              "schema-validator path catches this at step 1; compile path catches at NodeConfig construction",
+              "schema-validator path catches this at step 1; compile path catches at NodeConfig construction (CompilationError)",
               node["id"],
               type(prompt_cache_val).__name__,
           )
@@ -368,13 +405,38 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
       if prewarm_val is not None and not isinstance(prewarm_val, bool):
           logger.warning(
               "cache validation skipped node %s: malformed prewarm shape (%s); "
-              "schema-validator path catches this at step 1; compile path catches at NodeConfig construction",
+              "schema-validator path catches this at step 1; compile path catches at NodeConfig construction (CompilationError)",
               node["id"],
               type(prewarm_val).__name__,
           )
           continue
+
+      # STEP 3 (THIRD): order/cross-ref/unused-chunk checks (assume well-formed shape).
       ```
-      **Top-level cache block defense (similar)**: when `workflow_ir.get("cache")` is present but malformed (not a dict, missing `items`, `items` not a list of dicts, `ttl` not in `{"5m", "1h"}` or missing), emit `logger.warning` and skip ALL `_validate_cache_block` checks for the run — return early. Schema catches the shape; the helper just defends against running on it. Test asserts: a workflow with `cache: 5` (wrong type) loaded directly via `compile_workflow(ir_dict)` produces ZERO `cache.*` Diagnostics from `_validate_cache_block` and exactly ONE `logger.warning` (verify via `caplog`); the deeper compile failure surfaces normally. **Note**: `bool` is a subclass of `int` in Python; `isinstance(True, int)` is True. Use `isinstance(x, bool)` (NOT `isinstance(x, (int, bool))`) to reject `prewarm: 1` as malformed — the schema will catch the bare-int case.
+      **Test the ordering** (NEW Round-5 test in `tests/test_core/test_prompt_cache_validation.py`): a `type: shell` node with `prompt_cache: 5` (wrong type AND wrong target type) MUST emit `cache.invalid-on-non-llm` (the non-LLM rejection fires first). Only the type-llm + malformed-shape combination falls through to the defensive logger.warning skip.
+      **Top-level cache block defense (Round-5 split scope)**: when `workflow_ir.get("cache")` is present but malformed (not a dict, missing `items`, `items` not a list of dicts, `ttl` not in `{"5m", "1h"}` or missing), emit `logger.warning` and skip ONLY the top-level checks (cross-references against `cache.items`, unused-chunk warnings, batch-scoped resolution). The PER-NODE `cache.invalid-on-non-llm` check MUST still run for every node — it's independent of top-level cache shape (it tests `node.get("type") != "llm"` and key presence on the node itself). The earlier draft's "skip ALL checks" early-return suppressed `cache.invalid-on-non-llm` when top-level `cache:` was malformed — wrong; the two concerns are orthogonal. Concrete shape:
+      ```python
+      def _validate_cache_block(workflow_ir, diagnostics):
+          # Per-node check ALWAYS runs (independent of top-level cache shape)
+          for node in workflow_ir.get("nodes", []):
+              # ... non-LLM rejection (V6) and shape skip (V5) per the per-node loop
+              # documented above ...
+
+          # Top-level cache block checks ONLY run if shape is well-formed
+          cache_block = workflow_ir.get("cache")
+          if cache_block is None:
+              return  # No top-level block — per-node ran above; nothing more to do
+          if not isinstance(cache_block, dict) or not isinstance(cache_block.get("items"), list):
+              logger.warning(
+                  "cache validation skipped top-level cache block: malformed shape (%s); "
+                  "schema-validator path catches this at step 1; compile path catches at "
+                  "CompilationError on CacheBlockIR construction",
+                  type(cache_block).__name__,
+              )
+              return  # Skip top-level cross-refs, unused-chunk, batch-scoped — but per-node already ran
+          # ... well-formed top-level: cross-references, unused-chunk, batch-scoped checks ...
+      ```
+      Test asserts: a workflow with `cache: 5` (wrong top-level type) AND a `type: shell` node with `prompt_cache: [chunk]` produces (a) ONE `cache.invalid-on-non-llm` Diagnostic from the per-node check, (b) ZERO Diagnostics for top-level cross-refs, (c) exactly ONE `logger.warning` (verify via `caplog`). The deeper compile failure on `CacheBlockIR` surfaces normally. **Note**: `bool` is a subclass of `int` in Python; `isinstance(True, int)` is True. Use `isinstance(x, bool)` (NOT `isinstance(x, (int, bool))`) to reject `prewarm: 1` as malformed — the schema will catch the bare-int case.
     - Unused `## Cache` chunk (declared but no node references it) → WARNING with `id="cache.unused-chunk"`.
   - The function operates purely on the IR — no template resolution, no token counting, no I/O. Stays fast and deterministic per DD#36.
 
@@ -388,7 +450,7 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
 ### Tests
 
 - `tests/test_core/test_prompt_cache_validation.py` (new):
-  - `prompt_cache: [c, b]` when `## Cache` declares `[a, b, c]` → `cache.order-mismatch` ERROR with the **exact** message format. Assert byte-equality of the rendered message against spec's "Strict Order Validation" example block (the three lines `declared:`, `you wrote:`, `fix:` with exact indentation/labels). This is the agent-facing contract for order errors.
+  - `prompt_cache: [c, b]` when `## Cache` declares `[a, b, c]` → `cache.order-mismatch` ERROR with the **exact** message format. Assert byte-equality of the rendered message against spec's "Strict Order Validation" example block (the three lines `declared:`, `you wrote:`, `fix:` with exact indentation/labels). The bare-identifier bracketed format (`[concept, concept_brief]`, NOT `['concept', 'concept_brief']`) requires the catalog's `declared_str`/`actual_str` pre-formatted-string contract — verified at the catalog row in F1 (`declared_str = "[" + ", ".join(declared) + "]"`). This is the agent-facing contract for order errors. ALSO assert `diag.context["declared"]` and `diag.context["actual"]` are still the typed lists (preserved alongside the formatted strings).
   - `prompt_cache: [unknown]` → resolution ERROR with `similar_names` populated.
   - **`prompt_cache: [chunk]` on a non-LLM node** → ONE ERROR `cache.invalid-on-non-llm` with `context["invalid_fields"] == ["prompt_cache"]` and message containing the locked hint string. Filter the diagnostics list by `id == "cache.invalid-on-non-llm"` (do NOT assert "any error" — there may be unrelated structural errors on the test fixture; the assertion is "the cache.invalid-on-non-llm diagnostic IS in the list").
   - **Both `prompt_cache: [chunk]` AND `prewarm: true` on a non-LLM node** (V6 combined-diagnostic test): ONE ERROR with `context["invalid_fields"] == ["prompt_cache", "prewarm"]`; message contains both field names CSV-formatted; suggestions list contains "Remove the invalid declarations (prompt_cache, prewarm) from {node_id}, OR move the LLM logic into a type: llm node." `prewarm: true` alone (without `prompt_cache:`) → `context["invalid_fields"] == ["prewarm"]`. **Locks the V6 fix**: emission is one-per-node, not one-per-field.
@@ -400,6 +462,42 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
   - Unused chunk → `cache.unused-chunk` WARNING.
   - `prompt_cache: []` (empty) and `prompt_cache:` (absent) both treated as "no declared cache" — no ERROR.
   - Sub-workflow with `## Cache` validates independently (each file's cache block is scoped to its own inputs and step outputs per DD#12 — covered by the recursive validator path in `_validate_sub_workflows`). Run as both top-level workflow AND parent-invoked sub-workflow; assert same diagnostics fire in both.
+  - **V6 sub-workflow dedup test (NEW Round 5; Round 6 marked as `xfail` after verifying message-modification behavior)**: locks the V6 combined-diagnostic dedup contract across the parent-invokes-child propagation boundary. Sub-workflow validator path uses `_add_child_provenance` / `format_child_provenance` (verified Round 6 at `core/workflow/validator.py:52` — `replace(diagnostic, message=format_child_provenance(step_id, diagnostic.message), ...)` — the call DOES modify the `message` field). Identity tuple `(severity, source, node_id, id or message)` includes `message`, so parent-emitted bare and child-emitted provenance-prefixed diagnostics will NOT dedup. **The test as written WILL FAIL on first implementation** — by design.
+
+    **Test fixture**: a parent workflow that invokes a child sub-workflow file via real `WorkflowExecutor` (not synthetic IR); the child contains a non-LLM node with both `prompt_cache:` and `prewarm:` declared. Run via real `WorkflowValidator.validate(parent_path)` (which recursively invokes `_validate_sub_workflows`). Inspect the FINAL aggregated diagnostics list:
+
+    ```python
+    @pytest.mark.xfail(
+        reason=(
+            "V6 dedup test is a TRIPWIRE for an open user decision. "
+            "format_child_provenance modifies Diagnostic.message; identity tuple "
+            "(severity, source, node_id, id or message) hashes message; "
+            "parent-emitted bare and child-emitted prefixed diagnostics WILL NOT dedup. "
+            "Two fix options: "
+            "(a) granular dedup tuple including workflow_path; "
+            "(b) special-case cache.invalid-on-non-llm dedup by (severity, source, id, node_id) "
+            "ignoring message. "
+            "User decision required before removing this xfail. "
+            "DO NOT silently weaken the test — fail-loud is the design intent."
+        ),
+        strict=False,  # If implementation closes the gap, allow xpass
+    )
+    def test_v6_subworkflow_dedup():
+        # Real propagation path — NOT synthetic _validate_cache_block call:
+        diagnostics = WorkflowValidator().validate(parent_path)
+        invalid_diagnostics = [d for d in diagnostics if d.id == "cache.invalid-on-non-llm"]
+        assert len(invalid_diagnostics) == 1, (
+            f"V6 dedup leaked across sub-workflow boundary: "
+            f"{len(invalid_diagnostics)} diagnostics emitted, expected 1. "
+            f"format_child_provenance is the suspected cause; surface to user "
+            f"per V6 dedup test docstring."
+        )
+    ```
+    **`strict=False`** so xpass (test starts passing) doesn't fail CI — it indicates the dedup gap got closed organically. **The xfail message is the surface-to-user trigger** when the implementing agent reads it. Without the explicit xfail marker, an implementing agent seeing the failure would likely silently weaken the assertion or skip the test — both worse than the current TRIPWIRE design.
+
+    **Two fix options if user decides to close the gap**:
+    - **(a) Granular dedup tuple**: extend identity tuple to include workflow_path; sub-workflow propagation path's `_add_child_provenance` would need to thread the child's resolved path through. More complete but touches the Diagnostic identity contract.
+    - **(b) Special-case `cache.invalid-on-non-llm`**: dedup by `(severity, source, id, node_id)` ignoring `message` for cache-namespaced diagnostics. Local fix; preserves existing identity contract elsewhere. More fragile — adds a per-id dedup rule the codebase doesn't have today.
   - **Save-path validation reach** (review-validation-consistency W2): saving a workflow with `cache.order-mismatch` via `WorkflowManager.save()` raises `WorkflowValidationError` with the catalog id `cache.order-mismatch`. Locks the contract that `pflow save` runs full validation including cache checks (verified `save_service.py:107-156`).
   - **Structural shape via compile path** (review-validation-consistency W3): bypass `WorkflowValidator` and call `compile_workflow` directly with a malformed cache IR (e.g., `cache.items: "string"` — wrong type). Assert `_validate_cache_block` catches it (the compile path uses minimal `validate_ir_structure`, not full schema, so the `_validate_cache_block` shape check is the only line of defense).
   - **(REMOVED in Round 4)**: the prior "Schema vs `_validate_cache_block` redundancy dedup" test was based on a misanalysis. With V5 fix (schema-only for shape; `_validate_cache_block` does only semantics + defensive skip), there is no double-emit case to verify. The "Shape-malformed `prompt_cache`" test above is the replacement — asserts schema fires alone on the validator path, and `_validate_cache_block` defensively skips on the compile path.
@@ -492,6 +590,57 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
 
 - `src/pflow/runtime/compilation/...` (compiler):
   - Find the `NodeConfig` factory (search for `cache_enabled` field assignment — likely `compilation/compiler.py`). Extract `node.get("prompt_cache", [])` → `tuple(...)` into `NodeConfig.prompt_cache_items`. Extract `node.get("prewarm", False)` into `NodeConfig.prewarm`.
+  - **Wrap shape-failure in `CompilationError` (Round 5 fix + Round 6 hardened against iterable-but-wrong-shape)**: a malformed `prompt_cache: 5` (non-iterable) AND a malformed `prompt_cache: "concept"` (iterable string!) AND `prompt_cache: {"key": "val"}` (iterable dict!) all reach the compile path when bypassing `WorkflowValidator`. The naive `tuple(raw)` wrap from Round 5 only catches `TypeError`, but `tuple("concept")` returns `('c', 'o', 'n', 'c', 'e', 'p', 't')` SILENTLY — the implementing agent gets 7 single-character "chunks" that produce confusing downstream errors. Round 6 fix: replace try/except with explicit `isinstance` precondition (parallel to V5's STEP 2 defense in `_validate_cache_block`):
+    ```python
+    # Inside the NodeConfig factory in compilation/compiler.py:
+    raw_prompt_cache = node.get("prompt_cache", [])
+    if raw_prompt_cache is None or raw_prompt_cache == []:
+        prompt_cache_items: tuple[str, ...] = ()
+    elif not isinstance(raw_prompt_cache, list) or not all(isinstance(x, str) for x in raw_prompt_cache):
+        raise CompilationError(
+            phase="validation",
+            node_id=node.get("id"),
+            node_type=node.get("type"),
+            details=f"prompt_cache must be a list of strings; got {type(raw_prompt_cache).__name__}: {raw_prompt_cache!r}",
+            suggestion="Set prompt_cache to a list of cache chunk identifiers (e.g., `prompt_cache: [concept, concept_brief]`).",
+        )
+    else:
+        prompt_cache_items = tuple(raw_prompt_cache)
+
+    # Same explicit guard for prewarm (bool subclasses int; isinstance(True, int) is True;
+    # use isinstance(x, bool) to reject prewarm: 1 as malformed):
+    raw_prewarm = node.get("prewarm", False)
+    if raw_prewarm is not None and not isinstance(raw_prewarm, bool):
+        raise CompilationError(
+            phase="validation",
+            node_id=node.get("id"),
+            node_type=node.get("type"),
+            details=f"prewarm must be a bool; got {type(raw_prewarm).__name__}: {raw_prewarm!r}",
+            suggestion="Set prewarm to true or false (e.g., `prewarm: true`).",
+        )
+    ```
+    The schema-validator path catches these earlier and short-circuits before reaching here; this wrap matters only on the compile-direct path (`compile_workflow(ir_dict, registry)` called bypassing `WorkflowValidator`). **B3.4 test must parametrize over multiple malformed shapes** (Round 6 hardening — the Round 5 single-case test would have missed the string-splat class):
+    ```python
+    @pytest.mark.parametrize("bad_value, expected_substring", [
+        (5,              "got int: 5"),                # Non-iterable
+        ("concept",      "got str: 'concept'"),        # Iterable string — silent splat without isinstance guard
+        ({"key": "v"},   "got dict:"),                  # Iterable dict
+        ({"a", "b"},     "got set:"),                   # Iterable set
+        ([1, 2, 3],      "got list:"),                  # List of non-strings — caught by all(isinstance(x, str))
+        ([{"a": 1}],     "got list:"),                  # List of non-strings (dicts)
+    ])
+    def test_compilation_error_on_malformed_prompt_cache(bad_value, expected_substring, ...):
+        ir_dict = {..., "nodes": [{"type": "llm", "prompt_cache": bad_value, ...}], ...}
+        with pytest.raises(CompilationError) as exc_info:
+            compile_workflow(ir_dict, registry)
+        assert exc_info.value.phase == "validation"
+        assert expected_substring in str(exc_info.value)
+    # Positive control — well-formed list passes:
+    def test_compilation_succeeds_on_valid_prompt_cache(...):
+        ir_dict = {..., "nodes": [{"type": "llm", "prompt_cache": ["concept"], ...}], ...}
+        compile_workflow(ir_dict, registry)  # No exception
+    ```
+    Same wrap pattern applies to `CacheBlockIR` construction (top-level `cache:` block — `dict.get` calls on a malformed `cache: 5` would also fail; wrap in `CompilationError` with the same shape).
   - Find `CompiledWorkflow` assembly site. Build `CacheBlockIR` from `workflow_ir.get("cache")` if present:
     ```python
     cache_ir = workflow_ir.get("cache")
@@ -557,6 +706,36 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
     - **Read sites**: `plan_node._render_cache_for_hash` (B3.3), `LLMNode.prep` (C1.2), `batch_executor._execute_parallel` (D.2). All use `(shared.get("__pflow_cache_render__") or {}).get(node_id)`.
     - **Read-only invariant**: NEVER mutate the proxy or the `CacheRenderContext` values. `MappingProxyType` raises `TypeError` on mutation. The frozen dataclass values are mutation-proof by `dataclass(frozen=True)`.
     - **NOT in `_PROPAGATED_KEYS`**: each `engine.run()` builds its own per-workflow dict; sub-workflow children mask the parent's value via the save/restore semantics. Adding to `_PROPAGATED_KEYS` would leak parent cache_render dicts into children.
+    - **Round-5 fix + Round-6 factual correction — Document non-propagation in `workflow_executor.py:118-126`**: `_PROPAGATED_KEYS` enumerates **7 keys** (verified Round 6 via direct read): `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `__parser_diagnostics__`, `__memoization_cache__`, `__trace_collector__`. (Round 5 prose said 5 — drift; Round 6 corrected by reading actual file.) Add an inline comment immediately above this constant explaining `__pflow_cache_render__`'s intentional absence:
+      ```python
+      # __pflow_cache_render__ is INTENTIONALLY NOT propagated. Each workflow has its own
+      # ## Cache block, scoped to its own inputs and step outputs (DD#12). The child engine
+      # builds its own per-workflow CacheRenderContext dict at engine.run() entry; sub-workflow
+      # save/restore at engine.py:181-187 (mirrored for cache_render in B3.2) masks the parent's
+      # value during child execution and restores it on exit. Adding this key to _PROPAGATED_KEYS
+      # would leak parent chunks into child rendering, breaking cache scoping AND the
+      # CacheBlockIR freeze guarantee (parallel batch concurrency surface).
+      _PROPAGATED_KEYS = (...)
+      ```
+    - **Regression test (Round 5 + Round 6 instrumentation requirement)**: `tests/test_runtime/test_subworkflow_cache_isolation.py` — parent workflow with `## Cache: [parent_chunk]` invokes a child workflow with `## Cache: [child_chunk]` (non-overlapping names so any bleed is detectable). Run the parent. **REQUIRES instrumentation hook during child execution** (Round 6 — drop the "or post-execution trace inspection" alternative). The parent's value is restored on child exit via save/restore; post-execution trace inspection cannot catch a momentary leak that's already cleaned up. Use `monkeypatch.setattr` on `_build_cache_render_dict` OR `LLMNode.prep` to capture `shared["__pflow_cache_render__"]` AT THE MOMENT of child node prep. Assertion shape:
+      ```python
+      child_cache_render_snapshot = []
+      original_prep = LLMNode.prep
+      def capturing_prep(self, shared):
+          # Capture the cache_render dict the child's LLMNode sees during prep.
+          captured = dict(shared.get("__pflow_cache_render__") or {})
+          child_cache_render_snapshot.append(captured)
+          return original_prep(self, shared)
+      monkeypatch.setattr(LLMNode, "prep", capturing_prep)
+      WorkflowRunner().run(parent_path)
+      # During child execution, the snapshot has child_chunk only — not parent_chunk:
+      child_render = child_cache_render_snapshot[0]  # First capture is child's first prep
+      assert "child_chunk" in str(child_render), "child's chunks missing"
+      assert "parent_chunk" not in str(child_render), "parent's chunks leaked into child"
+      # After child returns, parent's dict has parent_chunk back (verify post-execution):
+      ...
+      ```
+    Catches the regression where a future contributor "tidies up" by adding `__pflow_cache_render__` to `_PROPAGATED_KEYS`. Without the instrumentation hook, the leak window is invisible.
     - **`storage_mode: shared` × `## Cache` interaction (LIMITATION)**: a sub-workflow with `storage_mode: shared` writes directly to the parent's root store (per `NamespacedSharedStore.__setitem__` at `namespaced_store.py:51` — `__*__` keys bypass the namespace). Two parallel batch items each running a `storage_mode: shared` sub-workflow that has its own `## Cache` block both invoke `engine.run()`'s save/restore on the same parent root, and the restore order across worker threads is non-deterministic (last-finished worker's restore wins). The result is functionally correct (each child reads its own installed value during execution) but the parent's value AFTER the batch is whichever child restored last. **For v1**: document this as an unsupported combination. The cache_render value is per-workflow scope, NOT meant to leak across `storage_mode: shared` boundaries. If a future need arises, the fix is either (a) make the cache_render save/restore use a worker-local key suffix, or (b) refuse the combination at validation time. Neither is needed for v1's motivating workload (lyrics-generator does not use `storage_mode: shared`).
 
 ## B3.3 — Plan_node renders cache content and includes it in the hash
@@ -577,25 +756,28 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
   - **Strict-mode template-error path**: if `resolve_templates` raises `ValueError`, the existing early-return at lines 57–68 still fires. The cache content is not rendered (correct — there's nothing to hash for; the `template_exception` branch returns).
   - **Empty subset**: when `cache_ctx is None` OR `cache_ctx.subset` is empty, `prompt_cache_content` is `None` and `compute_node_config`'s conditional include doesn't fire. Hash byte-identical to pre-task. This is the load-bearing DD#19 path.
   - **Hash-vs-prep render divergence invariant** (load-bearing): the `_render_cache_for_hash` helper called from `plan_node` and the `_render_cache_for_messages` helper called from `LLMNode.prep` (C1.2) MUST produce content that is byte-equivalent at the level of "value bytes substituted in for `${var}`." If the two diverge — e.g., `plan_node` resolves `${concept}` to value `V` at hash time but `LLMNode.prep` resolves it to `V'` at prep time — the memo cache is keyed on `V` but the adapter sends `V'`, producing silent stale-cache hits on the next run with `V` again. **Both helpers MUST use the same resolution function** (`TemplateResolver.resolve_template` against `shared`) and the same deterministic-serialization helper. Refactor: extract a single `_resolve_chunk_value(chunk, shared) -> str | _ChunkAbsentSentinel` helper that both call sites use; never duplicate the resolution logic.
-  - **Branch-absent symmetry (CRITICAL — silent-stale-cache class)**: the shared helper handles ABSENT chunks identically for both call sites by returning a sentinel. Without this, plan_node could include a chunk's stringified `None` value in the hash while LLMNode.prep skips the chunk entirely (per C1.2), producing different cache_keys for what is logically the same render — silent stale-cache. Concrete shape (verified against actual code shapes — see footnote below):
+  - **Branch-absent symmetry (CRITICAL — silent-stale-cache class)**: the shared helper handles ABSENT chunks identically for both call sites by returning a sentinel. Without this, plan_node could include a chunk's stringified `None` value in the hash while LLMNode.prep skips the chunk entirely (per C1.2), producing different cache_keys for what is logically the same render — silent stale-cache. **The helpers live in `src/pflow/core/cache_render.py`** (NEW module — see "Shared cache-rendering helpers — module placement" near the top of this plan). Concrete shape (verified against actual code shapes):
     ```python
-    from typing import Final
-    from pflow.runtime.node_state import NodeStatus, get_node_status
-    from pflow.runtime.template_resolver import TemplateResolver
+    # src/pflow/core/cache_render.py
+    from typing import Final, Any
+    # NOTE: TemplateResolver / NodeStatus / get_node_status are imported lazily
+    # inside the function bodies (see "Shared cache-rendering helpers — module placement").
+    # Module-level imports would create a core → runtime layer dependency at import time.
 
     # Module-level sentinel — distinct from any string a real value could serialize to.
-    # __repr__/__str__ raise TypeError so accidental serialization fails LOUD instead of
-    # silently injecting a memory-address-flavored string into the hash (defense against
-    # caller forgetting to filter — see "Both call sites MUST filter" below).
+    # NO __repr__/__str__ raising — a sentinel-bytecodes-into-hash-via-_make_serializable
+    # bypass exists at runtime/cache.py:25-51 (the catch-all `else` branch uses
+    # f"<{type(obj).__module__}.{type(obj).__name__}>" — neither __repr__ nor __str__).
+    # The defense lives at the serialization site instead — see "Defense at _make_serializable"
+    # below.
     class _ChunkAbsentSentinel:
         __slots__ = ()
-        def __repr__(self) -> str:
-            raise TypeError("_CHUNK_ABSENT must be filtered before serialization — caller forgot to drop ABSENT entries")
-        def __str__(self) -> str:
-            raise TypeError("_CHUNK_ABSENT must be filtered before serialization — caller forgot to drop ABSENT entries")
     _CHUNK_ABSENT: Final = _ChunkAbsentSentinel()
 
-    def _resolve_chunk_value(chunk: CacheChunkIR, shared: SharedStore) -> str | _ChunkAbsentSentinel:
+    def _resolve_chunk_value(chunk: "CacheChunkIR", shared: dict[str, Any]) -> str | _ChunkAbsentSentinel:
+        # Lazy-import — see "Shared cache-rendering helpers — module placement" rationale.
+        from pflow.runtime.node_state import NodeStatus, get_node_status
+        from pflow.runtime.template_resolver import TemplateResolver
         # extract_root_node_id always returns str (verified template_resolver.py:212);
         # no None guard needed.
         upstream_node = TemplateResolver.extract_root_node_id(chunk.var_expr)
@@ -609,18 +791,52 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
         resolved = TemplateResolver.resolve_template(chunk.var_expr, shared)
         return _deterministic_serialize(resolved)
     ```
+
+    **Defense at `_make_serializable` (Round-5 fix — closes a sentinel-bypass class)**: `runtime/cache.py:25-51`'s `_make_serializable` falls through to `f"<{type(obj).__module__}.{type(obj).__name__}>"` for any non-(dict/list/tuple/str/int/float/bool/None) value — without invoking `__repr__` or `__str__`. A leaked `_CHUNK_ABSENT` would therefore silently serialize to the string `"<pflow.core.cache_render._ChunkAbsentSentinel>"`, get folded into the cache hash byte-identically across runs, and produce the silent-stale-cache class (stable hash, wrong subset). **Add to `runtime/cache.py:_make_serializable`**, as the FIRST branch (before any other check):
+    ```python
+    # In runtime/cache.py:_make_serializable
+    def _make_serializable(obj: Any) -> Any:
+        # Defense against leaked cache-render sentinel — see core/cache_render.py.
+        # Lazy-import to avoid circular: runtime/cache.py is imported by instrumentation.py
+        # which is imported by engine.py which is imported by core/cache_render.py?
+        # NO — core/cache_render.py is the leaf; cache.py does NOT import from core/cache_render.
+        # Lazy-import is purely a defensive ordering practice, not a circular-break.
+        from pflow.core.cache_render import _ChunkAbsentSentinel
+        if isinstance(obj, _ChunkAbsentSentinel):
+            raise TypeError(
+                "_CHUNK_ABSENT reached cache hash serialization; caller forgot to filter ABSENT chunks "
+                "before passing prompt_cache_content to compute_node_config. This is a silent-stale-cache "
+                "regression class (DD#19) — fix the caller, not this guard."
+            )
+        # ... existing branches unchanged
+    ```
+    **B3.4 unit test for the defense** (Round 5 + Round 6 hardened): `_make_serializable(_CHUNK_ABSENT)` raises `TypeError`. **PIN the exact error-message substring** (Round 6 — locks against message drift): `assert "_CHUNK_ABSENT must be filtered before serialization" in str(exc_info.value)`. Test cases:
+    - `_make_serializable(_CHUNK_ABSENT)` raises (top-level).
+    - `_make_serializable({"key": _CHUNK_ABSENT})` raises (dict-recursion).
+    - `_make_serializable([_CHUNK_ABSENT])` raises (list-recursion).
+    - `_make_serializable({"a": [_CHUNK_ABSENT]})` raises (NESTED dict→list→sentinel — Round 6 added; tuple branch at `cache.py:46-47` is also recursed).
+    - `_make_serializable([{"a": _CHUNK_ABSENT}])` raises (list→dict→sentinel).
+    - Positive control: `_make_serializable("normal_string")` returns `"normal_string"` (no false positive).
+
+    **Test placement**: place primary defense test in `tests/test_runtime/test_cache.py` (next to `_make_serializable` itself per `tests/CLAUDE.md` mapping convention `src/X/Y/module.py` → `tests/test_X/test_Y/test_module.py`). The full ABSENT-symmetry tests in `tests/test_runtime/test_prompt_cache_hash.py` exercise the integration; the bare-defense unit test belongs next to the function it protects so a future `cache.py` refactor doesn't drop the guard without breaking the test.
     **Verified against actual code (Round 4)**: `TemplateResolutionError` does NOT exist in pflow — `TemplateResolver.resolve_template` raises plain `ValueError` (with `_pflow_partial_resolutions` and `_pflow_template_diagnostic` annotations attached for downstream rendering). `NodeStatus.ABSENT` is the canonical symbol (NOT `node_state.ABSENT`). `extract_root_node_id` always returns `str`, never `None`. The pseudo-code above reflects these actual signatures.
 
-    **Companion helper for static-prefix resolution (D.1) — locks byte-identical bytes across ALL cache paths** (Round 4 high-value fix #1):
+    **Companion helper for static-prefix resolution (D.1) — locks byte-identical bytes across ALL cache paths** (Round 4 high-value fix #1). Lives in **`src/pflow/core/cache_render.py`** alongside `_resolve_chunk_value`:
     ```python
+    # src/pflow/core/cache_render.py (continued)
     import re
+    from typing import Any
 
     # The TEMPLATE_VAR_PATTERN regex must match TemplateResolver's internal pattern
     # exactly (per runtime/CLAUDE.md):
     #   r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"
-    # Import or re-derive at the call site; do NOT duplicate the literal.
+    # Implementing-agent decision: import the compiled pattern symbol from
+    # `pflow.runtime.template_resolver` (lazy, inside the function) if it is exposed
+    # as a module-level constant; otherwise re-compile the literal here once at
+    # module load. Lock the choice with a unit test asserting the regex byte-equality
+    # against runtime/template_resolver.py (see "Regex parity test" below).
 
-    def _resolve_static_prefix_for_cache(template_str: str, shared: SharedStore) -> str:
+    def _resolve_static_prefix_for_cache(template_str: str, shared: dict[str, Any]) -> str:
         """Resolve every ${var} reference in template_str using the SAME deterministic
         serialization that _resolve_chunk_value uses for chunk values.
 
@@ -653,6 +869,12 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
 
     **Both helpers MUST share `_deterministic_serialize`** — the load-bearing invariant. `_resolve_chunk_value` and `_resolve_static_prefix_for_cache` are the two call sites; D.1 (static prefix), B3.3 (chunk hash), C1.2 (chunk message), F2 `analyze.py` (predicted cache_key) all route through one or the other. NEVER inline `str(value)` or `json.dumps(value)` at any cache-rendering site — that's the regression class this fix prevents.
 
+    **Regex parity test (NEW — Round 5)**: a unit test asserts the `TEMPLATE_VAR_PATTERN` used inside `_resolve_static_prefix_for_cache` is byte-equal to whatever pattern `TemplateResolver` uses internally. Two locking strategies depending on what the implementing agent chooses for the regex source:
+    - **If the agent imports a module-level constant** from `runtime/template_resolver.py`: assert `_resolve_static_prefix_for_cache.__globals__["TEMPLATE_VAR_PATTERN"] is pflow.runtime.template_resolver.<canonical_symbol>` (`is`-identity, not equality — locks the same compiled-pattern object).
+    - **If the agent re-compiles the literal** in `core/cache_render.py`: assert the pattern source string is byte-equal to a frozen copy committed in the test (`r"(?<!\$)\$\{...}"` — copy verbatim from runtime/template_resolver.py at test-write time). Test FAILS if either side drifts.
+
+    Either way, the test pins the parity. The plan does not pre-commit to one strategy — implementing agent picks based on what's exposed from `runtime/template_resolver.py`.
+
     **Test in B3.4** (NEW — locks the cross-helper byte-identity invariant): for the same logical dict value `{"text": "abc"}`:
     - `_resolve_chunk_value(chunk_with_var=${X}, shared={"X": {"text": "abc"}})` → `'{"text":"abc"}'`
     - `_resolve_static_prefix_for_cache(template_str="prefix ${X} suffix", shared={"X": {"text": "abc"}})` → `'prefix {"text":"abc"} suffix'`
@@ -681,12 +903,19 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
 
 ### Tests
 
+**Phase-ordering note for tests below (Round 6)**: B3.4 ships BEFORE C1.2. Some tests in this section depend on C1.2 production code (specifically: `LLMNode.prep` reading `__pflow_cache_render__` and rendering `system_blocks`). Those tests CANNOT pass at B3.4-merge time — they pass at C1.2-merge time. Tests in this category:
+- **Hash-vs-prep render byte-equivalence invariant**: depends on C1.2's `system_blocks` rendering. Mark as `@pytest.mark.skip(reason="ships with C1.2; B3.4 merge skips")` until C1.2 lands; at C1.2 merge, remove the skip marker.
+- **Divergence-injection import-shape meta-test** (`test_resolve_chunk_value_is_imported_locally_at_both_sites`): depends on C1.2's import in `nodes/llm/llm.py`. Same skip-then-unmark pattern.
+- **Memo HIT short-circuit** test extension (cache_chunks_skipped round-trip): depends on C1.2's `prep_res["__cache_chunks_skipped__"]` writes. Same pattern.
+
+The B3.4-AT-MERGE tests (no C1.2 dependency) are the LOAD-BEARING ones for the merge gate: golden_config_hashes.json regression, in-memory mutation three-state, branch-absent symmetry from the planner side ONLY (instrumented via `compute_node_config` call args, not via mock observation), `_make_serializable` defense, restore-from-absent invariant, outer-dict mutation rejection, batch-node hash inclusion. THESE pass at B3.4 alone.
+
 - `tests/test_runtime/test_prompt_cache_hash.py` (new — load-bearing gate):
   - **CRITICAL REGRESSION**: load `tests/test_runtime/fixtures/golden_config_hashes.json` (committed in pre-merge step). For each entry, recompute the hash against current code. Assert byte-equality. If any node's hash drifts, FAIL with a clear message naming the workflow + node.
   - Workflow with `prompt_cache: [concept]` produces DIFFERENT hash than the same workflow without the field.
   - Two invocations with `prompt_cache: [concept]` but different resolved `concept` values produce different hashes.
   - Empty `prompt_cache: []` produces the SAME hash as absent.
-  - **In-memory mutation test against baseline** (load-bearing for DD#19 byte-identity): for a representative baseline workflow (NO cache fields), parse to IR dict, then call `compile_workflow(ir_dict, registry)` directly (verified `compilation/compiler.py:460-500` accepts `dict`; bypasses `WorkflowExecutor._compiled_workflow_cache` which is keyed by resolved-path, not IR contents). Capture hash H_absent. Then mutate the IR in-memory:
+  - **In-memory mutation test against baseline** (load-bearing for DD#19 byte-identity, hardened Round 5): for a representative baseline workflow that has **NO `code: @./file.py` or `prompt: @./file.md` external file references** (per Round 5 — `compile_workflow(ir_dict, registry)` runs `resolve_file_references(ir_dict, base_dir)` per `compilation/compiler.py:497`, mutating the dict in-place; a second compile call sees the already-resolved dict, which can produce different hash on workflows containing file refs vs the first compile). Pick a baseline workflow with NO `@./` refs (the simplest LLM-only workflow with inline prompts) — OR `copy.deepcopy(ir_dict)` between compiles to bypass the in-place mutation. The plan recommends "no-file-ref baseline" as the cleaner pattern (deepcopy adds test mechanics; choosing a clean fixture avoids them). Then call `compile_workflow(ir_dict, registry)` directly (verified `compilation/compiler.py:460-500` accepts `dict`; bypasses `WorkflowExecutor._compiled_workflow_cache` which is keyed by resolved-path, not IR contents). Capture hash H_absent. Then mutate the IR in-memory:
     ```python
     # Top-level node key (NOT inside node["params"]) — matches B2.1 extraction:
     ir_dict["nodes"][i]["prompt_cache"] = []
@@ -703,7 +932,37 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
   - Three-state distinction: (1) no field, (2) `prompt_cache: []`, (3) `prompt_cache: [chunk]`. Assert (1) === (2) at hash AND rendering levels (no `cache_control` markers, no `system_blocks` list — plain string `system`); (3) is distinct from both.
   - Node with `cache: false` AND `prompt_cache: [concept]`: memo cache write skipped (existing `cache_enabled=False` behavior); cache rendering still applies at runtime; in-process cache hash is computed correctly.
   - **Batch-node hash inclusion**: a batch LLM node with `prompt_cache: [concept]` produces a different hash than the same batch node without the field. The batch resolution path renders cache content from `shared` (non-batch refs only), independent of per-item template resolution.
-  - **Hash-vs-prep render byte-equivalence invariant** (load-bearing per B3.3): for a workflow with `prompt_cache: [a, b]` declared and run end-to-end against `MockLLMClient`, capture (a) the rendered `prompt_cache_content` that `compute_node_config` saw at hash time (instrument by reading the call args), and (b) the rendered `system_blocks` text payload that the mock observed. Assert that for each chunk in the subset, the `value` bytes from (a) match the corresponding block's text bytes from (b) (modulo prose framing). If they ever differ, memo cache and adapter are out of sync — silent stale-cache hit. Catch this in B3, before any phase that depends on the invariant ships.
+  - **Hash-vs-prep render byte-equivalence invariant** (load-bearing per B3.3, hardened Round 5 + Round 6 fixture-arity correction). **REQUIRES ≥3 chunks with non-alphabetical names** (Round 6 — a 1-chunk fixture passes order trivially; a 2-chunk fixture has 50% accident-pass under bug; ≥3 with names like `["specs", "concept", "brief"]` (not in alphabetical order) makes order divergence detectable):
+    ```python
+    EXPECTED_NAMES = ["specs", "concept", "brief"]  # ≥3 chunks, non-alphabetical
+    # ## Cache declares them in this order; node's prompt_cache: matches.
+    ```
+    For a workflow with `prompt_cache: [specs, concept, brief]` declared and run end-to-end against `MockLLMClient`, capture (a) the rendered `prompt_cache_content` that `compute_node_config` saw at hash time (instrument by reading the call args), and (b) the rendered `system_blocks` text payload that the mock observed. Assert ORDER PRESERVATION + per-chunk byte equality (NOT set-equality):
+    ```python
+    # (a) — list of {"name", "prose", "value"} dicts in declaration order
+    hash_chunks = captured_prompt_cache_content
+    # (b) — list of {"type": "text", "text": "..."} blocks in declaration order
+    prep_blocks = mock.call_history_full[-1]["system"]
+    # Strip the marker block (last block carries cache_control) for shape comparison;
+    # the marker placement is tested separately.
+
+    assert len(hash_chunks) == len(prep_blocks), (
+        f"hash subset rendered {len(hash_chunks)} chunks; prep rendered {len(prep_blocks)}; "
+        f"order/length divergence — silent stale-cache class"
+    )
+    for i, (hash_chunk, prep_block) in enumerate(zip(hash_chunks, prep_blocks)):
+        assert hash_chunk["name"] == EXPECTED_NAMES[i], (
+            f"chunk {i} name mismatch: hash={hash_chunk['name']!r} expected={EXPECTED_NAMES[i]!r}"
+        )
+        # The chunk's value bytes (deterministic-serialized) must appear
+        # in the corresponding prep block's text. Prose framing is identical
+        # by construction (both call sites emit chunk.prose_before + value).
+        assert hash_chunk["value"] in prep_block["text"], (
+            f"chunk {i} value bytes diverged at hash vs prep: "
+            f"hash_value={hash_chunk['value']!r}, prep_text={prep_block['text']!r}"
+        )
+    ```
+    Locks ORDER (hash_chunks[i] aligns with prep_blocks[i] by index) and per-chunk byte equality. Set-equality would pass even if order diverged (chunks rendered as `[a, b]` at hash but `[b, a]` at prep — different cache_keys at the provider despite identical bytes per chunk). If they ever differ, memo cache and adapter are out of sync — silent stale-cache hit. Catch this in B3, before any phase that depends on the invariant ships.
   - **Branch-absent symmetry test** (CRITICAL — locks the sentinel-filter invariant): the fixture must induce ABSENT via a CONDITIONAL BRANCH that runtime didn't take (NOT via a structurally-missing upstream — that would be caught by validator and never reach prep). Concrete fixture shape:
     ```
     nodes: [router, branch_a (LLM), b_producer (LLM), branch_c (LLM), llm_target (LLM)]
@@ -715,17 +974,56 @@ Document this gate in B3 merge-gate section below as the FIRST checkpoint.
     Run with `router` returning `"take_a"` so `b_producer` never executes. Add a precondition assertion BEFORE the symmetry assertions: `assert get_node_status(shared, "b_producer") == NodeStatus.ABSENT` — pins down WHY `b` was skipped (runtime branch absence, not structural failure). Then capture (a) the `prompt_cache_content` at hash time (instrument `compute_node_config` call args) and (b) the `system_blocks` at prep time (read `MockLLMClient.call_history_full[-1]["system"]`). Assert: (1) BOTH have exactly 2 entries (`a` and `c`), NOT 3; (2) neither has any entry for `b` (no `None`-stringification on either side); (3) `shared["llm_target"]["llm_usage"]["cache_chunks_skipped"] == ["b"]`; (4) the trace 2.1.0 event records `cache_chunks_skipped: ["b"]`; (5) the precondition `get_node_status == ABSENT` (locks the test isn't passing for the wrong reason). Without all five assertions, the sentinel filter regression-class is uncaught.
   - **Divergence-injection variant** (anti-tautology): the byte-equivalence test passes whenever both sites import the same `_resolve_chunk_value` symbol — even if a future contributor inlined the resolution at one site and the duplicates happened to agree. Add a SECOND test variant that monkeypatches the per-site import binding independently:
     ```python
-    # Both call sites must import via `from ... import _resolve_chunk_value`
-    # (creating a local binding) so monkeypatch can target each site separately:
+    # Both call sites must import via `from pflow.core.cache_render import _resolve_chunk_value`
+    # (creating a local module binding) so monkeypatch can target each site separately:
     monkeypatch.setattr("pflow.runtime.engine.plan_node._resolve_chunk_value",
                         lambda chunk, shared: f"plan-{chunk.var_expr}")
     monkeypatch.setattr("pflow.nodes.llm.llm._resolve_chunk_value",
                         lambda chunk, shared: f"llm-{chunk.var_expr}")
     ```
     Assert the byte-equivalence test FAILS in this variant. This proves the test would actually catch divergence — not just that today's implementation happens to agree. **DO NOT use `inspect.stack()`** — fragile under PyTest's frame manipulation, slow, non-deterministic across Python implementations. **DO NOT use `threading.local`** — engine and worker threads have independent thread-locals; a marker set on the engine thread isn't visible to a parallel-batch worker. The per-site monkeypatch approach works because both call sites import the symbol (not the module) — locking this contract in B3.3 is load-bearing for the divergence-injection test.
+  - **Import-shape meta-test (NEW Round 5)**: the divergence-injection test silently bypasses if either consumer module accesses the helper via attribute path (e.g., `cache_render._resolve_chunk_value(...)` instead of `_resolve_chunk_value(...)`). Without a local module binding, `monkeypatch.setattr("pflow.runtime.engine.plan_node._resolve_chunk_value", ...)` does nothing — the test passes despite the bypass. Add a meta-test that locks the local-binding contract:
+    ```python
+    def test_resolve_chunk_value_is_imported_locally_at_both_sites():
+        """Lock the import contract — both consumer modules MUST create a local
+        binding via `from pflow.core.cache_render import _resolve_chunk_value`.
+        If either site switches to attribute access, the divergence-injection
+        test silently bypasses and the byte-identity invariant breaks silently."""
+        import pflow.runtime.engine.plan_node as plan_node_mod
+        import pflow.nodes.llm.llm as llm_mod
+        assert hasattr(plan_node_mod, "_resolve_chunk_value"), (
+            "plan_node.py must import _resolve_chunk_value as a local binding "
+            "(`from pflow.core.cache_render import _resolve_chunk_value`)."
+        )
+        assert hasattr(llm_mod, "_resolve_chunk_value"), (
+            "llm.py must import _resolve_chunk_value as a local binding "
+            "(`from pflow.core.cache_render import _resolve_chunk_value`)."
+        )
+        # Same locking for _resolve_static_prefix_for_cache (D.1 site in llm.py)
+        # and _CHUNK_ABSENT (filter-site at both consumer modules):
+        assert hasattr(plan_node_mod, "_CHUNK_ABSENT")
+        assert hasattr(llm_mod, "_CHUNK_ABSENT")
+        assert hasattr(llm_mod, "_resolve_static_prefix_for_cache")
+        # F2 analyzer also imports both helpers per F2 line ~1337; verify if F2 has shipped:
+        try:
+            import pflow.core.cache_analysis.analyze as analyze_mod
+        except ImportError:
+            # F2 not yet implemented — Round 6 fix: pytest.skip (NOT silent pass) so suite
+            # reports show the missing meta-coverage explicitly. Silent `pass` looks like
+            # the test passed when the F2 portion didn't actually run.
+            pytest.skip("F2 analyzer not yet implemented; meta-test will cover F2 once it ships")
+        assert hasattr(analyze_mod, "_resolve_chunk_value")
+        assert hasattr(analyze_mod, "_resolve_static_prefix_for_cache")
+        assert hasattr(analyze_mod, "_CHUNK_ABSENT")
+    ```
+    Without this meta-test, a refactor switching `_resolve_chunk_value(...)` to `cache_render._resolve_chunk_value(...)` would not break any existing test, but it WOULD silently break the divergence-injection test's coverage.
+
+    **Phase ordering caveat (Round 6)**: this meta-test asserts `hasattr(llm_mod, "_resolve_chunk_value")` — but `llm_mod` is `nodes/llm/llm.py`, which only imports the helper in C1.2. If this test runs at B3.4 merge time (per the plan's current phase placement), the `llm_mod` assertion fails because C1.2 hasn't shipped. **Resolution**: this test ships WITH C1.2, NOT B3.4. Move the test specification from B3.4 to C1.2's test list. Same applies to the byte-equivalence ORDER preservation test below (also depends on C1.2 production code rendering messages).
   - **Restore-from-absent**: construct a `WorkflowEngine`, call `run()` from a `shared` that lacks `__pflow_cache_render__`, and assert no `AttributeError`/`TypeError` raised. After completion, `shared.get("__pflow_cache_render__")` returns a `MappingProxyType({})` (NOT `None`).
   - **Outer-dict mutation rejected**: assert `shared["__pflow_cache_render__"]["new_node"] = ...` raises `TypeError` (MappingProxyType enforces read-only). Assert `dataclasses.replace(cache_ctx, prewarm=True)` works (frozen dataclasses support `replace`); but direct `cache_ctx.prewarm = True` raises `FrozenInstanceError`. Document why: parallel-batch concurrency surface elimination.
-  - **Memo HIT short-circuit invariant** (Suggestion 21): a workflow with `prompt_cache: [concept]` declared, run twice with identical state. **Use a function-scoped `MockLLMClient` fixture** so call-count assertions baseline cleanly per test. First run misses memo, calls `MockLLMClient.complete()` (1 call). Second run hits memo. Assert: (a) `MockLLMClient.complete` was called exactly ONCE total across both runs (this fixture's call count, not session-cumulative); (b) the second run's `shared["llm-node-id"]` matches the first run's byte-for-byte (memo restored the cached output); (c) the second run's `shared["llm-node-id"]["llm_usage"]["cache_source"] == "memo"`. Together (a)+(b)+(c) prove the LLM was not re-called AND the cached output round-tripped correctly — without testing implementation details. **REMOVED**: a previous draft asserted "`LLMNode.prep` was not invoked" via a `prep` spy; that's implementation-detail testing — a future refactor that calls `prep` once on memo hits but skips render-side work would still satisfy the contract but break this assertion. The (a)+(b)+(c) trio is behavior-level and stable across refactors.
+  - **Memo HIT short-circuit invariant** (Suggestion 21, hardened Round 5): a workflow with `prompt_cache: [concept]` declared, run twice with identical state. **Uses the autouse function-scoped `mock_llm_client` fixture** (per `tests/conftest.py:11-43` — already function-scoped autouse; no per-test setup needed) so call-count assertions baseline cleanly per test. First run misses memo, calls `complete()` (1 call). Second run hits memo. Assert: (a) `assert len(mock.call_history) == 1` (the autouse fixture isolates per-test — `MockLLMClient` has no `complete_call_count` attribute; use `len(call_history)` instead. Verified `tests/shared/llm_mock.py:104-105`); (b) the second run's `shared["llm-node-id"]` matches the first run's byte-for-byte (memo restored the cached output); (c) the second run's `shared["llm-node-id"]["llm_usage"]["cache_source"] == "memo"`. Together (a)+(b)+(c) prove the LLM was not re-called AND the cached output round-tripped correctly — without testing implementation details. **REMOVED**: a previous draft asserted "`LLMNode.prep` was not invoked" via a `prep` spy; that's implementation-detail testing — a future refactor that calls `prep` once on memo hits but skips render-side work would still satisfy the contract but break this assertion. The (a)+(b)+(c) trio is behavior-level and stable across refactors.
+
+    **Round-5 extension — `cache_chunks_skipped` round-trip via memo HIT**: the (a)+(b)+(c) trio doesn't probe the cross-layer co-edit C1.2 line 786-790 (`cache_chunks_skipped` round-trips via `apply_memo_hit`). Add a fourth assertion behind a separate fixture (or extend the test variant): use a workflow with a branch-absent chunk so first run records `cache_chunks_skipped=["b"]` (skipped because `b_producer` was on a non-taken branch). Run again with the same router decision (so memo HIT fires). Assert: (d) second run's `shared["llm-node-id"]["llm_usage"]["cache_chunks_skipped"] == ["b"]` (the skip list round-tripped from the cached `llm_usage` blob via `apply_memo_hit`'s whole-dict restore — see `instrumentation.py:241-268`). Without (d), C1.2's "no special-case code needed for the round-trip" claim has no test pinning it down.
 
 ### Regression invariants — STOP IF ANY FAIL
 
@@ -769,7 +1067,7 @@ Move actual cache-rendering tests to C1.2 — these widening tests are pure type
 
 - `src/pflow/nodes/llm/llm.py`:
   - In `prep()` (line 231): read `cache_ctx = (shared.get("__pflow_cache_render__") or {}).get(self.node_id)` (canonical defensive pattern per B3.2 — `or {}` handles legacy/test paths where the value may be `None`). **Do NOT cache `cache_ctx` on `self`** — `LLMNode` is reused across batch items per `nodes/CLAUDE.md` Pitfall #6, so any `self.X = result` would leak across iterations (Task 106 `_resolved` anti-pattern). The context is read fresh from `shared` on every `prep()` call. If `cache_ctx is None or not cache_ctx.subset`: skip cache rendering entirely; `prep_res["system"]` stays a plain string (today's behavior, byte-identical for opt-out nodes).
-  - When `cache_ctx` is set with a non-empty subset, build `prep_res["system_blocks"]` (new key — a `list[dict]`) using the **shared** `_resolve_chunk_value` helper introduced in B3.3 (so hash and prep render byte-identically — the load-bearing invariant from B3.3):
+  - When `cache_ctx` is set with a non-empty subset, build `prep_res["system_blocks"]` (new key — a `list[dict]`) using the **shared** `_resolve_chunk_value` helper from `pflow.core.cache_render` (introduced in B3.3 — see "Shared cache-rendering helpers — module placement" near the top of this plan). The import line: `from pflow.core.cache_render import _resolve_chunk_value, _CHUNK_ABSENT`. Both `plan_node._render_cache_for_hash` (B3.3) and this prep site share the same helper so hash and prep render byte-identically — the load-bearing invariant from B3.3.
     1. If the user's `system` param is set (existing `self.params.get("system")`), prepend it as the FIRST content block: `{"type": "text", "text": <user system>}` — NO `cache_control` marker. User-provided system text is not part of the cache prefix.
     2. Walk `cache_ctx.cache_block.items` (frozen tuple of `CacheChunkIR`) filtered to `cache_ctx.subset`, in declaration order. For each chunk:
        - Resolve via the shared `_resolve_chunk_value(chunk, shared)` helper (same call site `plan_node._render_cache_for_hash` uses — see B3.3).
@@ -783,11 +1081,35 @@ Move actual cache-rendering tests to C1.2 — these widening tests are pure type
   - **NO min-token threshold check at runtime.** Per DD#36 ("`pflow run` validation: no tokenizer, no historical state"), this expensive check moves to the analytical tier (`pflow analyze-cache` and `pflow run --dry-run`) where `litellm.token_counter` is permitted. The `cache.below-min-tokens` warning fires from F2's `analyze.py`, not from `LLMNode.prep()`. Earlier-draft runtime emission was inconsistent with DD#36.
   - **Cache-rendering template-resolution failure path** (per spec line 189): if a chunk's `${var}` fails to resolve at runtime (e.g. an upstream node failed), use the existing `build_template_error_diagnostic` pattern from `runtime/engine/template_errors.py`. Build the diagnostic with `node_id=self.node_id`, the chunk's `source_line`, and the failing reference. Return an error-dict from `_call_llm` (mirrors the typed-exception path at `_error_dict_from_exception`) so the Node retry loop short-circuits.
   - **Branch-absent skip with trace visibility** (spec edge case "Cache block references a step output on a branch that didn't execute"): the shared `_resolve_chunk_value` helper (B3.3) returns the `_CHUNK_ABSENT` sentinel when the upstream node's `node_state.get_node_status` is `ABSENT`. The C1.2 rendering loop checks for the sentinel and SKIPS the chunk. **Record the skipped chunk name** in `prep_res["__cache_chunks_skipped__"]: list[str]` (new key) so `LLMNode.post()` can write it to `shared[node_id]["llm_usage"]["cache_chunks_skipped"]`. The trace 2.1.0 channel surfaces this list per-event; `analyze-cache --from-trace` mode reads it to attribute discrepancies in cache_creation/read tokens to runtime branch-skips (vs TTL expiry, key mismatch, parallel-write race). Without this trace channel, agents see cache_key divergence between predicted and actual with no diagnostic explaining why. Document the behavior + trace key in the rendering helper's docstring. **The sentinel filter is the load-bearing invariant** — both `plan_node._render_cache_for_hash` (B3.3) and this `LLMNode.prep` rendering filter on the SAME `_CHUNK_ABSENT` value, so the rendered subset is identical at both sites.
-  - **Cross-layer co-edits for `cache_chunks_skipped`** (CRITICAL — the channel must survive every error path):
-    1. Extend `LLMNode.post()` (E.1) to copy `prep_res["__cache_chunks_skipped__"]` (default `[]`) into `shared[node_id]["llm_usage"]["cache_chunks_skipped"]`.
-    2. Extend the error-output builder (`_error_dict_from_exception` or equivalent in `nodes/llm/llm.py`) to ALSO populate `cache_chunks_skipped` from the same `prep_res` source. **Without this**, when `_call_llm` short-circuits on the cache-rendering template-error path or any deterministic LLMCallError, `post()` does not run and the channel is lost — but the trace event for the failure path still needs the skip context for `analyze-cache --from-trace` discrepancy attribution.
-    3. Persist `cache_chunks_skipped` in the `llm_usage` payload that `write_memo_cache` writes to disk. On memo HIT, `apply_memo_hit` round-trips the cached `llm_usage` (including this field) into `shared[node_id]["llm_usage"]` automatically — no special-case code needed beyond the keyset extension.
-    The intent: every trace event that could correspond to a partial render — success, deterministic error, retry-failure, memo HIT — carries the skip list. Test in E.1 must cover the error-path case explicitly.
+  - **Cross-layer co-edits for `cache_chunks_skipped`** (CRITICAL — the channel must survive every error path. **Round 5 correction**: error-path injection sites re-specified — `_error_dict_from_exception(exc)` / `_error_dict_for_timeout(model, message)` / `_error_dict_for_generic_failure(model, exc, attempts)` (verified `llm.py:33-110`) take ONLY exception/model/message arguments — they have NO access to `prep_res`. Inject at the **callers** that DO have `prep_res` in scope):
+    1. Extend `LLMNode.post()` (E.1) to copy `prep_res["__cache_chunks_skipped__"]` (default `[]`) into `shared[node_id]["llm_usage"]["cache_chunks_skipped"]`. (Success path.)
+    2. **Inject at `LLMNode._call_llm`'s error-return wrapper (~`llm.py:380` — the `return _error_dict_from_exception(e)` site).** Mutate the returned dict's `usage` keyset to add `cache_chunks_skipped` from `prep_res` BEFORE returning. Pseudo-code:
+       ```python
+       # Inside _call_llm, where it currently returns _error_dict_from_exception(e):
+       err_dict = _error_dict_from_exception(e)
+       err_dict["usage"]["cache_chunks_skipped"] = prep_res.get("__cache_chunks_skipped__", [])
+       return err_dict
+       ```
+       Same wrapping pattern at the timeout site (`return _error_dict_for_timeout(model, message)`) and any other `_call_llm` error-return path. The error-dict builders themselves stay unchanged — their signatures don't need widening. **DO NOT** widen `_error_dict_from_exception` / `_error_dict_for_timeout` / `_error_dict_for_generic_failure` signatures — that's a cross-cutting change touching every caller across the codebase. Wrap at the call site instead.
+    3. **Inject at `LLMNode.exec_fallback` / generic-failure path** (`llm.py:563-580` per Round 4 verification). `exec_fallback(prep_res, exc)` HAS `prep_res` in scope — wrap the `_error_dict_for_generic_failure(...)` call there:
+       ```python
+       # Inside exec_fallback:
+       err_dict = _error_dict_for_generic_failure(model, exc, attempts)
+       err_dict["usage"]["cache_chunks_skipped"] = prep_res.get("__cache_chunks_skipped__", [])
+       return err_dict
+       ```
+    4. **Inject at `LLMNode.post()` structured-output JSON-parse error path** (`llm.py:511` — Round 6 added; verified `prep_res` is in scope as method parameter). `post(self, shared, prep_res, exec_res)` constructs `LLMResponseParseError` then calls `_error_dict_from_exception(err)` at line 511. Wrap before downstream consumption:
+       ```python
+       # Inside post(), in the JSON-parse error branch around line 511:
+       err = LLMResponseParseError(...)
+       error_dict = _error_dict_from_exception(err)
+       error_dict["usage"]["cache_chunks_skipped"] = prep_res.get("__cache_chunks_skipped__", [])
+       # ... existing handling of error_dict ...
+       ```
+    5. Persist `cache_chunks_skipped` in the `llm_usage` payload that `write_memo_cache` writes to disk. On memo HIT, `apply_memo_hit` round-trips the cached `llm_usage` (including this field) into `shared[node_id]["llm_usage"]` automatically — no special-case code needed beyond the keyset extension.
+
+    The intent: every trace event that could correspond to a partial render — success, deterministic error, retry-failure, memo HIT — carries the skip list. Test in E.1 must cover EACH wrap site explicitly (success path, `_call_llm` error-return path, `exec_fallback` retry-exhausted path, timeout path, memo-HIT round-trip).
+    **`prep_res` accessibility verification**: at `_call_llm`'s error-return sites and inside `exec_fallback`, `prep_res` is the function's input arg — directly available. Verified by reading `llm.py:33-110` (error builders have no `prep_res`) and inferring the call-site context (the wrapping caller always has `prep_res` because it's the lifecycle method's argument).
 
 ### Tests
 
@@ -808,7 +1130,78 @@ Move actual cache-rendering tests to C1.2 — these widening tests are pure type
 ### Test infrastructure prerequisite
 
 - Widen `MockLLMClient.complete()`'s `system` parameter from `Optional[str]` to `Optional[Union[str, list[dict]]]` (line 194). The recorded entries in `call_history_full` already store `system` verbatim; cache-structure tests inspect `call_history_full[i]["system"]` directly. Update `tests/shared/llm_mock.py` and add a round-trip test asserting `system=[{...}]` is recorded as a list, not a stringified version.
-- Extend `MockLLMClient.set_response(...)` to accept `cache_creation_input_tokens` and `cache_read_input_tokens` keyword args (default 0). They populate the returned `usage` dict so trace tests can simulate cache hits with specific token counts. Without this, downstream cache-correlation tests need ad-hoc monkey-patching.
+- **Extend `MockLLMClient.set_response(...)` cache-tokens keyword args (Round-5 explicit spec).** Verified `tests/shared/llm_mock.py:253-263` — `complete()` currently hardcodes `cache_creation_input_tokens: 0` and `cache_read_input_tokens: 0`. To stage cache-hit scenarios, follow the existing parallel-dict pattern (`_costs`, `_warnings` lines 107-108):
+  1. Add two new field declarations on the `MockLLMClient` dataclass (next to `_costs` / `_warnings`):
+     ```python
+     _cache_creation_tokens: dict[str, int] = field(default_factory=dict)
+     _cache_read_tokens: dict[str, int] = field(default_factory=dict)
+     ```
+  2. Extend `set_response(...)` signature to accept `cache_creation_input_tokens: int = 0` and `cache_read_input_tokens: int = 0` keyword-only args. Inside, populate by `(model, schema)` key:
+     ```python
+     self._cache_creation_tokens[key] = cache_creation_input_tokens
+     self._cache_read_tokens[key] = cache_read_input_tokens
+     ```
+  3. Add resolver methods mirroring `_get_cost` / `_get_warnings` (lines 158-178):
+     ```python
+     def _get_cache_creation(self, model: str, schema: Any) -> int:
+         name = _schema_name(schema) or "text"
+         if f"{model}:{name}" in self._cache_creation_tokens:
+             return self._cache_creation_tokens[f"{model}:{name}"]
+         if f"*:{name}" in self._cache_creation_tokens:
+             return self._cache_creation_tokens[f"*:{name}"]
+         return 0
+     def _get_cache_read(self, model: str, schema: Any) -> int:
+         # Same shape as _get_cache_creation, against _cache_read_tokens.
+         ...
+     ```
+  4. Replace hardcoded `0` at lines 258-259 (current `usage` dict construction) with resolver calls:
+     ```python
+     usage = {
+         ...
+         "cache_creation_input_tokens": self._get_cache_creation(model, schema),
+         "cache_read_input_tokens": self._get_cache_read(model, schema),
+         ...
+     }
+     ```
+  5. Extend `reset()` (lines 180-186) to clear the new dicts.
+  Without this end-to-end specification, the implementing agent following the bare prose ("populate the returned `usage` dict") will likely either (a) add ad-hoc monkey-patching of `complete()` per test, or (b) widen `complete()`'s signature directly — both worse than the parallel-dict pattern that already governs the mock's other configurable fields.
+
+  **Round 6 — REQUIRED unit tests** (in `tests/test_shared/test_llm_mock.py` or wherever `MockLLMClient` is tested today):
+  ```python
+  def test_set_response_populates_cache_creation_tokens():
+      mock = MockLLMClient()
+      mock.set_response("anthropic/claude-sonnet-4-5", None, "test", cache_creation_input_tokens=1024)
+      response = mock.complete(model="anthropic/claude-sonnet-4-5", prompt="x")
+      assert response.usage["cache_creation_input_tokens"] == 1024
+
+  def test_set_response_populates_cache_read_tokens():
+      mock = MockLLMClient()
+      mock.set_response("anthropic/claude-sonnet-4-5", None, "test", cache_read_input_tokens=2048)
+      response = mock.complete(model="anthropic/claude-sonnet-4-5", prompt="x")
+      assert response.usage["cache_read_input_tokens"] == 2048
+
+  def test_cache_tokens_default_zero_when_not_set():
+      mock = MockLLMClient()
+      mock.set_response("model-X", None, "test")  # No cache_*_tokens kwargs
+      response = mock.complete(model="model-X", prompt="x")
+      assert response.usage["cache_creation_input_tokens"] == 0
+      assert response.usage["cache_read_input_tokens"] == 0
+
+  def test_cache_tokens_wildcard_fallback():
+      mock = MockLLMClient()
+      mock.set_response("*", None, "test", cache_creation_input_tokens=512)
+      response = mock.complete(model="anything", prompt="x")
+      assert response.usage["cache_creation_input_tokens"] == 512
+
+  def test_reset_clears_cache_tokens():
+      mock = MockLLMClient()
+      mock.set_response("model-X", None, "test", cache_creation_input_tokens=1024)
+      mock.reset()
+      mock.set_response("model-X", None, "test")
+      response = mock.complete(model="model-X", prompt="x")
+      assert response.usage["cache_creation_input_tokens"] == 0
+  ```
+  Without these tests, the implementation could silently ignore the new args (resolver methods returning 0 unconditionally would still produce passing cache-hit tests IF those tests don't assert on the field — exactly the "mock not verified as called" anti-pattern from Round 4 lessons).
 
 ### Regression invariants
 
@@ -1011,11 +1404,11 @@ Two pieces, both flowing through the `CacheRenderContext` channel established in
 
 Append to `tests/test_nodes/test_llm/test_batch_cache_prefix.py`. **All tests use a `function`-scoped `MockLLMClient` fixture** so call-count assertions baseline cleanly per test.
 
-- **Prewarm + fail_fast + item[0] fails**: items[1:] not dispatched. Verify via `mock.complete_call_count == 1` (function-scoped baseline). Also assert `pending_errors` length == 1, `results[0]["status"] == "failure"`, `results[1:]` all `None`.
-- **Prewarm + continue + item[0] fails**: items[1:] dispatched anyway, all marked as cache-write attempts (no reads). Verify `mock.complete_call_count == N`.
-- **Prewarm + item[0] succeeds — barrier-based ordering test** (locks the serialize-then-fan-out invariant deterministically):
+- **Prewarm + fail_fast + item[0] fails**: items[1:] not dispatched. Verify via `assert len(mock.call_history) == 1` (function-scoped fixture baseline; `MockLLMClient` exposes `call_history` and `call_history_full` lists, NOT a `complete_call_count` attribute — verified `tests/shared/llm_mock.py:104-105`). Also assert `pending_errors` length == 1, `results[0]["status"] == "failure"`, `results[1:]` all `None`.
+- **Prewarm + continue + item[0] fails**: items[1:] dispatched anyway, all marked as cache-write attempts (no reads). Verify `assert len(mock.call_history) == N`.
+- **Prewarm + item[0] succeeds — barrier-based ordering test** (locks the serialize-then-fan-out invariant deterministically). **Round-5 timeout fix**: lowered from 5.0s to 1.0s — `tests/CLAUDE.md` Pitfall #15 mandates "Keep real wall-clock waiting under 0.1s"; 1.0s is the smallest barrier-timeout margin that's safe over slow-CI noise without violating the per-test budget. The test's "fast path" completes in ~50ms (item[0] sleeps 50ms then unblocks workers); 1s is a 20× margin:
   ```python
-  barrier = threading.Barrier(parties=N - 1, timeout=5.0)
+  barrier = threading.Barrier(parties=N - 1, timeout=1.0)
   call_timestamps: dict[int, float] = {}
   def mocked_complete(prompt, model, system=None, **kwargs):
       idx = int(re.search(r"item-(\d+)", prompt).group(1))  # extract from per-item prompt
@@ -1031,8 +1424,8 @@ Append to `tests/test_nodes/test_llm/test_batch_cache_prefix.py`. **All tests us
           barrier.wait()
       return mock_response_for(idx)
   ```
-  Assert: (a) all N items complete within timeout (5s); (b) `call_timestamps[0] < call_timestamps[i]` for every `i in range(1, N)` — item[0]'s timestamp precedes all worker timestamps; (c) the workers' timestamps are clustered (within 100ms of each other) since they all unblocked simultaneously when the barrier filled. Catches BOTH "items[0] is submitted to the pool by mistake" (test deadlocks) AND "items[1:] start before item[0] completes" (timestamp ordering fails).
-- **Prewarm + N=1**: skip auto-batch entirely (gate at top of `_execute_parallel` requires `len(items) > 1`). Verify `mock.complete_call_count == 1` and no `_drain_worker_buffer` call for item[0] (it wasn't prewarm-split — went through the regular full-fan-out path).
+  Assert: (a) all N items complete within timeout (1.0s); (b) `call_timestamps[0] < call_timestamps[i]` for every `i in range(1, N)` — item[0]'s timestamp precedes all worker timestamps; (c) the workers' timestamps are clustered (within 100ms of each other) since they all unblocked simultaneously when the barrier filled. Catches BOTH "items[0] is submitted to the pool by mistake" (test deadlocks) AND "items[1:] start before item[0] completes" (timestamp ordering fails).
+- **Prewarm + N=1**: skip auto-batch entirely (gate at top of `_execute_parallel` requires `len(items) > 1`). Verify `assert len(mock.call_history) == 1` and no `_drain_worker_buffer` call for item[0] (it wasn't prewarm-split — went through the regular full-fan-out path).
 - **No prewarm**: full fan-out from start; item[0] uses the regular barrier (parties=N) without exception.
 - **Per-item progress order** (not strict sequencing): assert that EVERY `call_history_full` entry for items[1:] has a `before-event` timestamp ≥ item[0]'s `after-event` timestamp; do NOT assert `call_history_full[0]` is item[0] (worker completion order is non-deterministic).
 
@@ -1052,7 +1445,14 @@ Bump the trace format constant, add per-event `cache_key`/`cache_source`/`cache_
 
 ## Pre-implementation verification
 
-Read `runtime/workflow_trace.py:202–238` (`_add_llm_data`) and confirm the LLM-call event payload comes from `node_output.get("llm_usage")`. Cache fields flow by extending the `llm_usage` dict the LLMNode writes (mirroring how `cache_creation_input_tokens` already flows there). The implementing agent confirms the data flow before patching.
+Read `runtime/workflow_trace.py:202–238` (`_add_llm_data`) — top-level event-list integration site for non-batch nodes. Cache fields flow by extending the `llm_usage` dict the LLMNode writes (mirroring how `cache_creation_input_tokens` already flows there).
+
+**Round-5 correction — TWO `event["llm_call"]` integration sites (not one)**:
+
+1. `runtime/workflow_trace.py:202–238` (`_add_llm_data`) — top-level integration. Reads `node_output["llm_usage"]`, writes `event["llm_call"]`. Used for non-batch nodes.
+2. `runtime/engine/batch_executor.py:669-671` (verified) — per-batch-item integration. Reads `node_output.get("llm_usage")`, writes `item_event["llm_call"] = llm_usage`. Used for parallel-batch and sequential-batch trace events. Per-batch-item granularity asserted by E.1's test "`event["batch_items"][i]["llm_call"]["cache_key"]` is per-item, distinct per i."
+
+Both sites do the same `event["llm_call"] = llm_usage` whole-dict assignment, so extending the `llm_usage` keyset at the **producer** side (LLMNode writes the new keys) flows through both sites with no consumer-side code change. **However**, the implementing agent must verify BOTH sites at patch time — a future contributor extending `_add_llm_data` (e.g., to add a new field synthesis or filter) would need to mirror the change at `batch_executor.py:669-671` to preserve per-item granularity.
 
 ## E.1 — Format constant + new fields (route cache metadata through `llm_usage`, NOT a sidecar)
 
@@ -1069,12 +1469,28 @@ Read `runtime/workflow_trace.py:202–238` (`_add_llm_data`) and confirm the LLM
 - `src/pflow/nodes/llm/llm.py`:
   - In `post()` (line 431, where `shared["llm_usage"]` is populated): `usage_dict.get("cache_key")`, `usage_dict.get("cache_source")`, `usage_dict.get("cache_age_sec")` are added to the `llm_usage` dict written to `shared`. For non-cached calls, only `cache_key` is set (the key the entry was written under, available from the engine via `write_memo_cache`). For cached calls, all three are set.
   - **`cache_chunks_skipped` (cross-layer co-edit from C1.2)**: `post()` ALSO copies `prep_res.get("__cache_chunks_skipped__", [])` into `shared[node_id]["llm_usage"]["cache_chunks_skipped"]`. Default empty list. This is the success-path producer for the trace channel.
-  - **Error-path producer for `cache_chunks_skipped`**: extend the LLMNode's error-output builder (the path that fires when `_call_llm` returns an error-dict or raises a deterministic LLMCallError before `post()` runs) to ALSO copy `prep_res["__cache_chunks_skipped__"]` into the failure-event's `llm_usage`. Without this, the trace event for the failure carries no skip context, breaking `analyze-cache --from-trace` discrepancy attribution. Locate the error-output construction site (likely `_error_dict_from_exception` in `nodes/llm/llm.py`); add the copy alongside any existing `usage`-propagation.
+  - **Error-path producers for `cache_chunks_skipped`** (Round-5 correction — wrap at CALLER, not at builder): the error-dict builders `_error_dict_from_exception(exc)` / `_error_dict_for_timeout(model, message)` / `_error_dict_for_generic_failure(model, exc, attempts)` (verified `nodes/llm/llm.py:33-110`) take only exception/model/message — they have NO access to `prep_res`. Don't widen their signatures (cross-cutting change). Instead, wrap the error-dict at the CALL SITES that DO have `prep_res` in scope:
+    1. Inside `LLMNode._call_llm` (~line 380), wherever it returns `_error_dict_from_exception(e)` or `_error_dict_for_timeout(model, msg)`: capture the result in a local variable and add `result["usage"]["cache_chunks_skipped"] = prep_res.get("__cache_chunks_skipped__", [])` before returning.
+    2. Inside `LLMNode.exec_fallback(prep_res, exc)` (~line 563-580): same wrap pattern around the `_error_dict_for_generic_failure(...)` call. `prep_res` is the method's input argument here, directly available.
+    3. **Inside `LLMNode.post()` JSON-parse error path** (~line 511 — `error_dict = _error_dict_from_exception(err)` after constructing `LLMResponseParseError`. Round 6 added this site — Round 5 missed it). `prep_res` is the method's input argument (line 431); directly available. Same wrap pattern: `error_dict["usage"]["cache_chunks_skipped"] = prep_res.get("__cache_chunks_skipped__", [])` before whatever `post` does with `error_dict` (`shared`-write or return).
+    Locate every error-return/raise site in `_call_llm`, `exec_fallback`, AND `post()`'s structured-output error branch (and any new path that emerges during implementation); apply the same wrap. Test E.1 covers each path explicitly (deterministic LLMCallError, timeout, retry-exhausted, structured-output JSON-parse error, success — all FIVE must produce traces carrying `cache_chunks_skipped`).
   - **How does LLMNode learn the cache_key, cache_source, cache_age_sec?** They flow through the node-output dict the engine already writes via `apply_memo_hit` (cached path) or via `write_memo_cache` (write path). The engine's existing `usage` propagation is the channel; we extend the propagated keyset.
   - **Memo HIT round-trip for `cache_chunks_skipped`**: when the engine's `write_memo_cache` persists `shared[node_id]["llm_usage"]` to disk, the `cache_chunks_skipped` field is included automatically (it's in the dict). On a subsequent memo HIT, `apply_memo_hit` restores the full `llm_usage` payload — including the skip list from the original write. No special-case code; the field rides the existing channel.
 
 - `src/pflow/runtime/engine/instrumentation.py`:
   - **All three sites below MUST gate cache-metadata writes on `node_type_name == "LLMNode"`.** Add a small helper `_should_write_cache_metadata(node_type_name) -> bool` that returns `node_type_name == "LLMNode"` and call it at all three sites for symmetry.
+  - **Signature-widening checklist (Round 5 — verified two of the three sites currently lack `node_type_name`)**: Verified `apply_memo_hit` (line 241-247): `(node_id, shared, cached_action, cached_output, config_hash)` — no `node_type_name`. Verified `write_memo_cache` (line 297-304): `(node_id, shared, cache_key, action, *, duration_ms)` — no `node_type_name`. Only `handle_cached_execution` and `check_memo_cache:271` already have it. Patch table:
+
+  | Function | Current signature | Widening | Caller(s) to update |
+  |---|---|---|---|
+  | `apply_memo_hit` | `(node_id, shared, cached_action, cached_output, config_hash)` | append `*, node_type_name: str` (keyword-only — prevents future positional-arg drift) | **THREE callers** (Round 6 — Round 5 missed the third): (1) `instrumentation.py:292` `check_memo_cache` (already has `node_type_name`; thread through). (2) `engine.py:351` engine step-5 dispatch (`config.node_type_name` available via `_execute_node`'s `config: NodeConfig` parameter). (3) **`execution/plan.py:862`** `_cached_memo_entry` builder — `config: NodeConfig` is also in scope here, so `config.node_type_name` is reachable; thread through. Without updating this third caller, the dry-run planner crashes at every memo-hit prediction. |
+  | `write_memo_cache` | `(node_id, shared, cache_key, action, *, duration_ms)` | append `, node_type_name: str` to the keyword-only block | Single caller at `engine.py:428` (step 12 in `_execute_node`) — `config.node_type_name` in scope. |
+  | `handle_cached_execution` | already has `node_type_name` | (no change) | (no change) |
+
+  **Implementing-agent verification step (Round 6 confirmed)**: grep the codebase before patching:
+  - `grep -rn "apply_memo_hit" src/` should show exactly 3 production callers (`engine.py:351`, `instrumentation.py:292`, `execution/plan.py:862`) plus the def site at `instrumentation.py:241`. Verified Round 6.
+  - `grep -rn "write_memo_cache" src/` should show 1 production caller (`engine.py:428`) plus the def site at `instrumentation.py:297`. Verified Round 6.
+  - If a NEW caller appears (e.g., a test fixture, a future code path), add a `node_type_name: str` parameter to that caller's signature too — propagating up the call chain. If `node_type_name` isn't reachable from a caller, that's a structural issue requiring user surface, not a one-line fix.
   - **ClaudeCodeNode is intentionally excluded from this gate** (design decision per round-3 review). ClaudeCodeNode writes `cache_creation_input_tokens` / `cache_read_input_tokens` to `shared["llm_usage"]` from the Claude SDK's metadata (verified `nodes/claude/claude_code.py:875-889`); those represent provider-side caching done by the SDK. pflow's memo-cache `cache_key` / `cache_source="memo"` / `cache_age_sec` are NOT meaningful for ClaudeCodeNode because:
     1. ClaudeCodeNode's request-shape (Claude Code agent loop) is not amenable to pflow's memo cache — its outputs depend on multi-turn agent behavior, not a single deterministic prompt+params hash.
     2. Mixing `cache_creation_input_tokens` (SDK-side) with `cache_source="memo"` (pflow-side) would mislead agents reading the trace into thinking the SDK cache fired when it was actually the pflow memo cache.
@@ -1136,11 +1552,11 @@ Create `src/pflow/core/cache_analysis/` with the small, independent modules that
 - `src/pflow/core/cache_analysis/__init__.py` — re-exports `analyze`, `summarize`, `CacheAnalysis` dataclass.
 
 - `src/pflow/core/cache_analysis/warning_catalog.py` (new):
-  - Closed catalog of 10 `cache.*` warning IDs per spec DD#29. The catalog is a module-level constant `CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec]` where `CacheWarningSpec` is a frozen dataclass with the fields below. **Each row's values are concrete, not placeholders** — the implementing agent encodes them verbatim. The 10th entry, `cache.discrepancy`, is added per the orchestrator decision (resolves the spec line-944 open question — it fills the 10-entry slot reserved by DD#29).
+  - Closed catalog of `cache.*` warning IDs — **12 entries in v1** (10 from spec DD#29 + `cache.discrepancy` from Round 2 + `cache.invalid-on-non-llm` and `cache.prewarm-no-prefix` from Round 3). The catalog is a module-level constant `CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec]` where `CacheWarningSpec` is a frozen dataclass with the fields below. **Each row's values are concrete, not placeholders** — the implementing agent encodes them verbatim. The catalog count is auto-derived via `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (see "Catalog count strategy" subsection below); test code reads the constant or `len(CACHE_WARNING_CATALOG.keys())` rather than hardcoding the integer. `cache.discrepancy` was added per orchestrator decision (resolves spec line-944 open question — fills the 10-entry slot reserved by DD#29 + extends).
 
   | id | severity | source | category | message_template | required_context_keys | suggestions_template | path_template | nullable_cost_keys |
   |---|---|---|---|---|---|---|---|---|
-  | `cache.order-mismatch` | `ERROR` | `validator` | `cache_failure` | `"{node_id}: prompt_cache order doesn't match ## Cache declaration\n  declared:  {declared}\n  you wrote: {actual}\n  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order"` | `(("node_id", str), ("declared", list), ("actual", list))` | `[]` (message itself carries the fix) | `"nodes[id={node_id}].prompt_cache"` | `set()` |
+  | `cache.order-mismatch` | `ERROR` | `validator` | `cache_failure` | `"{node_id}: prompt_cache order doesn't match ## Cache declaration\n  declared:  {declared_str}\n  you wrote: {actual_str}\n  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order"` | `(("node_id", str), ("declared", list), ("actual", list), ("declared_str", str), ("actual_str", str))` | `[]` (message itself carries the fix) | `"nodes[id={node_id}].prompt_cache"` | `set()` |
   | `cache.unused-chunk` | `WARNING` | `validator` | `cache_warning` | `"## Cache declares chunk {chunk_name!r} but no node references it"` | `(("chunk_name", str), ("source_line", int))` | `["Remove the unused chunk from ## Cache, OR add it to a node's prompt_cache: list."]` | `"cache.items[name={chunk_name}]"` | `set()` |
   | `cache.shared-context-undeclared` | `INFO` | `cache_analyzer` | `cache_advisory` | `"{node_count} LLM nodes share static context that isn't in any ## Cache block (saves ~${savings_usd:.2f}/run)"` | `(("node_count", int), ("shared_chunks", list), ("affected_workflow", str), ("savings_usd", float\|None))` | `["Paste the suggested ## Cache block (see Suggested ## Cache block section above) into {affected_workflow}.", "Per-node prompt_cache: assignments are listed in the same section."]` | `"workflows[path={affected_workflow}]"` | `{"savings_usd"}` |
   | `cache.batch-prewarm-recommended` | `WARNING` | `cache_analyzer` | `cache_warning` | `"{node_id}: {batch_size}-item batch with ~{prefix_tokens_estimated}-token static prefix has no explicit prewarm decision; prewarming would save ~{savings_pct}% of batch cost"` | `(("node_id", str), ("batch_size", int), ("prefix_tokens_estimated", int), ("savings_pct", int), ("savings_usd", float\|None))` | `["Add `- prewarm: true` to {node_id} to opt in (-${savings_usd:.2f}/run).", "OR add `- prewarm: false` to {node_id} to opt out explicitly (suppresses this warning)."]` | `"nodes[id={node_id}]"` | `{"savings_usd"}` |
@@ -1214,7 +1630,28 @@ Create `src/pflow/core/cache_analysis/` with the small, independent modules that
 
   **`root_cause` enum values for `cache.discrepancy`** (only emitted in `--from-trace` / mode-4): `"ttl_expiry"` | `"key_mismatch"` | `"parallel_write_race"` | `"chunk_skipped"` | `"unknown"`. Encoded as a `Literal` in `CacheWarningSpec`. Note: `context["root_cause"]` MUST preserve the original (possibly-unknown) value even when the action template comes from the `"unknown"` row — agents reading the trace event need the rejected enum for debugging.
 
-  **Catalog count strategy (CRITICAL — avoids drift)**: define `EXPECTED_CATALOG_COUNT: int = len(CACHE_WARNING_CATALOG)` next to the catalog dict in `warning_catalog.py`. ALL count-references — F1 catalog test, F2 per-warning-ID coverage assertion, F3.2 MCP docstring contract test — read this constant rather than hardcoding "12." Tests assert `len(CATALOG) == EXPECTED_CATALOG_COUNT` AND assert that the docstring contains `len(CATALOG)` distinct id strings (computed at test time, not hardcoded). Adding a new ID later requires zero count-update edits across the plan; the constant is auto-derived. Round-3 left "10/11/12" in 5 prose sites — the constant pattern eliminates that entire drift class.
+  **Catalog count strategy (CRITICAL — avoids drift)**: define `EXPECTED_CATALOG_COUNT: int = len(CACHE_WARNING_CATALOG)` next to the catalog dict in `warning_catalog.py`. ALL count-references — F1 catalog test, F2 per-warning-ID coverage assertion, F3.2 MCP docstring contract test — read this constant rather than hardcoding the integer. Tests assert `len(CATALOG) == EXPECTED_CATALOG_COUNT` AND assert that the docstring contains `len(CATALOG)` distinct id strings (computed at test time, not hardcoded). Adding a new ID requires zero count-update edits across the plan; the constant is auto-derived. **Round-5 fix**: prose count references previously read "10 IDs" / "10 total" (lines that survived Round 2/3 entry additions). Replace EVERY remaining prose count reference with: `EXPECTED_CATALOG_COUNT` (in test code) or `len(CACHE_WARNING_CATALOG.keys())` (in test code), or — when historical context aids the reader — the literal `12 entries (10 from spec DD#29 + cache.discrepancy from Round 2 + cache.invalid-on-non-llm and cache.prewarm-no-prefix from Round 3)`. NEVER hardcode a bare integer count without the historical-breakdown footnote.
+
+  **`cache.order-mismatch` formatting contract (CRITICAL — Round 5 fix)**: spec contract (`task-159.md:210-215`) mandates the canonical message format with **BARE identifiers**:
+  ```
+  declared:  [concept, concept_brief, creative-direction.response]
+  you wrote: [concept_brief, concept, creative-direction.response]
+  ```
+  Python's `str(list)` produces `['concept', 'concept_brief', 'creative-direction.response']` — single quotes around items, NOT bare. The catalog row above uses `{declared_str}` / `{actual_str}` placeholders (string-typed) so `make_diagnostic` formats them verbatim. **The CALLER pre-formats** before invoking `make_diagnostic`:
+  ```python
+  # In _validate_cache_block:
+  declared_str = "[" + ", ".join(declared) + "]"   # Bare-identifier bracketed form
+  actual_str = "[" + ", ".join(actual) + "]"
+  diag = make_diagnostic(
+      "cache.order-mismatch",
+      node_id=node["id"],
+      declared=declared,           # Typed list — preserved in context for agent dispatch
+      actual=actual,               # Typed list — preserved in context for agent dispatch
+      declared_str=declared_str,   # Bare-formatted — used in message rendering
+      actual_str=actual_str,       # Bare-formatted — used in message rendering
+  )
+  ```
+  Both shapes survive: `context["declared"]` and `context["actual"]` carry typed lists for agent dispatch (JSON consumers iterate them); `context["declared_str"]` and `context["actual_str"]` carry bare-formatted strings for message rendering. The B2.3 byte-equality test (`tests/test_core/test_prompt_cache_validation.py`) asserts the rendered message matches `task-159.md:210-215` byte-for-byte — which uses the bare format.
 
   - `cache.invalid-on-non-llm` — validator-side ERROR closing the validator-reach gap (B2.3, see C3 review fix).
   - `cache.prewarm-no-prefix` — analytical-tier INFO that surfaces when `prewarm: true` is declared but no static prefix exists (D.1 references it; previously not in catalog).
@@ -1223,6 +1660,7 @@ Create `src/pflow/core/cache_analysis/` with the small, independent modules that
   - **`cache.opportunities-available`** is NOT in the catalog — it's the dry-run nudge ID emitted by `summarize()` per spec line 307. It has its own constant `CACHE_OPPORTUNITIES_NUDGE_ID = "cache.opportunities-available"` next to the catalog. The dry-run nudge format string is locked separately at `summarize.py` (see F2 + F3.3); message format: `"Cache: {n} design opportunit{y_or_ies} available (estimated -${savings_usd:.2f}/run, -{savings_pct}%)."` where `y_or_ies = "y" if n == 1 else "ies"`.
 
   - Helper: `make_diagnostic(warning_id, *, node_id=None, **context_kwargs) -> Diagnostic` reads the catalog row, formats `message_template` + each `suggestions_template` entry via `.format(**format_dict)` (where `format_dict = {**context_kwargs, "node_id": node_id}`), attaches `id=warning_id`, `source` from the catalog row (NOT uniform — per-ID split), `severity` from the row, `context["category"]` from `category_constant`, `see_also=["caching"]`, and `path` from `.format(**format_dict)` on `path_template`. **Validates** that all `required_context_keys` are present in `context_kwargs` (raises `KeyError` at construction if missing — catches catalog-misuse bugs at test time, not in production). **`node_id` is merged into the format dict** so message/suggestions/path templates can reference `{node_id}` without the caller having to duplicate it in `context_kwargs`.
+    - **Context-passthrough rule (Round 5 fix — locks `cache.discrepancy` `context["root_cause"]` preservation contract)**: the helper assembles `diag.context` as `{**context_kwargs, "category": category_constant}` (PLUS `"root_cause_action": action_payload` for `cache.discrepancy` per the dispatch logic below). EVERY key from `context_kwargs` survives into `diag.context` byte-for-byte. The implementing agent MUST NOT filter context_kwargs to "only the keys the message template references" — agents reading the JSON output dispatch on typed context fields (e.g., `context["root_cause"]`, `context["declared"]`, `context["actual"]`, `context["invalid_fields"]`) regardless of whether the human-rendered message references them. Without this passthrough, the `cache.discrepancy` test asserting `diag.context["root_cause"] == "future_value"` (line ~1279) would fail under literal pseudo-code. Test in F1: a "context-passthrough fidelity" parametrized test that for every catalog ID, asserts every `required_context_keys` value passed in `context_kwargs` appears in `diag.context` byte-for-byte (excluding `node_id` which is the helper's separate kwarg, and `category` which is set by the helper).
 
   - **`cache.invalid-on-non-llm` emission contract** (V6 fix — combined-diagnostic shape per Round 4 review): emit ONE Diagnostic per offending node listing ALL offending fields, NOT one Diagnostic per field. Identity tuple `(severity, source, node_id, id or message)` would collapse per-field emissions on shared `id`, hiding offenses. Caller computes:
     ```python
@@ -1317,7 +1755,8 @@ Create `src/pflow/core/cache_analysis/` with the small, independent modules that
 ## Regression invariants
 
 - `test_plan_drift.py` stays green.
-- The new package has no imports from `runtime/`, `nodes/`, or `cli/` (mirrors the `core/` discipline). Inputs are IR dicts and `MemoizationCache` instances; outputs are `Diagnostic` objects and dataclasses.
+- The new package has no DIRECT imports from `runtime/`, `nodes/`, or `cli/` (mirrors the `core/` discipline). Inputs are IR dicts and `MemoizationCache` instances; outputs are `Diagnostic` objects and dataclasses.
+- **Exception**: `core/cache_analysis/analyze.py` MAY import from `core/cache_render.py` (a sibling `core/` module). `core/cache_render.py` itself uses lazy imports of `runtime/template_resolver.py` and `runtime/node_state.py` inside function bodies — see "Shared cache-rendering helpers — module placement" near the top of this plan. The transitive runtime dependency is acceptable because (a) cache_analysis only fires on opt-in commands (`pflow analyze-cache` and `pflow run --dry-run`), not on `pflow run` validation, so it doesn't add to validation cost; (b) the lazy-import pattern keeps module-load cheap.
 
 ---
 
@@ -1334,8 +1773,25 @@ Compose the F1 primitives into the full `analyze()` and `summarize()` entry poin
   - Auto-load most recent matching 2.1.0 trace per DD#34: scan `~/.pflow/debug/`, parse top-level `workflow_path`, match against the analyzed workflow's resolved path (or `ir-hash:<md5>` for inline). 2.0.0 traces ignored by auto-load (no `workflow_path` field).
   - **2.0.0-skip info note** (review-silent-failures C7): when auto-load finds 2.0.0 traces matching the workflow filename but skips them due to format version, append an info note to `analysis.notes`: `"Found N 2.0.0 traces matching this workflow but skipped (auto-load requires 2.1.0). Use --from-trace <path> to load a specific trace, or --no-trace-autoload to disable auto-loading."` Without this, agents see `confidence: low_no_data` and don't realize their existing traces are present-but-ignored.
   - **Unparseable-trace defense** (Round 4 silent-failure): when scanning `~/.pflow/debug/`, individual trace files may be corrupt JSON, missing required fields, or otherwise unreadable. The scanner MUST NOT silently skip them — log via `logger.debug("Skipping unparseable trace %s: %s", path, exc)` per skipped file (debug, not info — too noisy for normal runs) AND when ≥1 skip fired during this analyze invocation, append an info note to `analysis.notes`: `"Found N unparseable trace files in ~/.pflow/debug/ (run with --verbose for details)."` Mirrors the 2.0.0-skip pattern. Without this, agents whose recent trace files got corrupted see `confidence: low_no_data` with no signal that their traces are present-but-broken.
-  - **Predicted cache_key uses shared resolution helper** (Round 4 impact-completeness): when computing `predicted_cache_key` for `cache.discrepancy` analysis, F2's `analyze.py` MUST use the same `_resolve_chunk_value` helper from `runtime/engine/plan_node.py` (or its successor location per B3.3) — NOT inline a parallel resolution path. Inline reimplementation diverges from runtime resolution and produces false discrepancy reports. The analyzer's prediction context uses memo'd upstream values (per DD#34 confidence labeling); the helper's resolution semantics (sentinel-on-ABSENT, deterministic-serialize, ValueError on strict failure) apply identically. Document this in `analyze.py`'s docstring: "Cache_key prediction MUST share `_resolve_chunk_value` with runtime; never inline."
+  - **Note ordering when both info notes can fire (Round 5 fix)**: in a single `analyze-cache` invocation, BOTH 2.0.0-skip note AND unparseable-trace-skip note may fire (e.g., `~/.pflow/debug/` contains 2 matching 2.0.0 traces AND 3 corrupt files). Lock the ordering: append the 2.0.0-skip note FIRST, then the unparseable-skip note. Test with a combined fixture (2 valid 2.0.0 + 3 corrupt) and assert `analysis.notes[i:i+2]` is `[2.0.0-note, unparseable-note]` byte-equal. Without locking, golden-test diffs flicker non-deterministically across runs.
+  - **Predicted cache_key uses shared resolution helper** (Round 4 impact-completeness, hardened Round 5): F2's `analyze.py` MUST import from `pflow.core.cache_render` — both `_resolve_chunk_value` AND `_resolve_static_prefix_for_cache` (the latter for predicted auto-batch-prefix cache_keys per D.1). Import: `from pflow.core.cache_render import _resolve_chunk_value, _resolve_static_prefix_for_cache, _CHUNK_ABSENT`. F2 ALSO filters `_CHUNK_ABSENT` from the predicted subset before serialization — same contract as `plan_node._render_cache_for_hash` and `LLMNode.prep`. Inline reimplementation diverges from runtime resolution and produces false discrepancy reports. The analyzer's prediction context uses memo'd upstream values (per DD#34 confidence labeling); the helper's resolution semantics (sentinel-on-ABSENT, deterministic-serialize, ValueError on strict failure) apply identically. Document in `analyze.py`'s docstring: "Cache_key prediction MUST share `_resolve_chunk_value` and `_resolve_static_prefix_for_cache` with runtime; never inline. The `_CHUNK_ABSENT` sentinel filter is applied identically to runtime so predicted vs actual cache_keys are byte-equal when the same upstream state holds." This closes the "byte-identical resolution across all cache paths" invariant for F2 too — chunk hash, chunk message, static-prefix auto-batch (D.1), AND analyzer prediction (F2) all route through the same helpers.
   - Composes: parser → cross-workflow walker → token estimation per node → confidence labeling per DD#34 (4-level per-call, 3-level aggregate, with coverage detail) → padding advisor → recommended-actions ordering (impact descending).
+  - **Confidence-label aggregation rule (Round 5 + Round 6 strict-semantics correction)**: per-call `data_source ∈ {"trace", "memo", "estimator", "heuristic"}`. Aggregate `estimate_confidence` follows DD#34's STRICT semantics verbatim (verified Round 6 against spec line 634-636):
+    > **DD#34 (spec line 634-636)**: *"All rows `trace` → `high_from_trace`. At least some `memo` (or mixed `trace`/`memo`) → `medium_from_memo`. All rows `estimator` or `heuristic` → `low_no_data`."*
+    ```python
+    def aggregate_confidence(per_call_sources: list[str]) -> str:
+        # STRICT: ALL rows must be "trace" for high (matches DD#34 line 634 verbatim).
+        if all(src == "trace" for src in per_call_sources):
+            return "high_from_trace"
+        # mixed trace/memo OR all memo OR partial coverage → medium (per spec line 635).
+        if all(src in ("trace", "memo") for src in per_call_sources):
+            return "medium_from_memo"
+        # any estimator/heuristic present → low (per spec line 636).
+        return "low_no_data"
+    ```
+    **Round 5 had this wrong** — defaulted to permissive "any row trace → high" semantics, which contradicts DD#34's "All rows" wording AND the rationale at spec line 638 (DD#34's coverage-detail paragraph explicitly defends against `medium_from_memo` overstating fidelity for "2 of 30 nodes" — same overstatement happens at the high-from-trace aggregate under permissive semantics). Round 6 corrected to strict per spec.
+
+    The `estimate_confidence_coverage: {"trace": <int>, "memo": <int>, "estimator": <int>, "heuristic": <int>, "total": <int>}` JSON sibling field carries per-source counts so agents can compute alternate aggregations themselves — no information lost. **Coverage detail in text-mode** (per DD#34 spec line 638): when aggregate is `medium_from_memo` or `high_from_trace`, append `(<count> of <total> nodes)` to the rendered confidence label.
   - Returns a `CacheAnalysis` dataclass with: summary fields, per-call rows, recommended actions, suggested cache blocks (when greenfield), cross-workflow findings, warnings list, notes.
 
 - `src/pflow/core/cache_analysis/summarize.py` (new):
@@ -1390,7 +1846,7 @@ Compose the F1 primitives into the full `analyze()` and `summarize()` entry poin
     - JSON empty-array contract (review-agent-ux 5): `cross_workflow.rename_detections`, `cross_workflow.prose_mismatches`, `cross_workflow.value_flow_opportunities` are PRESENT as `[]` (not absent, not `null`) when no findings exist.
 
 - **Per-warning-ID coverage** (Suggestion 30 — `tests/test_core/test_cache_analysis_per_id_emission.py`, new):
-  - For every warning ID in the catalog (10 total), exists at least one synthetic minimal workflow under `tests/test_cli/golden_analyze_cache/per_id/{cache_id}/` that triggers exactly that ID.
+  - For every warning ID in the catalog (iterate `CACHE_WARNING_CATALOG.keys()` at test time — currently 12 entries; do NOT hardcode the integer), exists at least one synthetic minimal workflow under `tests/test_cli/golden_analyze_cache/per_id/{cache_id}/` that triggers exactly that ID.
   - Test asserts: (a) running `analyze-cache` on the synthetic workflow emits the expected ID; (b) the emitted Diagnostic carries every `required_context_keys` key; (c) the rendered text output (golden file) matches byte-for-byte. Catches the case where a catalog ID is in the catalog but no production code path actually emits it (dead-code regression).
   - Coverage assertion at module level: `set(catalog.keys()) == set(scanned synthetic workflow directories)` — fails CI if a new ID is added without a synthetic workflow.
 
@@ -1427,7 +1883,7 @@ Surface F2 to users via three entry points: a new `pflow analyze-cache` CLI comm
     | Workflow validation fails — structural failures upstream of `validate_data_flow` (schema errors, malformed IR) — that prevent `compile_workflow` from producing a valid IR | non-zero | Existing diagnostic pipeline via stderr. **Cache validation findings (`cache.order-mismatch`, `cache.invalid-on-non-llm`, `cache.unused-chunk`) do NOT take this path** — they're emitted by `_validate_cache_block` which runs alongside analysis; their presence does not abort the analyzer. Compile/parse errors that prevent IR construction DO take this path. |
     | `--from-trace <path>` where path doesn't exist | non-zero | Validation-error-style diagnostic: `"Trace file not found: <path>"` + suggestion `"Check the path. Auto-load reads from ~/.pflow/debug/; for explicit override pass an existing trace JSON."`. |
     | `--from-trace <path>` where the file exists but isn't valid JSON OR missing `format_version` | non-zero | `"Trace file <path> is not a valid pflow trace (JSON parse error / missing format_version field)."` |
-    | `--from-trace <path>` where file is a 2.0.0 trace | `0` | Loads successfully (works on both 2.0.0 and 2.1.0 — see DD#34). Mode-4 output WITHOUT discrepancy analysis (per-call `data_source` falls to `memo` / `estimator` / `heuristic`); a single info note explains the limitation. |
+    | `--from-trace <path>` where file is a 2.0.0 trace | `0` | Loads successfully (works on both 2.0.0 and 2.1.0 — see DD#34). Mode-4 output WITHOUT discrepancy analysis (per-call `data_source` falls to `memo` / `estimator` / `heuristic`). Locked info note (Round-5 byte-equality): `"Loaded 2.0.0 trace from <path> — discrepancy analysis omitted (requires 2.1.0 cache_key/cache_age_sec fields). Re-run the workflow to produce a 2.1.0 trace, OR use --no-trace-autoload to skip trace loading."` Test asserts byte-equality of the rendered note against this format string with `<path>` substituted. |
     | Auto-load found a 2.0.0 trace and skipped it | `0` | Info note added to `notes` array (see F2 byte-equality test). Analysis proceeds without trace data. |
     | Conflicting `--from-trace <path>` AND `--no-trace-autoload` | non-zero | Click validation error: `"--from-trace and --no-trace-autoload are mutually exclusive."` |
     | All node models unpriced (cost-degradation tri-state) | `0` | Cost rendering = `unavailable`; structural recommendations still emitted. NOT a failure. |
@@ -1622,192 +2078,27 @@ These are documented above but listed here for the implementing agent's checklis
 
 If any verification fails, surface to the user before continuing.
 
-# Summary of plan corrections from review
+# Plan refinement history
 
-Applied to the plan from the code-review passes (Round 1 + Round 2 + Round 3 + Round 4):
+This plan has been refined across 6 review rounds:
+- **Rounds 1–2** stabilized the architectural backbone (`CacheRenderContext` consolidation, frozen IR dataclasses, `MappingProxyType` outer wrap, single save/restore boundary).
+- **Round 3** closed correctness gaps (validator reach for top-level keys, ABSENT-branch hash-vs-prep symmetry, prewarm execution algorithm).
+- **Round 4** hardened pseudo-code precision (verified every symbol/signature against actual code; introduced V5/V6 fix-shapes; added 5 high-value structural additions including `_resolve_static_prefix_for_cache` and `cache.discrepancy` typed payload).
+- **Rounds 5–6** closed layer-placement (`core/cache_render.py`), defensive-bypass (`_make_serializable` sentinel), and factual errors (missed callers, off-by-N enumerations, spec-strict-vs-permissive aggregation).
 
-**Round 4 fixes (applied this session — Critical + High-Priority + selected Tier-3, after reading actual code to validate every pseudo-code reference)**:
+All fixes are encoded inline in the relevant phase sections — no unmerged corrections remain. The journey, the tacit knowledge, and the meta-lessons live in `progress-log.md` §31–§35 and `starting-context/braindump-2026-04-28-plan-writing-and-review.md`. Read those if you need the *why*; this plan is the *how*.
 
-Critical pseudo-code corrections (Round 3 introduced these by writing pseudo-code without reading the target functions):
-- `_resolve_chunk_value` pseudo-code referenced `TemplateResolutionError` — verified does NOT exist in pflow. `TemplateResolver.resolve_template` raises plain `ValueError` (with `_pflow_partial_resolutions` + `_pflow_template_diagnostic` annotations). Helper now lets `ValueError` propagate; documented that `plan_node.py:57` already catches `except ValueError` per existing precedent.
-- `_resolve_chunk_value` pseudo-code referenced `node_state.ABSENT` — verified actual symbol is `NodeStatus.ABSENT` per `node_state.py:25`. Pseudo-code now imports `from pflow.runtime.node_state import NodeStatus, get_node_status` and compares `== NodeStatus.ABSENT`.
-- Pseudo-code had dead `if upstream_node is not None` check — verified `extract_root_node_id` always returns `str` (never `None`) per `template_resolver.py:212`. Dropped the dead check.
-- D.2 prewarm pseudo-code treated `process_item`'s return as a dict — verified actual return is 5-tuple `(idx, result, error, duration_ms, buffered_events)` per `batch_executor.py:589`. Rewrote D.2 with correct destructure mirroring `_collect_parallel_results:490-522`. Extended `_collect_parallel_results` signature with `*, initial_completed: int = 0, total: int | None = None` kwargs (backward-compatible) so the prewarm-split can pass `initial_completed=1, total=len(items)` and avoid duplicating per-future processing.
+## Deferred items the implementing agent should still verify
 
-V5 fix (Schema vs `_validate_cache_block` shape redundancy — top-10% pattern: one rule per error condition):
-- Decision: schema is single source for shape (`prompt_cache: list[str]`, `prewarm: bool`, `cache.ttl` enum). `_validate_cache_block` does ONLY semantics — cross-references, ordering, batch-scoped rejection, non-LLM-type rejection.
-- Compile-path defense: `_validate_cache_block` emits `logger.warning` and skips nodes with malformed `prompt_cache`/`prewarm` shape; deeper compile-time error (NodeConfig construction) surfaces normally; NO Diagnostic for shape errors from `_validate_cache_block`.
-- Removed the obsolete "two diagnostics that dedupe" test (was based on the misanalysis); replaced with explicit "shape-malformed `prompt_cache`" test asserting validator path emits ONE schema diagnostic AND compile path skips silently with logger.warning.
+These were noted across review rounds but intentionally not encoded as patches — verify during the relevant phase:
 
-V6 fix (Multi-field rejection collapse — top-10% pattern: one diagnostic per [rule, location], multiple offenses listed):
-- `cache.invalid-on-non-llm` now emits ONE Diagnostic per offending node with `context["invalid_fields"]: list[str]` listing ALL fields. Message lists fields CSV-formatted. Catalog row updated. Emission contract documented inline. Identity tuple already handles dedup correctly under this shape.
-- A node with both `prompt_cache:` AND `prewarm:` now produces ONE error (was: two emissions collapsed via id-dedup, hiding one offense).
+- **review-validation-consistency 4**: `template_validation/` vs `data_flow.py` asymmetry — during B2.3, verify whether cache chunks need `template_validation/` reach.
+- **review-impact-completeness 5**: `WorkflowExecutor.ALLOWED_PARAMS` — note that `prompt_cache:` / `prewarm:` on a `type: workflow` node is correctly rejected by validator step 8.
+- **review-impact-completeness 9**: `_NEAR_MISS_SECTIONS` typo hint for `## Cahe` — verify the parser's near-miss suggester surfaces "Cache" as a hint when the user typos the section name.
+- **review-impact-completeness 15**: `dependency_discovery` walker — verified Round 5 (walker iterates `node["params"]` only; cache chunks at top-level are structurally invisible). Test in B2.1 locks the contract; re-verify if the IR shape ever moves cache items into per-node params.
+- **review-feature-interactions C3**: Gemini multi-marker collapse — verified during pre-plan Gemini spike (progress log §32). Re-verify during Phase C2 if the LiteLLM Vertex translation behavior changes.
 
-Helper dispatch refinements:
-- `make_diagnostic` now merges `node_id` into the format dict (`{**context_kwargs, "node_id": node_id}`) before formatting templates — `{node_id}` placeholders in action templates resolve correctly.
-- `cache.discrepancy` unknown-enum fallback emits `logger.warning(...)` AND surfaces the rejected enum value in the rendered message (template now includes `{root_cause!r}`). Agents see what was rejected, not just "unknown."
-- `context["root_cause"]` preserves the original (possibly-unknown) enum value for downstream debugging.
+**Two open user decisions (must surface before respective phase ships):**
 
-Catalog count drift defense:
-- Defined `EXPECTED_CATALOG_COUNT: int = len(CACHE_WARNING_CATALOG)` constant next to the catalog. ALL count-references read this constant. Tests iterate `CACHE_WARNING_CATALOG.keys()` rather than hardcoding numbers. Adding a new catalog entry requires zero count-update edits across the plan; constant is auto-derived.
-- F3.2 MCP docstring contract test asserts every id in `CACHE_WARNING_CATALOG.keys()` appears in the docstring (computed at test time, not hardcoded "10/11/12").
-
-Test mechanism corrections:
-- D.2 prewarm test locks `threading.Barrier(parties=N-1, timeout=5.0)` mechanism — item[0] does NOT enter the barrier; items[1:] do. If item[0] is incorrectly submitted to the pool, it deadlocks (timeout fails the test). Replaces the vague "single-threaded mock or mock time.sleep."
-- Divergence-injection test uses per-site `monkeypatch.setattr(...)` on import bindings (NOT `inspect.stack` / thread-local — both fragile). Locks the contract that both call sites import via `from ... import _resolve_chunk_value` (creating a local binding).
-- B3.4 in-memory mutation test uses `compile_workflow(ir_dict, registry)` direct call to bypass `WorkflowExecutor._compiled_workflow_cache` (keyed by resolved-path; would return stale compile on second call with same path).
-- B3.4 ABSENT-case fixture pattern made concrete (router/branch_a/b_producer/branch_c/llm_target) with explicit precondition assertion `get_node_status(shared, "b_producer") == NodeStatus.ABSENT` — locks the test isn't passing for the wrong reason (structural failure vs runtime branch absence).
-- B3.4 type:llm positive-control row added to parametrize — locks the rule doesn't reject everything.
-- Cache-invalid parametrize uses minimal-valid params per node type (`shell` requires `command:`; `http` requires `url:`; etc.) so the cache check is reachable.
-- Memo HIT test drops the `prep`-spy assertion (implementation-detail testing); behavior-level (a)+(b)+(c) trio is sufficient and refactor-stable.
-- Function-scoped `MockLLMClient` fixture for call-count baseline.
-
-Tier 2 hardening:
-- F3.1 exit code table adds 10th row "unexpected analyzer crash → non-zero exit" + analyzer NEVER emits empty-but-valid JSON for internal failures (silent-failure attractor defense).
-- F2 auto-load scanner: `logger.debug` per unparseable trace file + info note in `analysis.notes` when ≥1 skip fired.
-- F2 `analyze.py` predicted-cache_key MUST use shared `_resolve_chunk_value` helper (NOT inline) — locks runtime↔analyzer resolution parity for `cache.discrepancy` accuracy.
-- LLMNode Interface docstring + `nodes/llm/README.md`: enumerate new `llm_usage` sub-keys (`cache_key`, `cache_source`, `cache_age_sec`, `cache_chunks_skipped`) — drives registry → template_validation pickup so `${node.llm_usage.cache_chunks_skipped}` references are valid at parse time.
-- `_EMPTY_CACHE_RENDER` placement: explicit in `engine.py` (where consumed) — NOT in types.py (YAGNI).
-- `_validate_cache_block` empty/None `type` handling: skip the cache check when `type` is missing/empty (let deeper structural error surface; no "type: None" rendered to user).
-- Tests with literal `"2.0.0"` enumerated explicitly (bump `test_workflow_trace.py:335`; keep `test_trace_integration.py:170`, `test_trace_report.py:43, :1295` for legacy-fixture compat).
-- ClaudeCodeNode exclusion docstring rewritten allowlist-style (rationale: SDK-side cache vs pflow memo; future LLM-producing node types must extend the gate).
-
-`_CHUNK_ABSENT` sentinel hardening:
-- `__repr__` and `__str__` raise `TypeError` on accidental serialization — defends against the silent-stale-cache class where forgotten-filter callers would inject memory-address-flavored strings into the hash. 4 LOC of defense.
-
-Process improvement (the meta-fix):
-- All Round 4 pseudo-code is verified against actual code shapes via direct reads (`batch_executor.py:524-611`, `node_state.py:25-59`, `template_resolver.py:198-212`, `plan_node.py:35-68`, `diagnostic.py:69-92`). Future rounds: read the target function before writing pseudo-code that depends on its signature.
-
-**Round 4 high-value fixes (1-5, applied after the V5/V6/symbol corrections — top-10% / simplest-final-code lens)**:
-
-1. **`_resolve_static_prefix_for_cache` companion helper** locks byte-identical resolution across ALL three cache paths (chunk hash via B3.3, chunk message via C1.2, static-prefix auto-batch via D.1 — and analyzer prediction via F2). Prevents the silent cross-mode cache miss where `${X}` resolving to `{"text": "abc"}` produces `'{"text":"abc"}'` (canonical JSON) in chunk paths but `"{'text': 'abc'}"` (Python repr via `TemplateResolver.resolve_template`'s default `str()`) in static-prefix path. The new helper substitutes via `_deterministic_serialize` per ref. B3.4 cross-helper byte-identity test added.
-
-2. **`cache.discrepancy` structured `context["root_cause_action"]` payload** makes mode-4 from-trace agent-actionable WITHOUT prose parsing. Per-cause typed payload schema (`CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS`) sits next to the prose template map. Agents dispatch on `context["root_cause_action"]["suggested_ttl"]` etc. instead of regex-extracting from prose. Suggestions list still renders prose for human display. Round 4 dispatch tests extended to assert both prose AND structured payload per cause.
-
-3. **JSON `format_version` evolution policy + constants** (`JSON_FORMAT_VERSION`, `JSON_FORMAT_VERSION_MAJOR`). Locks consumer rule: `format_version.startswith("1.")` (NOT `== "1.0"`). Mirrors trace 2.x policy at `trace_report.py:463`. F3.2 docstring includes the version-policy paragraph verbatim. Test asserts both the literal AND the consumer-rule prefix-match (would still pass on a future "1.1" bump).
-
-4. **Compile-path `_validate_cache_block` defensive isinstance guards enumerated**: explicit per-shape guards for `prompt_cache` (must be `list[str]`), `prewarm` (must be `bool`, NOT `int` since `bool` subclasses `int`), top-level `cache` block (dict with required keys). Each guard emits `logger.warning` and `continue` (per-node) or `return` (top-level cache malformed). Test asserts ZERO Diagnostics from `_validate_cache_block` on shape-malformed input + exactly ONE `logger.warning` per malformed shape.
-
-5. **Spike contingencies subsection** (new section before "Open hedged claims"). Maps each pre-authorized spike to the encoded plan decision it tests. Each row: spike name → encoded decision → if-outcome-contradicts action. Eliminates the "ran the spike in §33+, missed the contradicting plan section" regression class. Documents fallback paths for Gemini explicit cache_control, Gemini multi-marker behavior, OpenAI `prompt_cache_key` parallel routing, Anthropic per-TTL pricing precision.
-
-**Round 3 fixes (previous session — Critical + High-Priority + selected Medium):**
-
-Critical:
-- D.1 line 718 + D.2 line 759 used unsafe `shared.get(K, {}).get(...)` pattern, hitting the exact `None.get()` AttributeError trap the architectural backbone documents. Replaced with canonical `(shared.get(K) or {}).get(...)` pattern at both sites.
-- F1 catalog `cache.discrepancy` row was internally unresolvable — `suggestions_template = ["{root_cause_action}"]` referenced a key not in `required_context_keys`, would `KeyError` on every emission. Fix: added `CACHE_DISCREPANCY_ACTION_TEMPLATES` dispatch map + `CACHE_DISCREPANCY_REQUIRED_CONTEXT` per-root_cause additional-key map; helper dispatches on `context["root_cause"]` to render the correct action template; unknown enum falls back to `"unknown"` row.
-- B2.2 falsely claimed validator step 8 catches `prompt_cache:`/`prewarm:` on non-LLM nodes. Verified at `validator.py:600`: step 8 iterates `node["params"]` only; B2.1 extracts to top-level. Fix: added `cache.invalid-on-non-llm` ERROR-tier rejection inside `_validate_cache_block` (B2.3) walking top-level node keys; added 11th catalog entry. B2.2's hint claim removed; rejection now emitted from cache validation locus.
-- Hash-vs-prep ABSENT branch handling: B3.3 only specified happy-path; LLMNode.prep (C1.2) skipped ABSENT chunks but plan_node.render-for-hash didn't. Silent-stale-cache class. Fix: shared `_resolve_chunk_value` helper returns `_CHUNK_ABSENT` sentinel; both call sites filter on it BEFORE building output; B3.4 adds explicit ABSENT-case byte-equivalence test + divergence-injection variant (anti-tautology).
-- D.2 prewarm execution was structurally vague ("execute item[0] sequentially first"). Fix: concrete pseudo-code algorithm specifying `process_item` (sole single-item executor), `results[0]` direct write before pool dispatch, `future_to_idx` map for indices ≥ 1, error_handling matrix locked, item[0] excluded from `as_completed`, progress-event drain semantics, `_pre_warm_compile_cache` interaction.
-- `cache_chunks_skipped` lost on `_call_llm` error path: `prep_res` carries it but `post()` doesn't run on deterministic LLMCallError or template-error short-circuit. Fix: error-output builder (`_error_dict_from_exception`) ALSO copies `cache_chunks_skipped`; memo HIT round-trip via persisted `llm_usage`; explicit cross-layer co-edit notes in C1.2 + E.1.
-- E.1 strict-assert `workflow_path is not None` would fire 40+ times across test instantiations. Fix: dropped the assert; added dedicated production-path integration test (`test_workflow_path_set_in_production_runs`) covering file/inline/sub-workflow shapes.
-
-High-Priority:
-- `analyze-cache --no-trace` collided with existing `pflow run --no-trace` (different semantics). Renamed to `--no-trace-autoload`; updated F3.1 exit code table; updated F2 byte-equality info-note string.
-- `storage_mode: shared` × `## Cache` parallel batch save/restore non-deterministic interleaving documented as v1 limitation in `runtime/CLAUDE.md` reserved-key entry. Lyrics-generator doesn't use the combination, so v1 documents rather than tests.
-- OpenAI `prompt_cache_key` × batch_size > 15 RPM soft cap documented as known limitation; v1 relies on retry layer; deferred to v1.x as `cache.openai-batch-clamp` follow-up. Added to G.2 caching guide note.
-- Hash baseline cannot include post-task fields (main HEAD doesn't parse `prompt_cache:`). Fix: clarified that B3 baseline covers bare shapes; B3.4 adds in-memory mutation test (load baseline workflow → mutate IR to add `prompt_cache: []` → recompile → assert hash-equality with absent-baseline; mutate to `[chunk]` → assert hash differs). Closes the DD#19 byte-identity invariant verification gap that the baseline alone cannot.
-- F3.1 exit code policy: `analyze-cache` is advisory per DD#36 — ERROR-severity validator findings (`cache.order-mismatch`, `cache.invalid-on-non-llm`) appear in `warnings[]` array with exit 0; only IR-construction failures (parse/schema/structural) exit non-zero. Same policy applies to MCP `analyze_cache`.
-- E.1 `LLMNode.post()` patch list explicitly includes `cache_chunks_skipped` cross-layer co-edit (was mentioned in C1.2 but not threaded into E.1).
-- D.1 `user_message_blocks` consumer step missing — `_call_llm` not told to thread the kwarg through. Fix: explicit step in D.1 specifying `complete()` signature widening with `user_message_blocks` kwarg + `_build_messages` dispatch branch.
-- Engine save/restore simplified: dropped outer try/except (dead code; mirrors `__trace_collector__` precedent). Hoisted `_EMPTY_CACHE_RENDER = MappingProxyType({})` to module level (eliminates per-restore allocation in deeply-nested sub-workflow runs).
-
-Selected Mediums:
-- B2.3 sub-workflow batch concurrency test mechanism made concrete: `monkeypatch.setattr` on `_build_cache_render_dict` capturing `(threading.get_ident(), id(workflow.cache_block))` to a thread-safe list; assertions on threadid divergence + cache_block id-equality + frozen-mutation invariant.
-- ClaudeCodeNode intentionally excluded from `_should_write_cache_metadata` gate (its `cache_creation/read_input_tokens` come from Claude SDK, not pflow memo); documented in helper docstring; test asserts `cache_key`/`cache_source`/`cache_age_sec` absent on ClaudeCodeNode memo paths.
-- `cache.prewarm-no-prefix` added to F1 catalog as 12th entry (was referenced by D.1 but not in catalog). Total catalog: 12 entries (was 10 in spec; round-3 added `cache.invalid-on-non-llm` and `cache.prewarm-no-prefix` alongside `cache.discrepancy` from round-2). F2 per-warning-ID coverage adds fixtures for both new entries.
-- Loop recovery × cache rendering documented as known limitation in B3.3; engine sequencing guarantees upstream is terminal before downstream prep runs, so the precondition holds today; document the invariant for future loop-guard refactors.
-- `_resolve_chunk_value` shared helper extended to handle ABSENT via sentinel; D.1 static-prefix resolution must use the same helper (or `_resolve_template_for_cache` analog) to guarantee byte-identical resolution between cache-chunk path and auto-batch-prefix path.
-
-**Round 2 architectural fixes (previous session):**
-- `CompiledWorkflow.cache_block` is a frozen `CacheBlockIR` dataclass (NOT `dict[str, Any]`) — eliminates compile-cache + parallel-batch mutation hazard. Outer `__pflow_cache_render__` dict wrapped in `MappingProxyType`; values are frozen `CacheRenderContext` dataclasses with `tuple` for `subset` and `CacheBlockIR.items`.
-- `__pflow_cache_render__` save/restore writes `MappingProxyType({})` on restore-from-absent (NOT `None`) — fixes the consumer-`.get(...).get(node_id)` AttributeError trap. Outer try/finally added so restore fires even if `_build_cache_render_dict` raises.
-- All consumers use the canonical defensive read pattern `(shared.get("__pflow_cache_render__") or {}).get(node_id)`.
-- Hash-vs-prep render divergence invariant: `plan_node._render_cache_for_hash` and `LLMNode.prep` `_render_cache_for_messages` MUST share a single `_resolve_chunk_value(chunk, shared)` helper — never duplicate resolution logic. Test asserts byte-equivalence.
-- `core/CLAUDE.md:103` SSoT comment updated to reflect the `(severity, source, node_id, id or message)` tuple — sub-workflow dedup regression test added.
-- `markdown_parser._build_node_dict` extended to extract `prompt_cache:` and `prewarm:` to top-level (parallel to existing `cache` extraction at line 1432).
-- Duplicate `### Tests` block in C1.2 (with stale `__warnings__` runtime emission) deleted.
-- F1 catalog SSoT table FILLED — all 10 rows × 8 columns concrete values, including `cache.discrepancy` as the 10th entry per orchestrator decision (resolves spec line 944 open question).
-- `cache.opportunities-available` documented as separate non-catalog ID (per spec line 307) — emitted by `summarize()`, not `analyze()`.
-- All three `_should_write_cache_metadata(node_type_name)` gate sites in instrumentation.py — `apply_memo_hit`, `handle_cached_execution`, `write_memo_cache` — symmetric LLMNode-only check.
-- Memo HIT short-circuits cache rendering: documented in `_render_cache_for_hash`, tested explicitly in B3.4.
-- Three-state invariant tested at MCP/CLI/JSON-trace surfaces (not just hash + rendering).
-- F3.1 exit code contract: 9 conditions in a parametrized table; `--from-trace path` non-existent / corrupt / 2.0.0-graceful / mutually-exclusive-with-`--no-trace` all locked.
-- F3.3 dry-run nudge: byte-equality test on the rendered glyph + format string + indented suggestion line.
-- F2 cost-degradation tri-state contract: explicit table with three states (all priced / partial / all unpriced); locks `null` vs `0.00` vs `unavailable` per state.
-- F2 per-warning-ID coverage test: every catalog ID has a synthetic minimal workflow that triggers it; CI fails if a new ID lacks a fixture.
-- F3.2 MCP tool docstring contract: enumerates JSON shape, all catalog IDs (count derived from `CACHE_WARNING_CATALOG.keys()` at test time), cost-degradation tri-state, four-value `data_source`. Test asserts docstring contains the literal strings.
-- Cross-workflow walker resolution-failure handling without new catalog ID: cycles/depth-limit log at info; broken sub-workflow refs re-raise existing `WorkflowValidationError` (no silent-skip).
-- `_FAILURE_CATEGORY_MAP["cache_failure"]` entry DEFERRED to v1.x (not added in v1 — no typed exception emits it; dead-code violates "don't add features beyond what task requires").
-- Branch-absent silent chunk skip now writes `cache_chunks_skipped: list[str]` to `llm_usage` so trace mode attributes discrepancies (vs TTL expiry, key mismatch, parallel-write race).
-- B3 baseline-fixture merge gate: explicit "B3.1 patches MUST NOT begin until `golden_config_hashes.json` is committed against `main` head" + non-tautology PR sequence.
-- B3 baseline shape coverage: structured output, attachments, retry config, branching, sub-workflows, batch (parallel + sequential), reasoning — all enumerated.
-- `WorkflowExecutor.ALLOWED_PARAMS` × per-node schema: validator step 8 emits an improved hint message ("`prompt_cache:` and `prewarm:` are only valid on `type: llm` nodes") — tested explicitly.
-- `pflow save` bundling × `## Cache` integration test: dependency_discovery walker doesn't mistake cache `${var}` chunks for file refs.
-- B2.3 sub-workflow batch concurrency test: parallel batch with `WorkflowExecutor` (NOT sequential) — load-bearing for the `CacheBlockIR` freeze guarantee.
-- `trace_report.py` line citation corrected from 400 to 463 (verified via grep).
-- Paid spikes (Gemini, OpenAI routing, Anthropic per-TTL pricing) moved OUT of the plan entirely — they are pre-implementation work documented in agent-handoff and run before B1; spike outcomes either confirm the encoded decision or trigger a plan update.
-- `litellm.token_counter` empirical behavior verified (no raise on unknown models, returns 0 on empty text, raises ValueError on None) — F1 test reflects the true error path.
-
-**Round 1 corrections (preserved from prior session — see progress log §31):**
-
-**Architectural consolidation:**
-- Replaced 6 scattered reserved keys (3 in `shared`, 3 in `node.params`) with single `CacheRenderContext` typed dataclass + one shared key `__pflow_cache_render__`. Mirrors `__trace_collector__` precedent. Eliminates parallel-batch concurrency surface, dunder-param-injection ordering bugs, and `compute_node_config` filtering concern in one structural change. (Top-10% pattern: Temporal `Context`, Prefect `RunContext`, gRPC request context.)
-- Cache trace metadata (`cache_key`, `cache_source`, `cache_age_sec`) now flows via the existing `llm_usage` channel, NOT via `__pflow_last_cache_meta__` sidecar — preserves per-item granularity in parallel batch automatically.
-
-**Critical structural fixes:**
-- B3: `plan_node` reordered so `resolve_templates` runs BEFORE `compute_config_hash` (was opposite in current code).
-- B3: batch-node `prompt_cache` hash inclusion now explicitly handled — chunks resolve from `shared` directly (validated as non-batch in B2.3).
-- B3 regression baseline now generated from `main` BEFORE B3 patches and committed as `golden_config_hashes.json` — earlier draft's "compare both code paths with default None" was a tautology.
-- Engine save/restore for `__pflow_cache_render__` always installs (even None/empty) and uses write-back assignment, NOT `.pop()` — `NamespacedSharedStore` lacks `pop`.
-- C1.2 min-token threshold check moved from runtime to analytical tier (`analyze-cache` + `--dry-run` only) — earlier draft contradicted DD#36 ("no tokenizer at validation time"). `cache.below-min-tokens` warning now emitted by F2's `analyze.py` only.
-- B2.2: validation-reach gap closed — structural cache shape checks live in BOTH the JSON schema (validator path) AND `_validate_cache_block` (compile path) since the compile path uses the minimal `validate_ir_structure`, not full `validate_ir`.
-- E.1: workflow_executor.py:342 `WorkflowTraceCollector` instantiation site updated (review missed in earlier draft).
-- F1: warning catalog `source` field split — `cache.order-mismatch`/`cache.unused-chunk` use `source="validator"`; analytical IDs use `source="cache_analyzer"`. Catalog SSoT now enumerates per-ID severity, source, category, message template, required context keys, suggestions template, path template, nullable cost keys.
-- F3.1: `pflow plan` reference replaced with `pflow visualize` / `pflow describe` (the former does not exist).
-- F3.3: dry-run accuracy documentation note added — predictions assume upstream values match memo'd state; cross-run divergence is inherent to dry-run, not a Task 159 regression.
-
-**Algorithm specifications added:**
-- B2.1 cache-block-parser algorithm explicit pseudo-code; edge cases (empty, prose-only, back-to-back `${a}${b}`, trailing prose, duplicate identifiers) all covered.
-- D.2 auto-batch-prefix marker placement on USER message (not system), with explicit cut-detection algorithm.
-- D.2 prewarm × error_handling matrix now enumerated (fail_fast/continue × item[0] success/fail × below-min-tokens) — earlier draft punted to "follow existing tests."
-
-**Test fidelity improvements:**
-- Three-state equivalence test (no field / `[]` / non-empty) at BOTH hash and rendering levels.
-- Parallel-batch test ordering: search/filter `call_history_full`, never index by position.
-- `cache_age_sec` two-sided bound to catch "epoch returned instead of age" bugs.
-- Explicit test for Anthropic `ttl: "5m"` rendering as `{"type": "ephemeral"}` with no `ttl` key (asserts `"ttl" not in marker`).
-- Cross-workflow walker rename-precedence-suppression test.
-- All 7 `cache: false` example workflows parameterized in one test, not "pick one."
-- Sub-workflow + cache_block round-trip (different parent state, same compiled IR) verifies compile-once cache doesn't corrupt.
-- End-to-end `WorkflowRunner().run()` integration test in `tests/test_integration/test_prompt_cache_end_to_end.py`.
-- Test infrastructure prerequisites: widen `MockLLMClient.complete()` system param + extend `set_response` to accept `cache_creation_input_tokens` / `cache_read_input_tokens`.
-
-**Smaller fixes:**
-- `_build_messages.system` parameter type widening (mypy block — was implicit in earlier draft).
-- `_FAILURE_CATEGORY_MAP["cache_failure"]`: deferred until a typed exception emits it — v1 emits via Diagnostic directly, so the map entry is forward-looking only. Document or remove based on user preference.
-- Cache-rendering template-resolution failure: explicit path through `build_template_error_diagnostic` per spec line 189.
-- Branch-absent skip during cache rendering: explicit `node_state.get_node_status` check + silent skip.
-
-**Round-2 corrections applied (after re-review of unaddressed findings):**
-- F1 token-estimation tier order corrected to `trace → memo → estimator → heuristic` per DD#31 (was missing the `trace` tier).
-- D.1 auto-batch-prefix detection now fires on `prewarm: true` ALONE (independent of `prompt_cache:` declaration) per DD#9 / spec.
-- B2.3 added MCP entry-point reach verification (Task 72 historical pattern) — explicit test that `execute_workflow` produces same diagnostic structure as CLI.
-- G.2 added `--no-cache` regression test asserting `cache_control` markers still present (locks the spec contract that the two cache layers are independent).
-- F2 golden test pricing-pin strategy corrected — pin BOTH `MockLLMClient.set_response(cost_usd=...)` AND `monkeypatch.setattr("litellm.completion_cost", ...)` because the analyzer uses a different code path than the runtime.
-- F3.1 per-call rendering rules now have explicit byte-equality assertions (default-hide-clean, "Hidden: N nodes" exact text, `--all-rows` ordering, `format_version: "1.0"` string-not-int).
-- C1.2 explicitly forbids caching `cache_ctx` on `self` (Task 106 anti-pattern guard).
-- F2 added 2.0.0-skip info note when auto-load finds matching traces but skips them — prevents silent confidence-degradation.
-- F1 token-estimation `litellm.token_counter` exception path now logs at warning level (review-silent-failures W2) — model-name typos no longer fall through silently to heuristic without visibility.
-
-**Deferred to phase-internal task lists** (noted but not encoded as patches):
-- review-validation-consistency 4: `template_validation/` vs `data_flow.py` asymmetry — verify during B2.3 implementation whether cache chunks need template_validation reach too.
-- review-impact-completeness 5: `WorkflowExecutor.ALLOWED_PARAMS` — note that `prompt_cache:` / `prewarm:` on a `type: workflow` node is correctly rejected by validator step 8.
-- review-impact-completeness 9: `_NEAR_MISS_SECTIONS` typo hint for `## Cahe`.
-- review-impact-completeness 15: `dependency_discovery` walker — verify cache `${var}` chunks aren't mistaken for file references during `pflow save` bundling.
-- review-feature-interactions C3: Gemini multi-marker collapse — verified during the pre-plan Gemini spike (recorded in progress log §32+).
-
-**One open user decision still requires call:**
-- `cache.discrepancy` (used in spec mode-4 from-trace example): not in v1 catalog. Add as 9th entry (DD#29 design review) OR emit as generic Diagnostic without stable id? Recommend 9th entry under `cache_advisory` — needs one-line user confirmation.
-
-**One open user-architectural question (review-feature-interactions C2):**
-- Cache rendering errors in batch + sub-workflow + `error_handling: continue`: which error category fires (`template_error` vs new `cache_failure`)? Plan currently routes through `build_template_error_diagnostic` (i.e., `template_error` category). The four-dimensional error matrix interaction (signaling × categorization × mode × propagation) isn't fully enumerated. Recommended: stay with `template_error` for v1 (consistent with existing template-resolution failure semantics; `cache_failure` is forward-looking only and currently dead code per review-impact-completeness W8). Surface to user before B2.3 lands.
+- **F2 confidence aggregation strictness** — plan now defaults to STRICT semantics matching DD#34 line 634 verbatim (`all(src == "trace")`). If the user prefers permissive ("any row trace → high"), surface before F2 ships. The choice affects fixture data in golden tests.
+- **V6 sub-workflow dedup outcome** — the new `xfail`-marked test in B2.3 is a tripwire. Round 6 verified `format_child_provenance` modifies `Diagnostic.message`; the test will fail on first run. User picks between (a) granular dedup tuple including workflow_path or (b) special-case per-id dedup ignoring message.
