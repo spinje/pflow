@@ -1239,3 +1239,115 @@ Implementation. The implementing agent opens (in order):
 3. Spec + this progress log only as the contract reference.
 
 Single load-bearing gate: B3's no-`prompt_cache` hash regression test. STOP if it fails.
+
+---
+
+## 32. Session 2026-04-28 (continued) — Round 2 review + plan refinement
+
+Plan v1 (post-§31 consolidation) ran through a second `/code-review` pass — 8 agents in parallel reviewing structural integrity, silent failures, validation consistency, impact completeness, feature interactions, agent UX, test fidelity, concurrency safety. ~50 raw findings, deduped to ~30, classified into 7 critical / 12 high-priority / 11 polish. This entry captures the journey + the two course-corrections from user pushback that reshaped what got encoded.
+
+### What this entry covers (and what it doesn't)
+
+- **In the plan**: every encoded fix is documented inline, with the round-2 architectural corrections appended to the "Summary of plan corrections from review" section at the bottom.
+- **In this entry**: the user pushback that caught me drifting toward bloat, the verification round that confirmed which review findings to encode, and the insights for next round.
+
+### The two course-corrections that mattered most
+
+#### Correction 1 — Don't encode spike protocols inside the plan
+
+I drafted a new "Phase 0 — Pre-implementation paid spikes" section (~80 lines) that included full spike scripts, fallback paths, and "if spike fails do X" branching for all three pre-authorized spikes (Gemini cache_control, OpenAI routing, Anthropic per-TTL pricing). I also added per-spike auth gates ("🔒 PAID SPIKE — REQUIRES EXPLICIT USER AUTHORIZATION").
+
+User pushback was concise and load-bearing:
+
+> *"all spikes are authorized, no need for separate authorization, also spikes should be done before implementation (plan is executed) not at implementation plan"*
+
+> *"Can you explain what you are doing? it seems you are contaminating the spec with redundant information? if anything is relevant include the actual information in the plan, dont cross reference. this is the HOW to implement, the spike was to inform our decisions?"*
+
+The framing error was treating spikes as plan content. They aren't. **Spikes inform decisions BEFORE the plan executes; the plan encodes the decisions.** Every "if spike X fails, do Y" line is contingency planning, which doesn't belong in the HOW. If a spike outcome later contradicts the plan, that's a plan UPDATE event — not a baked-in fallback.
+
+Resolution: stripped the entire Phase 0 section, the obsolete C0 / D.4 / E.2 spike sub-phases (the original plan also had these — they were wrong from the start), and all "Spike outcome consumption" / "Cleanup gate" subsections. Replaced with a single Operating Principle bullet: *"Paid spikes run before plan execution, not inside the plan. The agent-handoff documents three pre-authorized spikes (~$0.30 total) ... Run them, record outcomes in progress log §32+, then update this plan if any outcome contradicts an encoded decision. Spikes do not appear as phases in the plan itself."* Merge order updated to drop C0 from the sequence.
+
+**Insight to carry forward:** when a doc has multiple concerns (spec = contract; progress log = journey; handoff = operational; plan = HOW), the temptation to centralize "how to run spike X" in the plan is real because spikes touch implementation. Resist. Plan is the HOW once decisions are made. Spike protocols live in handoff (or progress log if scripted). The plan only encodes decisions.
+
+#### Correction 2 — Cross-reference is fine for shared concerns; redundancy isn't
+
+User's wording: *"if anything is relevant include the actual information in the plan, don't cross reference."* Mild tension with the earlier braindump-§31 instruction *"Don't repeat values across docs. Cross-reference instead."*
+
+Reconciled: when something is operationally relevant to the HOW (a specific decision, a concrete value, a verbatim message format), include it directly in the plan. Cross-reference is for the journey (progress log §X) or the contract (DD#X) or operational style (handoff). Don't write "see Phase 0 spike outcome" — just say what the implementation does.
+
+Applied this to the F1 catalog SSoT table (Critical #7). Earlier draft had column headers but empty cells with handwaves like "format strings with named placeholders" — implementing agent would have invented them. Refilled with concrete `message_template` / `required_context_keys` / `suggestions_template` / `path_template` / `nullable_cost_keys` for all 10 IDs, including the 10th entry `cache.discrepancy` per orchestrator decision.
+
+### Architectural fixes from review
+
+The post-consolidation `CacheRenderContext` backbone held up under round 2 review — the consolidation pivot from §31 was correct. But three structural gaps surfaced that the architectural-backbone section didn't fully close:
+
+1. **`CompiledWorkflow.cache_block: dict[str, Any]` was mutable.** Plan claimed "immutable dict" at backbone line 38, but Python has no immutable dict. With `_compiled_workflow_cache` sharing the compiled IR across parallel sub-workflow invocations, any consumer mutation (or library `.setdefault` / `.update`) would corrupt other invocations. Fix: introduced `CacheBlockIR` and `CacheChunkIR` frozen dataclasses with `tuple` items. The compiler now constructs the frozen object once and `_compiled_workflow_cache` returns the same reference safely. `dataclasses.FrozenInstanceError` test asserts the freeze.
+
+2. **`None` write-back on save/restore.** The original save/restore mirrored `__trace_collector__` exactly: `saved = shared.get(...); ...; finally: shared[K] = saved`. But trace consumers don't `.get()`-chain on the value. Cache consumers do: `(shared.get("__pflow_cache_render__") or ...).get(node_id)`. When `saved is None` (parent never installed), the restore writes `None` back — and `.get(K, default)` only defaults on key absence, not on `None` value, so `None.get(node_id)` raises `AttributeError`. Fix: write `MappingProxyType({})` on restore-from-absent. Also wrapped install in `MappingProxyType` for read-only enforcement (catches accidental consumer mutation as `TypeError`). Consumer pattern unified to `(shared.get(K) or {}).get(node_id)`.
+
+3. **Hash-vs-prep render divergence.** `plan_node._render_cache_for_hash` and `LLMNode.prep._render_cache_for_messages` independently render cache content from the same `cache_ctx`. The plan asserted they "agree on values" but didn't enforce it. If the two ever diverge — different resolution function, different deterministic-serialization, different upstream-state read — memo cache is keyed on `V` while adapter sends `V'`, producing silent stale-cache hits. Fix: extract a single `_resolve_chunk_value(chunk, shared) -> str` helper that both call sites use. Test asserts byte-equivalence at the chunk-value level.
+
+These three closed the architectural-backbone fully. Other corrections were narrower:
+- `markdown_parser._build_node_dict` (line 1432) needs parallel `prompt_cache` / `prewarm` extraction next to existing `cache` extraction (otherwise the per-node IR-schema field check rejects valid workflows because the fields stay in `params`).
+- `core/CLAUDE.md:103` SSoT comment must be updated to match the new identity tuple — sub-workflow dedup regression test added to lock the invariant.
+- Duplicate `### Tests` block in C1.2 with stale `__warnings__` runtime emission deleted.
+- `_FAILURE_CATEGORY_MAP["cache_failure"]` deferred to v1.x — adding the entry without a typed-exception producer creates dead code.
+
+### Verifications run
+
+Before encoding fixes, ran 4 targeted verifications against the code:
+
+1. **`core/CLAUDE.md:103`** — confirmed: literally says *"Hash identity tuple: `(severity, source, node_id, message)` — keep it that way"* with sub-workflow dedup warning. The plan's `(severity, source, node_id, id or message)` is null-safe (preserves message-keyed dedup when `id is None`), but the SSoT comment needs updating to match.
+2. **`markdown_parser._build_node_dict`** — confirmed at line 1393, with `cache` extraction at line 1432. Patch site is unambiguous.
+3. **Duplicate Tests block** — confirmed: plan had `### Tests` at lines 476, 504, AND 524 with the second C1.2 block (524-533) duplicating + carrying stale `__warnings__` runtime emission.
+4. **`trace_report.py:400` line citation** — confirmed wrong: actual line is 463.
+
+Plus an empirical check on `litellm.token_counter`:
+- `token_counter("claude-sonnet-4-5", "hello world test")` → 3 (deterministic).
+- `token_counter("unknown-model/foo-bar", "hello world test")` → 3 (does NOT raise — falls back to default tokenizer, returns SOME count).
+- `token_counter("claude-sonnet-4-5", "")` → 0 (clean).
+- `token_counter("claude-sonnet-4-5", None)` → raises `ValueError`.
+
+This shaped the F1 token-estimation tier description: the `"estimator"` source label fires regardless of model recognition (LiteLLM doesn't raise on unknown models — agents get a number, possibly inaccurate). The "exception → fall through to heuristic + log warning" path fires only on `text=None` and any future LiteLLM regression where unknown models start raising.
+
+**Insight to carry forward:** verify-don't-trust applies to review-agent claims as well. Five of the round-2 critical findings cited specific code locations or behaviors. All five verified true; one (trace_report.py line) was off by 63 lines. Five-minute verification pass before encoding the fixes saved encoding the wrong line numbers into patch instructions.
+
+### What's encoded vs what's deferred
+
+**Critical (7 of 7):** all encoded. F1 catalog table has all 10 rows × 8 columns of concrete values.
+
+**High-Priority (12 of 12):** all encoded. Includes B3 baseline-fixture merge gate (explicit), open-user-decision gates (B2.3, F1, F2), cache_chunks_skipped trace channel, sub-workflow batch concurrency test, save-bundle integration test, `WorkflowExecutor.ALLOWED_PARAMS` × schema hint message, three-state at MCP/CLI/JSON.
+
+**Suggestions (10 of 11 encoded):** trace-load exit code contract, memo HIT short-circuits, cross-workflow walker resolution-failure (without new catalog ID), unified `_should_write_cache_metadata` gate, cost-degradation tri-state table, dry-run nudge byte-equality, F2 per-warning-ID coverage, MCP tool docstring contract. Suggestion 29 (test-file consolidation 19→~12) deferred to implementing-agent judgment per CLAUDE.md "quality over quantity, smaller is better."
+
+**Disputed (kept disputed):** Anthropic ordering claim (cache_control accepts on any block; user-system-FIRST ordering is intentional).
+
+**Two open user decisions resolved by orchestrator** with rationale documented:
+1. `cache.discrepancy` → 10th catalog entry under `cache_advisory` (fills the slot reserved by spec DD#29; mode-4 from-trace gets a stable ID).
+2. Cache rendering errors in batch+continue → route through `template_error` (defers typed `CacheRenderError` to v1.x; consistent with existing template-resolution failure semantics).
+
+### Where things stand at session end
+
+- Plan is 1290 lines, no residual spike phase content, no broken line citations, all key concepts (CacheRenderContext, prompt_cache, cache_block) referenced 130+ times across the HOW.
+- Three architectural fixes (`CacheBlockIR` freeze + `MappingProxyType` outer wrap + `_resolve_chunk_value` shared helper) close the parallel-batch and silent-stale-cache surfaces.
+- 13 sub-phases preserved (B1.1, B1.2, B2.1-3, B3.1-4, C1, C2, C3, D, E, F1, F2, F3, G). Merge order: B1 → B2 → B3 → C1/C2/C3 (parallel after B3) → D (parallel with C) → E → F1 → F2 → F3 → G. Paid spikes run before B1, outside the plan.
+- F1 catalog SSoT is filled — implementing agent reads concrete message templates, not handwaves.
+
+### Insights
+
+- **Spike protocols are operational, not implementation.** Belongs in handoff or progress log, never in the plan. The plan is the HOW once decisions are made; spike outcomes inform decisions, they don't sit alongside the implementation as conditional branches.
+- **The "what changes if X" → "always X" shift is the litmus test.** When you find yourself writing "if spike result is A, do Y; if B, do Z," you're not writing a plan — you're writing decision-tree contingencies. Pick the path; if the spike contradicts later, that's a plan update.
+- **F1-style SSoT tables MUST be filled, not schema-only.** Empty cells with placeholder descriptions defeat the SSoT purpose. Fill them in the plan; implementing agent encodes verbatim. This was a load-bearing miss in the v1 plan that round-2 review caught; round-2 fix made it concrete.
+- **`MappingProxyType` is cheap, frozen dataclasses are cheaper.** Both available in stdlib. When parallel-batch concurrency comes up, default to "make it impossible to mutate at the consumer," not "document the read-only contract and hope." Three structural changes (`CacheBlockIR` freeze + outer `MappingProxyType` wrap + frozen `CacheRenderContext` values) eliminate the entire concurrency surface for this feature.
+- **Cross-doc tension is real, not bug.** Spec/plan/log/handoff each have a concern. The user's instruction "include actual information in plan, don't cross reference" is correct for HOW-relevant content; the §31 instruction "don't duplicate values across docs" is correct for things like DD#X numeric values. Reconcile by separating "operational decision the implementer needs to encode" (in plan) from "rationale / journey / contract" (in spec / log / handoff).
+
+### Next step
+
+Implementation begins. The implementing agent opens (in order):
+1. The plan at `implementation/implementation-plan.md` — start with "Architectural backbone — `CacheRenderContext`" near the top, then "Operating principles," then "Cross-cutting reads," then phase-by-phase.
+2. The agent-handoff at `starting-context/agent-handoff.md` — for paid-spike protocols (run before B1) + working-style notes.
+3. This progress log §32 — for the journey of why the architectural fixes look the way they do.
+
+Three paid spikes (~$0.30 total, pre-authorized) run BEFORE B1. Outcomes get recorded as a §33 entry (or appended to §32) before B1.1 patches begin.
+
+Single load-bearing gate (unchanged from §31): B3's no-`prompt_cache` hash regression test. The pre-merge fixture step (`golden_config_hashes.json` committed against `main` head) MUST happen before B3.1 patches land; without it, the regression gate is a tautology.

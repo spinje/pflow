@@ -9,20 +9,54 @@ Task 159 ships prompt caching for pflow workflows: a declarative `## Cache` bloc
 **Decision (post-review):** all engine→LLMNode communication for caching flows through a single typed context object delivered via one reserved shared-store key. This collapses what an earlier draft scattered across 6 reserved keys (3 in `shared`, 3 in `node.params`) into one. The pattern mirrors `shared["__trace_collector__"]` exactly: engine sets, leaf node reads in `prep()`, save/restore at `engine.run()` boundary handles sub-workflow nesting.
 
 ```python
-# src/pflow/runtime/engine/types.py — NEW dataclass alongside CompiledWorkflow
+# src/pflow/runtime/engine/types.py — NEW dataclasses alongside CompiledWorkflow
+@dataclass(frozen=True)
+class CacheChunkIR:
+    """Frozen representation of one cache chunk in the workflow-level ## Cache block."""
+    name: str
+    var_expr: str
+    prose_before: str
+    source_line: int
+
+@dataclass(frozen=True)
+class CacheBlockIR:
+    """Frozen representation of the workflow-level ## Cache block.
+
+    Replaces the earlier dict[str, Any] shape so the value is genuinely immutable
+    and safe to share across parallel sub-workflow invocations via the compile-once
+    cache (`_compiled_workflow_cache`)."""
+    ttl: str | None                           # "5m" | "1h" | None (provider default)
+    items: tuple[CacheChunkIR, ...]           # declaration order; immutable tuple
+    source_line: int
+
 @dataclass(frozen=True)
 class CacheRenderContext:
     """Per-node cache rendering context, built once at engine.run() entry."""
-    cache_block: dict[str, Any] | None        # workflow-level ## Cache IR
+    cache_block: CacheBlockIR | None          # workflow-level ## Cache IR (frozen)
     subset: tuple[str, ...]                   # per-node prompt_cache items, declaration order; () = no opt-in
     prewarm: bool                             # per-node prewarm flag
     unresolved_batch_prompt: str | None       # per-node, batch-only — raw template with ${item.X} intact
     batch_alias: str | None                   # per-node, batch-only — typically "item"
 ```
 
+**Why `CacheBlockIR` is a frozen dataclass, not a `dict`:** the workflow-level `## Cache` IR is shared across invocations via `_compiled_workflow_cache` (keyed by resolved workflow path). A parallel batch dispatching the same sub-workflow file shares the same compiled `CacheBlockIR` object. If it were a regular `dict`, any consumer mutation (or library code accidentally calling `.setdefault` / `.update`) would corrupt other invocations. Frozen dataclass + `tuple` items eliminates the surface entirely. The `CompiledWorkflow.cache_block: CacheBlockIR | None` field at B3.1 reflects this.
+
 **Delivery channel:** `shared["__pflow_cache_render__"]: dict[node_id, CacheRenderContext]`. Engine builds this at `run()` entry from `CompiledWorkflow` + `NodeConfig` per node. Frozen dataclass + immutable tuple = read-only-shared = parallel-batch-safe by construction.
 
+**Outer-dict read-only invariant.** The outer `dict[node_id, CacheRenderContext]` is constructed once and passed to consumers (`plan_node`, `LLMNode.prep`, `batch_executor`) as read-only. **Wrap with `types.MappingProxyType` at install time** so any consumer mutation raises `TypeError` immediately rather than corrupting parallel-batch state silently. Document the read-only contract in `runtime/CLAUDE.md`'s "Reserved Shared Store Keys" entry: "`__pflow_cache_render__` is read-only across all consumers; never mutate the dict or its `CacheRenderContext` values."
+
 **Save/restore:** mirror `engine.py:181–187` exactly — capture prior value via `.get()`, install always (even when the dict is empty), restore via write-back assignment (NOT `.pop()` — `NamespacedSharedStore` lacks `pop`). Sub-workflow children's engine.run() installs their own dict; parent's value is restored on exit.
+
+**Restore-from-absent semantics.** When the parent never installed a value, `shared.get("__pflow_cache_render__")` returns `None`. The `finally` block must NOT write `None` back — consumers do `shared.get("__pflow_cache_render__", {}).get(node_id)`, but `.get(K, default)` only defaults on key absence, not on `None` value. So `None.get(node_id)` would raise `AttributeError`. **Choice in plan**: write `{}` instead of `None` on restore-from-absent (always install something dict-shaped). The save/restore block becomes:
+```python
+saved = shared.get("__pflow_cache_render__")
+shared["__pflow_cache_render__"] = MappingProxyType(_build_cache_render_dict(workflow))
+try:
+    return self._run_inner(workflow, shared)
+finally:
+    shared["__pflow_cache_render__"] = saved if saved is not None else MappingProxyType({})
+```
+This contract is documented in `runtime/CLAUDE.md` alongside the reserved-key entry. The `__trace_collector__` precedent doesn't have this trap because trace consumers don't `.get()`-chain on the value.
 
 **What this replaces from the earlier draft:**
 - `shared["__pflow_cache_block__"]` → folded into `CacheRenderContext.cache_block`.
@@ -57,7 +91,7 @@ This plan does NOT duplicate values from those documents — it cross-references
 - **`test_plan_drift.py` stays green throughout.** Phases B3, C, D, and E touch surfaces it watches.
 - **No contract changes here.** If a load-bearing assumption breaks, surface to the user — do not encode a divergence into a patch.
 - **Hedged claims become plan-internal verifications.** Each phase that owns a hedged claim has an explicit "verify" step before the patch lands.
-- **Three paid spikes (C0, D, E) are Phase-internal, not pre-plan.** They are designed below; their fallback paths are also designed below.
+- **Paid spikes run before plan execution, not inside the plan.** The agent-handoff documents three pre-authorized spikes (~$0.30 total) that inform decisions about Gemini cache_control, OpenAI parallel routing, and Anthropic per-TTL pricing. Run them, record outcomes in progress log §32+, then update this plan if any outcome contradicts an encoded decision. Spikes do not appear as phases in the plan itself.
 
 ## Cross-cutting reads before any phase
 
@@ -101,6 +135,10 @@ Land the two Phase B prerequisites that nothing else can build on top of: the `D
 - `src/pflow/core/diagnostic.py`:
   - Add `id: str | None = None` to the `Diagnostic` dataclass (after `see_also`).
   - Update `__eq__` to use `(severity, source, node_id, id or message)`. Same identity tuple update in `__hash__`. Comments at lines 69–80 and 89–92 must be updated to reference `id or message` as the dedup key when present.
+  - **Why this is safe** (load-bearing): when `id is None` (legacy diagnostics, all today's code paths), `id or message` resolves to `message` — identical to today's `(severity, source, node_id, message)` tuple. New cache-namespaced diagnostics that set `id` use it as the dedup key (two diagnostics differing only in `message` enrichment but sharing `id` collapse correctly).
+
+- `src/pflow/core/CLAUDE.md`:
+  - **Update the load-bearing SSoT comment at line 103.** Today the comment reads: `Hash identity tuple: (severity, source, node_id, message) — keep it that way.` Replace with: `Hash identity tuple: (severity, source, node_id, id or message) — keep it that way. When id is None (legacy), falls back to message-keyed dedup, preserving sub-workflow warning dedup. When id is set (cache-namespaced diagnostics), id is the dedup key and message variants collapse.` Without this update, future contributors reading core/CLAUDE.md will revert the change.
   - Update `to_dict()` to emit `"id"` when set; omit when None (mirror existing `title is not None` pattern).
   - **Add three new category constants and `CATEGORY_TITLES` entries** (DD#27 + Files-to-Modify in spec):
     - `CACHE_FAILURE_CATEGORY = "cache_failure"` (typed-exception path; v1 emits via Diagnostic directly, no typed exception).
@@ -109,7 +147,7 @@ Land the two Phase B prerequisites that nothing else can build on top of: the `D
     - Add corresponding `CATEGORY_TITLES` entries: `"Cache Failure"`, `"Cache Warning"`, `"Cache Advisory"`.
 
 - `src/pflow/execution/executor_service.py`:
-  - Add `"cache_failure": "cache_failure"` to `_FAILURE_CATEGORY_MAP` (line 29). The dual-invariant (string constant in `core/diagnostic.py` matches dict-VALUE here) per the comment at line 33–37 must hold.
+  - **DO NOT add `_FAILURE_CATEGORY_MAP["cache_failure"]` in v1.** The map's dual-invariant pattern is for typed-exception-driven failures (mirroring `LLMCallError`). v1 emits all cache validation diagnostics directly via `Diagnostic` (no typed cache exception). Adding the entry now creates dead code that no producer reaches — violates "don't add features beyond what task requires." When/if v1.x introduces a typed `CacheRenderError` exception, that task adds the entry alongside the producer in one PR. For v1, the constant `CACHE_FAILURE_CATEGORY` exists in `core/diagnostic.py` (above) for forward-compatibility on the diagnostic side — but no `_FAILURE_CATEGORY_MAP` entry is required because no exception ever flows through the failure-context-mapping path.
 
 - `src/pflow/core/diagnostic_render.py`:
   - Extend `_format_warning_or_info_diagnostic` with a category dispatch for `cache_warning` / `cache_advisory` / `cache_failure` that surfaces structured `context` data inline alongside `message`/`suggestions` — mirrors the existing `template_error` precedent (per spec "Diagnostic Extension" subsection). For v1, render: `id` (if present, prefix `[id]`), `message`, `suggestions[]`, then any `context.savings_pct` / `context.savings_usd` / `context.batch_size` / `context.prefix_tokens_estimated` / `context.target_file` lines if present (these are the keys the cache catalog actually emits — see warning-catalog tests in F1).
@@ -121,7 +159,8 @@ Land the two Phase B prerequisites that nothing else can build on top of: the `D
   - `id="cache.x"` uses `id` in dedup; two diagnostics with same `id` but different `message` collapse.
   - `to_dict()` round-trip with and without `id`.
   - `cache_failure`, `cache_warning`, `cache_advisory` constants exist and appear in `CATEGORY_TITLES`.
-  - `_FAILURE_CATEGORY_MAP["cache_failure"] == "cache_failure"`.
+  - `_FAILURE_CATEGORY_MAP["cache_failure"]` is **NOT present** in v1 (deferred until typed exception emits it). Test asserts the absence: `"cache_failure" not in _FAILURE_CATEGORY_MAP`.
+  - **Sub-workflow dedup regression** (load-bearing per `core/CLAUDE.md:103` warning): two `Diagnostic`s constructed with identical `(severity, source, node_id, message)` and `id=None` (one from validation-time path, one from runtime path — common pattern for child-workflow warnings flowing through both paths) MUST hash and compare equal. Use `deduplicate_diagnostics([d1, d2])` and assert `len(...) == 1`. Catches the regression where someone adds `id` to the tuple unconditionally.
 
 ### Hedged-claim verification (DD#27 backwards compat)
 
@@ -185,6 +224,17 @@ If any of those facts has shifted (e.g. a refactor between plan-write and implem
 ### Files
 
 - `src/pflow/core/markdown_parser.py`:
+  - **Add per-node field extraction in `_build_node_dict` (lines 1393–1449).** Today the function extracts `type`, `batch`, and `cache` from `all_params` to top-level node keys (`markdown_parser.py:1411–1432`). Add parallel extraction for `prompt_cache` and `prewarm` AFTER the existing `cache` extraction at line 1432:
+    ```python
+    # Extract prompt_cache (goes to top-level, not params)
+    if "prompt_cache" in all_params:
+        node["prompt_cache"] = all_params.pop("prompt_cache")
+
+    # Extract prewarm (goes to top-level, not params)
+    if "prewarm" in all_params:
+        node["prewarm"] = all_params.pop("prewarm")
+    ```
+    Without this, `prompt_cache:` and `prewarm:` declared on a node remain inside `node["params"]` and the per-node IR-schema `prompt_cache`/`prewarm` field check (B2.2) at top-level rejects every workflow that uses them. **Verify before patching**: re-read `_build_node_dict` at the line numbers above; confirm `cache` extraction is still at the same site.
   - Add `_SectionType.CACHE = auto()` to the enum (line 122).
   - Decision: **do NOT add CACHE to `_KNOWN_SECTIONS`.** The orphan-content rule at line 273–274 / 402–404 must NOT fire for the Cache section's section-level YAML and code block. The CACHE section is its own structural mode.
   - Add `_SECTION_DISPLAY_NAMES[_SectionType.CACHE] = "Cache"` for any error rendering that needs it.
@@ -250,6 +300,12 @@ If any of those facts has shifted (e.g. a refactor between plan-write and implem
 
 The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as still-open. `WorkflowManager.save()` writes raw markdown atomically per `core/workflow/CLAUDE.md`; the markdown body is preserved verbatim. The round-trip test above is the verification step. If it fails, the parser may be normalizing whitespace inside the cache code block or stripping prose; investigate before claiming the round-trip works.
 
+### Save bundling integration test (`dependency_discovery` walker × cache chunks)
+
+`pflow save` runs `dependency_discovery.discover_dependencies` (see `core/workflow/dependency_discovery.py`) which walks node params for file references and bundles them. Cache chunks contain `${var}` template references — NOT file paths — so the walker should ignore them. Verify with an integration test:
+
+- `tests/test_integration/test_save_with_cache_block.py` (new): a workflow with `## Cache` referencing values + a node with `prompt: ./external.prompt.md` (a real file ref). Save the workflow. Assert: (a) cache block survives byte-for-byte, (b) `external.prompt.md` is bundled correctly, (c) no spurious file-not-found errors from the walker mistaking `${concept-brief.response}` for a file path. If the walker DOES treat cache chunks as file refs, a fix is required in `dependency_discovery` to skip the `cache.items[].var` and `cache.items[].prose_before` fields explicitly. **This test is the verification gate for the deferred phase-internal item "review-impact-completeness 15."**
+
 ## B2.2 — IR schema (with validation-reach gap closure)
 
 ### Files
@@ -257,6 +313,8 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
 - `src/pflow/core/ir_schema.py`:
   - Top-level `FLOW_IR_SCHEMA["properties"]["cache"]`: object with `ttl` (enum `["5m", "1h"]`, optional), `items` (array of objects, each with `name: string`, `var: string`, `prose_before: string`, optional `_source_line: integer`). `additionalProperties: False`.
   - Per-node properties (line 156–183): add `prompt_cache: {"type": "array", "items": {"type": "string"}}` and `prewarm: {"type": "boolean"}`. Per-node `additionalProperties: False` at line 186 means both must be added explicitly.
+  - **`prompt_cache:` and `prewarm:` accepted on ALL node types at the schema level (additive properties).** They become semantically meaningful only on `type: llm` nodes — for non-LLM types (`shell`, `http`, `file`, `mcp`, `python`, `claude`, `workflow`), they're parsed but ignored at runtime, and the validator rejects them at validator step 8 via the per-node-type `ALLOWED_PARAMS` rule. **Verified at `runtime/workflow_executor.py:75`**: `WorkflowExecutor.ALLOWED_PARAMS = frozenset({"workflow", "inputs", "error_action", "storage_mode", "max_depth"})` — does NOT include `prompt_cache` or `prewarm`. So `prompt_cache:` on a `type: workflow` node passes the JSON schema (additive field on all nodes) but fails validator step 8 with the existing "param X not allowed on type Y" error.
+  - **Improve the validator-step-8 message** to surface a clear hint when `prompt_cache:` or `prewarm:` appears on a non-LLM node: append "`prompt_cache:` and `prewarm:` are only valid on `type: llm` nodes. For sub-workflow caching, declare `## Cache` and `prompt_cache:` inside the sub-workflow file." to the diagnostic. The hint avoids the confusing "field not allowed" error without an explanation.
   - The existing `cache: bool` field at line 180–183 remains unchanged.
   - Update `_get_suggestion` only if a new error path is introduced (e.g., misspelled `prompt_cache` → suggest correct field). Otherwise leave alone.
 
@@ -274,6 +332,8 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
   - Per-node `prompt_cahe` (typo) is rejected with `additionalProperties: False`.
   - Top-level `cahe` (typo) is rejected.
   - `cache: false` (existing memo opt-out) and `prompt_cache: [...]` (new) coexist on one node.
+  - **`prompt_cache:` on a `type: workflow` node**: schema passes (additive field), validator step 8 rejects with the improved hint message ("only valid on `type: llm` nodes"). Test asserts the diagnostic message contains the hint string.
+  - **Three-state at IR-shape level**: parsing absent vs `prompt_cache: []` vs `prompt_cache: [chunk]` produces three distinct IR shapes (key absent vs `[]` vs non-empty list). Confirms the parser doesn't normalize between them.
 
 ## B2.3 — Cache reference validation in `data_flow.py`
 
@@ -298,16 +358,36 @@ The handoff lists "`pflow save` round-trip preserves `## Cache` sections" as sti
 ### Tests
 
 - `tests/test_core/test_prompt_cache_validation.py` (new):
-  - `prompt_cache: [c, b]` when `## Cache` declares `[a, b, c]` → `cache.order-mismatch` ERROR with the exact message format.
+  - `prompt_cache: [c, b]` when `## Cache` declares `[a, b, c]` → `cache.order-mismatch` ERROR with the **exact** message format. Assert byte-equality of the rendered message against spec's "Strict Order Validation" example block (the three lines `declared:`, `you wrote:`, `fix:` with exact indentation/labels). This is the agent-facing contract for order errors.
   - `prompt_cache: [unknown]` → resolution ERROR with `similar_names` populated.
   - `${item.X}` in cache chunk → batch-scoped rejection ERROR.
   - Unused chunk → `cache.unused-chunk` WARNING.
   - `prompt_cache: []` (empty) and `prompt_cache:` (absent) both treated as "no declared cache" — no ERROR.
-  - Sub-workflow with `## Cache` validates independently (each file's cache block is scoped to its own inputs and step outputs per DD#12 — covered by the recursive validator path in `_validate_sub_workflows`).
+  - Sub-workflow with `## Cache` validates independently (each file's cache block is scoped to its own inputs and step outputs per DD#12 — covered by the recursive validator path in `_validate_sub_workflows`). Run as both top-level workflow AND parent-invoked sub-workflow; assert same diagnostics fire in both.
+  - **Save-path validation reach** (review-validation-consistency W2): saving a workflow with `cache.order-mismatch` via `WorkflowManager.save()` raises `WorkflowValidationError` with the catalog id `cache.order-mismatch`. Locks the contract that `pflow save` runs full validation including cache checks (verified `save_service.py:107-156`).
+  - **Structural shape via compile path** (review-validation-consistency W3): bypass `WorkflowValidator` and call `compile_workflow` directly with a malformed cache IR (e.g., `cache.items: "string"` — wrong type). Assert `_validate_cache_block` catches it (the compile path uses minimal `validate_ir_structure`, not full schema, so the `_validate_cache_block` shape check is the only line of defense).
+  - **Schema vs `_validate_cache_block` redundancy doesn't double-emit** (review-validation-consistency W1): a workflow with `prompt_cache: 5` (wrong type) loaded through `runner.validate()` produces exactly ONE diagnostic (or two diagnostics that dedupe via `(severity, source, node_id, id or message)` identity). Without this test, schema-emitted shape errors and `_validate_cache_block`-emitted ones could silently surface twice.
 
 ### Hedged-claim verification
 
-`WorkflowExecutor._compiled_workflow_cache` interaction with sub-workflow `## Cache`: per `runtime/CLAUDE.md` the compile cache is keyed by resolved workflow path and stores the compiled IR (which includes the `cache` field). Two sequential invocations of the same sub-workflow file therefore reuse the same compiled `cache` block — correct. **Verification test**: in `tests/test_runtime/`, add a test where a parent invokes the same sub-workflow twice (or runs a heterogeneous batch where two items share a child path), each time with different parent state. Assert the per-invocation cache content (renderable from each invocation's child shared store) differs while the compiled IR is reused. If the test reveals corruption, surface to the user — the fix may require evicting compile-cache entries on a different keying strategy.
+`WorkflowExecutor._compiled_workflow_cache` interaction with sub-workflow `## Cache`: per `runtime/CLAUDE.md` the compile cache is keyed by resolved workflow path and stores the compiled IR (which includes the `cache` field, now a frozen `CacheBlockIR` per B3.1). Two sequential invocations of the same sub-workflow file therefore reuse the same compiled `cache_block` — correct, and frozen so safe.
+
+**Verification test (parallel + heterogeneous batch — load-bearing for the architectural backbone):** in `tests/test_runtime/test_subworkflow_cache_concurrency.py` (new), add a test that spawns a heterogeneous batch parent (`${item.workflow}` varying — production shape verified by `workflow_executor.py:212–215`) where two batch items dispatch the same sub-workflow file with DIFFERENT parent state per item, in parallel mode. Assert:
+1. Each item's child engine.run() builds and installs its own `__pflow_cache_render__` dict (verify by instrumenting `_build_cache_render_dict` to record the build site).
+2. Per-invocation cache content (rendered by `LLMNode.prep` in each child) differs across the two items, even though `_compiled_workflow_cache` returns the same `CompiledWorkflow` object.
+3. The shared `CompiledWorkflow.cache_block` is identical (both items see the same frozen `CacheBlockIR` reference — `id(item1.cache_block) == id(item2.cache_block)`).
+4. Mutating any field on the returned `CacheBlockIR` raises `dataclasses.FrozenInstanceError` (catches the regression where someone "tidies up" by changing the type back to `dict`).
+
+Sequential-only verification is insufficient — the whole point of the `CacheBlockIR` freeze (B3.1) is parallel-batch safety. If this test fails, the fix is structural and must be surfaced to the user.
+
+### Open user decision required before B2.3 ships
+
+**Cache rendering errors in batch + sub-workflow + `error_handling: continue`** (review-feature-interactions C2): when a chunk's `${var}` fails to resolve at runtime inside a parallel-batch sub-workflow item with `error_handling: continue`, what error category fires? Two routes:
+
+- **(Recommended, current plan):** route through `template_error` via the existing `build_template_error_diagnostic` pattern. Consistent with existing template-resolution failure semantics; `cache_failure` category is forward-looking (no producer in v1 per High-Priority #11 deferral).
+- **Alternative:** introduce typed `CacheRenderError` exception now and emit `cache_failure` category. Pulls `_FAILURE_CATEGORY_MAP["cache_failure"]` back in.
+
+**Resolved (per orchestrator decision):** stay with `template_error`. Document this in C1.2's rendering-failure path. Defer typed `CacheRenderError` to v1.x with the corresponding `_FAILURE_CATEGORY_MAP` entry. If the user prefers the alternative, surface here before B2.3 patches land — it changes B1.1 + B2.3 + C1.2 in three coordinated places.
 
 ## B2 merge gate
 
@@ -332,7 +412,27 @@ Wire `prompt_cache` rendered content into the memo cache hash conditionally per 
 
 ## Pre-merge step: generate regression-baseline fixture
 
-Add `scripts/generate_config_hash_baseline.py` (NEW — minimal, can be deleted after baseline lands). It loads ≥10 workflows (3–4 from `examples/` representing branching/batch/sub-workflow shapes; all 7 files using `cache: false`; 2–3 fixtures from `tests/test_runtime/`), compiles each, and writes `compute_config_hash` for every node to `tests/test_runtime/fixtures/golden_config_hashes.json`. Run on `main` BEFORE B3 patches. Commit the JSON. The B3 regression test loads it and asserts byte-equality post-task.
+Add `scripts/generate_config_hash_baseline.py` (NEW — minimal, can be deleted after baseline lands). It loads workflows covering ALL the hash-affecting shapes (per review-test-fidelity #1 — without these, the regression gate is incomplete) and writes `compute_config_hash` for every node to `tests/test_runtime/fixtures/golden_config_hashes.json`.
+
+**Mandatory shape coverage** (each shape needs ≥1 representative workflow):
+- **Plain LLM node** (no cache, no batch, no special features) — baseline.
+- **`cache: false`** — all 7 example workflows using this field, parameterized.
+- **Branching** (post-DD#38 `## Outputs` coalesce semantics) — at least one workflow with `next:` routing tables.
+- **Batch processing** (Task 96) — both `parallel: true` and `parallel: false` shapes, with `error_handling: fail_fast` and `continue` variants.
+- **Sub-workflow nodes** (`type: workflow`) — these aren't LLMNode but live in `node_configs`; verify they're unaffected by the cache filter.
+- **Structured output** (`output_schema` injecting `tools`) — Task 66 contract.
+- **Attachments** — file/binary attachments on LLM nodes.
+- **Retry config** — non-default `max_retries` / `wait_seconds` (these ARE in `compute_node_config`).
+- **Reasoning** (`extended_thinking` / Task 158 reasoning translation map).
+
+The script enumerates which workflows it loaded and which shape each covers in a `# Coverage:` header in the JSON. Implementing agent verifies this header before committing.
+
+**MERGE GATE — non-negotiable:** B3.1 patches MUST NOT begin until `tests/test_runtime/fixtures/golden_config_hashes.json` is committed against `main` head. Generated post-patch = tautology = silent stale cache risk. Recommended PR sequence:
+1. PR #1: `scripts/generate_config_hash_baseline.py` only.
+2. Run script on `main`. Commit the resulting fixture (PR #1 also).
+3. PR #2 onward: B3.1 → B3.2 → B3.3 → B3.4 patches.
+
+Document this gate in B3 merge-gate section below as the FIRST checkpoint.
 
 ## B3.1 — Schema additions to runtime types
 
@@ -344,12 +444,32 @@ Add `scripts/generate_config_hash_baseline.py` (NEW — minimal, can be deleted 
     - `prompt_cache_items: tuple[str, ...] = ()` — the bare names declared on the node. **Tuple, not list**, so the value is hashable and the dataclass stays clean. Empty tuple = no opt-in (DD#19 + spec edge case).
     - `prewarm: bool = False`.
   - Extend `CompiledWorkflow`:
-    - `cache_block: dict[str, Any] | None = None` — the workflow-level `## Cache` IR.
+    - `cache_block: CacheBlockIR | None = None` — the workflow-level `## Cache` IR (frozen dataclass per the architectural backbone). NOT `dict[str, Any]`. Mutability would defeat the parallel-batch safety guarantee — see backbone section.
 
 - `src/pflow/runtime/compilation/...` (compiler):
   - Find the `NodeConfig` factory (search for `cache_enabled` field assignment — likely `compilation/compiler.py`). Extract `node.get("prompt_cache", [])` → `tuple(...)` into `NodeConfig.prompt_cache_items`. Extract `node.get("prewarm", False)` into `NodeConfig.prewarm`.
-  - Find `CompiledWorkflow` assembly site. Extract `workflow_ir.get("cache")` into `CompiledWorkflow.cache_block`.
-  - **Verification**: existing `cache: bool` extraction still produces the same `NodeConfig.cache_enabled`. Run all `tests/test_runtime/test_compiler*` tests.
+  - Find `CompiledWorkflow` assembly site. Build `CacheBlockIR` from `workflow_ir.get("cache")` if present:
+    ```python
+    cache_ir = workflow_ir.get("cache")
+    if cache_ir is not None:
+        cache_block = CacheBlockIR(
+            ttl=cache_ir.get("ttl"),
+            items=tuple(
+                CacheChunkIR(
+                    name=item["name"],
+                    var_expr=item["var"],
+                    prose_before=item["prose_before"],
+                    source_line=item.get("_source_line", 0),
+                )
+                for item in cache_ir.get("items", [])
+            ),
+            source_line=cache_ir.get("_source_line", 0),
+        )
+    else:
+        cache_block = None
+    ```
+    Pass to `CompiledWorkflow(... , cache_block=cache_block)`. The conversion happens once at compile time; subsequent reads from the compile cache see the same frozen object.
+  - **Verification**: existing `cache: bool` extraction still produces the same `NodeConfig.cache_enabled`. Run all `tests/test_runtime/test_compiler*` tests. Add a test that mutating any field on a returned `CacheBlockIR` raises `dataclasses.FrozenInstanceError`.
 
 ## B3.2 — `CacheRenderContext` build + install at engine boundary
 
@@ -358,24 +478,42 @@ Add `scripts/generate_config_hash_baseline.py` (NEW — minimal, can be deleted 
 - `src/pflow/runtime/engine/engine.py`:
   - Add a module-level helper `_build_cache_render_dict(workflow: CompiledWorkflow) -> dict[str, CacheRenderContext]`:
     - Iterate `workflow.node_configs`. For each LLMNode (`config.node_type_name == "LLMNode"`), build a `CacheRenderContext` if any of `(config.prompt_cache_items, config.prewarm, workflow.cache_block)` is set (i.e. at least one cache-related declaration exists for this node or workflow).
-    - `cache_block` = `workflow.cache_block`.
+    - `cache_block` = `workflow.cache_block` (already a frozen `CacheBlockIR | None` from B3.1).
     - `subset` = `config.prompt_cache_items`.
     - `prewarm` = `config.prewarm`.
     - `unresolved_batch_prompt` = `config.template_config.template_params.get("prompt")` only when `config.batch_config and config.template_config`; else `None`.
     - `batch_alias` = `config.batch_config.item_alias` when batch; else `None`.
-  - In `WorkflowEngine.run()` body (the section currently doing trace-collector save/restore at lines 181–187): add the same shape for `__pflow_cache_render__`:
+  - In `WorkflowEngine.run()` body (the section currently doing trace-collector save/restore at lines 181–187): add the same shape for `__pflow_cache_render__`. **The save/restore must be wrapped in an outer try/finally** so the restore fires even if `_build_cache_render_dict` raises (preserving parent state across malformed-IR errors). Wrap the install in `MappingProxyType` for read-only enforcement. Restore writes `{}` (proxy-wrapped) when the parent had no value, NOT `None` (per "Restore-from-absent semantics" in the backbone section):
     ```python
+    from types import MappingProxyType
     saved_cache_render = shared.get("__pflow_cache_render__")
-    shared["__pflow_cache_render__"] = _build_cache_render_dict(workflow)
     try:
-        return self._run_inner(workflow, shared)
-    finally:
-        shared["__pflow_cache_render__"] = saved_cache_render
+        shared["__pflow_cache_render__"] = MappingProxyType(_build_cache_render_dict(workflow))
+        try:
+            return self._run_inner(workflow, shared)
+        finally:
+            shared["__pflow_cache_render__"] = saved_cache_render if saved_cache_render is not None else MappingProxyType({})
+    except Exception:
+        # If _build_cache_render_dict itself raised before install, the inner finally never ran;
+        # ensure the parent's value is preserved even in that case.
+        shared["__pflow_cache_render__"] = saved_cache_render if saved_cache_render is not None else MappingProxyType({})
+        raise
     ```
     **Always install (never gated on truthiness).** Sub-workflow children must mask the parent's value even if the child has no cache declarations — otherwise a parent's cache_block leaks into a child without one. Per `engine.py:173–180` documentation: write-back assignment, not `.pop()`, because `shared` may be a `NamespacedSharedStore`.
 
+  - **Consumer pattern (canonical):** all consumers read with the `or {}` defensive pattern:
+    ```python
+    cache_ctx = (shared.get("__pflow_cache_render__") or {}).get(node_id)
+    ```
+    The `or {}` defends against any code path where the value is `None` (legacy/test instantiations that bypass `_build_cache_render_dict`). Document this in `runtime/CLAUDE.md`. Consumer sites: `plan_node._render_cache_for_hash` (B3.3), `LLMNode.prep` (C1.2), `batch_executor._execute_parallel` (D.2). Apply this pattern at all three.
+
 - `src/pflow/runtime/CLAUDE.md`:
-  - Add `__pflow_cache_render__` to the "Reserved Shared Store Keys" canonical reference. Document the value shape (`dict[str, CacheRenderContext]`), the engine-installed-and-restored lifecycle, and the read site (`LLMNode.prep()`).
+  - Add `__pflow_cache_render__` to the "Reserved Shared Store Keys" canonical reference. Document:
+    - **Value shape**: `MappingProxyType[node_id_str, CacheRenderContext]` (read-only proxy over a dict; consumers see the runtime type as `Mapping`, not `dict`).
+    - **Lifecycle**: engine-installed at `WorkflowEngine.run()` entry, save/restore via try/finally, restore-from-absent writes `MappingProxyType({})` (NOT `None`) so consumers can `.get("...") or {}` safely.
+    - **Read sites**: `plan_node._render_cache_for_hash` (B3.3), `LLMNode.prep` (C1.2), `batch_executor._execute_parallel` (D.2). All use `(shared.get("__pflow_cache_render__") or {}).get(node_id)`.
+    - **Read-only invariant**: NEVER mutate the proxy or the `CacheRenderContext` values. `MappingProxyType` raises `TypeError` on mutation. The frozen dataclass values are mutation-proof by `dataclass(frozen=True)`.
+    - **NOT in `_PROPAGATED_KEYS`**: each `engine.run()` builds its own per-workflow dict; sub-workflow children mask the parent's value via the save/restore semantics. Adding to `_PROPAGATED_KEYS` would leak parent cache_render dicts into children.
 
 ## B3.3 — Plan_node renders cache content and includes it in the hash
 
@@ -384,9 +522,9 @@ Add `scripts/generate_config_hash_baseline.py` (NEW — minimal, can be deleted 
 - `src/pflow/runtime/engine/plan_node.py`:
   - **Reorder**: move template resolution BEFORE config-hash computation. New shape:
     1. If `config.template_config and not config.batch_config`: call `resolve_templates(...)` for non-batch nodes (existing behavior, just moved earlier in the function).
-    2. Read `cache_ctx = shared.get("__pflow_cache_render__", {}).get(config.node_id)`.
+    2. Read `cache_ctx = (shared.get("__pflow_cache_render__") or {}).get(config.node_id)` (canonical defensive pattern per B3.2 — `or {}` handles the legacy/test path where the value may be `None`).
     3. If `cache_ctx is not None and cache_ctx.subset`: render `prompt_cache_content` via the new helper `_render_cache_for_hash(cache_ctx, resolved_params, shared)`. The helper:
-       - Walks `cache_ctx.cache_block["items"]` filtered to `cache_ctx.subset`, in declaration order.
+       - Walks `cache_ctx.cache_block.items` (frozen tuple of `CacheChunkIR`) filtered to `cache_ctx.subset`, in declaration order.
        - For each chunk: resolves `${var}` using `TemplateResolver.extract_root_node_id` + a lookup against `shared` (NOT `resolved_params` alone — for batch nodes, `resolved_params` is `None`; the cache references are validated as non-batch in B2.3 and so resolve from `shared` directly).
        - Returns `[{"name": chunk_name, "prose": prose_before, "value": serialized_value}, ...]` where `serialized_value` uses the deterministic helper (B3 stub: `json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)`; G.1 replaces with the canonical helper).
     4. Pass `prompt_cache_content` to `compute_node_config(...)` (new keyword-only argument; see B3.4).
@@ -394,6 +532,8 @@ Add `scripts/generate_config_hash_baseline.py` (NEW — minimal, can be deleted 
     6. Continue with memo-cache lookup and in-process-cache lookup as today.
   - **Strict-mode template-error path**: if `resolve_templates` raises `ValueError`, the existing early-return at lines 57–68 still fires. The cache content is not rendered (correct — there's nothing to hash for; the `template_exception` branch returns).
   - **Empty subset**: when `cache_ctx is None` OR `cache_ctx.subset` is empty, `prompt_cache_content` is `None` and `compute_node_config`'s conditional include doesn't fire. Hash byte-identical to pre-task. This is the load-bearing DD#19 path.
+  - **Hash-vs-prep render divergence invariant** (load-bearing): the `_render_cache_for_hash` helper called from `plan_node` and the `_render_cache_for_messages` helper called from `LLMNode.prep` (C1.2) MUST produce content that is byte-equivalent at the level of "value bytes substituted in for `${var}`." If the two diverge — e.g., `plan_node` resolves `${concept}` to value `V` at hash time but `LLMNode.prep` resolves it to `V'` at prep time — the memo cache is keyed on `V` but the adapter sends `V'`, producing silent stale-cache hits on the next run with `V` again. **Both helpers MUST use the same resolution function** (`TemplateResolver.resolve_template` against `shared`) and the same deterministic-serialization helper. Refactor: extract a single `_resolve_chunk_value(chunk, shared) -> str` helper that both call sites use; never duplicate the resolution logic.
+  - **Memo HIT short-circuits cache rendering** (review-feature-interactions / Suggestion 21): when `plan_node` computes a hash with `prompt_cache_content` and that hash matches a memo cache entry, the engine takes the cached path via `apply_memo_hit + handle_cached_execution` (`engine.py` step 5–9) and skips node execution entirely. `LLMNode.prep()` never runs on memo hits, so the message-side rendering doesn't fire — no wasted work, and no new opportunity for hash-vs-prep divergence on the cached path. Document this in `_render_cache_for_hash`'s docstring: "On memo HIT, this rendering is the only one that fires (for hash computation); LLMNode.prep is skipped. On memo MISS, plan_node renders for hash, then LLMNode.prep renders for messages — both must agree per the invariant above."
   - Update plan_node's docstring to document the new ordering and the rendering invariant.
 
 ## B3.4 — `compute_node_config` accepts rendered cache content
@@ -419,38 +559,19 @@ Add `scripts/generate_config_hash_baseline.py` (NEW — minimal, can be deleted 
   - Three-state distinction: (1) no field, (2) `prompt_cache: []`, (3) `prompt_cache: [chunk]`. Assert (1) === (2) at hash AND rendering levels (no `cache_control` markers, no `system_blocks` list — plain string `system`); (3) is distinct from both.
   - Node with `cache: false` AND `prompt_cache: [concept]`: memo cache write skipped (existing `cache_enabled=False` behavior); cache rendering still applies at runtime; in-process cache hash is computed correctly.
   - **Batch-node hash inclusion**: a batch LLM node with `prompt_cache: [concept]` produces a different hash than the same batch node without the field. The batch resolution path renders cache content from `shared` (non-batch refs only), independent of per-item template resolution.
+  - **Hash-vs-prep render byte-equivalence invariant** (load-bearing per B3.3): for a workflow with `prompt_cache: [a, b]` declared and run end-to-end against `MockLLMClient`, capture (a) the rendered `prompt_cache_content` that `compute_node_config` saw at hash time (instrument by reading the call args), and (b) the rendered `system_blocks` text payload that the mock observed. Assert that for each chunk in the subset, the `value` bytes from (a) match the corresponding block's text bytes from (b) (modulo prose framing). If they ever differ, memo cache and adapter are out of sync — silent stale-cache hit. Catch this in B3, before any phase that depends on the invariant ships.
+  - **Restore-from-absent**: construct a `WorkflowEngine`, call `run()` from a `shared` that lacks `__pflow_cache_render__`, and assert no `AttributeError`/`TypeError` raised. After completion, `shared.get("__pflow_cache_render__")` returns a `MappingProxyType({})` (NOT `None`).
+  - **Outer-dict mutation rejected**: assert `shared["__pflow_cache_render__"]["new_node"] = ...` raises `TypeError` (MappingProxyType enforces read-only). Assert `dataclasses.replace(cache_ctx, prewarm=True)` works (frozen dataclasses support `replace`); but direct `cache_ctx.prewarm = True` raises `FrozenInstanceError`. Document why: parallel-batch concurrency surface elimination.
+  - **Memo HIT no-rendering invariant** (Suggestion 21): a workflow with `prompt_cache: [concept]` declared, run twice with identical state. First run misses memo, calls `MockLLMClient.complete()` (1 call). Second run hits memo. Assert: (a) `MockLLMClient.complete` was called exactly ONCE total across both runs; (b) on the second run, `LLMNode.prep` was not invoked (instrument by counting via a spy on `prep`); (c) `shared["second-run-node-id"]["llm_usage"]["cache_source"] == "memo"`. Catches the regression where memo hits accidentally re-invoke the node (wasted work + potential render divergence).
 
 ### Regression invariants — STOP IF ANY FAIL
 
+- **Pre-merge baseline fixture exists**: `tests/test_runtime/fixtures/golden_config_hashes.json` is committed before B3.1 lands. Without this, the regression gate is a tautology.
 - `tests/test_execution/test_plan_drift.py` (verified at plan-write: 6+ test cases at lines 45–172): planner ↔ runtime parity. The drift test sees the same memo cache state across both code paths; cache rendering produces identical content, hashes match. New ordering (resolve before hash) must not break this.
 - All 7 files in `examples/` using `cache: false` execute identically — parameterize over all 7 in a single integration test, not "pick one." Cost is small; coverage gap was large in earlier draft.
 - All ~212 existing LLM-related tests pass.
 
-If the regression gate fails: STOP. Silent stale cache is unacceptable.
-
----
-
-# Phase C0 — Gemini explicit cache_control verification spike (paid)
-
-## Goal
-
-Verify with one paid call (~$0.10) that LiteLLM's Gemini path actually emits `cache_control` markers in a way that fires the explicit-cache mechanism (returns `cache_creation_input_tokens > 0` on call 1, `cache_read_input_tokens > 0` on call 2), distinguishing from Gemini's implicit auto-cache.
-
-This blocks C2 only. C1 (Anthropic) and C3 (OpenAI) can be implemented in parallel.
-
-## Spike script
-
-- `scratchpads/task-159-c0-gemini-cache-spike.py` (new, do NOT run as part of the implementation plan — the implementing agent runs it after authorization):
-  - Pattern: minimal Python file calling `litellm.completion` directly with a Gemini Flash model (cheapest), a 1500+ token `cache_control: {type: ephemeral}` system prefix, and a different per-call user message.
-  - Inject API keys: `from pflow.core.settings import SettingsManager; for k, v in (SettingsManager().load().env or {}).items(): if v and k not in os.environ: os.environ[k] = v`.
-  - Make two sequential calls with the same cached prefix.
-  - Print `response.usage.prompt_tokens_details.cached_tokens` (which the adapter normalizes to `cache_read_input_tokens` per `llm_client.py:751–755`) and `response._hidden_params["response_cost"]` for both calls.
-  - Pass: call 2 reports `cached_tokens > 0`. Fail: both calls report 0.
-  - **Cleanup**: delete the spike script after the C2 patch lands.
-
-## Fallback
-
-If the spike fails (Gemini doesn't honor explicit `cache_control` via LiteLLM): per the handoff spike-table fallback, document Gemini explicit-cache as best-effort. Ship C2 anyway — emit the markers — and add an info note in `analyze-cache` Gemini output: "Gemini cache hits cannot be distinguished from implicit auto-cache via the API response; check the GCP billing dashboard for explicit-cache savings."
+If the regression gate fails: STOP. Silent stale cache is unacceptable. **Failure message must include the regen command** (`uv run python scripts/generate_config_hash_baseline.py`) AND the warning "DO NOT regenerate without human review of the change — silent regeneration encodes the bug as expected."
 
 ---
 
@@ -484,22 +605,21 @@ Move actual cache-rendering tests to C1.2 — these widening tests are pure type
 ### Files
 
 - `src/pflow/nodes/llm/llm.py`:
-  - In `prep()` (line 231): read `cache_ctx = shared.get("__pflow_cache_render__", {}).get(self.node_id)`. **Do NOT cache `cache_ctx` on `self`** — `LLMNode` is reused across batch items per `nodes/CLAUDE.md` Pitfall #6, so any `self.X = result` would leak across iterations (Task 106 `_resolved` anti-pattern). The context is read fresh from `shared` on every `prep()` call. If `cache_ctx is None or not cache_ctx.subset`: skip cache rendering entirely; `prep_res["system"]` stays a plain string (today's behavior, byte-identical for opt-out nodes).
-  - When `cache_ctx` is set with a non-empty subset, build `prep_res["system_blocks"]` (new key — a `list[dict]`):
+  - In `prep()` (line 231): read `cache_ctx = (shared.get("__pflow_cache_render__") or {}).get(self.node_id)` (canonical defensive pattern per B3.2 — `or {}` handles legacy/test paths where the value may be `None`). **Do NOT cache `cache_ctx` on `self`** — `LLMNode` is reused across batch items per `nodes/CLAUDE.md` Pitfall #6, so any `self.X = result` would leak across iterations (Task 106 `_resolved` anti-pattern). The context is read fresh from `shared` on every `prep()` call. If `cache_ctx is None or not cache_ctx.subset`: skip cache rendering entirely; `prep_res["system"]` stays a plain string (today's behavior, byte-identical for opt-out nodes).
+  - When `cache_ctx` is set with a non-empty subset, build `prep_res["system_blocks"]` (new key — a `list[dict]`) using the **shared** `_resolve_chunk_value` helper introduced in B3.3 (so hash and prep render byte-identically — the load-bearing invariant from B3.3):
     1. If the user's `system` param is set (existing `self.params.get("system")`), prepend it as the FIRST content block: `{"type": "text", "text": <user system>}` — NO `cache_control` marker. User-provided system text is not part of the cache prefix.
-    2. Walk `cache_ctx.cache_block["items"]` filtered to `cache_ctx.subset`, in declaration order. For each chunk:
-       - Resolve `${var}` against `shared` (use `TemplateResolver`; consult `data_flow.py:18` for the var-name pattern).
-       - Serialize via the deterministic helper (Phase G stub for now: `json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)`).
-       - Produce a content block: `{"type": "text", "text": prose_before + serialized_value}`.
+    2. Walk `cache_ctx.cache_block.items` (frozen tuple of `CacheChunkIR`) filtered to `cache_ctx.subset`, in declaration order. For each chunk:
+       - Resolve via the shared `_resolve_chunk_value(chunk, shared)` helper (same call site `plan_node._render_cache_for_hash` uses — see B3.3).
+       - Produce a content block: `{"type": "text", "text": chunk.prose_before + serialized_value}`.
     3. Place a `cache_control` marker on the LAST block (v1 single-breakpoint strategy per DD#11). Per-provider translation (spec "TTL wire-format translation per provider"):
        - **Anthropic**: marker is `{"type": "ephemeral"}` for omitted/`5m` (Anthropic does NOT accept `ttl: "5m"` per progress log §29 — omit `ttl` for the 5-min default); `{"type": "ephemeral", "ttl": "1h"}` for `1h`.
        - **Gemini**: `{"type": "ephemeral"}` for omitted; `{"type": "ephemeral", "ttl": "300s"}` for `5m`; `{"type": "ephemeral", "ttl": "3600s"}` for `1h`.
        - **OpenAI**: cache_control markers are no-op on OpenAI; emit them anyway for consistency, plus the OpenAI-specific knobs in C3.
-    4. The TTL value is read from `cache_ctx.cache_block.get("ttl")` (the workflow-level `- ttl:` field). Provider lookup via `detect_provider(model)` from `core/llm_providers.py`.
+    4. The TTL value is read from `cache_ctx.cache_block.ttl` (frozen attribute access on `CacheBlockIR`, NOT `.get(...)` — the field is typed and always present). Provider lookup via `detect_provider(model)` from `core/llm_providers.py`.
   - In `_call_llm` (line 332): pass `system=prep_res["system_blocks"]` to `complete()` when `system_blocks` is set; otherwise pass `system=prep_res["system"]` (today's plain-string path). The adapter widening in C1.1 accepts both.
   - **NO min-token threshold check at runtime.** Per DD#36 ("`pflow run` validation: no tokenizer, no historical state"), this expensive check moves to the analytical tier (`pflow analyze-cache` and `pflow run --dry-run`) where `litellm.token_counter` is permitted. The `cache.below-min-tokens` warning fires from F2's `analyze.py`, not from `LLMNode.prep()`. Earlier-draft runtime emission was inconsistent with DD#36.
-  - **Cache-rendering template-resolution failure path** (per spec line 189): if a chunk's `${var}` fails to resolve at runtime (e.g. an upstream node failed), use the existing `build_template_error_diagnostic` pattern from `runtime/engine/template_errors.py`. Build the diagnostic with `node_id=self.node_id`, the chunk's `_source_line`, and the failing reference. Return an error-dict from `_call_llm` (mirrors the typed-exception path at `_error_dict_from_exception`) so the Node retry loop short-circuits.
-  - **Branch-absent skip** (spec edge case "Cache block references a step output on a branch that didn't execute"): when iterating chunks during rendering, if `${var}` resolves via `node_state.get_node_status` to ABSENT (the upstream node didn't execute), SKIP the chunk silently. Document this behavior in the rendering helper's docstring. The cache prefix is shorter for the affected call but still valid.
+  - **Cache-rendering template-resolution failure path** (per spec line 189): if a chunk's `${var}` fails to resolve at runtime (e.g. an upstream node failed), use the existing `build_template_error_diagnostic` pattern from `runtime/engine/template_errors.py`. Build the diagnostic with `node_id=self.node_id`, the chunk's `source_line`, and the failing reference. Return an error-dict from `_call_llm` (mirrors the typed-exception path at `_error_dict_from_exception`) so the Node retry loop short-circuits.
+  - **Branch-absent skip with trace visibility** (spec edge case "Cache block references a step output on a branch that didn't execute"): when iterating chunks during rendering, if `${var}` resolves via `node_state.get_node_status` to ABSENT (the upstream node didn't execute), SKIP the chunk. **Record the skipped chunk name** in `prep_res["__cache_chunks_skipped__"]: list[str]` (new key) so `LLMNode.post()` can write it to `shared[node_id]["llm_usage"]["cache_chunks_skipped"]`. The trace 2.1.0 channel surfaces this list per-event; `analyze-cache --from-trace` mode reads it to attribute discrepancies in cache_creation/read tokens to runtime branch-skips (vs TTL expiry, key mismatch, parallel-write race). Without this trace channel, agents see cache_key divergence between predicted and actual with no diagnostic explaining why. Document the behavior + trace key in the rendering helper's docstring. Cross-layer co-edit: extend `LLMNode.post()` (E.1) and the `llm_usage` keyset to include `cache_chunks_skipped` (default empty list).
 
 ### Tests
 
@@ -509,8 +629,9 @@ Move actual cache-rendering tests to C1.2 — these widening tests are pure type
   - Anthropic with `- ttl: 5m` → marker is EXACTLY `{"type": "ephemeral"}` (no `ttl` key). Assert `"ttl" not in marker` AND `len(marker) == 1`. Catches the bug where someone "symmetrically" emits `ttl: "5m"`.
   - No `prompt_cache` → `system` is a plain string (today's behavior).
   - Empty `prompt_cache: []` → `system` is a plain string. Three-state equivalence verified at the rendering level (mirrors B3.4 hash-level test).
-  - Cache chunk references an absent branch's output → chunk silently skipped; remaining chunks render correctly; markers placed correctly on the (shortened) chunk list.
-  - Cache-rendering template-resolution failure → error-dict returned from `_call_llm`; no retry; structured diagnostic with chunk `_source_line` + the failing reference.
+  - Cache chunk references an absent branch's output → chunk silently skipped; remaining chunks render correctly; markers placed correctly on the (shortened) chunk list. **`prep_res["__cache_chunks_skipped__"]` carries the skipped chunk name(s)** and propagates through to `shared[node_id]["llm_usage"]["cache_chunks_skipped"]` so trace mode can attribute discrepancies.
+  - **Branch-absent + order-mismatch interaction**: workflow with `prompt_cache: [a, b, c]` declared in correct order matching `## Cache`; runtime branch makes `b` absent so the rendered subset is `[a, c]`. Assert NO `cache.order-mismatch` diagnostic fires (the validator runs on the static IR, not the runtime-rendered subset). The order check is purely declaration-vs-IR, never runtime-vs-IR.
+  - Cache-rendering template-resolution failure → error-dict returned from `_call_llm`; no retry; structured diagnostic with chunk `source_line` + the failing reference.
   - `cache: false` AND `prompt_cache: [concept]` on the same node: rendered system_blocks STILL carry `cache_control` markers (cache rendering applies independently of memo cache opt-out). Verifies the two-layer independence per spec "Cache Layer Independence".
   - Structured output (`output_schema`) + `prompt_cache`: the schema's `tools` injection (Anthropic structured output uses tools) does NOT displace cache_control markers from the system blocks.
   - Extended thinking + `prompt_cache`: thinking budget tokens do NOT count against `cache_creation_input_tokens`. The thinking block is in the response, not the request; cache prefix is request-side only.
@@ -520,17 +641,6 @@ Move actual cache-rendering tests to C1.2 — these widening tests are pure type
 
 - Widen `MockLLMClient.complete()`'s `system` parameter from `Optional[str]` to `Optional[Union[str, list[dict]]]` (line 194). The recorded entries in `call_history_full` already store `system` verbatim; cache-structure tests inspect `call_history_full[i]["system"]` directly. Update `tests/shared/llm_mock.py` and add a round-trip test asserting `system=[{...}]` is recorded as a list, not a stringified version.
 - Extend `MockLLMClient.set_response(...)` to accept `cache_creation_input_tokens` and `cache_read_input_tokens` keyword args (default 0). They populate the returned `usage` dict so trace tests can simulate cache hits with specific token counts. Without this, downstream cache-correlation tests need ad-hoc monkey-patching.
-
-### Tests
-
-- `tests/test_nodes/test_llm/test_prompt_cache_rendering.py` (new):
-  - Anthropic node with `prompt_cache: [concept]` and a registered cache block: `MockLLMClient.call_history_full[-1]["system"]` is a list with at least one block carrying `cache_control: {"type": "ephemeral"}` on the last cache chunk; the user-provided `system` param (when set) appears as the first chunk WITHOUT a marker.
-  - Anthropic with `- ttl: 1h` on the cache block → marker is `{"type": "ephemeral", "ttl": "1h"}`.
-  - No `prompt_cache` → `system` is a plain string (today's behavior, no list).
-  - Empty `prompt_cache: []` → `system` is a plain string.
-  - Below-threshold rendered content emits `cache.below-min-tokens` warning to `__warnings__`.
-  - Structured output (`output_schema`) + `prompt_cache` co-exist correctly (system blocks unaffected by schema).
-  - Extended thinking + `prompt_cache` co-exist correctly (per Anthropic docs; LiteLLM Phase 0 spike findings in Task 158 §27 — cache markers compose with `thinking={"type":"enabled","budget_tokens":...}`).
 
 ### Regression invariants
 
@@ -543,7 +653,7 @@ Move actual cache-rendering tests to C1.2 — these widening tests are pure type
 
 ## Goal
 
-Same rendering surface as C1 but for Gemini. Triggers `cachedContents` via LiteLLM's translation (verified by C0 spike). Honors Gemini's seconds-suffix TTL format.
+Same rendering surface as C1 but for Gemini. Triggers `cachedContents` via LiteLLM's translation. Honors Gemini's seconds-suffix TTL format.
 
 ## Files
 
@@ -558,10 +668,6 @@ Same rendering surface as C1 but for Gemini. Triggers `cachedContents` via LiteL
 - Extend `tests/test_nodes/test_llm/test_prompt_cache_rendering.py`:
   - Gemini renderings produce the seconds-suffix TTL.
   - Multi-marker collapse note: when batch auto-prefix (Phase D) adds a second marker, only the latter takes effect on Gemini per spec "Breakpoint Limit Handling". v1's 2-marker max degrades correctly because the latter marker's prefix is a superset of the earlier. Add a test asserting both markers are emitted (the adapter doesn't filter them); the Gemini-side collapse is provider behavior, not pflow's responsibility.
-
-## Gating
-
-- C0 spike must have run successfully OR the fallback ("ship anyway with caveat in analyze-cache") is documented.
 
 ---
 
@@ -589,10 +695,6 @@ OpenAI doesn't use `cache_control` (auto-cache only), but it exposes two pflow-r
   - OpenAI node with `cache_block.ttl == "1h"` → `prompt_cache_retention: "24h"` in `model_options`.
   - OpenAI node with no `prompt_cache` → no cache-related kwargs leak into `model_options`.
 
-## Phase D paid-spike preview
-
-The OpenAI `prompt_cache_key` parallel-routing spike lives in Phase D — the test above only verifies the key is emitted; the spike verifies it actually achieves sticky routing under live parallel load.
-
 ---
 
 # Phase D — Auto-batch-prefix detection + prewarm execution
@@ -602,8 +704,6 @@ The OpenAI `prompt_cache_key` parallel-routing spike lives in Phase D — the te
 Two pieces, both flowing through the `CacheRenderContext` channel established in B3 (no new reserved keys):
 1. LLMNode performs auto-batch-prefix detection: read `cache_ctx.unresolved_batch_prompt` and `cache_ctx.batch_alias`; find the first `${<alias>.X}` reference; everything before it is the static prefix; insert a second `cache_control` marker at the end of that prefix when `cache_ctx.prewarm` is true.
 2. Batch executor's prewarm execution: serialize item[0], wait for cache write, then fan out items[1:]. The executor reads `prewarm` from `cache_ctx`, NOT from `node.params`.
-
-Plus the OpenAI parallel-routing paid spike.
 
 ## Pre-implementation verification
 
@@ -671,22 +771,6 @@ Append to `tests/test_nodes/test_llm/test_batch_cache_prefix.py`:
 - Prewarm + continue + item[0] fails → items[1:] dispatched anyway, all marked as cache-write attempts (no reads).
 - Prewarm + item[0] succeeds → item[0] completes BEFORE items[1:] start (verify via timing or via `call_history_full` insertion order on a single-threaded mock; for parallel determinism, mock `time.sleep` or use a barrier).
 
-## D.4 — OpenAI parallel-routing paid spike (~$0.10)
-
-### Spike script
-
-- `scratchpads/task-159-d-openai-routing-spike.py` (new, do NOT run as part of the implementation; runs after authorization):
-  - Pattern: 4–8 parallel OpenAI calls with the same `prompt_cache_key` and a 1500+ token shared prefix.
-  - Inject keys per the C0 pattern.
-  - For each call, log `response.usage.prompt_tokens_details.cached_tokens`.
-  - Pass: most calls (≥ N-1) report `cached_tokens > 0` after the first one writes.
-  - Fail: cache hits are random; suggests no sticky routing or the soft-cap kicked in.
-  - Cleanup: delete after the spike outcome is recorded in progress log.
-
-### Fallback
-
-If routing degrades on parallel batches: per the handoff spike-table fallback, document the degraded hit rate in `analyze-cache` OpenAI output and emit `prompt_cache_key` regardless (it never hurts).
-
 ## D merge gate
 
 - `test_engine_prompt_cache_plumbing.py`, `test_batch_cache_prefix.py` pass.
@@ -699,7 +783,7 @@ If routing degrades on parallel batches: per the handoff spike-table fallback, d
 
 ## Goal
 
-Bump the trace format constant, add per-event `cache_key`/`cache_source`/`cache_age_sec` and top-level `workflow_path`. Cost reporting unchanged (LiteLLM normalization in `llm_client.py:776–784` already handles the cache token counts). Per the handoff spike-table, an Anthropic per-TTL pricing precision spike is gated on whether 1h-TTL ships in v1.
+Bump the trace format constant, add per-event `cache_key`/`cache_source`/`cache_age_sec` and top-level `workflow_path`. Cost reporting unchanged — LiteLLM normalization in `llm_client.py:776–784` already handles the cache token counts. v1 trusts `litellm.completion_cost()` for per-TTL pricing distinction.
 
 ## Pre-implementation verification
 
@@ -712,19 +796,20 @@ Read `runtime/workflow_trace.py:202–238` (`_add_llm_data`) and confirm the LLM
 - `src/pflow/runtime/workflow_trace.py`:
   - Bump `TRACE_FORMAT_VERSION = "2.1.0"` (line 17).
   - Constructor: add `workflow_path: str | None = None` keyword arg to `WorkflowTraceCollector.__init__`. Defaulting to `None` keeps existing test instantiations (~21 sites surveyed by review-impact-completeness) source-compatible — they continue to construct with positional/`workflow_name` kwarg only.
-  - In `save_to_file` (line 463), add `trace_data["workflow_path"] = self.workflow_path` (may be `None` for legacy callers; non-None for production paths).
+  - In `save_to_file` (line 487 — verify before patching), add `trace_data["workflow_path"] = self.workflow_path`. **Per spec line 758, `workflow_path` MUST NOT be `None` for 2.1.0 traces.** Production paths set it via the runner/workflow_executor updates below. Defensive runtime check: assert `self.workflow_path is not None` when `format_version == TRACE_FORMAT_VERSION` and `TRACE_FORMAT_VERSION.startswith("2.1")`. Test-only callers that don't care can pass an explicit synthetic value (e.g., `"test-inline"`); legacy `None` only acceptable when the assert is wrapped behind a feature gate. If this assertion fires under any production path, STOP and surface to user — it indicates a missing `workflow_path` plumbing site.
   - In `_add_llm_data` (line 202): no new sidecar dict. The new fields (`cache_key`, `cache_source`, `cache_age_sec`) flow via the existing `llm_usage` keyset — same path `cache_creation_input_tokens` already takes (line 217–218). When `node_output["llm_usage"]` carries those keys, they land on `event["llm_call"]` automatically. **No new code in `_add_llm_data` other than the existing `event["llm_call"] = llm_usage` assignment** — the keyset is extended at the producer side.
-  - For 2.0.0 backwards-compat: existing `format_version.startswith("2.")` gate (`trace_report.py:400`) continues to work. Add an info note when `analyze-cache --from-trace` auto-load skips a 2.0.0 trace AND there are matching 2.0.0 traces present — see F3.1 update below.
+  - For 2.0.0 backwards-compat: existing `format_version.startswith("2.")` gate (`trace_report.py:463` — verify line at patch time) continues to work. Add an info note when `analyze-cache --from-trace` auto-load skips a 2.0.0 trace AND there are matching 2.0.0 traces present — see F3.1 update below.
 
 - `src/pflow/nodes/llm/llm.py`:
   - In `post()` (line 431, where `shared["llm_usage"]` is populated): `usage_dict.get("cache_key")`, `usage_dict.get("cache_source")`, `usage_dict.get("cache_age_sec")` are added to the `llm_usage` dict written to `shared`. For non-cached calls, only `cache_key` is set (the key the entry was written under, available from the engine via `write_memo_cache`). For cached calls, all three are set.
   - **How does LLMNode learn the cache_key, cache_source, cache_age_sec?** They flow through the node-output dict the engine already writes via `apply_memo_hit` (cached path) or via `write_memo_cache` (write path). The engine's existing `usage` propagation is the channel; we extend the propagated keyset.
 
 - `src/pflow/runtime/engine/instrumentation.py`:
-  - `apply_memo_hit` (line 241): when restoring `cached_output` to `shared[node_id]`, the cached output already contains the prior run's `llm_usage` (the cache layer round-trips it). On a cache hit, augment it with `cache_source="memo"` and `cache_age_sec=time.time() - created_at` (where `created_at` comes from the new `memo_cache_lookup` return shape — see below).
-  - `memo_cache_lookup` (line 181): change return shape to also include `created_at` from the memo cache row. Use `MemoizationCache.get_with_age` instead of `.get` for the lookup. Threads through `check_memo_cache` and `plan_node`.
-  - `handle_cached_execution` (line 480): in-process cache hits don't have a `cache_key` (they're in-memory), so `cache_source="in_process"`, `cache_key=None`, `cache_age_sec=None`. Write these into `shared[node_id]["llm_usage"]` if it's an LLM node (gate on `node_type_name == "LLMNode"`).
-  - `write_memo_cache` (line 297): on successful write, the cache_key passed in is what the entry will be stored under. Before the write, augment `shared[node_id]["llm_usage"]` with `cache_key=<key>` so the trace event for THIS run records the key the entry was created with. (This is correct: a cache-write event's `cache_key` is the key the writer used; a cache-hit event's `cache_key` is the key that matched.)
+  - **All three sites below MUST gate cache-metadata writes on `node_type_name == "LLMNode"`.** Non-LLM nodes (shell, http, file, mcp, python, claude, workflow) don't have `llm_usage` in their output and adding cache fields to them would corrupt the keyset for downstream consumers. Add a small helper `_should_write_cache_metadata(node_type_name) -> bool` that returns `node_type_name == "LLMNode"` and call it at all three sites for symmetry.
+  - `apply_memo_hit` (line 241 — verified): when restoring `cached_output` to `shared[node_id]` AND `_should_write_cache_metadata(node_type_name)`, the cached output already contains the prior run's `llm_usage` (the cache layer round-trips it). On a cache hit, augment it with `cache_source="memo"` and `cache_age_sec=time.time() - created_at` (where `created_at` comes from the new `memo_cache_lookup` return shape — see below). Non-LLM nodes skip this entirely.
+  - `memo_cache_lookup` (line 181): change return shape to also include `created_at` from the memo cache row. Use `MemoizationCache.get_with_age` (already exists at `cache.py:224`) instead of `.get` for the lookup. Threads through `check_memo_cache` and `plan_node`. The `created_at` value is an epoch (per progress log §30) — caller computes age via `time.time() - created_at`.
+  - `handle_cached_execution` (line 480 — verified): in-process cache hits don't have a `cache_key` (they're in-memory), so `cache_source="in_process"`, `cache_key=None`, `cache_age_sec=None`. Write these into `shared[node_id]["llm_usage"]` ONLY when `_should_write_cache_metadata(node_type_name)`.
+  - `write_memo_cache` (line 297 — verified): on successful write AND `_should_write_cache_metadata(node_type_name)`, the cache_key passed in is what the entry will be stored under. Before the write, augment `shared[node_id]["llm_usage"]` with `cache_key=<key>` so the trace event for THIS run records the key the entry was created with. (Correct: a cache-write event's `cache_key` is the key the writer used; a cache-hit event's `cache_key` is the key that matched.)
 
 - `src/pflow/execution/runner.py`:
   - At line 126 (where `WorkflowTraceCollector` is constructed), pass `workflow_path=resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)` so the trace carries the canonical identifier.
@@ -738,30 +823,14 @@ Read `runtime/workflow_trace.py:202–238` (`_add_llm_data`) and confirm the LLM
 
 - `tests/test_runtime/test_trace_format_2_1.py` (new):
   - A run with `prompt_cache` produces a trace with `format_version: "2.1.0"`, `workflow_path` set (file path for file runs; `ir-hash:<md5>` for inline), and per-event `cache_key`/`cache_source`/`cache_age_sec` on cache-hit events.
-  - A 2.1.0 trace is readable by the existing `format_version.startswith("2.")` consumer gate (`trace_report.py:400`) — no consumer-side regression.
+  - A 2.1.0 trace is readable by the existing `format_version.startswith("2.")` consumer gate (`trace_report.py:463`) — no consumer-side regression.
   - `cache_age_sec` is correctly computed: write a memo entry, sleep 0.1s, hit it, assert `0.05 <= cache_age_sec <= 5.0`. Two-sided bound catches "epoch returned instead of age" bugs (review-test-fidelity C3).
   - Inline-workflow run produces `workflow_path: "ir-hash:<md5>"` matching `_synthesize_inline_workflow_id` output.
   - **Parallel-batch per-item granularity**: a parallel batch where two items hit different cache_keys (different rendered cache content per item) records BOTH cache_keys in the trace. `event["batch_items"][i]["llm_call"]["cache_key"]` is per-item, distinct per i. (Verifies the routing through `llm_usage` preserves per-item granularity, where the earlier-draft sidecar dict would have lost it.)
   - Sub-workflow run: child trace events carry the child's `workflow_path` (NOT the parent's). Verifies the workflow_executor.py:342 update.
-
-- **Update existing tests** (review-impact-completeness C2/C3):
+  - **Non-LLM node cache-metadata gating** (review-silent-failures W5 / Suggestion 24): a workflow with a shell node that goes through `apply_memo_hit` produces a trace where `event["llm_call"]` is absent (correct — shell isn't an LLM call) AND `shared["shell-node-id"]` does NOT contain `cache_key`/`cache_source`/`cache_age_sec` keys. Catches the regression where the gate is missed at one of the three write sites and cache fields contaminate a non-LLM node's output dict.
   - `tests/test_runtime/test_workflow_trace.py:335` and any other tests with literal `format_version: "2.0.0"` assertions: triage each. Tests that assert "trace is 2.0.0 → has these fields" stay (testing legacy compat). Tests that just emit a trace and read its version bump to `"2.1.0"`. Enumerate the affected tests in the merge gate, don't punt to "all existing tests pass."
   - Tests that construct `WorkflowTraceCollector(workflow_name="...")` continue to work (workflow_path defaults to None). No bulk update needed.
-
-## E.2 — Anthropic per-TTL pricing precision paid spike (~$0.10)
-
-This spike is GATED on 1h-TTL actually being selectable in v1. Per spec verification list, all three TTL values must work end-to-end in Phase C/D. The spike here verifies `litellm.completion_cost()` distinguishes 1.25× (5-min) from 2× (1h) cache writes.
-
-### Spike script
-
-- `scratchpads/task-159-e-anthropic-pricing-spike.py` (new, do NOT run as part of plan):
-  - Pattern: two Anthropic calls with cache writes — one `5m`, one `1h` — same prefix, same cache size.
-  - Compute expected costs from the documented multipliers + the model's per-token rate.
-  - Compare against `response._hidden_params["response_cost"]`.
-
-### Fallback
-
-If LiteLLM doesn't distinguish per-TTL: compute write cost from raw `cache_creation_input_tokens × per-provider rate`, override `cost_usd` for cache-write events. The override site is `_normalize` in `llm_client.py:776–784`.
 
 ## E merge gate
 
@@ -781,29 +850,32 @@ Create `src/pflow/core/cache_analysis/` with the small, independent modules that
 - `src/pflow/core/cache_analysis/__init__.py` — re-exports `analyze`, `summarize`, `CacheAnalysis` dataclass.
 
 - `src/pflow/core/cache_analysis/warning_catalog.py` (new):
-  - Closed catalog of `cache.*` warning IDs per spec "Stable Warning ID Catalog" — encode as a single SSoT table with EVERY required attribute per ID. Per-ID contract:
+  - Closed catalog of 10 `cache.*` warning IDs per spec DD#29. The catalog is a module-level constant `CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec]` where `CacheWarningSpec` is a frozen dataclass with the fields below. **Each row's values are concrete, not placeholders** — the implementing agent encodes them verbatim. The 10th entry, `cache.discrepancy`, is added per the orchestrator decision (resolves the spec line-944 open question — it fills the 10-entry slot reserved by DD#29).
 
-    | Field | What |
-    |---|---|
-    | `id` | `cache.<name>` |
-    | `severity` | `Severity.ERROR` / `WARNING` / `INFO` |
-    | `source` | `"validator"` for run-validation IDs (`cache.order-mismatch`, `cache.unused-chunk`); `"cache_analyzer"` for analytical IDs (everything else) |
-    | `category_constant` | `cache_failure` / `cache_warning` / `cache_advisory` |
-    | `message_template` | Format string with named placeholders (e.g. `"{node_id}: declared {declared!r}, you wrote {actual!r}"`) |
-    | `required_context_keys` | Tuple of `(name, type)` pairs the diagnostic MUST carry in `context` |
-    | `suggestions_template` | List of suggestion-template strings with named placeholders. MUST include explicit alternatives where applicable (e.g. `cache.batch-prewarm-recommended`'s suggestions list both `prewarm: true` AND `prewarm: false` so the agent knows opt-out also suppresses the warning). |
-    | `path_template` | `"nodes[id={node_id}].prompt_cache[{i}]"` shape, where applicable |
-    | `nullable_cost_keys` | Set of `context.*_usd` keys that may be `null` under cost-degradation tri-state |
+  | id | severity | source | category | message_template | required_context_keys | suggestions_template | path_template | nullable_cost_keys |
+  |---|---|---|---|---|---|---|---|---|
+  | `cache.order-mismatch` | `ERROR` | `validator` | `cache_failure` | `"{node_id}: prompt_cache order doesn't match ## Cache declaration\n  declared:  {declared}\n  you wrote: {actual}\n  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order"` | `(("node_id", str), ("declared", list), ("actual", list))` | `[]` (message itself carries the fix) | `"nodes[id={node_id}].prompt_cache"` | `set()` |
+  | `cache.unused-chunk` | `WARNING` | `validator` | `cache_warning` | `"## Cache declares chunk {chunk_name!r} but no node references it"` | `(("chunk_name", str), ("source_line", int))` | `["Remove the unused chunk from ## Cache, OR add it to a node's prompt_cache: list."]` | `"cache.items[name={chunk_name}]"` | `set()` |
+  | `cache.shared-context-undeclared` | `INFO` | `cache_analyzer` | `cache_advisory` | `"{node_count} LLM nodes share static context that isn't in any ## Cache block (saves ~${savings_usd:.2f}/run)"` | `(("node_count", int), ("shared_chunks", list), ("affected_workflow", str), ("savings_usd", float\|None))` | `["Paste the suggested ## Cache block (see Suggested ## Cache block section above) into {affected_workflow}.", "Per-node prompt_cache: assignments are listed in the same section."]` | `"workflows[path={affected_workflow}]"` | `{"savings_usd"}` |
+  | `cache.batch-prewarm-recommended` | `WARNING` | `cache_analyzer` | `cache_warning` | `"{node_id}: {batch_size}-item batch with ~{prefix_tokens_estimated}-token static prefix has no explicit prewarm decision; prewarming would save ~{savings_pct}% of batch cost"` | `(("node_id", str), ("batch_size", int), ("prefix_tokens_estimated", int), ("savings_pct", int), ("savings_usd", float\|None))` | `["Add `- prewarm: true` to {node_id} to opt in (-${savings_usd:.2f}/run).", "OR add `- prewarm: false` to {node_id} to opt out explicitly (suppresses this warning)."]` | `"nodes[id={node_id}]"` | `{"savings_usd"}` |
+  | `cache.dynamic-before-static` | `WARNING` | `cache_analyzer` | `cache_warning` | `"{node_id}: dynamic `${{{dynamic_ref}}}` reference at line {dynamic_line} of the prompt template precedes ~{cacheable_tokens}-token cacheable content; cache won't fire for {affected_calls} calls per run"` | `(("node_id", str), ("dynamic_ref", str), ("dynamic_line", int), ("cacheable_tokens", int), ("affected_calls", int), ("savings_usd", float\|None))` | `["Move the cacheable content (everything stable across calls) to BEFORE `${{{dynamic_ref}}}` in the prompt template.", "Projected cache ratio after fix: {projected_ratio_pct}%."]` | `"nodes[id={node_id}].prompt"` | `{"savings_usd"}` |
+  | `cache.padding-advisory` | `INFO` | `cache_analyzer` | `cache_advisory` | `"{node_id}: prompt_cache subset doesn't start at position 1 of ## Cache declaration order; padding to {suggested_subset} would unlock prefix hits at 0.1× read rate (saves ~${savings_usd:.4f}/run)"` | `(("node_id", str), ("current_subset", list), ("suggested_subset", list), ("savings_usd", float\|None))` | `["Extend `prompt_cache:` to `{suggested_subset}` to gain prefix-cache hits from upstream writes."]` | `"nodes[id={node_id}].prompt_cache"` | `{"savings_usd"}` |
+  | `cache.below-min-tokens` | `WARNING` | `cache_analyzer` | `cache_warning` | `"{node_id}: declared cache content is ~{cacheable_tokens} tokens, below {model}'s minimum of {min_tokens}; cache_control markers will silently no-op at the provider"` | `(("node_id", str), ("model", str), ("cacheable_tokens", int), ("min_tokens", int))` | `["Increase cache content above {min_tokens} tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from {node_id} since the cache won't fire anyway."]` | `"nodes[id={node_id}].prompt_cache"` | `set()` |
+  | `cache.cross-workflow-prose-mismatch` | `INFO` | `cache_analyzer` | `cache_advisory` | `"{parent_workflow} → {child_workflow}: chunk `{chunk_name}` declared in both ## Cache blocks with different prose-before-${{var}}; cross-workflow byte-level cache hit will not fire"` | `(("parent_workflow", str), ("child_workflow", str), ("chunk_name", str), ("parent_prose", str), ("child_prose", str))` | `["Pick one prose label and use it in both files' ## Cache blocks for chunk `{chunk_name}`."]` | `"workflows[path={parent_workflow}].cache.items[name={chunk_name}]"` | `set()` |
+  | `cache.cross-workflow-rename-detected` | `INFO` | `cache_analyzer` | `cache_advisory` | `"{parent_workflow} → {child_workflow}: parent passes `{parent_value_expr}` as input named `{child_input_name}` (line {line_in_parent}); same logical value has two names across the boundary"` | `(("parent_workflow", str), ("child_workflow", str), ("parent_value_expr", str), ("child_input_name", str), ("line_in_parent", int))` | `["Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."]` | `"workflows[path={parent_workflow}].nodes[id={parent_node_id}].inputs[name={child_input_name}]"` | `set()` |
+  | `cache.discrepancy` | `INFO` | `cache_analyzer` | `cache_advisory` | `"{node_id} (path: {trace_path}): predicted hit_ratio {predicted_pct}%, actual {actual_pct}% — root cause: {root_cause_summary}"` | `(("node_id", str), ("trace_path", str), ("predicted_pct", int), ("actual_pct", int), ("root_cause", str), ("root_cause_summary", str), ("cache_age_sec", float\|None), ("predicted_cache_key", str\|None), ("actual_cache_key", str\|None))` | `["{root_cause_action}"]` (the action prose is computed per root_cause: TTL expiry → "Consider `- ttl: 1h` on the {affected_workflow} ## Cache block."; key mismatch → "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction."; parallel-write race → "Add `- prewarm: true` to the batch node to serialize the first write."; chunk-skipped → "Cache chunk `{skipped_chunk}` was skipped at runtime (branch absent); declaration is correct but rendered subset is shorter.") | `"nodes[id={node_id}]"` | `set()` |
 
-  - Helper: `make_diagnostic(warning_id, *, node_id=None, **context_kwargs) -> Diagnostic` reads the catalog row, formats the message + suggestions from templates, attaches `id=warning_id`, `source` (split per ID per the table above — NOT uniform `"cache_analyzer"`), `context["category"]` from `category_constant`, `see_also=["caching"]`, and `path` from `path_template`.
+  **`root_cause` enum values for `cache.discrepancy`** (only emitted in `--from-trace` / mode-4): `"ttl_expiry"` | `"key_mismatch"` | `"parallel_write_race"` | `"chunk_skipped"` | `"unknown"`. Encoded as a `Literal` in `CacheWarningSpec` if helpful.
 
-  - **Source split is load-bearing** (review-agent-ux Critical): structural validator-emitted IDs (`cache.order-mismatch` from B2.3, `cache.unused-chunk` from B2.3) use `source="validator"`. Analytical-emitted IDs use `source="cache_analyzer"`. Diagnostic dedup identity tuple `(severity, source, node_id, id or message)` collapses identical findings within a source but NOT across sources — so the same ID emitted from both surfaces (e.g. `cache.order-mismatch` reaching the analyzer's output via validation pre-check) survives as one entry per surface, which is the desired behavior.
+  - **`cache.opportunities-available`** is NOT in the catalog — it's the dry-run nudge ID emitted by `summarize()` per spec line 307. It has its own constant `CACHE_OPPORTUNITIES_NUDGE_ID = "cache.opportunities-available"` next to the catalog. The dry-run nudge format string is locked separately at `summarize.py` (see F2 + F3.3); message format: `"Cache: {n} design opportunit{y_or_ies} available (estimated -${savings_usd:.2f}/run, -{savings_pct}%)."` where `y_or_ies = "y" if n == 1 else "ies"`.
 
-  - **`cache.below-min-tokens` is analytical-only** per spec catalog AND DD#36. It does NOT fire from `LLMNode.prep()` at runtime. The analyzer (F2's `analyze.py`) computes the threshold check and emits this ID. C1.2's earlier-draft runtime emission was wrong; that emission is removed.
+  - Helper: `make_diagnostic(warning_id, *, node_id=None, **context_kwargs) -> Diagnostic` reads the catalog row, formats `message_template` + each `suggestions_template` entry via `.format(**context_kwargs)`, attaches `id=warning_id`, `source` from the catalog row (NOT uniform — per-ID split), `severity` from the row, `context["category"]` from `category_constant`, `see_also=["caching"]`, and `path` from `.format(**context_kwargs)` on `path_template`. **Validates** that all `required_context_keys` are present in `context_kwargs` (raises `KeyError` at construction if missing — catches catalog-misuse bugs at test time, not in production).
 
-  - **`cache.discrepancy`** (used in spec mode-4 from-trace example): NOT in the v1 catalog. Surface to user during plan implementation: is this a 9th catalog entry (DD#29 design review) OR a one-off label that doesn't enter the closed catalog? Recommend: emit as a generic Diagnostic in trace-mode without a stable `id`, OR add as the 9th catalog entry under `cache_advisory`. Plan-writer's preference: add as 9th entry; this needs a one-line user decision.
+  - **Source split is load-bearing** (per the table). Identity tuple `(severity, source, node_id, id or message)` collapses identical findings within a source but NOT across sources, so the same ID surviving from both validator and analyzer paths produces one entry per surface (the desired behavior — both surfaces mean different things to the agent).
 
-  - Test in `tests/test_core/test_cache_analysis_warnings.py`: parameterized over every catalog entry. Asserts: (1) `make_diagnostic(id, ...)` produces the expected severity/source/category/message/suggestions; (2) `path` matches the template; (3) `id` is in the diagnostic's `id` field (not buried in context); (4) byte-equality of the canonical message format for at least one example invocation per ID.
+  - **`cache.below-min-tokens` is analytical-only** per spec catalog AND DD#36. It does NOT fire from `LLMNode.prep()` at runtime. The analyzer (F2's `analyze.py`) computes the threshold check via `core/llm_capabilities.py::get_min_cache_tokens(model)` (B1.2) and emits this ID.
+
+  - Test in `tests/test_core/test_cache_analysis_warnings.py`: parameterized over every catalog entry. Asserts: (1) `make_diagnostic(id, ...)` produces the expected severity/source/category/message/suggestions; (2) `path` matches the template; (3) `id` is in the diagnostic's `id` field (not buried in context); (4) byte-equality of the canonical message format for at least one example invocation per ID — explicitly tests that `cache.batch-prewarm-recommended`'s suggestions list BOTH `prewarm: true` AND `prewarm: false` (agent must see both paths suppress the warning); (5) `make_diagnostic` raises `KeyError` when a required context key is missing; (6) `nullable_cost_keys` truly are `null`-able — passing `savings_usd=None` produces a Diagnostic without raising or substituting `0.00`.
 
 - `src/pflow/core/cache_analysis/token_estimation.py` (new):
   - `estimate_tokens(model, text, *, trace=None, memo_cache=None, node_id=None) -> tuple[int, str]` returns `(token_count, source)` where `source` is one of `"trace"` | `"memo"` | `"estimator"` | `"heuristic"` per DD#31. Tier order (highest fidelity first):
@@ -822,6 +894,9 @@ Create `src/pflow/core/cache_analysis/` with the small, independent modules that
   - `walk_cross_workflow(root_ir, base_path, *, max_depth=10) -> list[CrossWorkflowEdge]` — recursive walker using `resolve_sub_workflow` (the primitive at `core/workflow/sub_workflow_resolver.py`).
   - For each `WorkflowExecutor` node, read `node["params"]["workflow"]` and `node["params"]["inputs"]`. Resolve to child IR via the primitive. Recurse on the child IR with depth limit and cycle detection (set of resolved paths) — mirrors mermaid's `_render_workflow` traversal at `_render.py:94–130`.
   - Each `CrossWorkflowEdge` carries `parent_workflow`, `child_workflow`, `parent_value_expr`, `child_input_name`, `line_in_parent`.
+  - **Sub-workflow resolution failure handling** (Suggestion 22 — handled without new catalog ID): when `resolve_sub_workflow(child_ref)` raises (broken file path, missing workflow, cycle at depth limit), the walker does NOT silently drop the edge. Two cases:
+    - **Cycle / depth limit hit**: walker stops descending that branch but continues siblings. Logs via `logger.info` (not a Diagnostic — cycles are an analyzer-internal limit, not a user-facing finding) so the agent can see it in `--verbose` mode.
+    - **Resolution error (broken ref)**: re-raise the underlying `WorkflowValidationError` / `WorkflowNotFoundError`. These are validation errors that should surface through the existing diagnostic pipeline — the SAME error that would fire if the user tried to run the workflow. Adding a new `cache.*` ID for this would duplicate machinery the validator already provides. The cross-workflow walker is opt-in (only fires when `analyze-cache` runs); if the workflow has broken sub-workflow refs, `pflow run` would already fail with the same diagnostic. No silent-skip — the analyzer either produces findings on a structurally valid workflow OR reports the same validation error the runner would.
   - Three detection rules per spec "Cross-Workflow Walker":
     - **Rename detection** (`cache.cross-workflow-rename-detected`): when a parent edge has `child_input_name != tail_of_parent_value_expr`.
     - **Prose mismatch** (`cache.cross-workflow-prose-mismatch`): when names match across the boundary AND parent and child both declare `## Cache` blocks with the same chunk identifier AND the prose-before-the-`${var}` differs byte-by-byte. Suppressed when a rename was detected for the same chunk (rename takes precedence per spec).
@@ -834,8 +909,8 @@ Create `src/pflow/core/cache_analysis/` with the small, independent modules that
 ## Tests
 
 - `tests/test_core/test_cache_analysis_warnings.py` (new): each warning ID emits with the right severity, context shape, source.
-- `tests/test_core/test_cache_analysis_token_estimation.py` (new): tier order works; trace, memo, estimator, heuristic all reachable; confidence labels match; `litellm.token_counter` exception path falls through to heuristic.
-- `tests/test_core/test_cache_analysis_cross_workflow.py` (new): rename detection, prose mismatch, value-flow opportunity, batch sub-workflow enumeration, cycle detection, depth limit.
+- `tests/test_core/test_cache_analysis_token_estimation.py` (new): tier order works; trace, memo, estimator, heuristic all reachable; confidence labels match. **`litellm.token_counter` empirical findings** (verified during plan refinement): does NOT raise on unknown models — falls back to a default tokenizer. Test asserts: (a) known model returns deterministic count; (b) unknown model returns SOME count (source still labeled `estimator`, not `heuristic`); (c) `text=None` raises `ValueError` and the wrapper falls through to `heuristic`; (d) `text=""` returns 0. The "exception → fall through to heuristic + log warning" path fires for the `text=None` case and any future LiteLLM regression where unknown models start raising.
+- `tests/test_core/test_cache_analysis_cross_workflow.py` (new): rename detection, prose mismatch, value-flow opportunity, batch sub-workflow enumeration, cycle detection (logs at info, doesn't crash), depth limit (logs at info, doesn't crash). **Resolution-error propagation** (Suggestion 22): when a parent has a broken sub-workflow ref, the walker re-raises `WorkflowValidationError` (NOT silently skip, NOT a new `cache.*` ID).
 
 ## Regression invariants
 
@@ -875,19 +950,38 @@ Compose the F1 primitives into the full `analyze()` and `summarize()` entry poin
   - Each of the four output modes runs cleanly on a synthetic minimal workflow.
   - Confidence labels are correct given the trace/memo/estimator/heuristic mix.
   - Recommended actions are sorted by impact descending.
-  - Cost degradation: unknown model produces partial cost output; never `$0.00`.
+  - **Cost-degradation tri-state contract** (Suggestion 26 — explicit per-state JSON shape, locks the contract for agents):
+
+    | Pricing state | `summary.current_cost_per_run_usd` | `summary.partial_cost_usd` | `summary.unavailable_models` | text rendering |
+    |---|---|---|---|---|
+    | All models priced (normal) | float (e.g. `2.18`) | `false` | `[]` | `~$2.18` |
+    | Some models unpriced (partial) | float (sum of priced calls only, e.g. `0.84`) | `true` | `["ollama/llama3.2:8b", ...]` | `~$0.84 (partial — N of M nodes use unpriced models)` with footer `Unpriced models: ollama/llama3.2:8b, ...` |
+    | All models unpriced | `null` | `true` | `[<all model strings>]` | `unavailable` (NOT `$0.00`, NOT `null` rendered as text); SUMMARY explicitly states "All node models lack pricing data; structural recommendations are still actionable but cost figures are unavailable." |
+
+    Same contract applies to `optimized_cost_per_run_usd`, `rerun_cost_per_run_usd`, and `recommended_actions[].estimated_savings_usd` (becomes `null` when the action's affected nodes use unpriced models). Confidence label is unaffected by cost degradation — it tracks token-source fidelity, not dollar fidelity.
+
+    Test parametrized over the three states. **Never crashes, never silently shows `$0.00` for unpriced models.**
+  - Cost degradation: unknown model produces partial cost output; never `$0.00`. Tested per the table above.
 
 - `tests/test_cli/test_analyze_cache_golden.py` (new) — mirrors `test_mermaid_golden.py`:
-  - Parametrized cases for each of the 4 modes + a 5th for cost-degradation. Synthetic minimal workflows under `tests/test_cli/golden_analyze_cache/`. Byte-exact equality. Failure message embeds the regen command.
+  - Parametrized cases for each of the 4 modes + a 5th for cost-degradation + 1 from-trace = 10 files (4 × 2 formats text/JSON + 2 specials). Synthetic minimal workflows under `tests/test_cli/golden_analyze_cache/`. Byte-exact equality. Failure message embeds the regen command.
   - **Pricing-pin strategy** (review-test-fidelity W1): `MockLLMClient.set_response(..., cost_usd=...)` only pins runtime cost — but the analyzer uses `litellm.completion_cost()` against `litellm.model_cost`, a different code path. Pin BOTH:
     - Runtime side: `MockLLMClient.set_response(cost_usd=...)`.
     - Analyzer side: `monkeypatch.setattr("litellm.completion_cost", lambda *a, **kw: <pinned value>)` in test setup. Without this, golden cost values drift whenever LiteLLM updates `model_cost`, even with the mock pinned.
-  - Enumerate explicit golden files: 4 modes × 2 formats (text + JSON) + 1 cost-degradation + 1 from-trace = 10 files. Listed in the test parameterization.
+    - **`token_counter` does NOT need pinning.** Verified empirically: `litellm.token_counter(model="claude-sonnet-4-5", text="hello world test")` returns 3 deterministically; on unknown models it falls back to a default tokenizer (returns a count, doesn't raise) — see implementation log; the same input always produces the same count. No third pinning site needed.
   - Per-call rendering rules tested with explicit byte-equality assertions (review-agent-ux 12):
     - Default-hide-clean: a 23-row workflow hides the top 12 clean rows. Explicit `expected_text` assertion.
     - "Hidden: N nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows)." — exact text matched.
     - `--all-rows` flag: rows sorted by token volume descending. Explicit ordering test.
     - JSON `format_version: "1.0"` field present and exactly the string `"1.0"` (catches `"1"` int regression).
+    - JSON empty-array contract (review-agent-ux 5): `cross_workflow.rename_detections`, `cross_workflow.prose_mismatches`, `cross_workflow.value_flow_opportunities` are PRESENT as `[]` (not absent, not `null`) when no findings exist.
+
+- **Per-warning-ID coverage** (Suggestion 30 — `tests/test_core/test_cache_analysis_per_id_emission.py`, new):
+  - For every warning ID in the catalog (10 total), exists at least one synthetic minimal workflow under `tests/test_cli/golden_analyze_cache/per_id/{cache_id}/` that triggers exactly that ID.
+  - Test asserts: (a) running `analyze-cache` on the synthetic workflow emits the expected ID; (b) the emitted Diagnostic carries every `required_context_keys` key; (c) the rendered text output (golden file) matches byte-for-byte. Catches the case where a catalog ID is in the catalog but no production code path actually emits it (dead-code regression).
+  - Coverage assertion at module level: `set(catalog.keys()) == set(scanned synthetic workflow directories)` — fails CI if a new ID is added without a synthetic workflow.
+
+- **2.0.0-skip info note byte-equality** (Suggestion 14): synthetic test where `~/.pflow/debug/` contains 2 traces matching the workflow path, both 2.0.0. Run `analyze-cache` (no `--from-trace`). Assert the `notes` array contains exactly: `"Found 2 2.0.0 traces matching this workflow but skipped (auto-load requires 2.1.0). Use --from-trace <path> to load explicitly."` (byte-equality on the format string).
 
 ## Regression invariants
 
@@ -909,16 +1003,28 @@ Surface F2 to users via three entry points: a new `pflow analyze-cache` CLI comm
 - `src/pflow/cli/commands/analyze_cache.py` (new):
   - Click command `analyze-cache <workflow-path> [inputs...]` with flags `--format=text|json` (default `text`), `--from-trace <path>` (explicit trace override), `--no-trace` (opt out of auto-load), `--all-rows` (per-call rendering rule per spec).
   - Calls `cache_analysis.analyze(workflow, params)`; renders via `render_text` or `render_json`.
-  - Exit code: 0 on success; non-zero only on validation errors per spec.
   - Inputs are optional per DD#35.
+  - **Exit code contract** (Suggestion 20 — locks the agent-facing contract for trace-load failures and other error states):
+
+    | Condition | Exit code | Output |
+    |---|---|---|
+    | Successful analysis (any output mode) | `0` | Full output (text or JSON). Warnings of any severity DO NOT change exit code — analytical findings are advisory per DD#36. |
+    | Workflow path unparseable (`MarkdownParseError`) | non-zero | Existing `pflow run` validation diagnostic via stderr. |
+    | Workflow validation fails (`WorkflowValidationError`, including structural cache errors like `cache.order-mismatch`) | non-zero | Existing diagnostic pipeline. |
+    | `--from-trace <path>` where path doesn't exist | non-zero | Validation-error-style diagnostic: `"Trace file not found: <path>"` + suggestion `"Check the path. Auto-load reads from ~/.pflow/debug/; for explicit override pass an existing trace JSON."`. |
+    | `--from-trace <path>` where the file exists but isn't valid JSON OR missing `format_version` | non-zero | `"Trace file <path> is not a valid pflow trace (JSON parse error / missing format_version field)."` |
+    | `--from-trace <path>` where file is a 2.0.0 trace | `0` | Loads successfully (works on both 2.0.0 and 2.1.0 — see DD#34). Mode-4 output WITHOUT discrepancy analysis (per-call `data_source` falls to `memo` / `estimator` / `heuristic`); a single info note explains the limitation. |
+    | Auto-load found a 2.0.0 trace and skipped it | `0` | Info note added to `notes` array (see F2 byte-equality test). Analysis proceeds without trace data. |
+    | Conflicting `--from-trace <path>` AND `--no-trace` | non-zero | Click validation error: `"--from-trace and --no-trace are mutually exclusive."` |
+    | All node models unpriced (cost-degradation tri-state) | `0` | Cost rendering = `unavailable`; structural recommendations still emitted. NOT a failure. |
 
 - `src/pflow/cli/main.py`:
   - Register the new command via the existing command-discovery mechanism. Mirror `pflow visualize` or `pflow describe` registration at `cli/main.py:121–141` (the actual `cli.add_command(...)` registration pattern). Earlier draft referenced `pflow plan` — that command does not exist; `--dry-run` is a flag on `pflow run`, not a top-level command.
 
 ### Tests
 
-- `tests/test_cli/test_analyze_cache.py` (new): exit code, all four output modes, per-call rendering rules (default-hide-clean, `--all-rows`), padding-advisory sensitivity floor, missing-pricing degradation.
-- `tests/test_cli/test_analyze_cache_from_trace.py` (new): 2.1.0 fields available; 2.0.0 graceful fallback (an info message, no crash).
+- `tests/test_cli/test_analyze_cache.py` (new): exit code (parametrized per the F3.1 contract table — all 9 conditions), all four output modes, per-call rendering rules (default-hide-clean, `--all-rows`), padding-advisory sensitivity floor, missing-pricing degradation.
+- `tests/test_cli/test_analyze_cache_from_trace.py` (new): 2.1.0 fields available; 2.0.0 graceful fallback (an info message, no crash); `--from-trace` non-existent path produces non-zero exit with the locked diagnostic message; `--from-trace path` AND `--no-trace` produces a Click validation error.
 
 ## F3.2 — MCP parity
 
@@ -931,10 +1037,20 @@ Surface F2 to users via three entry points: a new `pflow analyze-cache` CLI comm
 - `src/pflow/mcp_server/tools/execution_tools.py`:
   - Add `@mcp.tool() async def analyze_cache(...)` (line ~178, after `plan_workflow`). Async wrapper per the file's pattern: `result = await asyncio.to_thread(_sync_op)`.
   - Add to `__all__` at line 353.
+  - **Tool docstring contract** (review-agent-ux 12): the docstring is the agent-facing schema. It MUST enumerate:
+    - The top-level JSON keys returned: `format_version` (string `"1.0"`), `workflow_path`, `analyzed_at`, `estimate_confidence` (one of `low_no_data` / `medium_from_memo` / `high_from_trace`), `trace_path`, `summary`, `recommended_actions`, `suggested_blocks`, `per_call`, `cross_workflow`, `warnings`, `notes`.
+    - The closed catalog of 10 `cache.*` warning IDs that may appear in `warnings[].id` (paste the list verbatim from F1's `CACHE_WARNING_CATALOG.keys()`).
+    - The cost-degradation tri-state behavior (per the F2 table — agents must handle `summary.partial_cost_usd: bool` and possible `null` cost fields).
+    - The four-value `per_call[].data_source`: `trace` / `memo` / `estimator` / `heuristic`.
+  - Test in `test_analyze_cache_tool.py` asserts the docstring contains: (a) the literal string `"format_version"`, (b) all 10 catalog ID strings, (c) the literal string `"partial_cost_usd"`, (d) the literal string `"data_source"`. Catches docstring-rot regressions.
 
 ### Tests
 
-- `tests/test_mcp_server/test_analyze_cache_tool.py` (new): MCP tool returns the same JSON as CLI `--format=json` for the same workflow + parameters. Stateless pattern (fresh service instance per call).
+- `tests/test_mcp_server/test_analyze_cache_tool.py` (new):
+  - MCP tool returns the same JSON as CLI `--format=json` for the same workflow + parameters. Stateless pattern (fresh service instance per call).
+  - **JSON round-trip** (review-test-fidelity 12): `json.loads(json.dumps(mcp_result))` produces a dict equal to `mcp_result`. Catches non-JSON-serializable values (Path objects, sets, etc.) leaking into the response.
+  - **Same-diagnostic-as-CLI** for `cache.order-mismatch` (review-feature-interactions C5): MCP `execute_workflow` on a workflow with `cache.order-mismatch` produces the SAME diagnostic structure (id, severity, message, suggestions) as `pflow run` on the same workflow. Locks the validation-reach contract.
+  - Docstring contract assertions (per F3.2 docstring requirements above).
 
 ## F3.3 — `--dry-run` cache nudge
 
@@ -949,9 +1065,20 @@ Surface F2 to users via three entry points: a new `pflow analyze-cache` CLI comm
 
 - `tests/test_execution/test_plan_cache_nudge.py` (new):
   - A workflow with cache opportunities produces a `--dry-run` Plan whose `diagnostics` includes `cache.opportunities-available` with the locked text format from spec.
-  - A workflow without opportunities → no nudge (silent).
+  - A workflow without opportunities → no nudge (silent). Test asserts `not any(d.id == "cache.opportunities-available" for d in plan.diagnostics)` — explicit negative assertion, not just absence of any string match.
   - The nudge appears in both text and JSON dry-run output.
   - `summarize.py` builds the message via a single locked format string (in `summarize.py`, not constructed at the call site). Pluralization is explicit: `"{n} design opportunit{y_or_ies}"` where `y_or_ies = "y" if n == 1 else "ies"`. Test both n=1 and n=4.
+  - **Byte-equality on the rendered nudge** (Suggestion 28): the rendered text payload (after `format_diagnostic`) matches exactly:
+    ```
+    ℹ Cache: 4 design opportunities available (estimated -$1.34/run, -61%).
+      Run 'pflow analyze-cache' for details.
+    ```
+    Including the leading `ℹ` glyph, the period after `%)`, the exact `-$1.34/run` sign convention, and the indented suggestion line. Catches the regression where someone changes pluralization or punctuation. n=1 variant: `Cache: 1 design opportunity available (estimated -$0.10/run, -5%).`
+  - **Three-state at MCP/CLI/JSON-trace layer** (High-Priority 19): integration test parametrized over the three `prompt_cache:` states (absent / `[]` / non-empty). For each state, run via:
+    1. `WorkflowRunner` directly (CLI path) → assert plan output equality between absent and `[]`; non-empty differs.
+    2. MCP `execute_workflow` → assert response JSON equality between absent and `[]`; non-empty differs.
+    3. JSON trace 2.1.0 file content → assert `trace["events"][i]["llm_call"]` keyset equality (no `cache_key`, `cache_source`, `cache_age_sec` in absent/`[]`; present in non-empty).
+    Locks the three-state invariant at every agent-facing surface, not just hash + rendering.
 
 ### Documentation note (Fix 6 — dry-run accuracy)
 
@@ -1049,7 +1176,7 @@ After all phases land, run the scenario-level verification per spec "Verificatio
 
 # Merge order
 
-The handoff phase split is the recommended sequence: B1 → B2 → B3 → C0/C1/C3 (parallel after B3) → C2 (gated on C0) → D (parallel with C after B3) → E → F1 → F2 → F3 → G. C and D may parallelize after B3 lands. F gates on B+C+E. G wraps. Each sub-phase is a PR-sized chunk.
+The recommended sequence: B1 → B2 → B3 → C1/C2/C3 (parallel after B3) → D (parallel with C after B3) → E → F1 → F2 → F3 → G. F gates on B+C+E. G wraps. Each sub-phase is a PR-sized chunk. Paid spikes (Gemini cache_control, OpenAI routing, Anthropic per-TTL pricing) run before B1 — they are not phases in this plan.
 
 The single hard gate: **B3's regression test (no-`prompt_cache` workflows produce identical hashes pre/post task) must pass before any subsequent phase ships.** This is the silent-stale-cache guard per DD#19.
 
@@ -1066,7 +1193,39 @@ If any verification fails, surface to the user before continuing.
 
 # Summary of plan corrections from review
 
-Applied to the plan from the 8-agent code-review pass:
+Applied to the plan from the 8-agent code-review passes (Round 1 + Round 2):
+
+**Round 2 architectural fixes (applied this session):**
+- `CompiledWorkflow.cache_block` is a frozen `CacheBlockIR` dataclass (NOT `dict[str, Any]`) — eliminates compile-cache + parallel-batch mutation hazard. Outer `__pflow_cache_render__` dict wrapped in `MappingProxyType`; values are frozen `CacheRenderContext` dataclasses with `tuple` for `subset` and `CacheBlockIR.items`.
+- `__pflow_cache_render__` save/restore writes `MappingProxyType({})` on restore-from-absent (NOT `None`) — fixes the consumer-`.get(...).get(node_id)` AttributeError trap. Outer try/finally added so restore fires even if `_build_cache_render_dict` raises.
+- All consumers use the canonical defensive read pattern `(shared.get("__pflow_cache_render__") or {}).get(node_id)`.
+- Hash-vs-prep render divergence invariant: `plan_node._render_cache_for_hash` and `LLMNode.prep` `_render_cache_for_messages` MUST share a single `_resolve_chunk_value(chunk, shared)` helper — never duplicate resolution logic. Test asserts byte-equivalence.
+- `core/CLAUDE.md:103` SSoT comment updated to reflect the `(severity, source, node_id, id or message)` tuple — sub-workflow dedup regression test added.
+- `markdown_parser._build_node_dict` extended to extract `prompt_cache:` and `prewarm:` to top-level (parallel to existing `cache` extraction at line 1432).
+- Duplicate `### Tests` block in C1.2 (with stale `__warnings__` runtime emission) deleted.
+- F1 catalog SSoT table FILLED — all 10 rows × 8 columns concrete values, including `cache.discrepancy` as the 10th entry per orchestrator decision (resolves spec line 944 open question).
+- `cache.opportunities-available` documented as separate non-catalog ID (per spec line 307) — emitted by `summarize()`, not `analyze()`.
+- All three `_should_write_cache_metadata(node_type_name)` gate sites in instrumentation.py — `apply_memo_hit`, `handle_cached_execution`, `write_memo_cache` — symmetric LLMNode-only check.
+- Memo HIT short-circuits cache rendering: documented in `_render_cache_for_hash`, tested explicitly in B3.4.
+- Three-state invariant tested at MCP/CLI/JSON-trace surfaces (not just hash + rendering).
+- F3.1 exit code contract: 9 conditions in a parametrized table; `--from-trace path` non-existent / corrupt / 2.0.0-graceful / mutually-exclusive-with-`--no-trace` all locked.
+- F3.3 dry-run nudge: byte-equality test on the rendered glyph + format string + indented suggestion line.
+- F2 cost-degradation tri-state contract: explicit table with three states (all priced / partial / all unpriced); locks `null` vs `0.00` vs `unavailable` per state.
+- F2 per-warning-ID coverage test: every catalog ID has a synthetic minimal workflow that triggers it; CI fails if a new ID lacks a fixture.
+- F3.2 MCP tool docstring contract: enumerates JSON shape, all 10 catalog IDs, cost-degradation tri-state, four-value `data_source`. Test asserts docstring contains the literal strings.
+- Cross-workflow walker resolution-failure handling without new catalog ID: cycles/depth-limit log at info; broken sub-workflow refs re-raise existing `WorkflowValidationError` (no silent-skip).
+- `_FAILURE_CATEGORY_MAP["cache_failure"]` entry DEFERRED to v1.x (not added in v1 — no typed exception emits it; dead-code violates "don't add features beyond what task requires").
+- Branch-absent silent chunk skip now writes `cache_chunks_skipped: list[str]` to `llm_usage` so trace mode attributes discrepancies (vs TTL expiry, key mismatch, parallel-write race).
+- B3 baseline-fixture merge gate: explicit "B3.1 patches MUST NOT begin until `golden_config_hashes.json` is committed against `main` head" + non-tautology PR sequence.
+- B3 baseline shape coverage: structured output, attachments, retry config, branching, sub-workflows, batch (parallel + sequential), reasoning — all enumerated.
+- `WorkflowExecutor.ALLOWED_PARAMS` × per-node schema: validator step 8 emits an improved hint message ("`prompt_cache:` and `prewarm:` are only valid on `type: llm` nodes") — tested explicitly.
+- `pflow save` bundling × `## Cache` integration test: dependency_discovery walker doesn't mistake cache `${var}` chunks for file refs.
+- B2.3 sub-workflow batch concurrency test: parallel batch with `WorkflowExecutor` (NOT sequential) — load-bearing for the `CacheBlockIR` freeze guarantee.
+- `trace_report.py` line citation corrected from 400 to 463 (verified via grep).
+- Paid spikes (Gemini, OpenAI routing, Anthropic per-TTL pricing) moved OUT of the plan entirely — they are pre-implementation work documented in agent-handoff and run before B1; spike outcomes either confirm the encoded decision or trigger a plan update.
+- `litellm.token_counter` empirical behavior verified (no raise on unknown models, returns 0 on empty text, raises ValueError on None) — F1 test reflects the true error path.
+
+**Round 1 corrections (preserved from prior session — see progress log §31):**
 
 **Architectural consolidation:**
 - Replaced 6 scattered reserved keys (3 in `shared`, 3 in `node.params`) with single `CacheRenderContext` typed dataclass + one shared key `__pflow_cache_render__`. Mirrors `__trace_collector__` precedent. Eliminates parallel-batch concurrency surface, dunder-param-injection ordering bugs, and `compute_node_config` filtering concern in one structural change. (Top-10% pattern: Temporal `Context`, Prefect `RunContext`, gRPC request context.)
@@ -1122,8 +1281,7 @@ Applied to the plan from the 8-agent code-review pass:
 - review-impact-completeness 5: `WorkflowExecutor.ALLOWED_PARAMS` — note that `prompt_cache:` / `prewarm:` on a `type: workflow` node is correctly rejected by validator step 8.
 - review-impact-completeness 9: `_NEAR_MISS_SECTIONS` typo hint for `## Cahe`.
 - review-impact-completeness 15: `dependency_discovery` walker — verify cache `${var}` chunks aren't mistaken for file references during `pflow save` bundling.
-- review-plan S5: spike-script cleanup — explicit phase merge gate item.
-- review-feature-interactions C3: Gemini multi-marker collapse — add as explicit C0 spike verification step (not just a documented limitation).
+- review-feature-interactions C3: Gemini multi-marker collapse — verified during the pre-plan Gemini spike (recorded in progress log §32+).
 
 **One open user decision still requires call:**
 - `cache.discrepancy` (used in spec mode-4 from-trace example): not in v1 catalog. Add as 9th entry (DD#29 design review) OR emit as generic Diagnostic without stable id? Recommend 9th entry under `cache_advisory` — needs one-line user confirmation.
