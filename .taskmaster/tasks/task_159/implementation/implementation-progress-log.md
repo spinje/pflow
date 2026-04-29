@@ -188,4 +188,58 @@ After committing the segment, I ran a 4-case manual smoke test through `pflow va
 
 ---
 
+### Post-segment-1 verification pass (adversarial smoke tests + 4-agent /code-review)
+
+After the post-segment fix to `_extract_all_templates`, ran a verification-specialist pass: 14 adversarial workflow files exercised through `pflow validate-only`, `pflow run`, `pflow save`, `pflow visualize`, `pflow --dry-run`, and `pflow --output-format json`. Then dispatched 4 high-leverage review subagents in parallel: `review-impact-completeness`, `review-silent-failures`, `review-validation-consistency`, `review-test-fidelity`.
+
+**Bugs found by adversarial smoke tests (NOT caught by unit tests):**
+
+1. **Double-emit on bad cache var references** — my walker fix routed cache vars through both `_validate_cache_block` AND the existing template-path validator (pass 5). User got two errors for one mistake. Fixed via split-extractor: cache vars live in a separate `_extract_cache_templates_for_unused_check` and flow ONLY into the unused-input check. Path validation receives only node-param templates; cache resolution is owned by `_validate_cache_block` with richer messages.
+
+2. **`prompt_cache: [a, a]` (duplicate items) passed silently** — would render the chunk twice in the system prompt, wasted tokens, silent semantic shift. Fixed with duplicate-detection diagnostic; suppresses the order-mismatch follow-on.
+
+**Fixes from the 4-agent code review:**
+
+3. **V6 sub-workflow dedup test was a tautology** (`review-test-fidelity` Critical 1). Synthetic `deduplicate_diagnostics([d1, d2])` necessarily collapses identically-id'd diagnostics regardless of production behavior. Replaced with Pattern 2 fixture-based test driving a real parent → child workflow file pair through `WorkflowValidator.validate()`.
+
+4. **Two circular identity tests removed** (`review-test-fidelity` Critical 2). They reconstructed the tuple from production code — passed by definition. Behavioral tests already cover the contract.
+
+5. **Split-extractor regression test extended with effect assertion** (`review-test-fidelity` High 3a). Now asserts BOTH the split mechanism AND the end-to-end effect (running `validate_workflow_templates` produces zero spurious errors for cache-only inputs). Catches future re-export-then-double-emit regressions.
+
+6. **Pattern 2 parser→validator integration test added** (`review-test-fidelity` High 5). Parses a real `.pflow.md` with `cache.order-mismatch` and asserts the validator emits the spec-locked diagnostic. Closes the "all hand-built IR" gap.
+
+7. **ERROR-severity cache diagnostics now show `[id]` next to the title** (`review-test-fidelity` High 4). E.g., `"Error: Cache Failure [cache.invalid-on-non-llm]"`. Same agent-routing handle as WARNING/INFO. Non-cache errors render unchanged (additive). Two new renderer tests lock both cases.
+
+8. **`_extract_cache_templates` renamed to `_extract_cache_templates_for_unused_check`** (`review-silent-failures` W3). Makes the contract explicit at every call site — a future contributor calling it from path-validation triggers an immediate naming red flag.
+
+9. **Parser invariant assertion `chunk.name == chunk.var_expr`** (`review-validation-consistency` S1). The schema doesn't enforce equality but the parser always populates them equal. Locks the contract — segment 3's renderer will use `var`; B2.3 resolves by `name`. Drift would break the resolution-vs-rendering symmetry silently.
+
+10. **Doc-staleness fixes**:
+    - `core/CLAUDE.md:107` — short paragraph aligned with load-bearing SSoT comment at line 103 (id-keyed identity tuple).
+    - `runtime/template_validation/CLAUDE.md` — documents both extractors and the split-extractor contract.
+
+**Findings deliberately NOT fixed (per critical-thinking triage):**
+
+- **`prompt_cache:` inside `node["params"]` asymmetry** (`review-validation-consistency` W1). Programmatic-IR-only path; the parser always lifts to top-level. Step 8 already rejects with clear "Unknown parameter" error. Adding a third rule would be belt-and-suspenders for a path normal authoring never hits.
+- **`cache.duplicate-chunk` stable catalog id** (`review-test-fidelity` High 3b suggestion). Would push the catalog to 12 entries, violating DD#29's closed-list-of-10 design decision. Adding new IDs requires user/spec review per DD#29. Substring match in the regression test is sufficient for now.
+- **Empty-string `id=""` `__post_init__` check** (`review-silent-failures` S1 suggestion). Speculative future risk; `grep` finds zero diagnostics constructed with empty `id` in `src/`. Not worth the runtime check.
+
+**End-to-end verification (manual `pflow ...` runs that PASSED):**
+
+- Run a workflow with `## Cache` declared (no LLM, just shell): `pflow workflow.pflow.md` executes successfully; cache.unused-chunk warning fires correctly.
+- `pflow save` round-trip: `## Cache` content preserved byte-for-byte; saved workflow runs identically.
+- Sub-workflow with `## Cache` invoked via parent: child cache validated, warnings propagate with `_add_child_provenance` prefix and include `Sub-workflow: ./child.pflow.md` context.
+- `pflow visualize`: mermaid generation works on cache workflows (cache section is invisible to mermaid, which is correct).
+- `pflow --dry-run` + `--output-format json`: cache warnings round-trip through plan diagnostics.
+- `--validate-only --output-format json`: full Diagnostic.to_dict structure (id at top-level, structured context, suggestions list) matches spec.
+- Parent → child where child has `cache.invalid-on-non-llm`: 1 ERROR with provenance prefix, sub-workflow path, preserved node_id (V6 dedup contract verified end-to-end at the integration level).
+
+**Final state after verification + review fixes:**
+- 5519 tests pass, 9 skipped, 0 xfailed/xpassed.
+- mypy + ruff + ruff-format + deptry all green.
+- `test_plan_drift.py` (32/32) green.
+- 14 manual adversarial cases all behave correctly.
+
+---
+
 > **Note to next agent**: Read this entry fully + the prior agents' entries (if any) before taking any action. Confirm your understanding by summarizing the segment's outcomes + open decisions, then state you're ready to proceed.
