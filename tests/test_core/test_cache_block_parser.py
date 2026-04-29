@@ -236,6 +236,33 @@ def test_prompt_cache_empty_list_promoted_to_top_level() -> None:
 # ------------------------------------------------------------------------------
 
 
+def test_inputs_referenced_only_in_cache_not_flagged_unused() -> None:
+    """A workflow input referenced ONLY by ``## Cache`` (no node param uses it)
+    must NOT trigger the unused-input ERROR — ``_extract_all_templates`` must
+    walk top-level ``cache.items[].var`` alongside node params and batch.items.
+
+    Regression: discovered via case-1 smoke test post-B2.x. Without the walker
+    extension, every workflow with `## Cache` referencing inputs would produce
+    a spurious 'Declared input(s) never used as template variable' ERROR even
+    when validation otherwise succeeds.
+    """
+    from pflow.runtime.template_validation.validator import _extract_all_templates
+
+    md = (
+        "# Test\n\nTest workflow.\n\n"
+        "## Inputs\n\n### concept\n\nConcept input.\n\n- type: string\n- required: true\n\n"
+        "## Cache\n\n```cache\nThe concept:\n${concept}\n```\n\n"
+        "## Steps\n\n### step\n\nA step that uses no template references.\n\n"
+        "- type: shell\n\n```shell command\necho hi\n```\n"
+    )
+    result = parse_markdown(md)
+    templates = _extract_all_templates(result.ir)
+    assert "concept" in templates, (
+        f"Cache chunk var ${{concept}} should be in extracted templates so the "
+        f"unused-input check sees it. Got: {sorted(templates)}"
+    )
+
+
 def test_cache_block_round_trip_preserves_content(tmp_path) -> None:
     """A workflow with ``## Cache`` saved and reloaded preserves chunk contents.
 

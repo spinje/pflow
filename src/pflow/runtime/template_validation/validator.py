@@ -351,6 +351,25 @@ def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:  # noqa: C9
             if items_template:
                 extract_from_value(items_template, node_id, "batch.items")
 
+    # Workflow-level ## Cache chunks reference workflow inputs / step outputs
+    # via their ``var`` field. Without this walk, ``_validate_unused_inputs``
+    # would flag any input declared ONLY for use inside ``## Cache`` as unused
+    # (false-positive ERROR; the input IS referenced, just not from a node param).
+    # Cache items are validated in B2.3's _validate_cache_block; this walk only
+    # serves the unused-input check by registering the templates as "seen".
+    cache_block = workflow_ir.get("cache")
+    if isinstance(cache_block, dict):
+        cache_items = cache_block.get("items")
+        if isinstance(cache_items, list):
+            for idx, item in enumerate(cache_items):
+                if isinstance(item, dict):
+                    var = item.get("var")
+                    if isinstance(var, str) and var:
+                        # Wrap in ${} so _PERMISSIVE_PATTERN finds it. The bare
+                        # 'var' field doesn't contain ``$`` syntax — it's the
+                        # already-extracted chunk identifier.
+                        extract_from_value(f"${{{var}}}", "cache", f"cache.items[{idx}].var")
+
     return templates
 
 
