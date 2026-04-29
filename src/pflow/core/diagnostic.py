@@ -46,6 +46,12 @@ class Diagnostic:
     source: str = ""
     context: dict[str, Any] | None = None
     see_also: list[str] | None = None
+    # Stable warning identifier (e.g. ``"cache.order-mismatch"``) — top-level field
+    # because top-10% diagnostic systems (mypy, rustc, ruff, eslint, clippy, TypeScript)
+    # all surface stable IDs at top level for filtering/suppression/identity dedup.
+    # When ``id`` is set it becomes the dedup key in the identity tuple; when ``None``
+    # the tuple falls back to ``message`` (legacy null-safe behavior).
+    id: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.suggestions, str):
@@ -67,8 +73,8 @@ class Diagnostic:
                     raise TypeError(f"Diagnostic.see_also entries must be non-empty slug-safe strings, got {topic!r}")
 
     def __eq__(self, other: object) -> bool:
-        # Identity is (severity, source, node_id, message) — context, title, and
-        # suggestions are deliberately excluded. This is LOAD-BEARING for the
+        # Identity is (severity, source, node_id, id or message) — context, title,
+        # and suggestions are deliberately excluded. This is LOAD-BEARING for the
         # dual-propagation-path dedup architecture (Task 143 decision): child
         # workflow diagnostics flow through BOTH the validation path (_add_child_provenance
         # in core/workflow/validator.py) AND the runtime path
@@ -77,19 +83,25 @@ class Diagnostic:
         # different context enrichment. Dedup must collapse them to one. Adding
         # context/title/suggestions to identity would break that collapse and
         # resurface duplicate warnings users already fixed.
+        #
+        # ``id or message`` (Task 159 DD#27): when ``id`` is set it becomes the
+        # dedup key — agents can route on a stable warning ID and message
+        # variants for the same finding collapse correctly. When ``id is None``
+        # (legacy/un-migrated diagnostics, all today's code paths) the tuple
+        # falls back to ``message`` — byte-identical to the pre-Task-159 behavior.
         if not isinstance(other, Diagnostic):
             return NotImplemented
         return (
             self.severity == other.severity
             and self.source == other.source
             and self.node_id == other.node_id
-            and self.message == other.message
+            and (self.id or self.message) == (other.id or other.message)
         )
 
     def __hash__(self) -> int:
         # Must match __eq__'s identity tuple exactly, for the same dedup reasons
         # documented above. Do NOT add context/title/suggestions here.
-        return hash((self.severity, self.source, self.node_id, self.message))
+        return hash((self.severity, self.source, self.node_id, self.id or self.message))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the structured JSON shape."""
@@ -98,6 +110,8 @@ class Diagnostic:
             "message": self.message,
             "source": self.source,
         }
+        if self.id is not None:
+            result["id"] = self.id
         if self.title is not None:
             result["title"] = self.title
         if self.suggestions is not None:
@@ -189,6 +203,23 @@ LLM_FAILURE_CATEGORY = "llm_failure"
 LLM_WARNING_CATEGORY = "llm_warning"
 
 
+# Cache diagnostic categories (Task 159 DD#27). Three severity tiers for the
+# prompt-caching feature surface:
+#   - cache_failure: structural ERROR-level diagnostics from validators
+#     (e.g. ``cache.order-mismatch``, ``cache.invalid-on-non-llm``). v1 emits
+#     these directly via ``Diagnostic`` — there is NO typed ``CacheRenderError``
+#     exception in v1, so ``_FAILURE_CATEGORY_MAP`` is intentionally NOT extended
+#     to include ``"cache_failure"`` (no producer flows through ``__failures__``).
+#     The constant exists for forward-compatibility with v1.x typed exceptions.
+#   - cache_warning: WARNING-level findings from the analyzer (e.g.
+#     ``cache.batch-prewarm-recommended``, ``cache.dynamic-before-static``).
+#   - cache_advisory: INFO-level recommendations (e.g. ``cache.padding-advisory``,
+#     ``cache.cross-workflow-prose-mismatch``).
+CACHE_FAILURE_CATEGORY = "cache_failure"
+CACHE_WARNING_CATEGORY = "cache_warning"
+CACHE_ADVISORY_CATEGORY = "cache_advisory"
+
+
 CATEGORY_TITLES: dict[str, str] = {
     "compilation": "Compilation Failed",
     "max_visits": "Infinite Loop Detected",
@@ -204,6 +235,9 @@ CATEGORY_TITLES: dict[str, str] = {
     "cli": "Error",
     LLM_FAILURE_CATEGORY: "LLM Call Failed",
     LLM_WARNING_CATEGORY: "LLM Warning",
+    CACHE_FAILURE_CATEGORY: "Cache Failure",
+    CACHE_WARNING_CATEGORY: "Cache Warning",
+    CACHE_ADVISORY_CATEGORY: "Cache Advisory",
 }
 
 

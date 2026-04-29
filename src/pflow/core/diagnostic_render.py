@@ -4,7 +4,27 @@ from __future__ import annotations
 
 from typing import Any
 
-from pflow.core.diagnostic import CATEGORY_TITLES, Diagnostic, Severity
+from pflow.core.diagnostic import (
+    CACHE_ADVISORY_CATEGORY,
+    CACHE_FAILURE_CATEGORY,
+    CACHE_WARNING_CATEGORY,
+    CATEGORY_TITLES,
+    Diagnostic,
+    Severity,
+)
+
+_CACHE_CATEGORIES: frozenset[str] = frozenset({CACHE_FAILURE_CATEGORY, CACHE_WARNING_CATEGORY, CACHE_ADVISORY_CATEGORY})
+
+# Context keys surfaced inline on cache warning/advisory diagnostics. These match
+# the catalog payload keys emitted by ``cache_analysis`` (Task 159 F1) — the
+# closed list of fields agents read to make remediation decisions.
+_CACHE_INLINE_CONTEXT_KEYS: tuple[str, ...] = (
+    "savings_pct",
+    "savings_usd",
+    "batch_size",
+    "prefix_tokens_estimated",
+    "target_file",
+)
 
 
 def format_diagnostic(
@@ -33,10 +53,19 @@ def _format_warning_or_info_diagnostic(diagnostic: Diagnostic) -> str:
     and paste-able fix hints — the whole point of permissive mode's
     pass-through in ``runner._extract_runtime_warnings``. So for template
     errors specifically, we fall through to the structured renderer.
+
+    Cache-namespaced diagnostics (Task 159 DD#27) prefix the stable ``id``
+    inline (e.g. ``[cache.batch-prewarm-recommended]``) and surface a
+    closed list of structured context keys (savings_pct, savings_usd,
+    batch_size, prefix_tokens_estimated, target_file) so agents reading
+    text output can route on the warning ID without parsing JSON.
     """
     context = diagnostic.context or {}
     if context.get("category") == "template_error" and context.get("unresolved_references"):
         return _format_warning_template_error(diagnostic, context)
+
+    if context.get("category") in _CACHE_CATEGORIES:
+        return _format_cache_warning_or_advisory(diagnostic, context)
 
     icon = "⚠" if diagnostic.severity == Severity.WARNING else "\N{INFORMATION SOURCE}"
     if diagnostic.node_id:
@@ -46,6 +75,39 @@ def _format_warning_or_info_diagnostic(diagnostic: Diagnostic) -> str:
     if diagnostic.suggestions:
         for suggestion in diagnostic.suggestions:
             line += f"\n    → {suggestion}"
+    return line
+
+
+def _format_cache_warning_or_advisory(diagnostic: Diagnostic, context: dict[str, Any]) -> str:
+    """Render a cache_warning / cache_advisory / cache_failure-as-warning diagnostic.
+
+    Layout (one diagnostic, multi-line):
+        ⚠ [cache.id] [node-id] message
+            → suggestion
+              savings_pct: 89
+              savings_usd: 0.12
+
+    The ``[cache.id]`` prefix is the agent-facing handle for stable warning
+    routing. Inline context keys are limited to the closed list in
+    ``_CACHE_INLINE_CONTEXT_KEYS`` so the renderer stays predictable as the
+    catalog grows. Future catalog entries that need new context keys must
+    extend this tuple deliberately.
+    """
+    icon = "⚠" if diagnostic.severity == Severity.WARNING else "\N{INFORMATION SOURCE}"
+    id_prefix = f"[{diagnostic.id}] " if diagnostic.id else ""
+    if diagnostic.node_id:
+        line = f"  {icon} {id_prefix}[{diagnostic.node_id}] {diagnostic.message}"
+    else:
+        line = f"  {icon} {id_prefix}{diagnostic.message}"
+    if diagnostic.suggestions:
+        for suggestion in diagnostic.suggestions:
+            line += f"\n    → {suggestion}"
+    detail_lines: list[str] = []
+    for key in _CACHE_INLINE_CONTEXT_KEYS:
+        if key in context:
+            detail_lines.append(f"      {key}: {context[key]}")
+    if detail_lines:
+        line += "\n" + "\n".join(detail_lines)
     return line
 
 
