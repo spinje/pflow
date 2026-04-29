@@ -1,0 +1,28 @@
+FRESH_PREFIX char length: 20450
+
+========================================================================
+DISAMBIGUATOR — fresh prefix, NO cache_control marker, cold call
+========================================================================
+NO-MARKER cold usage:
+{
+  "completion_tokens": 35,
+  "prompt_tokens": 5258,
+  "total_tokens": 5293,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": null,
+    "audio_tokens": null,
+    "reasoning_tokens": 28,
+    "rejected_prediction_tokens": null,
+    "text_tokens": 7,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": null,
+    "cached_tokens": null,
+    "text_tokens": 5258,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "cache_read_input_tokens": null
+}

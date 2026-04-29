@@ -1,0 +1,180 @@
+PREFIX char length: 8060
+KEY: d01d3a8ea1d6eb2f8301c7929be583ad
+N parallel calls: 6
+MODEL: openai/gpt-4o-mini
+
+========================================================================
+WARM-UP — single sequential call to prime cache
+========================================================================
+Warm call usage:
+{
+  "completion_tokens": 2,
+  "prompt_tokens": 1918,
+  "total_tokens": 1920,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": 0,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  }
+}
+
+========================================================================
+PARALLEL — 6 concurrent calls with same prompt_cache_key
+========================================================================
+
+--- Parallel call 0 ---
+{
+  "completion_tokens": 3,
+  "prompt_tokens": 1918,
+  "total_tokens": 1921,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": 0,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 1024,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  }
+}
+
+--- Parallel call 1 ---
+{
+  "completion_tokens": 3,
+  "prompt_tokens": 1918,
+  "total_tokens": 1921,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": 0,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 1024,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  }
+}
+
+--- Parallel call 2 ---
+{
+  "completion_tokens": 3,
+  "prompt_tokens": 1918,
+  "total_tokens": 1921,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": 0,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 1024,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  }
+}
+
+--- Parallel call 3 ---
+{
+  "completion_tokens": 2,
+  "prompt_tokens": 1918,
+  "total_tokens": 1920,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": 0,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 1024,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  }
+}
+
+--- Parallel call 4 ---
+{
+  "completion_tokens": 2,
+  "prompt_tokens": 1918,
+  "total_tokens": 1920,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": 0,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 1792,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  }
+}
+
+--- Parallel call 5 ---
+{
+  "completion_tokens": 2,
+  "prompt_tokens": 1918,
+  "total_tokens": 1920,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": 0,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": 0,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 1792,
+    "text_tokens": null,
+    "image_tokens": null,
+    "video_tokens": null
+  }
+}
+
+========================================================================
+SUMMARY
+========================================================================
+Parallel calls: 6
+Cache hits: 6 / 6
+Cache miss: 0 / 6
+Wall-clock elapsed: 1.90s

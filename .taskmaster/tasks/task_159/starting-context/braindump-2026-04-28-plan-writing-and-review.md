@@ -8,7 +8,7 @@
 
 ## Where I am
 
-Plan v6 is 2104 lines (post Round 6 + summary collapse — the previous "Summary of plan corrections from review" section grew to ~330 lines of fix-history; collapsed to a 10-line pointer because the implementing agent doesn't need the chronology, they need the final state). The next agent runs three pre-authorized paid spikes (~$0.30 total — Gemini cache_control, OpenAI parallel routing, Anthropic per-TTL pricing) per the agent-handoff, records outcomes as a §36 progress-log entry, consults the **Spike contingencies** table at the bottom of the plan (just before "Open hedged claims"), updates plan sections per the table if outcomes contradict encoded decisions, then begins B1.1. **After each phase merges**, run `/code-review` in code-review mode (7 agents, no `review-plan`) against staged changes — that's the structurally correct review surface from here. Plan-stage review hit diminishing returns at Round 6 (see §35 for the empirical analysis).
+Plan v6 is 2104 lines (post Round 6 + summary collapse — the previous "Summary of plan corrections from review" section grew to ~330 lines of fix-history; collapsed to a 10-line pointer because the implementing agent doesn't need the chronology, they need the final state). Three pre-authorized paid spikes ran 2026-04-29 (audit trail in §36); their decisions are encoded directly in the plan (E.1 1h-TTL cost override, F2 Gemini info-note). The next agent reads the plan and begins B1.1. **After each phase merges**, run `/code-review` in code-review mode (7 agents, no `review-plan`) against staged changes — that's the structurally correct review surface from here. Plan-stage review hit diminishing returns at Round 6 (see §35 for the empirical analysis).
 
 The plan has zero spike content inside the phases (Round 2's course-correction held; Round 4 added a Spike contingencies subsection that maps spike → encoded-decision → if-contradicts-action without baking in fallbacks).
 
@@ -336,12 +336,14 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 - **B2.3**: `WorkflowExecutor._compiled_workflow_cache` interaction with sub-workflow `## Cache`. Verification: parallel-batch heterogeneous-children integration test (`test_subworkflow_cache_concurrency.py`). With `CacheBlockIR` frozen, this should pass — but the test is the only thing that confirms the freeze actually holds under concurrency. If it fails, the fix may require evicting compile-cache entries on a different keying strategy.
 - **D.1**: `list | str` shape for older workflow inputs/outputs. Verification: `test_prompt_cache_value_types.py` with list/dict/scalar/None/empty-string/bytes resolved values.
 
-### Newly identified across Rounds 2–4 (and still open or spike-gated)
+### Newly identified across Rounds 2–4 (resolved in §36 spike run)
 
-- **NEEDS VERIFICATION** (Spike 3 — Phase E): `litellm.completion_cost()` distinguishes per-TTL Anthropic pricing. If it doesn't, the `_normalize` override in `llm_client.py:776-784` is needed. The plan E.1 is written assuming LiteLLM does distinguish — if Spike 3 fails, this is a Phase E plan update per the new Spike contingencies table.
-- **ASSUMPTION** (Spike 1 Scenario A — Phase C entry): LiteLLM Vertex path correctly translates `cache_control: {"type": "ephemeral", "ttl": "300s"}` to Gemini's `cachedContents` API. If it fails: ship C2 with documented info note in `analyze-cache` Gemini output (per Spike contingencies table).
-- **ASSUMPTION** (Spike 1 Scenario B — Phase C entry): Gemini accepts BOTH a system-cache marker AND a user-message-prefix marker in the same request without API error. If Gemini rejects: filter auto-batch marker on Gemini specifically (D.1 update per Spike contingencies table); flag as v1.x follow-up.
-- **NEEDS VERIFICATION** (Spike 2 — Phase D): OpenAI `prompt_cache_key` parallel-batch routing actually clusters 4–8 parallel calls with same key on one backend. If randomized: document degraded hit rate in G.2 caching guide; emit `prompt_cache_key` regardless.
+The four spike-gated items below were resolved 2026-04-29 (progress log §36). Two CONFIRMED encoded decisions cleanly; one CONFIRMED with a telemetry-shape caveat (F2 plan update applied); one CONTRADICTED severely (E.1 plan update applied).
+
+- **RESOLVED** (Spike 3 — Phase E): `litellm.completion_cost()` does NOT distinguish per-TTL Anthropic pricing — actually worse: it completely fails to price `ephemeral_1h_input_tokens` (1h cost surfaces as ~$0.00010 vs ~$0.018 actual; ratio 0.0083). **E.1 plan update applied** (line 1444): 1h-TTL normalization override at `llm_client.py:776-784`, provider-gated to Anthropic, with explicit test cases pinned to Spike 3's actual numbers.
+- **RESOLVED** (Spike 1 Scenario A — Phase C entry): LiteLLM Vertex path DOES translate `cache_control` to working caching, but telemetry shape diverges from encoded criteria — `cache_creation_input_tokens` is 0/absent; `cache_read_input_tokens` registers on the very first call. Spike 1b disambiguator (no-marker control) confirmed marker does real work. **F2 plan update applied** (line ~1813): Gemini info-note in `analyze.py` documenting the reads-only telemetry shape so agents don't misdiagnose `cache_creation_input_tokens=0` as broken caching. C2 emission code unchanged.
+- **RESOLVED** (Spike 1 Scenario B — Phase C entry): Gemini accepts both markers in the same request without error (`cache_read_input_tokens: 5664`). No plan update.
+- **RESOLVED** (Spike 2 — Phase D): OpenAI `prompt_cache_key` reliably clusters parallel calls (6/6 cache hits after warm-up; cached_tokens 1024–1792 each). No plan update.
 - **UNCLEAR**: how `node_state.get_node_status` behaves under parallel-batch concurrency for the chunk-absent check. Existing pflow node_state SHOULD be stable post-execution-of-upstream (DAG ordering guarantee per `runtime/CLAUDE.md`), but the test for this in C1.2 is sequential. If parallel-batch behavior matters here, the test needs to be parallel. Round 3's documented LIMITATION ("loop recovery × cache rendering") covers the main edge case; v1 ships with the documented invariant.
 - **NEEDS VERIFICATION**: `MockLLMClient.set_response()` accepts `cache_creation_input_tokens` and `cache_read_input_tokens` after the C1.2 test-infra extension. Plan extends the signature; if any existing test breaks, surface.
 
@@ -432,11 +434,10 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 ### Start here
 
 1. Read `implementation-plan.md` "Architectural backbone — `CacheRenderContext`" section (~lines 7-87) AND "Shared cache-rendering helpers — module placement" subsection right below it. These are the load-bearing decisions. If you find yourself drifting to `node.params` injection, scattered shared keys, OR placing helpers in `runtime/engine/` instead of `core/cache_render.py`, STOP — those architectural sections explain why those failed.
-2. Read the agent-handoff for the three pre-authorized paid spikes. **Run them BEFORE B1.1.** Record outcomes as a **§36** progress-log entry (§35 is now Rounds 5+6 + diminishing-returns analysis). ~$0.30 total budget; user has authorized.
-3. **Read the "Spike contingencies" subsection at the bottom of the plan** (just before "Deferred items the implementing agent should still verify"). Maps each spike → encoded plan decision → if-contradicts-action. After §36 lands, update plan sections per the table BEFORE B1.1 patches start.
-4. Read this braindump end-to-end. Sections "What §35 doesn't capture" and "Tacit knowledge I'm worried isn't documented anywhere" are the highest-value content.
-5. Read progress log §31–§35 chronologically. §35 is the most recent and explains the diminishing-returns stop decision + reusable lessons across all 6 review rounds.
-6. Spec is the contract — read sections only when implementing the corresponding phase.
+2. Read this braindump end-to-end. Sections "What §35 doesn't capture" and "Tacit knowledge I'm worried isn't documented anywhere" are the highest-value content.
+3. Read progress log §31–§35 chronologically. §35 explains the diminishing-returns stop decision + reusable lessons across all 6 review rounds.
+4. Spec is the contract — read sections only when implementing the corresponding phase.
+5. **Don't** need to read §36 (spike audit trail) — its decisions are already encoded inline in the plan at E.1 and F2. Read it only if you ever need to know *why* a specific plan section says what it says.
 
 ### Single load-bearing gate
 
@@ -482,11 +483,12 @@ This is structurally a better fit than re-running plan-review for the remaining 
 - Adding more entries to the warning catalog. 12 entries, locked. Adding new IDs goes through DD#29 design review — surface to user.
 - Re-debating the `core/cache_render.py` placement. Round 5 verified both layer violations from the runtime/engine/plan_node alternative; the placement is locked. Lazy-import runtime symbols inside function bodies.
 
-### The two paid spike outcomes that matter most
+### The paid spike outcomes (resolved 2026-04-29 — see §36)
 
-- **Spike 1 Scenario A (Gemini explicit cache_control)**: if it fails, C2 ships with documented info note. Doesn't block.
-- **Spike 1 Scenario B (Gemini multi-marker)**: if Gemini rejects the request (vs accepts and just collapses to last), D.1 needs to filter the auto-batch marker on Gemini specifically. Surface to user.
-- **Spike 3 (Anthropic per-TTL pricing)**: only matters if 1h-TTL is actually used in v1. If LiteLLM doesn't distinguish, the `_normalize` override in `llm_client.py:776-784` is a Phase E follow-up patch.
+- **Spike 1 Scenario A (Gemini explicit cache_control)**: AMBIGUOUS leaning CONFIRM via the 1b disambiguator. F2 plan update applied (Gemini info-note for reads-only telemetry shape). C2 emission code unchanged.
+- **Spike 1 Scenario B (Gemini multi-marker)**: CONFIRMS — multi-marker request succeeded with no error. No plan update.
+- **Spike 2 (OpenAI parallel routing)**: CONFIRMS — 6/6 cache hits after warm-up. No plan update.
+- **Spike 3 (Anthropic per-TTL pricing)**: CONTRADICTS severely — 1h cache-write cost is missing entirely from `litellm.completion_cost()` (ratio 0.0083 vs expected ~1.6). E.1 plan update applied (1h-TTL normalization override at `llm_client.py:776-784`, Anthropic-gated, with explicit test cases).
 
 ### Two open user decisions to surface during their respective phases
 

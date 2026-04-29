@@ -14,8 +14,8 @@ Before writing any code:
 
 1. **`.taskmaster/tasks/task_159/task-159.md`** — the spec (contract). DDs, requirements, output formats, warning catalog.
 2. **`.taskmaster/tasks/task_159/implementation/implementation-plan.md`** — the HOW. Read in full once; re-read your specific phase sections at patch time.
-   - Pay special attention to: "Architectural backbone — `CacheRenderContext`" near the top, "Shared cache-rendering helpers — module placement" right below it, "Cross-cutting reads before any phase," and "Spike contingencies" near the bottom.
-3. **`.taskmaster/tasks/task_159/starting-context/agent-handoff.md`** — operational style, working-with-this-user notes, paid spike protocols, hedged claims.
+   - Pay special attention to: "Architectural backbone — `CacheRenderContext`" near the top, "Shared cache-rendering helpers — module placement" right below it, and "Cross-cutting reads before any phase."
+3. **`.taskmaster/tasks/task_159/starting-context/agent-handoff.md`** — operational style, working-with-this-user notes, hedged claims. Note: its "in-phase paid spikes" sections are stale (spikes ran 2026-04-29, see §36); skim them for context only.
 4. **`.taskmaster/tasks/task_159/starting-context/braindump-2026-04-28-plan-writing-and-review.md`** — tacit knowledge from 6 review rounds. Sections "What §35 doesn't capture," "What I'd tell myself if starting over," and "For the next agent" are highest-value.
 5. **`.taskmaster/tasks/task_159/implementation/progress-log.md`** §31–§35 — the planning journey. §35 covers the diminishing-returns analysis and the decision to switch to code-review per phase merge from here.
 6. **`.taskmaster/tasks/task_159/implementation/implementation-progress-log.md`** — IF prior implementing agents have run, read all their entries. This is where YOU will also log your work.
@@ -39,24 +39,11 @@ The 13 sub-phases split into 4 segments at the strongest tacit-knowledge firebre
 
 ## Before you start coding
 
-### Agent 1 (Foundations + Parser/Validator)
-
-Three pre-authorized paid spikes (~$0.30 total) must run BEFORE B1.1:
-- **Spike 1**: Gemini explicit cache_control verification (Phase C0 entry — informs C2)
-- **Spike 2**: OpenAI prompt_cache_key parallel-batch routing (Phase D — informs D.2)
-- **Spike 3**: Anthropic per-TTL pricing precision via `litellm.completion_cost` (Phase E entry — informs E.1, only matters if 1h TTL ships)
-
-Pattern (per `agent-handoff.md` "In-phase paid spikes"):
-1. Write a minimal Python file under `scratchpads/` that calls `litellm.completion()` directly. Inject API keys via `from pflow.core.settings import SettingsManager; for k, v in (SettingsManager().load().env or {}).items(): if v and k not in os.environ: os.environ[k] = v`.
-2. Run each spike. Record outcomes (token counts, response shapes, observed behavior) as a **§36 progress-log entry**.
-3. Consult the **Spike contingencies** table at the bottom of `implementation-plan.md` (just before "Deferred items the implementing agent should still verify"). For each spike outcome:
-   - If outcome **confirms** encoded plan decision: continue.
-   - If outcome **contradicts** encoded plan decision: update the relevant plan section per the table BEFORE B1.1 patches start.
-4. Surface §36 entry to user, get confirmation, then begin B1.1.
+Spikes ran 2026-04-29; any decisions they informed are already encoded in the plan. **The plan is your single source of truth.** §36 of `progress-log.md` records the audit trail if you ever need to know why a specific plan section says what it says — but you don't need to read it to implement.
 
 ### Agent 2+ (B3, C+D+E, F+G)
 
-Read `progress-log.md` §36 (spike outcomes) AND the prior implementing agent's `implementation-progress-log.md` entry. Verify any plan updates from spike contradictions landed. If a prior agent surfaced a decision the user hasn't resolved, do NOT proceed — escalate.
+Read the prior implementing agent's `implementation-progress-log.md` entry. If a prior agent surfaced a decision the user hasn't resolved, do NOT proceed — escalate.
 
 ## Operating principles
 
@@ -152,8 +139,6 @@ Concrete handoff:
 - Which sub-phase of the next segment to begin.
 - Which files to re-read (pointing at specific plan sections + line numbers).
 - Which verifications to run BEFORE writing code (e.g., "grep `apply_memo_hit` to confirm the 3rd caller at execution/plan.py:862 still exists").
-- Any paid spikes that need to run (Agent 1 only).
-- Any plan updates from spike contradictions.
 
 #### Code-review findings worth carrying forward
 
@@ -175,7 +160,6 @@ These are tracked in the plan but may resolve mid-implementation:
 
 - **F2 confidence aggregation strictness** (Segment 4 — during F2): plan defaults STRICT per DD#34 line 634. If user prefers permissive, surface before F2 ships.
 - **V6 sub-workflow dedup outcome** (Segment 1 — during B2.3): the `xfail`-marked test in B2.3 will fail on first run. User picks the fix shape.
-- Any spike outcome that contradicts the plan's encoded decision (Segment 1 — Spike contingencies table).
 
 ## What you DO NOT do
 

@@ -1,0 +1,95 @@
+[92m13:26:47 - LiteLLM:WARNING[0m: transformation.py:615 -
+                No contents in messages. Contents are required. See
+                https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.publishers.models/generateContent#request-body.
+                If the original request did not comply to OpenAI API requirements it should have failed by now,
+                but LiteLLM does not check for missing messages.
+                Setting an empty content to prevent an 400 error.
+                Relevant Issue - https://github.com/BerriAI/litellm/issues/9733
+
+SYSTEM_PREFIX char length: 20300
+USER_PREFIX_B char length: 8120
+
+========================================================================
+SCENARIO A — single system cache_control, two consecutive calls
+========================================================================
+
+>>> Call A1 (cold)
+A1 usage:
+{
+  "completion_tokens": 75,
+  "prompt_tokens": 4050,
+  "total_tokens": 4125,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": null,
+    "audio_tokens": null,
+    "reasoning_tokens": 67,
+    "rejected_prediction_tokens": null,
+    "text_tokens": 8,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": null,
+    "cached_tokens": 4042,
+    "text_tokens": 8,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "cache_read_input_tokens": 4042
+}
+
+>>> Call A2 (warm, exact byte match)
+A2 usage:
+{
+  "completion_tokens": 89,
+  "prompt_tokens": 4050,
+  "total_tokens": 4139,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": null,
+    "audio_tokens": null,
+    "reasoning_tokens": 81,
+    "rejected_prediction_tokens": null,
+    "text_tokens": 8,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": null,
+    "cached_tokens": 4042,
+    "text_tokens": 8,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "cache_read_input_tokens": 4042
+}
+
+========================================================================
+SCENARIO B — multi-marker (system + user prefix)
+========================================================================
+
+>>> Call B (multi-marker)
+B usage:
+{
+  "completion_tokens": 53,
+  "prompt_tokens": 5666,
+  "total_tokens": 5719,
+  "completion_tokens_details": {
+    "accepted_prediction_tokens": null,
+    "audio_tokens": null,
+    "reasoning_tokens": 46,
+    "rejected_prediction_tokens": null,
+    "text_tokens": 7,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "prompt_tokens_details": {
+    "audio_tokens": null,
+    "cached_tokens": 5664,
+    "text_tokens": 2,
+    "image_tokens": null,
+    "video_tokens": null
+  },
+  "cache_read_input_tokens": 5664
+}
+
+B: SUCCESS (no exception, no API error)

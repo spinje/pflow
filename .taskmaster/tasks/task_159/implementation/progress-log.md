@@ -1614,3 +1614,93 @@ User asked at the start of Round 6: *"how come we are never reaching diminishing
 The implementing agent runs the three pre-authorized paid spikes, records outcomes as §36, updates plan sections per the Spike contingencies table if any spike contradicts encoded decisions, then begins B1.1. After each phase merges, run `/code-review` in code-review mode (7 agents, no `review-plan`) against staged changes — that's where the remaining bug class surfaces fastest.
 
 The B3 baseline-fixture-before-B3.1-patches gate is the single load-bearing TDD-shaped catch. STOP if it fails.
+
+## 36. Session 2026-04-29 — Pre-implementation paid spike outcomes
+
+Three pre-authorized paid spikes (~$0.30 budget) executed before B1.1 per the agent-handoff and `starting-context/spike-runner-brief.md`. Each verifies an encoded plan decision; outcomes are recorded against the plan's "Spike contingencies" table at line 2057.
+
+Total cost across all three spikes: **~$0.04** (well under the $0.30 budget — Anthropic's 1h cache-write was the dominant line item at ~$0.018, plus a Spike 1b disambiguator re-run that was needed to resolve telemetry-shape ambiguity).
+
+### Spike 1 — Gemini explicit `cache_control` (`gemini/gemini-2.5-flash`, ~5000-token Lorem-Ipsum prefix)
+
+**Scenario A (cachedContents fires under explicit cache_control):**
+- A1 (cold): `cache_read_input_tokens: 4042`, `cached_tokens: 4042`. **No `cache_creation_input_tokens` field surfaces** — that key is entirely absent from LiteLLM's Vertex/Gemini telemetry, replaced by `cache_read_input_tokens` even on the first call.
+- A2 (warm, exact byte match): `cache_read_input_tokens: 4042`, `cached_tokens: 4042`.
+- **Telemetry shape ambiguity:** A1 showing reads-on-cold is consistent with either (a) LiteLLM's Vertex translation creating `cachedContents` as a side-effect and surfacing only reads (markers DO real work), OR (b) Gemini's implicit auto-cache firing regardless of markers (markers are silently no-op).
+
+**Spike 1b disambiguator** — same prefix length (~5000 tokens), FRESH content (unique salt), NO `cache_control` marker:
+- Cold call result: `cached_tokens: null`, `cache_read_input_tokens: null`, `text_tokens: 5258` (full prompt billed as fresh).
+- **Conclusion: explicit `cache_control` IS doing real work.** Without the marker, no caching fires. With the marker, cache reads register on the first call. Interpretation (a) confirmed.
+
+**Scenario B (multi-marker request — system + user-prefix):**
+- B response: `cache_read_input_tokens: 5664` (covers both prefixes), no exception, no API error.
+- Outcome: **CONFIRMS** — Gemini accepts both markers in the same request without error.
+
+**Outcome — Scenario A: AMBIGUOUS leaning CONFIRM (telemetry shape diverges from encoded verification criteria, but disambiguator proves marker is functional).**
+**Outcome — Scenario B: CONFIRMS.**
+
+**Plan updates applied:**
+- F2 `analyze.py` Gemini-detection branch (per Spike contingencies table for Scenario A): added an info-note documenting that `cache_creation_input_tokens` will be 0/absent on Gemini even when caching is working perfectly, because LiteLLM's Vertex translation surfaces only reads. Verification path is `cache_read_input_tokens` (or `prompt_tokens_details.cached_tokens`) on subsequent calls. C2 emission code unchanged.
+
+**Files written:**
+- `scratchpads/task-159-spike-1.py` + `task-159-spike-1-output.txt`
+- `scratchpads/task-159-spike-1b.py` + `task-159-spike-1b-output.txt` (disambiguator)
+
+### Spike 2 — OpenAI `prompt_cache_key` parallel-batch routing (`openai/gpt-4o-mini`, ~2000-token prefix, N=6 parallel)
+
+**Protocol:** warm-up call (cached=0), 2-second pause, 6 concurrent calls with same `prompt_cache_key`.
+
+**Results:**
+- Warm-up: `prompt_tokens_details.cached_tokens: 0` (cold, as expected).
+- Parallel call 0: `cached_tokens: 1024`
+- Parallel call 1: `cached_tokens: 1024`
+- Parallel call 2: `cached_tokens: 1024`
+- Parallel call 3: `cached_tokens: 1024`
+- Parallel call 4: `cached_tokens: 1792`
+- Parallel call 5: `cached_tokens: 1792`
+- **Cache hits: 6/6.** Wall-clock: 1.90s for the parallel batch.
+
+**Outcome: CONFIRMS encoded decision.** OpenAI's sticky routing reliably clusters parallel calls on the same backend after warm-up. The cached-token chunking variation (1024 vs 1792) is OpenAI's documented prefix-granularity behavior — all 6 calls register meaningful cache hits.
+
+**Plan updates applied:** None. C3 + D.2 emission code stands.
+
+**Files written:**
+- `scratchpads/task-159-spike-2.py` + `task-159-spike-2-output.txt`
+
+### Spike 3 — Anthropic per-TTL pricing precision via `litellm.completion_cost()` (`anthropic/claude-sonnet-4-5`, ~2000-token prefix)
+
+**Protocol:** Two cache-write calls — first with default 5-min TTL (no `ttl` key), second with `ttl: "1h"` and the `anthropic-beta: extended-cache-ttl-2025-04-11` header.
+
+**Results:**
+- 5m write: `cache_creation_input_tokens: 3043`, `ephemeral_5m_input_tokens: 3043`, `ephemeral_1h_input_tokens: 0`. `completion_cost` = **$0.01153725**. Math check: 3043 × $3/M × 1.25 + 6 output × $15/M ≈ $0.01151 ✓ (LiteLLM correctly applies 1.25× multiplier).
+- 1h write: `cache_creation_input_tokens: 3060`, `ephemeral_5m_input_tokens: 0`, `ephemeral_1h_input_tokens: 3060`. `completion_cost` = **$0.00009600**. Math check: this is approximately just `4 output × $15/M ≈ $0.00006`. **The entire 1h cache-write cost is missing from LiteLLM's pricing.**
+- Ratio (1h / 5m) = **0.0083** — should have been ~1.4–1.7 for "distinguishes per-TTL" or ~1.0 for "treats writes equivalently." 0.0083 means LiteLLM completely fails to price `ephemeral_1h_input_tokens`.
+
+**Outcome: CONTRADICTS encoded decision (more severely than expected).** Plan E.1's trust in `litellm.completion_cost()` is misplaced for 1h-TTL cache writes — those events are silently undercounted by ~100×.
+
+**Plan updates applied:**
+- Plan E.1 (line 1444 — Phase E goal paragraph): replaced the "Cost reporting unchanged — LiteLLM normalization in `llm_client.py:776–784` already handles the cache token counts. v1 trusts `litellm.completion_cost()` for per-TTL pricing distinction." sentences with a normalization-override directive: when the response usage carries `ephemeral_1h_input_tokens > 0`, override `cost_usd` by computing the 1h-write cost from raw token counts × per-provider 1h rate (2× base input rate) + non-1h portions priced via LiteLLM. Anchor lives in `llm_client.py:776–784`.
+- Spike contingencies table (line 2066): annotated the row to record that the contingency fired (severity: 1h cost ≈ output-only, ratio 0.0083) and link the §36 detail.
+
+**Files written:**
+- `scratchpads/task-159-spike-3.py` + `task-159-spike-3-output.txt`
+
+### Cost summary
+
+| Spike | Calls | Approx cost |
+|---|---|---|
+| Spike 1 (A1, A2, B) | 3 Gemini calls, 2 cached, 1 mostly-cached | ~$0.0006 |
+| Spike 1b (disambiguator) | 1 Gemini cold call | ~$0.0004 |
+| Spike 2 (warm + 6 parallel) | 7 OpenAI calls, 1 cold + 6 cached | ~$0.002 |
+| Spike 3 (5m write + 1h write) | 2 Anthropic calls (both cache writes) | ~$0.030 |
+| **Total** | 13 paid calls | **~$0.04** |
+
+### Net effect on plan
+
+- **One critical correctness fix** (E.1 — 1h cost normalization override). Without this, every 1h-TTL cache-write event in production would be silently undercounted, defeating the cost-prediction contract.
+- **One observability enhancement** (F2 Gemini info-note). Helps `analyze-cache` users interpret Gemini's reads-only telemetry shape correctly.
+- **Two clean confirmations** (Scenario B multi-marker, OpenAI parallel routing).
+
+### Next step
+
+B1.1 implementation can now proceed. The implementing agent reads §36 to confirm spike outcomes; the two plan updates above are already encoded in the plan. No further pre-implementation gating remains.
