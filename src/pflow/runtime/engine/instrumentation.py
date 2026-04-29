@@ -199,8 +199,16 @@ def memo_cache_lookup(
     shared: dict,
     visit_counts: dict,
     resolved_params: Optional[dict] = None,
-) -> tuple[bool, Optional[str], Optional[tuple[str, dict]]]:
-    """Pure read: check SQLite memo cache without mutating shared state."""
+) -> tuple[bool, Optional[str], Optional[tuple[str, dict, Optional[float]]]]:
+    """Pure read: check SQLite memo cache without mutating shared state.
+
+    Task 159 E.1: the success-shape third element is now a 3-tuple
+    ``(action, output, created_at_epoch)``. ``created_at_epoch`` is the
+    SQLite ``created_at`` column from the memo cache row — callers compute
+    ``cache_age_sec = time.time() - created_at`` for trace 2.1.0. The age
+    surfaces only when the lookup goes through ``MemoizationCache.get_with_age``;
+    callers that don't care can ignore the third element.
+    """
     memo_cache = shared.get("__memoization_cache__")
     if not memo_cache or visit_counts.get(node_id, 0) > 1:
         return False, None, None
@@ -242,13 +250,89 @@ def memo_cache_lookup(
     if not cache_key:
         return False, None, None
 
-    cached = memo_cache.get(cache_key)
-    if cached is None:
+    # Task 159 E.1: ``get_with_age`` returns ``(action, output, created_at)``
+    # so callers can compute ``cache_age_sec`` for trace 2.1.0. The age lookup
+    # is the same SQLite row the legacy ``.get`` reads — no extra query.
+    cached_with_age = memo_cache.get_with_age(cache_key)
+    if cached_with_age is None:
         return False, cache_key, None
 
-    cached_action, cached_output = cached
+    cached_action, cached_output, created_at = cached_with_age
     cached_action = cached_action or "default"
-    return True, cache_key, (cached_action, cached_output)
+    return True, cache_key, (cached_action, cached_output, created_at)
+
+
+def _should_write_cache_metadata(node_type_name: str) -> bool:
+    """Allowlist semantics for trace 2.1.0 cache-metadata fields.
+
+    Returns ``True`` only for node types that participate in pflow's memo
+    cache layer with explicit ``cache_key`` / ``cache_source`` /
+    ``cache_age_sec`` semantics. Currently only ``LLMNode``. Adding a new
+    LLM-producing node type that participates requires extending this gate
+    alongside the new node type's ``post()`` implementation.
+
+    ``ClaudeCodeNode`` is intentionally NOT in the allowlist: its
+    ``cache_creation_input_tokens`` / ``cache_read_input_tokens`` come from
+    the Claude SDK and reflect SDK-side caching (a different cache layer).
+    Adding pflow's memo ``cache_key`` / ``cache_source`` to ClaudeCodeNode's
+    ``llm_usage`` would conflate two distinct cache layers and mislead
+    agents reading the trace.
+    """
+    return node_type_name == "LLMNode"
+
+
+def _log_skipped_cache_metadata(node_type_name: str, sample_output: Any) -> None:
+    """Emit a debug signal when cache-metadata writes are skipped for a
+    node type that DID produce an ``llm_usage`` payload.
+
+    Most non-LLM node types never write ``llm_usage``, so the gate's
+    silent-skip is a no-op for them. But a future LLM-producing node type
+    (e.g., a hypothetical ``OllamaNode`` / ``BedrockNode`` / ``GroqNode``)
+    would silently lose trace-2.1.0 cache fields with no signal to the
+    producer. This debug log gives them a hook: when the test author or
+    runtime observer sees ``llm_usage`` populated AND the gate returning
+    False, they know they need to extend the allowlist.
+
+    Debug-level (not warning) so production logs aren't noisy for the
+    common ClaudeCodeNode case (which is intentionally excluded).
+    """
+    if isinstance(sample_output, dict) and sample_output.get("llm_usage"):
+        logger.debug(
+            "cache metadata gate: skipping non-allowlisted LLM-producing node "
+            "type %r; trace 2.1.0 cache fields will be absent. To enable, add "
+            "%r to _should_write_cache_metadata.",
+            node_type_name,
+            node_type_name,
+        )
+
+
+def _augment_llm_usage_with_cache_metadata(
+    shared: dict,
+    node_id: str,
+    *,
+    cache_source: Optional[str],
+    cache_key: Optional[str],
+    cache_age_sec: Optional[float],
+) -> None:
+    """Write cache-metadata fields into ``shared[node_id]['llm_usage']``.
+
+    Trace 2.1.0 surfaces these per-event via the existing
+    ``llm_usage`` channel that ``_add_llm_data`` already reads (no new
+    sidecar). Caller is responsible for the ``_should_write_cache_metadata``
+    gate; this helper assumes the gate has fired.
+    """
+    node_output = shared.get(node_id)
+    if not isinstance(node_output, dict):
+        return
+    llm_usage = node_output.get("llm_usage")
+    if not isinstance(llm_usage, dict):
+        return
+    if cache_source is not None:
+        llm_usage["cache_source"] = cache_source
+    if cache_key is not None:
+        llm_usage["cache_key"] = cache_key
+    if cache_age_sec is not None:
+        llm_usage["cache_age_sec"] = cache_age_sec
 
 
 def apply_memo_hit(
@@ -257,6 +341,10 @@ def apply_memo_hit(
     cached_action: str,
     cached_output: dict,
     config_hash: str,
+    *,
+    node_type_name: str,
+    cache_key: Optional[str] = None,
+    created_at: Optional[float] = None,
 ) -> None:
     """Apply a memoization cache hit to shared state.
 
@@ -265,6 +353,14 @@ def apply_memo_hit(
     into the live `shared` dict — a fresh execution would never produce that
     key, so restoring it would make cached and fresh paths observably differ
     (template resolution, equality checks, trace output).
+
+    Task 159 E.1: when ``_should_write_cache_metadata(node_type_name)``
+    fires, augment the restored ``llm_usage`` dict with ``cache_source =
+    "memo"``, ``cache_key`` (the matching key), and ``cache_age_sec``
+    (computed as ``time.time() - created_at``). Trace 2.1.0 surfaces these
+    fields via the existing ``_add_llm_data`` integration site — no new
+    sidecar dict required. ``node_type_name`` is keyword-only so future
+    positional-arg drift can't accidentally bypass the gate.
     """
     execution = shared.setdefault("__execution__", {})
     completed_nodes = execution.setdefault("completed_nodes", [])
@@ -279,6 +375,21 @@ def apply_memo_hit(
     completed_nodes.append(node_id)
     node_actions[node_id] = cached_action
     node_hashes[node_id] = config_hash
+
+    if _should_write_cache_metadata(node_type_name):
+        cache_age_sec = (time.time() - created_at) if created_at is not None else None
+        _augment_llm_usage_with_cache_metadata(
+            shared,
+            node_id,
+            cache_source="memo",
+            cache_key=cache_key,
+            cache_age_sec=cache_age_sec,
+        )
+    else:
+        # Future LLM-producing node types: surface a debug signal so the
+        # producer knows to extend the allowlist if their llm_usage should
+        # carry cache_key / cache_source / cache_age_sec.
+        _log_skipped_cache_metadata(node_type_name, cached_output)
 
 
 def check_memo_cache(
@@ -301,8 +412,17 @@ def check_memo_cache(
         resolved_params=resolved_params,
     )
     if hit and cached_data is not None:
-        cached_action, cached_output = cached_data
-        apply_memo_hit(node_id, shared, cached_action, cached_output, config_hash)
+        cached_action, cached_output, created_at = cached_data
+        apply_memo_hit(
+            node_id,
+            shared,
+            cached_action,
+            cached_output,
+            config_hash,
+            node_type_name=node_type_name,
+            cache_key=cache_key,
+            created_at=created_at,
+        )
         return True, cached_action, None
     return False, None, cache_key
 
@@ -314,6 +434,7 @@ def write_memo_cache(
     action: str = "default",
     *,
     duration_ms: Optional[float] = None,
+    node_type_name: str,
 ) -> None:
     """Write to SQLite cache after successful execution. Skips error results.
 
@@ -325,6 +446,13 @@ def write_memo_cache(
     dunder-keyed values to their type name for deterministic hashing, so
     stats deltas don't invalidate cache identity. A single-underscore key
     would feed stats into the hash — silent cache-breakage bug.
+
+    Task 159 E.1: when ``_should_write_cache_metadata(node_type_name)``
+    fires, augment ``shared[node_id]['llm_usage']['cache_key']`` with the
+    key the entry was stored under BEFORE persisting to disk. The trace
+    event for THIS run records the key the entry was written with;
+    subsequent memo-hit runs round-trip the same key via
+    ``apply_memo_hit``.
     """
     if not cache_key or str(action).startswith("error"):
         return
@@ -333,6 +461,18 @@ def write_memo_cache(
         return
     node_output = shared.get(node_id)
     if node_output is not None:
+        if _should_write_cache_metadata(node_type_name):
+            _augment_llm_usage_with_cache_metadata(
+                shared,
+                node_id,
+                cache_source=None,  # write events have no source label
+                cache_key=cache_key,
+                cache_age_sec=None,
+            )
+            # Re-read after augmentation so the persisted blob carries the key.
+            node_output = shared.get(node_id)
+        else:
+            _log_skipped_cache_metadata(node_type_name, node_output)
         workflow_path = shared.get("_pflow_workflow_file")
         output_dict = dict(node_output) if isinstance(node_output, dict) else {"value": node_output}
         if duration_ms is not None:
@@ -514,6 +654,22 @@ def handle_cached_execution(
     if "__cache_hits__" not in shared:
         shared["__cache_hits__"] = []
     shared["__cache_hits__"].append(node_id)
+
+    # Task 159 E.1: in-process cache hits have no key (memory-only) and no
+    # age (always "this run"). Tag them with cache_source="in_process" so
+    # trace 2.1.0 can distinguish memo-cache hits (cross-run) from
+    # in-process hits (intra-run loop revisits) without consumers having to
+    # cross-reference cache_key existence.
+    if _should_write_cache_metadata(node_type_name):
+        _augment_llm_usage_with_cache_metadata(
+            shared,
+            node_id,
+            cache_source="in_process",
+            cache_key=None,
+            cache_age_sec=None,
+        )
+    else:
+        _log_skipped_cache_metadata(node_type_name, shared.get(node_id))
 
     # Record trace for cached node
     record_trace(

@@ -557,6 +557,10 @@ class TestLLMNode:
             "cache_read_input_tokens": 20,
             "thinking_tokens": 0,
             "thinking_budget": 0,
+            # Task 159 C1.2: cache_chunks_skipped is always present in
+            # populated llm_usage dicts (default empty list when no chunks
+            # were skipped). Trace 2.1.0 (E.1) consumes this channel.
+            "cache_chunks_skipped": [],
             "cost_usd": 0.00966,
         }
 

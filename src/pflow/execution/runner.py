@@ -123,7 +123,15 @@ class WorkflowRunner:
             metrics_collector = MetricsCollector()
             metrics_collector.record_workflow_start()
 
-            trace_collector = WorkflowTraceCollector(workflow_name=workflow_name or resolved.file_path or "unnamed")
+            # Task 159 E.1 trace 2.1.0: ``workflow_path`` is the canonical
+            # identifier. File-based runs use the resolved path; inline runs
+            # synthesize a stable ``ir-hash:<md5>`` (symmetric with
+            # ``MemoizationCache.workflow_path`` scoping for inline rows).
+            trace_workflow_path = resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)
+            trace_collector = WorkflowTraceCollector(
+                workflow_name=workflow_name or resolved.file_path or "unnamed",
+                workflow_path=trace_workflow_path,
+            )
 
             mcp_pool = MCPConnectionPool()
             cache = MemoizationCache(read_enabled=config.cache_enabled)

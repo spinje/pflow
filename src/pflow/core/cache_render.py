@@ -157,6 +157,45 @@ def _resolve_chunk_value(chunk: CacheChunkIR, shared: dict[str, Any]) -> ChunkRe
     return _deterministic_serialize(resolved)
 
 
+# --- Per-provider cache_control marker translation -------------------------
+
+
+def _build_cache_control_marker(provider_name: str | None, ttl: str | None) -> dict[str, Any]:
+    """Per-provider ``cache_control`` marker for the LAST chunk of a cached
+    system prefix (v1 single-breakpoint strategy, task-159 DD#11).
+
+    TTL wire-format translation (task-159 spec "TTL wire-format translation"):
+
+    - **Anthropic**: ``{"type": "ephemeral"}`` for omitted/``5m`` (5-min IS
+      the provider default; Anthropic's API does NOT accept an explicit
+      ``ttl: "5m"`` — only ``"1h"`` is documented). ``"1h"`` →
+      ``{"type": "ephemeral", "ttl": "1h"}``.
+    - **Gemini**: ``{"type": "ephemeral"}`` for omitted; ``"5m"`` →
+      ``{"type": "ephemeral", "ttl": "300s"}``; ``"1h"`` →
+      ``{"type": "ephemeral", "ttl": "3600s"}``. LiteLLM's Vertex translation
+      requires seconds notation with ``s`` suffix.
+    - **OpenAI / unknown / out-of-vocab**: ``{"type": "ephemeral"}``
+      unconditionally. ``cache_control`` markers are no-ops on OpenAI
+      (auto-cache only); the bare marker is emitted for shape consistency
+      (the LiteLLM call body matches across providers). The dedicated
+      OpenAI knobs (``prompt_cache_key``, ``prompt_cache_retention``) flow
+      through ``model_options`` from the LLMNode prep path (C3).
+
+    Returns a fresh dict on every call so callers can safely mutate / store.
+    """
+    if provider_name == "anthropic":
+        if ttl == "1h":
+            return {"type": "ephemeral", "ttl": "1h"}
+        return {"type": "ephemeral"}
+    if provider_name == "gemini":
+        if ttl == "5m":
+            return {"type": "ephemeral", "ttl": "300s"}
+        if ttl == "1h":
+            return {"type": "ephemeral", "ttl": "3600s"}
+        return {"type": "ephemeral"}
+    return {"type": "ephemeral"}
+
+
 # --- Static-prefix resolution (D.1 auto-batch-prefix detection) ------------
 
 

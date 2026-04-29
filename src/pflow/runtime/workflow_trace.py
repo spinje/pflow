@@ -14,7 +14,7 @@ from pflow.core.diagnostic import Diagnostic
 logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
-TRACE_FORMAT_VERSION = "2.0.0"
+TRACE_FORMAT_VERSION = "2.1.0"
 
 
 @dataclass
@@ -124,13 +124,33 @@ class WorkflowTraceCollector:
     - No value truncation (only internal key filtering and binary replacement)
     """
 
-    def __init__(self, workflow_name: str = "workflow"):
+    def __init__(
+        self,
+        workflow_name: str = "workflow",
+        *,
+        workflow_path: str | None = None,
+    ):
         """Initialize the trace collector.
 
         Args:
-            workflow_name: Name of the workflow being traced
+            workflow_name: Name of the workflow being traced (display label;
+                used for the trace filename and the saved trace's
+                ``workflow_name`` field).
+            workflow_path: Canonical path identifier for the workflow (Task
+                159 trace 2.1.0). For file-based runs, the resolved file
+                path. For inline runs, the synthetic
+                ``"ir-hash:<32-char-md5>"`` from
+                ``execution/runner._synthesize_inline_workflow_id`` —
+                symmetric with how ``MemoizationCache.workflow_path``
+                already scopes inline-run rows. Defaults to ``None`` so
+                existing test fixtures continue to construct without
+                changes; production paths set it from
+                ``shared["_pflow_workflow_file"]`` / inline-id synthesis.
+                The saved trace JSON always emits ``workflow_path``
+                unconditionally (``null`` when not set).
         """
         self.workflow_name = workflow_name
+        self.workflow_path = workflow_path
         self.execution_id = str(uuid.uuid4())
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
@@ -503,6 +523,11 @@ class WorkflowTraceCollector:
             "format_version": TRACE_FORMAT_VERSION,
             "execution_id": self.execution_id,
             "workflow_name": self.workflow_name,
+            # Task 159 trace 2.1.0: emitted unconditionally. None when the
+            # caller didn't set it (test fixtures, legacy harnesses); the
+            # production paths (``execution/runner.py``,
+            # ``runtime/workflow_executor.py``) always provide a value.
+            "workflow_path": self.workflow_path,
             "start_time": self.start_time.isoformat(),
             "end_time": datetime.now().isoformat(),
             "duration_ms": round(duration_ms, 2),

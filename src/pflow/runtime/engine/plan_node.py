@@ -39,6 +39,11 @@ class NodePlan:
     last_resolutions: dict[str, Any]
     template_errors: list[Any]
     template_exception: BaseException | None
+    # Task 159 E.1: epoch seconds for the memo cache row's ``created_at``,
+    # populated only on ``status == "cached_memo"`` so the engine and the
+    # dry-run planner can compute ``cache_age_sec`` for trace 2.1.0
+    # without a second SQLite read. ``None`` for non-memo statuses.
+    cached_created_at: float | None = None
 
 
 def plan_node(node: Any, config: NodeConfig, shared: dict[str, Any]) -> NodePlan:
@@ -86,7 +91,7 @@ def plan_node(node: Any, config: NodeConfig, shared: dict[str, Any]) -> NodePlan
         resolved_params=resolved_params,
     )
     if hit and cached_data is not None:
-        cached_action, cached_output = cached_data
+        cached_action, cached_output, created_at = cached_data
         return _make_plan(
             "cached_memo",
             config_hash=config_hash,
@@ -96,6 +101,7 @@ def plan_node(node: Any, config: NodeConfig, shared: dict[str, Any]) -> NodePlan
             cached_output=cached_output,
             last_resolutions=last_resolutions,
             template_errors=template_errors,
+            cached_created_at=created_at,
         )
 
     valid, cached_action = in_process_cache_lookup(config.node_id, config_hash, shared)
@@ -201,6 +207,7 @@ def _make_plan(
     cached_output: dict[str, Any] | None = None,
     last_resolutions: dict[str, Any] | None = None,
     template_errors: list[Any] | None = None,
+    cached_created_at: float | None = None,
 ) -> NodePlan:
     """Build a NodePlan with sensible defaults for the absent fields."""
     return NodePlan(
@@ -213,6 +220,7 @@ def _make_plan(
         last_resolutions=last_resolutions or {},
         template_errors=template_errors or [],
         template_exception=None,
+        cached_created_at=cached_created_at,
     )
 
 

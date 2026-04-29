@@ -347,7 +347,14 @@ class WorkflowExecutor(BaseNode):
         if parent_trace:
             from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
-            child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
+            # Task 159 E.1 trace 2.1.0: child trace records the child's
+            # workflow_path (NOT the parent's) so analyze-cache --from-trace
+            # can correlate the child's events back to the child workflow's
+            # cache plan.
+            child_trace = WorkflowTraceCollector(
+                workflow_name=str(workflow_path or "sub-workflow"),
+                workflow_path=str(workflow_path or "sub-workflow"),
+            )
 
         # Compile (with compile-once caching)
         compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)

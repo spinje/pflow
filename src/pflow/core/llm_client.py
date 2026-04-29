@@ -170,7 +170,7 @@ def complete(
     *,
     model: str,
     prompt: str,
-    system: str | None = None,
+    system: str | list[dict[str, Any]] | None = None,
     temperature: float = 0.0,
     max_tokens: int | None = None,
     attachments: list[Attachment] | None = None,
@@ -179,6 +179,7 @@ def complete(
     model_options: dict[str, Any] | None = None,
     timeout: float | None = None,
     trace_hook: TraceHook | None = None,
+    user_message_blocks: list[dict[str, Any]] | None = None,
 ) -> AdapterResponse:
     """Execute an LLM call via LiteLLM and return a normalized response.
 
@@ -216,7 +217,19 @@ def complete(
             inconsistently across providers; prefer explicit prefixes.
         prompt: User-message text. Already template-resolved; no further
             substitution happens here.
-        system: Optional system-message text.
+        system: Optional system-message content. Accepts two shapes:
+
+            - ``str``: plain text. The adapter wraps it as
+              ``{"role": "system", "content": <str>}``. (Original/default
+              shape; null-safe for callers that don't care about caching.)
+            - ``list[dict]``: structured content blocks per the LiteLLM /
+              Anthropic / OpenAI SDK convention. Each block is
+              ``{"type": "text", "text": "..."}`` with an optional
+              ``"cache_control": {"type": "ephemeral", ...}`` marker. The
+              marker must appear on the LAST chunk only (v1
+              single-breakpoint strategy per task-159 DD#11). Used by
+              ``LLMNode.prep`` when a workflow declares ``## Cache`` and
+              the node opts in via ``prompt_cache:``.
         temperature: 0.0 to 2.0. NOTE: Anthropic models with thinking enabled
             require temperature=1.0 (LiteLLM/Anthropic enforces; the adapter
             does not pre-validate). Violation surfaces as ``LLMCallError``
@@ -241,6 +254,14 @@ def complete(
         trace_hook: Optional callable; see ``TraceHook`` docstring. Fires
             ``after_call`` with ``error`` set before any ``LLMCallError`` is
             raised, so traces capture the failure.
+        user_message_blocks: Optional structured user-message content blocks
+            (Task 159 D.1 auto-batch-prefix). When set, ``prompt`` is ignored
+            for message assembly — the blocks become the user-role content
+            directly, with the cache marker on whichever block carries
+            ``cache_control``. Used to insert a per-batch-item cache
+            breakpoint at the boundary between the static prefix and the
+            dynamic suffix on prewarmed batch LLM nodes. Mirrors the
+            ``system`` widening (C1.1) for the user role.
 
     Returns:
         AdapterResponse on success.
@@ -252,7 +273,12 @@ def complete(
             ``LLMCallError`` base for consumers that don't discriminate).
     """
     model = _normalize_model_name(model)
-    messages = _build_messages(system=system, prompt=prompt, attachments=attachments)
+    messages = _build_messages(
+        system=system,
+        prompt=prompt,
+        attachments=attachments,
+        user_message_blocks=user_message_blocks,
+    )
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -578,15 +604,36 @@ def _classify_transient_kind(exc: Exception) -> LLMTransientKind:
 
 def _build_messages(
     *,
-    system: str | None,
+    system: str | list[dict[str, Any]] | None,
     prompt: str,
     attachments: list[Attachment] | None,
+    user_message_blocks: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Assemble the LiteLLM ``messages`` list."""
+    """Assemble the LiteLLM ``messages`` list.
+
+    ``system`` may be a plain string OR a list of content blocks (used by
+    the ``## Cache`` rendering path; see ``complete()`` docstring for the
+    block shape). ``messages.append({"role": "system", "content": system})``
+    works unchanged for both shapes — LiteLLM accepts either.
+
+    ``user_message_blocks`` (Task 159 D.1) — when set, replaces the
+    string-and-attachments user-message assembly entirely. The caller has
+    already structured the user content (typically: cache-marked static
+    prefix + dynamic suffix). ``prompt`` is ignored for message assembly in
+    that case; trace plumbing still uses ``prompt`` for the rendered-prompt
+    field via ``LLMNode.post`` separately.
+    """
     messages: list[dict[str, Any]] = []
 
     if system is not None:
         messages.append({"role": "system", "content": system})
+
+    if user_message_blocks is not None:
+        # Caller-built blocks (e.g., D.1 auto-batch-prefix). Use as-is — the
+        # adapter doesn't second-guess the block ordering or the location of
+        # cache_control markers.
+        messages.append({"role": "user", "content": user_message_blocks})
+        return messages
 
     if attachments:
         # Build content blocks (image(s) + text). Order: images first, then
@@ -783,6 +830,16 @@ def _normalize(
         if isinstance(raw_cost, (int, float)):
             cost_usd = float(raw_cost)
 
+    # Task 159 E.1 — Anthropic 1h-TTL cost normalization (per Spike 3 outcome
+    # in progress log §36). LiteLLM correctly prices 5-min cache writes (1.25x
+    # rate) but does NOT price ``ephemeral_1h_input_tokens`` — the 1h
+    # cache-write contribution surfaces as ~$0.0001 (just output tokens)
+    # when it should be ~$0.018 for a 3060-token write. Without this
+    # override, every 1h-TTL cache write in production is silently
+    # undercounted by ~100x. Provider-gated to Anthropic; defensive when the
+    # model isn't in ``litellm.model_cost``.
+    cost_usd = _maybe_normalize_anthropic_1h_cost(cost_usd, model, usage_obj)
+
     usage: dict[str, Any] = {
         "model": model,
         "input_tokens": input_tokens,
@@ -928,6 +985,67 @@ def _safe_int(value: int | float | None) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _maybe_normalize_anthropic_1h_cost(
+    cost_usd: float | None,
+    model: str,
+    usage_obj: Any,
+) -> float | None:
+    """Add the missing Anthropic 1h cache-write contribution to ``cost_usd``.
+
+    Spike 3 (progress log §36) verified that ``litellm.completion_cost``
+    correctly prices Anthropic's 5-min cache writes but completely fails to
+    price ``ephemeral_1h_input_tokens`` — the 1h cache-write cost surfaces
+    as ~$0.0001 when it should be ~$0.018 for a 3060-token write. This
+    helper computes the missing contribution and adds it to ``cost_usd``.
+
+    Provider-gated to Anthropic (the only provider with a 1h-TTL beta as of
+    plan-writing) so a phantom field on a future provider can't trigger
+    spurious activation. Defensive when:
+
+    - ``cost_usd`` is ``None`` (LiteLLM had no pricing — leave unchanged).
+    - ``ephemeral_1h_input_tokens`` is absent or 0 (no 1h write happened).
+    - The model isn't in ``litellm.model_cost`` (no rate available — leave
+      unchanged rather than risk over-correction).
+    """
+    if cost_usd is None:
+        return cost_usd
+    provider = detect_provider(model)
+    if provider is None or provider.name != "anthropic":
+        return cost_usd
+
+    prompt_details = getattr(usage_obj, "prompt_tokens_details", None)
+    cache_creation_details = getattr(prompt_details, "cache_creation_token_details", None) if prompt_details else None
+    ephemeral_1h = _safe_int(getattr(cache_creation_details, "ephemeral_1h_input_tokens", None))
+    if ephemeral_1h <= 0:
+        return cost_usd
+
+    # Look up the per-token input rate from LiteLLM's pricing table. Lazy
+    # import keeps adapter import-cheap.
+    try:
+        import litellm
+    except ImportError:
+        return cost_usd
+    model_cost = getattr(litellm, "model_cost", None)
+    if not isinstance(model_cost, dict):
+        return cost_usd
+    pricing = model_cost.get(model)
+    if pricing is None:
+        # Try the bare model name (without provider prefix) as a fallback.
+        from pflow.core.llm_providers import model_name_without_provider
+
+        bare = model_name_without_provider(model, provider)
+        pricing = model_cost.get(bare)
+    if not isinstance(pricing, dict):
+        return cost_usd
+    base_input_rate = pricing.get("input_cost_per_token")
+    if not isinstance(base_input_rate, (int, float)):
+        return cost_usd
+
+    # Anthropic 1h cache-write multiplier is documented as 2.0x base input.
+    missing_contribution = ephemeral_1h * float(base_input_rate) * 2.0
+    return cost_usd + missing_contribution
 
 
 def _emit_trace(hook: TraceHook | None, event: dict[str, Any]) -> None:

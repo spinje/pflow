@@ -425,6 +425,9 @@ class WorkflowEngine:
                         plan.cached_action,
                         plan.cached_output,
                         plan.config_hash,
+                        node_type_name=config.node_type_name,
+                        cache_key=plan.cache_key,
+                        created_at=plan.cached_created_at,
                     )
                 return str(
                     handle_cached_execution(
@@ -496,7 +499,14 @@ class WorkflowEngine:
 
             # 13. Memo cache write (skip for nodes with cache: false)
             if config.cache_enabled:
-                write_memo_cache(config.node_id, shared, cache_key, action, duration_ms=duration_ms)
+                write_memo_cache(
+                    config.node_id,
+                    shared,
+                    cache_key,
+                    action,
+                    duration_ms=duration_ms,
+                    node_type_name=config.node_type_name,
+                )
 
             # 14. Metrics
             if self.metrics:

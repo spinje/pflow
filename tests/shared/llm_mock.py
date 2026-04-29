@@ -106,6 +106,11 @@ class MockLLMClient:
     _responses: dict[str, dict] = field(default_factory=dict)
     _costs: dict[str, Optional[float]] = field(default_factory=dict)
     _warnings: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # Task 159 C1.2: per-(model,schema) cache-token staging. Production
+    # callers populate via ``set_response`` so cache-hit scenarios surface at
+    # the test seam. Parallel-dict pattern matching ``_costs`` / ``_warnings``.
+    _cache_creation_tokens: dict[str, int] = field(default_factory=dict)
+    _cache_read_tokens: dict[str, int] = field(default_factory=dict)
 
     def set_response(
         self,
@@ -115,8 +120,19 @@ class MockLLMClient:
         *,
         cost_usd: Optional[float] = None,
         warnings: list[dict[str, Any]] | None = None,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
     ) -> None:
         """Configure a response for a (model, schema) pair.
+
+        **Full-replacement contract** — each call OVERWRITES every staged
+        field for the (model, schema) key, including fields not passed in
+        this call. Args you don't specify revert to their defaults
+        (``cost_usd=None``, ``warnings=[]``, ``cache_creation_input_tokens=0``,
+        ``cache_read_input_tokens=0``). To layer changes across calls, pass
+        ALL the fields you want preserved on every call. Mirrors pytest's
+        ``MagicMock.return_value`` semantics — calls are full replacements,
+        not merges.
 
         Args:
             model: Model name, or ``"*"`` for any model.
@@ -127,12 +143,20 @@ class MockLLMClient:
                 matches production behavior for unknown-pricing models.
             warnings: Optional structured adapter warnings (each entry has
                 ``kind``, ``text``, and ``context``). Defaults to ``[]``.
+            cache_creation_input_tokens: Stage the cache-write token count
+                for the returned ``usage`` dict. Default ``0`` matches the
+                pre-Task-159 mock behavior. Used by C-phase rendering tests
+                + E.1 trace-format tests that assert on cache telemetry.
+            cache_read_input_tokens: Stage the cache-read token count for
+                the returned ``usage`` dict. Default ``0``.
         """
         name = _schema_name(schema) or "text"
         key = f"{model}:{name}"
         self._responses[key] = response
         self._costs[key] = cost_usd
         self._warnings[key] = list(warnings or [])
+        self._cache_creation_tokens[key] = cache_creation_input_tokens
+        self._cache_read_tokens[key] = cache_read_input_tokens
 
     def get_response(self, model: str, schema: Any) -> dict:
         """Resolve a configured or default response."""
@@ -177,6 +201,24 @@ class MockLLMClient:
             return list(self._warnings[f"*:{name}"])
         return []
 
+    def _get_cache_creation(self, model: str, schema: Any) -> int:
+        """Resolve staged cache-write token count for a (model, schema) pair."""
+        name = _schema_name(schema) or "text"
+        if f"{model}:{name}" in self._cache_creation_tokens:
+            return self._cache_creation_tokens[f"{model}:{name}"]
+        if f"*:{name}" in self._cache_creation_tokens:
+            return self._cache_creation_tokens[f"*:{name}"]
+        return 0
+
+    def _get_cache_read(self, model: str, schema: Any) -> int:
+        """Resolve staged cache-read token count for a (model, schema) pair."""
+        name = _schema_name(schema) or "text"
+        if f"{model}:{name}" in self._cache_read_tokens:
+            return self._cache_read_tokens[f"{model}:{name}"]
+        if f"*:{name}" in self._cache_read_tokens:
+            return self._cache_read_tokens[f"*:{name}"]
+        return 0
+
     def reset(self) -> None:
         """Clear call history and configured responses."""
         self.call_history.clear()
@@ -184,6 +226,8 @@ class MockLLMClient:
         self._responses.clear()
         self._costs.clear()
         self._warnings.clear()
+        self._cache_creation_tokens.clear()
+        self._cache_read_tokens.clear()
 
     # The patched function — must mirror llm_client.complete()'s signature.
     def complete(
@@ -191,7 +235,7 @@ class MockLLMClient:
         *,
         model: str,
         prompt: str,
-        system: Optional[str] = None,
+        system: Optional[str | list[dict[str, Any]]] = None,
         temperature: float = 0.0,
         max_tokens: Optional[int] = None,
         attachments: Optional[list] = None,
@@ -200,6 +244,7 @@ class MockLLMClient:
         model_options: Optional[dict] = None,
         timeout: Optional[float] = None,
         trace_hook: Optional[Any] = None,
+        user_message_blocks: Optional[list[dict[str, Any]]] = None,
     ) -> AdapterResponse:
         """Record the call and return a mocked AdapterResponse.
 
@@ -221,6 +266,7 @@ class MockLLMClient:
             "reasoning_kwargs": reasoning_kwargs,
             "model_options": model_options,
             "timeout": timeout,
+            "user_message_blocks": user_message_blocks,
         }
         self.call_history.append(record)
 
@@ -255,8 +301,8 @@ class MockLLMClient:
             "input_tokens": input_tokens,
             "output_tokens": 50,
             "total_tokens": input_tokens + 50,
-            "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": self._get_cache_creation(model, schema),
+            "cache_read_input_tokens": self._get_cache_read(model, schema),
             "thinking_tokens": 0,
             "thinking_budget": 0,
             "cost_usd": self._get_cost(model, schema),

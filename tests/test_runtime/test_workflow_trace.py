@@ -331,8 +331,10 @@ class TestWorkflowTraceCollector:
             assert "end_time" in trace_data
             assert "duration_ms" in trace_data
 
-            # Verify format version
-            assert trace_data["format_version"] == "2.0.0"
+            # Verify format version (bumped to 2.1.0 in Task 159 E.1 — adds
+            # cache-correlation fields: workflow_path, cache_key, cache_source,
+            # cache_age_sec, cache_chunks_skipped).
+            assert trace_data["format_version"] == "2.1.0"
 
             # Verify node counts
             assert trace_data["nodes_executed"] == 2

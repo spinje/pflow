@@ -473,6 +473,9 @@ def _collect_parallel_results(
     batch_config: BatchConfig,
     callback: Any,
     depth: int,
+    *,
+    initial_completed: int = 0,
+    total: int | None = None,
 ) -> None:
     """Collect results from parallel futures as they complete.
 
@@ -480,10 +483,17 @@ def _collect_parallel_results(
     worker's buffered progress events (see ``_drain_worker_buffer``)
     before reporting batch progress, producing atomic per-item
     transcripts in completion order.
+
+    ``initial_completed`` and ``total`` (Task 159 D.2) account for items
+    that already ran synchronously BEFORE the parallel pool dispatched —
+    notably item[0] when prewarm-split is active. Defaults preserve
+    today's behavior: ``completed_count = 0`` and ``total =
+    len(future_to_idx)``.
     """
     should_stop = False
-    completed_count = 0
-    total = len(future_to_idx)
+    completed_count = initial_completed
+    if total is None:
+        total = len(future_to_idx)
 
     for future in as_completed(future_to_idx):
         try:
@@ -588,9 +598,40 @@ def _execute_parallel(
         )
         return idx, result, error, duration_ms, buffered_events
 
+    # Task 159 D.2 — prewarm-split. When the cache_render context says
+    # ``prewarm: true`` AND there are at least 2 items, run item[0]
+    # synchronously through the SAME ``process_item`` closure the pool
+    # would use, drain its buffered events, then dispatch items[1:] in
+    # parallel. The single-item-then-fan-out shape lets item[0] populate
+    # the LLM provider's cache prefix so items[1:] read at 0.1x cost
+    # instead of all writing in parallel at 1.25-2x cost. ``fail_fast`` +
+    # item[0] failure: append to pending_errors and skip fan-out (early
+    # return); execute_batch raises post-aggregation. ``continue`` +
+    # item[0] failure: dispatch items[1:] anyway (they each pay full write
+    # cost — documented expectation).
+    cache_ctx = (shared.get("__pflow_cache_render__") or {}).get(config.node_id)
+    do_prewarm = cache_ctx is not None and cache_ctx.prewarm and len(items) > 1
+
     pool = ThreadPoolExecutor(max_workers=batch_config.max_concurrent)
     try:
-        future_to_idx = {pool.submit(process_item, idx, item): idx for idx, item in enumerate(items)}
+        if do_prewarm:
+            idx0, result0, error0, duration_ms0, buffered_events0 = process_item(0, items[0])
+            results[idx0] = result0
+            timings[idx0] = duration_ms0
+            _drain_worker_buffer(callback, buffered_events0)
+            _report_batch_progress(callback, config.node_id, duration_ms0, depth, 1, len(items), error0 is None)
+            if error0:
+                pending_errors.append(error0)
+                if batch_config.error_handling == "fail_fast":
+                    # Skip fan-out. ``execute_batch`` raises post-aggregation
+                    # via the existing path at line 236, preserving the
+                    # partial-state contract.
+                    return results, pending_errors, timings
+            start_idx = 1
+        else:
+            start_idx = 0
+
+        future_to_idx = {pool.submit(process_item, idx, items[idx]): idx for idx in range(start_idx, len(items))}
         _collect_parallel_results(
             future_to_idx,
             items,
@@ -601,6 +642,8 @@ def _execute_parallel(
             batch_config,
             callback,
             depth,
+            initial_completed=start_idx,
+            total=len(items),
         )
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

@@ -876,6 +876,9 @@ def _cached_memo_entry(
             planned.cached_action,
             planned.cached_output,
             planned.config_hash,
+            node_type_name=config.node_type_name,
+            cache_key=planned.cache_key,
+            created_at=planned.cached_created_at,
         )
     return PlanEntry(
         node_id=config.node_id,
