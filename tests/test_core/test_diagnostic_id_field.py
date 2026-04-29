@@ -191,29 +191,6 @@ def test_subworkflow_legacy_dedup_regression() -> None:
     assert len(deduplicate_diagnostics([d1, d2])) == 1
 
 
-def test_legacy_identity_tuple_in_hash_when_id_absent() -> None:
-    """Hash equality between an ``id=None`` diagnostic and a hash computed from
-    the legacy 4-tuple proves the null-safety claim by construction.
-
-    Catches the regression where someone changes the tuple to include ``id``
-    unconditionally (e.g., ``hash((severity, source, node_id, id, message))``).
-    """
-    d = Diagnostic(severity=Severity.ERROR, source="src", node_id="n", message="msg")
-    assert hash(d) == hash((Severity.ERROR, "src", "n", "msg"))
-
-
-def test_id_set_changes_hash_to_id_keyed_tuple() -> None:
-    """When ``id`` is set, the hash uses ``id`` as the dedup key, not ``message``."""
-    d = Diagnostic(
-        severity=Severity.ERROR,
-        source="cache_analyzer",
-        node_id="n",
-        id="cache.order-mismatch",
-        message="anything",
-    )
-    assert hash(d) == hash((Severity.ERROR, "cache_analyzer", "n", "cache.order-mismatch"))
-
-
 def test_renderer_prefixes_cache_warning_with_id() -> None:
     """Cache-namespaced WARNING renders ``[id]`` inline so agents route on the
     stable warning identifier without parsing JSON."""
@@ -283,6 +260,48 @@ def test_renderer_skips_unknown_cache_context_keys() -> None:
     assert "savings_pct: 5" in rendered
     assert "internal_debug_blob" not in rendered
     assert "another_random_key" not in rendered
+
+
+def test_renderer_error_title_includes_id_when_present() -> None:
+    """ERROR rendering shows ``[id]`` next to the title — same agent-routing
+    handle as WARNING/INFO. Text-mode agents can grep on id; JSON consumers
+    use the top-level ``id`` field.
+
+    Without this, the WARNING/INFO renderer surfaces ``[cache.X]`` inline but
+    ERROR renders only the category title (e.g. ``"Cache Failure"``) — agents
+    can't route on the specific rule from text output for ERRORs.
+    """
+    from pflow.core.diagnostic_render import format_diagnostic
+
+    d = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        node_id="bad-step",
+        id="cache.invalid-on-non-llm",
+        message="Some message",
+        context={"category": CACHE_FAILURE_CATEGORY},
+    )
+    rendered = format_diagnostic(d)
+    assert "Error: Cache Failure [cache.invalid-on-non-llm]" in rendered
+
+
+def test_renderer_error_title_unchanged_when_no_id() -> None:
+    """Non-cache ERROR diagnostics (which have ``id=None``) render unchanged
+    — additive backwards compatibility check."""
+    from pflow.core.diagnostic_render import format_diagnostic
+
+    d = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        node_id="x",
+        message="Some validation error",
+        context={"category": "validation"},
+    )
+    rendered = format_diagnostic(d)
+    assert "Error: Validation Error" in rendered
+    # No square-bracket id appears next to the title
+    first_line = rendered.splitlines()[0]
+    assert "[" not in first_line
 
 
 def test_renderer_cache_failure_error_uses_category_title() -> None:

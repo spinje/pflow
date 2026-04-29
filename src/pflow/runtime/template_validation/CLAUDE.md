@@ -28,8 +28,18 @@ from pflow.runtime.template_validation import (
 )
 
 # Test-only (import directly from submodule, not re-exported via __init__):
-from pflow.runtime.template_validation.validator import _extract_all_templates
+from pflow.runtime.template_validation.validator import (
+    _extract_all_templates,                  # Node-param + batch.items templates
+    _extract_cache_templates_for_unused_check,  # Workflow-level ## Cache items only;
+                                                 # used ONLY for the unused-input check
+)
 ```
+
+## Cache template extraction — split-extractor contract (Task 159)
+
+Workflow-level `## Cache` chunk vars (`workflow_ir["cache"]["items"][i]["var"]`) live in `_extract_cache_templates_for_unused_check` and are kept OUT of the `all_templates` set that flows into `validate_template_paths`. Cache var resolution is owned by `core/workflow/data_flow.py::_validate_cache_block`, which emits richer "Cache chunk 'X' references..." diagnostics with similar-name suggestions and source-line metadata. If both extractors fed the same set, the user would see two errors for one mistake.
+
+The union of both extractors is computed inline at the call site in `validate_workflow_templates` and passed ONLY to `_validate_unused_inputs` so cache-only inputs aren't flagged as unused. Other passes (path validation, type validation, batch item, code-node) MUST continue to receive `all_templates` only.
 
 ## Dependency Graph (no cycles)
 

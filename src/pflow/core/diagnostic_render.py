@@ -142,10 +142,16 @@ def _format_error_diagnostic(
     lines: list[str] = []
     context = diagnostic.context or {}
 
-    # 1. Title line
+    # 1. Title line — agent-routing handle. The stable warning ``id``, when
+    # present, appears in brackets next to the title so text-mode consumers
+    # can grep on the id without parsing JSON. Diagnostics without an ``id``
+    # (every pflow diagnostic pre-Task-159) render unchanged.
     title = diagnostic.title or CATEGORY_TITLES.get(context.get("category", ""), "Error")
     prefix = f"Error {error_number}" if error_number is not None else "Error"
-    lines.append(f"{prefix}: {title}")
+    if diagnostic.id:
+        lines.append(f"{prefix}: {title} [{diagnostic.id}]")
+    else:
+        lines.append(f"{prefix}: {title}")
     lines.append("")
 
     # 2. Message

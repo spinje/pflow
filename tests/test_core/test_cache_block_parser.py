@@ -241,7 +241,7 @@ def test_inputs_referenced_only_in_cache_not_flagged_unused() -> None:
     must NOT trigger the unused-input ERROR.
 
     Split-extractor contract (post-double-emit fix): cache vars live in
-    ``_extract_cache_templates`` and are unioned into the unused-check input
+    ``_extract_cache_templates_for_unused_check`` and are unioned into the unused-check input
     only — they MUST NOT be in ``_extract_all_templates``'s output (which
     flows into ``validate_template_paths``, producing a duplicate generic
     "Template variable ${X} has no valid source" diagnostic alongside the
@@ -254,7 +254,7 @@ def test_inputs_referenced_only_in_cache_not_flagged_unused() -> None:
     """
     from pflow.runtime.template_validation.validator import (
         _extract_all_templates,
-        _extract_cache_templates,
+        _extract_cache_templates_for_unused_check,
     )
 
     md = (
@@ -265,18 +265,36 @@ def test_inputs_referenced_only_in_cache_not_flagged_unused() -> None:
         "- type: shell\n\n```shell command\necho hi\n```\n"
     )
     result = parse_markdown(md)
+
+    # (1) Mechanism: split-extractor contract.
     node_param_templates = _extract_all_templates(result.ir)
-    cache_templates = _extract_cache_templates(result.ir)
-    # Cache vars are NOT in the node-param set (no double-emit).
+    cache_templates = _extract_cache_templates_for_unused_check(result.ir)
     assert "concept" not in node_param_templates, (
-        f"Cache var should not be in _extract_all_templates output (would cause "
+        f"Cache var must not be in _extract_all_templates output (would cause "
         f"path-validation to emit a generic duplicate diagnostic). Got: {sorted(node_param_templates)}"
     )
-    # Cache vars ARE in the cache extractor output (so the unused-input check
-    # marks the input as used via the union).
     assert "concept" in cache_templates, (
-        f"Cache var should be in _extract_cache_templates output so the "
-        f"unused-input check sees it via union. Got: {sorted(cache_templates)}"
+        f"Cache var must be in cache extractor output so the unused-input "
+        f"check sees it via union. Got: {sorted(cache_templates)}"
+    )
+
+    # (2) Effect: running the FULL template validator produces no spurious
+    # "unused input" or "Template variable has no valid source" errors. Without
+    # this assertion, a future contributor could break the mechanism (e.g., add
+    # a re-export and call the cache extractor in the wrong consumer) and the
+    # mechanism check would still pass while the user-visible double-emit
+    # returns silently.
+    from pflow.core.diagnostic import Severity
+    from pflow.registry.registry import Registry
+    from pflow.runtime.template_validation.validator import validate_workflow_templates
+
+    # Registry is auto-populated by the conftest's isolate_pflow_config fixture.
+    registry = Registry()
+    diagnostics = validate_workflow_templates(result.ir, {"concept": "x"}, registry)
+    errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+    assert errors == [], (
+        f"Cache-only input should produce no template validation errors; got: "
+        f"{[(d.id, d.message[:80]) for d in errors]}"
     )
 
 

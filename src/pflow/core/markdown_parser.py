@@ -1742,9 +1742,25 @@ def _build_cache_dict(cache_section: _CacheSection) -> dict[str, Any]:
 
     Shape matches the IR schema (B2.2): ``{"ttl": "5m"|"1h"|None, "items":
     [{"name", "var", "prose_before", "_source_line"}, ...], "_source_line"}``.
+
+    Parser invariant: ``chunk.name == chunk.var_expr`` for every parsed chunk.
+    The chunk identifier IS the raw template path verbatim; the parser does
+    not normalize. Downstream consumers rely on this equality — cache
+    validation in B2.3 matches ``prompt_cache:`` by ``name``, and segment-3
+    cache rendering will substitute via ``var``. Locking equality here
+    prevents future refactors from silently drifting the two fields.
     """
     items: list[dict[str, Any]] = []
     for chunk in cache_section.chunks:
+        if chunk.name != chunk.var_expr:
+            # Defensive: a future parser change that normalizes ``name``
+            # (e.g., lowercases or strips prefixes) would silently break the
+            # resolution-vs-rendering symmetry — fail loud at parse time
+            # instead.
+            raise MarkdownParseError(
+                f"Internal: cache chunk name '{chunk.name}' diverges from var '{chunk.var_expr}'.",
+                line=chunk.source_line,
+            )
         items.append({
             "name": chunk.name,
             "var": chunk.var_expr,

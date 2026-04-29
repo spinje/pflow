@@ -104,7 +104,7 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 ### diagnostic.py
 
-`Diagnostic` dataclass, `Severity` enum, dedup, exception conversion. Identity (eq/hash) is `severity + source + node_id + message` only — context, title, suggestions are display data. Use `deduplicate_diagnostics()` for collections.
+`Diagnostic` dataclass, `Severity` enum, dedup, exception conversion. Identity (eq/hash) is `(severity, source, node_id, id or message)` — context, title, suggestions are display data. When `id` is `None` the tuple falls back to `message` (preserving sub-workflow dedup byte-for-byte); when `id` is set (cache-namespaced diagnostics from Task 159) it becomes the dedup key. Use `deduplicate_diagnostics()` for collections.
 
 **`CATEGORY_TITLES`** maps diagnostic categories to human-readable titles. Used by both `executor_service.py` (error categorization) and `diagnostic_render.py` (error title rendering). Lives here because it's a data constant, not rendering logic.
 

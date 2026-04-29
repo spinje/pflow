@@ -476,59 +476,122 @@ def test_absent_prompt_cache_does_not_error() -> None:
 # ------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "V6 dedup test is a TRIPWIRE for an open user decision. "
-        "format_child_provenance modifies Diagnostic.message; identity tuple "
-        "(severity, source, node_id, id or message) hashes id when set, so "
-        "parent and child versions of cache.invalid-on-non-llm SHOULD dedup "
-        "via id even though message differs — but the actual sub-workflow "
-        "propagation path may produce different node_ids (child's offending "
-        "node id is preserved), causing the dedup not to fire as expected. "
-        "Two fix options: "
-        "(a) granular dedup tuple including workflow_path; "
-        "(b) special-case cache.invalid-on-non-llm dedup by (severity, source, "
-        "id) ignoring node_id and message. "
-        "User decision required before removing this xfail. "
-        "DO NOT silently weaken the test — fail-loud is the design intent."
-    ),
-    strict=False,  # If implementation closes the gap, allow xpass
-)
-def test_v6_subworkflow_invalid_on_non_llm_dedup() -> None:
-    """Locks the V6 combined-diagnostic dedup contract across the parent-invokes-child
-    propagation boundary. With ``id="cache.invalid-on-non-llm"`` set and the
-    identity tuple using ``id or message``, parent-emitted and child-emitted
-    versions on the SAME (severity, source, node_id) tuple should collapse via
-    Diagnostic.__hash__. Reality: format_child_provenance preserves id but
-    DOES modify message, AND the propagation may modify node_id too —
-    depending on which side, this dedup may not fire as expected.
+def test_parser_to_validator_pipeline_emits_order_mismatch(tmp_path) -> None:
+    """Pattern 2 integration test: parse a real ``.pflow.md`` and run
+    ``WorkflowValidator.validate()`` end-to-end.
 
-    This test exercises the full WorkflowValidator + sub-workflow recursion
-    path with deduplicate_diagnostics applied at the end. Marked xfail because
-    the user has not yet picked between the two fix options.
+    Hand-built IR fixtures (used by every other test in this file) test
+    ``_validate_cache_block`` against a synthetic IR shape. They CAN'T catch:
+      - Parser → IR shape drift (``cache.items`` field naming, ``_source_line``
+        injection, ``prompt_cache:`` top-level extraction).
+      - Schema → validator interaction (whether the schema rejects before
+        ``_validate_cache_block`` runs, or vice versa).
+      - Validator step ordering when other passes run first.
+
+    Locks the parser-emitted IR shape against ``cache.order-mismatch`` firing
+    correctly in the canonical workflow shape. If the parser changes how it
+    populates ``cache.items[i].name`` or ``prompt_cache:`` extraction, this
+    test fails with a clear signal.
     """
-    from pflow.core.diagnostic import Diagnostic, deduplicate_diagnostics
+    from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.workflow.validator import WorkflowValidator
 
-    parent = Diagnostic(
-        severity=Severity.ERROR,
-        source="validator",
-        node_id="bad-node",
-        id="cache.invalid-on-non-llm",
-        message="Bare parent emission",
+    workflow_path = tmp_path / "order-mismatch.pflow.md"
+    workflow_path.write_text(
+        "# Order Mismatch\n\n"
+        "Workflow with prompt_cache: in wrong order.\n\n"
+        "## Inputs\n\n"
+        "### concept\n\nConcept input.\n\n- type: string\n- required: true\n\n"
+        "### concept_brief\n\nBrief input.\n\n- type: string\n- required: true\n\n"
+        "## Cache\n\n"
+        "```cache\nThe concept:\n${concept}\n\nThe brief:\n${concept_brief}\n```\n\n"
+        "## Steps\n\n"
+        "### llm-step\n\nLLM with reversed prompt_cache.\n\n"
+        "- type: llm\n"
+        "- prompt_cache: [concept_brief, concept]\n"
+        "- model: anthropic/claude-sonnet-4-5\n\n"
+        "```prompt\nPrompt body referencing ${concept} and ${concept_brief}.\n```\n"
     )
-    child_with_provenance = Diagnostic(
-        severity=Severity.ERROR,
-        source="validator",
-        node_id="bad-node",  # same logical node
-        id="cache.invalid-on-non-llm",
-        message="In step 'parent-step' sub-workflow: Bare parent emission",
+
+    ir = parse_markdown(workflow_path.read_text()).ir
+    ir.setdefault("ir_version", "0.1.0")
+    diagnostics = WorkflowValidator.validate(ir, workflow_file=workflow_path)
+
+    order_errors = [d for d in diagnostics if d.id == "cache.order-mismatch"]
+    assert len(order_errors) == 1, (
+        f"Expected one cache.order-mismatch through the parser→validator pipeline; "
+        f"got: {[(d.id, d.message[:60]) for d in diagnostics]}"
     )
-    deduped = deduplicate_diagnostics([parent, child_with_provenance])
-    # Tripwire: this WILL pass currently because identity uses id (not message)
-    # when id is set. If a future change reverts to message-keyed dedup for
-    # cache diagnostics, this test catches it. The xfail tag is a reminder that
-    # the broader sub-workflow-propagation behavior remains an open user decision.
-    assert len(deduped) == 1, (
-        f"V6 dedup leaked across sub-workflow boundary: {len(deduped)} diagnostics "
-        f"emitted, expected 1. Surface to user per V6 dedup test docstring."
+    assert order_errors[0].context["declared"] == ["concept", "concept_brief"]
+    assert order_errors[0].context["actual"] == ["concept_brief", "concept"]
+
+
+def test_v6_subworkflow_invalid_on_non_llm_via_real_validator(tmp_path) -> None:
+    """V6 combined-diagnostic dedup contract — REAL parent → child propagation path.
+
+    Replaces the earlier synthetic ``deduplicate_diagnostics`` test (which was a
+    tautology: hashing two diagnostics with the same id necessarily collapses
+    them — the test was testing the hash function, not the propagation path).
+
+    Drives a real parent ``.pflow.md`` that invokes a real child ``.pflow.md``
+    (which contains a non-LLM node with both ``prompt_cache:`` and ``prewarm:``
+    declared) through ``WorkflowValidator.validate()``. The validator runs
+    ``_validate_cache_block`` on both parent and child IRs, then
+    ``_add_child_provenance`` wraps the child's diagnostics with parent context
+    before merging into the parent's diagnostic list.
+
+    Contract: the merged diagnostic list contains ONE
+    ``cache.invalid-on-non-llm`` for the offending child node — id-keyed
+    identity correctly handles the parent's recursive validation that walks
+    the child IR before provenance wrapping happens.
+    """
+    from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.workflow.validator import WorkflowValidator
+
+    child_path = tmp_path / "child-bad-non-llm.pflow.md"
+    child_path.write_text(
+        "# Child Bad Non-LLM\n\n"
+        "Child workflow with a non-LLM node declaring prompt_cache + prewarm.\n\n"
+        "## Inputs\n\n### topic\n\nThe topic.\n\n- type: string\n- required: true\n\n"
+        "## Steps\n\n"
+        "### bad-step\n\n"
+        "Non-LLM node with cache fields.\n\n"
+        "- type: shell\n"
+        "- prompt_cache: [topic]\n"
+        "- prewarm: true\n\n"
+        '```shell command\necho "${topic}"\n```\n'
     )
+    parent_path = tmp_path / "parent.pflow.md"
+    parent_path.write_text(
+        "# Parent\n\n"
+        "Calls a child whose validation fails on cache.invalid-on-non-llm.\n\n"
+        "## Inputs\n\n### topic\n\nThe topic.\n\n- type: string\n- required: true\n\n"
+        "## Steps\n\n"
+        "### invoke-child\n\n"
+        "Call the broken child.\n\n"
+        "- type: workflow\n"
+        f"- workflow: ./{child_path.name}\n"
+        "- inputs:\n"
+        "    topic: ${topic}\n"
+    )
+
+    # Drive the standard WorkflowValidator path (mirrors `pflow validate-only`).
+    parent_ir = parse_markdown(parent_path.read_text()).ir
+    parent_ir.setdefault("ir_version", "0.1.0")
+    diagnostics = WorkflowValidator.validate(parent_ir, workflow_file=parent_path)
+
+    invalid = [d for d in diagnostics if d.id == "cache.invalid-on-non-llm"]
+    assert len(invalid) == 1, (
+        f"Expected exactly one cache.invalid-on-non-llm diagnostic from the parent→child "
+        f"propagation path; got {len(invalid)}. Diagnostics: "
+        f"{[(d.severity, d.id, d.node_id, d.message[:60]) for d in diagnostics]}"
+    )
+    diag = invalid[0]
+    # Provenance prefix is applied (child diagnostic was wrapped via
+    # _add_child_provenance with the parent's invocation step id).
+    assert diag.message.startswith("In step 'invoke-child' sub-workflow:"), (
+        f"Expected provenance prefix; got message: {diag.message!r}"
+    )
+    # The offending node's identity is preserved across propagation.
+    assert diag.node_id == "bad-step"
+    assert diag.context["invalid_fields"] == ["prompt_cache", "prewarm"]

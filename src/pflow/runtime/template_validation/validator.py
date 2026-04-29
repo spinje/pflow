@@ -93,7 +93,7 @@ def validate_workflow_templates(
 
     # Extract all templates from workflow
     all_templates = _extract_all_templates(workflow_ir)
-    cache_templates = _extract_cache_templates(workflow_ir)
+    cache_templates = _extract_cache_templates_for_unused_check(workflow_ir)
 
     if all_templates or cache_templates:
         logger.debug(
@@ -359,7 +359,7 @@ def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:  # noqa: C9
     return templates
 
 
-def _extract_cache_templates(workflow_ir: dict[str, Any]) -> set[str]:
+def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> set[str]:
     """Extract template variables from the workflow-level ``## Cache`` block.
 
     Cache chunks reference workflow inputs / step outputs via their ``var``
