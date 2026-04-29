@@ -124,9 +124,15 @@ class _SectionType(Enum):
     INPUTS = auto()
     STEPS = auto()
     OUTPUTS = auto()
+    CACHE = auto()
     UNKNOWN = auto()
 
 
+# CACHE is intentionally NOT in _KNOWN_SECTIONS: the orphan-content rules at the
+# code-fence-close site and at end-of-section walk apply only to entity-bearing
+# sections. ## Cache is its own structural mode (section-level params + a
+# section-level tagged code block, no ### entities) — including it in the
+# orphan path would reject every well-formed cache block.
 _KNOWN_SECTIONS: set[_SectionType] = {
     _SectionType.INPUTS,
     _SectionType.STEPS,
@@ -137,7 +143,25 @@ _SECTION_DISPLAY_NAMES: dict[_SectionType, str] = {
     _SectionType.INPUTS: "Inputs",
     _SectionType.STEPS: "Steps",
     _SectionType.OUTPUTS: "Outputs",
+    _SectionType.CACHE: "Cache",
 }
+
+# Cache code blocks must be tagged with the literal ``cache`` info string —
+# distinct from other ``yaml batch`` / ``shell command`` patterns because the
+# block content is parsed for ${var} chunks rather than handed to a node param.
+_CACHE_BLOCK_TAG = "cache"
+
+# Allowed values for the ``- ttl:`` parameter on ``## Cache``. Per DD#7, only
+# the two locked durations are valid in v1; everything else is a syntax error.
+_CACHE_TTL_VALUES: frozenset[str] = frozenset({"5m", "1h"})
+
+# Pattern matching ``${...}`` template references inside the cache code block.
+# Inner content is a single match group with no nested braces — pflow has no
+# nested-template syntax, and this matches the existing TemplateResolver
+# extraction surface. Each match becomes one chunk; the parser never produces
+# a chunk with two ${var} references by construction (the algorithm splits at
+# every match).
+_CACHE_TEMPLATE_RE = re.compile(r"\$\{([^}]+)\}")
 
 _SECTION_SYNTAX_HINTS: dict[_SectionType, str] = {
     _SectionType.INPUTS: (
@@ -161,6 +185,17 @@ _SECTION_SYNTAX_HINTS: dict[_SectionType, str] = {
         "    ### output-name\n\n"
         "    Description of the output.\n\n"
         "    - value: ${step-name.output}"
+    ),
+    _SectionType.CACHE: (
+        "Cache uses section-level params + a single tagged code block:\n\n"
+        "    ## Cache\n\n"
+        "    - ttl: 5m       # optional; default 5m, also accepts 1h\n\n"
+        "    ```cache\n"
+        "    Description of the value:\n\n"
+        "    ${concept}\n\n"
+        "    Description of the next value:\n\n"
+        "    ${concept_brief}\n"
+        "    ```"
     ),
 }
 
@@ -188,6 +223,39 @@ class _Entity:
     yaml_item_keys: list[str] = field(default_factory=list)  # Parallel to yaml_items: parsed top-level key
     code_blocks: list[_CodeBlock] = field(default_factory=list)
     section_type: _SectionType = _SectionType.NONE
+
+
+@dataclass
+class _CacheChunk:
+    """One ``[prose-before-${var}][${var}]`` pair inside a ``## Cache`` block.
+
+    The chunk identifier (``name``) is the raw content inside ``${...}`` —
+    e.g. ``${chorus-chooser.winning_chorus}`` → ``"chorus-chooser.winning_chorus"``.
+    Downstream root-extraction (B2.3 cache reference validation) uses
+    ``TemplateResolver.extract_root_node_id`` against ``var_expr`` for proper
+    bracket-syntax handling.
+    """
+
+    name: str
+    var_expr: str
+    prose_before: str
+    source_line: int
+
+
+@dataclass
+class _CacheSection:
+    """Collector for the workflow-level ``## Cache`` block.
+
+    The cache section is a structurally novel mode: section-level YAML params
+    (``- ttl: ...``) and a single tagged ``cache`` code block, with no
+    ``### entities``. The collector stays parser-local; Phase 4 builds
+    ``ir["cache"]`` from it via ``_build_cache_dict``.
+    """
+
+    source_line: int
+    ttl: str | None = None
+    chunks: list[_CacheChunk] = field(default_factory=list)
+    code_block_seen: bool = False  # Trips on first ``cache`` fence close; second triggers an error.
 
 
 # --- Main parser ---
@@ -237,6 +305,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     h1_prose_parts: list[str] = []
     entities: list[_Entity] = []
     current_entity: _Entity | None = None
+    cache_section: _CacheSection | None = None
     in_code_block = False
     code_fence_pattern = ""  # The fence string that opened the block
     code_fence_line = 0
@@ -270,6 +339,16 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                     block_content = "\n".join(code_block_lines)
                     if current_entity is not None:
                         _append_code_block(current_entity, code_block_tag, block_content, code_fence_line)
+                    elif current_section == _SectionType.CACHE:
+                        if cache_section is None:
+                            # Defensive — H2 transition initializes cache_section, so reaching
+                            # here means the closing fence appeared mid-section; surface the
+                            # exact state to the user.
+                            raise MarkdownParseError(
+                                "Internal: cache section state was not initialized.",
+                                line=code_fence_line,
+                            )
+                        _attach_cache_code_block(cache_section, code_block_tag, block_content, code_fence_line)
                     elif current_section in _KNOWN_SECTIONS:
                         orphaned_lines.setdefault(current_section, []).extend([code_fence_line, line_num])
                     in_code_block = False
@@ -320,6 +399,14 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 )
             if current_section in _KNOWN_SECTIONS:
                 seen_sections[current_section] = line_num
+            if current_section == _SectionType.CACHE:
+                if cache_section is not None:
+                    raise MarkdownParseError(
+                        "Duplicate '## Cache' section.",
+                        line=line_num,
+                        suggestion=(f"Merge with the existing '## Cache' section at line {cache_section.source_line}."),
+                    )
+                cache_section = _CacheSection(source_line=line_num)
             if is_steps:
                 steps_section_found = True
             if warning:
@@ -355,6 +442,49 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 section_type=current_section,
             )
             entities.append(current_entity)
+            continue
+
+        # --- Section-level params for ## Cache (no ### entities allowed here) ---
+        # Runs only when no entity is active AND we're inside ## Cache. Accepts
+        # ``- ttl: <value>`` items at the section level; rejects every other YAML
+        # key with a locked hint. Prose lines and blank lines are ignored —
+        # commentary above the cache code block is not part of the rendered IR.
+        if current_section == _SectionType.CACHE and current_entity is None:
+            if cache_section is None:
+                # Defensive: H2 transition seeds cache_section. Reaching here means
+                # something broke — surface clearly rather than NoneType-crashing later.
+                raise MarkdownParseError(
+                    "Internal: cache section state was not initialized.",
+                    line=line_num,
+                )
+            yaml_match = _YAML_ITEM_RE.match(line)
+            if yaml_match:
+                key = yaml_match.group(1)
+                value = yaml_match.group(2).strip()
+                if key != "ttl":
+                    raise MarkdownParseError(
+                        f"'{key}:' is not a valid parameter for '## Cache'. Only '- ttl:' is supported in v1.",
+                        line=line_num,
+                        suggestion="Valid keys: '- ttl: 5m' (default) or '- ttl: 1h' (extended).",
+                    )
+                if value not in _CACHE_TTL_VALUES:
+                    raise MarkdownParseError(
+                        f"Invalid '- ttl:' value '{value}'. Must be '5m' or '1h'.",
+                        line=line_num,
+                        suggestion=("Use '- ttl: 5m' (default 5-minute cache) or '- ttl: 1h' (extended 1-hour cache)."),
+                    )
+                if cache_section.ttl is not None:
+                    raise MarkdownParseError(
+                        "Duplicate '- ttl:' parameter on '## Cache'.",
+                        line=line_num,
+                        suggestion="Remove the duplicate '- ttl:' line — only one TTL applies to the whole cache block.",
+                    )
+                cache_section.ttl = value
+                continue
+            # Prose / blank lines under ## Cache are commentary — ignored. Other
+            # malformed input (e.g. a stray '*' bullet) falls through silently here;
+            # users see the downstream "no chunks parsed" error instead, which is the
+            # actionable failure mode for a malformed section.
             continue
 
         # --- Inside an entity: YAML params, prose ---
@@ -527,6 +657,20 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         for entity in output_entities:
             ir["outputs"][entity.id] = _build_output_dict(entity)
 
+    # Build cache block (if a ## Cache section was declared).
+    if cache_section is not None:
+        # The section was declared but produced no chunks — e.g. ``## Cache``
+        # followed only by ``- ttl:`` with no fenced ```cache block, or a section
+        # header alone with nothing after it. Either case is a syntax error
+        # because the IR-level `cache` field requires at least one item.
+        if not cache_section.chunks:
+            raise MarkdownParseError(
+                "'## Cache' section requires a ```cache code block with at least one '${var}' reference.",
+                line=cache_section.source_line,
+                suggestion=_SECTION_SYNTAX_HINTS[_SectionType.CACHE],
+            )
+        ir["cache"] = _build_cache_dict(cache_section)
+
     result.ir = ir
 
     if warnings:
@@ -580,6 +724,8 @@ def _resolve_section(section_name: str, line_num: int) -> tuple[_SectionType, bo
         return _SectionType.STEPS, True, None
     if section_lower == "outputs":
         return _SectionType.OUTPUTS, False, None
+    if section_lower == "cache":
+        return _SectionType.CACHE, False, None
     # Unknown section — check for near-miss
     warning = None
     if section_lower in _NEAR_MISS_SECTIONS:
@@ -1431,6 +1577,17 @@ def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
     if "cache" in all_params:
         node["cache"] = all_params.pop("cache")
 
+    # Extract prompt_cache and prewarm (Task 159 — goes to top-level, not params).
+    # These must be top-level for the per-node IR-schema check (B2.2) to see them
+    # AND for the data_flow validator's ``cache.invalid-on-non-llm`` rule (B2.3),
+    # which inspects ``node`` keys directly. If they stayed inside ``node["params"]``,
+    # validator step 8 (``_validate_unknown_params``) would silently allow them on
+    # non-LLM nodes by virtue of not iterating top-level node keys.
+    if "prompt_cache" in all_params:
+        node["prompt_cache"] = all_params.pop("prompt_cache")
+    if "prewarm" in all_params:
+        node["prewarm"] = all_params.pop("prewarm")
+
     # Extract routing metadata (not stored in params)
     routing: dict[str, Any] = {}
     if "next" in all_params:
@@ -1486,6 +1643,117 @@ def _build_output_dict(entity: _Entity) -> dict[str, Any]:
         elif block.param_name:
             result[block.param_name] = block.content
 
+    return result
+
+
+def _attach_cache_code_block(
+    cache_section: _CacheSection,
+    code_block_tag: str,
+    block_content: str,
+    code_fence_line: int,
+) -> None:
+    """Attach a parsed ``cache`` code block's chunks to the section collector.
+
+    Validates the tag (must be ``cache`` exactly — ``yaml cache`` is rejected
+    because cache content is not yaml-config) and that no prior cache block
+    was attached to this section (multi-block syntax error per spec).
+    """
+    actual_tag = _extract_param_name(code_block_tag) if code_block_tag else ""
+    if actual_tag != _CACHE_BLOCK_TAG:
+        raise MarkdownParseError(
+            f"Code blocks under '## Cache' must use the 'cache' tag — got '{code_block_tag}'.",
+            line=code_fence_line,
+            suggestion=(
+                "Replace the opening fence with ```cache. The cache code block is parsed "
+                "for ${var} chunks; other tags are rejected to keep the contract explicit."
+            ),
+        )
+    if cache_section.code_block_seen:
+        raise MarkdownParseError(
+            "Multiple 'cache' code blocks under '## Cache' are not allowed.",
+            line=code_fence_line,
+            suggestion=(
+                "Combine all values into a single ```cache block. Cache chunks are ordered "
+                "by their position in this single block — multiple blocks would create "
+                "ambiguous ordering and break per-node prompt_cache: declaration-order matching."
+            ),
+        )
+    cache_section.code_block_seen = True
+    cache_section.chunks = _parse_cache_code_block(block_content, code_fence_line + 1)
+
+
+def _parse_cache_code_block(content: str, base_line: int) -> list[_CacheChunk]:
+    """Split a cache code block's content into ``[prose-before-${var}][${var}]`` chunks.
+
+    Each ``${var}`` occurrence becomes a chunk whose ``prose_before`` is the
+    text from the previous chunk's end (or the start of the block) up to (but
+    not including) the ``${``. Trailing prose after the last ``${var}`` is
+    silently discarded — the chunk contract is "prose-then-var", and trailing
+    prose has no var to pair with.
+
+    Raises:
+        MarkdownParseError: if the block has no ``${var}`` references at all
+            (empty / prose-only block) or if any chunk identifier is duplicated.
+    """
+    chunks: list[_CacheChunk] = []
+    seen_names: set[str] = set()
+    last_end = 0
+    for match in _CACHE_TEMPLATE_RE.finditer(content):
+        prose = content[last_end : match.start()]
+        var_expr = match.group(1)
+        # The chunk identifier is the raw template path verbatim (post ``${`` /
+        # pre ``}``). Downstream root extraction happens in B2.3 via
+        # TemplateResolver.extract_root_node_id.
+        name = var_expr
+        line_offset = content.count("\n", 0, match.start())
+        chunk_line = base_line + line_offset
+        if name in seen_names:
+            raise MarkdownParseError(
+                f"Duplicate cache chunk identifier '{name}'.",
+                line=chunk_line,
+                suggestion=(
+                    f"Each ${{var}} can only appear once in a '## Cache' block. "
+                    f"Remove the duplicate ${{{name}}} reference."
+                ),
+            )
+        seen_names.add(name)
+        chunks.append(
+            _CacheChunk(
+                name=name,
+                var_expr=var_expr,
+                prose_before=prose,
+                source_line=chunk_line,
+            )
+        )
+        last_end = match.end()
+
+    if not chunks:
+        raise MarkdownParseError(
+            "'## Cache' block must contain at least one '${var}' reference.",
+            line=base_line,
+            suggestion=_SECTION_SYNTAX_HINTS[_SectionType.CACHE],
+        )
+
+    return chunks
+
+
+def _build_cache_dict(cache_section: _CacheSection) -> dict[str, Any]:
+    """Build the IR ``cache`` field from the parsed cache section.
+
+    Shape matches the IR schema (B2.2): ``{"ttl": "5m"|"1h"|None, "items":
+    [{"name", "var", "prose_before", "_source_line"}, ...], "_source_line"}``.
+    """
+    items: list[dict[str, Any]] = []
+    for chunk in cache_section.chunks:
+        items.append({
+            "name": chunk.name,
+            "var": chunk.var_expr,
+            "prose_before": chunk.prose_before,
+            "_source_line": chunk.source_line,
+        })
+    result: dict[str, Any] = {"items": items, "_source_line": cache_section.source_line}
+    if cache_section.ttl is not None:
+        result["ttl"] = cache_section.ttl
     return result
 
 
