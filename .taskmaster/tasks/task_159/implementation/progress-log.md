@@ -1351,3 +1351,78 @@ Implementation begins. The implementing agent opens (in order):
 Three paid spikes (~$0.30 total, pre-authorized) run BEFORE B1. Outcomes get recorded as a §33 entry (or appended to §32) before B1.1 patches begin.
 
 Single load-bearing gate (unchanged from §31): B3's no-`prompt_cache` hash regression test. The pre-merge fixture step (`golden_config_hashes.json` committed against `main` head) MUST happen before B3.1 patches land; without it, the regression gate is a tautology.
+
+## 33. Session 2026-04-29 — Round 3 review + plan refinement
+
+Plan v2 ran through a third `/code-review` pass — 8 agents in parallel reviewing the same blindspot categories as Round 2. The hypothesis going in: "We're paying with each round; verify findings honestly; stop encoding once we hit polish-tier returns." Round 3 surfaced **7 Critical + 8 High-Priority + ~14 Medium** findings, most of which were substantive (not polish, not restatements). The user's epistemic question — "are we hitting diminishing returns?" — drove an explicit analysis: returns are still high because the plan keeps growing, each round operates on a different post-fix codebase, and Round 2's claims of completeness ("all consumers use canonical pattern") turned out false in two sites.
+
+### What this entry covers (and what it doesn't)
+
+- **In the plan**: every encoded fix is documented inline; the "Summary of plan corrections from review" section now has a "Round 3 fixes" subsection at the top.
+- **In this entry**: the journey of why we ran a third round, the verifications that confirmed reviewer claims (and the one that disputed them), and the structural-versus-polish judgment calls that shaped what got encoded.
+
+### Round 3 findings — verified against code before encoding
+
+Pattern: the orchestrator triaged 8-agent output → Critical/High-Priority/Medium → verified each Critical against actual code (NOT just trusting reviewer claims) → presented action plan to user → encoded after user approval. Verification was cheap (5 grep + 2 read calls) and caught one Disputed-Critical (review-silent-failures #3 about `validate_data_flow` reach — actually verified at `compile_validation.py:120-122` to be correct as planned). The 87% confirmation rate (7 of 8 Critical confirmed) signals the curve hasn't flattened.
+
+**Critical fixes encoded (7 of 7):**
+
+1. **D.1 line 718 + D.2 line 759 unsafe defensive-read pattern.** Round 2 explicitly claimed "all consumers use the canonical pattern"; grep showed two sites still used `shared.get(K, {}).get(...)` — the exact `None.get(...)` AttributeError trap the architectural backbone documents. Replaced with `(shared.get(K) or {}).get(...)`. The Round 2 summary lied about its own coverage; this is the recurring "trust but verify" pattern caught by each new round.
+
+2. **F1 catalog `cache.discrepancy` row internally unresolvable.** The row Round 2 added had `suggestions_template = ["{root_cause_action}"]` referencing a key NOT in `required_context_keys`. The helper documented in F1 says it raises `KeyError` when required keys are missing; literally applied, every `cache.discrepancy` emission throws. Action sub-templates also referenced `{affected_workflow}` and `{skipped_chunk}` — also missing. Fix: introduced `CACHE_DISCREPANCY_ACTION_TEMPLATES` dispatch map keyed on the `root_cause` enum + `CACHE_DISCREPANCY_REQUIRED_CONTEXT` per-cause additional-key map; helper dispatches and validates per-cause keys; `unknown` enum has its own action template (resolves M13). The Round-2 fix introduced the bug; Round 3 caught it.
+
+3. **B2.2 false claim about validator step 8 reach for non-LLM nodes.** Verified `validator.py:600` — step 8 iterates `node.get("params", {})` only. B2.1 extracts `prompt_cache:` and `prewarm:` to TOP-LEVEL node keys. Step 8 cannot see them. So `prompt_cache: [chunk]` on a `type: shell` node passes both schema (additive) AND step 8 (invisible) and silently no-ops at runtime — exactly the validator-vs-runtime drift the review category exists to catch. Fix: removed B2.2's hint claim; added `cache.invalid-on-non-llm` ERROR in `_validate_cache_block` (B2.3) walking top-level node keys; new 11th catalog entry; parametrized test over all non-LLM types.
+
+4. **Hash-vs-prep ABSENT branch handling: silent-stale-cache class.** B3.3 specified `_resolve_chunk_value` as a shared helper, but only C1.2 specified ABSENT handling (skip the chunk). plan_node.render-for-hash didn't. If hash includes the chunk's stringified `None` while prep skips it entirely, memo cache and adapter diverge → silent stale cache (the #1 risk per DD#19). Fix: shared helper returns `_CHUNK_ABSENT` sentinel; both call sites filter on it BEFORE building output; B3.4 adds explicit ABSENT-case byte-equivalence test + divergence-injection variant (anti-tautology — proves the test would actually catch divergence).
+
+5. **D.2 prewarm execution structurally vague.** "Execute item[0] sequentially first via the existing single-item path" left ambiguous (a) which executor runs item[0] (`process_item` synchronously?), (b) how `results[0]` index alignment works, (c) whether item[0] appears in `future_to_idx`, (d) progress drain semantics. An implementing agent could break the per-index `results` array invariant `_aggregate_batch_results` depends on. Fix: concrete pseudo-code algorithm with all six implementation requirements explicit (sole `process_item` callable, `results[0]` direct write, items[1:] in `future_to_idx`, error-handling matrix locked, progress events drain through same buffer, interaction with existing `_pre_warm_compile_cache`).
+
+6. **`cache_chunks_skipped` lost on `_call_llm` error path.** C1.2 wrote it to `prep_res["__cache_chunks_skipped__"]` and propagated through `LLMNode.post()`. But if `_call_llm` short-circuits via `_error_dict_from_exception` (template-error path, deterministic LLMCallError), `post()` never runs — channel lost. Mode-4 trace then has no skip context for the failure. Fix: cross-layer co-edit at three sites — `LLMNode.post()` (success), `_error_dict_from_exception` (error path), `write_memo_cache` persistence (round-trip). Now every trace event corresponding to a partial render — success, failure, retry-failure, memo HIT — carries the skip list.
+
+7. **Strict `workflow_path is not None` assertion would fire 40+ times in tests.** Verified via grep: 40 `WorkflowTraceCollector(...)` instantiations across `tests/` + `src/` (the plan claimed ~21). The assertion was meant to catch missing production plumbing; cost-benefit was wrong. Fix: dropped the assertion; replaced with dedicated `test_workflow_path_set_in_production_runs` integration test covering file/inline/sub-workflow shapes. The integration test catches the same regression class without breaking 40 unrelated tests.
+
+**High-Priority fixes encoded (8 of 8):**
+
+- `--no-trace` flag-name collision with `pflow run --no-trace` → renamed to `--no-trace-autoload`.
+- `storage_mode: shared` × `## Cache` interleaving documented as v1 limitation in `runtime/CLAUDE.md` reserved-key entry (lyrics-generator doesn't use the combination).
+- OpenAI `prompt_cache_key` × batch_size > 15 RPM soft cap documented in G.2 caching guide; v1 relies on retries; deferred to v1.x as `cache.openai-batch-clamp` follow-up.
+- B3 baseline cannot include post-task fields → in-memory mutation test added in B3.4 (load baseline workflow → mutate IR → recompile → assert hash invariants).
+- F3.1 exit code policy locked: ERROR-severity validator findings appear in `warnings[]` with exit 0; only IR-construction failures exit non-zero. `analyze-cache` is advisory per DD#36.
+- `cache_chunks_skipped` cross-layer co-edit explicit in E.1 LLMNode.post() patch list.
+- D.1 `user_message_blocks` consumer step in `_call_llm`/`complete()`/`_build_messages` made explicit (was built but never read in earlier draft).
+- Engine save/restore simplified: dropped outer try/except (dead code; mirrors `__trace_collector__`); hoisted `_EMPTY_CACHE_RENDER = MappingProxyType({})` to module level (eliminates per-restore allocation).
+
+**Mediums encoded (7 of 14):** sub-workflow batch concurrency test mechanism made concrete (M5); `_EMPTY_CACHE_RENDER` hoisted (M6); divergence-injection variant (M7); D.1 must use shared resolution helper (M8); ClaudeCodeNode intentionally excluded from cache-metadata gate with explicit doc (M10); `cache.prewarm-no-prefix` added to F1 catalog as 12th entry (M12); resolved unknown root_cause action template via C2 dispatch (M13); loop recovery × cache rendering documented as engine-sequencing-guaranteed-safe (M14).
+
+**Mediums deferred (7 of 14):** `root_cause_action` fully-structured (M1, partially mitigated by C2 dispatch); `notes[]` typed objects with `kind` enum (M2); JSON `format_version` evolution policy (M3); `per_call[].declared_prompt_cache` four-state encoding test (M4); `cache_chunks_skipped` × memo HIT explicit assertion (M9, folded into H6 doc); per-warning-ID synthetic-workflow contract sub-table (M11). All polish-tier; defer to implementer judgment or v1.x follow-up.
+
+**Disputed (1):** review-silent-failures #3 ("`_validate_cache_block` reach across save/compile path unverified"). Verified `compile_validation.py:120-122`: compile path DOES call `validate_data_flow` via `_validate_data_flow_at_compile_time`. Plan B2.3's belt-AND-suspenders is structurally correct.
+
+### Why Round 3 wasn't diminishing returns (analysis explicitly run with user)
+
+User asked the right question: "It seems we are not hitting diminishing returns on this. I'm trying to understand why?" The analysis surfaced four reasons:
+
+1. **Plan keeps growing.** 1099 lines (v1) → 1290 lines (v2) → 1445 lines (v3). More material = more surface area for next-round review.
+2. **Layered visibility.** Round 1 fixed gross architecture. Round 2 hardened concurrency. Round 3 found correctness gaps that only surface once architecture+concurrency are fixed. Each layer needs the previous to be in place.
+3. **Each round runs on a different post-fix codebase.** Reviewers see fresh material; their claims of completeness ("all consumers use canonical pattern") haven't been re-verified against the fixes that prompted them.
+4. **Round-N fixes can introduce Round-N+1 bugs.** `cache.discrepancy` as 10th catalog entry (Round 2 fix) had unresolvable placeholder (Round 3 finding).
+
+**Counter-evidence:** the Mediums are increasingly polish-tier (typed `notes[]`, format_version evolution, four-state test) — that signal is real but weak relative to 7 Critical + 8 High-Priority confirmed.
+
+**Stop criterion (agreed with user):** when a round's findings shift to mostly-disputed, mostly-polish, mostly-restatements, stop. Round 3 showed none of those signals.
+
+**Next:** targeted Round 4 with 5 agents (review-plan, review-silent-failures, review-validation-consistency, review-impact-completeness, review-test-fidelity) focused on Round-3-introduced code (dispatch map, sentinel pattern, `cache.invalid-on-non-llm`, `cache.prewarm-no-prefix`, in-memory mutation test, simplified save/restore). The other three categories (concurrency, feature-interactions, agent-ux) are predicted to find polish-only at this point.
+
+### Insights to carry forward
+
+- **"All consumers use X pattern" is a load-bearing claim that demands grep verification before encoding.** Round 2 made the claim; Round 3 grep falsified it in two sites. Same trap as "I tested it" without showing the command.
+- **Catalog-fix that introduces an unresolvable placeholder is the Round-3 archetype.** Adding the row was the right Round-2 decision; missing the helper-vs-template integration was a load-bearing detail. When the spec sentence is "X is computed per Y," demand a structured dispatch — never a single template with a placeholder named after the dispatch.
+- **Verify-don't-trust applies to my own corrections too.** Round 3 CRITICAL #2 was verified by reading the catalog row in the plan; cheap. Round 3 Critical #3 was verified by reading `validator.py:600`; cheaper. Round 3 dispute (silent-failures #3) was verified by reading `compile_validation.py:120-122`; cheapest. Reading > trusting.
+- **The escape hatch is implementation.** No amount of plan review substitutes for real code on real workflows. The targeted Round 4 is the last bulk-review investment; if it returns ≤2 Critical + ≤4 High-Priority, we ship to B1.1.
+
+### Where things stand at session end
+
+- Plan is 1445 lines (was 1290 before Round 3). Catalog has 12 entries (was 10 in spec; +`cache.discrepancy` Round 2; +`cache.invalid-on-non-llm` and `cache.prewarm-no-prefix` Round 3).
+- Architectural backbone (`CacheRenderContext` + frozen `CacheBlockIR` + `MappingProxyType` + `_resolve_chunk_value` + new `_CHUNK_ABSENT` sentinel) closes the structural concurrency and silent-stale-cache classes by construction.
+- Three paid spikes still pending (Gemini cache_control, OpenAI parallel routing, Anthropic per-TTL pricing) — pre-authorized, run before B1.1.
+- Round 4 targeted review (5 agents) starts after this commit.
