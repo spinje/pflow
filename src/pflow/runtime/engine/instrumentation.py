@@ -141,12 +141,21 @@ def compute_node_config(
     static_params: dict,
     template_params: dict,
     batch_config: Optional[BatchConfig],
+    *,
+    prompt_cache_content: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Build config dict for cache key.
 
     Reads directly from config, no chain traversal.
     MUST include template_params (raw template strings) in the hash.
     MUST exclude _source_line keys from static_params.
+
+    Task 159 B3.4: ``prompt_cache_content`` is the rendered cache prefix
+    (list of ``{"name": ..., "prose": ..., "value": ...}`` dicts in declaration
+    order, ABSENT chunks already filtered). Included CONDITIONALLY (truthy
+    list only) so workflows without ``prompt_cache:`` produce identical
+    hashes pre- and post-task (DD#19 — silent stale cache is the #1 risk).
+    Empty list ``[]`` falls through, byte-identical to ``None``.
     """
     config: dict[str, Any] = {"type": node_type_name, "params": {}}
 
@@ -166,6 +175,10 @@ def compute_node_config(
             "error_handling": batch_config.error_handling,
             "max_retries": batch_config.max_retries,
         }
+
+    # Task 159 B3.4: rendered prompt-cache content (conditional inclusion).
+    if prompt_cache_content:
+        config["prompt_cache"] = prompt_cache_content
 
     return config
 

@@ -44,7 +44,7 @@ from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import resolve_batch_items
-from pflow.runtime.engine.engine import is_clean_termination, parse_only_path
+from pflow.runtime.engine.engine import build_cache_render_dict, is_clean_termination, parse_only_path
 from pflow.runtime.engine.instrumentation import apply_memo_hit, enforce_loop_guard
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.template_resolution import resolve_templates
@@ -472,7 +472,17 @@ def _create_planner_shared(
     Matches the shape the engine expects under `__execution__`, so
     `plan_node()` and `apply_memo_hit()` can operate on it without
     special-casing.
+
+    Task 159 B3.2: also installs ``__pflow_cache_render__`` (per-workflow
+    ``CacheRenderContext`` map) wrapped in ``MappingProxyType``, mirroring
+    ``WorkflowEngine.run``. Without this install, the planner's ``plan_node``
+    sees ``None`` for the cache render dict and produces a ``config_hash``
+    that excludes prompt-cache content — diverging from the engine's hash
+    for cache-using workflows. The drift would silently mislead
+    ``pflow run --dry-run`` predictions on workflows declaring ``## Cache``.
     """
+    from types import MappingProxyType
+
     shared: dict[str, Any] = {**params}
     shared.update(compiled.resolved_defaults)
     shared["__memoization_cache__"] = cache
@@ -484,6 +494,7 @@ def _create_planner_shared(
         "node_visit_counts": {},
     }
     shared["__cache_hits__"] = []
+    shared["__pflow_cache_render__"] = MappingProxyType(build_cache_render_dict(compiled))
     if parent_workflow_file:
         shared["_pflow_workflow_file"] = parent_workflow_file
     return shared

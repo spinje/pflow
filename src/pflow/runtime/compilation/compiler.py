@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Any, Optional, Union
 
+from pflow.core.cache_render import CacheBlockIR, CacheChunkIR
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.registry import Registry
@@ -356,9 +357,85 @@ def _create_node_and_config(
         namespaced=enable_namespacing,
         interface_metadata=interface_metadata,
         cache_enabled=node_data.get("cache", True),
+        prompt_cache_items=_extract_prompt_cache_items(node_data),
+        prewarm=_extract_prewarm(node_data),
     )
 
     return node_instance, node_config
+
+
+def _extract_prompt_cache_items(node_data: dict[str, Any]) -> tuple[str, ...]:
+    """Coerce the per-node ``prompt_cache:`` field into an immutable tuple of strings.
+
+    Schema validation catches malformed shape via the WorkflowValidator path,
+    but ``compile_workflow(ir_dict, registry)`` can be called directly bypassing
+    schema. Round-6 hardening: explicit ``isinstance`` precondition rejects the
+    iterable-but-wrong-shape case (``"concept"`` would silently splat into 7
+    single-character chunks via ``tuple(str)``).
+    """
+    raw = node_data.get("prompt_cache")
+    if raw is None or raw == []:
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise CompilationError(
+            f"prompt_cache must be a list of strings; got {type(raw).__name__}: {raw!r}",
+            phase="validation",
+            node_id=node_data.get("id"),
+            node_type=node_data.get("type"),
+            suggestion="Set prompt_cache to a list of cache chunk identifiers (e.g., `prompt_cache: [concept, concept_brief]`).",
+        )
+    return tuple(raw)
+
+
+def _extract_prewarm(node_data: dict[str, Any]) -> bool:
+    """Coerce ``prewarm:`` into a strict bool. Rejects truthy ints (1/0) since
+    ``isinstance(True, int)`` is True — the explicit ``bool`` check is required."""
+    raw = node_data.get("prewarm")
+    if raw is None:
+        return False
+    if not isinstance(raw, bool):
+        raise CompilationError(
+            f"prewarm must be a bool; got {type(raw).__name__}: {raw!r}",
+            phase="validation",
+            node_id=node_data.get("id"),
+            node_type=node_data.get("type"),
+            suggestion="Set prewarm to true or false (e.g., `prewarm: true`).",
+        )
+    return raw
+
+
+def _build_cache_block(ir_dict: dict[str, Any]) -> Optional[CacheBlockIR]:
+    """Build the workflow-level ``CacheBlockIR`` from the IR's top-level ``cache`` field.
+
+    Returns None when no ``## Cache`` block was declared. Schema enforces shape
+    upstream; this builder assumes well-formed input but still copes gracefully
+    with absent ``ttl`` / ``items`` keys.
+    """
+    cache_ir = ir_dict.get("cache")
+    if cache_ir is None:
+        return None
+    if not isinstance(cache_ir, dict):
+        raise CompilationError(
+            f"Top-level `cache` must be a mapping; got {type(cache_ir).__name__}: {cache_ir!r}",
+            phase="validation",
+            suggestion="Declare ## Cache with `- ttl:` and a ```cache code block (see pflow guide caching).",
+        )
+    items = tuple(_build_cache_chunk(item) for item in cache_ir.get("items", []))
+    return CacheBlockIR(
+        ttl=cache_ir.get("ttl"),
+        items=items,
+        source_line=int(cache_ir.get("_source_line", 0) or 0),
+    )
+
+
+def _build_cache_chunk(item: dict[str, Any]) -> CacheChunkIR:
+    """Build one frozen ``CacheChunkIR`` from a parsed cache-block item dict."""
+    return CacheChunkIR(
+        name=item["name"],
+        var_expr=item["var"],
+        prose_before=item["prose_before"],
+        source_line=int(item.get("_source_line", 0) or 0),
+    )
 
 
 def _coerce_bool(value: Any, field: str = "parallel") -> bool:
@@ -527,4 +604,5 @@ def compile_workflow(
         resolved_defaults=resolved_defaults,
         env_param_names=env_param_names,
         template_resolution_mode=template_resolution_mode,
+        cache_block=_build_cache_block(ir_dict),
     )

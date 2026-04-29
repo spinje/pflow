@@ -172,6 +172,38 @@ shared["__template_errors__"] = {}        # Permissive mode errors
 shared["__mcp_pool__"] = MCPConnectionPool
 shared["__memoization_cache__"] = MemoizationCache
 shared["__index__"] = int                 # 0-based batch item index
+shared["__pflow_cache_render__"] = MappingProxyType[node_id, CacheRenderContext]
+                                          # Task 159 B3.2: per-workflow cache rendering map.
+                                          # Read-only proxy over a dict keyed by node_id.
+                                          # Engine-installed at WorkflowEngine.run() entry,
+                                          # save+restore mirrors __trace_collector__. Restore
+                                          # from absent writes _EMPTY_CACHE_RENDER (a frozen
+                                          # empty proxy), NEVER None. Consumers use the
+                                          # canonical (shared.get(K) or {}).get(node_id)
+                                          # defensive pattern. NOT in _PROPAGATED_KEYS — each
+                                          # .pflow.md scopes its own ## Cache (DD#12); leaking
+                                          # parent → child would break cache scoping AND the
+                                          # CacheBlockIR freeze guarantee.
+                                          #
+                                          # UNSUPPORTED COMBO (v1): a sub-workflow with
+                                          # `storage_mode: shared` writes directly to the
+                                          # parent's root store (NamespacedSharedStore.__setitem__
+                                          # at namespaced_store.py:51 makes __*__ keys bypass
+                                          # the namespace). Two parallel batch items each
+                                          # running a `storage_mode: shared` sub-workflow that
+                                          # has its own ## Cache block both invoke
+                                          # WorkflowEngine.run's save/restore on the SAME parent
+                                          # root, and the restore order across worker threads
+                                          # is non-deterministic (last-finished worker wins).
+                                          # Each child reads its own installed value during
+                                          # execution (correct), but the parent's value AFTER
+                                          # the batch is whichever child restored last. Today
+                                          # no consumer reads parent's cache_render after a
+                                          # parallel batch completes, so this is silent-but-
+                                          # benign. If a future code path adds such a consumer,
+                                          # add a runtime guard at engine.run entry rejecting
+                                          # the combination. Also see plan-doc DD#12 and
+                                          # progress-log Segment 2 for the full rationale.
 
 # Nested workflow keys
 shared["_pflow_depth"] = int

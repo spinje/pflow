@@ -34,6 +34,19 @@ def _make_serializable(obj: Any) -> Any:
     Returns:
         JSON-serializable version of the object
     """
+    # Task 159 B3.3: defense against a leaked _CHUNK_ABSENT sentinel. The
+    # catch-all branch at the bottom would silently serialize the sentinel to
+    # a stable type-name string and fold it into the cache hash — the
+    # silent-stale-cache regression class. Lazy-import keeps cache.py
+    # dependency-free at module load.
+    from pflow.core.cache_render import _ChunkAbsentSentinel
+
+    if isinstance(obj, _ChunkAbsentSentinel):
+        raise TypeError(
+            "_CHUNK_ABSENT must be filtered before serialization; reached "
+            "_make_serializable. Caller forgot to drop ABSENT chunks before "
+            "passing prompt_cache_content into compute_node_config (DD#19)."
+        )
     if isinstance(obj, dict):
         result = {}
         for key, value in obj.items():
@@ -69,7 +82,7 @@ def compute_node_cache_key(
 ) -> str:
     """Compute memoization cache key for a non-batch node.
 
-    cache_key = md5(config_hash + hash(resolved_inputs))
+    cache_key = md5(config_hash + hash(filtered_resolved_inputs))
 
     Args:
         config_hash: Hash of the node's static configuration
@@ -77,10 +90,20 @@ def compute_node_cache_key(
 
     Returns:
         MD5 hex digest cache key
+
+    GH #357: ``_*_source_line`` keys are filtered from the cache key just
+    like ``compute_node_config`` filters them from the config hash. They
+    are cosmetic line-number metadata (used by python_code.py at runtime
+    for error reporting) that shift on every workflow edit AND on every
+    invocation of a saved-library workflow (since the library mutates the
+    file's frontmatter post-run, growing the prefix and shifting body
+    line numbers). Without this filter, the cache_key changed on every
+    saved-workflow run and memo cache never hit.
     """
     parts = [config_hash]
     if resolved_inputs is not None:
-        parts.append(_deterministic_json(resolved_inputs))
+        filtered = {k: v for k, v in resolved_inputs.items() if not k.endswith("_source_line")}
+        parts.append(_deterministic_json(filtered))
     combined = "|".join(parts)
     return hashlib.md5(combined.encode()).hexdigest()  # noqa: S324
 

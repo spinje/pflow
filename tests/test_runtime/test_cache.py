@@ -314,6 +314,47 @@ def test_compute_node_cache_key_dict_order_irrelevant():
     assert key1 == key2
 
 
+def test_compute_node_cache_key_filters_source_line_keys():
+    """GH #357: ``_*_source_line`` keys must be filtered from the cache key
+    so cosmetic line-shifts (workflow edits, saved-library frontmatter
+    growth on each run) don't invalidate the cache.
+
+    Mirrors the existing filter in ``compute_node_config`` for the same
+    reason. Without this filter, every ``pflow save`` workflow re-executes
+    on every invocation because frontmatter mutation shifts source lines.
+    """
+    no_lines = {"prompt": "hello", "model": "x"}
+    with_lines = {"prompt": "hello", "model": "x", "_prompt_source_line": 23, "_model_source_line": 19}
+    with_different_lines = {**with_lines, "_prompt_source_line": 56, "_model_source_line": 52}
+    assert compute_node_cache_key("h", no_lines) == compute_node_cache_key("h", with_lines), (
+        "presence of _*_source_line keys must NOT change the cache key"
+    )
+    assert compute_node_cache_key("h", with_lines) == compute_node_cache_key("h", with_different_lines), (
+        "different _*_source_line values must NOT change the cache key (cosmetic shifts)"
+    )
+
+
+def test_compute_node_cache_key_preserves_real_input_changes_alongside_line_shifts():
+    """Filter must not be over-broad — real input changes still differentiate."""
+    a = {"prompt": "hello", "_prompt_source_line": 10}
+    b = {"prompt": "world", "_prompt_source_line": 20}
+    assert compute_node_cache_key("h", a) != compute_node_cache_key("h", b)
+
+
+def test_compute_node_cache_key_filter_only_targets_suffix():
+    """Filter matches the ``_source_line`` suffix only — keys that happen to
+    contain ``source_line`` mid-name are NOT filtered."""
+    a = {"source_line_other": "x"}  # NOT a _*_source_line key
+    b = {"line_source": "x"}  # NOT a _*_source_line key
+    c = {"_x_source_line": 1}  # IS a _*_source_line key
+    # a vs missing-key: distinct
+    assert compute_node_cache_key("h", a) != compute_node_cache_key("h", {})
+    # b vs missing-key: distinct
+    assert compute_node_cache_key("h", b) != compute_node_cache_key("h", {})
+    # c vs missing-key: SAME (filtered out)
+    assert compute_node_cache_key("h", c) == compute_node_cache_key("h", {})
+
+
 # ---------------------------------------------------------------------------
 # Cache key computation — batch keys
 # ---------------------------------------------------------------------------
