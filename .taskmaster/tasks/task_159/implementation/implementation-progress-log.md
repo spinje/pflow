@@ -144,6 +144,34 @@ No new user decisions were forced during Segment 1 implementation.
 
 **Signal to look for:** if `test_plan_drift.py` (32 tests) goes red during B3.x implementation, STOP — the planner is lying about what will execute. Don't patch around it; surface to user.
 
+### Post-segment-1 smoke test + bug fix
+
+After committing the segment, I ran a 4-case manual smoke test through `pflow validate-only` to verify rendered diagnostic UX matches the spec-locked formats:
+
+1. **Valid workflow** with `## Cache` + `prompt_cache:` → first run **failed** with a false-positive `Declared input(s) never used` ERROR. **Real interaction bug surfaced.** Fix below.
+2. **Out-of-order `prompt_cache:`** → renders the four-line spec-locked message exactly:
+   ```
+   Error 1: Cache Failure
+
+   Node 'write-lyrics' prompt_cache order doesn't match ## Cache declaration
+     declared:  [concept, concept_brief]
+     you wrote: [concept_brief, concept]
+     fix:       reorder the `prompt_cache:` field to match ## Cache declaration order
+   ```
+3. **`prompt_cache:` on a `type: shell` node** → renders `Cache Failure` title, structured message naming the node type, locked suggestion phrasing.
+4. **Unused chunk** → renders `[cache.unused-chunk]` ID prefix inline + concrete actionable suggestion. Validation passes (warning is non-blocking).
+
+**Bug found by the smoke test (commit `1045d122`):** `_extract_all_templates` in `runtime/template_validation/validator.py` only walked `node.params` and `batch.items` — top-level `workflow_ir["cache"]["items"]` was structurally invisible to it. Result: every workflow declaring an input ONLY for use in `## Cache` (a common shape, since cache chunks ARE inputs from the workflow's perspective) tripped the spurious unused-input ERROR.
+
+**Fix:** extended `_extract_all_templates` with a top-level walk that wraps each `cache.items[i].var` in `${...}` and feeds it through the existing `extract_from_value` pipeline. The walker now sees cache chunk vars the same way it sees node-param vars, so `_validate_unused_inputs` correctly marks them as referenced.
+
+**Regression test:** `tests/test_core/test_cache_block_parser.py::test_inputs_referenced_only_in_cache_not_flagged_unused`.
+
+**What follow-up agents need to know:**
+- `_extract_all_templates` is structurally responsible for "find every template var reference anywhere in the IR" — when adding new IR fields that carry template references, EXTEND the walker. The unused-input check (and possibly future passes) depend on this being exhaustive.
+- Other validation passes (path validation, type validation) consume the same `all_templates` set returned by this walker. Cache chunks now flow through ALL validation passes for free — and resolution succeeds because cache vars reference declared inputs / step outputs which are already in `available_params` / `node_outputs`. Verified by the 4-case smoke test.
+- Smoke test fixtures live at `/tmp/task159-smoke/case1-4-*.pflow.md`. Reproducible with `uv run pflow /tmp/task159-smoke/<file> --validate-only <inputs>`.
+
 ### Code-review findings worth carrying forward
 
 **No `/code-review` skill was run for this segment** (per the deviation note above). The pragmatic checks ran:
