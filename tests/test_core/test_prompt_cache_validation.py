@@ -425,6 +425,34 @@ def test_malformed_top_level_cache_block_skips_top_level_checks(caplog: pytest.L
 # ------------------------------------------------------------------------------
 
 
+def test_duplicate_chunk_in_prompt_cache_emits_error() -> None:
+    """``prompt_cache: [a, a]`` (same chunk listed twice) emits an actionable error.
+
+    Mirrors the parser's per-block duplicate-${var} rule. Without this check,
+    the chunk would render twice into the system prompt — wasted tokens and a
+    silent semantic shift the author likely didn't intend.
+    """
+    ir = _ir(
+        nodes=[_llm_node("x", prompt_cache=["a", "a", "b"])],
+        inputs={"a": {"type": "string"}, "b": {"type": "string"}},
+        cache={
+            "items": [
+                {"name": "a", "var": "a", "prose_before": ""},
+                {"name": "b", "var": "b", "prose_before": ""},
+            ],
+        },
+    )
+    diagnostics = validate_data_flow(ir)
+    dup_errors = [d for d in diagnostics if "more than once" in d.message]
+    assert len(dup_errors) == 1
+    diag = dup_errors[0]
+    assert diag.severity == Severity.ERROR
+    assert diag.node_id == "x"
+    assert diag.context["duplicates"] == ["a"]
+    # Order error must NOT also fire (would be noise on top of duplicates).
+    assert not [d for d in diagnostics if d.id == "cache.order-mismatch"]
+
+
 def test_empty_prompt_cache_list_does_not_error() -> None:
     """``prompt_cache: []`` is equivalent to absence (DD#5) — no errors."""
     ir = _ir(

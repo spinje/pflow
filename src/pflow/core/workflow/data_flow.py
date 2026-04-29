@@ -633,9 +633,25 @@ def _validate_cache_block(  # noqa: C901
         if not prompt_cache:
             continue
 
-        # Check each chunk name resolves to a declared cache item.
+        # Duplicate-detection mirrors the parser's per-block rule (each ${var}
+        # can appear once in ## Cache); a node's prompt_cache: [a, a] would
+        # otherwise render the chunk twice in the system prompt — wasted tokens
+        # AND a silent semantic shift the author likely didn't intend.
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for name in prompt_cache:
+            if name in seen and name not in duplicates:
+                duplicates.append(name)
+            seen.add(name)
+        if duplicates:
+            diagnostics.append(_make_duplicate_chunk_diagnostic(node_id, duplicates, prompt_cache))
+
+        # Check each chunk name resolves to a declared cache item. The
+        # resolution check uses ``seen`` so a chunk listed twice produces ONE
+        # resolution diagnostic at most (the duplicate diagnostic is the
+        # actionable error in that case).
         all_resolved = True
-        for chunk_name in prompt_cache:
+        for chunk_name in seen:
             if chunk_name in cache_item_names:
                 referenced_chunks.add(chunk_name)
             else:
@@ -643,9 +659,10 @@ def _validate_cache_block(  # noqa: C901
                 similar = find_similar_items(chunk_name, cache_item_names, max_results=3, method="fuzzy")
                 diagnostics.append(_make_undeclared_chunk_diagnostic(node_id, chunk_name, cache_item_names, similar))
 
-        # Order-match check (only when all chunks resolve — otherwise the
-        # order error would be confusing on top of resolution errors).
-        if all_resolved:
+        # Order-match check (only when all chunks resolve AND no duplicates —
+        # otherwise the order error would be confusing on top of the actionable
+        # one).
+        if all_resolved and not duplicates:
             indices = [cache_item_names.index(c) for c in prompt_cache]
             if indices != sorted(indices):
                 expected_order = [c for c in cache_item_names if c in prompt_cache]
@@ -748,6 +765,36 @@ def _make_order_mismatch_diagnostic(node_id: str, declared: list[str], actual: l
         # The guide-topic pointer is wired in Phase G when the caching topic
         # ships. Until then, the topic-existence test enforces that every
         # see-also reference points at a registered topic.
+    )
+
+
+def _make_duplicate_chunk_diagnostic(node_id: str, duplicates: list[str], prompt_cache: list[str]) -> Diagnostic:
+    """Per-node ``prompt_cache:`` lists each chunk twice or more.
+
+    No catalog id — flows through the existing validation diagnostic machinery
+    (per spec § Stable Warning ID Catalog: prompt_cache reference errors
+    reuse pflow's general validation pipeline). Mirrors the parser's
+    ``Duplicate cache chunk identifier`` rule for ``## Cache`` itself.
+    """
+    duplicates_csv = ", ".join(duplicates)
+    plural = "" if len(duplicates) == 1 else "s"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' lists cache chunk{plural} '{duplicates_csv}' more than once "
+            f"in prompt_cache:. Each chunk renders once into the system prompt; "
+            f"duplicate references waste tokens and produce ambiguous order semantics."
+        ),
+        suggestions=[f"Remove the duplicate '{duplicates[0]}' entry from prompt_cache: on '{node_id}'."],
+        context={
+            "category": "validation",
+            "path": f"nodes[id={node_id}].prompt_cache",
+            "duplicates": duplicates,
+            "prompt_cache": prompt_cache,
+        },
     )
 
 

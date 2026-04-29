@@ -238,15 +238,24 @@ def test_prompt_cache_empty_list_promoted_to_top_level() -> None:
 
 def test_inputs_referenced_only_in_cache_not_flagged_unused() -> None:
     """A workflow input referenced ONLY by ``## Cache`` (no node param uses it)
-    must NOT trigger the unused-input ERROR — ``_extract_all_templates`` must
-    walk top-level ``cache.items[].var`` alongside node params and batch.items.
+    must NOT trigger the unused-input ERROR.
 
-    Regression: discovered via case-1 smoke test post-B2.x. Without the walker
-    extension, every workflow with `## Cache` referencing inputs would produce
-    a spurious 'Declared input(s) never used as template variable' ERROR even
-    when validation otherwise succeeds.
+    Split-extractor contract (post-double-emit fix): cache vars live in
+    ``_extract_cache_templates`` and are unioned into the unused-check input
+    only — they MUST NOT be in ``_extract_all_templates``'s output (which
+    flows into ``validate_template_paths``, producing a duplicate generic
+    "Template variable ${X} has no valid source" diagnostic alongside the
+    richer ``Cache chunk 'X' references...`` one from
+    ``core/workflow/data_flow.py::_validate_cache_block``).
+
+    Regression: discovered via case-9 smoke test post-walker-fix. The first
+    walker fix routed cache vars through BOTH passes; the second fix splits
+    them so each pass owns exactly one rule (V5 single-source pattern).
     """
-    from pflow.runtime.template_validation.validator import _extract_all_templates
+    from pflow.runtime.template_validation.validator import (
+        _extract_all_templates,
+        _extract_cache_templates,
+    )
 
     md = (
         "# Test\n\nTest workflow.\n\n"
@@ -256,10 +265,18 @@ def test_inputs_referenced_only_in_cache_not_flagged_unused() -> None:
         "- type: shell\n\n```shell command\necho hi\n```\n"
     )
     result = parse_markdown(md)
-    templates = _extract_all_templates(result.ir)
-    assert "concept" in templates, (
-        f"Cache chunk var ${{concept}} should be in extracted templates so the "
-        f"unused-input check sees it. Got: {sorted(templates)}"
+    node_param_templates = _extract_all_templates(result.ir)
+    cache_templates = _extract_cache_templates(result.ir)
+    # Cache vars are NOT in the node-param set (no double-emit).
+    assert "concept" not in node_param_templates, (
+        f"Cache var should not be in _extract_all_templates output (would cause "
+        f"path-validation to emit a generic duplicate diagnostic). Got: {sorted(node_param_templates)}"
+    )
+    # Cache vars ARE in the cache extractor output (so the unused-input check
+    # marks the input as used via the union).
+    assert "concept" in cache_templates, (
+        f"Cache var should be in _extract_cache_templates output so the "
+        f"unused-input check sees it via union. Got: {sorted(cache_templates)}"
     )
 
 
