@@ -1,18 +1,23 @@
-# Braindump: Task 159 — Plan refinement (Round 1 + Round 2 reviews)
+# Braindump: Task 159 — Plan refinement (Rounds 1–4 reviews)
 
-**Sessions**: 2026-04-28 (plan-writing + first /code-review pass + consolidation pivot) → 2026-04-29 (second /code-review pass + architectural refinements). Plan is approved, refined, and ready for execution. **Implementation has not started.**
+**Sessions**: 2026-04-28 (plan-writing + Round 1 /code-review + consolidation pivot) → 2026-04-29 (Round 2 /code-review + architectural refinements + Round 3 /code-review + Round 4 targeted /code-review + 5 high-value top-10%-pattern additions). Plan is approved, refined four passes deep, and ready for execution. **Implementation has not started.**
 
-> The journey is in `implementation/progress-log.md` §31 (round 1) and §32 (round 2). The contract is in `task-159.md`. The HOW is in `implementation/implementation-plan.md`. This braindump only captures what isn't in those docs — **tacit knowledge, hunches, gotchas, and reasoning that lives in my head right now**.
+> The journey is in `implementation/progress-log.md` §31 (Round 1), §32 (Round 2), §33 (Round 3), §34 (Round 4 + 5 high-value additions). The contract is in `task-159.md`. The HOW is in `implementation/implementation-plan.md`. This braindump only captures what isn't in those docs — **tacit knowledge, hunches, gotchas, and reasoning that lives in my head right now**.
 
 ---
 
 ## Where I am
 
-Plan v2 is 1290 lines, two review passes deep, architecturally consolidated. The next agent runs three pre-authorized paid spikes (~$0.30 total — Gemini cache_control, OpenAI parallel routing, Anthropic per-TTL pricing) per the agent-handoff, records outcomes as a §33 progress-log entry, then begins B1.1.
+Plan v4 is 1813 lines, four review passes deep, architecturally consolidated. The next agent runs three pre-authorized paid spikes (~$0.30 total — Gemini cache_control, OpenAI parallel routing, Anthropic per-TTL pricing) per the agent-handoff, records outcomes as a §35 progress-log entry, consults the new **Spike contingencies** table at the bottom of the plan (just before "Open hedged claims"), updates plan sections per the table if outcomes contradict encoded decisions, then begins B1.1.
 
-The plan has zero spike content inside it (round 2's main course-correction). Spike outcomes either confirm the encoded decisions or trigger a plan update — they're not baked-in fallbacks.
+The plan has zero spike content inside the phases (Round 2's course-correction held; Round 4 added a Spike contingencies subsection that maps spike → encoded-decision → if-contradicts-action without baking in fallbacks).
 
-The architectural backbone (`CacheRenderContext` + `__pflow_cache_render__` shared key) survived round-2 review intact. Three structural reinforcements were applied this session: `CacheBlockIR` frozen dataclass replacing `dict[str, Any]`; `MappingProxyType` wrap on the outer dict; restore-from-absent writes `MappingProxyType({})` not `None`; shared `_resolve_chunk_value` helper between `plan_node` and `LLMNode.prep`. Together these eliminate the parallel-batch concurrency surface and the silent-stale-cache risk by construction.
+The architectural backbone (`CacheRenderContext` + `__pflow_cache_render__` shared key) survived four review passes intact. Successive structural reinforcements:
+- Round 2: `CacheBlockIR` frozen dataclass; `MappingProxyType` outer wrap; restore-from-absent writes proxy({}) not None; shared `_resolve_chunk_value` helper.
+- Round 3: `_CHUNK_ABSENT` sentinel for branch-absent symmetry; `cache.invalid-on-non-llm` rule (validator-reach gap); cross-layer co-edits for `cache_chunks_skipped`; engine save/restore simplified to single try/finally; `_EMPTY_CACHE_RENDER` module constant.
+- Round 4: `_resolve_static_prefix_for_cache` companion helper (locks byte-identical resolution across ALL three cache paths); `cache.discrepancy` structured `context["root_cause_action"]` payload; JSON `format_version` evolution policy + constants; defensive isinstance guards enumerated; `Diagnostic` identity tuple multi-field-collapse fix (combined diagnostic with `invalid_fields: list[str]`).
+
+Catalog has 12 entries. `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` constant defends against count drift across docs/tests.
 
 ---
 
@@ -92,6 +97,71 @@ But don't lose tests in the merge — the test count doesn't matter, the asserti
 
 ---
 
+## What §33 / §34 don't capture (Rounds 3 + 4 tacit knowledge)
+
+### Why I picked combined-diagnostic over namespaced-id for V6
+
+`cache.invalid-on-non-llm` on a node with both `prompt_cache:` AND `prewarm:` declared. Three options I considered:
+
+- **(a) ONE diagnostic with `invalid_fields: list[str]`** — picked. Matches mypy/ruff convention (one error per [rule, location] with multiple offenses listed). Identity tuple already handles dedup correctly. Best agent UX (one error → one "remove these N fields" intent).
+- **(b) Namespaced ids per field** (`cache.invalid-on-non-llm.prompt_cache`, `cache.invalid-on-non-llm.prewarm`) — rejected. Variable IDs break F1 catalog static enumeration AND F2 per-warning-ID coverage test. More code, worse DX.
+- **(c) Same id, different messages** — rejected. With `id` set (truthy), identity tuple `(severity, source, node_id, id or message)` collapses on `id` regardless of message — falls back to (a) or (b) shape; (c) doesn't actually work given pflow's identity tuple.
+
+The Round-4 reviewer found (c) as the bug class; option (a) is the cleanest fix.
+
+### Why I rejected belt-and-suspenders for V5 (schema vs `_validate_cache_block`)
+
+Round-4 reviewer found my Round-3 dedup test was based on a misanalysis: schema-emitted shape errors and `_validate_cache_block`-emitted ones have different messages, no shared `id`, won't dedup via `(severity, source, node_id, id or message)`. Two fix options:
+- **(a) Belt-and-suspenders**: keep both. Test asserts TWO diagnostics fire (intentional double-emit).
+- **(b) Schema-only for shape**: schema validates `prompt_cache: list[str]`, `prewarm: bool`, `cache.ttl` enum. `_validate_cache_block` does only semantics (cross-refs, ordering, batch-scoped, non-LLM-type rejection) + defensive isinstance skip on the compile path.
+
+Picked (b). Top-10% question (mypy/rustc/ruff): one rule per error condition, never two. Belt-and-suspenders means TWO places to maintain when shape constraints change — exactly the validation-consistency drift the review category exists to catch. Compile-path defense is just `isinstance` guards + `logger.warning`; deeper compile-time error surfaces normally. **This made the V6 fix simpler too** — `_validate_cache_block` doesn't have shape checks competing with semantic checks.
+
+### Why `_resolve_static_prefix_for_cache` is its own helper, not a parameter on `_resolve_chunk_value`
+
+The two paths produce DIFFERENT shapes:
+- `_resolve_chunk_value(chunk, shared) -> str | _ChunkAbsentSentinel` — single-var, sentinel-eligible (ABSENT branch returns `_CHUNK_ABSENT`; both call sites filter).
+- `_resolve_static_prefix_for_cache(template_str, shared) -> str` — multi-ref, no sentinel (ABSENT leaves the `${var}` literal in the string; matches existing TemplateResolver permissive behavior).
+
+I considered unifying via a `mode` flag. Rejected — the sentinel semantics differ structurally (chunk: skip; static-prefix: leave literal). The shared invariant is `_deterministic_serialize` for substituted values, NOT a unified function body. The two helpers SHARE the deterministic-serialize call, which is what locks byte-identity for the same logical value across all three cache paths (chunk hash, chunk message, static-prefix auto-batch + analyzer prediction).
+
+The bug this prevents: `TemplateResolver.resolve_template("${X}", shared)` for a dict `{"text": "abc"}` returns the dict (simple template preserves type per `runtime/CLAUDE.md`). `_deterministic_serialize` produces `'{"text":"abc"}'`. But `TemplateResolver.resolve_template("prefix ${X} suffix", shared)` is a complex template — substitutes via Python's default `str(value)` → `"prefix {'text': 'abc'} suffix"` (Python repr, NOT canonical JSON). Different bytes, silent cross-mode cache miss.
+
+### Why `cache.discrepancy` structured payload is `dict`-shaped, not a per-cause typed dataclass
+
+Spec line 944 left the `cache.discrepancy` shape open. I considered:
+- Per-cause dataclass (`TtlExpiryAction`, `KeyMismatchAction`, ...) — rejected. Adds 5 dataclass definitions for marginal type-safety gain. JSON consumers (MCP, agent) would deserialize as dicts anyway.
+- Loose `dict[str, Any]` — picked. Schema documented in `CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS`. Agents dispatch via `"raw_root_cause" in payload` (unknown-cause discriminator) or specific keys (`"suggested_ttl"`, `"skipped_chunk"`).
+- Polymorphic union via JSON `"kind"` field — rejected for v1. Could add later as a non-breaking minor bump (per the new format_version policy).
+
+The `suggested_ttl` field is a STRING (`"1h"`) NOT a duration object. Matches the YAML config; simpler. If future cache TTLs need finer granularity (e.g., minutes), the field can become `{"value": int, "unit": "hour" | "minute"}` via additive minor bump.
+
+### Why I picked `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (computed) not a hardcoded constant
+
+Round 3 left "10/11/12 catalog entries" in 5 prose sites despite Round 3 adding two entries. The drift class is real. Two fix options:
+- Hardcode `EXPECTED_CATALOG_COUNT = 12` — rejected. Future entries require updating both the catalog dict AND the constant; if you forget, tests pass for the wrong reason (or fail with a confusing message).
+- Compute `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` — picked. Tautological to the catalog itself, but locks the count-vs-docstring/tests/MCP-schema alignment. Adding a new entry: zero cascade edits.
+
+The test then asserts `assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT` — passes trivially under the constant pattern, but the docstring-contract test asserts the docstring contains EVERY id in `CACHE_WARNING_CATALOG.keys()` (computed at test time). That's where the constant earns its keep.
+
+### Why I skipped the "verification-only pass" before B1.1
+
+After Round 4 + the 5 high-value additions, I considered running a final 30-min self-review that re-greps every Round 4 / 5-additions change against actual code shapes. The user said "yes go ahead, but do 5 agents for round 4" then later "yes" to all 5 high-value items, implying "ship Round 4 / 5-additions, don't gate on yet another pass."
+
+I'd estimate the verification pass would catch 1-2 pseudo-code precision issues in the 5 high-value additions (specifically: the `_resolve_static_prefix_for_cache` regex pattern is referenced as `TEMPLATE_VAR_PATTERN` but the plan doesn't lock the import path; the per-cause structured payload's `"branch_node": None` default is documented but the analyzer code path that would supply it isn't yet). These are minor — implementation-time review catches them.
+
+If the next agent wants to do the pass: 30 min, focused on the 5 high-value additions only. Worth doing if any pseudo-code feels under-specified during B1.1.
+
+### The "verify against actual code" methodology shift (load-bearing for future rounds)
+
+Round 3 sketched D.2 prewarm pseudo-code from memory of pflow conventions; result was wrong (`process_item` is a 5-tuple-returning closure, not a dict-returning function). Round 4 caught it via Read of `batch_executor.py:540-589`.
+
+The lesson: **for any pseudo-code that depends on a function's signature, return shape, or symbol path, Read the target before encoding.** The 5-minute verification cost prevents hours of mid-implementation rework. Future rounds should follow this discipline by default.
+
+The `/evaluate-review` skill, invoked in Round 4 after the 8-agent review returned, is what made this discipline explicit. The skill's framework (read review → verify findings via subagent + own reads → triage → form judgment → present plan) prevented the Round 3 pattern of encode-then-discover-bug-in-Round-N+1.
+
+---
+
 ## User's load-bearing principles (preserved + extended)
 
 These are the user's exact words that shaped specific decisions. Treat them as forcing functions during implementation.
@@ -117,6 +187,18 @@ These are the user's exact words that shaped specific decisions. Treat them as f
 - *"go ahead with A then lets discuss if any suggestions should be included in the plan"* — apply Critical + High-Priority items first, then evaluate Suggestions selectively. Don't bulk-apply polish without thinking about cost.
 
 The interaction pattern that worked: I presented an action plan with my recommendations; user said "go" with directional corrections; I encoded; surfaced decisions I made; user adjusted course twice (mid-stream — once for spike auth gates, once for spike location). **The user reviews mid-stream when something feels off, not at the end.** This is faster than wait-for-full-output review.
+
+### From §33 (round-3 — diminishing-returns analysis)
+
+- *"It seems we are not hitting diminishing returns on this. Im trying to undertand why? Or are you under a different impression? lets discuss first"* — the user pushes back on review-cycles when the cost-benefit isn't clear. Forced honest analysis: "are returns flattening?" became a falsifiable question (Critical-finding rate, confirmation rate, restatement rate). Round 3 cleared 7 Critical + 8 High-Priority + verified 87% of reviewer claims — not flattening yet. **Pattern**: when the user asks "why X?", they want analysis with evidence, not reassurance.
+- *"go ahead, but do 5 agents for round 4"* — directional correction (5 not 8). User trusts the orchestrator's targeted-review reasoning but adjusts scope. Mid-stream, low-friction.
+
+### From §34 (round-4 — read-the-actual-code)
+
+- *"I want you to read all the relevant code so that you are not making the same mistakes again when writing pseudo or real code."* — load-bearing. Round 3's pseudo-code bugs (`process_item` shape, `node_state.ABSENT`, `TemplateResolutionError`) were all preventable by reading the target functions. The user noticed the pattern and made it an explicit instruction.
+- *"Are we prioritizing simplicity of the FINAL code, not how easy it is to get there? Are we aiming for the right solution that the top 10% of codebases similar to this one would implement, have we considered it yet?"* — the load-bearing lens for ALL fix-shape decisions. V5 (single source of truth), V6 (combined diagnostic), the helper unification, the catalog count constant — every Round 4 fix-shape decision was made under this lens explicitly. Future rounds should lead with this question.
+- *"This applies to all potential fixes. Use /evaluate-review to understand how to think about this"* — methodology framing. The skill is the right shape for late-round reviews. Use it by default after Round 2.
+- *"anything else that is HIGH value that we should consider fixing?"* — the user's openness to additional fixes IF they're high-value. Surfaced 5 items (helper unification, structured payload, format_version policy, defensive guards, spike contingencies). User said "yes all 5." Pattern: end-of-session "anything else?" is a low-cost prompt that surfaces the top-of-stack tacit knowledge.
 
 ---
 
@@ -180,14 +262,27 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 
 ## ASSUMPTION / UNCLEAR / NEEDS VERIFICATION
 
-(Updated from §31 — some resolved, some still open, some new this round.)
+(Updated through Round 4 — some resolved, some still open, some new from Rounds 3 + 4.)
 
-### Resolved this session
+### Resolved across Rounds 1–4
 
-- ~~`cache.discrepancy` ID — open user decision~~ → resolved as 10th catalog entry under `cache_advisory`.
-- ~~Cache rendering errors in batch+continue+sub-workflow error category — open user decision~~ → resolved as `template_error` (defer typed `CacheRenderError` to v1.x).
-- ~~Tier 2 walker LOC estimate (~50 vs ~130-240)~~ → resolved §30 (~130-240 LOC realistic).
-- ~~`core/llm_capabilities.py` mirror pattern — confirmed.~~ → resolved §30.
+- ~~`cache.discrepancy` ID — open user decision~~ → 10th catalog entry under `cache_advisory` (Round 2).
+- ~~Cache rendering errors in batch+continue+sub-workflow error category~~ → `template_error` (defer typed `CacheRenderError` to v1.x; Round 2).
+- ~~Tier 2 walker LOC estimate~~ → resolved §30 (~130–240 LOC realistic).
+- ~~`core/llm_capabilities.py` mirror pattern~~ → confirmed §30.
+- ~~D.1 / D.2 unsafe `shared.get(K, {}).get(...)`~~ → all consumers use `(shared.get(K) or {}).get(...)` (Round 3 caught + Round 4 verified zero remaining).
+- ~~F1 `cache.discrepancy` row's unresolvable `{root_cause_action}` placeholder~~ → dispatch map + per-cause required-context map + structured payload schema (Round 3 introduced dispatch; Round 4 added structured payload).
+- ~~Validator step 8 reach for `prompt_cache:` on non-LLM nodes (claim: "step 8 catches it")~~ → FALSE; step 8 iterates `node["params"]` only. Fix: `_validate_cache_block` walks top-level node keys + emits `cache.invalid-on-non-llm` (11th catalog entry, Round 3) + V6 combined-diagnostic shape (Round 4).
+- ~~Hash-vs-prep render symmetry on ABSENT branches~~ → `_CHUNK_ABSENT` sentinel + filter at both call sites; B3.4 adds branch-absent test + divergence-injection variant (Round 3).
+- ~~D.2 prewarm pseudo-code shape (Round 3 treated `process_item` return as dict)~~ → verified 5-tuple destructure; `_collect_parallel_results` extended with `initial_completed`/`total` kwargs (Round 4).
+- ~~`node_state.ABSENT` symbol path~~ → actual symbol is `NodeStatus.ABSENT`; corrected in Round 4 pseudo-code.
+- ~~`TemplateResolutionError` reference in `_resolve_chunk_value`~~ → does not exist; pflow uses plain `ValueError` (Round 4).
+- ~~Strict `workflow_path is not None` assertion in trace constructor~~ → would fire 40+ times in tests; dropped in favor of dedicated production-path integration test (Round 4).
+- ~~Schema vs `_validate_cache_block` shape-error dedup test~~ → V5 fix: schema is single source for shape; `_validate_cache_block` does only semantics + defensive `isinstance` skip on compile path (Round 4).
+- ~~Multi-field rejection on non-LLM node collapsing on shared `id`~~ → V6 fix: ONE diagnostic per node with `context["invalid_fields"]: list[str]` (Round 4).
+- ~~`_resolve_static_prefix_for_cache` byte-divergence (`TemplateResolver.resolve_template`'s default `str()` for embedded refs)~~ → companion helper substitutes via `_deterministic_serialize` per ref (Round 4 high-value fix #1).
+- ~~JSON `format_version` evolution policy~~ → `JSON_FORMAT_VERSION_MAJOR` constant + `format_version.startswith("1.")` consumer rule (Round 4 high-value fix #3).
+- ~~Catalog count drift across docstring/tests~~ → `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` constant; tests iterate `.keys()` rather than hardcode (Round 4).
 
 ### Still open (Phase-internal verifications)
 
@@ -196,13 +291,22 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 - **B2.3**: `WorkflowExecutor._compiled_workflow_cache` interaction with sub-workflow `## Cache`. Verification: parallel-batch heterogeneous-children integration test (`test_subworkflow_cache_concurrency.py`). With `CacheBlockIR` frozen, this should pass — but the test is the only thing that confirms the freeze actually holds under concurrency. If it fails, the fix may require evicting compile-cache entries on a different keying strategy.
 - **D.1**: `list | str` shape for older workflow inputs/outputs. Verification: `test_prompt_cache_value_types.py` with list/dict/scalar/None/empty-string/bytes resolved values.
 
-### Newly identified this round
+### Newly identified across Rounds 2–4 (and still open or spike-gated)
 
-- **NEEDS VERIFICATION**: `litellm.completion_cost()` distinguishes per-TTL Anthropic pricing. Spike 3 verifies this; if it doesn't, the `_normalize` override in `llm_client.py:776-784` is needed. The plan E.1 is written assuming LiteLLM does distinguish — if Spike 3 fails, this is a Phase E plan update.
-- **ASSUMPTION**: `LiteLLM` Vertex path correctly translates `cache_control: {"type": "ephemeral", "ttl": "300s"}` to Gemini's `cachedContents` API. Spike 1 Scenario A verifies. If it fails: the C2 patch goes in anyway with the documented info note in `analyze-cache` Gemini output.
-- **ASSUMPTION**: Gemini accepts BOTH a system-cache marker AND a user-message-prefix marker in the same request without API error. Spike 1 Scenario B. If Gemini rejects: filter the auto-batch marker on Gemini specifically (D.1 update); flag as v1.x follow-up.
-- **UNCLEAR**: how `node_state.get_node_status` behaves under parallel-batch concurrency. The branch-absent check in C1.2 reads node_state during `LLMNode.prep`. If two parallel batch threads check status concurrently while an upstream node's status is transitioning, they could see different chunk sets. Existing pflow node_state should be stable post-execution-of-upstream (upstream completes before downstream batch dispatch), but the test for this in C1.2 is sequential — if parallel-batch behavior matters here, the test needs to be parallel.
-- **NEEDS VERIFICATION**: `MockLLMClient.set_response()` accepts `cache_creation_input_tokens` and `cache_read_input_tokens` after the C1.2 test-infra extension. The current `set_response` accepts `cost_usd` (verified §31). The plan extends it; if the extension breaks any existing test that calls `set_response(cost_usd=X)`, surface to user.
+- **NEEDS VERIFICATION** (Spike 3 — Phase E): `litellm.completion_cost()` distinguishes per-TTL Anthropic pricing. If it doesn't, the `_normalize` override in `llm_client.py:776-784` is needed. The plan E.1 is written assuming LiteLLM does distinguish — if Spike 3 fails, this is a Phase E plan update per the new Spike contingencies table.
+- **ASSUMPTION** (Spike 1 Scenario A — Phase C entry): LiteLLM Vertex path correctly translates `cache_control: {"type": "ephemeral", "ttl": "300s"}` to Gemini's `cachedContents` API. If it fails: ship C2 with documented info note in `analyze-cache` Gemini output (per Spike contingencies table).
+- **ASSUMPTION** (Spike 1 Scenario B — Phase C entry): Gemini accepts BOTH a system-cache marker AND a user-message-prefix marker in the same request without API error. If Gemini rejects: filter auto-batch marker on Gemini specifically (D.1 update per Spike contingencies table); flag as v1.x follow-up.
+- **NEEDS VERIFICATION** (Spike 2 — Phase D): OpenAI `prompt_cache_key` parallel-batch routing actually clusters 4–8 parallel calls with same key on one backend. If randomized: document degraded hit rate in G.2 caching guide; emit `prompt_cache_key` regardless.
+- **UNCLEAR**: how `node_state.get_node_status` behaves under parallel-batch concurrency for the chunk-absent check. Existing pflow node_state SHOULD be stable post-execution-of-upstream (DAG ordering guarantee per `runtime/CLAUDE.md`), but the test for this in C1.2 is sequential. If parallel-batch behavior matters here, the test needs to be parallel. Round 3's documented LIMITATION ("loop recovery × cache rendering") covers the main edge case; v1 ships with the documented invariant.
+- **NEEDS VERIFICATION**: `MockLLMClient.set_response()` accepts `cache_creation_input_tokens` and `cache_read_input_tokens` after the C1.2 test-infra extension. Plan extends the signature; if any existing test breaks, surface.
+
+### Round 4 still-open (post-Round-4 review unverified items)
+
+- **MIGHT MATTER**: `_resolve_static_prefix_for_cache` references `TEMPLATE_VAR_PATTERN` constant. The plan says "import or re-derive at the call site" but doesn't lock the import path. Implementing agent picks: import from `pflow.runtime.template_resolver` (where the regex lives) OR re-derive next to the helper. Either is fine; lock during B3.3 implementation.
+- **MIGHT MATTER**: `cache.discrepancy` `branch_node` field in the structured payload is documented as "optional — analyzer may not always identify the branching node." Concrete: the F2 analyzer's chunk-skipped detection logic isn't yet specified to extract `branch_node` — plan says optional but implementing agent might want to lock how it's identified or accept it stays None for v1.
+- **CONSIDER**: V5 fix's compile-path defensive skip means a malformed `prompt_cache: 5` reaching the compile path emits `logger.warning` and proceeds; the deeper compile error then surfaces. Test asserts ZERO Diagnostics from `_validate_cache_block` and ONE `logger.warning`. The "deeper compile error" is implicit — the implementing agent needs to verify what error fires (NodeConfig construction? schema-via-different-path? compile-time exception?). Run the test and document the actual deeper error so the test can assert on it explicitly.
+- **MIGHT MATTER**: function-scoped MockLLMClient fixtures — the plan locks this for Round-4-introduced tests, but the EXISTING test suite has session-scoped fixtures in places. Implementing agent should audit `tests/shared/llm_mock.py` fixture usage and decide whether to standardize project-wide or leave new-vs-existing scopes split.
+- **UNCLEAR**: Round 5 prediction is "1-2 Critical in Round-4-introduced code (the new helpers, the structured payload, the spike contingency table)." If the implementing agent is paranoid and wants to verify, run a Round 5 with the same 5 agents (or just review-plan + review-test-fidelity for the new helpers). Skipping is also fine — implementation-time review (`/code-review` after each phase merges) catches the rest.
 
 ---
 
@@ -266,10 +370,11 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 ### Start here
 
 1. Read `implementation-plan.md` "Architectural backbone — `CacheRenderContext`" section (~lines 7-87). This is the load-bearing decision. If you find yourself drifting to `node.params` injection or scattered shared keys, STOP — the architectural section explains why those failed.
-2. Read the agent-handoff for the three pre-authorized paid spikes. **Run them BEFORE B1.1.** Record outcomes as a §33 progress log entry. ~$0.30 total budget; user has authorized.
-3. Read this braindump end-to-end. The "Tacit knowledge I'm worried isn't documented anywhere" section is the highest-value content here.
-4. Read progress log §32 for the round-2 journey. It explains why specific architectural decisions look the way they do.
-5. Spec is the contract — read sections only when implementing the corresponding phase.
+2. Read the agent-handoff for the three pre-authorized paid spikes. **Run them BEFORE B1.1.** Record outcomes as a §35 progress log entry (§33 = Round 3, §34 = Round 4 + 5 high-value additions; spike outcomes are §35). ~$0.30 total budget; user has authorized.
+3. **Read the new "Spike contingencies" subsection at the bottom of the plan** (just before "Open hedged claims"). Maps each spike → encoded plan decision → if-contradicts-action. After §35 lands, update plan sections per the table BEFORE B1.1 patches start.
+4. Read this braindump end-to-end. Sections "What §33 / §34 don't capture" and "Tacit knowledge I'm worried isn't documented anywhere" are the highest-value content.
+5. Read progress log §31 (Round 1), §32 (Round 2), §33 (Round 3), §34 (Round 4) — chronological. §34 is the most recent and explains the V5/V6 fix-shape decisions + the 5 high-value additions.
+6. Spec is the contract — read sections only when implementing the corresponding phase.
 
 ### Single load-bearing gate
 
@@ -283,7 +388,9 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 4. Existing `cache: bool` workflows continuing unchanged.
 5. `test_plan_drift.py` staying green.
 6. **Simplicity of the final code, not the easiest path to get there.**
-7. **Clean doc separation — concerns belong to specific docs.** (NEW — added §32.)
+7. **Clean doc separation — concerns belong to specific docs.** (Added §32.)
+8. **Top-10% codebases similar to this one — what would mypy/rustc/ruff do?** (NEW — surfaced explicitly in §34. Apply this lens to every fix-shape decision. V5 single-source-of-truth + V6 combined-diagnostic both came from this question.)
+9. **Read the actual code before writing pseudo-code that depends on its signature.** (NEW — load-bearing instruction in §34. The /evaluate-review skill operationalizes this.)
 
 ### When in doubt
 
@@ -294,9 +401,11 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 
 ### Don't bother with
 
-- Re-running the 8-agent review for v3. The fixes are encoded; remaining review surface is implementation-time review (`/code-review` after each phase merges).
+- Re-running the 8-agent review for v5. Rounds 3 + 4 are done; remaining review surface is implementation-time review (`/code-review` after each phase merges). If paranoid about Round-4-introduced code (the new helpers, structured payload, spike contingency table), run a TARGETED 2-agent review (review-plan + review-test-fidelity) on those sections only — that's the highest-value Round 5 shape.
 - The `cache.cross-workflow-resolution-failed` ID idea (Suggestion 22). Resolved without a new ID — broken sub-workflow refs re-raise the existing `WorkflowValidationError`; cycles/depth-limit log at info.
 - Test-file consolidation (Suggestion 29) — defer to your judgment when actually writing tests.
+- The "verification-only pass" before B1.1 (skipped per user's "yes go ahead with all 5"). 30 min if you want it; not required.
+- Adding more entries to the 5 high-value additions list. Round 4 + 5-additions has hit the natural ceiling on plan-stage refinement; further marginal value comes from running the spikes and starting B1.1.
 
 ### The two paid spike outcomes that matter most
 
@@ -310,20 +419,29 @@ For inline runs (e.g., `pflow run --inline workflow-string`), the workflow has n
 
 ### Plan + context (re-read order)
 
-- `implementation/implementation-plan.md` — the HOW (1290 lines, post round-2).
-- `implementation/progress-log.md` — §31 (round 1), §32 (round 2). Journey + insights.
+- `implementation/implementation-plan.md` — the HOW (1813 lines, post Round 4 + 5 high-value additions).
+- `implementation/progress-log.md` — §31 (Round 1), §32 (Round 2), §33 (Round 3), §34 (Round 4 + 5 high-value additions). Journey + insights.
 - `task-159.md` — spec / contract.
 - `starting-context/agent-handoff.md` — operational style + paid spike protocols.
 - This file (`starting-context/braindump-2026-04-28-plan-writing-and-review.md`) — tacit knowledge, hunches, gotchas.
 
-### Code anchors verified during plan refinement
+### Code anchors verified during plan refinement (Rounds 1–4)
 
 - `src/pflow/core/CLAUDE.md:103` — Diagnostic identity tuple SSoT (must be updated to `(severity, source, node_id, id or message)` in B1.1).
+- `src/pflow/core/diagnostic.py:69-92` — `Diagnostic.__eq__` and `__hash__`; identity tuple `(severity, source, node_id, message)` documented at line 70-79; `deduplicate_diagnostics` at line 124-132. Verified Round 4.
 - `src/pflow/core/markdown_parser.py:1393` — `_build_node_dict` start; `cache` extraction at 1432; `prompt_cache` / `prewarm` extraction added in B2.1 next to it.
+- `src/pflow/core/workflow/validator.py:559-638` — `_validate_unknown_params` (step 8); iterates `node["params"]` only at line 600 + 616. Verified Round 4 — does NOT see top-level `prompt_cache`/`prewarm` keys.
+- `src/pflow/runtime/engine/batch_executor.py:524-611` — `_execute_parallel`; `process_item` closure at 540-589 returns 5-tuple `(idx, result, error, duration_ms, buffered_events)` at line 589. Verified Round 4.
+- `src/pflow/runtime/engine/batch_executor.py:466-522` — `_collect_parallel_results`; destructures the 5-tuple at line 490. Verified Round 4.
+- `src/pflow/runtime/engine/batch_executor.py:103-177` — `_pre_warm_compile_cache` (sub-workflow IR compile, NOT D.2 prewarm). Verified Round 4.
 - `src/pflow/runtime/engine/instrumentation.py:139` — `compute_node_config`; `batch_config` precedent at 162.
 - `src/pflow/runtime/engine/instrumentation.py:241/297/480` — `apply_memo_hit`/`write_memo_cache`/`handle_cached_execution` (all 3 need `_should_write_cache_metadata` gate).
+- `src/pflow/runtime/engine/plan_node.py:35-68` — `plan_node()` — `compute_config_hash` runs FIRST (line 37-44), `resolve_templates` SECOND (line 50-56); `template_exception` early-return catches `except ValueError` at line 57. Verified Round 4.
+- `src/pflow/runtime/node_state.py:25-59` — `class NodeStatus(Enum)`; `ABSENT/SUCCEEDED/FAILED`; `get_node_status(shared, node_id)` at 48-59. Canonical import: `from pflow.runtime.node_state import NodeStatus, get_node_status`. Verified Round 4.
+- `src/pflow/runtime/template_resolver.py:198-212` — `extract_root_node_id(template_path) -> str` (always returns str, never None). Verified Round 4.
+- `src/pflow/runtime/compilation/compile_validation.py:120-161` — `_validate_data_flow_at_compile_time` calls `validate_data_flow` at line 122; minimal `validate_ir_structure` at line 155 only checks `nodes`/`edges` arrays. Verified Round 4 (V5 fix relies on this).
 - `src/pflow/runtime/workflow_trace.py:17` — `TRACE_FORMAT_VERSION`; `save_to_file` at 463; `_add_llm_data` at 202.
-- `src/pflow/core/trace_report.py:463` — `format_version.startswith("2.")` consumer gate (corrected from 400).
+- `src/pflow/core/trace_report.py:463` — `format_version.startswith("2.")` consumer gate (corrected from 400 in Round 2).
 - `src/pflow/execution/runner.py:36-53` — `_synthesize_inline_workflow_id` (NOT `runtime/runner.py`).
 - `src/pflow/execution/executor_service.py:29` — `_FAILURE_CATEGORY_MAP`; dual-invariant comment at line 37.
 
