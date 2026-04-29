@@ -4,12 +4,20 @@ This module ensures that workflows have correct execution order and that
 all data dependencies are satisfied before nodes execute.
 """
 
+import logging
 import re
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import (
+    CACHE_FAILURE_CATEGORY,
+    CACHE_WARNING_CATEGORY,
+    Diagnostic,
+    Severity,
+)
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.runtime.template_resolver import TemplateResolver
+
+logger = logging.getLogger(__name__)
 
 # Positive match for pflow variable paths (e.g., "node", "node.field", "node[0].field").
 # Uses TemplateResolver._VAR_NAME_PATTERN as the canonical definition of valid pflow
@@ -372,6 +380,18 @@ def validate_data_flow(
             diagnostics,
         )
 
+    # Cache-block validation (Task 159): ## Cache references, prompt_cache: order,
+    # invalid-on-non-llm, unused chunks, batch-scoped rejection. Runs at the SAME
+    # tier as the per-node template validation so both validation entry points
+    # (WorkflowValidator + compile_validation) pick it up via the shared call site.
+    _validate_cache_block(
+        workflow_ir,
+        nodes_by_id,
+        declared_inputs,
+        batch_item_aliases,
+        diagnostics,
+    )
+
     return diagnostics
 
 
@@ -472,3 +492,377 @@ def _validate_node_params(
             check_inputs,
             errors,
         )
+
+
+# ------------------------------------------------------------------------------
+# Cache-block validation (Task 159 B2.3)
+# ------------------------------------------------------------------------------
+
+
+def _format_chunk_list(names: list[str]) -> str:
+    """Format a list of chunk identifiers for the order-mismatch error message.
+
+    Bare-identifier bracketed form: ``[a, b, c]`` (NOT Python ``repr`` quoted form).
+    The agent-facing contract for ``cache.order-mismatch`` mandates this exact
+    rendering — ``str(list)`` would produce ``"['a', 'b', 'c']"`` which differs
+    byte-for-byte and breaks the spec-locked message format.
+    """
+    return "[" + ", ".join(names) + "]"
+
+
+def _validate_cache_block(  # noqa: C901
+    workflow_ir: dict[str, Any],
+    nodes_by_id: dict[str, Any],
+    declared_inputs: set[str],
+    batch_item_aliases: set[str],
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Validate cache-related declarations: per-node ``prompt_cache:`` and ``prewarm:``,
+    plus the workflow-level ``## Cache`` block's chunk references.
+
+    Step ordering (load-bearing per Round 5 plan + V5 fix):
+      1. Non-LLM-rejection (shape-agnostic) — runs FIRST so a malformed
+         ``prompt_cache: 5`` on a ``type: shell`` node still fires
+         ``cache.invalid-on-non-llm`` rather than silently log-skipping.
+      2. Defensive shape skip — for surviving LLM nodes, log a warning and
+         skip semantic checks if shape is wrong. The schema-validator path
+         catches shape errors at step 1 (``WorkflowValidator``) and
+         short-circuits; the compile path bypasses jsonschema and falls
+         through here. Per V5: schema is single source for shape; data_flow
+         emits ZERO Diagnostics for shape errors — the deeper compile error
+         (``CompilationError`` on ``CacheBlockIR`` construction) surfaces.
+      3. Top-level cache block validation — only when shape is well-formed.
+         Walk chunk references for resolution + batch-scoped rejection.
+         Walk per-node ``prompt_cache:`` for declaration-order check + chunk
+         resolution + unused-chunk warnings.
+
+    Schema is the single source of truth for SHAPE (per V5 fix); this function
+    does ONLY semantic checks. It emits no diagnostics for malformed shapes —
+    those produce a single jsonschema diagnostic at step 1 of WorkflowValidator
+    OR a CompilationError on the compile path. No double-emit.
+    """
+    # STEP 1: non-LLM-rejection (shape-agnostic; runs FIRST — see V5 fix in
+    # core/CLAUDE.md and the plan's Round 5 ordering note). The check is pure
+    # key-presence + node-type-string discrimination — it does not inspect
+    # the values of ``prompt_cache`` or ``prewarm``, so a malformed shape
+    # on a non-LLM node still emits the structured "wrong target type"
+    # error rather than silently logger.warning-skipping into a confusing
+    # downstream NodeConfig failure.
+    rejected_node_ids: set[str] = set()
+    for node in workflow_ir.get("nodes", []):
+        node_type = node.get("type")
+        # ``isinstance(..., str)`` is load-bearing: ``type: ["llm"]`` (list — a
+        # structural error caught by schema) would satisfy ``["llm"] != "llm"``
+        # and incorrectly fire cache.invalid-on-non-llm against a node whose
+        # REAL problem is the type-must-be-string failure. The isinstance gate
+        # restricts cache.invalid-on-non-llm to well-formed-but-wrong-target types.
+        if not isinstance(node_type, str) or not node_type:
+            continue
+        if node_type == "llm":
+            continue
+        invalid_fields: list[str] = [k for k in ("prompt_cache", "prewarm") if k in node]
+        if not invalid_fields:
+            continue
+        node_id = node.get("id")
+        if not isinstance(node_id, str):
+            continue
+        diagnostics.append(_make_invalid_on_non_llm_diagnostic(node_id, node_type, invalid_fields))
+        rejected_node_ids.add(node_id)
+
+    # Resolve top-level ``cache`` block defensively (compile path may bypass schema).
+    cache_block = workflow_ir.get("cache")
+    cache_items: list[dict[str, Any]] = []
+    cache_item_names: list[str] = []
+    cache_block_well_formed = False
+    if cache_block is not None:
+        if not isinstance(cache_block, dict) or not isinstance(cache_block.get("items"), list):
+            logger.warning(
+                "cache validation skipped top-level cache block: malformed shape (%s); "
+                "schema-validator path catches this at step 1; compile path catches at "
+                "CompilationError on CacheBlockIR construction",
+                type(cache_block).__name__,
+            )
+        else:
+            cache_block_well_formed = True
+            for item in cache_block["items"]:
+                if isinstance(item, dict) and isinstance(item.get("name"), str):
+                    cache_items.append(item)
+                    cache_item_names.append(item["name"])
+
+    # STEP 2 + 3: walk LLM nodes for shape skip + semantic checks.
+    referenced_chunks: set[str] = set()
+    for node in workflow_ir.get("nodes", []):
+        node_id = node.get("id")
+        if not isinstance(node_id, str):
+            continue
+        if node_id in rejected_node_ids:
+            continue
+        if node.get("type") != "llm":
+            continue
+
+        # STEP 2: defensive shape skip. The schema-validator path catches these
+        # at step 1 and short-circuits; the compile path bypasses jsonschema
+        # so we MUST guard here to avoid a TypeError on ``list(prompt_cache)``.
+        prompt_cache_val = node.get("prompt_cache")
+        if prompt_cache_val is not None and (
+            not isinstance(prompt_cache_val, list) or not all(isinstance(item, str) for item in prompt_cache_val)
+        ):
+            logger.warning(
+                "cache validation skipped node %s: malformed prompt_cache shape (%s); "
+                "schema-validator path catches this at step 1; compile path catches at "
+                "NodeConfig construction (CompilationError)",
+                node_id,
+                type(prompt_cache_val).__name__,
+            )
+            continue
+        prewarm_val = node.get("prewarm")
+        # ``bool`` is a subclass of ``int``; ``isinstance(True, int)`` is True.
+        # Use ``isinstance(x, bool)`` to reject ``prewarm: 1`` as malformed.
+        if prewarm_val is not None and not isinstance(prewarm_val, bool):
+            logger.warning(
+                "cache validation skipped node %s: malformed prewarm shape (%s); "
+                "schema-validator path catches this at step 1; compile path catches at "
+                "NodeConfig construction (CompilationError)",
+                node_id,
+                type(prewarm_val).__name__,
+            )
+            continue
+
+        # STEP 3a: per-node ``prompt_cache:`` semantic checks.
+        prompt_cache: list[str] = list(prompt_cache_val) if prompt_cache_val else []
+        if not prompt_cache:
+            continue
+
+        # Check each chunk name resolves to a declared cache item.
+        all_resolved = True
+        for chunk_name in prompt_cache:
+            if chunk_name in cache_item_names:
+                referenced_chunks.add(chunk_name)
+            else:
+                all_resolved = False
+                similar = find_similar_items(chunk_name, cache_item_names, max_results=3, method="fuzzy")
+                diagnostics.append(_make_undeclared_chunk_diagnostic(node_id, chunk_name, cache_item_names, similar))
+
+        # Order-match check (only when all chunks resolve — otherwise the
+        # order error would be confusing on top of resolution errors).
+        if all_resolved:
+            indices = [cache_item_names.index(c) for c in prompt_cache]
+            if indices != sorted(indices):
+                expected_order = [c for c in cache_item_names if c in prompt_cache]
+                diagnostics.append(_make_order_mismatch_diagnostic(node_id, expected_order, prompt_cache))
+
+    # STEP 3b: top-level chunk-var resolution + batch-scoped rejection +
+    # unused-chunk warning. Only runs if the cache block is well-formed.
+    if cache_block_well_formed:
+        for item in cache_items:
+            var_expr = item.get("var")
+            if not isinstance(var_expr, str):
+                continue
+            chunk_name = item.get("name", "")
+            chunk_line = item.get("_source_line")
+            root = TemplateResolver.extract_root_node_id(var_expr)
+            # Batch-scoped rejection: chunks that vary across calls referencing
+            # the same chunk are invalid. ``${item.X}`` and any descendants of
+            # batch aliases fail this check.
+            if root in batch_item_aliases:
+                diagnostics.append(_make_batch_scoped_rejection_diagnostic(chunk_name, var_expr, chunk_line))
+                continue
+            # Resolution check: root must be a declared input or an existing node id.
+            if root not in declared_inputs and root not in nodes_by_id:
+                candidates = sorted(set(nodes_by_id.keys()) | declared_inputs)
+                similar = find_similar_items(root, candidates, max_results=3, method="fuzzy")
+                diagnostics.append(_make_chunk_resolution_diagnostic(chunk_name, var_expr, root, similar, chunk_line))
+
+        # Unused-chunk warning: declared but not referenced by any node's
+        # prompt_cache. Excludes chunks belonging to nodes that were rejected
+        # at STEP 1 — those errors take precedence, the unused warning would
+        # be noise.
+        for chunk_name in cache_item_names:
+            if chunk_name not in referenced_chunks:
+                diagnostics.append(_make_unused_chunk_diagnostic(chunk_name))
+
+
+def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fields: list[str]) -> Diagnostic:
+    """V6 combined-diagnostic shape: ONE diagnostic per node listing ALL invalid
+    fields, not one per field. Identity tuple uses ``id`` so two diagnostics
+    on the same node with the same id collapse correctly even if message
+    enrichment differs.
+    """
+    fields_csv = ", ".join(invalid_fields)
+    is_or_are = "is" if len(invalid_fields) == 1 else "are"
+    plural_s = "" if len(invalid_fields) == 1 else "s"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Cache Failure",
+        node_id=node_id,
+        id="cache.invalid-on-non-llm",
+        message=(
+            f"Node '{node_id}' is type: {node_type} but declares {fields_csv} — "
+            f"{'this field is' if len(invalid_fields) == 1 else 'these fields are'} only valid on type: llm nodes."
+        ),
+        suggestions=[
+            f"Remove the invalid declaration{plural_s} ({fields_csv}) from {node_id}, "
+            f"OR move the LLM logic into a type: llm node."
+        ],
+        context={
+            "category": CACHE_FAILURE_CATEGORY,
+            "invalid_fields": invalid_fields,
+            "invalid_fields_csv": fields_csv,
+            "is_or_are": is_or_are,
+            "plural_s": plural_s,
+            "node_type": node_type,
+            "path": f"nodes[id={node_id}]",
+        },
+        # The guide-topic pointer is wired in Phase G when the caching topic
+        # ships. Until then, the topic-existence test enforces that every
+        # see-also reference points at a registered topic.
+    )
+
+
+def _make_order_mismatch_diagnostic(node_id: str, declared: list[str], actual: list[str]) -> Diagnostic:
+    """Spec-locked four-line message format with bare-identifier bracketed lists."""
+    declared_str = _format_chunk_list(declared)
+    actual_str = _format_chunk_list(actual)
+    message = (
+        f"Node '{node_id}' prompt_cache order doesn't match ## Cache declaration\n"
+        f"  declared:  {declared_str}\n"
+        f"  you wrote: {actual_str}\n"
+        f"  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order"
+    )
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Cache Failure",
+        node_id=node_id,
+        id="cache.order-mismatch",
+        message=message,
+        context={
+            "category": CACHE_FAILURE_CATEGORY,
+            "declared": declared,
+            "actual": actual,
+            "declared_str": declared_str,
+            "actual_str": actual_str,
+            "path": f"nodes[id={node_id}].prompt_cache",
+        },
+        # The guide-topic pointer is wired in Phase G when the caching topic
+        # ships. Until then, the topic-existence test enforces that every
+        # see-also reference points at a registered topic.
+    )
+
+
+def _make_undeclared_chunk_diagnostic(
+    node_id: str, chunk_name: str, declared_names: list[str], similar: list[str]
+) -> Diagnostic:
+    """Reference-resolution error: prompt_cache references a chunk not in ## Cache items.
+
+    No catalog id — flows through the existing validation diagnostic machinery
+    (per spec § Stable Warning ID Catalog: reference-resolution errors reuse
+    pflow's general validation pipeline, not a cache-namespaced id).
+    """
+    suggestions = [f"Did you mean '{similar[0]}'?"] if similar else None
+    context: dict[str, Any] = {
+        "category": "validation",
+        "path": f"nodes[id={node_id}].prompt_cache",
+        "available_fields": sorted(declared_names),
+        "available_fields_total": len(declared_names),
+        "available_fields_label": "cache chunks",
+    }
+    if similar:
+        context["similar_names"] = similar
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(f"Node '{node_id}' references undeclared cache chunk '{chunk_name}' in prompt_cache:."),
+        suggestions=suggestions,
+        context=context,
+    )
+
+
+def _make_chunk_resolution_diagnostic(
+    chunk_name: str, var_expr: str, root: str, similar: list[str], chunk_line: int | None
+) -> Diagnostic:
+    """``${var}`` in a cache chunk that doesn't resolve to an input or node output.
+
+    No catalog id — flows through the existing validation diagnostic machinery.
+    """
+    suggestions = [f"Did you mean '${{{similar[0]}}}'?"] if similar else None
+    context: dict[str, Any] = {
+        "category": "validation",
+        "path": f"cache.items[name={chunk_name}].var",
+    }
+    if chunk_line is not None:
+        context["line"] = chunk_line
+    if similar:
+        context["similar_names"] = similar
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        message=(
+            f"Cache chunk '{chunk_name}' references '${{{var_expr}}}' but '{root}' is not "
+            "a declared input or an existing node output."
+        ),
+        suggestions=suggestions,
+        context=context,
+    )
+
+
+def _make_batch_scoped_rejection_diagnostic(chunk_name: str, var_expr: str, chunk_line: int | None) -> Diagnostic:
+    """Cache chunks must reference values that are stable across calls — batch-scoped
+    references (``${item.X}`` and any descendants of a batch alias) vary per call
+    and are explicitly rejected per spec.
+
+    No catalog id — flows through the existing validation diagnostic machinery.
+    """
+    context: dict[str, Any] = {
+        "category": "validation",
+        "path": f"cache.items[name={chunk_name}].var",
+        "var_expr": var_expr,
+    }
+    if chunk_line is not None:
+        context["line"] = chunk_line
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        message=(
+            f"Cache chunk '{chunk_name}' references '${{{var_expr}}}', which is batch-scoped "
+            "(varies across calls referencing the same chunk). batch references like "
+            "${item.X} and any descendants are not valid in '## Cache' — only stable values "
+            "(workflow inputs and step outputs) may be cached."
+        ),
+        suggestions=[
+            "Remove the batch-scoped reference from '## Cache' and put the dynamic value "
+            "directly in the node's prompt instead."
+        ],
+        context=context,
+    )
+
+
+def _make_unused_chunk_diagnostic(chunk_name: str) -> Diagnostic:
+    """Declared chunk that no node references via prompt_cache:.
+
+    Catalog id ``cache.unused-chunk``, severity WARNING. Helps the author keep
+    the cache block lean and surfaces dead code (per spec).
+    """
+    return Diagnostic(
+        severity=Severity.WARNING,
+        source="validator",
+        title="Cache Warning",
+        id="cache.unused-chunk",
+        message=(f"Cache chunk '{chunk_name}' is declared in ## Cache but no node references it via prompt_cache:."),
+        suggestions=[
+            f"Remove '{chunk_name}' from ## Cache, OR reference it from a node's `- prompt_cache: [{chunk_name}]`."
+        ],
+        context={
+            "category": CACHE_WARNING_CATEGORY,
+            "chunk_name": chunk_name,
+            "path": f"cache.items[name={chunk_name}]",
+        },
+        # The guide-topic pointer is wired in Phase G when the caching topic
+        # ships. Until then, the topic-existence test enforces that every
+        # see-also reference points at a registered topic.
+    )
