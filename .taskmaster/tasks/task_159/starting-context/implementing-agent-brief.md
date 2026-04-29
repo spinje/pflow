@@ -14,15 +14,15 @@ Before writing any code:
 
 1. **`.taskmaster/tasks/task_159/task-159.md`** — the spec (contract). DDs, requirements, output formats, warning catalog.
 2. **`.taskmaster/tasks/task_159/implementation/implementation-plan.md`** — the HOW. Read in full once; re-read your specific phase sections at patch time.
-   - Pay special attention to: "Architectural backbone — `CacheRenderContext`" near the top, "Shared cache-rendering helpers — module placement" right below it, and "Cross-cutting reads before any phase."
-3. **`.taskmaster/tasks/task_159/starting-context/agent-handoff.md`** — operational style, working-with-this-user notes, hedged claims. Note: its "in-phase paid spikes" sections are stale (spikes ran 2026-04-29, see §36); skim them for context only.
-4. **`.taskmaster/tasks/task_159/starting-context/braindump-2026-04-28-plan-writing-and-review.md`** — tacit knowledge from 6 review rounds. Sections "What §35 doesn't capture," "What I'd tell myself if starting over," and "For the next agent" are highest-value.
-5. **`.taskmaster/tasks/task_159/implementation/progress-log.md`** §31–§35 — the planning journey. §35 covers the diminishing-returns analysis and the decision to switch to code-review per phase merge from here.
+3. **`.taskmaster/tasks/task_159/starting-context/agent-handoff.md`** — operational style, working-with-this-user notes, hedged claims.
+4. **`.taskmaster/tasks/task_159/starting-context/braindump-2026-04-28-plan-writing-and-review.md`** — tacit knowledge from 6 review rounds.
 6. **`.taskmaster/tasks/task_159/implementation/implementation-progress-log.md`** — IF prior implementing agents have run, read all their entries. This is where YOU will also log your work.
-7. **`CLAUDE.md`** at the project root — pflow's epistemic manifesto and operational guidelines.
-8. **The CLAUDE.md files in any directory you'll touch** (`src/pflow/runtime/CLAUDE.md`, `src/pflow/runtime/engine/CLAUDE.md`, `src/pflow/nodes/CLAUDE.md`, `tests/CLAUDE.md`, etc.).
 
 After reading: **state your understanding** (the key architectural decisions, what's been done, what you'll do, where the load-bearing risks are) and **wait for the user's confirmation** before writing code.
+
+## Files not to read
+
+**`.taskmaster/tasks/task_159/implementation/progress-log.md`** - Never read this file directly, if you need to understand any decisions made during the planning journey in detail use pflow searcher subagent to gather the information for you and reference this file if you think the information might be inside it.
 
 ## The four agent segments
 
