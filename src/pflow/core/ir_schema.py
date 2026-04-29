@@ -181,6 +181,23 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "type": "boolean",
                         "description": "Whether to cache this node's output across runs (default: true)",
                     },
+                    "prompt_cache": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Per-node LLM-provider prompt-cache subset (Task 159). List of bare cache "
+                            "chunk identifiers from the workflow-level ## Cache block, in declaration order. "
+                            "Independent of the `cache: bool` memoization field."
+                        ),
+                    },
+                    "prewarm": {
+                        "type": "boolean",
+                        "description": (
+                            "Per-node opt-in for batch prewarming (Task 159). When true on a batch LLM node, "
+                            "pflow serializes the first call (cache write) before fanning out the remainder "
+                            "as cache reads."
+                        ),
+                    },
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,
@@ -276,6 +293,51 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
             },
             "default": {},
+        },
+        "cache": {
+            "type": "object",
+            "description": (
+                "Workflow-level prompt-cache declaration (Task 159). Carries an optional `ttl` "
+                "and an ordered list of cache chunks. Per-node `prompt_cache:` lists reference "
+                "subsets of these items by name; semantic validation lives in core/workflow/data_flow.py."
+            ),
+            "properties": {
+                "ttl": {
+                    "type": "string",
+                    "enum": ["5m", "1h"],
+                    "description": (
+                        "Cache TTL: 5m (provider default) or 1h (extended; opt-in only — "
+                        "writes cost 2x on Anthropic, breakeven at 3+ reads)."
+                    ),
+                },
+                "items": {
+                    "type": "array",
+                    "description": "Cache chunks in declaration order. Each chunk is `[prose-before-${var}][${var}]`.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Chunk identifier (the ${var} content verbatim)"},
+                            "var": {"type": "string", "description": "Template path inside ${...} (== name)"},
+                            "prose_before": {
+                                "type": "string",
+                                "description": "Prose appearing before the ${var} (rendered into the cacheable system prefix)",
+                            },
+                            "_source_line": {
+                                "type": "integer",
+                                "description": "Markdown source line of the chunk (parser metadata)",
+                            },
+                        },
+                        "required": ["name", "var", "prose_before"],
+                        "additionalProperties": False,
+                    },
+                },
+                "_source_line": {
+                    "type": "integer",
+                    "description": "Markdown source line of the ## Cache section header (parser metadata)",
+                },
+            },
+            "required": ["items"],
+            "additionalProperties": False,
         },
         "enable_namespacing": {
             "type": "boolean",
