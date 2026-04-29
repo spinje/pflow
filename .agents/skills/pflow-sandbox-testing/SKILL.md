@@ -29,6 +29,42 @@ HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest -n 4 --doctest-modu
 
 Known baseline at creation time: `5372 passed, 18 skipped` (might have changed since then).
 
+## Manual pflow Verification
+
+The pflow CLI works in this sandbox, but prefer the project virtualenv directly:
+
+```bash
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow --help
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow guide core
+```
+
+Bare `pflow` may not be on `PATH`. If you need commands or subprocesses to resolve `pflow` by name, prepend the virtualenv:
+
+```bash
+HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" pflow --help
+```
+
+Use `HOME=/private/tmp/pflow-test-home` for manual workflow runs too. This keeps pflow traces and caches under `/private/tmp/pflow-test-home/.pflow` instead of trying to write to the real home directory.
+
+Manual scratch workflow pattern:
+
+```bash
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow scratchpads/example/workflow.pflow.md --validate-only
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow scratchpads/example/workflow.pflow.md key=value --print
+```
+
+Good manual regression checks in this sandbox:
+
+- `shell`, `code`, and local `file` workflows that read/write inside the repository or `/private/tmp`
+- CLI help and guide commands
+- `--validate-only`, `--dry-run`, `--print`, and `--output-format json` behavior
+
+Sandbox limits to keep in mind:
+
+- Network is restricted, so `http`, remote MCP, LiteLLM, and external API workflows may fail for environment reasons.
+- Filesystem writes are limited to the workspace and writable temp roots; workflows writing elsewhere may hit permission errors.
+- Read-only inspection of accessible local folders can work, but do not assume arbitrary user-home writes are allowed.
+
 ## Known Failures
 
 Do not trust `make test` or `uv run ...` inside this sandbox. `uv` may fail with:
