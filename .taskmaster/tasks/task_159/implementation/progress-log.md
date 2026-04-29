@@ -1352,6 +1352,8 @@ Three paid spikes (~$0.30 total, pre-authorized) run BEFORE B1. Outcomes get rec
 
 Single load-bearing gate (unchanged from §31): B3's no-`prompt_cache` hash regression test. The pre-merge fixture step (`golden_config_hashes.json` committed against `main` head) MUST happen before B3.1 patches land; without it, the regression gate is a tautology.
 
+The implementing agent runs the three pre-authorized paid spikes first, records outcomes as §35, updates plan sections per the Spike contingencies table if needed, then begins B1.1. The single load-bearing gate (B3 baseline fixture) remains unchanged.
+
 ## 33. Session 2026-04-29 — Round 3 review + plan refinement
 
 Plan v2 ran through a third `/code-review` pass — 8 agents in parallel reviewing the same blindspot categories as Round 2. The hypothesis going in: "We're paying with each round; verify findings honestly; stop encoding once we hit polish-tier returns." Round 3 surfaced **7 Critical + 8 High-Priority + ~14 Medium** findings, most of which were substantive (not polish, not restatements). The user's epistemic question — "are we hitting diminishing returns?" — drove an explicit analysis: returns are still high because the plan keeps growing, each round operates on a different post-fix codebase, and Round 2's claims of completeness ("all consumers use canonical pattern") turned out false in two sites.
@@ -1426,3 +1428,83 @@ User asked the right question: "It seems we are not hitting diminishing returns 
 - Architectural backbone (`CacheRenderContext` + frozen `CacheBlockIR` + `MappingProxyType` + `_resolve_chunk_value` + new `_CHUNK_ABSENT` sentinel) closes the structural concurrency and silent-stale-cache classes by construction.
 - Three paid spikes still pending (Gemini cache_control, OpenAI parallel routing, Anthropic per-TTL pricing) — pre-authorized, run before B1.1.
 - Round 4 targeted review (5 agents) starts after this commit.
+
+## 34. Session 2026-04-29 (continued) — Round 4 review + read-the-actual-code refinement
+
+Plan v3 (post §33 Round 3) ran through a **targeted Round 4** (5 agents instead of full 8: review-plan, review-silent-failures, review-validation-consistency, review-impact-completeness, review-test-fidelity). The user's epistemic question driving this round: *"are we hitting diminishing returns? Or are we aiming for the right solution that the top 10% of codebases similar to this one would implement?"*
+
+Hypothesis going in: Round 4 would find ≤2 Critical + ≤4 High-Priority (diminishing returns signal). **Empirical result: 6 Critical + 12 High-Priority + ~14 Medium + 1 Disputed.** Returns are still high — but the bug class shifted decisively. Round 4 caught **pseudo-code bugs in Round-3-introduced code** (wrong function signatures, wrong symbol paths, references to non-existent classes, count drift). The architectural backbone is sound; the bugs are at the pseudo-code precision level.
+
+The journey's central lesson: **read the actual code before writing pseudo-code that depends on its signature.** Round 3 sketched fixes from memory and convention; Round 4's grep + Read sweep caught:
+- `process_item` returns a 5-tuple `(idx, result, error, duration_ms, buffered_events)` — Round 3 pseudo-code treated it as a dict (would have shipped a malformed `results[0]`).
+- `NodeStatus.ABSENT` is the canonical symbol — Round 3 wrote `node_state.ABSENT` (would `AttributeError`).
+- `TemplateResolutionError` does NOT exist — Round 3 referenced it in the `_resolve_chunk_value` pseudo-code (would `ImportError`).
+- `extract_root_node_id` always returns `str` — Round 3's `if upstream_node is not None` check is dead code.
+- Catalog count "10/11/12" drifted across 5 prose sites despite Round 3 adding two entries.
+- `Diagnostic.__hash__` identity tuple `(severity, source, node_id, message)` — Round 3's V6 fix proposal "emit one ERROR per offending field" with shared `id` would have collapsed multi-field rejections to ONE diagnostic, hiding offenses.
+
+### V5 + V6 fix-shape decisions (top-10% lens)
+
+User question: *"Are we aiming for the right solution that the top 10% of codebases similar to this one would implement, have we considered it yet?"*
+
+This forced explicit reasoning about each fix shape rather than encoding the first-suggested approach.
+
+**V5 — Schema vs `_validate_cache_block` shape redundancy**: Round 4 reviewer found the Round-3 dedup test was based on a misanalysis (schema-emitted and `_validate_cache_block`-emitted shape errors have different messages, no shared `id`, won't dedup). Two fix options surfaced: (a) belt-and-suspenders (both fire, accept double-emit), (b) single source of truth (schema does shape, `_validate_cache_block` does only semantics + defensive skip on compile path). Top-10% answer: **Option (b)**. Mypy/rustc/ruff each have one rule per error condition. Belt-and-suspenders means TWO places to maintain when shape constraints change — exactly the validation-consistency drift the review category exists to catch. Encoded.
+
+**V6 — Multi-field rejection collapse**: Round-3 said "emit one ERROR per offending field" for `cache.invalid-on-non-llm`. With identity tuple `(severity, source, node_id, id or message)` and shared `id`, two emissions for the same node collapse to one. Top-10% answer: ONE diagnostic per [rule, location] with multiple offenses listed in `context["invalid_fields"]: list[str]`. Identity tuple now handles dedup correctly under this shape.
+
+### The five high-value additions (after user said "encode all 5")
+
+1. **`_resolve_static_prefix_for_cache` companion helper** — locks byte-identical resolution across THREE cache paths (chunk hash, chunk message, static-prefix auto-batch). Prevents the dict→Python-repr-vs-canonical-JSON divergence that would silently break cross-mode cache hits. The Round 3 plan said "use the same deterministic-serialization" but didn't lock the abstraction — D.1 calling `TemplateResolver.resolve_template` directly would substitute via Python's default `str(value)`, NOT canonical JSON. Encoded the helper inline next to `_resolve_chunk_value` with a B3.4 cross-helper byte-identity test.
+
+2. **`cache.discrepancy` structured context payload** — agents reading from-trace mode-4 output had to regex-parse prose action templates to dispatch on root_cause specifics. Top-10% pattern: typed structured data in `context["root_cause_action"]`, prose in `suggestions` for human display. Per-cause payload schema (`CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS`) added; tests assert both prose AND structured payload per cause.
+
+3. **JSON `format_version` evolution policy** — locked `format_version.startswith("1.")` consumer rule via module-level constants `JSON_FORMAT_VERSION` and `JSON_FORMAT_VERSION_MAJOR`. Mirrors trace 2.x policy at `trace_report.py:463`. Without this, agents pinning `== "1.0"` break silently on the first additive minor bump.
+
+4. **Compile-path `_validate_cache_block` defensive isinstance guards enumerated** — Round 4's V5 fix said "defensive isinstance guards" but didn't enumerate them. Concrete per-shape guards now spec'd: `prompt_cache` must be `list[str]` (with all-elements check); `prewarm` must be `bool` (NOT `int` — `bool` subclasses `int`, so `isinstance(prewarm_val, bool)` rejects `prewarm: 1`); top-level `cache` block defends against malformed dict. Each guard emits `logger.warning` and skips.
+
+5. **Spike contingencies subsection** — three pre-authorized paid spikes run before B1.1; their outcomes either confirm encoded decisions or contradict them. Round 3 left "implicit via progress log §33" for the contradiction case. Round 4 added an explicit table mapping each spike to the encoded decision it tests + the if-outcome-contradicts action. Eliminates "ran the spike, missed the contradicting plan section" regression class.
+
+### Why Round 4 wasn't actually diminishing returns
+
+Returns measured by Critical-finding count: Round 1 ~7, Round 2 ~7, Round 3 ~7, **Round 4 ~6**. By rate alone, no flattening. But the BUG CLASS shifted:
+
+- Round 1 + 2 found ARCHITECTURAL bugs (scattered keys, mutable IR, missing concurrency defenses).
+- Round 3 found CORRECTNESS-GAP bugs (validator reach, ABSENT branch symmetry, prewarm vagueness).
+- Round 4 found PSEUDO-CODE-PRECISION bugs (wrong signatures, wrong symbols, count drift).
+
+Round 5 prediction: pseudo-code precision in Round-4-introduced code (`_resolve_static_prefix_for_cache` helper, per-cause structured payload schema, spike contingency table). At which point we'd see Round 5 with 1-2 Critical and the curve flattening. The escape hatch is implementation. The architectural backbone (CacheRenderContext + frozen IR + MappingProxyType + sentinel + shared resolution helpers) holds against round 4 review. Remaining bugs are local correctness; they will surface immediately during B1.1 if any slip through.
+
+### Insights to carry forward
+
+- **"Read the target code before writing pseudo-code that depends on its signature."** Round 3 sketched D.2 prewarm without reading `_collect_parallel_results`; the resulting pseudo-code shipped a malformed `results[0]`. Round 4 verified each pseudo-code reference via direct Read. The 5-minute verification cost prevents hours of mid-implementation rework.
+- **Top-10% / simplest-final-code is the right lens for fix-shape decisions.** Asking "what would mypy/rustc/ruff do?" eliminated belt-and-suspenders (V5) and id-namespacing (V6) in favor of single-source-of-truth and combined-diagnostic-with-typed-context.
+- **Each round operates on a different post-fix codebase.** Round 4 reviewers saw Round 3 patches as fresh material. Round 4's claims of completeness ("all consumers use canonical pattern") need to be re-verified by Round 5 at two specific spots — process self-correcting.
+- **Targeted reviews (5 agents) work as well as full battery (8) for late rounds.** Skipping concurrency/feature-interactions/agent-ux for Round 4 cost nothing — those categories were closed by earlier rounds. Targeted is the right shape after architectural backbone stabilizes.
+- **`logger.warning` for fallback paths beats silent skip.** Round 4 added warnings to: cache.discrepancy unknown-enum dispatch, _validate_cache_block compile-path malformed shape, F2 auto-load scanner unparseable trace skip. The pattern: silent fallback hides regressions; visible fallback lets agents see degradation in `--verbose` mode.
+- **`/evaluate-review` skill changes the methodology.** When the user invoked it after Round 4, the framework forced explicit verification of every reviewer claim via parallel pflow-codebase-searcher subagents PLUS direct Read of the 6+ critical files. The discipline caught two reviewer claims that needed clarification (e.g., "single-threaded mock defeats parallelism" was right; the proposed barrier mechanism was the right shape). The framework is the right shape for late-round reviews where reviewer accuracy matters more than reviewer breadth.
+
+### What's encoded vs what's deferred
+
+**Critical (6 of 6):** all encoded, all verified against actual code shapes.
+**High-Priority (12 of 12):** all encoded.
+**Medium (8 of 14 encoded):** sub-workflow batch concurrency mechanism, divergence-injection mechanism (per-site monkeypatch), in-memory mutation pattern (compile_workflow direct call), `type: llm` positive control, minimal-valid params per node type, `_CHUNK_ABSENT` `__repr__`/`__str__` raise, function-scoped MockLLMClient fixture, ClaudeCodeNode allowlist-style docstring.
+**Medium (6 of 14 deferred):** `notes[]` typed (M2), `per_call[].declared_prompt_cache` four-state test (M4), per-warning-ID synthetic-workflow contract sub-table (M11), test file count consolidation, baseline-fixture script body, null-sort ordering polish.
+**Disputed (1):** review-silent-failures #3 (`_validate_cache_block` reach via compile path) — verified `compile_validation.py:120-122` reaches `validate_data_flow`; plan B2.3 belt-AND-suspenders structurally correct.
+
+**High-value additions encoded after user's follow-up question (5 of 5):** see "five high-value additions" section above.
+
+### Where things stand at session end
+
+- Plan is 1813 lines (was 1445 after Round 3, 1290 after Round 2, 1099 after Round 1). Catalog has 12 entries.
+- All Round 4 pseudo-code verified against actual code shapes (`batch_executor.py:524-611`, `node_state.py:25-59`, `template_resolver.py:198-212`, `plan_node.py:35-68`, `diagnostic.py:69-92`, `compile_validation.py:120-161`).
+- `_resolve_static_prefix_for_cache` companion helper locks byte-identical resolution across all three cache paths.
+- `cache.discrepancy` is now agent-actionable via `context["root_cause_action"]` typed payload (no prose parsing required).
+- JSON `format_version` consumer rule locked via `JSON_FORMAT_VERSION_MAJOR` constant.
+- Spike contingencies table maps each spike to the plan section it can contradict.
+- Three paid spikes (Gemini cache_control, OpenAI parallel routing, Anthropic per-TTL pricing) still pending — pre-authorized, run before B1.1.
+- B1.1 patches start AFTER spike outcomes recorded in §35 (potentially) AND any plan updates from spike contradictions land.
+
+### Next step
+
+The implementing agent runs the three pre-authorized paid spikes first, records outcomes as §35, updates plan sections per the Spike contingencies table if needed, then begins B1.1. The single load-bearing gate (B3 baseline fixture) remains unchanged.
