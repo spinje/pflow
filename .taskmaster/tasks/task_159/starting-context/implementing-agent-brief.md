@@ -37,10 +37,6 @@ The 13 sub-phases split into 4 segments at the strongest tacit-knowledge firebre
 
 **You are Segment N** — the user tells you which N when invoking you. Implement only that segment. Stop at the end.
 
-## Before you start coding
-
-Spikes ran 2026-04-29; any decisions they informed are already encoded in the plan. **The plan is your single source of truth.** §36 of `progress-log.md` records the audit trail if you ever need to know why a specific plan section says what it says — but you don't need to read it to implement.
-
 ### Agent 2+ (B3, C+D+E, F+G)
 
 Read the prior implementing agent's `implementation-progress-log.md` entry. If a prior agent surfaced a decision the user hasn't resolved, do NOT proceed — escalate.
