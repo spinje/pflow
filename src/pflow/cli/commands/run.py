@@ -818,7 +818,16 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
 )
 @click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
 @click.option("--dry-run", "dry_run", is_flag=True, help="Build execution plan without invoking side effects")
-@click.option("--cache/--no-cache", default=True, help="Enable/disable memoization cache (default: enabled)")
+@click.option(
+    "--cache/--no-cache",
+    default=True,
+    help=(
+        "Enable/disable pflow's local memoization layer (default: enabled). "
+        "Does NOT disable LLM provider prompt caching declared via "
+        "`prompt_cache:` / `## Cache` (those fire regardless). "
+        "See `pflow guide caching` for the two-layer model."
+    ),
+)
 @click.option(
     "--only",
     "only_node",

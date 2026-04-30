@@ -349,8 +349,97 @@ async def read_fields(
     return result
 
 
+@mcp.tool()
+async def analyze_cache(
+    workflow: Annotated[
+        str | dict[str, Any],
+        Field(description="Workflow name from library, path to workflow file, or workflow IR object"),
+    ],
+    parameters: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Input parameters as key-value pairs (optional per DD#35 — analysis falls back gracefully when input substitution can't fully resolve a prompt)"
+        ),
+    ] = None,
+) -> dict[str, Any]:
+    """Analyze a workflow's prompt-cache plan; emit recommendations + discrepancies.
+
+    Returns the same JSON shape as ``pflow analyze-cache --format=json``.
+
+    Top-level keys: ``format_version``, ``workflow_path``, ``analyzed_at``,
+    ``estimate_confidence``, ``estimate_confidence_coverage``, ``trace_path``,
+    ``summary``, ``recommended_actions``, ``suggested_blocks``, ``per_call``,
+    ``cross_workflow``, ``warnings``, ``notes``.
+
+    **Version policy**: ``format_version`` follows semver-ish. Minor bumps
+    (``1.0`` → ``1.1``) are additive (new fields, new warning IDs); consumers
+    tolerant via ``format_version.startswith("1.")`` continue to work.
+    Major bumps (``1.x`` → ``2.x``) are breaking; pinned consumers refuse to
+    consume. Mirrors the trace ``2.x`` consumer policy.
+
+    **Closed catalog of cache.* warning IDs** that may appear in
+    ``warnings[].id`` (12 entries in v1):
+      - cache.order-mismatch
+      - cache.unused-chunk
+      - cache.shared-context-undeclared
+      - cache.batch-prewarm-recommended
+      - cache.dynamic-before-static
+      - cache.padding-advisory
+      - cache.below-min-tokens
+      - cache.cross-workflow-prose-mismatch
+      - cache.cross-workflow-rename-detected
+      - cache.discrepancy
+      - cache.invalid-on-non-llm
+      - cache.prewarm-no-prefix
+
+    **Cost-degradation tri-state** (per the F2 contract): when some node
+    models lack pricing data, ``summary.partial_cost_usd`` becomes ``true``,
+    ``summary.unavailable_models`` lists the missing model strings, and
+    cost fields may be ``null``. Confidence label tracks token-source
+    fidelity, NOT dollar fidelity.
+
+    **per_call[].data_source** carries the four-value tier: ``trace`` /
+    ``memo`` / ``estimator`` / ``heuristic`` (highest-fidelity first).
+
+    **Empty-array contract**: ``cross_workflow.rename_detections``,
+    ``prose_mismatches``, ``value_flow_opportunities`` are always present
+    as ``[]`` (not absent, not ``null``) when no findings exist.
+
+    Per DD#36, analytical findings are advisory: ERROR-severity findings
+    surface in ``warnings[]`` but do NOT raise from this tool. Pre-existing
+    parse / validation errors that prevent IR construction DO raise (same
+    shape ``workflow_validate`` would surface).
+
+    Examples:
+        # Variant 1: saved library workflow
+        workflow="my-workflow"
+
+        # Variant 2: file path
+        workflow="./path/to/workflow.pflow.md"
+
+        # Variant 3: raw IR dict (for inline analysis)
+        workflow={"nodes": [...], "edges": [...]}
+
+        # With parameters (optional)
+        workflow="my-workflow"
+        parameters={"input_key": "value"}
+
+    Returns:
+        JSON dict matching the CLI's ``--format=json`` output shape.
+    """
+    logger.debug(f"analyze_cache called: workflow type={type(workflow).__name__}")
+
+    def _sync_analyze() -> dict[str, Any]:
+        return ExecutionService.analyze_cache(workflow, parameters)
+
+    result = await asyncio.to_thread(_sync_analyze)
+    logger.info("Cache analysis complete")
+    return result
+
+
 # Export all execution tools
 __all__ = [
+    "analyze_cache",
     "plan_workflow",
     "read_fields",
     "registry_run",

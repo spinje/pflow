@@ -355,6 +355,86 @@ class ExecutionService(BaseService):
 
     @classmethod
     @ensure_stateless
+    def analyze_cache(
+        cls,
+        workflow: Any,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Analyze a workflow's cache plan; return the JSON shape that mirrors
+        ``pflow analyze-cache --format=json`` byte-for-byte.
+
+        Per Task 152 MCP-parity invariant: every shared formatter has two call
+        sites (CLI + MCP); ``render_json(analyze(...))`` is that single
+        formatter and is reused by both surfaces.
+
+        Per DD#36, cache-analysis findings are advisory: ERROR-severity
+        diagnostics surface in the result's ``warnings[]`` array but do NOT
+        raise exceptions from this method. Exceptions are reserved for parse /
+        validation failures that prevent IR construction (the same shape the
+        runner would surface), and for trace-load failures.
+
+        Args:
+            workflow: Workflow file path / saved name / raw IR dict.
+            parameters: Optional input parameters (per DD#35 — analysis falls
+                back gracefully when input substitution can't fully resolve a
+                prompt).
+
+        Returns:
+            JSON dict with stable schema; ``format_version`` follows
+            ``JSON_FORMAT_VERSION``. Consumers should match
+            ``format_version.startswith("1.")`` (accept any minor ``1.x``,
+            reject major ``2.x``).
+
+        Raises:
+            ValueError: workflow path unparseable, validation prevents IR
+                construction, or ``--from-trace`` analog (a trace path
+                provided via parameters) cannot be loaded. Pre-rendered
+                rich text matching the CLI surface.
+        """
+        from pflow.core.cache_analysis import analyze, render_json
+
+        validated_params: dict[str, Any] = {}
+        if parameters:
+            is_valid, error = validate_execution_parameters(parameters)
+            if not is_valid:
+                raise ValueError(f"Invalid parameters: {error}")
+            validated_params = dict(parameters)
+
+        try:
+            resolved = _unified_resolve(workflow)
+        except WorkflowNotFoundError as e:
+            hint = str(e)
+            if e.similar_names:
+                hint += f"\nDid you mean: {', '.join(e.similar_names[:5])}"
+            raise ValueError(hint) from e
+        except (CompilationError, MarkdownParseError) as e:
+            from pflow.core.diagnostic import exception_to_diagnostics
+
+            rendered = "\n\n".join(format_diagnostic(d) for d in exception_to_diagnostics(e))
+            raise ValueError(f"Workflow analysis failed:\n\n{rendered}") from e
+        except Exception as e:
+            raise ValueError(str(e)) from e
+
+        base_path = Path(resolved.file_path).parent if resolved.file_path else None
+        workflow_path_str = resolved.file_path or "<inline>"
+
+        try:
+            analysis = analyze(
+                resolved.ir,
+                parameters=validated_params,
+                workflow_path=workflow_path_str,
+                base_path=base_path,
+            )
+        except (FileNotFoundError, ValueError) as e:
+            raise ValueError(str(e)) from e
+        except Exception as e:
+            logger.error("Cache analysis failed: %s", e, exc_info=True)
+            raise RuntimeError(f"❌ Cache analysis failed: {e}") from e
+
+        return render_json(analysis)
+
+    @classmethod
+    @ensure_stateless
     def save_workflow(cls, workflow: str, name: str, force: bool = False) -> str:
         """Save workflow to global library.
 

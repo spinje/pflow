@@ -118,6 +118,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
         ctx.exit(0)
 
 
+from pflow.cli.commands.analyze_cache import analyze_cache  # noqa: E402
 from pflow.cli.commands.describe import describe_cmd  # noqa: E402
 from pflow.cli.commands.find import find_cmd  # noqa: E402
 from pflow.cli.commands.guide import guide_cmd  # noqa: E402
@@ -147,6 +148,7 @@ cli.add_command(read_fields)
 cli.add_command(skill)
 cli.add_command(report_cmd)
 cli.add_command(visualize)
+cli.add_command(analyze_cache)
 
 
 def cli_main() -> None:

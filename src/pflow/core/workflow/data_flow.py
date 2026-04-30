@@ -731,9 +731,7 @@ def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fi
             "node_type": node_type,
             "path": f"nodes[id={node_id}]",
         },
-        # The guide-topic pointer is wired in Phase G when the caching topic
-        # ships. Until then, the topic-existence test enforces that every
-        # see-also reference points at a registered topic.
+        see_also=["caching"],
     )
 
 
@@ -762,9 +760,7 @@ def _make_order_mismatch_diagnostic(node_id: str, declared: list[str], actual: l
             "actual_str": actual_str,
             "path": f"nodes[id={node_id}].prompt_cache",
         },
-        # The guide-topic pointer is wired in Phase G when the caching topic
-        # ships. Until then, the topic-existence test enforces that every
-        # see-also reference points at a registered topic.
+        see_also=["caching"],
     )
 
 
@@ -909,7 +905,5 @@ def _make_unused_chunk_diagnostic(chunk_name: str) -> Diagnostic:
             "chunk_name": chunk_name,
             "path": f"cache.items[name={chunk_name}]",
         },
-        # The guide-topic pointer is wired in Phase G when the caching topic
-        # ships. Until then, the topic-existence test enforces that every
-        # see-also reference points at a registered topic.
+        see_also=["caching"],
     )

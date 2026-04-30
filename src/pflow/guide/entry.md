@@ -50,6 +50,8 @@ Features — when the user says X, load topic Y:
                    → "if X then Y", "handle failures", "retry on error"
   sub-workflows    Reusable sub-workflow composition
                    → "reuse this", "same validation as X"
+  caching          Prompt caching, ## Cache, prompt_cache:
+                   → "cache prompts", "reduce LLM cost", "speed up retries"
 
 Start here:
   core             Framework fundamentals — how to design and build workflows

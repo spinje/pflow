@@ -96,7 +96,7 @@ ChunkRenderResult = Union[str, _ChunkAbsentSentinel]
 # --- Deterministic serialization (single source of truth) ------------------
 
 
-def _deterministic_serialize(value: Any) -> str:
+def deterministic_serialize(value: Any) -> str:
     """Serialize a resolved chunk value to canonical bytes.
 
     Strings pass through verbatim. Everything else is encoded as compact JSON
@@ -105,10 +105,21 @@ def _deterministic_serialize(value: Any) -> str:
     deterministic across Python implementations and dict-insertion-order
     histories — the load-bearing invariant for byte-identity at hash AND prep
     sites (B3.3 hash-vs-prep render byte-equivalence).
+
+    Public per Task 159 G.1 — every consumer that needs canonical byte
+    serialization (chunk hash, chunk message, static-prefix auto-batch,
+    analyzer prediction) imports this single helper. Forking it would
+    silently break the cache-key byte-identity invariant.
     """
     if isinstance(value, str):
         return value
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+# Backward-compatible private alias — kept for in-tree consumers that
+# imported the underscored name during Phase B3 / C1.2. New code uses
+# ``deterministic_serialize``.
+_deterministic_serialize = deterministic_serialize
 
 
 # --- Chunk-level resolution (single ${var} per chunk) ----------------------

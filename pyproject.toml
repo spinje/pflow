@@ -169,6 +169,7 @@ ignore = [
 "tests/*" = ["S101"]
 "tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
 "src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
+"src/pflow/core/cache_analysis/*" = ["RUF001", "RUF002"]  # `×` (multiplication sign) is spec-mandated for agent-facing output: `(×N)` batch annotation, `0.1×`/`1.25×`/`2×` cost ratios.
 
 [tool.ruff.format]
 preview = true

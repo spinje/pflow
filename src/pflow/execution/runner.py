@@ -422,7 +422,47 @@ class WorkflowRunner:
         if validation_diags:
             plan = replace(plan, diagnostics=[*plan.diagnostics, *validation_diags])
 
+        # Task 159 F3.3: append the dry-run cache nudge when actionable
+        # opportunities exist (silent on optimal plans). Per DD#36, --dry-run
+        # runs the FULL analytical pass — same analysis as `pflow analyze-cache`.
+        cache_nudge = self._build_cache_nudge(resolved, params, workflow_name)
+        if cache_nudge is not None:
+            plan = replace(plan, diagnostics=[*plan.diagnostics, cache_nudge])
+
         return plan
+
+    def _build_cache_nudge(
+        self,
+        resolved: ResolvedWorkflow,
+        params: dict[str, Any],
+        workflow_name: str,
+    ) -> Diagnostic | None:
+        """Run analyze() + summarize() to produce the dry-run cache nudge.
+
+        Returns ``None`` when the cache plan is optimal (no actionable
+        opportunities). On any analyzer-internal failure, log + return None
+        — the nudge is advisory and must NEVER fail the dry-run.
+        """
+        try:
+            from pathlib import Path
+
+            from pflow.core.cache_analysis import analyze, summarize_from_analysis
+
+            base_path = Path(resolved.file_path).parent if resolved.file_path else None
+            analysis = analyze(
+                resolved.ir,
+                parameters=params,
+                workflow_path=resolved.file_path or workflow_name,
+                base_path=base_path,
+                # Don't auto-load traces in --dry-run path — keeps latency
+                # bounded; agents who want trace-correlated nudges run
+                # `pflow analyze-cache --from-trace` directly.
+                auto_load_trace=False,
+            )
+            return summarize_from_analysis(analysis)
+        except Exception:
+            logger.debug("Cache nudge generation failed; skipping", exc_info=True)
+            return None
 
     # --- Internal helpers ---
 
