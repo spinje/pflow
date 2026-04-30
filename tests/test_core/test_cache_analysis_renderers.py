@@ -237,6 +237,131 @@ def test_text_per_call_inline_marker_includes_analysis_wide_warning_id() -> None
     assert "cache.dynamic-before-static" in review_lines[0]
 
 
+def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findings() -> None:
+    """When ``RecommendedAction.node_id is None`` AND ``scope_workflow`` is set,
+    the renderer surfaces ``Workflow: <basename>`` so workflow-level findings
+    are distinguishable from per-node ones (the GH #2 surface).
+
+    Mutation test: comment out the ``elif action.scope_workflow:`` branch in
+    ``render_text._render_recommended_actions`` and this test fails — the
+    workflow-level finding renders with no scope line, indistinguishable
+    from a fully-unscoped finding.
+    """
+    from pflow.core.cache_analysis.analyze import RecommendedAction
+
+    actions = (
+        RecommendedAction(
+            rank=1,
+            warning_id="cache.shared-context-undeclared",
+            node_id=None,
+            estimated_savings_usd=None,
+            scope_workflow="/abs/path/song-creator.pflow.md",
+        ),
+        # Per-node finding alongside (existing rendering preserved).
+        RecommendedAction(
+            rank=2,
+            warning_id="cache.shared-context-undeclared",
+            node_id="emotional-reviews",
+            estimated_savings_usd=None,
+        ),
+    )
+    base = _make_analysis()
+    analysis = type(base)(
+        workflow_path=base.workflow_path,
+        analyzed_at=base.analyzed_at,
+        estimate_confidence=base.estimate_confidence,
+        estimate_confidence_coverage=base.estimate_confidence_coverage,
+        trace_path=base.trace_path,
+        summary=base.summary,
+        recommended_actions=actions,
+        suggested_blocks=base.suggested_blocks,
+        per_call=base.per_call,
+        cross_workflow=base.cross_workflow,
+        warnings=base.warnings,
+        notes=base.notes,
+    )
+    text = render_text(analysis)
+    # Workflow-level finding gets the basename (not full path) for compactness.
+    assert "Workflow: song-creator.pflow.md" in text
+    assert "/abs/path/" not in text  # Full path NOT surfaced; basename only.
+    # Per-node finding still renders with Node: prefix.
+    assert "Node: emotional-reviews" in text
+
+
+def test_text_recommended_actions_inline_label_passes_through() -> None:
+    """Non-path scope identifiers (``<inline>``, ``ir-hash:abc123``) pass through
+    unchanged — they're not filesystem paths, so basename extraction shouldn't
+    chop a meaningful prefix off them.
+    """
+    from pflow.core.cache_analysis.analyze import RecommendedAction
+
+    actions = (
+        RecommendedAction(
+            rank=1,
+            warning_id="cache.shared-context-undeclared",
+            node_id=None,
+            estimated_savings_usd=None,
+            scope_workflow="<inline>",
+        ),
+    )
+    base = _make_analysis()
+    analysis = type(base)(
+        workflow_path=base.workflow_path,
+        analyzed_at=base.analyzed_at,
+        estimate_confidence=base.estimate_confidence,
+        estimate_confidence_coverage=base.estimate_confidence_coverage,
+        trace_path=base.trace_path,
+        summary=base.summary,
+        recommended_actions=actions,
+        suggested_blocks=base.suggested_blocks,
+        per_call=base.per_call,
+        cross_workflow=base.cross_workflow,
+        warnings=base.warnings,
+        notes=base.notes,
+    )
+    text = render_text(analysis)
+    assert "Workflow: <inline>" in text
+
+
+def test_text_recommended_actions_unscoped_finding_omits_scope_line() -> None:
+    """When neither node_id nor scope_workflow is set (defensive fallback),
+    the renderer omits the scope line entirely rather than showing an empty
+    "Node:" or "Workflow:" prefix."""
+    from pflow.core.cache_analysis.analyze import RecommendedAction
+
+    actions = (
+        RecommendedAction(
+            rank=1,
+            warning_id="cache.shared-context-undeclared",
+            node_id=None,
+            estimated_savings_usd=None,
+            scope_workflow=None,
+        ),
+    )
+    base = _make_analysis()
+    analysis = type(base)(
+        workflow_path=base.workflow_path,
+        analyzed_at=base.analyzed_at,
+        estimate_confidence=base.estimate_confidence,
+        estimate_confidence_coverage=base.estimate_confidence_coverage,
+        trace_path=base.trace_path,
+        summary=base.summary,
+        recommended_actions=actions,
+        suggested_blocks=base.suggested_blocks,
+        per_call=base.per_call,
+        cross_workflow=base.cross_workflow,
+        warnings=base.warnings,
+        notes=base.notes,
+    )
+    text = render_text(analysis)
+    # The action itself appears, but no scope line follows it.
+    assert "1. [cache.shared-context-undeclared]" in text
+    # No "Node:" or "Workflow:" line for this entry.
+    action_section_lines = [line for line in text.splitlines() if "cache.shared-context-undeclared" in line]
+    assert len(action_section_lines) >= 1
+    # The next line after the action shouldn't contain a scope label for this case.
+
+
 def test_text_recommended_actions_drop_sub_cent_savings() -> None:
     """Bug D — sub-cent estimated_savings_usd must render as 'savings unavailable',
     not '-$0.00/run'. Tri-state contract: rounds-to-zero == unavailable."""

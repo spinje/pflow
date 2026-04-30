@@ -327,3 +327,133 @@ def test_inputs_with_non_template_values_still_yield_edge() -> None:
     # If emitted, parent_value_expr is the literal value; rename check uses tail logic.
     if edges:
         assert edges[0].child_input_name == "x"
+
+
+# ---------------------------------------------------------------------------
+# CrossWorkflowEdge — batch-alias detection (#362 evidence-basis suppression)
+# ---------------------------------------------------------------------------
+
+
+def _batch_workflow_node(node_id: str, workflow_ref: str, inputs: dict[str, str], alias: str = "item") -> dict:
+    """Workflow-type node with a batch config — the parent shape that triggers
+    batch-alias edges."""
+    return {
+        "id": node_id,
+        "type": "workflow",
+        "params": {"workflow": workflow_ref, "inputs": dict(inputs)},
+        "batch": {"items": "${things}", "as": alias},
+        "_source_line": 50,
+    }
+
+
+def test_walker_populates_parent_batch_alias_from_default_item() -> None:
+    """When the parent workflow-type node has ``batch:`` with no explicit
+    ``as:``, the walker records ``parent_batch_alias = "item"`` on each edge.
+    Used downstream to suppress rename warnings for iteration-variable
+    references (``${item}`` / ``${item.X}``).
+    """
+    child_ir = {"inputs": {"source": {"type": "string"}}, "nodes": []}
+    parent_node = {
+        "id": "fetch",
+        "type": "workflow",
+        "params": {"workflow": "./c.pflow.md", "inputs": {"source": "${item}"}},
+        "batch": {"items": "${urls}", "parallel": True},  # No explicit ``as:`` → defaults to "item".
+        "_source_line": 50,
+    }
+    root_ir = {"nodes": [parent_node]}
+    resolver = _StubResolver({"./c.pflow.md": (child_ir, Path("/abs/c.pflow.md"))})
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    assert len(result.edges) == 1
+    assert result.edges[0].parent_batch_alias == "item"
+
+
+def test_walker_populates_parent_batch_alias_from_explicit_as() -> None:
+    """When ``as: <name>`` overrides the default, the alias propagates to edges."""
+    child_ir = {"inputs": {"row": {"type": "object"}}, "nodes": []}
+    root_ir = {"nodes": [_batch_workflow_node("process", "./c.pflow.md", {"row": "${record.data}"}, alias="record")]}
+    resolver = _StubResolver({"./c.pflow.md": (child_ir, Path("/abs/c.pflow.md"))})
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    assert result.edges[0].parent_batch_alias == "record"
+
+
+def test_walker_parent_batch_alias_none_for_non_batch_node() -> None:
+    """Non-batch workflow nodes have no iteration variable; ``parent_batch_alias``
+    is ``None``."""
+    child_ir = {"inputs": {"x": {"type": "string"}}, "nodes": []}
+    root_ir = {"nodes": [_workflow_node("c", "./child.pflow.md", {"x": "${y}"})]}
+    resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/child.pflow.md"))})
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    assert result.edges[0].parent_batch_alias is None
+
+
+def test_is_batch_alias_root_simple_alias_match() -> None:
+    """``${item}`` (bare alias) is detected as a batch-alias root."""
+    edge = CrossWorkflowEdge(
+        parent_workflow="p.pflow.md",
+        child_workflow="c.pflow.md",
+        parent_value_expr="item",
+        child_input_name="source",
+        line_in_parent=10,
+        parent_node_id="fetch",
+        parent_batch_alias="item",
+    )
+    assert edge.is_rename is True  # Names differ: 'item' vs 'source'
+    assert edge.is_batch_alias_root is True
+
+
+def test_is_batch_alias_root_dotted_path_match() -> None:
+    """``${item.field}`` is a batch-alias root (root segment = alias)."""
+    edge = CrossWorkflowEdge(
+        parent_workflow="p.pflow.md",
+        child_workflow="c.pflow.md",
+        parent_value_expr="item.url",
+        child_input_name="source",
+        line_in_parent=10,
+        parent_node_id="fetch",
+        parent_batch_alias="item",
+    )
+    assert edge.is_batch_alias_root is True
+
+
+def test_is_batch_alias_root_bracketed_path_match() -> None:
+    """``${item[0].x}`` is a batch-alias root (root segment before bracket = alias)."""
+    edge = CrossWorkflowEdge(
+        parent_workflow="p.pflow.md",
+        child_workflow="c.pflow.md",
+        parent_value_expr="item[0].field",
+        child_input_name="source",
+        line_in_parent=10,
+        parent_node_id="fetch",
+        parent_batch_alias="item",
+    )
+    assert edge.is_batch_alias_root is True
+
+
+def test_is_batch_alias_root_false_when_no_batch() -> None:
+    """``parent_batch_alias=None`` → never a batch-alias root."""
+    edge = CrossWorkflowEdge(
+        parent_workflow="p.pflow.md",
+        child_workflow="c.pflow.md",
+        parent_value_expr="item",
+        child_input_name="source",
+        line_in_parent=10,
+        parent_node_id="fetch",
+        parent_batch_alias=None,
+    )
+    assert edge.is_batch_alias_root is False
+
+
+def test_is_batch_alias_root_false_when_value_doesnt_match() -> None:
+    """Stable identifier (e.g. ``${concept_brief}``) is NOT a batch-alias root
+    even when the parent has batch config."""
+    edge = CrossWorkflowEdge(
+        parent_workflow="p.pflow.md",
+        child_workflow="c.pflow.md",
+        parent_value_expr="concept_brief",
+        child_input_name="creative_brief",
+        line_in_parent=10,
+        parent_node_id="fetch",
+        parent_batch_alias="item",
+    )
+    assert edge.is_rename is True  # 'concept_brief' vs 'creative_brief'
+    assert edge.is_batch_alias_root is False  # Real rename, not iteration variable

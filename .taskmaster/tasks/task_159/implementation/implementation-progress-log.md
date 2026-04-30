@@ -2778,3 +2778,250 @@ the path during the planning conversation. The three follow-up items
 (Path 2 + #362) are tracked as separate work.
 
 ---
+
+## Stage 1 lyrics-generator verification: Tier 1 AG/UX fixes (2026-04-30)
+
+User reframed: "do the issues we would need to fix regardless... There are no
+v1.x issues right now, everything should be up on the table for the next
+agent." So I shipped Tier 1 (the 4 issues that produce wrong/buried/incomplete
+findings to agents on real workflows) and documented Tier 2 + Tier 3 + open
+architectural questions for the next agent rather than filing them as v1.x
+deferrals.
+
+### What I implemented
+
+Four Tier 1 issues fixed in this commit. Each has mutation-tested regression
+gates.
+
+**#362 — Cross-workflow rename detector evidence-basis suppression.**
+
+Pre-fix: 23 false-positive `cache.cross-workflow-rename-detected` warnings on
+lyrics-generator dominated the "Recommended actions" section. Two distinct
+false-positive classes:
+
+1. **Batch alias**: `${item}` and `${item.X}` are iteration-variable
+   references, not stable renameable identifiers. Every batch sub-workflow
+   invocation tripped this.
+2. **No `## Cache` on either side**: rename's premise (diverging prose
+   labels would break byte-level cache match) requires `## Cache` declared
+   to be actionable. Without it, the warning fires hypothetically.
+
+Fix shape — applied at emission, NOT at the walker (keeps `is_rename`
+syntactic-pure). Added `parent_batch_alias: str | None` field to
+`CrossWorkflowEdge`, populated by walker at `_process_one_call`. Added new
+`is_batch_alias_root` property that detects when `parent_value_expr`'s root
+segment matches the alias. In `analyze.py:_build_cross_workflow_findings`,
+the rename emission gate now skips edges where `is_batch_alias_root` is True
+OR neither side declares `## Cache`.
+
+**Framed as "evidence-basis principle"** in code comments: predictive
+warnings about state comparisons fire only when the state to compare against
+exists. Top-10% codebases (mypy, rustc, clippy, ruff) all follow this — they
+don't warn about hypothetical states. The user's framing during planning was
+sharp on this point.
+
+Files: `core/cache_analysis/cross_workflow.py`, `core/cache_analysis/analyze.py`,
++8 new tests in `test_cache_analysis_cross_workflow.py` (predicate + walker)
++5 new tests in `test_cache_analysis_per_id_emission.py` (end-to-end emission).
+
+**#1 — Sort priority dict in `warning_catalog.py`.**
+
+Pre-fix: `_build_recommended_actions` sort key was
+`(-sev_weight, -savings, d.id or "")`. When two warnings shared severity AND
+had no savings, alphabetical tie-break put `cache.cross-workflow-rename-
+detected` (sorts earlier alphabetically) ahead of `cache.shared-context-
+undeclared` (the actual high-value finding). On lyrics-generator, the 4
+shared-context findings ended up at positions 18-21 below 17 noise warnings.
+
+Fix shape: new `RECOMMENDED_ACTION_PRIORITY: dict[str, int]` constant in
+`warning_catalog.py` (where catalog metadata lives — SSoT). Tier 1 actionable
+IDs (shared-context-undeclared, dynamic-before-static, batch-prewarm-
+recommended) priority 10; advisories priority 20; informational/alignment
+priority 50. Sort key extends to `(-sev_weight, priority, -savings, d.id or "")`.
+
+ERROR severity still wins over priority dimension — structural blockers
+first. Unknown IDs default to 100 (lowest) for graceful degradation.
+
+Files: `core/cache_analysis/warning_catalog.py` (new constants),
+`core/cache_analysis/analyze.py` (sort key extension), +4 tests in
+`test_cache_analysis_analyze.py`.
+
+**#2 — Workflow-level scope rendering.**
+
+Pre-fix: `cache.shared-context-undeclared` is emitted in two contexts —
+workflow-level (analyze.py:766) with `node_id=None`, and per-node
+(analyze.py:1078) with `node_id=parent_node_id`. Text renderer treated
+`node_id=None` as "no scope line" — workflow-level findings rendered
+identically to fully-unscoped ones, indistinguishable from per-node.
+
+Fix shape: added `scope_workflow: str | None` field to `RecommendedAction`,
+populated during `_build_recommended_actions` from
+`context.affected_workflow` when `node_id is None`. Text renderer outputs
+`Workflow: <basename>` when `scope_workflow` is set; basename stripping via
+new `_short_workflow_label` helper (filesystem paths get basename;
+`<inline>`, `ir-hash:*` pass through). JSON renderer exposes
+`scope_workflow` field (additive to JSON shape — JSON consumers dispatch on
+`(node_id, scope_workflow)` — at most one non-null).
+
+Files: `core/cache_analysis/analyze.py` (RecommendedAction field +
+population), `core/cache_analysis/render_text.py` (renderer +
+_short_workflow_label), `core/cache_analysis/render_json.py` (JSON
+exposure), +3 tests in `test_cache_analysis_renderers.py`.
+
+**#10 — `_source_line` populated on nodes (parser fix).**
+
+Pre-fix: cross-workflow output showed `(line 0)` for every boundary.
+Investigation: `_source_line` was set only on outputs (and conditionally —
+only when `source:` was present in YAML params). Workflow-type nodes never
+had it populated, so the cross-workflow walker's `int(node.get("_source_line")
+or 0)` always returned 0.
+
+Fix shape: parser-level fix at `markdown_parser._build_node_dict`. Added
+`node["_source_line"] = entity.heading_line` at the end of the function
+(the `### node-id` heading is the natural anchor for "where in the file
+this node lives"). Updated `ir_schema.py` to allow `_source_line` as a
+node-level integer property.
+
+Picked the parser fix over a render-time guard because it makes the field
+universally available — future consumers (richer diagnostic rendering,
+`pflow describe`-with-line-numbers, etc.) inherit accurate source-line
+attribution for free. The `int(...) or 0` defensive read in cross_workflow.py
+still works (now defensive-only).
+
+Files: `core/markdown_parser.py`, `core/ir_schema.py`, +2 tests in
+`test_markdown_parser.py` (`TestNodeSourceLine`).
+
+### Verification
+
+- `make test`: **5,967 passing** (was 5,945 before; +22 new Tier 1 tests,
+  zero regressions).
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- `test_plan_drift.py` 34/34 green throughout.
+- `test_golden_baseline_hashes_match` (DD#19) green.
+- All 4 Tier 1 fixes mutation-tested. For each: `git stash` the production
+  fix → the matching contract test fails with a clear diagnostic;
+  `git stash pop` → passes.
+- **End-to-end smoke on lyrics-generator** (`song-creator/song-creator.pflow.md`):
+
+  Pre-Tier-1 (after Path 1 only):
+  - 21 opportunities (17 false-positive renames + 4 actionable)
+  - Recommendations buried at positions 18-21
+  - Workflow-level finding rendered with no scope line
+  - Cross-workflow output: `(line 0)` everywhere
+
+  Post-Tier-1:
+  - 4 opportunities (all actionable, all `cache.shared-context-undeclared`)
+  - Recommendations sorted with shared-context-undeclared first
+  - Workflow-level finding rendered as `Workflow: song-creator.pflow.md`
+  - Real line numbers (e.g. `(line 49)`) in cross-workflow output
+
+  The output is now agent-readable top-to-bottom without manual rework.
+
+### Updated existing test fixture
+
+`test_cache_analysis_per_id_coverage.py::test_emitted_diagnostics_round_trip_for_real_producer_paths`
+relied on the old behavior where `cache.cross-workflow-rename-detected`
+fires on greenfield (no `## Cache`). Updated the rename fixture to add
+`## Cache` to the parent so the warning still fires under the new
+suppression rules. Documented in the test's comments: "Per the
+evidence-basis suppression (#362), the warning fires only when at least
+one side declares ## Cache."
+
+### Tacit knowledge for the next agent
+
+1. **The evidence-basis principle generalizes.** When you add a new warning,
+   ask: "is this predicting a future problem? what state makes the prediction
+   actionable?" If the answer is "imagine the user adds X later," gate the
+   warning on that state existing. Other catalog warnings I haven't audited
+   may need similar gates.
+
+2. **`parent_batch_alias` is on the edge, not derived at emission.** Set the
+   pattern: pre-compute walker-time information on `CrossWorkflowEdge`
+   fields so emission-time consumers don't re-walk the IR. Adding more such
+   fields is straightforward; just populate in `_process_one_call`.
+
+3. **Priority dict in `warning_catalog.py` is the SSoT for ordering.** Adding
+   a new catalog ID requires a priority entry too — otherwise it falls back
+   to `DEFAULT_RECOMMENDED_ACTION_PRIORITY` (100, lowest). The tiers
+   (5/10/15/20/30/50) leave gaps for future IDs to slot in without
+   renumbering.
+
+4. **`RecommendedAction.scope_workflow` and `node_id` are mutually exclusive
+   semantically.** At most one is set; both can be None for unscoped
+   findings (rare). JSON consumers dispatch on the triple. Don't add a
+   `scope` enum field — overengineering; the existing fields already encode
+   the choice.
+
+5. **`_source_line` is now consistently populated on nodes.** If you write
+   code reading it, expect a populated `int`. The legacy
+   `int(node.get("_source_line") or 0)` defensive read still works but the
+   `or 0` fallback is now defensive-only.
+
+6. **Mutation testing is the litmus for negative fixtures.** Every Tier 1
+   test has a docstring explaining what removing the production fix would
+   break. Follow the same pattern.
+
+### Open hedged claims and verifications still pending
+
+- **VERIFIED**: All 4 Tier 1 fixes don't break existing behavior. 5,967 tests
+  pass; no regressions.
+- **VERIFIED**: Cross-workflow walker correctly populates `parent_batch_alias`
+  for batch + non-batch parent nodes. Both `as: <custom>` and default `"item"`
+  cases tested.
+- **VERIFIED**: Sort priority correctly resolves the original burying
+  scenario. Mutation-tested.
+- **VERIFIED**: Workflow-level scope renders with basename; full path NOT
+  surfaced (compactness). Mutation-tested.
+- **VERIFIED**: `_source_line` populated on workflow + shell + LLM nodes
+  (TestNodeSourceLine).
+- **NEEDS VERIFICATION (next agent's Stage 2 work)**: real LLM run with
+  `## Cache` declared on song-creator delivers spec's locked ≥40% input-cost
+  reduction. The analyzer correctly identifies the opportunity AND points
+  to actionable findings; Stage 2 verifies the cache rendering layer
+  (Segments 2-3 of Task 159) actually delivers the savings on a real
+  workflow.
+
+### Open user decisions surfaced
+
+**None blocking.** Three architectural questions were SURFACED but explicitly
+not filed as v1.x deferrals (per user reframe). All documented in
+`agent-handoff-stage1-stage2.md`:
+
+1. **Catalog redesign question**: should `cache.cross-workflow-rename-detected`
+   fold into `cache.discrepancy`'s root_cause enum? Discussed during planning;
+   tabled for next-agent decision because the Tier 1 #362 suppression makes
+   the standalone warning behave correctly NOW, even if v1.x decides to
+   redesign.
+
+2. **Python-assembled prompts (#12)**: chorus-chooser's score-choruses (the
+   spec mode-1 canonical prewarm test) has its prompt assembled in Python
+   code. Static analyzer can't see it. Three directions documented (document-
+   as-limitation, run-once detection, AST analysis); recommendation is
+   document-as-limitation for v1, run-once detection for v1.x.
+
+3. **Path 2 architectural cleanup (#361)**: extends the boundary contract
+   to close #321 + #334 in lockstep. ~280 LOC + ~10 tests, 1-2 days.
+   Tracked as separate issue. NOT blocking Stage 2 — but consider tackling
+   before merging if user wants the architectural slice complete.
+
+### Lessons worth surfacing
+
+1. **"File as v1.x" is a tactical convenience that ships broken UX.** My
+   first-draft plan filed cross-workflow rename suppression as a separate
+   GH issue. User correctly pushed back: "this branch needs to be working,
+   we cant defer things that SHOULD be working." Top-10% codebases ship
+   coherent v1s, not "shipped + tracked brokenness." Tier 1 framing
+   ("regardless" = "what's actually broken") is the right bar.
+
+2. **The smart-colleague handoff doc pattern works.** I followed the
+   existing `recommendations-section-handoff.md` shape — what's in this PR,
+   current state, what's left, decisions on the table, tacit knowledge,
+   quick-start commands. Kept context dense without requiring the next
+   agent to re-derive everything.
+
+3. **Mutation testing forces honest contracts.** Every Tier 1 fix has a
+   regression gate that fails when the fix is reverted. This is more useful
+   than just "test passes after fix" — it proves the test ACTUALLY guards
+   the regression class. Worth doing for every fix in this branch.
+
+---

@@ -301,6 +301,195 @@ def test_cross_workflow_value_flow_suppresses_when_no_llm_consumers(monkeypatch:
     assert all(not (d.id == "cache.shared-context-undeclared" and d.node_id == "child-call") for d in result.warnings)
 
 
+# ---------------------------------------------------------------------------
+# #362 — cache.cross-workflow-rename-detected evidence-basis suppression
+#
+# Mutation test contract for these: comment out either suppression branch in
+# ``analyze.py::_build_cross_workflow_findings`` and the matching test fails
+# with a clear assertion. The two branches together encode the principle
+# "predictive warnings about state comparisons fire only when the state to
+# compare against actually exists" (no batch-iteration substitution; at
+# least one side has ``## Cache``).
+# ---------------------------------------------------------------------------
+
+
+def test_rename_warning_suppressed_for_batch_alias_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``${item}`` is the iteration variable for a batch sub-workflow call;
+    ``parent passes 'item' as input named 'source'`` is iteration-variable
+    substitution, not a logical rename. The detector must suppress.
+
+    Mutation test: comment out ``if edge.is_batch_alias_root: continue`` in
+    analyze.py and this test fails — the rename warning fires on every
+    batch-sub-workflow boundary in the lyrics-generator workflow (~6 false
+    positives per parent run).
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    # Parent has a batch sub-workflow call; even with ## Cache declared (so
+    # Suppression 2 doesn't fire), the batch-alias suppression must still
+    # block the warning.
+    parent_ir = {
+        "cache": {"items": [{"name": "x", "var": "x", "prose_before": "x:\n"}]},
+        "nodes": [
+            {
+                "id": "fetch",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"source": "${item}"}},
+                "batch": {"items": "${urls}", "parallel": True},
+            }
+        ],
+    }
+    child_ir = {"inputs": {"source": {"type": "string"}}, "nodes": []}
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    rename_diags = [d for d in result.warnings if d.id == "cache.cross-workflow-rename-detected"]
+    assert rename_diags == [], (
+        f"Batch alias edge produced rename warning(s): {rename_diags}. "
+        "Suppression 1 (batch_alias_root) should block this; check is_batch_alias_root or analyze.py emission gate."
+    )
+
+
+def test_rename_warning_suppressed_for_dotted_batch_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``${item.field}`` is also an iteration-variable reference (root segment
+    is the batch alias). Same suppression applies."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "cache": {"items": [{"name": "x", "var": "x", "prose_before": "x:\n"}]},
+        "nodes": [
+            {
+                "id": "process",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"target": "${item.url}"}},
+                "batch": {"items": "${records}", "parallel": True},
+            }
+        ],
+    }
+    child_ir = {"inputs": {"target": {"type": "string"}}, "nodes": []}
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    rename_diags = [d for d in result.warnings if d.id == "cache.cross-workflow-rename-detected"]
+    assert rename_diags == []
+
+
+def test_rename_warning_suppressed_when_neither_side_has_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real rename (different stable identifiers across boundary) should NOT
+    fire when neither parent nor child declares ``## Cache``. The warning's
+    premise — diverging prose labels would break byte-level cache match — is
+    hypothetical without ``## Cache`` declarations to compare against.
+
+    Mutation test: comment out the
+    ``if not parent_has_cache and not child_has_cache: continue`` branch and
+    this test fails — the warning fires on every cross-workflow rename in
+    greenfield workflows (~17 false positives on lyrics-generator).
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {
+                    "workflow": "./child.pflow.md",
+                    "inputs": {"creative_brief": "${concept_brief}"},
+                },
+            }
+        ]
+    }
+    child_ir = {"inputs": {"creative_brief": {"type": "string"}}, "nodes": []}
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    rename_diags = [d for d in result.warnings if d.id == "cache.cross-workflow-rename-detected"]
+    assert rename_diags == [], (
+        f"Rename without ## Cache on either side should be suppressed; got: {rename_diags}. "
+        "The warning's premise is hypothetical without state to compare against."
+    )
+
+
+def test_rename_warning_FIRES_when_parent_has_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same rename, but parent declares ``## Cache`` — now the warning IS
+    actionable (agent can align prose labels) and must fire.
+
+    Locks the positive case so the suppression doesn't over-block.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "cache": {"items": [{"name": "concept_brief", "var": "concept_brief", "prose_before": "Brief:\n"}]},
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {
+                    "workflow": "./child.pflow.md",
+                    "inputs": {"creative_brief": "${concept_brief}"},
+                },
+            }
+        ],
+    }
+    child_ir = {"inputs": {"creative_brief": {"type": "string"}}, "nodes": []}
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    rename_diags = [d for d in result.warnings if d.id == "cache.cross-workflow-rename-detected"]
+    assert len(rename_diags) == 1, (
+        f"Expected exactly 1 rename warning when parent has ## Cache; got {len(rename_diags)}. "
+        "Over-suppression — the gate should NOT block when state exists to compare against."
+    )
+    assert rename_diags[0].context is not None
+    assert rename_diags[0].context["parent_value_expr"] == "concept_brief"
+    assert rename_diags[0].context["child_input_name"] == "creative_brief"
+
+
+def test_rename_warning_FIRES_when_child_has_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same rename, parent has no ``## Cache`` but child does — warning still
+    fires because the child's prose label could end up diverging from a
+    future parent declaration."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {
+                    "workflow": "./child.pflow.md",
+                    "inputs": {"creative_brief": "${concept_brief}"},
+                },
+            }
+        ]
+    }
+    child_ir = {
+        "cache": {"items": [{"name": "creative_brief", "var": "creative_brief", "prose_before": "Brief:\n"}]},
+        "inputs": {"creative_brief": {"type": "string"}},
+        "nodes": [],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    rename_diags = [d for d in result.warnings if d.id == "cache.cross-workflow-rename-detected"]
+    assert len(rename_diags) == 1
+
+
 def _write_trace(tmp_path: Path, events: list[dict[str, Any]], *, format_version: str = "2.1.0") -> Path:
     trace_path = tmp_path / "trace.json"
     trace_path.write_text(

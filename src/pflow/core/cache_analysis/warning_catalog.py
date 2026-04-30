@@ -358,6 +358,51 @@ EXPECTED_CATALOG_COUNT: Final[int] = len(CACHE_WARNING_CATALOG)
 
 
 # ---------------------------------------------------------------------------
+# Recommended-actions sort priority
+#
+# When two warnings share severity AND ``savings_usd`` is unavailable for both
+# (the common greenfield case), the natural alphabetical tie-break buries
+# actionable findings (``cache.shared-context-undeclared`` — sorts later
+# alphabetically) under informational ones (``cache.cross-workflow-rename-
+# detected`` — sorts earlier). This dict gives an explicit detection-class
+# priority so agents reading the "Recommended actions" section see real
+# opportunities first.
+#
+# Lower number = higher priority (sorts earlier in recommended-actions).
+# Co-located with the catalog (this file is the SSoT for catalog metadata)
+# so future contributors adding a new ID see the priority table inline.
+# Updates go through the same DD#29 review as adding catalog entries.
+# Unknown IDs default to ``DEFAULT_RECOMMENDED_ACTION_PRIORITY`` (lowest).
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_RECOMMENDED_ACTION_PRIORITY: Final[int] = 100
+
+
+RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
+    # Tier 1 — actionable opportunities with concrete suggestions agents can apply.
+    "cache.shared-context-undeclared": 10,
+    "cache.dynamic-before-static": 10,
+    "cache.batch-prewarm-recommended": 10,
+    # Tier 2 — discrepancy attribution (only fires with trace; usually high-value).
+    "cache.discrepancy": 15,
+    # Tier 3 — advisories grounded in current state.
+    "cache.padding-advisory": 20,
+    # Tier 4 — structural problems (ERROR severity already wins via sev_weight;
+    # priority here is belt-and-suspenders for ordering ERRORs among themselves).
+    "cache.order-mismatch": 5,
+    "cache.invalid-on-non-llm": 5,
+    # Tier 5 — informational warnings that surface latent issues.
+    "cache.unused-chunk": 30,
+    "cache.below-min-tokens": 30,
+    "cache.prewarm-no-prefix": 30,
+    # Tier 6 — cross-workflow alignment (informational; no concrete savings).
+    "cache.cross-workflow-prose-mismatch": 50,
+    "cache.cross-workflow-rename-detected": 50,
+}
+
+
+# ---------------------------------------------------------------------------
 # cache.discrepancy dispatch — three module-level constants per F1 plan
 # ---------------------------------------------------------------------------
 
@@ -616,7 +661,9 @@ __all__ = [
     "CACHE_DISCREPANCY_REQUIRED_CONTEXT",
     "CACHE_OPPORTUNITIES_NUDGE_ID",
     "CACHE_WARNING_CATALOG",
+    "DEFAULT_RECOMMENDED_ACTION_PRIORITY",
     "EXPECTED_CATALOG_COUNT",
+    "RECOMMENDED_ACTION_PRIORITY",
     "CacheWarningSpec",
     "format_dry_run_nudge",
     "make_diagnostic",

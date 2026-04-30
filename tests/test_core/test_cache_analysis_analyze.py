@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,7 @@ from pflow.core.cache_analysis.analyze import (
     _maybe_append_gemini_note,
     analyze,
 )
-from pflow.core.diagnostic import Severity
+from pflow.core.diagnostic import Diagnostic, Severity
 
 # ---------------------------------------------------------------------------
 # Confidence aggregation — STRICT semantics per DD#34 line 634 verbatim
@@ -638,3 +639,96 @@ def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() ->
     # But the aggregate savings figure IS populated (input-only, output cancels).
     assert analysis.summary.aggregate_savings_first_run_usd is not None
     assert analysis.summary.aggregate_savings_first_run_usd > 0
+
+
+# ---------------------------------------------------------------------------
+# _build_recommended_actions sort priority (Tier 1 #1)
+#
+# Mutation contract: drop the ``priority`` dimension from the sort key in
+# ``_build_recommended_actions._key`` and the priority test fails — the
+# alphabetical tie-break re-buries actionable findings under informational
+# ones (the lyrics-generator regression we observed).
+# ---------------------------------------------------------------------------
+
+
+def _make_diag(diag_id: str, severity: Severity, savings_usd: float | None = None) -> Diagnostic:
+    """Synthetic Diagnostic for sort-key tests."""
+    context: dict[str, Any] = {}
+    if savings_usd is not None:
+        context["savings_usd"] = savings_usd
+    return Diagnostic(
+        severity=severity,
+        message=f"test {diag_id}",
+        title="Test",
+        id=diag_id,
+        node_id=None,
+        source="cache_analyzer",
+        context=context,
+    )
+
+
+def test_recommended_actions_prioritize_actionable_over_informational() -> None:
+    """When two warnings share severity AND have no savings, detection-class
+    priority decides the order. Tier 1 IDs (shared-context-undeclared,
+    priority 10) sort ahead of Tier 6 IDs (cross-workflow-rename-detected,
+    priority 50).
+
+    Pre-fix: alphabetical tie-break put rename-detected first (sorts before
+    shared-context-undeclared lexically). Agent reading top of "Recommended
+    actions" got noise instead of the real opportunity.
+    """
+    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+
+    actions = _build_recommended_actions([
+        _make_diag("cache.cross-workflow-rename-detected", Severity.INFO),
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),
+    ])
+    # shared-context-undeclared MUST come first (priority 10 < 50).
+    assert actions[0].warning_id == "cache.shared-context-undeclared"
+    assert actions[1].warning_id == "cache.cross-workflow-rename-detected"
+
+
+def test_recommended_actions_severity_overrides_priority() -> None:
+    """ERROR severity always wins over priority — structural blockers come first."""
+    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+
+    actions = _build_recommended_actions([
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),  # priority 10
+        _make_diag("cache.order-mismatch", Severity.ERROR),  # priority 5, ERROR
+    ])
+    # ERROR severity ranks above INFO regardless of priority dimension.
+    assert actions[0].warning_id == "cache.order-mismatch"
+    assert actions[1].warning_id == "cache.shared-context-undeclared"
+
+
+def test_recommended_actions_savings_orders_within_priority_tier() -> None:
+    """Within a priority tier, dollar savings break ties ahead of alphabetical.
+
+    Two same-priority IDs (priority 10) with different savings — higher
+    savings ranks first.
+    """
+    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+
+    actions = _build_recommended_actions([
+        _make_diag("cache.dynamic-before-static", Severity.INFO, savings_usd=0.50),
+        _make_diag("cache.shared-context-undeclared", Severity.INFO, savings_usd=2.10),
+    ])
+    # Higher savings first, even though alphabetical would put dynamic-before-static first.
+    assert actions[0].warning_id == "cache.shared-context-undeclared"
+    assert actions[1].warning_id == "cache.dynamic-before-static"
+
+
+def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None:
+    """An ID not in RECOMMENDED_ACTION_PRIORITY (e.g. a future addition that
+    hasn't been added to the dict) gets ``DEFAULT_RECOMMENDED_ACTION_PRIORITY``
+    (100 — lowest). Defensive: graceful degradation rather than KeyError.
+    """
+    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+
+    actions = _build_recommended_actions([
+        _make_diag("cache.future-unknown-id", Severity.INFO),  # no priority entry
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),  # priority 10
+    ])
+    # Known priority wins over default.
+    assert actions[0].warning_id == "cache.shared-context-undeclared"
+    assert actions[1].warning_id == "cache.future-unknown-id"

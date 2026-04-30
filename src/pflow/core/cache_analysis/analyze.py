@@ -87,12 +87,28 @@ class PerCallRow:
 
 @dataclass(frozen=True)
 class RecommendedAction:
-    """One pre-sorted dispatch row for the recommended-actions section."""
+    """One pre-sorted dispatch row for the recommended-actions section.
+
+    Scope fields (``node_id``, ``scope_workflow``) — at most one is set:
+
+    - **Per-node**: ``node_id`` set, ``scope_workflow=None``. The finding is
+      attributable to a specific node in the workflow IR.
+    - **Workflow-level**: ``node_id=None``, ``scope_workflow=<path>``. The
+      finding spans multiple nodes in one workflow file (e.g., shared-context
+      detection that finds N nodes referencing the same value).
+    - **Unscoped**: both ``None``. Defensive fallback; current emitters
+      always populate one or the other.
+
+    Carrying scope on the action (rather than re-deriving from the warning's
+    context at render time) lets the JSON consumer read scope without an
+    id-to-context lookup, AND keeps text rendering trivial.
+    """
 
     rank: int
     warning_id: str
     node_id: str | None
     estimated_savings_usd: float | None
+    scope_workflow: str | None = None
 
 
 @dataclass(frozen=True)
@@ -985,6 +1001,23 @@ def _build_cross_workflow_findings(
     value_flow_opportunities: list[Diagnostic] = []
     for edge in edges:
         if edge.is_rename and edge.parent_value_expr is not None:
+            # Evidence-basis principle: the rename warning predicts that
+            # cross-workflow byte-level cache match WILL fail because of
+            # diverging prose labels. That prediction is only meaningful
+            # when (a) the parent value is a stable identifier (not a
+            # batch iteration variable), and (b) at least one side has
+            # ``## Cache`` declared so there's actual state to break.
+            # Without these, the warning fires hypothetically and floods
+            # the agent-facing report with non-actionable noise. See
+            # GH #362 for the empirical case (lyrics-generator: 23
+            # rename warnings, all from batch aliases or non-cache
+            # boundaries — zero actionable).
+            if edge.is_batch_alias_root:
+                continue  # Iteration-variable substitution, not a rename.
+            parent_has_cache = bool(result.cache_items_by_workflow.get(edge.parent_workflow))
+            child_has_cache = bool(result.cache_items_by_workflow.get(edge.child_workflow))
+            if not parent_has_cache and not child_has_cache:
+                continue  # No cached state to break — prediction unactionable.
             rename_diags.append(
                 make_diagnostic(
                     "cache.cross-workflow-rename-detected",
@@ -1589,19 +1622,31 @@ def _build_recommended_actions(
 ) -> list[RecommendedAction]:
     """Order warnings by impact descending; rank starts at 1.
 
-    Impact heuristic: ``context.savings_usd`` if present, else the severity
-    rank (ERROR > WARNING > INFO). Stable secondary sort on ``id``.
-    """
+    Sort key dimensions (lexicographic, all ascending after negation/inversion):
 
-    def _key(d: Diagnostic) -> tuple[int, float, str]:
+    1. **Severity** (ERROR > WARNING > INFO) — structural blockers first.
+    2. **Detection-class priority** (``RECOMMENDED_ACTION_PRIORITY`` in
+       ``warning_catalog``) — actionable opportunities ahead of informational
+       alignment findings. Resolves the common "all INFO, no savings" case
+       where alphabetical tie-break used to bury ``cache.shared-context-
+       undeclared`` (priority 10) under ``cache.cross-workflow-rename-
+       detected`` (priority 50). See GH #1 / #361 thread for the surface.
+    3. **Savings** (when known) — higher dollar impact ranks ahead within a
+       priority tier.
+    4. **Stable alphabetical** on ``d.id`` — deterministic tie-break.
+    """
+    from .warning_catalog import DEFAULT_RECOMMENDED_ACTION_PRIORITY, RECOMMENDED_ACTION_PRIORITY
+
+    def _key(d: Diagnostic) -> tuple[int, int, float, str]:
         # Severity weight (higher = more impactful when no savings_usd).
         sev_weight = {Severity.ERROR: 2, Severity.WARNING: 1, Severity.INFO: 0}.get(d.severity, 0)
+        priority = RECOMMENDED_ACTION_PRIORITY.get(d.id or "", DEFAULT_RECOMMENDED_ACTION_PRIORITY)
         savings = 0.0
         ctx = d.context or {}
         savings_value = ctx.get("savings_usd")
         if isinstance(savings_value, (int, float)):
             savings = float(savings_value)
-        return (-sev_weight, -savings, d.id or "")
+        return (-sev_weight, priority, -savings, d.id or "")
 
     sorted_warnings = sorted(warnings, key=_key)
     actions: list[RecommendedAction] = []
@@ -1610,12 +1655,23 @@ def _build_recommended_actions(
         savings = ctx.get("savings_usd")
         if not isinstance(savings, (int, float)):
             savings = None
+        # Workflow-level scope: when the warning has no per-node ``node_id`` but
+        # ``context.affected_workflow`` is set, surface that as ``scope_workflow``
+        # so the renderer can label it "Workflow: <path>" instead of leaving the
+        # scope line absent (which makes workflow-level findings indistinguishable
+        # from per-node findings in agent-readable output — the GH #2 surface).
+        scope_workflow: str | None = None
+        if d.node_id is None:
+            affected = ctx.get("affected_workflow")
+            if isinstance(affected, str) and affected:
+                scope_workflow = affected
         actions.append(
             RecommendedAction(
                 rank=rank,
                 warning_id=d.id or "",
                 node_id=d.node_id,
                 estimated_savings_usd=float(savings) if savings is not None else None,
+                scope_workflow=scope_workflow,
             )
         )
     return actions

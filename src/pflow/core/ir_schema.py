@@ -198,6 +198,15 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                             "as cache reads."
                         ),
                     },
+                    "_source_line": {
+                        "type": "integer",
+                        "description": (
+                            "1-based line number of the ``### node-id`` heading in the source .pflow.md file "
+                            "(injected by parser). Used for cross-workflow boundary attribution and diagnostic "
+                            "rendering. Always populated on parser-produced nodes; legacy / programmatic IRs may "
+                            "omit it."
+                        ),
+                    },
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,

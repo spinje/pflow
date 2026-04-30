@@ -491,7 +491,9 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
 
     # cache.cross-workflow-rename-detected: parent value tail differs from the
-    # child input name.
+    # child input name. Per the evidence-basis suppression (#362), the warning
+    # fires only when at least one side declares ## Cache — the parent here
+    # has it so the rename has actionable consequences (prose label alignment).
     rename_child_ir = {"nodes": [{"id": "noop", "type": "shell", "params": {"command": "echo ok"}}]}
     monkeypatch.setattr(
         cross_module,
@@ -499,6 +501,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         lambda _params, _base_path: SubWorkflowResult(rename_child_ir, None, ()),
     )
     rename_ir: dict[str, Any] = {
+        "cache": {"items": [{"name": "concept_brief", "var": "concept_brief", "prose_before": "Brief:\n"}]},
         "nodes": [
             {
                 "id": "call-child",

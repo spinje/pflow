@@ -45,6 +45,13 @@ class CrossWorkflowEdge:
     literal value (no template). ``child_input_name`` is the key of the child's
     declared inputs dict. Rename detection compares the LAST segment of
     ``parent_value_expr`` (after splitting on ``.``) to ``child_input_name``.
+
+    ``parent_batch_alias`` is the iteration-variable name when the parent
+    workflow-type node has a ``batch:`` config (e.g. ``"item"`` by default,
+    or whatever the ``as:`` field overrides it to). ``None`` for non-batch
+    parent nodes. Used downstream to suppress the rename warning when the
+    parent value is a batch alias root (``${item}`` / ``${item.X}``) — that
+    is iteration-variable substitution, not a logical rename.
     """
 
     parent_workflow: str
@@ -53,19 +60,41 @@ class CrossWorkflowEdge:
     child_input_name: str
     line_in_parent: int
     parent_node_id: str
+    parent_batch_alias: str | None = None
 
     @property
     def is_rename(self) -> bool:
         """True iff the parent's value-tail differs from the child's input name.
 
-        ``cache.cross-workflow-rename-detected`` (per spec § "Cross-Workflow
-        Walker"): same logical value has two names across the boundary. Suppressed
-        when there's no template (literal value) — there's no rename to detect
-        because the parent isn't passing a named value.
+        Syntactic predicate only — answers "are the names different?" without
+        regard to whether the difference matters for caching. The decision to
+        EMIT a ``cache.cross-workflow-rename-detected`` warning is made
+        downstream in :mod:`analyze`, gated on actionability (see the
+        evidence-basis principle: predictive warnings about state comparisons
+        should fire only when the state to compare against actually exists).
+
+        Suppressed when there's no template (literal value) — there's no
+        rename to detect because the parent isn't passing a named value.
         """
         if not self.parent_value_expr:
             return False
         return _value_tail(self.parent_value_expr) != self.child_input_name
+
+    @property
+    def is_batch_alias_root(self) -> bool:
+        """True iff ``parent_value_expr``'s root segment is the parent's batch alias.
+
+        ``${item}`` and ``${item.X}`` (assuming default alias) are
+        iteration-variable references, not stable renameable identifiers.
+        Every batch-sub-workflow invocation produces such an edge by design;
+        emitting a rename warning for every one floods the report with
+        non-actionable noise. This predicate identifies that case.
+        """
+        if not self.parent_value_expr or not self.parent_batch_alias:
+            return False
+        # Strip dotted-path / bracket-index to isolate the root identifier.
+        root = self.parent_value_expr.split(".", 1)[0].split("[", 1)[0]
+        return root == self.parent_batch_alias
 
 
 def _value_tail(expr: str) -> str:
@@ -261,6 +290,7 @@ def _process_one_call(
     inputs = params.get("inputs")
     line_in_parent = int(node.get("_source_line") or 0)
     node_id = str(node.get("id", ""))
+    parent_batch_alias = _node_batch_alias(node)
 
     if isinstance(inputs, dict):
         for input_name, value_expr in inputs.items():
@@ -272,6 +302,7 @@ def _process_one_call(
                     child_input_name=str(input_name),
                     line_in_parent=line_in_parent,
                     parent_node_id=node_id,
+                    parent_batch_alias=parent_batch_alias,
                 )
             )
 
@@ -300,6 +331,19 @@ def _process_one_call(
     finally:
         if child_path_str:
             seen.discard(child_path_str)
+
+
+def _node_batch_alias(node: dict[str, Any]) -> str | None:
+    """Return the iteration-variable alias for a workflow-type batch node.
+
+    Defaults to ``"item"`` when the node has ``batch:`` config without an
+    explicit ``as:`` override; otherwise the configured value. Returns
+    ``None`` for non-batch nodes (no iteration variable to detect).
+    """
+    batch = node.get("batch")
+    if not isinstance(batch, dict):
+        return None
+    return str(batch.get("as", "item"))
 
 
 def _cache_items(ir: dict[str, Any]) -> tuple[dict[str, Any], ...]:

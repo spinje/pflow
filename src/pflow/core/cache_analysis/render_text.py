@@ -167,7 +167,24 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
         lines.append(f"  {action.rank}. [{action.warning_id}]  {_format_savings_usd(action.estimated_savings_usd)}")
         if action.node_id:
             lines.append(f"     Node: {action.node_id}")
+        elif action.scope_workflow:
+            # Workflow-level finding (e.g. shared-context spanning N nodes in one
+            # file). Without this branch, the scope line would be absent and the
+            # finding would render indistinguishable from per-node ones — the
+            # GH #2 surface. Use basename to keep the line short.
+            lines.append(f"     Workflow: {_short_workflow_label(action.scope_workflow)}")
     return "\n".join(lines)
+
+
+def _short_workflow_label(path: str) -> str:
+    """Render a workflow path as a short label for the recommended-actions section.
+
+    Filesystem paths get their basename; non-path identifiers (e.g.
+    ``"<inline>"``, ``"ir-hash:<md5>"``) pass through as-is.
+    """
+    if "/" in path:
+        return path.rsplit("/", 1)[-1] or path
+    return path
 
 
 def _format_savings_usd(value: float | None) -> str:

@@ -1605,6 +1605,14 @@ def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
     if all_params:
         node["params"] = all_params
 
+    # Source line for diagnostics + cross-workflow boundary attribution. The
+    # ``### node-id`` heading is the natural anchor for "where in the parent
+    # file does this boundary live." Used by ``cache_analysis/cross_workflow.py``
+    # for accurate ``(line N)`` rendering in cross-workflow output (the GH #10
+    # surface — the placeholder ``(line 0)`` was caused by this field being
+    # populated only on outputs, not nodes).
+    node["_source_line"] = entity.heading_line
+
     return node, routing
 
 
