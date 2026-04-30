@@ -1,5 +1,6 @@
 """Detailed trace collection for workflow debugging."""
 
+import hashlib
 import json
 import logging
 import re
@@ -15,6 +16,28 @@ logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
 TRACE_FORMAT_VERSION = "2.1.0"
+
+
+def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
+    """Compose a trace filename whose hash prefix encodes ``workflow_path``.
+
+    Filename schema: ``workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json``
+    where ``wf_hash`` is the first 8 hex chars of ``md5(workflow_path or "")``.
+
+    The hash makes ``analyze-cache`` autoload O(matching-traces) instead of
+    O(directory-size): the reader globs by the same hash prefix to narrow
+    candidates before reading any file's contents. Filename collisions across
+    distinct workflows are guarded by a contents-level ``workflow_path``
+    re-check at read time.
+    """
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", workflow_name)[:30]
+    safe_name = re.sub(r"-+", "-", safe_name).strip("-")
+
+    wf_hash = hashlib.md5((workflow_path or "").encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+
+    if safe_name and safe_name != "workflow":
+        return f"workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json"
+    return f"workflow-trace-{wf_hash}-{timestamp}.json"
 
 
 @dataclass
@@ -490,19 +513,8 @@ class WorkflowTraceCollector:
         trace_dir = Path.home() / ".pflow" / "debug"
         trace_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate filename with timestamp and workflow name
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-
-        # Sanitize workflow name for filename (keep only alphanumeric and hyphens, limit length)
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", self.workflow_name)[:30]
-        # Remove multiple consecutive hyphens and strip leading/trailing hyphens
-        safe_name = re.sub(r"-+", "-", safe_name).strip("-")
-
-        # Create filename with workflow name if available, otherwise just "workflow"
-        if safe_name and safe_name != "workflow":
-            filename = f"workflow-trace-{safe_name}-{timestamp}.json"
-        else:
-            filename = f"workflow-trace-{timestamp}.json"
+        filename = format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
         filepath = trace_dir / filename
 
         # Calculate total duration

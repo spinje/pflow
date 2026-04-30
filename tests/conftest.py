@@ -2,6 +2,7 @@
 
 import os
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -240,6 +241,22 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
     # Create a temporary .pflow directory for this test
     test_pflow_dir = tmp_path / ".pflow"
     test_pflow_dir.mkdir(parents=True, exist_ok=True)
+
+    # Redirect both ``Path.home()`` calls AND ``$HOME``-driven path
+    # resolution (``Path("~/...").expanduser()``, ``os.path.expanduser``,
+    # subprocess env inheritance) at ``tmp_path``. The two are NOT
+    # interchangeable per ``tests/CLAUDE.md`` — production code uses both
+    # idioms (``Path.home()`` in ``runtime/workflow_trace.py``,
+    # ``runtime/cache.py``, ``cli/commands/report.py``,
+    # ``core/cache_analysis/analyze.py``; ``Path.expanduser()`` in
+    # ``mcp/manager.py``, ``nodes/mcp/node.py``,
+    # ``core/workflow/skill_service.py``). Patching both closes the
+    # pre-existing leak where ``WorkflowTraceCollector.save_to_file`` and
+    # ``_autoload_trace`` read/wrote the user's real ``~/.pflow/debug/``
+    # during tests — which otherwise produces O(N-real-traces)
+    # ``analyze-cache`` test slowdown on developer machines.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     # Create temporary paths for each component
     test_registry_path = test_pflow_dir / "registry.json"

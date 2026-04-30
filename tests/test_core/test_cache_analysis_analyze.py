@@ -125,7 +125,7 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Trace auto-load — note ordering (Round 5 fix)
+# Trace auto-load — hash-prefix glob (O(matches), not O(directory))
 # ---------------------------------------------------------------------------
 
 
@@ -134,60 +134,25 @@ def _write_trace(
     *,
     workflow_path: str,
     format_version: str,
-    suffix: str = "x",
+    workflow_name: str = "x",
 ) -> Path:
-    """Helper to write a synthetic trace file with the given format_version."""
+    """Write a synthetic trace under the production filename schema.
+
+    Uses ``format_trace_filename`` so the test fixture matches the same hash
+    prefix the autoload reader globs by — without that, autoload skips the
+    file even when contents match.
+    """
+    from pflow.runtime.workflow_trace import format_trace_filename
+
     debug_dir.mkdir(parents=True, exist_ok=True)
-    name = f"workflow-trace-{suffix}-{time.time_ns()}.json"
+    timestamp = f"20260430-{time.time_ns() % 1_000_000:06d}"
+    name = format_trace_filename(workflow_path, workflow_name, timestamp)
     path = debug_dir / name
     path.write_text(
         json.dumps({"format_version": format_version, "workflow_path": workflow_path, "events": []}),
         encoding="utf-8",
     )
     return path
-
-
-def test_autoload_appends_2_0_0_skip_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 2.0.0 trace matching workflow_path is skipped + an info note appended."""
-    fake_home = tmp_path / "home"
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-    debug_dir = fake_home / ".pflow" / "debug"
-    _write_trace(debug_dir, workflow_path="/abs/x.pflow.md", format_version="2.0.0")
-
-    workflow_ir = {"nodes": []}
-    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
-    assert result.trace_path is None
-    assert any("2.0.0" in note and "skipped" in note for note in result.notes)
-
-
-def test_autoload_appends_unparseable_skip_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_home = tmp_path / "home"
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-    debug_dir = fake_home / ".pflow" / "debug"
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    (debug_dir / "workflow-trace-broken.json").write_text("{invalid json", encoding="utf-8")
-
-    workflow_ir = {"nodes": []}
-    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
-    assert any("unparseable" in note for note in result.notes)
-
-
-def test_autoload_note_ordering_2_0_0_first_unparseable_second(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When BOTH fire, lock the order: 2.0.0-skip note first, unparseable second."""
-    fake_home = tmp_path / "home"
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-    debug_dir = fake_home / ".pflow" / "debug"
-    _write_trace(debug_dir, workflow_path="/abs/x.pflow.md", format_version="2.0.0")
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    (debug_dir / "workflow-trace-broken-1.json").write_text("{invalid", encoding="utf-8")
-    (debug_dir / "workflow-trace-broken-2.json").write_text("not json", encoding="utf-8")
-
-    workflow_ir = {"nodes": []}
-    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
-    indices = {note: i for i, note in enumerate(result.notes)}
-    skipped_idx = next(i for n, i in indices.items() if "2.0.0" in n)
-    unparseable_idx = next(i for n, i in indices.items() if "unparseable" in n)
-    assert skipped_idx < unparseable_idx, "2.0.0-skip must come before unparseable"
 
 
 def test_autoload_finds_2_1_0_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -199,6 +164,56 @@ def test_autoload_finds_2_1_0_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     workflow_ir = {"nodes": []}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
     assert result.trace_path == str(path)
+
+
+def test_autoload_skips_2_0_0_trace_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """2.0.0 traces are not auto-loaded (DD#34). No advisory note —
+    pre-2.1.0 traces age out naturally, and the 2.0.0 explicit-load path
+    (via --from-trace) emits its own graceful note."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    _write_trace(debug_dir, workflow_path="/abs/x.pflow.md", format_version="2.0.0")
+
+    workflow_ir = {"nodes": []}
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path is None
+
+
+def test_autoload_skips_unparseable_files_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unparseable trace files in ~/.pflow/debug/ are skipped at debug log
+    level. Disk corruption / aborted writes are rare; the producer side
+    (WorkflowTraceCollector.save_to_file) is the right place to surface
+    write failures, not every analyzer read."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    # Write a syntactically broken file under the new schema's hash prefix
+    # so the autoload glob actually surfaces it (then skips).
+    from pflow.runtime.workflow_trace import format_trace_filename
+
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    name = format_trace_filename("/abs/x.pflow.md", "broken", "20260430-000001")
+    (debug_dir / name).write_text("{invalid json", encoding="utf-8")
+
+    workflow_ir = {"nodes": []}
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path is None
+
+
+def test_autoload_skips_traces_for_other_workflows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hash-prefix glob narrows to candidates for *this* workflow_path.
+    Traces for unrelated workflows aren't even read — their hash prefixes
+    differ. Locks the O(matching), not O(directory), invariant."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+
+    _write_trace(debug_dir, workflow_path="/abs/other.pflow.md", format_version="2.1.0")
+
+    workflow_ir = {"nodes": []}
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path is None
 
 
 def test_explicit_from_trace_2_0_0_emits_graceful_note(tmp_path: Path) -> None:

@@ -270,8 +270,12 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            # The filename now includes the workflow name
-            expected_path = temp_home / ".pflow" / "debug" / "workflow-trace-test-workflow-20240115-143022.json"
+            # Filename includes an 8-char md5 hash of workflow_path (None here →
+            # md5("") = "d41d8cd9...") followed by sanitized workflow name and
+            # timestamp. See runtime/workflow_trace.format_trace_filename.
+            expected_path = (
+                temp_home / ".pflow" / "debug" / "workflow-trace-d41d8cd9-test-workflow-20240115-143022.json"
+            )
             assert filepath == expected_path
             assert filepath.exists()
 

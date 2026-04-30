@@ -20,6 +20,7 @@ resolution and produces false ``cache.discrepancy`` reports.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -299,69 +300,46 @@ def _load_trace_explicit(path: Path, notes: list[str]) -> dict[str, Any] | None:
     return data
 
 
-def _scan_trace_dir(debug_dir: Path, workflow_path: str) -> tuple[list[tuple[Path, dict[str, Any]]], int, int]:
-    """Walk ``debug_dir`` collecting traces matching ``workflow_path``.
+def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
+    """Find the newest 2.1.0 trace whose ``workflow_path`` matches.
 
-    Returns ``(matching_2_1, matching_2_0_count, unparseable_count)``. Traces
-    are visited newest-first so ``matching_2_1[0]`` is the newest 2.1.0 hit.
+    O(matching-traces) lookup, not O(directory-size): trace filenames encode
+    an 8-char md5 hash of ``workflow_path`` at write time (see
+    ``runtime/workflow_trace.format_trace_filename``). The reader globs by the
+    same hash prefix so we only read files that could match.
+
+    Pre-2.1.0 traces and 2.1.0 traces written before the hash-prefix scheme
+    are not findable via auto-load — pass ``--from-trace <path>`` to load
+    them explicitly. Per DD#34, auto-load is a convenience; explicit loading
+    is the contract.
+
+    The ``notes`` parameter is preserved for future use (e.g., a Gemini
+    telemetry note appended by F2 callers).
     """
-    matching_2_1: list[tuple[Path, dict[str, Any]]] = []
-    matching_2_0_count = 0
-    unparseable_count = 0
+    del notes  # currently unused; preserved for caller contract symmetry
+    if workflow_path is None:
+        return None, None
+    debug_dir = Path.home() / ".pflow" / "debug"
+    if not debug_dir.exists():
+        return None, None
 
-    for trace_file in sorted(debug_dir.glob("workflow-trace-*.json"), reverse=True):
+    wf_hash = hashlib.md5(workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    pattern = f"workflow-trace-{wf_hash}-*.json"
+
+    for trace_file in sorted(debug_dir.glob(pattern), reverse=True):
         try:
             data = json.loads(trace_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            unparseable_count += 1
             logger.debug("Skipping unparseable trace %s", trace_file, exc_info=True)
             continue
         if not isinstance(data, dict):
-            unparseable_count += 1
             continue
+        # Hash-collision guard: 8 hex chars = 32 bits → vanishingly unlikely
+        # for trace files, but the inner check makes it impossible.
         if data.get("workflow_path") != workflow_path:
             continue
-        fv = str(data.get("format_version", ""))
-        if fv.startswith("2.1"):
-            matching_2_1.append((trace_file, data))
-        elif fv.startswith("2."):
-            matching_2_0_count += 1
-
-    return matching_2_1, matching_2_0_count, unparseable_count
-
-
-def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
-    """Scan ``~/.pflow/debug/`` for the newest matching 2.1.0 trace.
-
-    2.0.0 traces with a matching workflow path are SKIPPED with an info note
-    (DD#34 — auto-load requires 2.1.0). Unparseable files emit a single info
-    note when ≥1 skipped.
-
-    Note ordering (Round 5 fix): 2.0.0-skip note first, unparseable-skip note
-    second. F2 callers append the Gemini telemetry note third when applicable.
-    """
-    debug_dir = Path.home() / ".pflow" / "debug"
-    if not debug_dir.exists() or workflow_path is None:
-        return None, None
-
-    matching_2_1, matching_2_0_count, unparseable_count = _scan_trace_dir(debug_dir, workflow_path)
-
-    # Note ordering: 2.0.0-skip FIRST.
-    if matching_2_0_count > 0:
-        notes.append(
-            f"Found {matching_2_0_count} 2.0.0 traces matching this workflow but "
-            "skipped (auto-load requires 2.1.0). Use --from-trace <path> to load "
-            "a specific trace, or --no-trace-autoload to disable auto-loading."
-        )
-    # Unparseable-skip SECOND.
-    if unparseable_count > 0:
-        notes.append(
-            f"Found {unparseable_count} unparseable trace files in ~/.pflow/debug/ (run with --verbose for details)."
-        )
-
-    if matching_2_1:
-        path, data = matching_2_1[0]
-        return data, str(path)
+        if str(data.get("format_version", "")).startswith("2.1"):
+            return data, str(trace_file)
     return None, None
 
 

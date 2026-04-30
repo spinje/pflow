@@ -1273,3 +1273,180 @@ preference for the broader follow-up work.
 > Each detection is bounded (~30-80 LOC); combined ~250 LOC. The infrastructure
 > they consume (PerCallRow data, cost computation, sensitivity floors) is
 > already in place.
+
+---
+
+## Post-segment-4 follow-up: O(matches) trace autoload + test isolation gap (2026-04-30)
+
+User reported `make test` slowdown from ~20s baseline to 107s after Segment 4
+shipped. Investigation surfaced a single root cause with two distinct surfaces.
+
+### Root cause
+
+`pflow analyze-cache` calls `_autoload_trace` (`core/cache_analysis/analyze.py:333`)
+which calls `_scan_trace_dir` (`core/cache_analysis/analyze.py:302`) — reads and
+JSON-parses **every file** in `~/.pflow/debug/` to filter by `data["workflow_path"]`.
+On the user's machine: 67,339 trace files / 3.4 GB → ~10s file I/O + ~3s JSON
+decode = **14s per analyze-cache invocation**. With 11 analyze-cache tests in the
+suite, that's ~155 cumulative seconds, ~40s wall on 4 workers.
+
+`cProfile` on a single test confirmed: 67,340 `read_text()` calls + 67,339
+`json.loads()` calls dominating cumulative time. Wall 14.46s, CPU only 6.7s —
+the rest is filesystem I/O.
+
+The previous investigation's hypotheses (LiteLLM remote model-cost-map fetch,
+`uv run` subprocess overhead) were both wrong on this machine: LiteLLM imports
+in 0.86s and `token_counter` is ~100ms.
+
+### Two distinct issues sharing this root
+
+**Issue A (test isolation gap):** `tests/conftest.py::isolate_pflow_config` patches
+Registry / SettingsManager / MCPServerManager / WorkflowManager / MemoizationCache
+to tmp paths but does **NOT** patch `Path.home()` itself. `WorkflowTraceCollector.save_to_file()`
+and `_autoload_trace` call `Path.home() / ".pflow" / "debug"` directly — escaping
+isolation entirely. Tests have been silently writing trace files to the user's
+real `~/.pflow/debug/` for the entire history of this fixture. Verified by setting
+`HOME=/tmp/empty-home` on a single test: 14.17s → 0.31s (45×).
+
+**Issue B (production scaling):** even with test isolation fixed, `_scan_trace_dir`
+remains O(N) where N grows unbounded. Real users hit 14s+ analyze-cache invocations
+within months. The structural mistake: filename encodes `workflow_name` (sanitized
+H1 title, truncated to 30 chars) but lookup filters by `workflow_path` (canonical
+absolute path or `ir-hash:<md5>`). Filename and lookup key disagree → must read
+every file's contents to match.
+
+### What I implemented
+
+**Production fix — identity-encoded filenames** (top-10% pattern from git refs,
+mypy cache, pip metadata: encode identity in filename, lookup by glob, never
+scan-and-parse):
+
+- `src/pflow/runtime/workflow_trace.py` — added module-level helper
+  `format_trace_filename(workflow_path, workflow_name, timestamp)`. Schema:
+  `workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json` where `wf_hash` is
+  the first 8 hex chars of `md5(workflow_path or "")`. `WorkflowTraceCollector.save_to_file()`
+  delegates filename composition to the helper. (+22 / −12 lines)
+- `src/pflow/core/cache_analysis/analyze.py` — replaced `_scan_trace_dir` (28 LOC,
+  deleted) + `_autoload_trace` (33 LOC). New `_autoload_trace` globs by hash:
+  `workflow-trace-{wf_hash}-*.json`. Reads only files that could match. Hash
+  collision (8 hex = 32 bits) defended by inner `data["workflow_path"] == workflow_path`
+  re-check. Dropped the 2.0.0-skip and unparseable-skip advisory notes (they have
+  no producer post-fix — the narrow glob doesn't surface them). (+44 / −64 lines)
+
+**Test isolation fix:**
+
+- `tests/conftest.py::isolate_pflow_config` — patches `Path.home()` AND `os.environ["HOME"]`
+  per `tests/CLAUDE.md:210-214` documented split. Production code uses both idioms
+  (11 `Path.home()` sites + 4 `expanduser()` sites in `src/pflow/`); patching both
+  closes all of them. Bonus: closes 2 pre-existing `expanduser()` isolation gaps
+  (`skill_service.py:328`, `nodes/mcp/node.py:502`) unrelated to Task 159. (+17 lines)
+
+**Test updates:**
+
+- `tests/test_runtime/test_workflow_trace.py::TestWorkflowTraceCollector::test_filename_format` —
+  updated literal filename pin to include hash prefix (`d41d8cd9` for `workflow_path=None`).
+- `tests/test_core/test_cache_analysis_analyze.py` — replaced 3 dead-counter tests
+  with 3 behavioral tests:
+  - `test_autoload_finds_2_1_0_trace` (kept, updated `_write_trace` helper to use production schema)
+  - `test_autoload_skips_2_0_0_trace_silently` (replaces 2.0.0-note test)
+  - `test_autoload_skips_unparseable_files_silently` (replaces unparseable-note test)
+  - `test_autoload_skips_traces_for_other_workflows` (NEW — locks O(matches), not O(directory) invariant)
+
+  `_write_trace` helper now imports `format_trace_filename` so test fixtures match
+  what production writes. Drift between fixture and reader filename schemas is
+  impossible by construction.
+- `src/pflow/cli/CLAUDE.md:225` — updated cosmetic trace path example.
+
+### Tradeoff: dropping advisory counters
+
+User decision: chose option (a) — drop the 2.0.0-skip and unparseable-skip notes
+entirely.
+
+Reasoning: under the new hash-narrowed glob, neither counter has a real producer.
+2.0.0 traces don't have the new hash prefix → invisible to glob → counter always
+0. Unparseable traces only count files with the new prefix → vanishingly rare.
+Keeping the counters would be dead code pretending to be live. The renderer test
+(`test_cache_analysis_renderers.py:205-216`) still passes because it tests
+rendering order with manually-constructed note strings; it doesn't depend on a
+production producer.
+
+The unparseable diagnostic theoretically catches disk corruption, but the right
+place to surface that is at `WorkflowTraceCollector.save_to_file()` (the producer)
+on write failure, not at every reader.
+
+### Final state
+
+- **Test suite**: 107s → **27.26s** (3.9× speedup, near pre-Segment-4 baseline).
+- **5920 tests passing**, 9 skipped, 0 xfailed.
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- `tests/test_execution/test_plan_drift.py` 33/33 green.
+- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) green.
+- All 117 directly-affected tests in 5 files pass in 1.33s (vs ~150s pre-fix).
+
+### Diff stat
+
+`+117 / −91` across 6 files. Net +26 LOC (mostly the helper docstring).
+
+### Tacit knowledge for the next agent
+
+1. **Filename schema is now load-bearing.** `format_trace_filename` is the single
+   source of truth — both `WorkflowTraceCollector.save_to_file` and the autoload
+   reader (via the same hash derivation) AND test fixtures (via direct import)
+   use it. If you change the schema, change one place; the test fixture import
+   guarantees fixtures stay in sync. Drift is impossible by construction.
+
+2. **Existing 2.1.0 traces written before this fix are not findable via autoload.**
+   They lack the hash prefix → glob misses them. Acceptable per DD#34 ("auto-load
+   is a convenience; explicit loading is the contract"). Users who want analysis
+   of old runs use `pflow analyze-cache --from-trace <path>` (path-based, unchanged).
+   On the user's machine right now, all 67k existing traces are silently bypassed
+   by autoload — analyze-cache invocations drop to ~0s without even cleaning up
+   the directory.
+
+3. **Hash collision defense is at TWO layers.** 8 hex chars = 32 bits — vanishingly
+   unlikely for trace files (would need two distinct workflow_paths producing the
+   same first-8-hex md5). The inner `data.get("workflow_path") != workflow_path`
+   re-check after JSON parse makes it impossible. Both layers documented inline.
+
+4. **Test isolation now redirects BOTH `Path.home()` and `$HOME`.** Per the
+   pre-existing `tests/CLAUDE.md:210-214` documented split: `setattr(Path, "home", ...)`
+   handles `Path.home()` callers; `setenv("HOME", ...)` handles `Path("~/...").expanduser()`,
+   `os.path.expanduser`, and subprocess env inheritance. They are NOT interchangeable.
+   Production code uses both idioms — verified 11 `Path.home()` + 4 `expanduser()`
+   sites in `src/pflow/`.
+
+5. **Two pre-existing isolation gaps closed as a bonus.** `core/workflow/skill_service.py:328`
+   and `nodes/mcp/node.py:502` resolve `~/.pflow/...` via `Path("~/...").expanduser()`,
+   which goes through `os.environ["HOME"]`. Existing fixture's individual-class
+   patches (WorkflowManager, MCPServerManager) covered some sites; these two were
+   gaps. Adding `monkeypatch.setenv("HOME", str(tmp_path))` covers them too.
+
+6. **Shell tests intentionally read `$HOME` for shell-expansion testing.**
+   `tests/test_nodes/test_shell/test_shell.py:134` and
+   `test_nodes/test_shell/test_improved_behavior.py:268` assert
+   `output == os.environ.get("HOME", "")`. With the new fixture, `HOME=tmp_path`,
+   the shell subprocess inherits `HOME=tmp_path`, `echo $HOME` produces `tmp_path`,
+   assertion holds. Tests are value-agnostic — they verify shell expansion works,
+   not what the value is.
+
+### Open follow-ups (NOT in this commit)
+
+1. **Update mintlify docs and architecture docs** (`docs/guides/debugging.mdx`,
+   `docs/reference/cli/index.mdx`, `architecture/architecture.md`,
+   `architecture/reference/template-variables.md`) to reflect the new filename
+   schema. Cosmetic; defer to a docs-cleanup pass.
+
+2. **Existing 67k+ traces in users' `~/.pflow/debug/`.** Not affected by this
+   commit — they remain on disk but are bypassed by autoload. Users who want to
+   reclaim space can `rm` the directory; new traces will accumulate under the
+   new schema. Consider a `pflow trace prune` follow-up command.
+
+3. **Verification specialist not run on this fix.** The Segment-3 pattern of
+   adversarial CLI smoke-testing surfaced two critical bugs the unit tests
+   missed. Worth running the same drill against this fix before final ship —
+   especially `pflow analyze-cache --from-trace`, `pflow report` (which still
+   uses the broad `workflow-trace-*.json` glob — verified safe but worth
+   exercising end-to-end), and a real `pflow run` → trace save → autoload cycle.
+
+> **Note to user**: working tree changes ready to commit. Test suite runs in 27s
+> down from 107s. All `make check` green. Awaiting commit instruction.
