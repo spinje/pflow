@@ -154,7 +154,12 @@ class WorkflowRunner:
         params: dict[str, Any],
         diagnostics: list[Diagnostic],
     ) -> ResolvedWorkflow:
-        """Resolve, inject file path, resolve file refs, enrich defaults, validate."""
+        """Resolve, inject file path, enrich defaults, validate.
+
+        File reference resolution happens inside ``resolve_workflow()`` at the
+        IR-load boundary (see ``execution/workflow_resolver.py``). The Runner
+        never re-resolves; ``ResolvedWorkflow.ir`` is the canonical resolved IR.
+        """
         resolved = self._resolve(workflow)
         diagnostics.extend(resolved.diagnostics)
 
@@ -169,8 +174,6 @@ class WorkflowRunner:
             params.setdefault("_pflow_workflow_file", resolved.file_path)
         else:
             params.setdefault("_pflow_workflow_file", _synthesize_inline_workflow_id(resolved.ir))
-
-        self._resolve_file_references(resolved.ir, params)
 
         # Fill declared input names so validation doesn't flag them as missing.
         # Only needs to know WHICH inputs will be available, not their final values.
@@ -314,7 +317,9 @@ class WorkflowRunner:
             if file_path:
                 params["_pflow_workflow_file"] = file_path
 
-            self._resolve_file_references(ir, params)
+            # File resolution happens inside resolve_workflow() at the IR-load
+            # boundary. ``ir`` is already fully resolved by the time we get
+            # here. See ``execution/workflow_resolver.py`` module docstring.
 
             from pflow.core.validation_utils import generate_dummy_parameters
 
@@ -463,23 +468,6 @@ class WorkflowRunner:
             normalize_ir(ir)
             return ResolvedWorkflow(ir=ir, source="direct", file_path=None)
         return resolve_workflow(workflow)
-
-    def _resolve_file_references(self, ir: dict[str, Any], params: dict[str, Any]) -> None:
-        """Resolve external file references in IR."""
-        import yaml
-
-        from pflow.core.file_resolver import get_base_dir, resolve_file_references
-
-        base_dir = get_base_dir(params)
-        try:
-            resolve_file_references(ir, base_dir)
-        except (FileNotFoundError, yaml.YAMLError) as e:
-            raise CompilationError(
-                message=str(e),
-                phase="file_resolution",
-                details={"error": str(e)},
-                suggestion="Check that the file path is correct and relative to the workflow file.",
-            ) from e
 
     def _validate(self, ir: dict[str, Any], params: dict[str, Any]) -> list[Diagnostic]:
         """Run WorkflowValidator once. Returns validation warnings."""

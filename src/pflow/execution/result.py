@@ -25,10 +25,26 @@ class RunnerConfig:
 
 @dataclass(frozen=True)
 class ResolvedWorkflow:
-    """Result of workflow resolution.
+    """Result of workflow resolution — IR ready for any downstream consumer.
 
-    Returned by resolve_workflow(). The Runner reads file_path
-    for _inject_workflow_file_path() -- callers never set this.
+    The IR is fully resolved at this boundary:
+
+    - **External file references inlined** (e.g. ``- prompt: ./file.prompt.md``
+      becomes the file's content). Resolution happens for ``source="file"``
+      and ``source="library"`` (when path exists on disk). For ``source="content"``
+      / ``source="direct"`` (inline workflows), file references are rejected
+      pre-resolution because there is no base directory to resolve them against.
+
+    Future resolution steps (sub-workflow pre-compile per #334, output exposure
+    rules per #321) will land at this same boundary. Consumers should never
+    re-resolve. If you find yourself calling ``resolve_file_references`` /
+    compiling sub-workflows / etc. on a ``ResolvedWorkflow.ir``, that's a bug —
+    file an issue against this boundary instead of duplicating resolution
+    downstream. See ``execution/workflow_resolver.py`` module docstring for
+    the architectural rationale.
+
+    Returned by ``resolve_workflow()``. The Runner reads ``file_path`` for
+    ``_inject_workflow_file_path()`` — callers never set this.
     """
 
     ir: dict[str, Any]

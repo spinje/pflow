@@ -2,6 +2,27 @@
 
 Merges CLI (cli/workflow_resolution.py) and MCP (mcp_server/utils/resolver.py)
 resolvers into a single function that returns ResolvedWorkflow.
+
+External file references (``- prompt: ./file.prompt.md``, ``- code: ./script.py``,
+etc.) are resolved at this boundary for file-loaded and library-loaded workflows.
+The returned ``ResolvedWorkflow.ir`` is the canonical fully-resolved IR — every
+downstream consumer (analyzer, runner, mermaid, validator) operates on it
+without needing to call ``resolve_file_references`` itself.
+
+Two other IR-construction boundaries exist by design and have their own
+resolution calls:
+
+- ``runtime/compilation/compiler.py`` resolves child IR loaded by
+  ``WorkflowExecutor`` for sub-workflow execution. The compiler's call is
+  idempotent on already-resolved parent IR (``is_file_reference`` returns
+  False for the inlined content).
+- ``core/workflow/validator.py`` resolves child IR loaded fresh from disk
+  during sub-workflow validation recursion.
+
+If a future consumer needs to call ``resolve_file_references`` on a
+``ResolvedWorkflow.ir``, that's a regression — file the issue against this
+boundary instead of duplicating resolution downstream. See GH #321 / #334
+for related boundary-vs-consumer architectural threads.
 """
 
 import logging
@@ -9,14 +30,37 @@ import os
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from pflow.core.diagnostic import Diagnostic
-from pflow.core.exceptions import WorkflowNotFoundError
+from pflow.core.exceptions import CompilationError, WorkflowNotFoundError
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.workflow.manager import WorkflowManager
 
 from .result import ResolvedWorkflow
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_file_refs_at_boundary(ir: dict[str, Any], base_dir: Path) -> None:
+    """Resolve external file references in IR at a load boundary.
+
+    Wraps ``core.file_resolver.resolve_file_references`` to re-raise as
+    ``CompilationError`` (consistent with the compiler's wrapping at
+    ``runtime/compilation/compiler.py:570-581`` so existing exception-handling
+    catches keep working).
+    """
+    from pflow.core.file_resolver import resolve_file_references
+
+    try:
+        resolve_file_references(ir, base_dir)
+    except (FileNotFoundError, yaml.YAMLError) as e:
+        raise CompilationError(
+            message=str(e),
+            phase="file_resolution",
+            details={"error": str(e)},
+            suggestion="Check that the file path is correct and relative to the workflow file.",
+        ) from e
 
 
 def resolve_workflow(
@@ -126,6 +170,9 @@ def _try_load_from_file(identifier: str) -> ResolvedWorkflow | None:
     content = path.read_text(encoding="utf-8")
     result = parse_markdown(content)
     normalize_ir(result.ir)
+    # Resolve external file references at the IR-load boundary so every
+    # downstream consumer sees a fully-resolved IR. See module docstring.
+    _resolve_file_refs_at_boundary(result.ir, path.parent)
     return ResolvedWorkflow(
         ir=result.ir,
         source="file",
@@ -174,8 +221,16 @@ def _load_library_workflow(name: str, wm: WorkflowManager) -> ResolvedWorkflow:
         description = result.description
         diagnostics = tuple(result.warnings)
     else:
+        # Mocked WorkflowManager path (test isolation). No real file on disk
+        # means no relative paths to resolve from — file resolution is skipped.
+        # Tests that exercise file-resolution behavior must use a real path.
         ir = wm.load_ir(name)
     normalize_ir(ir)
+    # Resolve external file references at the IR-load boundary, but only
+    # when the file actually exists on disk. The mocked-load fallback above
+    # has no on-disk anchor for relative paths.
+    if path.exists():
+        _resolve_file_refs_at_boundary(ir, path.parent)
     return ResolvedWorkflow(
         ir=ir,
         source="library",

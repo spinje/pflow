@@ -2510,3 +2510,271 @@ renamed it to `expected:`.
 **Fix**: one-line edit at `src/pflow/guide/features/caching.md:84`.
 
 **Final state**: 5941 tests passing; `make check` clean; `test_plan_drift.py` 34/34; `test_golden_baseline_hashes_match` green; production CLI smoke tests for E/F/G produce correct output.
+
+---
+
+## Stage 1 lyrics-generator verification: architectural finding + Path 1 fix (2026-04-30)
+
+User asked to verify Task 159 against the motivating workflow (lyrics-generator)
+before declaring the feature shipped. Before spending money on real LLM runs,
+we ran `pflow analyze-cache` against all 17 workflow files in the
+lyrics-generator tree (free static analysis). The output exposed a class of
+finding that the unit-test surface couldn't catch: the analyzer is structurally
+working but doesn't deliver value on real workflows.
+
+### What the static analysis showed
+
+`pflow analyze-cache song-creator.pflow.md` (the heaviest sub-workflow, ~6
+sequential LLM calls all sharing concept + concept_brief + creative-direction +
+song-architecture context — the spec mode-1 example pattern):
+
+- Token counts reported as `tokens=7` for write-lyrics (actual prompt: ~3752
+  tokens). The analyzer was tokenizing the literal filename string
+  `"./write-lyrics.prompt.md"` (≈24 chars / 4 ≈ 7 tokens), not the file content.
+- Zero `cache.shared-context-undeclared` warnings fired — even though the
+  spec mode-1 example explicitly enumerates the shared contexts as
+  detection targets.
+- Zero `cache.dynamic-before-static` warnings — same root cause.
+- 17-23 `cache.cross-workflow-rename-detected` warnings (false-positive flood
+  on batch aliases + non-cache boundaries — secondary issue tracked separately).
+- `score-choruses` (the canonical 34-item prewarm test from the spec) showed
+  zero opportunities — its prompt is `${item.prompt}` assembled in Python
+  code, invisible to static analysis (separate compounding issue, not in
+  scope here).
+
+### Root cause investigation
+
+`core/file_resolver.py` (Task 129's substrate) exists and works. **Three**
+production sites called it independently before this fix:
+
+| Caller | Location |
+|---|---|
+| Compiler | `runtime/compilation/compiler.py:570-581` |
+| Runner | `execution/runner.py:173, 317, 467-482` |
+| Validator | `core/workflow/validator.py:784-789` |
+
+The analyzer (`core/cache_analysis/analyze.py`, called via
+`cli/commands/analyze_cache.py`) was the **fourth** consumer that needed file
+resolution — but didn't call it. `cli/commands/analyze_cache.py:97` does:
+
+```python
+resolved = resolve_workflow(workflow)              # returns IR with "./file.prompt.md" still present
+analysis = analyze(resolved.ir, ...)               # walks raw IR — never resolves
+```
+
+`ResolvedWorkflow` is the misleading name: the IR is only structurally
+parsed, NOT file-resolved. Every consumer has to remember to apply file
+resolution after the fact.
+
+This is an instance of an architectural pattern already tracked in #321
+(output population + cycle detection between planner and runtime) and #334
+(per-item workflow resolution + compile cache between planner and runtime).
+**Three independent instances of the same "consumer applies X" pattern.**
+The analyzer's instance was the worst surfacing because it didn't just
+duplicate — it skipped silently.
+
+### Top-10% reframe
+
+The right architectural shape (rustc / TypeScript / mypy / clippy / ruff
+all do this): **resolve at the boundary, not at every consumer.** Each of
+those tools constructs a canonical, fully-resolved IR/HIR/AST at module-
+load time; downstream queries operate on the resolved form and never re-
+resolve. `ResolvedWorkflow` already PROMISES this contract in its name.
+
+### Path 1 (this commit) — file resolution centralized at boundary
+
+Files modified:
+
+- `src/pflow/execution/workflow_resolver.py`:
+  - Module docstring strengthened with the boundary contract — explicit
+    list of known IR-load boundaries (`resolve_workflow` for parent IR,
+    `compiler.py` for sub-workflow children loaded by `WorkflowExecutor`,
+    `validator.py` for child IR validation recursion). Future contributors
+    who find themselves applying file resolution downstream are pointed at
+    the contract.
+  - New `_resolve_file_refs_at_boundary()` helper wraps
+    `resolve_file_references` exceptions in `CompilationError` for
+    consistency with the prior compiler-side wrapping (preserves the
+    existing exception-handling shape downstream).
+  - File resolution wired into `_try_load_from_file()` (file-path branch)
+    and `_load_library_workflow()` (library branch, guarded on
+    `path.exists()` so mocked-WorkflowManager test fixtures continue to
+    work).
+
+- `src/pflow/execution/result.py`:
+  - `ResolvedWorkflow` docstring strengthened to lock the boundary
+    contract. Lists what's resolved today (file references) and points
+    at the architectural follow-up (#361) for future resolution steps
+    (sub-workflow pre-compile per #334, output exposure rules per #321).
+
+- `src/pflow/execution/runner.py`:
+  - Deleted `_resolve_file_references()` method (~16 LOC).
+  - Deleted 2 call sites (lines 173 and 317 — pre-fix). Both are now
+    redundant with the boundary call.
+  - Updated comments to reference the new contract.
+
+- `runtime/compilation/compiler.py:570-581` — **kept**. Serves the only
+  OTHER IR-load boundary: sub-workflow children loaded by
+  `WorkflowExecutor`. Idempotent on already-resolved parent IR
+  (already-inlined content has `is_file_reference == False`).
+
+- `core/workflow/validator.py:784-789` — **kept**. Operates on freshly-
+  loaded child IR during sub-workflow validation recursion. Different
+  code path; out of Path 1 scope.
+
+Tests added:
+
+- `tests/test_execution/test_workflow_resolver_contract.py` — NEW, 4
+  contract tests:
+  - `test_resolve_workflow_returns_fully_file_resolved_ir` — the load-
+    bearing structural defense. Walks every `FILE_RESOLVABLE_PARAMS`
+    field in the IR and asserts none look like an unresolved file
+    reference. Mutation-tested: reverting the fix makes this test fail
+    with a clear diagnostic message that points future contributors at
+    the contract docstring.
+  - `test_resolve_workflow_skips_resolution_for_inline_dict_input` —
+    confirms the dict-passthrough path (no file_path means no resolution
+    anchor; correct).
+  - `test_resolve_workflow_rejects_inline_dict_with_file_references` —
+    confirms the existing defensive rejection (inline workflows with
+    `./file.md` refs raise ValueError pre-resolution).
+  - `test_resolve_workflow_raises_compilation_error_on_missing_file` —
+    confirms exception type matches the prior compiler-side wrap so
+    existing catch logic in runner.py / validate-path keeps working.
+
+### Verification
+
+- `make test`: **5,945 passing** (was 5,941; +4 contract tests, zero
+  regressions).
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- `test_plan_drift.py` 34/34 green throughout.
+- `test_golden_baseline_hashes_match` (DD#19) green.
+- **Mutation-tested**: `git stash` the fix → contract test fails with the
+  exact "If a consumer is calling resolve_file_references on this IR,
+  that's the bug" diagnostic; `git stash pop` → passes.
+- **Smoke test on lyrics-generator**:
+
+  song-creator BEFORE Path 1:
+  - `tokens=7` for write-lyrics (filename string char count)
+  - 0 `cache.shared-context-undeclared` warnings
+  - No suggested `## Cache` block
+
+  song-creator AFTER Path 1:
+  - `tokens=3289` for write-lyrics (real prompt size)
+  - 4 `cache.shared-context-undeclared` warnings (matching the spec mode-1
+    example: concept_brief, creative-direction.response,
+    song-architecture.response, easter-eggs.response — sub-paths of
+    concept also detected)
+  - Suggested `## Cache` block with 7 chunks emitted, paste-ready
+  - Per-node `prompt_cache:` assignments emitted for write-lyrics +
+    song-architecture
+
+  Other workflows: parent `lyrics-generator.pflow.md` curate-briefs node
+  now reports `tokens=3869` (was 9); `evaluate-songs` reports `tokens=782`
+  (was 6).
+
+### Path 2 — tracked in #361
+
+Three remaining items, each closing one of the related issues:
+
+- **Item 2.1** — pre-compile sub-workflows at the boundary (closes #334)
+- **Item 2.2** — bake output exposure rules into the resolved IR (closes
+  #321 item A)
+- **Item 2.3** — thread cycle-detection state once at the boundary
+  (closes #321 item B)
+- **Item 2.4** — extend the contract test for each new resolution step
+
+The umbrella's framing: when all four items are done, #321 + #334 + this
+issue close in lockstep. No new "consumer applies X" patterns added in the
+meantime — enforced structurally by the contract test.
+
+Estimated scope: ~280 LOC + ~10 tests, 1-2 days focused work.
+
+### Secondary follow-up — tracked in #362
+
+The `cache.cross-workflow-rename-detected` detector at
+`core/cache_analysis/cross_workflow.py` floods false positives on real
+workflows (23 warnings on lyrics-generator). Two suppression conditions
+needed:
+
+1. Suppress when parent value is a batch alias (`${item}` or `${item.X}`).
+2. Suppress when neither parent nor child has a `## Cache` declaration
+   (the warning's premise — diverging prose labels — is hypothetical
+   without `## Cache` blocks to break).
+
+~10-30 LOC + 3 tests. Orthogonal to Path 2 (different bug class:
+detection logic, not architectural). Filed separately so an agent can
+pick it up independently.
+
+### Tacit knowledge for the next agent
+
+1. **`ResolvedWorkflow.ir` is now fully file-resolved by contract.** Every
+   downstream consumer can rely on this. If a future feature needs file
+   resolution at a different point, do NOT add a `resolve_file_references`
+   call locally — instead, extend the boundary in `resolve_workflow()` and
+   the contract test catches the regression class structurally.
+
+2. **Two other IR-load boundaries exist by design** and have their own
+   resolution calls. They are NOT redundancy:
+   - `runtime/compilation/compiler.py:570-581` resolves sub-workflow
+     children loaded by `WorkflowExecutor`. Idempotent on resolved parent
+     IR but load-bearing for child IR.
+   - `core/workflow/validator.py:784-789` resolves child IR loaded fresh
+     from disk during sub-workflow validation recursion.
+   Both are documented in the `workflow_resolver.py` module docstring.
+
+3. **The library-load path is guarded on `path.exists()`** because the
+   mocked-WorkflowManager test isolation pattern (used widely in the test
+   tree) returns IR via `wm.load_ir(name)` without a real file on disk.
+   Calling `resolve_file_references` on a non-existent base directory
+   would raise on the first `./file.md` reference — which would be a
+   regression in test infrastructure.
+
+4. **The contract test is the load-bearing structural defense.** It walks
+   `FILE_RESOLVABLE_PARAMS` and asserts no `is_file_reference(value)`
+   matches. If a future contributor introduces a new file-resolvable
+   param type (e.g., `system: ./system.md`), they need to extend
+   `FILE_RESOLVABLE_PARAMS` AND the contract test catches their work
+   automatically.
+
+5. **The `cache.dynamic-before-static` and `cache.padding-advisory`
+   detections still don't fire on lyrics-generator** — separate issue
+   that compounds with #362. The auto-batch-prefix detector also can't
+   see prefixes assembled in Python code nodes (e.g.
+   `chorus-chooser/score-choruses` builds its prompt via
+   `build-scoring-items` Python code, then references via
+   `${item.prompt}`). Path 1 didn't address this; tracked as part of
+   the broader "real-workflow analyzer usefulness" work — file
+   separately when an agent picks up Stage 2 verification.
+
+6. **Stage 2 verification (real LLM runs) was deferred** until the
+   analyzer produces useful output. Stage 1's free static analysis
+   surfaced this finding before money was spent. The right next step
+   is Stage 2: re-run `pflow analyze-cache` against the lyrics-generator
+   workflows post-Path-1, identify the highest-leverage `## Cache`
+   block to add (likely song-creator), then run song-creator standalone
+   pre/post-cache to verify the value-prop ≥40% input-cost reduction.
+
+### Open hedged claims and verifications still pending
+
+- **VERIFIED**: Path 1 doesn't change runtime behavior — same end-state IR
+  reaches the compiler/runner/engine. Confirmed by 5,945 tests passing
+  including the planner-vs-runtime parity gate (`test_plan_drift.py`).
+- **VERIFIED**: error-type contract preserved — `CompilationError` now
+  raised at the boundary instead of the compiler. Existing catch logic
+  in runner.py validate path (`except (..., CompilationError, ...)` at
+  line 369) and run path (broad `except Exception` at line 145) handles
+  it identically.
+- **NEEDS VERIFICATION (Stage 2)**: real LLM run with `## Cache` declared
+  on song-creator delivers the spec's locked ≥40% input-cost reduction.
+  The analyzer correctly identifies the opportunity; Stage 2 verifies
+  the cache rendering layer (Segments 2-3 of Task 159) actually delivers
+  the savings on a real workflow.
+
+### Open user decisions surfaced
+
+**None.** Path 1 is an unambiguous architectural fix; the user pre-approved
+the path during the planning conversation. The three follow-up items
+(Path 2 + #362) are tracked as separate work.
+
+---
