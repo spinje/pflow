@@ -5,19 +5,33 @@ under their node ID, preventing collisions when multiple nodes of the same
 type write to the same keys.
 """
 
-from collections.abc import Iterator
-from typing import Any, Optional
+from collections.abc import Iterator, MutableMapping
+from typing import Any
 
 
-class NamespacedSharedStore:
+class NamespacedSharedStore(MutableMapping[str, Any]):
     """Proxy that namespaces all node writes while maintaining backward compatibility.
 
-    This proxy ensures that all writes from a node go to shared[node_id][key]
+    This proxy ensures that all writes from a node go to ``shared[node_id][key]``
     while reads check both the namespace and root level for backward compatibility
     with CLI inputs and legacy data.
 
+    Inherits from ``collections.abc.MutableMapping`` so consumers using
+    duck-typed ``isinstance(_, Mapping)`` checks (e.g. ``TemplateResolver``)
+    correctly recognize the proxy as dict-like. Without this, dotted-path
+    template resolution (``${node.field}``) silently fails through the proxy
+    because ``isinstance(value, dict)`` excludes it. Task 159 cache rendering
+    relies on this — see Task 159 Segment 3 verification report.
+
+    Required ABC primitives are implemented below: ``__getitem__``,
+    ``__setitem__``, ``__delitem__``, ``__iter__``, ``__len__``,
+    ``__contains__``. ``keys`` / ``items`` / ``values`` / ``get`` /
+    ``setdefault`` / ``update`` / ``pop`` / ``popitem`` / ``clear`` are
+    provided by the ABC mixin and route through these primitives — no manual
+    override needed.
+
     Example:
-        >>> shared = {"cli_input": "value"}  # Root level data
+        >>> shared = {"cli_input": "value"}
         >>> proxy = NamespacedSharedStore(shared, "node1")
         >>> proxy["output"] = "data"  # Writes to shared["node1"]["output"]
         >>> proxy.get("cli_input")  # Reads from root level
@@ -40,152 +54,102 @@ class NamespacedSharedStore:
         if namespace not in parent_store:
             parent_store[namespace] = {}
 
+    @staticmethod
+    def _is_special_key(key: object) -> bool:
+        """A ``__*__`` key bypasses namespacing and reads/writes at root."""
+        return isinstance(key, str) and key.startswith("__") and key.endswith("__")
+
     def __setitem__(self, key: str, value: Any) -> None:
         """Write to the namespaced location or root for special keys.
 
-        Special keys (starting and ending with __) are written to root
-        to enable framework coordination without namespace isolation.
-        Regular writes go to shared[namespace][key] to prevent collisions.
+        Special keys (``__*__``) are written to root for framework
+        coordination. Regular writes go to ``shared[namespace][key]`` to
+        prevent collisions.
         """
-        # Special keys bypass namespacing and go to root
-        if key.startswith("__") and key.endswith("__"):
+        if self._is_special_key(key):
             self._parent[key] = value
         else:
-            # Regular keys go to namespace
             self._parent[self._namespace][key] = value
 
     def __getitem__(self, key: str) -> Any:
         """Read with namespace priority, falling back to root.
 
-        Special keys (__*__) are always checked at root first since they
-        are always written to root.
-
-        For regular keys:
-        1. shared[namespace][key] - For self-reading nodes or namespaced data
-        2. shared[key] - For CLI inputs, legacy data, or cross-node reads
+        For special keys (``__*__``): always at root.
+        For regular keys: namespace first, then root (CLI inputs, legacy data).
 
         Raises:
-            KeyError: If key not found in namespace or root
+            KeyError: If key not found in namespace or root.
         """
-        # Special keys are always at root
-        if key.startswith("__") and key.endswith("__"):
+        if self._is_special_key(key):
             if key in self._parent:
                 return self._parent[key]
             raise KeyError(f"Key '{key}' not found in root")
 
-        # Check own namespace first (for self-reading nodes if any)
         if key in self._parent[self._namespace]:
             return self._parent[self._namespace][key]
-
-        # Fall back to root level (for CLI inputs, legacy data)
         if key in self._parent:
             return self._parent[key]
 
-        # Key not found in either location
         raise KeyError(f"Key '{key}' not found in namespace '{self._namespace}' or root")
 
-    def get(self, key: str, default: Optional[Any] = None) -> Any:
-        """Safe get with namespace priority.
+    def __delitem__(self, key: str) -> None:
+        """Delete a key.
 
-        Args:
-            key: The key to look up
-            default: Value to return if key not found
+        Special keys (``__*__``) are deleted from root. Regular keys are
+        deleted from this proxy's namespace only — root reads (CLI inputs,
+        other nodes' namespaces) are off-limits because writes never go
+        there in the first place. Raises ``KeyError`` if the key isn't in
+        the targeted location.
 
-        Returns:
-            The value if found, otherwise default
+        Required by ``collections.abc.MutableMapping`` (the ABC's mixin
+        ``pop`` / ``popitem`` / ``clear`` call this internally).
         """
-        try:
-            return self[key]
-        except KeyError:
-            return default
+        if self._is_special_key(key):
+            del self._parent[key]
+            return
+        ns = self._parent[self._namespace]
+        if key not in ns:
+            raise KeyError(f"Key '{key}' not found in namespace '{self._namespace}'")
+        del ns[key]
 
-    def __contains__(self, key: str) -> bool:
+    def __contains__(self, key: object) -> bool:
         """Check if key exists in namespace or root.
 
-        Special keys (__*__) are only checked at root.
-        Regular keys are checked in both namespace and root level.
+        Special keys (``__*__``) are only checked at root. Regular keys are
+        checked in both namespace and root.
         """
-        # Special keys are always at root
-        if key.startswith("__") and key.endswith("__"):
+        if self._is_special_key(key):
             return key in self._parent
 
-        # Regular keys checked in both locations
+        # Non-string non-special keys can't be in either location.
+        if not isinstance(key, str):
+            return False
+
         return key in self._parent[self._namespace] or key in self._parent
 
-    def setdefault(self, key: str, default: Any = None) -> Any:
-        """Set default value if key doesn't exist.
-
-        Special keys (__*__) are handled at root level.
-        Regular keys: if exists in namespace or root, return value,
-        otherwise set in namespace and return default.
-        """
-        # Special keys at root
-        if key.startswith("__") and key.endswith("__"):
-            return self._parent.setdefault(key, default)
-
-        # Regular keys with namespace priority
-        if key in self:
-            return self[key]
-        self[key] = default
-        return default
-
-    def keys(self) -> set[str]:
-        """Return combined keys from namespace and root.
-
-        This is needed for dict() conversion and iteration.
-        """
-        # Combine keys from both namespace and root
-        namespace_keys = set(self._parent[self._namespace].keys())
-        root_keys = set(self._parent.keys())
-
-        # Don't include our own namespace as a key (would cause recursion)
-        root_keys.discard(self._namespace)
-
-        return namespace_keys | root_keys
-
-    def items(self) -> list[tuple[str, Any]]:
-        """Return combined items from namespace and root.
-
-        Namespace items take priority over root items.
-        """
-        result = []
-        seen = set()
-
-        # First add namespace items
-        for key, value in self._parent[self._namespace].items():
-            result.append((key, value))
-            seen.add(key)
-
-        # Then add root items (except our own namespace to avoid recursion)
-        for key, value in self._parent.items():
-            if key not in seen and key != self._namespace:
-                result.append((key, value))
-                seen.add(key)
-
-        return result
-
-    def values(self) -> list[Any]:
-        """Return combined values from namespace and root."""
-        return [value for _, value in self.items()]
-
     def __iter__(self) -> Iterator[str]:
-        """Iterate over combined keys."""
-        return iter(self.keys())
+        """Iterate over combined keys, namespace priority for dedup.
+
+        Skips ``self._namespace`` (the node's own dict in the parent) to
+        avoid surfacing it as a top-level key — it's the container for
+        namespaced writes, not a value the node itself stored.
+        """
+        seen: set[str] = set()
+        for k in self._parent[self._namespace]:
+            seen.add(k)
+            yield k
+        for k in self._parent:
+            if k != self._namespace and k not in seen:
+                yield k
 
     def __len__(self) -> int:
-        """Return count of combined unique keys."""
-        return len(self.keys())
-
-    def update(self, other: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        """Update with key/value pairs, routing through __setitem__."""
-        if other:
-            for key, value in other.items():
-                self[key] = value
-        for key, value in kwargs.items():
-            self[key] = value
+        """Number of distinct keys visible (namespace + root, deduped)."""
+        # Sum sizes minus the overlap and minus the namespace bucket itself.
+        ns_keys = self._parent[self._namespace]
+        overlap = sum(1 for k in ns_keys if k in self._parent and k != self._namespace)
+        return len(ns_keys) + len(self._parent) - overlap - 1  # -1 for self._namespace bucket
 
     def __repr__(self) -> str:
         """String representation for debugging."""
-        return (
-            f"NamespacedSharedStore(namespace='{self._namespace}', keys={list(self._parent[self._namespace].keys())})"
-        )
+        ns_keys = list(self._parent[self._namespace].keys())
+        return f"NamespacedSharedStore(namespace='{self._namespace}', keys={ns_keys})"

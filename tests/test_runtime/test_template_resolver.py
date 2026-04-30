@@ -311,3 +311,66 @@ class TestExtractFirstFieldSegment:
         # Root carries the `[0]` — `.split(".", 1)` gives `["node[0]", "field"]`
         # and we return the first segment after the dot.
         assert TemplateResolver.extract_first_field_segment("node[0].field") == "field"
+
+
+class TestResolveTemplateThroughDictLikeProxy:
+    """Regression tests for Bug #2 (Task 159 verification, 2026-04-30).
+
+    ``LLMNode.prep`` receives ``shared`` as a ``NamespacedSharedStore`` (engine
+    wraps in ``engine.py:471`` for the ``node._run`` call). Pre-fix,
+    ``TemplateResolver._get_dict_value`` checked ``isinstance(value, dict)``
+    which excluded the proxy — so ``${node.field}`` resolved against the proxy
+    silently echoed the literal template, breaking the cache-rendering byte
+    identity invariant (DD#19) for every dotted-path chunk.
+
+    After fix: NamespacedSharedStore inherits ``MutableMapping`` and
+    ``_get_dict_value`` checks ``isinstance(value, Mapping)``, so dotted-path
+    resolution works through any dict-like proxy.
+    """
+
+    def test_simple_var_resolves_through_namespaced_proxy(self):
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+
+        shared = {"topic": "hello", "node-x": {}}
+        store = NamespacedSharedStore(shared, "node-x")
+        assert TemplateResolver.resolve_template("${topic}", store) == "hello"
+
+    def test_dotted_path_resolves_through_namespaced_proxy(self):
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+
+        shared = {"upstream": {"stdout": "from upstream", "exit_code": 0}, "consumer": {}}
+        store = NamespacedSharedStore(shared, "consumer")
+        assert TemplateResolver.resolve_template("${upstream.stdout}", store) == "from upstream"
+
+    def test_dotted_path_yields_identical_bytes_for_dict_and_proxy(self):
+        """Hash side (raw dict) and prep side (NamespacedSharedStore) must
+        produce byte-identical results for the same logical state. This is
+        the load-bearing DD#19 invariant; any divergence is a silent stale-
+        cache regression class."""
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+
+        shared = {"upstream": {"stdout": "abc"}, "consumer": {}}
+        store = NamespacedSharedStore(shared, "consumer")
+        from_dict = TemplateResolver.resolve_template("${upstream.stdout}", shared)
+        from_proxy = TemplateResolver.resolve_template("${upstream.stdout}", store)
+        assert from_dict == from_proxy == "abc"
+
+    def test_namespaced_store_is_a_mapping(self):
+        """NamespacedSharedStore must declare itself a ``Mapping`` so consumers
+        using duck-typed isinstance checks recognize it as dict-like."""
+        from collections.abc import Mapping, MutableMapping
+
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+
+        store = NamespacedSharedStore({"k": "v"}, "k")
+        assert isinstance(store, Mapping)
+        assert isinstance(store, MutableMapping)
+
+    def test_unresolvable_path_through_proxy_echoes_template(self):
+        """Permissive-mode contract: unresolvable refs leave the ``${var}``
+        literal in place (consumed by `_resolve_chunk_value`'s permissive-
+        echo branch which collapses to ``_CHUNK_ABSENT``)."""
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+
+        store = NamespacedSharedStore({"consumer": {}}, "consumer")
+        assert TemplateResolver.resolve_template("${unknown.field}", store) == "${unknown.field}"

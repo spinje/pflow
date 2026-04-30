@@ -755,4 +755,111 @@ After reaching staged-ready state, the user requested a multi-agent code review 
 
 ---
 
-> **Note to next agent**: Read this entry fully + Segment 1 + Segment 2's entries above before taking any action. Confirm your understanding by summarizing all three segments' outcomes + open decisions, then state you're ready to proceed.
+### Post-segment-3 adversarial CLI verification + 2 bug fixes (2026-04-30)
+
+After Segment 3's 5-agent code review reached a "ready to commit" state, the user requested a verification-specialist pass: try to break the cache rendering, prewarm, and trace 2.1.0 surfaces using manual `.pflow.md` workflows + the `pflow` CLI (real Anthropic Haiku calls, ~$0.005 total). Test suite was green going in (5709 passed). **Two critical Segment-3 bugs surfaced that the test suite missed**, both in shipped code. Both fixed in the same pass.
+
+**Adversarial fixtures** (committed under `scratchpads/segment3-verification/`):
+- A1: `## Cache` declared, no LLM nodes — boundary check
+- A2: `prompt_cache: []` (empty list) — edge case
+- A3: complex value types (dict, list) in cache chunks
+- A4: hash byte-identity probe (em-dash → hyphen → memo MISS)
+- A5–A5c: ABSENT chunk via branching + control workflows isolating the dotted-path bug
+- A6: realistic dotted-path pattern matching the lyrics-generator motivating shape
+- A7-parent + A7-child: sub-workflow cache isolation
+
+Full report: `scratchpads/segment3-verification/VERIFICATION-REPORT.md`.
+
+#### Bug #1 (HIGH) — `cache_source` mislabeled `"in_process"` for cross-process memo HITs
+
+**Symptom**: every cross-process memo HIT in 2.1.0 traces showed `cache_source: "in_process"` even when `cache_age_sec` was hundreds of seconds (impossible for true in-process state). Defeats DD#22's whole motivation; `analyze-cache --from-trace` (Segment 4) cannot distinguish memo HITs from in-process HITs.
+
+**Root cause**: `engine.py:420–442` calls `apply_memo_hit` (which augments `cache_source="memo"` correctly) followed unconditionally by `handle_cached_execution`, which augmented `cache_source="in_process"` for both branches and silently overwrote the memo augment. The `_augment_llm_usage_with_cache_metadata` guard `if cache_source is not None: ...` rejects None but accepts non-None overwrites.
+
+**Fix shape considered**:
+- (1A) "First-writer-wins" guard `if "cache_source" not in llm_usage` — rejected as fragile; relies on call ordering, future contributor swaps the order, bug returns silently.
+- (1B) Skip augment in `handle_cached_execution` for `plan.status == "cached_memo"` — caller has to know the function's internals.
+- **(1D) Pass `cache_source: str | None = None` keyword-only parameter to `handle_cached_execution`. Engine specifies based on `plan.status`. Memo path: `None` (no augment). In-process path: `"in_process"`. ✅ chosen.**
+- (1F) Extract cache_source augment to a separate helper called only at engine site — cleaner SRP but more churn for marginal benefit.
+
+**Files changed**:
+- `runtime/engine/instrumentation.py` — `handle_cached_execution` adds `*, cache_source: Optional[str] = None`. Augment is no-op when `cache_source is None`.
+- `runtime/engine/engine.py:420–446` — engine sets `cached_source = None` for `cached_memo` branch (apply_memo_hit handles it), `"in_process"` otherwise; passes through.
+
+**Production verified**: A4 cross-process second run now shows `cache_source: memo` with `cache_age_sec: 0.6s`. Pre-fix showed `cache_source: in_process` with `cache_age_sec: 587s`.
+
+#### Bug #2 (CRITICAL) — Cache rendering silently drops every dotted-path chunk through `NamespacedSharedStore`
+
+**Symptom**: any cache chunk referencing an upstream node output (`${node.field}`) was silently filtered as `_CHUNK_ABSENT` in `_build_system_blocks`. The LLM's cache prefix was missing the most important content. Hash-vs-prep byte-identity (DD#19, the load-bearing invariant the entire B3 phase was built to prevent) was broken in production.
+
+**Root cause**: `LLMNode.prep` receives `shared` as `NamespacedSharedStore` (engine.py:471 wraps for `node._run`); `plan_node._render_cache_for_hash` receives the raw `dict`. `TemplateResolver._get_dict_value` checked `isinstance(value, dict)` — **False** for `NamespacedSharedStore` (it implemented dict-like methods but didn't inherit `dict` or any ABC). Path traversal returned `(False, None)` → `variable_exists` returned False → `resolve_template` returned the unchanged template literal → `_resolve_chunk_value`'s permissive-echo branch fired → `_CHUNK_ABSENT`.
+
+**Production semantic proof (A6)**: workflow declared `prompt_cache: [topic, analyst.response]`. Pre-fix the LLM responded *"There are no analyst notes provided in your prompt to summarize—only a preamble with filler text..."* The chunk was dropped silently. No warning. No error. The motivating use case (lyrics-generator) uses dotted-path chunks almost exclusively (`${concept-brief.response}`, `${creative-direction.response}`, `${chorus-chooser.winning_chorus}`, etc.) — every one would have been silently filtered. **The cache feature was non-functional for the motivating workflow.**
+
+**Why tests missed it**: `test_hash_render_and_prep_render_byte_equivalent_for_same_subset` (line 486) used single-root chunks `${a}`, `${b}`, `${c}` — bug doesn't trigger because top-level `__contains__` works for both raw dict and the proxy. AND it called `node.run(shared)` with a raw `dict`, bypassing the `NamespacedSharedStore` wrap engine.py:471 applies in production. Synthetic fixture, wrong shape, passed by definition.
+
+**Fix shapes considered**:
+- (A) Unwrap `NamespacedSharedStore` at LLMNode.prep boundary (`shared._parent`) — minimum diff but private attr access; leaves the proxy lying about its type; next contributor who runs templates through it hits the same bug.
+- (B) Cache helpers detect & special-case the proxy — layer violation (`core/` knows about `runtime/`).
+- (E) Pass raw shared to LLMNode.prep specifically — engine interface change, blast radius across all node types.
+- (F/G) Plan_node renders once, prep consumes via shared key — new architectural element to fix a type-taxonomy bug.
+- (I) Reimplement traversal locally — loses DRY with TemplateResolver.
+- **(C+D) `NamespacedSharedStore` inherits `collections.abc.MutableMapping` (it always was one structurally — it just didn't declare it); `TemplateResolver._get_dict_value` checks `isinstance(value, Mapping)` instead of `isinstance(value, dict)`. ✅ chosen.**
+
+The C+D combination is what mypy/Pydantic/Prefect/etc. do — `collections.abc.Mapping` is the canonical Python ABC for "dict-like read." Top-10% pattern. Per the user's standing question (CLAUDE.md "prioritize simplicity of the FINAL code, not how easy it is to get there"), the type-taxonomy fix is the right end-state — Option A would have been minimum-diff but architecturally wrong.
+
+**Pleasant side effect**: `NamespacedSharedStore` shrank from 218 → 154 lines (−64) because the `MutableMapping` mixin handles `keys` / `items` / `values` / `get` / `setdefault` / `update` / `pop` / `popitem` / `clear` automatically — they all route through `__getitem__` / `__setitem__` / `__iter__` / `__len__` / `__delitem__` (which we already had or trivially added). Plus added `__delitem__` (required by the ABC) and `_is_special_key` static helper consolidating the four scattered `__*__` checks. The fix made the proxy *simpler* than it was before, not more complex.
+
+**Files changed**:
+- `runtime/engine/namespaced_store.py` — inherit `MutableMapping[str, Any]`. Remove explicit `keys` / `items` / `values` / `get` / `setdefault` / `update` (let ABC mixin handle). Add `__delitem__` (required ABC primitive). Rewrite `__iter__` to yield namespace + root union directly (no longer recurses through `self.keys()`). Rewrite `__len__` via inclusion-exclusion arithmetic. Narrow `__contains__` signature from `key: str` to `key: object` (ABC's signature) with `isinstance(key, str)` guard. Consolidate special-key check into `_is_special_key` static method.
+- `runtime/template_resolver.py` — `_get_dict_value` accepts any `Mapping`. Docstring updated to call out the proxy support explicitly. Two sites changed (the direct check + the post-JSON-parse check).
+
+**Production verified**: A6 post-fix the LLM produces a real summary of the upstream content. A5c trace shows `cache_chunks_skipped: []` (was `['path_a.stdout']`); `input_tokens: 26` (was 17 — the path_a.stdout content is now actually in the prompt).
+
+#### Tests added (9 new)
+
+- `test_template_resolver.py::TestResolveTemplateThroughDictLikeProxy` (5):
+  - `test_simple_var_resolves_through_namespaced_proxy`
+  - `test_dotted_path_resolves_through_namespaced_proxy`
+  - `test_dotted_path_yields_identical_bytes_for_dict_and_proxy` (DD#19 invariant at the resolver level)
+  - `test_namespaced_store_is_a_mapping`
+  - `test_unresolvable_path_through_proxy_echoes_template`
+- `test_prompt_cache_rendering.py` (2):
+  - `test_dotted_path_chunk_resolves_through_namespaced_shared_store` — production execution shape (NamespacedSharedStore wrap + dotted path); locks the cache rendering invariant.
+  - `test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store` — DD#19 hash-vs-prep byte-identity through the production wrap (the one the existing test missed).
+- `test_trace_format_2_1.py` (3, replacing the old in_process write test which encoded the broken contract):
+  - `test_handle_cached_execution_writes_in_process_source_when_caller_specifies` — new explicit-parameter contract.
+  - `test_handle_cached_execution_does_not_overwrite_memo_cache_source` — Bug #1 regression gate.
+  - `test_handle_cached_execution_no_op_when_caller_passes_no_cache_source` — default-no-augment contract.
+
+#### Final state
+
+- **5718 tests pass** (was 5709 + 9 new regression tests). 9 skipped, 0 xfailed.
+- `make check` clean — ruff + ruff-format + mypy + deptry.
+- `test_plan_drift.py` 34/34 green.
+- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) PASSED — no-`prompt_cache` workflows still hash byte-identically.
+- All 7 adversarial CLI smoke cases (A1, A2, A3, A4, A5c, A6, A7) behave correctly.
+
+**Diff stat**: `+339 / −133` across 7 files. Production code roughly net-neutral (the proxy refactor offsets the new param plumbing); most of the delta is regression test coverage.
+
+#### Tacit knowledge for the next agent (Segment 4)
+
+1. **`NamespacedSharedStore` is now a real `MutableMapping`.** Future code that needs to type-check "dict-like" should use `isinstance(_, collections.abc.Mapping)` rather than `isinstance(_, dict)`. The proxy is the only non-`dict` Mapping in pflow today, but more may appear. The previous "duck-walks-but-isn't-typed-as" trap is closed.
+
+2. **`handle_cached_execution(cache_source=...)` is keyword-only and required for the in-process path.** The default `None` is meant for the memo path where `apply_memo_hit` already augmented. If a future cache layer is added (a third one, beyond memo + in_process), follow the same pattern: caller specifies the source label; `handle_cached_execution` augments only when told to.
+
+3. **The verification-specialist methodology that surfaced both bugs**: 10 adversarial `.pflow.md` workflows + real `pflow` CLI invocations + actual trace inspection + monkeypatched diagnostics inside Python harnesses. Total cost ~$0.005 in real Anthropic API. Both bugs were architecturally invisible to the unit-test fixtures (synthetic `dict` shared, single-root chunks, helper functions tested in isolation rather than in the engine call sequence). Worth running this same drill against Segment 4 (analyze-cache, F2 confidence aggregation, MCP parity) before declaring it done.
+
+4. **Test fidelity blind spots to watch**: (a) any test that calls `node.run(raw_dict)` instead of going through the engine wrap is BLIND to NamespacedSharedStore-related bugs; (b) any test that exercises `apply_memo_hit` and `handle_cached_execution` in isolation (not in sequence) is BLIND to overwrite-class bugs. Segment 4's analyzer tests should drive through real `pflow analyze-cache` end-to-end at least for the main shapes.
+
+5. **DD#19 hash-vs-prep symmetry needs a production-shape test from now on.** The historical byte-equivalence test at `test_prompt_cache_rendering.py:486` was a tautology under synthetic dict + single-root chunks. The new `test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store` is the real regression gate. If a future refactor reintroduces an asymmetric resolution path, this is the test that catches it.
+
+#### Open user decisions surfaced
+
+**None new**. The two pre-existing decisions remain (per `agent-handoff.md`):
+1. **F2 confidence aggregation strictness** — surfaces in Segment 4. Plan defaults STRICT per DD#34.
+2. **V6 sub-workflow dedup outcome** — Segment 1 added the synthetic test; integration-level behavior remains unverified.
+
+---
+
+> **Note to next agent**: Read this entry fully + Segments 1–3 above before taking any action. Confirm your understanding by summarizing all four phases' outcomes + open decisions, then state you're ready to proceed to Segment 4.

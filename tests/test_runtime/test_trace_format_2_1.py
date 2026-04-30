@@ -312,7 +312,8 @@ def test_write_memo_cache_skips_metadata_for_shell_node() -> None:
 # --- handle_cached_execution: in_process source --------------------------
 
 
-def test_handle_cached_execution_writes_in_process_source_for_llm_node() -> None:
+def test_handle_cached_execution_writes_in_process_source_when_caller_specifies() -> None:
+    """Engine passes ``cache_source="in_process"`` for the cached_in_process branch."""
     shared: dict = {"node-x": {"llm_usage": {"input_tokens": 50}}}
 
     handle_cached_execution(
@@ -323,12 +324,47 @@ def test_handle_cached_execution_writes_in_process_source_for_llm_node() -> None
         node_type_name="LLMNode",
         node_params={},
         trace_collector=None,
+        cache_source="in_process",
     )
 
     assert shared["node-x"]["llm_usage"]["cache_source"] == "in_process"
     # In-process hits have no key + no age
     assert "cache_key" not in shared["node-x"]["llm_usage"]
     assert "cache_age_sec" not in shared["node-x"]["llm_usage"]
+
+
+def test_handle_cached_execution_does_not_overwrite_memo_cache_source() -> None:
+    """When caller omits ``cache_source`` (default ``None``), the augment is a
+    no-op so a prior ``apply_memo_hit`` write of ``cache_source="memo"``
+    survives. Bug 1 regression: handle_cached_execution used to unconditionally
+    overwrite with ``"in_process"`` (Task 159 verification, 2026-04-30)."""
+    # Simulate state after apply_memo_hit
+    shared: dict = {
+        "node-x": {
+            "llm_usage": {
+                "input_tokens": 50,
+                "cache_source": "memo",
+                "cache_key": "abc123",
+                "cache_age_sec": 12.5,
+            }
+        }
+    }
+
+    handle_cached_execution(
+        "node-x",
+        shared,
+        cached_action="default",
+        shared_keys_before=set(shared.keys()),
+        node_type_name="LLMNode",
+        node_params={},
+        trace_collector=None,
+        # Memo path: caller omits cache_source so apply_memo_hit's augment survives.
+    )
+
+    # All three memo-path fields preserved
+    assert shared["node-x"]["llm_usage"]["cache_source"] == "memo"
+    assert shared["node-x"]["llm_usage"]["cache_key"] == "abc123"
+    assert shared["node-x"]["llm_usage"]["cache_age_sec"] == 12.5
 
 
 def test_handle_cached_execution_skips_metadata_for_non_llm_node() -> None:
@@ -342,10 +378,31 @@ def test_handle_cached_execution_skips_metadata_for_non_llm_node() -> None:
         node_type_name="ShellNode",
         node_params={},
         trace_collector=None,
+        cache_source="in_process",
     )
 
     # No augmentation (shell node not in allowlist)
     assert shared["shell-step"] == {"value": "ok"}
+
+
+def test_handle_cached_execution_no_op_when_caller_passes_no_cache_source() -> None:
+    """Default ``cache_source=None`` → no augment touches llm_usage at all."""
+    shared: dict = {"node-x": {"llm_usage": {"input_tokens": 50}}}
+
+    handle_cached_execution(
+        "node-x",
+        shared,
+        cached_action="default",
+        shared_keys_before=set(shared.keys()),
+        node_type_name="LLMNode",
+        node_params={},
+        trace_collector=None,
+    )
+
+    # No source/key/age fields added
+    assert "cache_source" not in shared["node-x"]["llm_usage"]
+    assert "cache_key" not in shared["node-x"]["llm_usage"]
+    assert "cache_age_sec" not in shared["node-x"]["llm_usage"]
 
 
 # --- 2.0.0 backward compat ------------------------------------------------

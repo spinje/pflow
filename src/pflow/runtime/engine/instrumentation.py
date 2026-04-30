@@ -638,6 +638,8 @@ def handle_cached_execution(
     node_type_name: str,
     node_params: dict,
     trace_collector: Any,
+    *,
+    cache_source: Optional[str] = None,
 ) -> Any:
     """Handle cached node execution: record trace, call callbacks.
 
@@ -650,26 +652,34 @@ def handle_cached_execution(
     load-bearing (e.g. checkpoint-resume seeding a shared store with both
     ``shared[id]`` and ``__failures__[id]``), add it back with a test that
     exercises the reaching path, not as speculative defense.
+
+    Task 159 E.1 ``cache_source`` keyword-only parameter: caller specifies the
+    label (e.g., ``"in_process"`` for the in-process branch). The memo branch
+    omits it — ``apply_memo_hit`` already wrote ``"memo"`` along with the
+    matching key + age. Without this, both branches funnelled through here
+    would silently overwrite the memo augment with ``"in_process"`` (DD#22
+    distinguishes memo from in-process; that distinction is load-bearing for
+    ``analyze-cache --from-trace``). Keyword-only so positional drift can't
+    accidentally re-introduce the overwrite.
     """
     if "__cache_hits__" not in shared:
         shared["__cache_hits__"] = []
     shared["__cache_hits__"].append(node_id)
 
-    # Task 159 E.1: in-process cache hits have no key (memory-only) and no
-    # age (always "this run"). Tag them with cache_source="in_process" so
-    # trace 2.1.0 can distinguish memo-cache hits (cross-run) from
-    # in-process hits (intra-run loop revisits) without consumers having to
-    # cross-reference cache_key existence.
-    if _should_write_cache_metadata(node_type_name):
-        _augment_llm_usage_with_cache_metadata(
-            shared,
-            node_id,
-            cache_source="in_process",
-            cache_key=None,
-            cache_age_sec=None,
-        )
-    else:
-        _log_skipped_cache_metadata(node_type_name, shared.get(node_id))
+    # Task 159 E.1: augment llm_usage with the caller-specified cache_source.
+    # No-op when ``cache_source is None`` so the memo path (already augmented
+    # by ``apply_memo_hit`` with ``"memo"``) is never overwritten.
+    if cache_source is not None:
+        if _should_write_cache_metadata(node_type_name):
+            _augment_llm_usage_with_cache_metadata(
+                shared,
+                node_id,
+                cache_source=cache_source,
+                cache_key=None,
+                cache_age_sec=None,
+            )
+        else:
+            _log_skipped_cache_metadata(node_type_name, shared.get(node_id))
 
     # Record trace for cached node
     record_trace(

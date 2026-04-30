@@ -1046,3 +1046,95 @@ def test_openai_still_emits_system_blocks(mock_llm_client) -> None:
     sent = mock_llm_client.call_history_full[-1]["system"]
     assert isinstance(sent, list)
     assert sent[-1]["text"] == "Concept:\na song"
+
+
+# --- Bug #2 regression (Task 159 verification 2026-04-30) -------------------
+# Production wraps shared in NamespacedSharedStore for node._run; the prior
+# byte-equivalence tests called node.run(raw_dict) and so missed the broken
+# dotted-path resolution path that the proxy exposed. Lock the production
+# execution shape here.
+
+
+def test_dotted_path_chunk_resolves_through_namespaced_shared_store(mock_llm_client) -> None:
+    """LLMNode.prep receives ``shared`` as ``NamespacedSharedStore``. A cache
+    chunk referencing an upstream node output via dotted path
+    (``${node.field}``) MUST render the upstream value into system_blocks and
+    NOT silently mark it ABSENT. Pre-fix this filtered the chunk and the LLM
+    received a cache prefix missing the most important content."""
+    from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node("emit")
+    raw_shared = {
+        "topic": "hello",
+        "upstream": {"response": "important upstream content"},
+        "emit": {},
+    }
+    _install_cache_render(
+        raw_shared,
+        "emit",
+        _ctx(
+            chunks=[("topic", "Topic:\n"), ("upstream.response", "Upstream:\n")],
+            subset=("topic", "upstream.response"),
+        ),
+    )
+
+    # Production wrap — engine.py:471
+    store = NamespacedSharedStore(raw_shared, "emit")
+    node.run(store)
+
+    sent = mock_llm_client.call_history_full[-1]["system"]
+    assert isinstance(sent, list), "system_blocks must be a list when cache is rendered"
+    assert len(sent) == 2, f"both chunks must render, got {len(sent)}"
+    # Both chunks present in declaration order
+    assert sent[0]["text"] == "Topic:\nhello"
+    assert sent[1]["text"] == "Upstream:\nimportant upstream content"
+    # cache_chunks_skipped on llm_usage must be empty (no chunk was filtered)
+    assert raw_shared["emit"]["llm_usage"]["cache_chunks_skipped"] == []
+
+
+def test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store(mock_llm_client) -> None:
+    """The DD#19 hash-vs-prep byte-identity invariant must hold under the
+    production execution shape: hash side calls ``_render_cache_for_hash``
+    against the engine's raw shared dict; prep side calls
+    ``_build_system_blocks`` against the per-node ``NamespacedSharedStore``.
+    Pre-fix these diverged silently for any dotted-path chunk."""
+    from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+    from pflow.runtime.engine.plan_node import _render_cache_for_hash
+    from pflow.runtime.engine.types import NodeConfig
+
+    mock_llm_client.set_response("*", None, "ok")
+    raw_shared = {
+        "topic": "hello",
+        "upstream": {"response": "important upstream content"},
+        "emit": {},
+    }
+    cache_ctx = _ctx(
+        chunks=[("topic", "Topic:\n"), ("upstream.response", "Upstream:\n")],
+        subset=("topic", "upstream.response"),
+    )
+    _install_cache_render(raw_shared, "emit", cache_ctx)
+
+    # Hash side — receives raw dict
+    config = NodeConfig(
+        node_id="emit",
+        node_type_name="LLMNode",
+        template_config=None,
+        batch_config=None,
+        namespaced=True,
+        interface_metadata=None,
+        prompt_cache_items=("topic", "upstream.response"),
+        prewarm=False,
+    )
+    hash_rendered = _render_cache_for_hash(config, raw_shared)
+    assert hash_rendered is not None
+    hash_texts = [h["prose"] + h["value"] for h in hash_rendered]
+
+    # Prep side — receives NamespacedSharedStore (production shape)
+    store = NamespacedSharedStore(raw_shared, "emit")
+    node = _make_node("emit")
+    node.run(store)
+    sent = mock_llm_client.call_history_full[-1]["system"]
+    prep_texts = [b["text"] for b in sent]
+
+    assert hash_texts == prep_texts, f"hash-vs-prep byte divergence:\n  hash: {hash_texts!r}\n  prep: {prep_texts!r}"

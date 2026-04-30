@@ -418,6 +418,14 @@ class WorkflowEngine:
                 raise plan.template_exception
 
             if plan.status in ("cached_memo", "cached_in_process"):
+                # Task 159 E.1: ``cache_source`` is keyword-driven by plan status.
+                # - ``cached_memo``: ``apply_memo_hit`` already augments
+                #   ``llm_usage`` with ``cache_source="memo"`` plus the matching
+                #   key + age. Pass ``cache_source=None`` so
+                #   ``handle_cached_execution`` does NOT overwrite that augment.
+                # - ``cached_in_process``: nothing has augmented yet; pass
+                #   ``"in_process"`` so the trace correctly tags the intra-run
+                #   loop-revisit hit. DD#22 distinguishes the two layers.
                 if plan.status == "cached_memo" and plan.cached_output is not None and plan.cached_action is not None:
                     apply_memo_hit(
                         config.node_id,
@@ -429,6 +437,9 @@ class WorkflowEngine:
                         cache_key=plan.cache_key,
                         created_at=plan.cached_created_at,
                     )
+                    cached_source: Optional[str] = None
+                else:
+                    cached_source = "in_process"
                 return str(
                     handle_cached_execution(
                         config.node_id,
@@ -438,6 +449,7 @@ class WorkflowEngine:
                         config.node_type_name,
                         node.params,
                         self.trace,
+                        cache_source=cached_source,
                     )
                 )
 
