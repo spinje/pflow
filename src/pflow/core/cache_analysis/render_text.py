@@ -195,6 +195,12 @@ def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
             chunks.append(f"  {chunk.var}")
             chunks.append("")
         chunks.append("  ```")
+        if block.per_node_assignments:
+            chunks.append("")
+            chunks.append("  Per-node prompt_cache: assignments:")
+            chunks.append("")
+            for node_id, assignment in block.per_node_assignments.items():
+                chunks.append(f"    {node_id}: {assignment}")
     return "\n".join(chunks)
 
 

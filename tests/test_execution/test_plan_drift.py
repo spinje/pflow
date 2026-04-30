@@ -2128,6 +2128,17 @@ def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_c
 
     # First run populates the memo cache under engine's hash.
     _run(compiled, cache, params={"concept": "caching"})
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "cache.db")
+    try:
+        row = conn.execute(
+            "SELECT cache_key FROM cache_entries WHERE node_id = ? ORDER BY created_at DESC LIMIT 1",
+            ("gen",),
+        ).fetchone()
+        engine_cache_key = row[0] if row else None
+    finally:
+        conn.close()
 
     # Plan via the planner. Must see the SAME __pflow_cache_render__ dict the
     # engine installs — otherwise plan_node's hash diverges and the plan
@@ -2140,6 +2151,11 @@ def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_c
         workflow_name="prompt-cache-parity",
     )
     assert plan.entries, "plan produced no entries"
+    gen_entry = next(entry for entry in plan.entries if entry.node_id == "gen")
+    assert engine_cache_key is not None, "engine did not populate cache row"
+    assert gen_entry.cache_key == engine_cache_key, (
+        f"PlanEntry.cache_key drift: planner={gen_entry.cache_key!r} engine={engine_cache_key!r}"
+    )
     statuses = [entry.status for entry in plan.entries]
     assert all(s == "cached" for s in statuses), (
         f"planner mispredicted for prompt_cache workflow: statuses={statuses!r}. "

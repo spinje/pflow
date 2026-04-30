@@ -11,6 +11,7 @@ and the per-id round-trip locks the agent-facing JSON contract for every ID.
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any
 
@@ -205,26 +206,16 @@ def test_json_format_version_consumer_rule_holds() -> None:
 # by design (the structural round-trip above provides coverage on the
 # ``make_diagnostic``-side until detection wires up in v1.x).
 #
-# TODO(task-159 recommendations-section-plan): when sub-segments A+B+C wire
-# up producers for the 7 IDs below, this set should empty out and the parallel
+# TODO(task-159 recommendations-section-plan): when sub-segments B+C wire
+# up producers for the remaining IDs below, this set should empty out and the parallel
 # test helpers ``_kwargs_for`` (this file) and ``_minimal_context_kwargs`` +
 # ``test_every_id_round_trips_through_make_diagnostic`` (in
 # ``tests/test_core/test_cache_analysis_warnings.py``) become dead. Delete
-# all four in the same PR that lands sub-segment C; the production-driven
-# test ``test_emitted_diagnostics_round_trip_for_real_producer_paths`` will
-# cover all 12 IDs once stubs ship. Sub-segment A → ``cache.dynamic-before-static``,
-# ``cache.shared-context-undeclared``, ``cache.padding-advisory``,
-# ``cache.batch-prewarm-recommended``. Sub-segment B → ``cache.cross-workflow-*``.
+# all four in the same PR that lands sub-segment C; the production-driven test
+# ``test_emitted_diagnostics_round_trip_for_real_producer_paths`` will cover
+# all 12 IDs once stubs ship. Sub-segment B → ``cache.cross-workflow-*``.
 # Sub-segment C → ``cache.discrepancy``.
-_STUBBED_PRODUCERS_DEFERRED_TO_V1X = frozenset({
-    "cache.dynamic-before-static",
-    "cache.shared-context-undeclared",
-    "cache.padding-advisory",
-    "cache.batch-prewarm-recommended",
-    "cache.cross-workflow-prose-mismatch",
-    "cache.cross-workflow-rename-detected",
-    "cache.discrepancy",
-})
+_STUBBED_PRODUCERS_DEFERRED_TO_V1X = frozenset()
 
 
 def _round_trip(diag: Any) -> dict:
@@ -237,7 +228,7 @@ def _round_trip(diag: Any) -> dict:
     return payload
 
 
-def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any) -> None:
+def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, monkeypatch: Any) -> None:
     """Drive every NON-STUBBED catalog id through its actual producer and
     round-trip the emitted Diagnostic. Catches the divergence class where
     a producer populates context with a non-JSON-serializable value (Path,
@@ -252,6 +243,15 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any) -
     """
     from pflow.core.cache_analysis import analyze, summarize_from_analysis
     from pflow.core.workflow.data_flow import validate_data_flow
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(
+        analyze_module,
+        "estimate_tokens",
+        lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
+    )
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
     seen_ids: set[str] = set()
 
@@ -366,7 +366,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any) -
                 "type": "llm",
                 "model": "anthropic/claude-sonnet-4-5",
                 "prewarm": True,
-                "batch": {"items": "${items}", "item_alias": "item"},
+                "batch": {"items": "${items}", "as": "item"},
                 "params": {"prompt": "${item.text}"},  # batch ref at position 0
             }
         ],
@@ -377,6 +377,198 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any) -
     assert found, f"analyze did not emit cache.prewarm-no-prefix: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.prewarm-no-prefix")
+
+    # cache.batch-prewarm-recommended: batch with large static prefix, no
+    # explicit prewarm decision.
+    batch_recommended_ir: dict[str, Any] = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "priced/model",
+                "batch": {"items": [{"text": str(i)} for i in range(34)], "as": "item"},
+                "params": {"prompt": ("stable " * 100) + "${item.text}"},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(batch_recommended_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.batch-prewarm-recommended"]
+    assert found, f"analyze did not emit cache.batch-prewarm-recommended: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.batch-prewarm-recommended")
+
+    # cache.dynamic-before-static: full-path declared cache chunk appears after
+    # an undeclared dynamic ref.
+    dynamic_ir: dict[str, Any] = {
+        "cache": {
+            "items": [
+                {
+                    "name": "creative-direction.response",
+                    "var": "creative-direction.response",
+                    "prose_before": "Direction:\n",
+                }
+            ]
+        },
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "priced/model",
+                "prompt_cache": ["creative-direction.response"],
+                "params": {"prompt": "Dynamic ${user_input}\n${creative-direction.response}\n" + ("rubric " * 50)},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(dynamic_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.dynamic-before-static"]
+    assert found, f"analyze did not emit cache.dynamic-before-static: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.dynamic-before-static")
+
+    # cache.padding-advisory: dotted-path subset starts after position 1.
+    padding_ir: dict[str, Any] = {
+        "cache": {
+            "items": [
+                {"name": "concept", "var": "concept", "prose_before": "concept " * 20},
+                {"name": "concept-brief.response", "var": "concept-brief.response", "prose_before": "brief " * 20},
+                {"name": "scorer.response", "var": "scorer.response", "prose_before": "score " * 20},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "priced/model",
+                "prompt_cache": ["scorer.response"],
+                "params": {"prompt": "review ${scorer.response}"},
+            },
+            {
+                "id": "rewrite",
+                "type": "llm",
+                "model": "priced/model",
+                "prompt_cache": ["concept-brief.response", "scorer.response"],
+                "params": {"prompt": "rewrite ${concept-brief.response}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(padding_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.padding-advisory"]
+    assert found, f"analyze did not emit cache.padding-advisory: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.padding-advisory")
+
+    # cache.shared-context-undeclared: two LLM nodes share a dotted-path ref
+    # and the workflow has no ## Cache block.
+    shared_ir: dict[str, Any] = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "priced/model",
+                "params": {"prompt": "Use ${concept-brief.response}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "priced/model",
+                "params": {"prompt": "Review ${concept-brief.response}."},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(shared_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.shared-context-undeclared"]
+    assert found, f"analyze did not emit cache.shared-context-undeclared: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.shared-context-undeclared")
+
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+
+    # cache.cross-workflow-rename-detected: parent value tail differs from the
+    # child input name.
+    rename_child_ir = {"nodes": [{"id": "noop", "type": "shell", "params": {"command": "echo ok"}}]}
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(rename_child_ir, None, ()),
+    )
+    rename_ir: dict[str, Any] = {
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"creative_brief": "${concept_brief}"}},
+            }
+        ],
+    }
+    analysis = analyze(rename_ir, workflow_path="parent.pflow.md")
+    found = [d for d in analysis.warnings if d.id == "cache.cross-workflow-rename-detected"]
+    assert found, f"analyze did not emit cache.cross-workflow-rename-detected: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.cross-workflow-rename-detected")
+
+    # cache.cross-workflow-prose-mismatch: same dotted-path chunk name in both
+    # cache blocks, different prose labels, no rename on the edge.
+    prose_child_ir = {
+        "cache": {
+            "items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "child prose"}]
+        },
+        "nodes": [{"id": "noop", "type": "shell", "params": {"command": "echo ok"}}],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(prose_child_ir, None, ()),
+    )
+    prose_ir: dict[str, Any] = {
+        "cache": {
+            "items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "parent prose"}]
+        },
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"direction": "${creative.direction}"}},
+            }
+        ],
+    }
+    analysis = analyze(prose_ir, workflow_path="parent.pflow.md")
+    found = [d for d in analysis.warnings if d.id == "cache.cross-workflow-prose-mismatch"]
+    assert found, f"analyze did not emit cache.cross-workflow-prose-mismatch: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.cross-workflow-prose-mismatch")
+
+    # cache.discrepancy: 2.1.0 trace event with observable TTL-expiry fields.
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.1.0",
+            "workflow_path": "parent.pflow.md",
+            "nodes": [
+                {
+                    "node_id": "gen",
+                    "llm_call": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "cache_creation_input_tokens": 100,
+                        "cache_read_input_tokens": 0,
+                        "cache_age_sec": 301,
+                        "cache_chunks_skipped": [],
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+    analysis = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    found = [d for d in analysis.warnings if d.id == "cache.discrepancy"]
+    assert found, f"analyze did not emit cache.discrepancy: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.discrepancy")
 
     # --- summarize-emitted id (summarize.py) -----------------------------
     # cache.opportunities-available: the dry-run nudge fires when actionable

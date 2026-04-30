@@ -24,7 +24,8 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,13 +41,17 @@ from pflow.core.cache_render import (  # noqa: F401 — see docstring.
     _CHUNK_ABSENT,
     _resolve_chunk_value,
     _resolve_static_prefix_for_cache,
+    deterministic_serialize,
 )
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_providers import detect_provider
+from pflow.core.workflow.data_flow import validate_data_flow
 from pflow.core.workflow_id import synthesize_inline_workflow_id
+from pflow.runtime.template_resolver import TemplateResolver
 
 from .cross_workflow import walk_cross_workflow
+from .padding_advisor import PaddingCandidate, compute_padding_advisories
 from .token_estimation import estimate_output_tokens, estimate_tokens
 from .warning_catalog import make_diagnostic
 
@@ -223,6 +228,17 @@ def analyze(
         memo_cache=memo_cache,
         declared_chunks=declared_chunks,
     )
+    rows_by_node = {row.node_path: row for row in per_call_rows}
+
+    suggested_blocks, shared_warnings = _populate_suggested_blocks(
+        workflow_ir=workflow_ir,
+        rows_by_node=rows_by_node,
+        memo_cache=memo_cache,
+        workflow_path=lookup_path,
+    )
+    warnings.extend(shared_warnings)
+    warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
+    warnings.extend(_cache_validator_findings(workflow_ir))
 
     # --- Cross-workflow walker ------------------------------------------------
     cross_findings = _build_cross_workflow_findings(
@@ -234,6 +250,17 @@ def analyze(
     warnings.extend(cross_findings.rename_detections)
     warnings.extend(cross_findings.prose_mismatches)
     warnings.extend(cross_findings.value_flow_opportunities)
+    if trace_data is not None:
+        warnings.extend(
+            _emit_discrepancy_diagnostics(
+                workflow_ir=workflow_ir,
+                trace_data=trace_data,
+                parameters=parameters or {},
+                memo_cache=memo_cache,
+                workflow_path=lookup_path,
+                notes=notes,
+            )
+        )
 
     # --- Confidence aggregation (STRICT per DD#34) ---------------------------
     confidence, coverage = _aggregate_confidence(per_call_rows)
@@ -433,7 +460,7 @@ def _build_per_call_rows_and_warnings(
             declared_chunks=declared_chunks,
         )
         rows.append(row)
-        warnings.extend(_per_node_warnings(node, row))
+        warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks))
     return rows, warnings
 
 
@@ -500,14 +527,11 @@ def _build_per_call_row(
     )
 
 
-def _per_node_warnings(node: dict[str, Any], row: PerCallRow) -> list[Diagnostic]:
+def _per_node_warnings(node: dict[str, Any], row: PerCallRow, *, declared_chunks: list[str]) -> list[Diagnostic]:
     """Emit analytical-tier warnings for one LLM node.
 
-    v1 covers the inexpensive checks: ``cache.below-min-tokens``,
-    ``cache.prewarm-no-prefix``. The richer detection (``cache.dynamic-before-static``,
-    ``cache.batch-prewarm-recommended`` with savings ratio, padding-advisory math)
-    requires the per-call data already on ``row`` plus prompt-template parsing
-    not implemented in v1's scaffold (see Phase F follow-ups).
+    Full-path matching is load-bearing: cache chunk identifiers are
+    ``creative-direction.response`` rather than root ids.
     """
     diagnostics: list[Diagnostic] = []
     node_id = row.node_path
@@ -525,6 +549,9 @@ def _per_node_warnings(node: dict[str, Any], row: PerCallRow) -> list[Diagnostic
                     min_tokens=int(min_tokens),
                 )
             )
+
+    diagnostics.extend(_batch_prewarm_recommendations(node, row))
+    diagnostics.extend(_dynamic_before_static_warnings(node, row, declared_chunks=declared_chunks))
 
     # cache.prewarm-no-prefix — prewarm: true with no static prefix before
     # the first batch-scoped reference. Detected by inspecting the unresolved
@@ -556,6 +583,90 @@ def _per_node_warnings(node: dict[str, Any], row: PerCallRow) -> list[Diagnostic
     return diagnostics
 
 
+def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> list[Diagnostic]:
+    """Emit ``cache.batch-prewarm-recommended`` per DD#33.
+
+    ``prewarm: false`` is an explicit opt-out and suppresses this warning; only
+    absence of the field means the author has not made a decision.
+    """
+    batch = node.get("batch")
+    if "prewarm" in node or not isinstance(batch, dict):
+        return []
+    batch_size = row.batch_size_estimated
+    if batch_size is None or batch_size < 2:
+        return []
+    prompt = node.get("params", {}).get("prompt", "") or ""
+    if not isinstance(prompt, str):
+        return []
+
+    alias = str(batch.get("as", "item"))
+    match = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)").search(prompt)
+    if match is None or match.start() == 0:
+        return []
+
+    prefix_tokens = estimate_tokens(row.model, prompt[: match.start()])[0]
+    dynamic_tokens = estimate_tokens(row.model, prompt[match.start() :])[0]
+    if prefix_tokens < get_min_cache_tokens(row.model):
+        return []
+
+    savings_ratio = ((batch_size - 1) * 1.15 * prefix_tokens) / (batch_size * ((1.25 * prefix_tokens) + dynamic_tokens))
+    savings_pct = round(100 * savings_ratio)
+    if savings_pct < 5:
+        return []
+
+    return [
+        make_diagnostic(
+            "cache.batch-prewarm-recommended",
+            node_id=row.node_path,
+            batch_size=batch_size,
+            prefix_tokens_estimated=prefix_tokens,
+            savings_pct=savings_pct,
+            savings_usd=_estimate_token_savings_usd(row.model, prefix_tokens, batch_size - 1),
+        )
+    ]
+
+
+def _dynamic_before_static_warnings(
+    node: dict[str, Any],
+    row: PerCallRow,
+    *,
+    declared_chunks: list[str],
+) -> list[Diagnostic]:
+    """Detect a dynamic template reference before a large stable suffix."""
+    if not row.declared_prompt_cache or not declared_chunks:
+        return []
+    prompt = node.get("params", {}).get("prompt", "") or ""
+    if not isinstance(prompt, str):
+        return []
+
+    declared = set(declared_chunks)
+    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+        var_expr = match.group(1)
+        operands = TemplateResolver.split_coalesce_operands(var_expr)
+        if any(operand in declared for operand in operands):
+            continue
+
+        cacheable_tokens = estimate_tokens(row.model, prompt[match.end() :])[0]
+        if cacheable_tokens < get_min_cache_tokens(row.model):
+            break
+
+        affected_calls = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
+        tokens_before = estimate_tokens(row.model, prompt[: match.start()])[0]
+        return [
+            make_diagnostic(
+                "cache.dynamic-before-static",
+                node_id=row.node_path,
+                dynamic_ref=var_expr,
+                dynamic_line=1 + prompt[: match.start()].count("\n"),
+                cacheable_tokens=cacheable_tokens,
+                affected_calls=affected_calls,
+                savings_usd=_estimate_token_savings_usd(row.model, cacheable_tokens, affected_calls),
+                projected_ratio_pct=_safe_pct(cacheable_tokens, cacheable_tokens + tokens_before),
+            )
+        ]
+    return []
+
+
 def _estimate_batch_size(batch: dict[str, Any]) -> int | None:
     """Heuristic estimate of batch size from inline-static items list."""
     items = batch.get("items")
@@ -578,6 +689,232 @@ def _estimate_cacheable_tokens(*, prompt: str, declared_subset: list[str] | None
     # Stub: 75% of prompt is cacheable when there's a declared subset (proxy
     # for "the system prefix dominates the prompt budget"). Refined in v1.x.
     return max(0, len(prompt) * 75 // 400)
+
+
+def _populate_suggested_blocks(
+    *,
+    workflow_ir: dict[str, Any],
+    rows_by_node: dict[str, PerCallRow],
+    memo_cache: Any,
+    workflow_path: str,
+) -> tuple[list[SuggestedBlock], list[Diagnostic]]:
+    """Build greenfield suggested ``## Cache`` blocks and matching advisory."""
+    declared_names = set(_cache_item_names(workflow_ir))
+    if declared_names:
+        return [], []
+
+    ref_to_nodes, first_seen = _collect_llm_template_references(workflow_ir)
+    shared_refs = [(ref, nodes) for ref, nodes in ref_to_nodes.items() if len(nodes) >= 2]
+    if not shared_refs:
+        return [], []
+
+    shared_refs.sort(key=lambda item: (-len(item[1]), first_seen[item[0]], item[0]))
+    chunks: list[SuggestedBlockChunk] = []
+    assignments: dict[str, list[str]] = {}
+    total_savings: float | None = 0.0
+    affected_nodes: set[str] = set()
+
+    for ref, node_ids in shared_refs:
+        first_row = rows_by_node.get(node_ids[0])
+        model = first_row.model if first_row else ""
+        size_tokens = _estimate_ref_tokens(ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path)
+        chunks.append(
+            SuggestedBlockChunk(
+                name=ref,
+                var=f"${{{ref}}}",
+                size_tokens_est=size_tokens,
+                prose_placeholder=f"<DESCRIBE {ref} — appears verbatim in cached system prefix>",
+            )
+        )
+        chunk_savings = _savings_for_shared_ref(ref, node_ids, rows_by_node, size_tokens)
+        if chunk_savings is None:
+            total_savings = None
+        elif total_savings is not None:
+            total_savings += chunk_savings
+        for node_id in node_ids:
+            affected_nodes.add(node_id)
+            assignments.setdefault(node_id, []).append(ref)
+
+    target_file = workflow_path or "<root>"
+    block = SuggestedBlock(
+        target_file=target_file,
+        ttl="5m",
+        chunks=tuple(chunks),
+        per_node_assignments={node_id: assignments[node_id] for node_id in sorted(assignments)},
+        estimated_savings_usd=total_savings,
+    )
+    warning = make_diagnostic(
+        "cache.shared-context-undeclared",
+        node_id=None,
+        node_count=len(affected_nodes),
+        shared_chunks=[chunk.name for chunk in chunks],
+        affected_workflow=target_file,
+        savings_usd=total_savings,
+    )
+    return [block], [warning]
+
+
+def _collect_llm_template_references(workflow_ir: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, int]]:
+    """Return ``template_ref -> node_ids`` for LLM prompt references."""
+    ref_to_nodes: dict[str, list[str]] = {}
+    first_seen: dict[str, int] = {}
+    for node_idx, node in enumerate(workflow_ir.get("nodes", []) or []):
+        if not isinstance(node, dict) or node.get("type") != "llm":
+            continue
+        prompt = node.get("params", {}).get("prompt", "")
+        if not isinstance(prompt, str):
+            continue
+        batch_aliases = _batch_aliases(node)
+        seen_in_node: set[str] = set()
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+            for ref in TemplateResolver.split_coalesce_operands(match.group(1)):
+                if _is_batch_scoped_ref(ref, batch_aliases) or ref in seen_in_node:
+                    continue
+                seen_in_node.add(ref)
+                ref_to_nodes.setdefault(ref, []).append(str(node["id"]))
+                first_seen.setdefault(ref, node_idx)
+    return ref_to_nodes, first_seen
+
+
+def _batch_aliases(node: dict[str, Any]) -> set[str]:
+    batch = node.get("batch")
+    if not isinstance(batch, dict):
+        return set()
+    return {str(batch.get("as", "item"))}
+
+
+def _is_batch_scoped_ref(ref: str, aliases: set[str]) -> bool:
+    return any(ref == alias or ref.startswith(f"{alias}.") or ref.startswith(f"{alias}[") for alias in aliases)
+
+
+def _emit_padding_advisories(
+    *,
+    workflow_ir: dict[str, Any],
+    rows_by_node: dict[str, PerCallRow],
+) -> list[Diagnostic]:
+    """Build and filter ``cache.padding-advisory`` candidates."""
+    cache_items = _cache_items(workflow_ir)
+    declared_names = [str(item["name"]) for item in cache_items]
+    if not declared_names:
+        return []
+    candidates: list[PaddingCandidate] = []
+    for node in workflow_ir.get("nodes", []) or []:
+        if not isinstance(node, dict) or node.get("type") != "llm":
+            continue
+        subset = node.get("prompt_cache")
+        if not isinstance(subset, list) or not subset:
+            continue
+        current_subset = tuple(str(item) for item in subset)
+        if current_subset[0] not in declared_names:
+            continue
+        first_pos = declared_names.index(current_subset[0])
+        if first_pos == 0:
+            continue
+        row = rows_by_node.get(str(node.get("id")))
+        if row is None:
+            continue
+        rate = _input_rate(row.model)
+        if rate is None:
+            continue
+        prefix_tokens = sum(_estimate_chunk_tokens(item, row.model) for item in cache_items[:first_pos])
+        call_count = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
+        savings_usd = 0.9 * prefix_tokens * call_count * rate
+        candidates.append(
+            PaddingCandidate(
+                node_id=row.node_path,
+                current_subset=current_subset,
+                suggested_subset=tuple(declared_names[:first_pos]) + current_subset,
+                savings_usd=savings_usd,
+            )
+        )
+    return compute_padding_advisories(candidates)
+
+
+def _cache_validator_findings(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Surface validator-shipped cache findings in analyze-cache output."""
+    return [
+        diag
+        for diag in validate_data_flow(workflow_ir, check_inputs=False)
+        if diag.id is not None and diag.id.startswith("cache.")
+    ]
+
+
+def _cache_items(workflow_ir: dict[str, Any]) -> list[dict[str, Any]]:
+    cache = workflow_ir.get("cache")
+    if not isinstance(cache, dict):
+        return []
+    items = cache.get("items")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict) and isinstance(item.get("name"), str)]
+
+
+def _cache_item_names(workflow_ir: dict[str, Any]) -> list[str]:
+    return [str(item["name"]) for item in _cache_items(workflow_ir)]
+
+
+def _estimate_chunk_tokens(item: dict[str, Any], model: str) -> int:
+    text = f"{item.get('prose_before', '')}\n${{{item.get('var', item.get('name', ''))}}}"
+    return estimate_tokens(model, text)[0]
+
+
+def _estimate_ref_tokens(ref: str, *, model: str, memo_cache: Any, workflow_path: str | None) -> int:
+    value = _latest_value_for_ref(ref, memo_cache=memo_cache, workflow_path=workflow_path)
+    if value is not None:
+        return estimate_tokens(model, deterministic_serialize(value))[0]
+    return estimate_tokens(model, f"${{{ref}}}")[0]
+
+
+def _latest_value_for_ref(ref: str, *, memo_cache: Any, workflow_path: str | None) -> Any:
+    if memo_cache is None:
+        return None
+    root = TemplateResolver.extract_root_node_id(ref)
+    try:
+        latest = memo_cache.get_latest_for_node(root, workflow_path=workflow_path)
+    except Exception:
+        logger.debug("memo_cache.get_latest_for_node failed while estimating %s", ref, exc_info=True)
+        return None
+    if latest is None:
+        return None
+    output, _created_at = latest
+    if not isinstance(output, dict):
+        return None
+    resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
+    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
+        return None
+    return resolved
+
+
+def _savings_for_shared_ref(
+    ref: str,
+    node_ids: list[str],
+    rows_by_node: dict[str, PerCallRow],
+    tokens: int,
+) -> float | None:
+    total = 0.0
+    for node_id in node_ids[1:]:
+        row = rows_by_node.get(node_id)
+        if row is None:
+            return None
+        savings = _estimate_token_savings_usd(row.model, tokens, 1)
+        if savings is None:
+            return None
+        total += savings
+    return total
+
+
+def _estimate_token_savings_usd(model: str, tokens: int, calls: int) -> float | None:
+    rate = _input_rate(model)
+    if rate is None:
+        return None
+    return 0.9 * tokens * calls * rate
+
+
+def _input_rate(model: str) -> float | None:
+    from .cost_estimation import get_model_pricing
+
+    pricing = get_model_pricing(model)
+    return pricing.input_rate if pricing is not None else None
 
 
 def _safe_pct(numerator: int, denominator: int) -> int:
@@ -608,14 +945,17 @@ def _build_cross_workflow_findings(
     # ``walk_cross_workflow`` may raise FileNotFoundError / ValueError on broken
     # sub-workflow refs; we let it propagate so the analyzer surfaces the same
     # validation error the runner would (per F1.3 contract).
-    edges = walk_cross_workflow(
+    result = walk_cross_workflow(
         root_ir,
         base_path=base_path,
         root_workflow_path=root_workflow_path,
         notes=notes,
     )
+    edges = result.edges
 
     rename_diags: list[Diagnostic] = []
+    prose_mismatches: list[Diagnostic] = []
+    value_flow_opportunities: list[Diagnostic] = []
     for edge in edges:
         if edge.is_rename and edge.parent_value_expr is not None:
             rename_diags.append(
@@ -629,13 +969,281 @@ def _build_cross_workflow_findings(
                     parent_node_id=edge.parent_node_id,
                 )
             )
+            continue
+
+        prose_mismatches.extend(_cross_workflow_prose_mismatches(edge, result.cache_items_by_workflow))
+        opportunity = _cross_workflow_value_flow_opportunity(edge, result.cache_items_by_workflow)
+        if opportunity is not None:
+            value_flow_opportunities.append(opportunity)
 
     return CrossWorkflowFindings(
         boundaries_analyzed=len(edges),
         rename_detections=tuple(rename_diags),
-        prose_mismatches=(),  # v1 stub — prose-mismatch detection requires both files' parse trees
-        value_flow_opportunities=(),  # v1 stub — same
+        prose_mismatches=tuple(prose_mismatches),
+        value_flow_opportunities=tuple(value_flow_opportunities),
     )
+
+
+def _cross_workflow_prose_mismatches(
+    edge: Any,
+    cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
+) -> list[Diagnostic]:
+    parent_by_name = _items_by_name(cache_items_by_workflow.get(edge.parent_workflow, ()))
+    child_by_name = _items_by_name(cache_items_by_workflow.get(edge.child_workflow, ()))
+    diagnostics: list[Diagnostic] = []
+    for chunk_name in sorted(parent_by_name.keys() & child_by_name.keys()):
+        parent_prose = str(parent_by_name[chunk_name].get("prose_before", ""))
+        child_prose = str(child_by_name[chunk_name].get("prose_before", ""))
+        if parent_prose == child_prose:
+            continue
+        diagnostics.append(
+            make_diagnostic(
+                "cache.cross-workflow-prose-mismatch",
+                parent_workflow=edge.parent_workflow,
+                child_workflow=edge.child_workflow,
+                chunk_name=chunk_name,
+                parent_prose=parent_prose,
+                child_prose=child_prose,
+            )
+        )
+    return diagnostics
+
+
+def _cross_workflow_value_flow_opportunity(
+    edge: Any,
+    cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
+) -> Diagnostic | None:
+    if edge.parent_value_expr is None:
+        return None
+    parent_declared = set(_items_by_name(cache_items_by_workflow.get(edge.parent_workflow, ())))
+    child_declared = set(_items_by_name(cache_items_by_workflow.get(edge.child_workflow, ())))
+    if edge.parent_value_expr in parent_declared or edge.child_input_name in child_declared:
+        return None
+    return make_diagnostic(
+        "cache.shared-context-undeclared",
+        node_id=edge.parent_node_id,
+        node_count=2,
+        shared_chunks=[edge.child_input_name],
+        affected_workflow=edge.parent_workflow,
+        savings_usd=None,
+    )
+
+
+def _items_by_name(items: tuple[dict[str, Any], ...]) -> dict[str, dict[str, Any]]:
+    return {str(item["name"]): item for item in items if isinstance(item.get("name"), str)}
+
+
+# ---------------------------------------------------------------------------
+# Trace discrepancy detection
+# ---------------------------------------------------------------------------
+
+
+def _iter_llm_events(events: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Walk trace events recursively, including cached events."""
+    for event in events:
+        if "llm_call" in event:
+            yield str(event.get("node_id", "unknown")), event
+        for item in event.get("batch_items", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if "llm_call" in item:
+                yield str(event.get("node_id", "unknown")), item
+            yield from _iter_llm_events(item.get("events", []) or [])
+        yield from _iter_llm_events(event.get("sub_workflow_events", []) or [])
+
+
+def _predict_cache_keys(
+    workflow_ir: dict[str, Any],
+    parameters: dict[str, Any],
+    memo_cache: Any,
+    workflow_path: str | None,
+) -> tuple[dict[str, str], list[str]]:
+    """Consume planner-produced cache keys rather than re-deriving them."""
+    notes: list[str] = []
+    if memo_cache is None:
+        notes.append(
+            "Discrepancy detection: predicted-key matching unavailable (no memo cache available). "
+            "Observable-field attributions (TTL expiry, chunk skipped) still apply."
+        )
+        return {}, notes
+    try:
+        from pflow.core.exceptions import CompilationError
+        from pflow.execution.plan import build_plan
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+
+        registry = Registry()
+        compiled = compile_workflow(workflow_ir, registry, parameters or {})
+        plan = build_plan(
+            compiled,
+            parameters or {},
+            memo_cache,
+            registry,
+            _parent_workflow_file=workflow_path,
+        )
+    except CompilationError as exc:
+        notes.append(
+            f"Discrepancy detection: predicted-key matching unavailable ({type(exc).__name__}). "
+            "Provide required inputs via `pflow analyze-cache <workflow> key=value` for full detection. "
+            "Observable-field attributions (TTL expiry, chunk skipped) still apply."
+        )
+        return {}, notes
+    return _flatten_plan_keys(plan), notes
+
+
+def _flatten_plan_keys(plan: Any, acc: dict[str, str] | None = None) -> dict[str, str]:
+    """Flatten parent and nested sub-plans to ``node_id -> cache_key``."""
+    keys = {} if acc is None else acc
+    for entry in getattr(plan, "entries", []) or []:
+        cache_key = getattr(entry, "cache_key", None)
+        if cache_key is not None:
+            keys[str(entry.node_id)] = str(cache_key)
+        sub_plan = getattr(entry, "sub_plan", None)
+        if sub_plan is not None:
+            _flatten_plan_keys(sub_plan, keys)
+    return keys
+
+
+def _emit_discrepancy_diagnostics(
+    *,
+    workflow_ir: dict[str, Any],
+    trace_data: dict[str, Any],
+    parameters: dict[str, Any],
+    memo_cache: Any,
+    workflow_path: str | None,
+    notes: list[str],
+) -> list[Diagnostic]:
+    if not str(trace_data.get("format_version", "")).startswith("2.1"):
+        return []
+
+    predicted_keys, predict_notes = _predict_cache_keys(workflow_ir, parameters, memo_cache, workflow_path)
+    notes.extend(predict_notes)
+
+    diagnostics: list[Diagnostic] = []
+    for node_id, event in _iter_llm_events(trace_data.get("nodes", []) or []):
+        llm_call = event.get("llm_call") or {}
+        if not isinstance(llm_call, dict):
+            continue
+
+        cache_create = int(llm_call.get("cache_creation_input_tokens") or 0)
+        cache_read = int(llm_call.get("cache_read_input_tokens") or 0)
+        if cache_create == 0 and cache_read == 0:
+            continue
+
+        actual_key = llm_call.get("cache_key") or event.get("cache_key")
+        cache_age_sec = llm_call.get("cache_age_sec") or event.get("cache_age_sec")
+        chunks_skipped = llm_call.get("cache_chunks_skipped")
+        predicted_key = predicted_keys.get(node_id)
+
+        actual_pct = _safe_pct(cache_read, cache_read + cache_create)
+        predicted_pct = 100 if predicted_key is not None else 0
+
+        if predicted_key is None and not (chunks_skipped or (cache_age_sec is not None and float(cache_age_sec) > 300)):
+            continue
+        if predicted_key is not None and abs(predicted_pct - actual_pct) < 5:
+            continue
+
+        root_cause, summary, extra = _attribute_root_cause(
+            cache_age_sec=cache_age_sec,
+            chunks_skipped=chunks_skipped,
+            predicted_key=predicted_key,
+            actual_key=actual_key,
+            ttl=_extract_cache_ttl(workflow_ir.get("cache")),
+            provider=detect_provider(llm_call.get("model")),
+            node_id=node_id,
+            workflow_path=workflow_path,
+            predicted_pct=predicted_pct,
+            actual_pct=actual_pct,
+        )
+        diagnostics.append(
+            make_diagnostic(
+                "cache.discrepancy",
+                node_id=node_id,
+                trace_path=str(trace_data.get("workflow_path") or "<unknown>"),
+                predicted_pct=predicted_pct,
+                actual_pct=actual_pct,
+                root_cause=root_cause,
+                root_cause_summary=summary,
+                cache_age_sec=cache_age_sec,
+                predicted_cache_key=predicted_key,
+                actual_cache_key=actual_key,
+                **extra,
+            )
+        )
+    return _aggregate_and_cap_discrepancies(diagnostics, max_total=20)
+
+
+def _attribute_root_cause(
+    *,
+    cache_age_sec: Any,
+    chunks_skipped: Any,
+    predicted_key: str | None,
+    actual_key: Any,
+    ttl: str | None,
+    provider: Any,
+    node_id: str,
+    workflow_path: str | None,
+    predicted_pct: int,
+    actual_pct: int,
+) -> tuple[str, str, dict[str, Any]]:
+    if chunks_skipped:
+        skipped = str(chunks_skipped[0])
+        return (
+            "chunk_skipped",
+            f"Cache chunk {skipped!r} skipped at runtime (branch absent)",
+            {"skipped_chunk": skipped},
+        )
+    if chunks_skipped is None:
+        return (
+            "unknown",
+            f"Cache chunks-skipped field absent on this trace event "
+            f"(predicted={predicted_pct}%, actual={actual_pct}%); cannot attribute for {node_id}",
+            {},
+        )
+
+    effective_ttl = ttl
+    if effective_ttl is None and provider is not None and provider.name in {"anthropic", "openai", "gemini"}:
+        effective_ttl = "5m"
+
+    if cache_age_sec is not None:
+        age = float(cache_age_sec)
+        if effective_ttl == "5m" and age >= 300:
+            return (
+                "ttl_expiry",
+                f"Cache entry was {age:.0f}s old (>= 5m TTL); upstream write expired",
+                {"affected_workflow": workflow_path or "<root>"},
+            )
+        if effective_ttl == "1h" and age >= 3600:
+            return (
+                "ttl_expiry",
+                f"Cache entry was {age:.0f}s old (>= 1h TTL)",
+                {"affected_workflow": workflow_path or "<root>"},
+            )
+
+    if predicted_key is not None and predicted_key != actual_key:
+        return ("key_mismatch", "Upstream value changed between predicted run and actual run", {})
+
+    return (
+        "unknown",
+        f"Cannot attribute discrepancy to known causes "
+        f"(predicted={predicted_pct}%, actual={actual_pct}%); inspect trace events for {node_id}",
+        {},
+    )
+
+
+def _aggregate_and_cap_discrepancies(diags: list[Diagnostic], *, max_total: int) -> list[Diagnostic]:
+    groups: dict[tuple[str | None, str], list[Diagnostic]] = {}
+    for diag in diags:
+        ctx = diag.context or {}
+        groups.setdefault((diag.node_id, str(ctx.get("root_cause", "unknown"))), []).append(diag)
+
+    aggregated: list[Diagnostic] = []
+    for group in groups.values():
+        representative = group[0]
+        merged_context = {**(representative.context or {}), "affected_invocations": len(group)}
+        aggregated.append(replace(representative, context=merged_context))
+    aggregated.sort(key=lambda diag: -int((diag.context or {}).get("affected_invocations", 1)))
+    return aggregated[:max_total]
 
 
 # ---------------------------------------------------------------------------

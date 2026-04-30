@@ -95,6 +95,10 @@ class PlanEntry:
         "dynamic",
         "routing_error",
     ]
+    # Predicted cache_key from the planner's plan_node call. None when this
+    # entry has no concrete node cache state (routing errors, opaque
+    # sub-workflows, aggregate batch entries).
+    cache_key: str | None = None
     action: str | None = None
     age_sec: float | None = None
     last_cost_usd: float | None = None

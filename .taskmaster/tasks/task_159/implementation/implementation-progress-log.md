@@ -2043,3 +2043,211 @@ The 4 stubbed analytical detections (`cache.batch-prewarm-recommended`,
 `cache.shared-context-undeclared`) + `suggested_blocks` populator are
 the load-bearing remaining work. Per the recommendations plan: ~580
 production LOC + ~56 tests across 3 commits (A → B → C).
+
+---
+
+## Recommendations-section implementation interrupted: Sub-segment A partial (2026-04-30)
+
+User asked to stop and update this progress log so another agent can continue.
+This entry covers the partial implementation done in the interrupted turn.
+No commits were made.
+
+### What I implemented
+
+Started **recommendations-section plan sub-segment A** only. Sub-segments B
+and C were not started.
+
+**Production files modified:**
+- `src/pflow/core/cache_analysis/analyze.py`
+  - Added in-workflow producers for:
+    - `cache.batch-prewarm-recommended`
+    - `cache.dynamic-before-static`
+    - `cache.padding-advisory`
+    - `cache.shared-context-undeclared`
+  - Added greenfield-only `suggested_blocks` population.
+  - Added `validate_data_flow(..., check_inputs=False)` cache-ID surfacing
+    for validator-shipped findings (`cache.order-mismatch`,
+    `cache.unused-chunk`, `cache.invalid-on-non-llm`).
+  - Uses full template paths for chunk matching; does **not** use
+    `extract_root_node_id` for declared-cache membership.
+  - **Important user decision applied:** for
+    `cache.batch-prewarm-recommended`, the spec wins over the plan:
+    the warning fires only when `prewarm` is absent. `prewarm: false`
+    is an explicit opt-out and suppresses the warning.
+- `src/pflow/core/cache_analysis/render_text.py`
+  - Suggested block text rendering now includes per-node `prompt_cache:`
+    assignments.
+- `src/pflow/core/cache_analysis/summarize.py`
+  - Dry-run nudge now prefers `aggregate_savings_first_run_usd` when absolute
+    current/optimized costs are unavailable, preserving the greenfield
+    input-only savings contract.
+- `src/pflow/core/cache_analysis/warning_catalog.py`
+  - `format_dry_run_nudge` now renders a dollar-only form when savings USD is
+    known but percentage is unavailable, e.g.
+    `Cache: 2 design opportunities available (estimated -$0.42/run).`
+
+**Tests modified / added:**
+- NEW `tests/test_core/test_cache_analysis_per_id_emission.py`
+  - Production-shaped end-to-end `analyze(...)` tests for the four A warning
+    IDs plus `suggested_blocks`, with dotted-path coverage.
+- `tests/test_core/test_cache_analysis_analyze.py`
+  - Added A.6 tests proving analyze-cache surfaces validator cache findings
+    and filters non-cache diagnostics.
+- `tests/test_core/test_cache_analysis_summarize.py`
+  - Added greenfield aggregate-savings nudge test.
+- `tests/test_core/test_cache_analysis_per_id_coverage.py`
+  - Removed the four A IDs from `_STUBBED_PRODUCERS_DEFERRED_TO_V1X`.
+  - Added production-driven coverage for the four A IDs.
+  - Fixed the previously noted accidental fixture key from `item_alias` to
+    IR-correct `as`.
+
+### Deviations / open implementation notes
+
+1. **Spec override on A.1 is intentional.** The recommendations plan said
+   `prewarm` "not declared (or False)" should emit. User confirmed the spec
+   behavior: `prewarm: false` is explicit opt-out. Keep this unless the user
+   changes the decision.
+
+2. **Savings estimates for A detections are intentionally simple.**
+   `_estimate_token_savings_usd()` uses input-rate × tokens × calls × 0.9.
+   If model pricing is unavailable, `savings_usd=None` flows through the
+   existing nullable-cost catalog path. This keeps with the tri-state contract.
+
+3. **`suggested_blocks` ordering currently sorts by most-shared first, then
+   first-seen node index, then chunk name.** In the new fixture, `${concept}`
+   sorts before `${concept-brief.response}` because both are shared by two
+   nodes and the first prompt mentions `concept-brief.response` then `concept`,
+   but both refs are recorded against the same node index and the final
+   tie-break is lexical. If the next agent wants exact prompt-order
+   tie-breaking, extend `first_seen` to include match position as well.
+   Current tests lock the actual deterministic behavior.
+
+4. **`_estimate_ref_tokens()` memo lookup is best-effort.** It fetches the
+   latest memo row for the root node and resolves the full ref through
+   `TemplateResolver.resolve_template`. Greenfield falls back to tokenizing
+   the literal `${full.path}`. This matches the current low-fidelity but
+   useful suggested-block path.
+
+5. **A.6 cache validator findings are appended after per-node/shared/padding
+   findings.** That can create duplicate IDs if a workflow is invalid and also
+   analyzable; dedup is not currently applied inside `CacheAnalysis.warnings`.
+   Existing diagnostic identity/dedup infrastructure lives elsewhere. If this
+   becomes noisy, apply a small id/source/node dedup pass in `analyze()`.
+
+6. **Potential linter issue not yet checked.** The modified `analyze.py` grew
+   several helpers. Run ruff/mypy before proceeding far; if C901 fires, split
+   helpers further instead of adding `# noqa: C901`.
+
+---
+
+## Recommendations-section implementation continued: Sub-segments B + C complete (2026-04-30)
+
+Picked up from the interrupted sub-segment A state. No commits were made, and
+no new files were staged because the project memory says not to `git add`
+without explicit instruction.
+
+### What I implemented
+
+Completed **recommendations-section plan sub-segments B and C** on top of the
+already-staged A work.
+
+**Sub-segment B — cross-workflow detections**
+- `src/pflow/core/cache_analysis/cross_workflow.py`
+  - `walk_cross_workflow()` now returns `CrossWorkflowResult` with:
+    - `edges`
+    - `cache_items_by_workflow`
+  - The walker eagerly records each visited workflow's `## Cache` items using
+    the same workflow labels carried by `CrossWorkflowEdge`.
+- `src/pflow/core/cache_analysis/analyze.py`
+  - Emits `cache.cross-workflow-prose-mismatch` when parent and child declare
+    the same full-path chunk name with byte-different `prose_before`.
+  - Emits cross-boundary `cache.shared-context-undeclared` for value flow where
+    neither side declares the value, with `node_id=edge.parent_node_id` so it
+    does not dedup-collide with in-workflow greenfield findings.
+  - Rename still takes precedence; prose/value-flow warnings are suppressed
+    when `edge.is_rename` fires.
+- Tests:
+  - Updated existing walker tests for the result object.
+  - Added cache-item collection coverage.
+  - Added production-shaped analyzer emission tests for prose mismatch and
+    cross-boundary shared-context value flow.
+  - Removed cross-workflow IDs from the "stubbed producer" set in
+    `test_cache_analysis_per_id_coverage.py`.
+
+**Sub-segment C — discrepancy via planner output**
+- `src/pflow/execution/result.py`
+  - Added `PlanEntry.cache_key: str | None = None`.
+- `src/pflow/execution/plan.py`
+  - Renamed `_create_planner_shared()` to public `create_planner_shared()` and
+    kept `_create_planner_shared = create_planner_shared` as a compatibility
+    alias.
+  - Propagates `NodePlan.cache_key` into standard-node `PlanEntry` objects for
+    cache hits, misses, and cache-disabled nodes. Aggregate/opaque/error
+    entries keep `None`.
+- `tests/test_execution/test_plan_drift.py`
+  - Extended `test_plan_matches_engine_for_workflow_with_prompt_cache` to read
+    the engine-written cache key from SQLite and assert
+    `PlanEntry.cache_key == engine_cache_key`.
+- `src/pflow/core/cache_analysis/analyze.py`
+  - Added `_iter_llm_events()` recursive walker that includes cached events and
+    nested sub-workflow events.
+  - Added `_predict_cache_keys()` that consumes `compile_workflow + build_plan`
+    and flattens `PlanEntry.cache_key`, instead of re-deriving runtime hash
+    semantics in analyzer code.
+  - Handles missing `memo_cache` and `CompilationError` by appending a note and
+    continuing with observable-only attribution.
+  - Emits `cache.discrepancy` for:
+    - TTL expiry
+    - skipped cache chunks
+    - cache-key mismatch when predicted keys are available
+    - unknown attribution when observable fields are insufficient
+  - Aggregates discrepancies by `(node_id, root_cause)` with
+    `affected_invocations`, capped at 20.
+- Tests:
+  - Added production-shaped discrepancy tests with 2.1.0 trace fixtures.
+  - Added 2.0.0 silent fallback coverage.
+  - Added sub-workflow event recursion coverage.
+  - Removed `cache.discrepancy` from the "stubbed producer" set; production
+    coverage now drives every catalog ID.
+
+**Additional test contract fix**
+- `tests/test_core/test_cache_analysis_warnings.py`
+  - Updated the older dry-run nudge expectation to match the staged A behavior:
+    when `savings_usd` is known but `savings_pct` is unavailable, render the
+    dollar-only nudge instead of hiding the figure.
+
+### Deviations from plan
+
+1. **`cache.prewarm: false` behavior from A preserved.** I did not revisit the
+   user's prior decision: only absent `prewarm` triggers
+   `cache.batch-prewarm-recommended`; explicit `prewarm: false` is an opt-out.
+
+2. **No staging.** Existing A changes were already staged before this turn; B/C
+   changes are currently unstaged. This is intentional because the project
+   memory says not to `git add` unless explicitly asked.
+
+3. **Direct full `ruff check src tests` is not a valid sandbox proxy for
+   `make check`.** It reports unrelated existing issues and a Python 3.9 parse
+   target mismatch. I used the sandbox-safe direct tools on touched files,
+   plus full mypy and deptry.
+
+### Current working tree state
+
+At the end of this turn:
+- Previously staged A files remain staged.
+- B/C additions and the warning-catalog test expectation update are unstaged.
+- There are mixed staged/unstaged files (`MM`) where B/C changed files that A
+  had already staged.
+
+### Open hedged claims and follow-ups
+
+- **PlanEntry JSON exposure:** `PlanEntry.cache_key` is not added to the dry-run
+  JSON formatter. The analyzer consumes the object directly; text/JSON dry-run
+  output remains unchanged. If agents later need predicted keys in dry-run JSON,
+  that should be an explicit API decision.
+- **Discrepancy attribution is intentionally v1-simple.** No
+  `parallel_write_race` correlation was added; the plan listed it as deferred.
+- **Sub-workflow duplicate node IDs:** `_flatten_plan_keys()` remains flat by
+  `node_id`, matching the handoff's instruction not to solve heterogeneous
+  batch sub-plan attribution in this pass.
+

@@ -11,7 +11,12 @@ from pflow.core.cache_analysis.summarize import summarize, summarize_from_analys
 from pflow.core.diagnostic import Severity
 
 
-def _analysis_with(actionable: int, current: float | None = None, optimized: float | None = None) -> CacheAnalysis:
+def _analysis_with(
+    actionable: int,
+    current: float | None = None,
+    optimized: float | None = None,
+    aggregate_savings: float | None = None,
+) -> CacheAnalysis:
     summary = AnalysisSummary(
         current_cost_per_run_usd=current,
         optimized_cost_per_run_usd=optimized,
@@ -28,6 +33,7 @@ def _analysis_with(actionable: int, current: float | None = None, optimized: flo
         models_in_use=("anthropic/claude-sonnet-4-5",),
         partial_cost_usd=False,
         unavailable_models=(),
+        aggregate_savings_first_run_usd=aggregate_savings,
     )
     return CacheAnalysis(
         workflow_path="x.pflow.md",
@@ -107,6 +113,18 @@ def test_nudge_drops_dollar_figure_when_cost_unavailable() -> None:
     # from 0.0 when cost-gating their own decisions.
     assert diag.context is not None
     assert diag.context["estimated_savings_usd"] is None
+    assert diag.context["estimated_savings_pct"] is None
+
+
+def test_nudge_uses_aggregate_savings_when_absolute_cost_unavailable() -> None:
+    """Greenfield workflows can know input-side savings before output-token
+    history exists. The dry-run nudge should surface that dollar figure rather
+    than hiding it behind unavailable absolute costs."""
+    diag = summarize_from_analysis(_analysis_with(actionable=2, aggregate_savings=0.42))
+    assert diag is not None
+    assert diag.message == "Cache: 2 design opportunities available (estimated -$0.42/run)."
+    assert diag.context is not None
+    assert diag.context["estimated_savings_usd"] == pytest_approx(0.42)
     assert diag.context["estimated_savings_pct"] is None
 
 

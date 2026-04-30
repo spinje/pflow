@@ -17,6 +17,7 @@ import pytest
 
 from pflow.core.cache_analysis.cross_workflow import (
     CrossWorkflowEdge,
+    CrossWorkflowResult,
     walk_cross_workflow,
 )
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
@@ -64,8 +65,8 @@ def test_walker_returns_empty_list_for_workflow_with_no_subworkflows() -> None:
             {"id": "step1", "type": "shell", "params": {"command": "echo"}},
         ]
     }
-    edges = walk_cross_workflow(root_ir, base_path=None, resolve_child=_StubResolver({}))
-    assert edges == []
+    result = walk_cross_workflow(root_ir, base_path=None, resolve_child=_StubResolver({}))
+    assert result.edges == ()
 
 
 def test_walker_emits_one_edge_per_input_for_a_single_subworkflow() -> None:
@@ -84,7 +85,8 @@ def test_walker_emits_one_edge_per_input_for_a_single_subworkflow() -> None:
         ]
     }
     resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/child.pflow.md"))})
-    edges = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    edges = result.edges
     assert len(edges) == 2
     edges_by_input = {e.child_input_name: e for e in edges}
     assert edges_by_input["text"].parent_value_expr == "title"
@@ -92,6 +94,27 @@ def test_walker_emits_one_edge_per_input_for_a_single_subworkflow() -> None:
     for e in edges:
         assert e.child_workflow == "/abs/child.pflow.md"
         assert e.line_in_parent == 50
+
+
+def test_walker_collects_cache_items_by_workflow_label() -> None:
+    child_ir = {
+        "cache": {"items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "child"}]},
+        "nodes": [{"id": "noop", "type": "shell", "params": {"command": "echo ok"}}],
+    }
+    root_ir = {
+        "cache": {"items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "parent"}]},
+        "nodes": [_workflow_node("process", "./child.pflow.md", {"direction": "${creative.direction}"})],
+    }
+    resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/child.pflow.md"))})
+    result = walk_cross_workflow(
+        root_ir,
+        base_path=Path("/abs"),
+        resolve_child=resolver,
+        root_workflow_path="/abs/parent.pflow.md",
+    )
+    assert isinstance(result, CrossWorkflowResult)
+    assert result.cache_items_by_workflow["/abs/parent.pflow.md"][0]["prose_before"] == "parent"
+    assert result.cache_items_by_workflow["/abs/child.pflow.md"][0]["prose_before"] == "child"
 
 
 def test_walker_recurses_into_grandchildren() -> None:
@@ -105,7 +128,8 @@ def test_walker_recurses_into_grandchildren() -> None:
         "./child.pflow.md": (child_ir, Path("/abs/child.pflow.md")),
         "./grandchild.pflow.md": (grandchild_ir, Path("/abs/grandchild.pflow.md")),
     })
-    edges = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    edges = result.edges
     assert len(edges) == 2
     parents = {e.parent_workflow for e in edges}
     assert "/abs/child.pflow.md" in parents  # grandchild edge
@@ -121,14 +145,14 @@ def test_walker_handles_cycle_at_info_level(caplog: pytest.LogCaptureFixture) ->
         "./b.pflow.md": (b_ir, Path("/abs/b.pflow.md")),
         "./a.pflow.md": (a_ir, Path("/abs/a.pflow.md")),
     })
-    edges = walk_cross_workflow(
+    result = walk_cross_workflow(
         a_ir,
         base_path=Path("/abs"),
         resolve_child=resolver,
         seen_paths={"/abs/a.pflow.md"},  # simulate root is "/abs/a.pflow.md"
     )
     # 1 edge from a → b. Cycle prevents descending b's edge to a.
-    assert len(edges) == 1
+    assert len(result.edges) == 1
     assert any("cycle" in rec.message.lower() for rec in caplog.records)
 
 
@@ -141,10 +165,10 @@ def test_walker_respects_depth_limit(caplog: pytest.LogCaptureFixture) -> None:
         "./child.pflow.md": (child_ir, Path("/abs/child.pflow.md")),
         "./gc.pflow.md": (grandchild_ir, Path("/abs/gc.pflow.md")),
     })
-    edges = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver, max_depth=1)
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver, max_depth=1)
     # Only root → child edge; depth 1 doesn't descend into grandchild.
-    assert len(edges) == 1
-    assert edges[0].child_workflow == "/abs/child.pflow.md"
+    assert len(result.edges) == 1
+    assert result.edges[0].child_workflow == "/abs/child.pflow.md"
     assert any("depth" in rec.message.lower() for rec in caplog.records)
 
 
@@ -170,14 +194,14 @@ def test_walker_depth_limit_appends_truncation_note() -> None:
         "./gc.pflow.md": (grandchild_ir, Path("/abs/gc.pflow.md")),
     })
     notes: list[str] = []
-    edges = walk_cross_workflow(
+    result = walk_cross_workflow(
         root_ir,
         base_path=Path("/abs"),
         resolve_child=resolver,
         max_depth=1,
         notes=notes,
     )
-    assert len(edges) == 1  # Root → child only.
+    assert len(result.edges) == 1  # Root → child only.
     assert any("max_depth" in n and "deeper boundaries not analyzed" in n for n in notes)
 
 
@@ -268,12 +292,13 @@ def test_edge_carries_resolved_paths() -> None:
     child_ir = {"inputs": {"x": {"type": "string"}}, "nodes": []}
     root_ir = {"nodes": [_workflow_node("c", "./child.pflow.md", {"x": "${y}"})]}
     resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/path/child.pflow.md"))})
-    edges = walk_cross_workflow(
+    result = walk_cross_workflow(
         root_ir,
         base_path=Path("/abs/path"),
         resolve_child=resolver,
         root_workflow_path="/abs/path/parent.pflow.md",
     )
+    edges = result.edges
     assert len(edges) == 1
     assert edges[0].parent_workflow == "/abs/path/parent.pflow.md"
     assert edges[0].child_workflow == "/abs/path/child.pflow.md"
@@ -285,7 +310,8 @@ def test_edge_carries_parent_node_id() -> None:
     child_ir = {"inputs": {"x": {"type": "string"}}, "nodes": []}
     root_ir = {"nodes": [_workflow_node("song-creator", "./c.pflow.md", {"x": "${y}"})]}
     resolver = _StubResolver({"./c.pflow.md": (child_ir, Path("/abs/c.pflow.md"))})
-    edges = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    edges = result.edges
     assert edges[0].parent_node_id == "song-creator"
 
 
@@ -295,7 +321,8 @@ def test_inputs_with_non_template_values_still_yield_edge() -> None:
     child_ir = {"inputs": {"x": {"type": "string"}}, "nodes": []}
     root_ir = {"nodes": [_workflow_node("c", "./child.pflow.md", {"x": "literal value"})]}
     resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/c.pflow.md"))})
-    edges = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
+    edges = result.edges
     # Walker may or may not emit an edge for literals; the contract is "no crash".
     # If emitted, parent_value_expr is the literal value; rename check uses tail logic.
     if edges:

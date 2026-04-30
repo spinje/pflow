@@ -589,8 +589,10 @@ def format_dry_run_nudge(
     "unavailable", never "zero".
     """
     word = "opportunity" if opportunity_count == 1 else "opportunities"
-    if savings_usd is None or savings_pct is None:
+    if savings_usd is None:
         return f"Cache: {opportunity_count} design {word} available."
+    if savings_pct is None:
+        return f"Cache: {opportunity_count} design {word} available (estimated -${savings_usd:.2f}/run)."
     return f"Cache: {opportunity_count} design {word} available (estimated -${savings_usd:.2f}/run, -{savings_pct}%)."
 
 

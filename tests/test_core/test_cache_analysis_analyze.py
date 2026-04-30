@@ -16,6 +16,7 @@ from pflow.core.cache_analysis.analyze import (
     _maybe_append_gemini_note,
     analyze,
 )
+from pflow.core.diagnostic import Severity
 
 # ---------------------------------------------------------------------------
 # Confidence aggregation — STRICT semantics per DD#34 line 634 verbatim
@@ -123,6 +124,84 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
     # cache.below-min-tokens fires (small prompt, anthropic min=1024).
     sum_ = result.summary
     assert sum_.warnings_count + sum_.info_count >= 1
+
+
+def test_analyze_surfaces_cache_order_mismatch() -> None:
+    workflow_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "gen",
+                "type": "llm",
+                "prompt_cache": ["b", "a"],
+                "params": {"prompt": "go"},
+            }
+        ],
+        "edges": [],
+    }
+    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
+    diag = next(d for d in result.warnings if d.id == "cache.order-mismatch")
+    assert diag.severity == Severity.ERROR
+
+
+def test_analyze_surfaces_cache_unused_chunk() -> None:
+    workflow_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "gen",
+                "type": "llm",
+                "prompt_cache": ["a"],
+                "params": {"prompt": "go"},
+            }
+        ],
+        "edges": [],
+    }
+    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
+    assert "cache.unused-chunk" in {d.id for d in result.warnings}
+
+
+def test_analyze_surfaces_cache_invalid_on_non_llm() -> None:
+    workflow_ir = {
+        "inputs": {"a": {"type": "string"}},
+        "cache": {"items": [{"name": "a", "var": "a", "prose_before": "A:\n"}]},
+        "nodes": [
+            {
+                "id": "echo",
+                "type": "shell",
+                "prompt_cache": ["a"],
+                "params": {"command": "echo hi"},
+            }
+        ],
+        "edges": [],
+    }
+    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
+    diag = next(d for d in result.warnings if d.id == "cache.invalid-on-non-llm")
+    assert diag.severity == Severity.ERROR
+
+
+def test_analyze_filters_non_cache_data_flow_diagnostics() -> None:
+    workflow_ir = {
+        "nodes": [
+            {"id": "a", "type": "shell", "params": {"command": "echo"}},
+            {"id": "b", "type": "shell", "params": {"command": "echo"}},
+        ],
+        "edges": [{"from": "b", "to": "a"}],
+    }
+    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
+    assert all(d.id and d.id.startswith("cache.") for d in result.warnings)
 
 
 # ---------------------------------------------------------------------------

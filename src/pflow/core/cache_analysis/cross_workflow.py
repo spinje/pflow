@@ -17,16 +17,17 @@ new ``cache.*`` ID).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
 
 logger = logging.getLogger(__name__)
 
 
-ResolverCallback = Callable[[dict[str, Any], Optional[Path]], Optional[SubWorkflowResult]]
+ResolverCallback = Callable[[dict[str, Any], Path | None], SubWorkflowResult | None]
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +85,18 @@ def _value_tail(expr: str) -> str:
     return tail
 
 
+@dataclass(frozen=True)
+class CrossWorkflowResult:
+    """Cross-workflow walk output.
+
+    ``cache_items_by_workflow`` is keyed by the same labels carried on
+    :class:`CrossWorkflowEdge` (``parent_workflow`` / ``child_workflow``).
+    """
+
+    edges: tuple[CrossWorkflowEdge, ...]
+    cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]]
+
+
 # ---------------------------------------------------------------------------
 # Walker
 # ---------------------------------------------------------------------------
@@ -101,7 +114,7 @@ def walk_cross_workflow(
     max_depth: int = _DEFAULT_MAX_DEPTH,
     seen_paths: set[str] | None = None,
     notes: list[str] | None = None,
-) -> list[CrossWorkflowEdge]:
+) -> CrossWorkflowResult:
     """Walk the parent-child sub-workflow graph and return every edge.
 
     Parameters mirror the mermaid renderer's traversal API for consistency.
@@ -120,7 +133,9 @@ def walk_cross_workflow(
     resolver = resolve_child or resolve_sub_workflow
     seen = set(seen_paths) if seen_paths else set()
     edges: list[CrossWorkflowEdge] = []
+    cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]] = {}
     parent_label = root_workflow_path or "<root>"
+    cache_items_by_workflow[parent_label] = _cache_items(root_ir)
     _walk_one_level(
         ir=root_ir,
         parent_label=parent_label,
@@ -131,8 +146,9 @@ def walk_cross_workflow(
         depth=0,
         max_depth=max_depth,
         notes=notes,
+        cache_items_by_workflow=cache_items_by_workflow,
     )
-    return edges
+    return CrossWorkflowResult(edges=tuple(edges), cache_items_by_workflow=cache_items_by_workflow)
 
 
 def _walk_one_level(
@@ -146,6 +162,7 @@ def _walk_one_level(
     depth: int,
     max_depth: int,
     notes: list[str] | None,
+    cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
 ) -> None:
     """Visit every ``type: workflow`` node in ``ir`` and recurse."""
     if depth >= max_depth:
@@ -177,6 +194,7 @@ def _walk_one_level(
                 depth=depth,
                 max_depth=max_depth,
                 notes=notes,
+                cache_items_by_workflow=cache_items_by_workflow,
             )
 
 
@@ -204,6 +222,7 @@ def _process_one_call(
     depth: int,
     max_depth: int,
     notes: list[str] | None,
+    cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
 ) -> None:
     """Resolve one child call and emit edges + recurse."""
     result = resolver(params, base_path)
@@ -212,6 +231,8 @@ def _process_one_call(
 
     # Cycle detection — re-entry of a path already on the recursion stack.
     child_path_str = str(result.path) if result.path else None
+    child_label = child_path_str or "<inline>"
+    cache_items_by_workflow[child_label] = _cache_items(result.ir)
     if child_path_str and child_path_str in seen:
         message = (
             f"Cross-workflow walker detected cycle: {child_path_str} "
@@ -231,7 +252,7 @@ def _process_one_call(
             edges.append(
                 CrossWorkflowEdge(
                     parent_workflow=parent_label,
-                    child_workflow=child_path_str or "<inline>",
+                    child_workflow=child_label,
                     parent_value_expr=_extract_template_inner(value_expr),
                     child_input_name=str(input_name),
                     line_in_parent=line_in_parent,
@@ -258,10 +279,21 @@ def _process_one_call(
             depth=depth + 1,
             max_depth=max_depth,
             notes=notes,
+            cache_items_by_workflow=cache_items_by_workflow,
         )
     finally:
         if child_path_str:
             seen.discard(child_path_str)
+
+
+def _cache_items(ir: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    cache = ir.get("cache")
+    if not isinstance(cache, dict):
+        return ()
+    items = cache.get("items")
+    if not isinstance(items, list):
+        return ()
+    return tuple(item for item in items if isinstance(item, dict) and isinstance(item.get("name"), str))
 
 
 def _extract_template_inner(value: Any) -> str | None:
@@ -284,4 +316,4 @@ def _extract_template_inner(value: Any) -> str | None:
     return inner or None
 
 
-__all__ = ["CrossWorkflowEdge", "walk_cross_workflow"]
+__all__ = ["CrossWorkflowEdge", "CrossWorkflowResult", "walk_cross_workflow"]

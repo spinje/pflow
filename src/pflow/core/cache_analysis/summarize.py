@@ -66,14 +66,16 @@ def summarize_from_analysis(analysis: CacheAnalysis) -> Diagnostic | None:
     if actionable <= 0:
         return None
 
-    optimized = analysis.summary.optimized_cost_per_run_usd
     current = analysis.summary.current_cost_per_run_usd
+    optimized = analysis.summary.optimized_cost_per_run_usd
     savings_value: float | None
     savings_pct: int | None
-    if optimized is None or current is None or current <= 0:
-        # No reliable savings number — dollar-savings unavailable. Pass None
-        # through so the nudge drops the cost figure entirely (NEVER emits
-        # "-$0.00/run, -0%" — the cost tri-state contract: None ≠ 0).
+    if analysis.summary.aggregate_savings_first_run_usd is not None:
+        savings_value = max(0.0, analysis.summary.aggregate_savings_first_run_usd)
+        savings_pct = analysis.summary.savings_pct_first_run
+        if savings_pct is None and current is not None and current > 0:
+            savings_pct = round(100 * savings_value / current)
+    elif optimized is None or current is None or current <= 0:
         savings_value = None
         savings_pct = None
     else:

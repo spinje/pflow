@@ -259,7 +259,7 @@ def _build_plan_with_shared(
 
     this_only, child_only = parse_only_path(only_node)
 
-    shared = _create_planner_shared(compiled, params, cache, _parent_workflow_file)
+    shared = create_planner_shared(compiled, params, cache, _parent_workflow_file)
     visited_paths = list(_visited_paths) if _visited_paths else []
     workflow_path = shared.get("_pflow_workflow_file")
 
@@ -461,7 +461,7 @@ def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None) -> 
             )
 
 
-def _create_planner_shared(
+def create_planner_shared(
     compiled: CompiledWorkflow,
     params: dict[str, Any],
     cache: MemoizationCache,
@@ -498,6 +498,9 @@ def _create_planner_shared(
     if parent_workflow_file:
         shared["_pflow_workflow_file"] = parent_workflow_file
     return shared
+
+
+_create_planner_shared = create_planner_shared
 
 
 def _routing_error_entry(
@@ -810,7 +813,7 @@ def _plan_standard_node(
     if planned.template_exception is not None:
         return _template_error_entry(config, planned.template_exception)
     if planned.status == "cache_disabled":
-        return _cache_disabled_entry(config, cache, workflow_path)
+        return _cache_disabled_entry(config, planned, cache, workflow_path)
     if planned.status == "cached_memo":
         return _cached_memo_entry(config, planned, shared, cache)
     if planned.status == "cached_in_process":
@@ -850,6 +853,7 @@ def _template_error_entry(config: NodeConfig, exc: BaseException) -> PlanEntry:
 
 def _cache_disabled_entry(
     config: NodeConfig,
+    planned: NodePlan,
     cache: MemoizationCache,
     workflow_path: str | None,
 ) -> PlanEntry:
@@ -859,7 +863,9 @@ def _cache_disabled_entry(
     from prior runs are attached. `cache: false` means "don't use the cache
     for hit decisions"; it does NOT mean "hide history from the agent".
     """
-    return _execute_entry(config, cache, cause="cache_disabled", workflow_path=workflow_path)
+    return _execute_entry(
+        config, cache, cause="cache_disabled", cache_key=planned.cache_key, workflow_path=workflow_path
+    )
 
 
 def _cached_memo_entry(
@@ -885,6 +891,7 @@ def _cached_memo_entry(
         node_type=config.node_type_name,
         status="cached",
         cause="hash_match",
+        cache_key=planned.cache_key,
         action=planned.cached_action or "default",
         age_sec=_cache_age(planned.cache_key, cache),
     )
@@ -897,6 +904,7 @@ def _cached_in_process_entry(config: NodeConfig, planned: NodePlan) -> PlanEntry
         node_type=config.node_type_name,
         status="cached",
         cause="hash_match",
+        cache_key=planned.cache_key,
         action=planned.cached_action or "default",
         age_sec=None,
     )
@@ -907,6 +915,7 @@ def _execute_entry(
     cache: MemoizationCache,
     *,
     cause: Literal["no_cache_match", "downstream", "template_error", "cache_disabled"],
+    cache_key: str | None = None,
     diagnostic: Diagnostic | None = None,
     workflow_path: str | None = None,
 ) -> PlanEntry:
@@ -924,6 +933,7 @@ def _execute_entry(
         node_type=config.node_type_name,
         status="execute",
         cause=cause,
+        cache_key=cache_key,
         last_cost_usd=last_cost,
         last_duration_ms=last_duration,
         last_run_age_sec=last_age,
@@ -943,7 +953,14 @@ def _miss_entry(
     cause: Literal["no_cache_match", "template_error"] = (
         "template_error" if permissive_diag is not None else "no_cache_match"
     )
-    return _execute_entry(config, cache, cause=cause, diagnostic=permissive_diag, workflow_path=workflow_path)
+    return _execute_entry(
+        config,
+        cache,
+        cause=cause,
+        cache_key=planned.cache_key,
+        diagnostic=permissive_diag,
+        workflow_path=workflow_path,
+    )
 
 
 def _cache_age(cache_key: str | None, cache: MemoizationCache) -> float | None:

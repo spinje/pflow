@@ -479,7 +479,7 @@ def test_format_dry_run_nudge_drops_dollar_figure_when_savings_unavailable() -> 
 
 
 def test_format_dry_run_nudge_drops_figure_when_only_pct_unavailable() -> None:
-    """Both savings_usd and savings_pct must be present to render the figure;
-    treat either being None as 'unavailable' so the contract is symmetric."""
+    """When dollar savings are known but percentage is unavailable, keep the
+    actionable dollar estimate rather than hiding greenfield savings."""
     text = format_dry_run_nudge(opportunity_count=2, savings_usd=0.50, savings_pct=None)
-    assert text == "Cache: 2 design opportunities available."
+    assert text == "Cache: 2 design opportunities available (estimated -$0.50/run)."
