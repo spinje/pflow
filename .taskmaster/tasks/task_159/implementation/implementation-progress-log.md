@@ -3025,3 +3025,231 @@ not filed as v1.x deferrals (per user reframe). All documented in
    the regression class. Worth doing for every fix in this branch.
 
 ---
+
+## Stage 1 CP5 — agent-UX message clarity pass (2026-04-30)
+
+After Tier 1 landed, the user audited the rendered output as a cold reader
+and surfaced six specific UX issues (catalog message opacity, grammar bug,
+Cross-workflow-section confusion, Python-repr per-node assignments,
+workflow-vs-boundary ambiguity, terse header). These aren't structural bugs —
+the data flow is correct — but the rendered text was assuming prior knowledge
+agents don't have. CP5 is a focused message-clarity pass across `warning_catalog.py`
+and `render_text.py`, no logic changes.
+
+### What I implemented
+
+Three commits-worth of work shipped as one CP5 (no commits yet — user controls).
+
+**Pass 1 — catalog message clarity + grammar fix + workflow/boundary disambiguation:**
+
+- `core/cache_analysis/warning_catalog.py`:
+  - New `_format_savings_clause` helper that returns `" (saves $X.XX/run)"` or
+    empty string. Mirrors the tri-state contract — None/sub-cent → silent,
+    real value → rendered. Closes the "saves savings unavailable/run"
+    grammar bug at the format-level.
+  - New `savings_clause` typed alias in `make_diagnostic` format_dict
+    (alongside the existing `savings_str`). Templates that want the
+    parenthetical form switch to `{savings_clause}`.
+  - Two new module-level templates: `_SHARED_CONTEXT_WORKFLOW_TEMPLATE`
+    (workflow-internal sharing) and `_SHARED_CONTEXT_BOUNDARY_TEMPLATE`
+    (cross-workflow value flow). Each has its own remediation prose because
+    the fixes differ (one workflow's ## Cache vs either side of the boundary).
+  - Dispatch added to `make_diagnostic`: when ``warning_id ==
+    "cache.shared-context-undeclared"`` AND ``child_workflow`` is in context,
+    select the boundary template + compute ``child_workflow_basename`` for
+    the message. Mirrors the ``cache.discrepancy`` dispatch precedent.
+  - Updated `cache.padding-advisory` and `cache.batch-prewarm-recommended`
+    templates to use `{savings_clause}` (eliminating the same grammar bug).
+  - Module docstring count: 12 → 13 (catches up with consolidate-to-root from CP3).
+
+- `core/cache_analysis/analyze.py`:
+  - `_cross_workflow_value_flow_opportunity` now passes `child_workflow=edge.child_workflow`
+    so the boundary dispatch fires.
+  - `RecommendedAction` extended with `message: str = ""` field. Populated
+    from `d.message` in `_build_recommended_actions`.
+  - **The load-bearing fix for issue #5**: pre-CP5 the recommended-actions
+    section showed only ID + savings + scope, not the diagnostic message.
+    Four `[cache.shared-context-undeclared]` findings looked byte-identical
+    except for scope label. Adding `message` to the dataclass + showing it
+    below scope makes each recommendation self-explanatory.
+
+- `core/cache_analysis/render_text.py`:
+  - `_render_recommended_actions` now appends the diagnostic's message
+    (indented under the rank line) so each finding tells the agent what it
+    is about without scrolling.
+
+**Pass 2 — cross-workflow section rewrite (Issue #3):**
+
+- `core/cache_analysis/render_text.py`:
+  - Section renamed `## Cross-workflow alignment (Tier 2)` → `## Sub-workflow
+    boundaries`. The "Tier 2" parenthetical was internal pflow architecture
+    jargon agents shouldn't have to learn.
+  - Added section preamble explaining what the findings ARE (values flowing
+    across sub-workflow boundaries that could be cached on either side).
+  - Three new finding-type renderers:
+    `_format_value_flow_finding`, `_format_rename_finding`,
+    `_format_prose_mismatch_finding`. Each renders a 4-line block:
+    boundary header (`parent → child  (via <node>)` or `(line N)`) /
+    what-was-detected / `→ <action>` / `[<id>]` at the bottom.
+  - Each finding pulls structured data from `diag.context` directly,
+    bypassing the catalog message text — the section has more space than
+    the recommendations bullet so it can be more verbose without being
+    cryptic.
+  - New `_workflow_short_name(path)` helper strips `/abs/path/`
+    + `.pflow.md` for compactness. `<inline>` and `ir-hash:*` pass through
+    unchanged.
+  - Findings ordered by leverage: value-flow first (highest impact —
+    unlocks new caching), rename + prose-mismatch after (alignment fixes).
+
+**Pass 3 — per-node `.pflow.md` syntax + header phrasing (Issues #4, #6):**
+
+- `core/cache_analysis/render_text.py`:
+  - `_render_suggested_blocks` per-node section now renders actual
+    `.pflow.md` syntax (`### node-id\n- prompt_cache: [a, b, c]`) instead
+    of Python repr. Includes a brief explainer about the strict order
+    requirement (with explicit reference to `cache.order-mismatch` ERROR).
+  - New `_format_scale_line` helper renders the header scale line with
+    actual model names. Four cases: 0 LLM nodes / 1 model / 2+ models /
+    LLM nodes but no model resolved (with actionable `set
+    settings.default_model` hint).
+  - Header drops the `· models in use` count phrasing — model names appear
+    inline now.
+
+### Files modified summary
+
+Production: `warning_catalog.py` (~80 LOC across helpers + templates +
+dispatch), `analyze.py` (~10 LOC for child_workflow + RecommendedAction
+message), `render_text.py` (~150 LOC for cross-workflow rewrite + per-node
+syntax + header).
+
+Tests: `test_cache_analysis_renderers.py` (3 old CP2 tests rewritten for new
+multi-line format, 11 new behavioral tests added — covering the section
+header rename, distinguishability invariant, action-line presence, full
+4-line format for each finding type, per-node syntax shape, header model
+listing modes including 1/2+/no-model branches).
+
+### Final state
+
+- 6,000 tests passing (was 5,992 → +8 net new after replacing 3 CP2 tests
+  with 5 broader-shape tests)
+- `make check` clean (ruff + ruff-format + mypy + deptry)
+- `test_plan_drift.py` 34/34 green
+- `test_golden_baseline_hashes_match` green
+
+### Tacit knowledge for the next agent
+
+1. **The `child_workflow` context key is the dispatch trigger** for
+   `cache.shared-context-undeclared`. When `child_workflow in context_kwargs`,
+   `make_diagnostic` swaps in the boundary template. Workflow-scope
+   emission (`_populate_suggested_blocks`) does NOT set this key — that's
+   how the workflow-scope template is selected. Future contributors adding
+   new emission sites for this ID need to decide which scope they're in.
+
+2. **`savings_clause` vs `savings_str`** — both typed aliases exist in
+   `make_diagnostic` format_dict. Templates wanting the bare amount
+   (`-$0.45`) use `savings_str`. Templates wanting the parenthetical form
+   `(saves $0.45/run)` (or empty when None/sub-cent) use `savings_clause`.
+   The savings_str form still renders "savings unavailable" for None — DON'T
+   embed it in `(saves {savings_str}/run)` or the grammar bug returns.
+
+3. **Cross-workflow renderer pulls from `diag.context`, NOT `diag.message`.**
+   The catalog message for `cache.shared-context-undeclared` is rich for
+   recommendations + JSON, but it duplicates info that the
+   `parent → child` header already shows in the cross-workflow section.
+   Each finding-type renderer reaches into context directly. If a future
+   contributor adds a new cross-workflow finding type, they need to add a
+   new rendering helper alongside the three existing ones.
+
+4. **Recommendations section now shows messages.** Pre-CP5 it was just
+   ID + savings + scope. Adding the message field made each recommendation
+   self-explanatory. The trade-off: long messages wrap in narrow terminals.
+   Acceptable trade for "agent reads top-to-bottom and acts" usability.
+
+5. **The two CP3 stub paths still apply post-CP5.**
+   `cache.consolidate-to-root-recommended` still doesn't fire pre-run on
+   greenfield (memo data needed for accurate root_tokens). And the
+   workflow-level `cache.shared-context-undeclared` finding includes the
+   FULL chunk list in its csv (~150 chars on lyrics-generator) which
+   wraps awkwardly in the recommendations bullet. Both are quality-of-life
+   nits, not blockers.
+
+### Open hedged claims and verifications still pending
+
+- **VERIFIED**: all CP5 changes are text-only — zero logic regression risk.
+  `test_plan_drift.py` (34/34) and `test_golden_baseline_hashes_match`
+  passed throughout.
+- **VERIFIED**: brownfield safety — ERRORs (`cache.order-mismatch`) still
+  surface prominently in Recommended Actions on the brownfield smoke
+  fixture. Confirmed via `POST-CP5-BROWNFIELD.txt` in scratchpads.
+- **VERIFIED**: dispatch path tested end-to-end through real
+  `_cross_workflow_value_flow_opportunity` emission on lyrics-generator
+  (boundary template fires with sub-workflow names rendered correctly).
+
+### Open user decisions surfaced (for next agent)
+
+The user reviewed the post-CP5 output and flagged two issues that were NOT
+fixed in this pass:
+
+**Concern A — `[cache.shared-context-undeclared]` still surfaces visibly.**
+Even after the message clarity work, the bracketed ID appears prominently
+in both Recommended Actions and Sub-workflow boundaries. The user feels
+this is still opaque — agents shouldn't need to look up what the ID means.
+Possible directions (not designed yet):
+
+- Drop the brackets entirely from the rendered text; keep the ID in JSON
+  for machine consumption.
+- Replace with a short human-readable category prefix
+  (e.g. `[shared context]` instead of `[cache.shared-context-undeclared]`).
+- Move the ID to a less prominent position (e.g. parenthetical at the
+  end of the action line).
+
+This is a real call about the discoverability/agent-readability tradeoff;
+spec DD#27 establishes that stable IDs are first-class for filtering, but
+that's about the structured surface (JSON / `Diagnostic.id`), not the
+rendered text. Worth surfacing to the user before committing to a shape.
+
+**Concern B — `cacheable=0 ratio=0%` in per-call report unexplained.**
+The per-call section header says "Current ratios (always 0% pre-cache; see
+Recommended actions for the recoverable opportunities.)". The header
+explainer addresses the ratio column. But the `cacheable=0` column has no
+explainer — agents reading the table don't know what "cacheable" means
+in greenfield (where it's always 0 because no `prompt_cache:` is declared).
+Possible directions:
+
+- Add column-header annotations or replace `cacheable=0` with `cacheable=—`
+  in greenfield mode.
+- Drop the cacheable column from greenfield rendering (always 0 anyway).
+- Add a one-line explainer near the table about what each column means.
+
+The `cacheable_tokens_estimated` field IS valuable in steady-state mode
+where it reflects actual declared-subset coverage. The greenfield mode is
+where the column gets confusing. Branch on `is_steady_state` (the same
+detection used for the section header) and render greenfield rows
+without the cacheable column, OR with `cacheable=—`.
+
+### Code-review findings worth carrying forward
+
+1. **Catalog opacity audit pattern.** The user's "what does this mean to
+   an agent?" lens is structurally repeatable. For every catalog template,
+   ask: "does this answer what / why / how-to-fix in plain language?" If
+   any of those three is missing, the template needs work. The existing
+   templates I rewrote in CP5 (shared-context-undeclared, padding-advisory,
+   batch-prewarm-recommended suggestions) all failed the test in different
+   ways. The remaining 9 templates passed my audit but the next agent
+   should re-audit when they touch this code.
+
+2. **Multi-line per-finding format scales the available space.** Single-line
+   bullets force compression that hides discriminator data. The "Sub-workflow
+   boundaries" rewrite shows that giving each finding 4 lines makes the
+   data agent-readable without bloating the output. Worth applying to
+   other sections that compress aggressively (e.g. recommendations could
+   benefit similarly when the message is long).
+
+3. **Renderer-side data extraction beats catalog-message-only rendering**
+   when the section header already provides context. The cross-workflow
+   section's `parent → child` header makes the catalog message ("flows
+   from this workflow into sub-workflow X") redundant. Pulling from
+   `diag.context` directly avoids the duplication.
+
+---
+

@@ -1395,3 +1395,277 @@ def test_discrepancy_key_mismatch_via_real_planner_consumption(
     assert diag.context["predicted_cache_key"] is not None
     assert diag.context["predicted_cache_key"] != actual_engine_key
     assert diag.context["actual_cache_key"] == actual_engine_key
+
+
+# ---------------------------------------------------------------------------
+# CP3 (#3) — Sub-path policy: template-honest default + new consolidate advisory
+# ---------------------------------------------------------------------------
+
+
+def test_template_honest_default_keeps_subpaths_separate() -> None:
+    """Default behavior: sub-paths of a parent dict are NOT auto-collapsed.
+
+    Workflow uses ``${concept.core_idea}`` and ``${concept.title}`` in two
+    different LLM nodes. The suggested ## Cache block lists them as TWO
+    chunks (one per template reference) — NOT a single ``${concept}`` root.
+
+    Mutation test: if a future contributor adds an "auto-collapse to root"
+    branch in ``_collect_llm_template_references`` or
+    ``_populate_suggested_blocks``, this test fails because the chunk count
+    drops from 2 to 1 and the chunk identifier changes from ``concept.title``
+    to ``concept``. The user-facing contract: pflow suggests caching what
+    your prompts actually reference; consolidation is opt-in via
+    ``cache.consolidate-to-root-recommended``.
+    """
+    workflow_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "About: ${concept.core_idea}"},
+            },
+            {
+                "id": "n2",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Title: ${concept.title}, Idea: ${concept.core_idea}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, auto_load_trace=False)
+    # ``concept.core_idea`` is shared by both nodes (qualifies for suggestion);
+    # ``concept.title`` is used by only n2 (filtered out by ≥2 rule). Result:
+    # exactly one suggested chunk — and crucially, that chunk is the SUB-PATH
+    # ``concept.core_idea`` not the auto-collapsed root ``concept``.
+    assert len(analysis.suggested_blocks) == 1
+    chunks = analysis.suggested_blocks[0].chunks
+    chunk_names = [c.name for c in chunks]
+    assert chunk_names == ["concept.core_idea"], (
+        f"Expected template-honest sub-path; got {chunk_names}. Auto-collapse to root would render ['concept'] instead."
+    )
+
+
+def test_subpath_sort_clusters_siblings_by_root() -> None:
+    """Sibling sub-paths of the same root cluster contiguously regardless of
+    individual share counts.
+
+    Three sub-paths of ``concept`` (each shared by 2+ nodes) plus one
+    independent root ``concept_brief`` (also shared). The suggested block
+    must put the three ``concept.*`` chunks ADJACENT, not interleave them
+    with ``concept_brief``.
+
+    Mutation test: revert the sort key in ``_populate_suggested_blocks`` to
+    drop the root-grouping dimension; this test fails because individual
+    share counts scatter ``concept.angle`` away from its siblings.
+    """
+    workflow_ir = {
+        "inputs": {
+            "concept": {"type": "object"},
+            "concept_brief": {"type": "string"},
+        },
+        "nodes": [
+            # Every node uses concept.core_idea + concept.title + concept.angle
+            # (varying share counts) AND concept_brief.
+            {
+                "id": f"n{i}",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {
+                    "prompt": (
+                        "${concept.core_idea} ${concept.title} "
+                        + ("${concept.angle} " if i < 2 else "")  # only 2 of 3 use .angle
+                        + "${concept_brief}"
+                    )
+                },
+            }
+            for i in range(3)
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, auto_load_trace=False)
+    assert analysis.suggested_blocks
+    chunk_names = [c.name for c in analysis.suggested_blocks[0].chunks]
+    # All concept.* siblings appear together (no concept_brief between them).
+    concept_subpaths = [c for c in chunk_names if c.startswith("concept.")]
+    concept_indexes = [chunk_names.index(c) for c in concept_subpaths]
+    assert concept_indexes == sorted(concept_indexes), f"Indexes not contiguous: {concept_indexes}"
+    assert concept_indexes[-1] - concept_indexes[0] == len(concept_subpaths) - 1, (
+        f"concept.* siblings interleaved with non-siblings: {chunk_names}"
+    )
+
+
+def test_consolidate_to_root_advisory_fires_for_brownfield_subpaths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Brownfield: workflow declares sub-path chunks individually below the
+    min-cache threshold. Advisory fires telling the agent to consolidate.
+
+    Mutation test: remove the ``_consolidate_to_root_advisories`` call from
+    ``analyze()`` or revert the threshold check; this test fails because
+    the advisory disappears.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    # Lock min-cache threshold deterministically.
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
+    # Sub-paths return 5 tokens each; the root returns 200 tokens.
+    monkeypatch.setattr(
+        analyze_module,
+        "_estimate_ref_tokens",
+        lambda ref, **_kw: 200 if ref == "concept" else 5,
+    )
+
+    workflow_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {"name": "concept.title", "var": "concept.title", "prose_before": "T:\n"},
+                {"name": "concept.core_idea", "var": "concept.core_idea", "prose_before": "C:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["concept.title", "concept.core_idea"],
+                "params": {"prompt": "${concept.title} ${concept.core_idea}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.consolidate-to-root-recommended"]
+    assert found, f"advisory missing: ids={[d.id for d in analysis.warnings]}"
+    ctx = found[0].context
+    assert ctx is not None
+    assert ctx["root"] == "concept"
+    assert sorted(ctx["sub_paths"]) == ["concept.core_idea", "concept.title"]
+    assert ctx["max_subpath_tokens"] == 5
+    assert ctx["root_tokens"] == 200
+    assert ctx["min_tokens"] == 100
+
+
+def test_consolidate_to_root_advisory_silent_when_subpath_already_above_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Suppression: at least one sub-path is already large enough to cache on
+    its own — the agent's declarations work as intended; no advisory.
+
+    Mutation test: remove the ``if max_subpath >= min_tokens: continue``
+    guard; this test fails because the advisory fires despite the sub-path
+    being self-sufficient.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
+    # core_idea = 200 (above threshold); title = 5; root = 300.
+    monkeypatch.setattr(
+        analyze_module,
+        "_estimate_ref_tokens",
+        lambda ref, **_kw: {"concept.core_idea": 200, "concept.title": 5, "concept": 300}.get(ref, 1),
+    )
+
+    workflow_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {"name": "concept.core_idea", "var": "concept.core_idea", "prose_before": "C:\n"},
+                {"name": "concept.title", "var": "concept.title", "prose_before": "T:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["concept.core_idea", "concept.title"],
+                "params": {"prompt": "${concept.core_idea} ${concept.title}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.consolidate-to-root-recommended"]
+    assert not found, f"advisory should NOT fire when a sub-path is above threshold; got {found}"
+
+
+def test_consolidate_to_root_advisory_silent_when_root_below_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Suppression: even the consolidated root would be below threshold —
+    consolidation wouldn't help; ``cache.below-min-tokens`` covers this case.
+
+    Mutation test: remove the ``if root_tokens < min_tokens: continue`` guard;
+    this test fails because the advisory fires for a useless consolidation.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
+    # All sizes below threshold — consolidation wouldn't help.
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kw: 30)
+
+    workflow_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {"name": "concept.title", "var": "concept.title", "prose_before": "T:\n"},
+                {"name": "concept.core_idea", "var": "concept.core_idea", "prose_before": "C:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["concept.title", "concept.core_idea"],
+                "params": {"prompt": "${concept.title} ${concept.core_idea}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.consolidate-to-root-recommended"]
+    assert not found
+
+
+def test_consolidate_to_root_advisory_silent_when_root_already_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Suppression: the root is already declared/used directly. Sub-paths
+    alongside the root are a redundancy issue, not a consolidation case.
+
+    Mutation test: remove the ``if root in candidate_set: continue`` guard;
+    this test fires the advisory for a redundancy that the agent has
+    already partly addressed.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
+    monkeypatch.setattr(
+        analyze_module,
+        "_estimate_ref_tokens",
+        lambda ref, **_kw: 200 if ref == "concept" else 5,
+    )
+
+    # Brownfield with BOTH root and sub-paths declared — no consolidation case.
+    workflow_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {"name": "concept", "var": "concept", "prose_before": "Concept:\n"},
+                {"name": "concept.title", "var": "concept.title", "prose_before": "T:\n"},
+                {"name": "concept.core_idea", "var": "concept.core_idea", "prose_before": "C:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["concept", "concept.title", "concept.core_idea"],
+                "params": {"prompt": "${concept}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.consolidate-to-root-recommended"]
+    assert not found

@@ -43,11 +43,13 @@ def test_catalog_count_constant_is_auto_derived() -> None:
     assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT
 
 
-def test_catalog_has_twelve_entries_v1() -> None:
-    """v1 ships with 12 cache.* IDs (10 from spec DD#29 + cache.discrepancy from
-    Round 2 + cache.invalid-on-non-llm and cache.prewarm-no-prefix from Round 3).
-    The catalog is closed per DD#29; expanding requires design review."""
-    assert len(CACHE_WARNING_CATALOG) == 12
+def test_catalog_has_thirteen_entries_v1() -> None:
+    """v1 ships with 13 cache.* IDs (10 from spec DD#29 + cache.discrepancy from
+    Round 2 + cache.invalid-on-non-llm and cache.prewarm-no-prefix from Round 3
+    + cache.consolidate-to-root-recommended from CP3 / lyrics-generator
+    Stage 1 verification). The catalog is closed per DD#29; expanding requires
+    design review."""
+    assert len(CACHE_WARNING_CATALOG) == 13
 
 
 def test_all_entries_are_cache_namespaced() -> None:
@@ -430,6 +432,15 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "node_id": "score",
             "batch_alias": "item",
             "first_dynamic_position": 0,
+        },
+        "cache.consolidate-to-root-recommended": {
+            "root": "concept",
+            "sub_paths": ["concept.core_idea", "concept.title", "concept.angle"],
+            "model": "anthropic/claude-sonnet-4-5",
+            "min_tokens": 1024,
+            "max_subpath_tokens": 200,
+            "root_tokens": 1500,
+            "affected_workflow": "x.pflow.md",
         },
     }
     return samples[warning_id]

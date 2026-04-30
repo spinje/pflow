@@ -45,6 +45,7 @@ from pflow.core.cache_render import (  # noqa: F401 — see docstring.
 )
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.llm_capabilities import get_min_cache_tokens
+from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import detect_provider
 from pflow.core.workflow.data_flow import validate_data_flow
 from pflow.core.workflow_id import synthesize_inline_workflow_id
@@ -109,6 +110,13 @@ class RecommendedAction:
     node_id: str | None
     estimated_savings_usd: float | None
     scope_workflow: str | None = None
+    # CP5 #5: the diagnostic's rendered message — without this, four
+    # ``[cache.shared-context-undeclared]`` recommendations on lyrics-generator
+    # song-creator looked byte-identical (only the scope line distinguished
+    # them) because the recommendations renderer didn't show messages. Carrying
+    # the message lets the agent see WHAT each finding is about without having
+    # to scroll to the cross-workflow / per-call sections.
+    message: str = ""
 
 
 @dataclass(frozen=True)
@@ -255,6 +263,15 @@ def analyze(
     )
     warnings.extend(shared_warnings)
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
+    warnings.extend(
+        _consolidate_to_root_advisories(
+            workflow_ir=workflow_ir,
+            rows_by_node=rows_by_node,
+            declared_chunks=declared_chunks,
+            memo_cache=memo_cache,
+            workflow_path=lookup_path,
+        )
+    )
     warnings.extend(_cache_validator_findings(workflow_ir))
 
     # --- Cross-workflow walker ------------------------------------------------
@@ -496,7 +513,15 @@ def _build_per_call_row(
 ) -> PerCallRow:
     """Compose a single PerCallRow for an LLM node."""
     node_id = str(node.get("id", "?"))
-    model = str(node.get("params", {}).get("model") or node.get("model") or "")
+    # Effective model resolution mirrors compiler.py:281-285 — explicit per-node
+    # ``model:`` wins; absence falls back to ``get_default_workflow_model()``
+    # (settings.default_model → API-key auto-detect → None). Without this fallback
+    # the per-call table renders ``model=`` empty for nodes that inherit the
+    # default, ``models_in_use`` undercounts, and cost computation can never
+    # price these rows. Tests that need deterministic model values monkeypatch
+    # ``pflow.core.cache_analysis.analyze.get_default_workflow_model``.
+    explicit = node.get("params", {}).get("model") or node.get("model")
+    model = str(explicit) if explicit else (get_default_workflow_model() or "")
     prompt = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt, str):
         prompt = str(prompt) if prompt is not None else ""
@@ -742,7 +767,39 @@ def _populate_suggested_blocks(
     if not shared_refs:
         return [], []
 
-    shared_refs.sort(key=lambda item: (-len(item[1]), first_seen[item[0]], item[0]))
+    # Sort key has 5 dimensions (CP3 #4 fix — sibling clustering):
+    #   1. Most-shared root first. Roots like ``concept`` (used by 7 nodes via
+    #      various sub-paths) outrank singleton roots regardless of any
+    #      individual sub-path's count.
+    #   2. Root segment alphabetical — deterministic tie-break BETWEEN roots
+    #      with equal popularity. Crucially, this also keeps ALL sub-paths of
+    #      the same root contiguous in the output (siblings cluster).
+    #   3. Within a root, most-shared sub-path first. ``concept.core_idea``
+    #      (used by 7) outranks ``concept.angle`` (used by 4).
+    #   4. First-seen-in-prompt-walk-order — preserves narrative order between
+    #      otherwise-equivalent refs.
+    #   5. Alphabetical — final deterministic tie-break.
+    # Pre-fix the sort scattered ``concept.core_idea`` / ``concept.title`` /
+    # ``concept.angle`` across positions 1, 2, 5 because they had different
+    # share counts and got ranked individually. Lyrics-generator song-creator
+    # rendered ``concept.angle`` between ``creative-direction.response`` and
+    # ``song-architecture.response`` — broke narrative flow AND made the
+    # generated ``prompt_cache:`` lists non-prefix-contiguous for nodes using
+    # only some sub-paths.
+    root_to_nodes: dict[str, set[str]] = {}
+    for ref, nodes in shared_refs:
+        root_to_nodes.setdefault(_template_root_segment(ref), set()).update(nodes)
+    root_popularity = {root: len(node_set) for root, node_set in root_to_nodes.items()}
+
+    shared_refs.sort(
+        key=lambda item: (
+            -root_popularity[_template_root_segment(item[0])],
+            _template_root_segment(item[0]),
+            -len(item[1]),
+            first_seen[item[0]],
+            item[0],
+        )
+    )
     chunks: list[SuggestedBlockChunk] = []
     assignments: dict[str, list[str]] = {}
     total_savings: float | None = 0.0
@@ -808,6 +865,161 @@ def _collect_llm_template_references(workflow_ir: dict[str, Any]) -> tuple[dict[
                 ref_to_nodes.setdefault(ref, []).append(str(node["id"]))
                 first_seen.setdefault(ref, node_idx)
     return ref_to_nodes, first_seen
+
+
+def _template_root_segment(ref: str) -> str:
+    """Return the first segment of a template path.
+
+    Examples:
+        ``concept.core_idea`` → ``concept``
+        ``concept`` → ``concept``
+        ``items[0].name`` → ``items``
+        ``creative-direction.response`` → ``creative-direction``
+
+    Used by:
+    - the ``_populate_suggested_blocks`` sort key (CP3 #4 — sibling clustering),
+    - the ``_consolidate_to_root_advisories`` detector (CP3 #3 — sub-path
+      clusters that fall below the provider's min-cache threshold).
+    """
+    return ref.split(".", 1)[0].split("[", 1)[0]
+
+
+def _consolidate_to_root_advisories(
+    *,
+    workflow_ir: dict[str, Any],
+    rows_by_node: dict[str, PerCallRow],
+    declared_chunks: list[str],
+    memo_cache: Any,
+    workflow_path: str,
+) -> list[Diagnostic]:
+    """Emit ``cache.consolidate-to-root-recommended`` advisories.
+
+    Fires when sub-paths of a parent dict (e.g. ``concept.core_idea``,
+    ``concept.title``) are individually below the provider's min-cache token
+    threshold AND consolidating to ``${root}`` would cross the threshold.
+    The pre-fix sub-path declarations cache_control markers silently no-op
+    at the provider; the agent thinks they're caching but they aren't.
+
+    Greenfield path (no ``## Cache`` declared): audits shared template
+    references. Only fires when memo data is available — without it,
+    ``_estimate_ref_tokens`` falls back to tokenizing the literal
+    ``${concept}`` string (~3 tokens), making the threshold check naturally
+    suppress the advisory for pure-greenfield workflows. After the first
+    run, memo data populates and the advisory becomes meaningful.
+
+    Brownfield path (``## Cache`` declared with sub-path chunks): audits the
+    declared chunks directly. The user has explicitly chosen these chunks;
+    the advisory tells them why caching isn't actually firing.
+    """
+    candidates = _collect_consolidate_candidates(workflow_ir, declared_chunks)
+    if not candidates:
+        return []
+    candidate_set = set(candidates)
+    by_root = _group_subpaths_by_root(candidates)
+    if not by_root:
+        return []
+
+    # Use the first node's resolved model as representative for threshold lookup.
+    # Heterogeneous-model workflows would warrant per-model checks; defer to
+    # v1.x if real usage hits the pattern.
+    rows = list(rows_by_node.values())
+    representative_model = next((row.model for row in rows if row.model), "")
+    if not representative_model:
+        return []
+    min_tokens = get_min_cache_tokens(representative_model)
+
+    diagnostics: list[Diagnostic] = []
+    for root, sub_paths in sorted(by_root.items()):
+        diag = _check_root_for_consolidation(
+            root=root,
+            sub_paths=sub_paths,
+            candidate_set=candidate_set,
+            model=representative_model,
+            min_tokens=min_tokens,
+            memo_cache=memo_cache,
+            workflow_path=workflow_path,
+        )
+        if diag is not None:
+            diagnostics.append(diag)
+    return diagnostics
+
+
+def _collect_consolidate_candidates(workflow_ir: dict[str, Any], declared_chunks: list[str]) -> list[str]:
+    """Pick the chunk set the consolidate-advisory should examine."""
+    if declared_chunks:
+        # Brownfield — agent has explicitly declared these chunks.
+        return list(set(declared_chunks))
+    # Greenfield — shared template references (≥2 LLM nodes).
+    ref_to_nodes, _ = _collect_llm_template_references(workflow_ir)
+    return [ref for ref, node_ids in ref_to_nodes.items() if len(node_ids) >= 2]
+
+
+def _group_subpaths_by_root(candidates: list[str]) -> dict[str, list[str]]:
+    """Group sub-paths by their root segment.
+
+    Root form chunks (``concept`` itself, where root == ref) are excluded:
+    they ARE the root, not candidates for consolidation. Only genuine
+    sub-paths (``concept.title``) get grouped.
+    """
+    by_root: dict[str, list[str]] = {}
+    for ref in candidates:
+        root = _template_root_segment(ref)
+        if root != ref:
+            by_root.setdefault(root, []).append(ref)
+    return by_root
+
+
+def _check_root_for_consolidation(
+    *,
+    root: str,
+    sub_paths: list[str],
+    candidate_set: set[str],
+    model: str,
+    min_tokens: int,
+    memo_cache: Any,
+    workflow_path: str,
+) -> Diagnostic | None:
+    """Run the threshold check for one root group.
+
+    Returns a Diagnostic when consolidation would cross the threshold; None
+    when any of the suppression rules fires:
+      - <2 sub-paths (no consolidation case)
+      - root already declared/used (redundancy, not consolidation)
+      - some sub-path already crosses threshold (caching already works)
+      - root itself wouldn't cross threshold (cache.below-min-tokens covers it)
+    """
+    if len(sub_paths) < 2:
+        return None
+    if root in candidate_set:
+        # Root already declared/used directly — sub-paths are a redundancy
+        # issue, not a consolidation case. The right fix is "remove the
+        # redundant sub-path entries", not "consolidate to root".
+        return None
+    sub_path_tokens = [
+        _estimate_ref_tokens(sp, model=model, memo_cache=memo_cache, workflow_path=workflow_path) for sp in sub_paths
+    ]
+    max_subpath = max(sub_path_tokens)
+    if max_subpath >= min_tokens:
+        # At least one sub-path is large enough to cache on its own;
+        # cache_control on the largest sub-path already fires.
+        return None
+    root_tokens = _estimate_ref_tokens(root, model=model, memo_cache=memo_cache, workflow_path=workflow_path)
+    if root_tokens < min_tokens:
+        # Even consolidation wouldn't cross the threshold — the real fix is
+        # "add more chunks to ## Cache", which ``cache.below-min-tokens``
+        # already covers.
+        return None
+    return make_diagnostic(
+        "cache.consolidate-to-root-recommended",
+        node_id=None,
+        root=root,
+        sub_paths=sorted(sub_paths),
+        model=model,
+        min_tokens=min_tokens,
+        max_subpath_tokens=max_subpath,
+        root_tokens=root_tokens,
+        affected_workflow=workflow_path,
+    )
 
 
 def _batch_aliases(node: dict[str, Any]) -> set[str]:
@@ -1112,6 +1324,11 @@ def _cross_workflow_value_flow_opportunity(
         node_count=node_count,
         shared_chunks=[edge.child_input_name],
         affected_workflow=edge.parent_workflow,
+        # CP5 #5: presence of ``child_workflow`` in context selects the
+        # boundary-scope message template (see make_diagnostic dispatch).
+        # Workflow-scope emission at ``_populate_suggested_blocks`` does NOT
+        # set this key — it gets the workflow-scope template by default.
+        child_workflow=edge.child_workflow,
         savings_usd=None,
     )
 
@@ -1672,6 +1889,7 @@ def _build_recommended_actions(
                 node_id=d.node_id,
                 estimated_savings_usd=float(savings) if savings is not None else None,
                 scope_workflow=scope_workflow,
+                message=d.message or "",
             )
         )
     return actions

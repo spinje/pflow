@@ -5,10 +5,12 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-12 entries in v1: 9 from spec § "Stable Warning ID Catalog" + ``cache.discrepancy``
+13 entries in v1: 9 from spec § "Stable Warning ID Catalog" + ``cache.discrepancy``
 (Round 2, dispatch over ``root_cause`` enum), ``cache.invalid-on-non-llm``
-(Round 3, validator-reach gap closure for non-LLM nodes), and
-``cache.prewarm-no-prefix`` (Round 3, prewarm-without-static-prefix advisory).
+(Round 3, validator-reach gap closure for non-LLM nodes),
+``cache.prewarm-no-prefix`` (Round 3, prewarm-without-static-prefix advisory),
+and ``cache.consolidate-to-root-recommended`` (CP3, sub-paths below threshold
+that would cross when consolidated to the parent dict).
 
 The dry-run nudge ID ``cache.opportunities-available`` is reserved separately —
 it's emitted by ``summarize()`` not ``analyze()``, so it isn't part of the
@@ -92,6 +94,33 @@ _UNUSED_CHUNK_MESSAGE = (
 )
 
 
+# cache.shared-context-undeclared has two distinct emission contexts that
+# warrant different prose (CP5 #1+#5):
+#
+#   - WORKFLOW scope (node_id=None): the analyzer detected a value used by N≥2
+#     LLM nodes inside this workflow. The fix is to declare the value in this
+#     workflow's ## Cache block.
+#
+#   - BOUNDARY scope (node_id=parent_node_id, child_workflow set): the value
+#     flows into a sub-workflow via a ``type: workflow`` node. The fix can go
+#     in either the parent's or the child's ## Cache block.
+#
+# Both templates use ``{savings_clause}`` for the optional parenthetical so
+# ``None`` savings produces grammatical output (no "saves savings unavailable/run").
+_SHARED_CONTEXT_WORKFLOW_TEMPLATE = (
+    "`{shared_chunks_csv}` is referenced by {node_count} LLM nodes in this "
+    "workflow but no ## Cache block declares it. Each call sends those tokens "
+    "fresh; declaring them caches the bytes once and reuses at 0.1× input "
+    "cost.{savings_clause}"
+)
+_SHARED_CONTEXT_BOUNDARY_TEMPLATE = (
+    "`{shared_chunks_csv}` flows from this workflow into sub-workflow "
+    "`{child_workflow_basename}` where {node_count} LLM nodes use it; no "
+    "## Cache block declares it on either side. Add it to either workflow's "
+    "## Cache to share cached bytes across the boundary.{savings_clause}"
+)
+
+
 CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
     # === Run-validation tier (always emitted at pflow run) ===
     "cache.order-mismatch": CacheWarningSpec(
@@ -144,9 +173,12 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         severity=Severity.INFO,
         source="cache_analyzer",
         category=CACHE_ADVISORY_CATEGORY,
-        message_template=(
-            "{node_count} LLM nodes share static context that isn't in any ## Cache block (saves {savings_str}/run)"
-        ),
+        # Dispatched on context: workflow scope (default) vs boundary scope
+        # (when ``child_workflow`` is present in context). The placeholder here
+        # is replaced at make_diagnostic time — see ``_dispatch_shared_context``.
+        # Two distinct sentences are needed because workflow-internal sharing
+        # and cross-boundary value flow have different remediation paths.
+        message_template=_SHARED_CONTEXT_WORKFLOW_TEMPLATE,
         required_context_keys=(
             ("node_count", int),
             ("shared_chunks", list),
@@ -154,8 +186,8 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("savings_usd", float),
         ),
         suggestions_template=(
-            "Paste the suggested ## Cache block (see Suggested ## Cache block section above) into {affected_workflow}.",
-            "Per-node prompt_cache: assignments are listed in the same section.",
+            "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into {affected_workflow}.",
+            "Per-node `prompt_cache:` assignments are listed in the same section.",
         ),
         path_template="workflows[path={affected_workflow}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
@@ -177,7 +209,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("savings_usd", float),
         ),
         suggestions_template=(
-            "Add `- prewarm: true` to {node_id} to opt in ({savings_str}/run).",
+            "Add `- prewarm: true` to {node_id} to opt in.{savings_clause}",
             "OR add `- prewarm: false` to {node_id} to opt out explicitly (suppresses this warning).",
         ),
         path_template="nodes[id={node_id}]",
@@ -214,9 +246,9 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="cache_analyzer",
         category=CACHE_ADVISORY_CATEGORY,
         message_template=(
-            "{node_id}: prompt_cache subset doesn't start at position 1 of ## Cache "
-            "declaration order; padding to {suggested_subset} would unlock prefix "
-            "hits at 0.1× read rate (saves {savings_str}/run)"
+            "{node_id}: `prompt_cache:` subset doesn't start at position 1 of the "
+            "## Cache declaration. Extending it to {suggested_subset} would let this "
+            "node hit cached writes from upstream nodes at 0.1× input cost.{savings_clause}"
         ),
         required_context_keys=(
             ("node_id", str),
@@ -349,6 +381,36 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="nodes[id={node_id}].prompt",
     ),
+    "cache.consolidate-to-root-recommended": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        message_template=(
+            "Sub-paths of `{root}` ({sub_paths_csv}) are individually below "
+            "{model}'s min-cache threshold ({min_tokens} tokens, max sub-path "
+            "~{max_subpath_tokens}); consolidating to `${{{root}}}` (~{root_tokens} "
+            "tokens) would cross the threshold and actually cache. Sub-path "
+            "markers silently no-op at the provider as declared."
+        ),
+        required_context_keys=(
+            ("root", str),
+            ("sub_paths", list),
+            ("model", str),
+            ("min_tokens", int),
+            ("max_subpath_tokens", int),
+            ("root_tokens", int),
+            ("affected_workflow", str),
+        ),
+        suggestions_template=(
+            "Replace [{sub_paths_csv}] with [{root}] in the ## Cache block and in "
+            "every node's `prompt_cache:` list that currently references any of "
+            "those sub-paths. Trade-off: each call sends the entire `{root}` "
+            "value (~{root_tokens} tokens) instead of just the sub-paths it "
+            "references; cache write costs 1.25× input rate, reads cost 0.1×, "
+            "so consolidation pays off after the first read.",
+        ),
+        path_template="workflows[path={affected_workflow}]",
+    ),
 }
 
 
@@ -396,6 +458,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.unused-chunk": 30,
     "cache.below-min-tokens": 30,
     "cache.prewarm-no-prefix": 30,
+    "cache.consolidate-to-root-recommended": 30,
     # Tier 6 — cross-workflow alignment (informational; no concrete savings).
     "cache.cross-workflow-prose-mismatch": 50,
     "cache.cross-workflow-rename-detected": 50,
@@ -458,6 +521,26 @@ def _format_savings(savings_usd: Any) -> str:
     if savings_usd is None:
         return "savings unavailable"
     return f"-${float(savings_usd):.2f}"
+
+
+def _format_savings_clause(savings_usd: Any) -> str:
+    """Render the parenthetical ``" (saves $X.XX/run)"`` clause, or empty string.
+
+    Used by message templates that want to APPEND a savings hint inline. When
+    ``savings_usd`` is ``None`` or sub-cent, returns empty string — the
+    template's surrounding wording stays grammatical (no orphan
+    ``"saves savings unavailable/run"`` artifact). Mirrors the tri-state
+    contract: None → silent, sub-cent → silent, real value → rendered.
+    """
+    if savings_usd is None:
+        return ""
+    try:
+        amount = float(savings_usd)
+    except (TypeError, ValueError):
+        return ""
+    if amount < 0.005:
+        return ""
+    return f" (saves ${amount:.2f}/run)"
 
 
 def _validate_required(
@@ -574,6 +657,28 @@ def make_diagnostic(
     # gracefully degrades on None. Compute on demand.
     if "savings_usd" in context_kwargs:
         format_dict["savings_str"] = _format_savings(context_kwargs["savings_usd"])
+        # ``savings_clause`` is the inline-parenthetical form that templates can
+        # append without producing the broken ``"saves savings unavailable/run"``
+        # artifact when savings_usd is None/sub-cent. Templates use one or the
+        # other depending on whether they want the bare amount (savings_str) or
+        # the full parenthetical (savings_clause).
+        format_dict["savings_clause"] = _format_savings_clause(context_kwargs["savings_usd"])
+
+    # ``shared_chunks_csv`` is a typed alias of ``shared_chunks`` (list) so
+    # message templates can render the discriminator without duplicating the
+    # join logic at every emission site. Without this, ``cache.shared-context-
+    # undeclared`` rendered three identical lines on lyrics-generator
+    # song-creator (one per cross-workflow boundary) — agents couldn't tell
+    # which chunk each line was about.
+    if "shared_chunks" in context_kwargs:
+        chunks = context_kwargs["shared_chunks"]
+        format_dict["shared_chunks_csv"] = ", ".join(str(c) for c in chunks) if chunks else ""
+
+    # ``sub_paths_csv`` mirrors ``shared_chunks_csv`` for the consolidate-to-root
+    # advisory. Same join-free pattern; same passthrough-to-context fidelity.
+    if "sub_paths" in context_kwargs:
+        sub_paths = context_kwargs["sub_paths"]
+        format_dict["sub_paths_csv"] = ", ".join(str(p) for p in sub_paths) if sub_paths else ""
 
     # cache.invalid-on-non-llm: provide the lowercase form matching the
     # shipped data_flow.py emitter (lowercase 'this'/'these'). Synced with
@@ -583,6 +688,18 @@ def make_diagnostic(
         format_dict["is_or_are_capitalized"] = (
             "this field is" if context_kwargs["is_or_are"] == "is" else "these fields are"
         )
+
+    # cache.shared-context-undeclared: select boundary template when
+    # ``child_workflow`` is set in context (CP5 #5 — disambiguate workflow-level
+    # from cross-workflow-boundary findings). Boundary form has different
+    # remediation prose (declare on either side). Mirrors ``cache.discrepancy``
+    # dispatch — see ``_SHARED_CONTEXT_BOUNDARY_TEMPLATE``.
+    selected_message_template = spec.message_template
+    if warning_id == "cache.shared-context-undeclared" and "child_workflow" in context_kwargs:
+        selected_message_template = _SHARED_CONTEXT_BOUNDARY_TEMPLATE
+        # Render basename for compact output — full paths bloat the message.
+        child_path = str(context_kwargs["child_workflow"])
+        format_dict["child_workflow_basename"] = child_path.rsplit("/", 1)[-1] if "/" in child_path else child_path
 
     # cache.discrepancy → dispatch; everything else → straight format.
     if warning_id == "cache.discrepancy":
@@ -595,7 +712,7 @@ def make_diagnostic(
         context["root_cause_action"] = action_payload
         context["path"] = path
     else:
-        message = spec.message_template.format(**format_dict)
+        message = selected_message_template.format(**format_dict)
         suggestions = [s.format(**format_dict) for s in spec.suggestions_template]
         path = spec.path_template.format(**format_dict)
         context = dict(context_kwargs)

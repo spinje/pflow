@@ -117,6 +117,18 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
             "score",
             {"batch_alias": "item", "first_dynamic_position": 0},
         ),
+        "cache.consolidate-to-root-recommended": (
+            None,
+            {
+                "root": "concept",
+                "sub_paths": ["concept.core_idea", "concept.title", "concept.angle"],
+                "model": "anthropic/claude-sonnet-4-5",
+                "min_tokens": 1024,
+                "max_subpath_tokens": 200,
+                "root_tokens": 1500,
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
     }
     return samples[warning_id]
 
@@ -398,6 +410,50 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.batch-prewarm-recommended: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.batch-prewarm-recommended")
+
+    # cache.consolidate-to-root-recommended: brownfield path. Workflow declares
+    # ``## Cache`` with two SUB-PATH chunks (``concept.title``, ``concept.core_idea``)
+    # of the same root. Each sub-path is below the (mocked) min-cache threshold;
+    # the consolidated ``${concept}`` would cross. Override ``_estimate_ref_tokens``
+    # locally so the threshold check fires deterministically without needing
+    # real memo data (production-shape estimator math is covered by dedicated
+    # unit tests; this test only locks the emission contract).
+    monkeypatch.setattr(
+        analyze_module,
+        "_estimate_ref_tokens",
+        lambda ref, **_kw: 100 if ref == "concept" else 5,
+    )
+    consolidate_ir: dict[str, Any] = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {"name": "concept.title", "var": "concept.title", "prose_before": "T:\n"},
+                {"name": "concept.core_idea", "var": "concept.core_idea", "prose_before": "C:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "consumer-1",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["concept.title", "concept.core_idea"],
+                "params": {"prompt": "${concept.title} ${concept.core_idea}"},
+            },
+            {
+                "id": "consumer-2",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["concept.title", "concept.core_idea"],
+                "params": {"prompt": "${concept.title} ${concept.core_idea}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(consolidate_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.consolidate-to-root-recommended"]
+    assert found, f"analyze did not emit cache.consolidate-to-root-recommended: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.consolidate-to-root-recommended")
 
     # cache.dynamic-before-static: full-path declared cache chunk appears after
     # an undeclared dynamic ref.

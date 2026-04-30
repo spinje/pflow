@@ -96,7 +96,7 @@ Two tightly-coupled changes, shipped together because neither provides value alo
 
 28. **No `FixAction` typed structure in v1.** Existing `suggestions: list[str]` carries prose fix hints; existing `context: dict` carries raw structured data. Pattern follows mypy (analyzer without auto-fix), not rustc / ruff / eslint (which auto-apply). `FixAction` substructure is justified only when programmatic fix application ships — that's deferred to v1b along with `pflow cache apply`. Until then, structure-without-consumer is overengineering. The `description` field of a hypothetical `FixAction` overlaps entirely with `suggestions[0]`; the typed `action` enum and `applicability` classification have no v1 consumer.
 
-29. **Closed warning ID catalog of 10 entries for v1.** Adding new IDs goes through design review. Keeps the agent-facing API stable and prevents ID-namespace drift. Catalog covered in the `Stable Warning ID Catalog` requirements section.
+29. **Closed warning ID catalog of 13 entries for v1** (started at 10 from spec; +cache.discrepancy from Round 2; +cache.invalid-on-non-llm and cache.prewarm-no-prefix from Round 3; +cache.consolidate-to-root-recommended from CP3 / lyrics-generator Stage 1 verification). Adding new IDs goes through design review. Keeps the agent-facing API stable and prevents ID-namespace drift. Catalog covered in the `Stable Warning ID Catalog` requirements section.
 
 30. **Four-level per-call confidence labeling, three-level aggregate.** Per-call: `trace` (from JSON trace file, richest — only path that gets discrepancy analysis) / `memo` (from `MemoizationCache` prior `llm_usage`) / `estimator` (from `litellm.token_counter()`) / `heuristic` (`len(text) // 4` fallback). Aggregate: `high_from_trace` / `medium_from_memo` / `low_no_data`. Replaces an earlier sloppier scheme that conflated trace files and `MemoizationCache` history under one label — DD#34 separates them properly.
 
@@ -308,6 +308,7 @@ Catalog organized by emission path (per DD#36 three-tier architecture). "Run val
 | `cache.below-min-tokens` | `warning` | Declared cache content for a node is below the provider's minimum token threshold. Markers will silently no-op. |
 | `cache.cross-workflow-prose-mismatch` | `info` | Tier 2: parent and child both declare a chunk with the same identifier but different prose-before-the-`${var}`. Cross-workflow byte-level cache hit won't fire. |
 | `cache.cross-workflow-rename-detected` | `info` | Tier 2: parent passes a value into a child's input under a different name (e.g. `concept_brief → creative_brief`). Yellow flag for divergent prose between the two cache blocks. |
+| `cache.consolidate-to-root-recommended` | `info` | Sub-paths of a parent dict (e.g. `concept.core_idea`, `concept.title`) appear in `## Cache` (brownfield) or in shared template references (greenfield) AND are individually below the provider's min-cache threshold AND consolidating to `${root}` would cross the threshold. Sub-path `cache_control` markers silently no-op at the provider; consolidation makes caching actually fire. (Added in CP3 / lyrics-generator Stage 1 verification — DD#29 design review approved.) |
 
 The `cache.opportunities-available` ID is reserved for the `--dry-run` nudge Diagnostic; it's emitted by `summarize()` rather than `analyze()` and isn't part of the analyze-cache warnings list.
 

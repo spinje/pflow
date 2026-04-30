@@ -732,3 +732,169 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
     # Known priority wins over default.
     assert actions[0].warning_id == "cache.shared-context-undeclared"
     assert actions[1].warning_id == "cache.future-unknown-id"
+
+
+# ---------------------------------------------------------------------------
+# CP1 (#8) — Effective model resolution
+# ---------------------------------------------------------------------------
+
+
+def test_effective_model_falls_back_to_workflow_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A node without per-node ``model:`` picks up ``get_default_workflow_model()``.
+
+    Mutation-test: if the fallback in ``_build_per_call_row`` (``analyze.py:499``)
+    is reverted to ``str(node.get("params", {}).get("model") or node.get("model") or "")``,
+    this test fails with ``model == ""`` instead of the patched default. The
+    lyrics-generator parent workflow's ``~2 LLM calls · 0 models in use`` bug
+    would re-appear.
+    """
+    # ``pflow.core.cache_analysis.analyze`` resolves to the FUNCTION via
+    # ``__init__.py``'s ``from .analyze import analyze`` re-export, shadowing the
+    # submodule. Reach the actual module via ``sys.modules`` for monkeypatch.
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(
+        analyze_module,
+        "get_default_workflow_model",
+        lambda: "anthropic/claude-sonnet-4-5",
+    )
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "creative-direction",
+                "type": "llm",
+                "params": {"prompt": "hello"},  # no model
+            }
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    assert len(result.per_call) == 1
+    assert result.per_call[0].model == "anthropic/claude-sonnet-4-5"
+    assert result.summary.models_in_use == ("anthropic/claude-sonnet-4-5",)
+
+
+def test_effective_model_explicit_wins_over_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-node ``model:`` always wins; default is only the fallback."""
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "should-not-be-used")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "params": {"model": "gemini/gemini-3.1-pro-preview", "prompt": "x"},
+            }
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    assert result.per_call[0].model == "gemini/gemini-3.1-pro-preview"
+
+
+def test_effective_model_empty_when_no_default_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``get_default_workflow_model()`` returns None → row.model is empty string.
+
+    This matches the pre-fix behavior for the case where neither per-node
+    model nor settings/auto-detect yields anything. The renderer then shows
+    ``model=`` empty (CP4 will improve to ``(default)``); the summary's
+    ``models_in_use`` is correctly empty (not undercounted).
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "params": {"prompt": "x"},  # no model
+            }
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    assert result.per_call[0].model == ""
+    assert result.summary.models_in_use == ()
+
+
+def test_summary_message_zero_llm_nodes() -> None:
+    """Zero LLM nodes → message says exactly that, doesn't mention pricing.
+
+    Mutation-test: if the renderer's branch logic in
+    ``render_text._render_summary`` re-conflates the three sub-cases, this
+    test fails because the message would mention LLM nodes.
+    """
+    from pflow.core.cache_analysis.render_text import _render_summary
+
+    workflow_ir = {"nodes": [{"id": "shell", "type": "shell", "params": {"command": "echo"}}]}
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    rendered = _render_summary(result)
+    assert "workflow has no LLM nodes" in rendered
+    assert "model resolved" not in rendered
+    assert "run the workflow once" not in rendered
+
+
+def test_summary_message_no_model_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM nodes exist but no model resolves → message says so explicitly.
+
+    This is the lyrics-generator parent workflow case: 2 LLM nodes, neither
+    has per-node ``model:``, no default configured → before CP1 the message
+    said "workflow has no LLM nodes" (factually wrong with 2 visible in the
+    table below). Mutation-test: reverting either the analyzer fallback OR
+    the renderer branch produces the wrong message.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    from pflow.core.cache_analysis.render_text import _render_summary
+
+    workflow_ir = {
+        "nodes": [
+            {"id": "n1", "type": "llm", "params": {"prompt": "hi"}},
+            {"id": "n2", "type": "llm", "params": {"prompt": "bye"}},
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    rendered = _render_summary(result)
+    assert "no model resolved" in rendered
+    assert "workflow has no LLM nodes" not in rendered
+
+
+def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM nodes with priced models but no run history → 'run the workflow once'.
+
+    This case fires when models resolve and pricing is available, but
+    ``current_cost_per_run_usd`` is None (output tokens unavailable) AND
+    aggregate savings is None (no shared context detected).
+    """
+    # ``pflow.core.cache_analysis.analyze`` resolves to the FUNCTION via
+    # ``__init__.py``'s ``from .analyze import analyze`` re-export, shadowing the
+    # submodule. Reach the actual module via ``sys.modules`` for monkeypatch.
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(
+        analyze_module,
+        "get_default_workflow_model",
+        lambda: "anthropic/claude-sonnet-4-5",
+    )
+    from pflow.core.cache_analysis.render_text import _render_summary
+
+    # Single LLM node — no shared context → no aggregate-savings → falls into
+    # the third sub-branch.
+    workflow_ir = {
+        "nodes": [
+            {"id": "n1", "type": "llm", "params": {"prompt": "lonely call"}},
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    rendered = _render_summary(result)
+    # Either the priced-no-history branch fires, or (if savings detection
+    # produces an aggregate figure even for one node) the greenfield run-once
+    # hint fires. Both forms are correct; only the wrong "no LLM nodes" or
+    # "no model resolved" branches should be excluded.
+    assert "workflow has no LLM nodes" not in rendered
+    assert "no model resolved" not in rendered
