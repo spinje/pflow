@@ -396,11 +396,7 @@ def test_resolve_chunk_value_is_imported_locally_at_both_sites() -> None:
     This identity check catches "Break B": one site reimports the helper
     from a different location. It does NOT catch "Break A" (one site inlines
     a divergent implementation while still keeping the import) — that's
-    structurally undetectable without AST scanning. The
-    ``test_resolve_chunk_value_bindings_are_independent`` test below covers
-    the divergence-injection mechanism itself: each site's binding can be
-    monkeypatched without affecting the other, which is what makes
-    site-by-site behavioral testing possible at all.
+    structurally undetectable without AST scanning.
     """
     llm_module = _import_module("pflow.nodes.llm.llm")
     plan_node_module = _import_module("pflow.runtime.engine.plan_node")
@@ -413,64 +409,6 @@ def test_resolve_chunk_value_is_imported_locally_at_both_sites() -> None:
     assert llm_module._resolve_chunk_value is plan_node_module._resolve_chunk_value
 
 
-def test_resolve_chunk_value_bindings_are_independent(monkeypatch, mock_llm_client) -> None:
-    """Behavioral check: monkeypatching one site's ``_resolve_chunk_value``
-    binding must NOT affect the other site's behavior — they're independent
-    module-level references. This proves divergence-injection is mechanically
-    possible (a future test can inject a sentinel-marker at one site and
-    verify the other site is unaffected, catching real divergence).
-
-    If a future contributor uses a different import pattern (e.g., re-imports
-    inside function bodies, or aliases via ``from X import Y as _resolve_chunk_value``),
-    this test surfaces the breakage by exposing inconsistent monkeypatch
-    behavior."""
-    from pflow.core.cache_render import _CHUNK_ABSENT
-    from pflow.runtime.engine.plan_node import _render_cache_for_hash
-    from pflow.runtime.engine.types import NodeConfig
-
-    mock_llm_client.set_response("*", None, "ok")
-
-    # Inject a sentinel-returning replacement at the LLM site only.
-    sentinel_calls = {"llm": 0}
-
-    def llm_site_replacement(chunk: Any, shared: dict[str, Any]) -> Any:
-        sentinel_calls["llm"] += 1
-        return _CHUNK_ABSENT  # always-skip wrapper for the LLM site
-
-    monkeypatch.setattr("pflow.nodes.llm.llm._resolve_chunk_value", llm_site_replacement)
-
-    # Now exercise BOTH sites against the same shared state and cache_ctx.
-    shared: dict[str, Any] = {"a": "alpha-resolved"}
-    cache_ctx = _ctx(chunks=[("a", "A:\n")], subset=("a",))
-    _install_cache_render(shared, "n1", cache_ctx)
-
-    # Hash side — uses plan_node's binding (unpatched). Should produce the
-    # rendered chunk, NOT the sentinel.
-    config = NodeConfig(
-        node_id="n1",
-        node_type_name="LLMNode",
-        template_config=None,
-        batch_config=None,
-        namespaced=True,
-        interface_metadata=None,
-        prompt_cache_items=("a",),
-        prewarm=False,
-    )
-    hash_rendered = _render_cache_for_hash(config, shared)
-    assert hash_rendered is not None
-    assert hash_rendered[0]["value"] == "alpha-resolved", (
-        "hash side picked up the LLM-site monkeypatch — bindings are NOT independent"
-    )
-
-    # Prep side — uses LLM's binding (patched). Should hit the sentinel and
-    # filter the chunk → fall back to plain-string system path (None blocks).
-    node = _make_node("n1")
-    node.run(shared)
-    sent = mock_llm_client.call_history_full[-1]["system"]
-    assert sent is None, "prep side did NOT use the LLM-site monkeypatch — bindings are NOT independent"
-    assert sentinel_calls["llm"] >= 1, "LLM-site replacement was never invoked"
-
-
 def test_chunk_absent_sentinel_class_is_shared(mock_llm_client) -> None:
     """The ABSENT-filter sentinel class must be the SAME class at both
     sites — otherwise ``isinstance`` filter breaks asymmetrically."""
@@ -481,51 +419,12 @@ def test_chunk_absent_sentinel_class_is_shared(mock_llm_client) -> None:
 
 
 # --- Hash-vs-prep render byte equivalence ----------------------------------
-
-
-def test_hash_render_and_prep_render_byte_equivalent_for_same_subset(mock_llm_client) -> None:
-    """The bytes produced by ``_render_cache_for_hash`` (hash side) and by
-    ``LLMNode.prep`` (prep side) for the SAME chunk values must match
-    chunk-for-chunk. If they diverge, memo cache hash is keyed on bytes A
-    while the adapter sends bytes A' — silent stale-cache class.
-
-    The hash side returns ``[{name, prose, value}]`` and the prep side
-    returns ``[{type:"text", text: prose+value}]``. The invariant is that
-    ``prose+value`` matches at every position."""
-    from pflow.runtime.engine.plan_node import _render_cache_for_hash
-    from pflow.runtime.engine.types import NodeConfig
-
-    mock_llm_client.set_response("*", None, "ok")
-    shared = {"a": "alpha", "b": {"k": "v"}, "c": [1, 2]}
-    cache_ctx = _ctx(
-        chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")],
-        subset=("a", "b", "c"),
-    )
-    _install_cache_render(shared, "write-lyrics", cache_ctx)
-
-    # Hash side
-    config = NodeConfig(
-        node_id="write-lyrics",
-        node_type_name="LLMNode",
-        template_config=None,
-        batch_config=None,
-        namespaced=True,
-        interface_metadata=None,
-        prompt_cache_items=("a", "b", "c"),
-        prewarm=False,
-    )
-    hash_rendered = _render_cache_for_hash(config, shared)
-    assert hash_rendered is not None
-    assert len(hash_rendered) == 3
-    hash_texts = [h["prose"] + h["value"] for h in hash_rendered]
-
-    # Prep side
-    node = _make_node("write-lyrics")
-    node.run(shared)
-    sent = mock_llm_client.call_history_full[-1]["system"]
-    prep_texts = [b["text"] for b in sent]
-
-    assert hash_texts == prep_texts
+# The top-level-keys-only sibling of this invariant lived here historically; it
+# was deleted because the production-shape variant at
+# ``test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store``
+# (Bug #2 regression block, below) covers the same chunk-by-chunk byte-equality
+# under the wrap engine.py:471 actually applies. The synthetic-dict version was
+# the same shape that hid Bug #2.
 
 
 def test_hash_render_and_prep_render_byte_equivalent_with_absent_chunks(mock_llm_client) -> None:

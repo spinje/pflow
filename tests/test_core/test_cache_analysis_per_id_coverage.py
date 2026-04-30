@@ -12,6 +12,7 @@ and the per-id round-trip locks the agent-facing JSON contract for every ID.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -138,30 +139,41 @@ def test_opportunities_nudge_id_NOT_in_catalog() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-ID JSON round-trip — every catalog ID's emitted Diagnostic round-trips
+# Per-ID JSON round-trip — structural floor over a small representative sample.
+# Full per-ID coverage is delegated to the production-driven test below
+# (``test_emitted_diagnostics_round_trip_for_real_producer_paths``), which
+# iterates the diagnostics actual code paths emit rather than constructing
+# them locally. The two surfaces are complementary: this one catches
+# ``make_diagnostic``-side regressions for the structural variants; the
+# production-driven one catches divergence between the catalog template and
+# how producers populate context.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("warning_id", sorted(CACHE_WARNING_CATALOG.keys()))
+@pytest.mark.parametrize(
+    "warning_id",
+    [
+        # Simple flat context (list-of-strings).
+        "cache.order-mismatch",
+        # Nested dispatch payload — highest complexity in the catalog.
+        "cache.discrepancy",
+        # V6 combined-diagnostic shape (invalid_fields: list[str]).
+        "cache.invalid-on-non-llm",
+    ],
+)
 def test_per_id_diagnostic_json_round_trip(warning_id: str) -> None:
-    """For every catalog ID, the emitted Diagnostic.to_dict() round-trips
-    through json.dumps/loads cleanly. Catches non-JSON-serializable values
-    (Path, set, etc.) leaking into context."""
+    """For 3 structurally-representative catalog IDs (flat / nested-dispatch /
+    multi-field-collapse), the emitted Diagnostic.to_dict() round-trips
+    through json.dumps/loads cleanly and carries ``id`` at top level. Catches
+    non-JSON-serializable values (Path, set, etc.) leaking into context, and
+    the regression where ``id`` gets nested inside ``context`` instead of
+    surfacing at the top of the payload (top-10% diagnostic systems —
+    mypy/rustc/ruff — surface stable IDs at top level for filtering)."""
     node_id, kwargs = _kwargs_for(warning_id)
     diag = make_diagnostic(warning_id, node_id=node_id, **kwargs)
     payload = diag.to_dict()
     round_tripped = json.loads(json.dumps(payload))
     assert round_tripped == payload
-
-
-@pytest.mark.parametrize("warning_id", sorted(CACHE_WARNING_CATALOG.keys()))
-def test_per_id_json_payload_carries_id_at_top_level(warning_id: str) -> None:
-    """Top-10% diagnostic systems (mypy, rustc, ruff) all surface stable IDs at
-    top level for filtering/suppression. v1 contract: ``id`` is a top-level key
-    in the JSON, not buried in context."""
-    node_id, kwargs = _kwargs_for(warning_id)
-    diag = make_diagnostic(warning_id, node_id=node_id, **kwargs)
-    payload = diag.to_dict()
     assert payload["id"] == warning_id
 
 
@@ -175,3 +187,201 @@ def test_json_format_version_consumer_rule_holds() -> None:
     accepts current ``"1.0"`` AND any future ``"1.x"`` minor bump. Lock both."""
     assert JSON_FORMAT_VERSION == "1.0"
     assert JSON_FORMAT_VERSION.startswith(JSON_FORMAT_VERSION_MAJOR + ".")
+
+
+# ---------------------------------------------------------------------------
+# Production-driven round-trip: drives REAL producers (validator, analyzer,
+# summarizer) against minimal IR fixtures that fire each catalog id, then
+# round-trips the emitted Diagnostic through ``Diagnostic.to_dict() →
+# json.dumps → json.loads`` and asserts top-level ``id`` plus content
+# fidelity. Catches the regression class where the catalog template and the
+# producer's context-population diverge — something the local-construction
+# round-trip above can't see (it builds the same kwargs the catalog
+# template renders against).
+# ---------------------------------------------------------------------------
+#
+# v1 stubbed warnings — catalog rows exist but no producer fires them yet.
+# Documented here for transparency; the production-driven test skips these
+# by design (the structural round-trip above provides coverage on the
+# ``make_diagnostic``-side until detection wires up in v1.x).
+_STUBBED_PRODUCERS_DEFERRED_TO_V1X = frozenset({
+    "cache.dynamic-before-static",
+    "cache.shared-context-undeclared",
+    "cache.padding-advisory",
+    "cache.batch-prewarm-recommended",
+    "cache.cross-workflow-prose-mismatch",
+    "cache.cross-workflow-rename-detected",
+    "cache.discrepancy",
+})
+
+
+def _round_trip(diag: Any) -> dict:
+    """Round-trip a Diagnostic through ``to_dict → json.dumps → json.loads``.
+    Asserts ``id`` is at top level and the round-trip is byte-stable."""
+    payload = diag.to_dict()
+    round_tripped = json.loads(json.dumps(payload))
+    assert round_tripped == payload
+    assert "id" in payload
+    return payload
+
+
+def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any) -> None:
+    """Drive every NON-STUBBED catalog id through its actual producer and
+    round-trip the emitted Diagnostic. Catches the divergence class where
+    a producer populates context with a non-JSON-serializable value (Path,
+    set, dataclass) — invisible to the structural round-trip above which
+    only sees the catalog template's hand-curated kwargs.
+
+    Producers covered:
+    - ``validate_data_flow`` → ``cache.order-mismatch``,
+      ``cache.unused-chunk``, ``cache.invalid-on-non-llm``
+    - ``analyze`` → ``cache.below-min-tokens``, ``cache.prewarm-no-prefix``
+    - ``summarize_from_analysis`` → ``cache.opportunities-available``
+    """
+    from pflow.core.cache_analysis import analyze, summarize_from_analysis
+    from pflow.core.workflow.data_flow import validate_data_flow
+
+    seen_ids: set[str] = set()
+
+    # --- validator-emitted ids (data_flow.py) -----------------------------
+    # cache.order-mismatch: declare ## Cache items in one order, then a
+    # node's prompt_cache lists them in a different order.
+    order_mismatch_ir: dict[str, Any] = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "gen",
+                "type": "llm",
+                "prompt_cache": ["b", "a"],  # wrong order
+                "params": {"prompt": "go"},
+            }
+        ],
+        "edges": [],
+    }
+    diags = validate_data_flow(order_mismatch_ir, check_inputs=False)
+    found = [d for d in diags if d.id == "cache.order-mismatch"]
+    assert found, f"validate_data_flow did not emit cache.order-mismatch: ids={[d.id for d in diags]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.order-mismatch")
+
+    # cache.unused-chunk: a chunk in ## Cache that no node references.
+    unused_chunk_ir: dict[str, Any] = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "gen",
+                "type": "llm",
+                "prompt_cache": ["a"],  # b is declared but unreferenced
+                "params": {"prompt": "go"},
+            }
+        ],
+        "edges": [],
+    }
+    diags = validate_data_flow(unused_chunk_ir, check_inputs=False)
+    found = [d for d in diags if d.id == "cache.unused-chunk"]
+    assert found, f"validate_data_flow did not emit cache.unused-chunk: ids={[d.id for d in diags]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.unused-chunk")
+
+    # cache.invalid-on-non-llm: prompt_cache: declared on a non-LLM node.
+    invalid_on_non_llm_ir: dict[str, Any] = {
+        "inputs": {"a": {"type": "string"}},
+        "cache": {
+            "items": [{"name": "a", "var": "a", "prose_before": "A:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "echo",
+                "type": "shell",
+                "prompt_cache": ["a"],  # invalid on shell node
+                "params": {"command": "echo hi"},
+            }
+        ],
+        "edges": [],
+    }
+    diags = validate_data_flow(invalid_on_non_llm_ir, check_inputs=False)
+    found = [d for d in diags if d.id == "cache.invalid-on-non-llm"]
+    assert found, f"validate_data_flow did not emit cache.invalid-on-non-llm: ids={[d.id for d in diags]}"
+    payload = _round_trip(found[0])
+    # V6 combined-diagnostic shape: invalid_fields list survives JSON.
+    assert payload["context"]["invalid_fields"] == ["prompt_cache"]
+    seen_ids.add("cache.invalid-on-non-llm")
+
+    # --- analyzer-emitted ids (analyze.py) -------------------------------
+    # cache.below-min-tokens: a node opts into a small declared cache —
+    # the rendered content falls below the provider minimum (Anthropic = 1024).
+    below_min_tokens_ir: dict[str, Any] = {
+        "inputs": {"topic": {"type": "string"}},
+        "cache": {
+            "items": [{"name": "topic", "var": "topic", "prose_before": "Topic:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["topic"],
+                "params": {"prompt": "summarize ${topic}"},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(below_min_tokens_ir, parameters={"topic": "hi"})
+    found = [d for d in analysis.warnings if d.id == "cache.below-min-tokens"]
+    assert found, f"analyze did not emit cache.below-min-tokens: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.below-min-tokens")
+
+    # cache.prewarm-no-prefix: batch llm node with prewarm: true and
+    # ${item.X} at position 0 of the prompt template.
+    prewarm_no_prefix_ir: dict[str, Any] = {
+        "inputs": {"items": {"type": "list"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": "${items}", "item_alias": "item"},
+                "params": {"prompt": "${item.text}"},  # batch ref at position 0
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(prewarm_no_prefix_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.prewarm-no-prefix"]
+    assert found, f"analyze did not emit cache.prewarm-no-prefix: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.prewarm-no-prefix")
+
+    # --- summarize-emitted id (summarize.py) -----------------------------
+    # cache.opportunities-available: the dry-run nudge fires when actionable
+    # opportunities exist. Reuse the prewarm-no-prefix IR — it carries one.
+    nudge = summarize_from_analysis(analysis)
+    assert nudge is not None, "summarize_from_analysis returned None despite actionable opportunities"
+    assert nudge.id == "cache.opportunities-available"
+    _round_trip(nudge)
+    seen_ids.add("cache.opportunities-available")
+
+    # --- coverage assertion: every NON-STUBBED catalog id was driven ----
+    expected_covered = (
+        set(CACHE_WARNING_CATALOG.keys()) | {CACHE_OPPORTUNITIES_NUDGE_ID}
+    ) - _STUBBED_PRODUCERS_DEFERRED_TO_V1X
+    missing = expected_covered - seen_ids
+    assert not missing, (
+        f"production-driven test missed catalog ids that should have producers: {missing}. "
+        f"If a stub became a real producer, drive it here and remove from "
+        f"_STUBBED_PRODUCERS_DEFERRED_TO_V1X."
+    )

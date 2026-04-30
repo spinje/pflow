@@ -434,18 +434,12 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
     return samples[warning_id]
 
 
-@pytest.mark.parametrize("warning_id", sorted(CACHE_WARNING_CATALOG.keys()))
-def test_context_passthrough_fidelity(warning_id: str) -> None:
-    """Every required_context key passed in MUST appear in diag.context byte-for-byte.
-    Catches the regression where a future contributor filters context_kwargs to
-    'only the keys the message template references' — agents reading JSON dispatch
-    on typed context fields regardless of what the human-rendered message uses."""
-    kwargs = _minimal_context_kwargs(warning_id)
-    node_id = kwargs.pop("node_id", None)
-    diag = make_diagnostic(warning_id, node_id=node_id, **kwargs)
-    assert diag.context is not None
-    for key, value in kwargs.items():
-        assert diag.context.get(key) == value, f"{warning_id}: context['{key}'] not preserved"
+# test_context_passthrough_fidelity removed: ``Diagnostic.context = {**kwargs}``
+# means every kwarg is preserved by construction. The dispatch tests above
+# (``test_make_discrepancy_diagnostic_dispatches_*`` lines 246-300) cover the
+# typed payload structure for each ``cache.discrepancy`` root_cause via
+# ``make_diagnostic`` against the actual dispatch table — that's the
+# production-shaped invariant.
 
 
 @pytest.mark.parametrize("warning_id", sorted(CACHE_WARNING_CATALOG.keys()))

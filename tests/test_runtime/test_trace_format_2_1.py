@@ -620,35 +620,179 @@ def test_normalize_skips_1h_override_for_openai_response() -> None:
     assert response.usage["cost_usd"] == 0.001
 
 
+# --- End-to-end engine path: memo HIT writes cache_source="memo" ----------
+# Symmetric counter-test to Bug #1 (the regression where engine called
+# ``handle_cached_execution`` after ``apply_memo_hit`` and overwrote
+# ``cache_source="memo"`` with ``"in_process"``).
+#
+# The pre-existing helper-pair test at
+# ``test_handle_cached_execution_does_not_overwrite_memo_cache_source``
+# verifies the contract at the boundary by hand-seeding state-after-
+# ``apply_memo_hit``. This test is the production-shaped sibling: it runs
+# the full engine call sequence (``apply_memo_hit`` THEN
+# ``handle_cached_execution``) over a real ``CompiledWorkflow`` with a
+# pre-populated memo cache, and asserts the saved trace event has
+# ``cache_source="memo"``.
+#
+# A future regression where ``engine._execute_node`` step-5 omits the
+# ``cache_source=None`` argument for the cached_memo branch (the Bug #1
+# root) — or routes both cached branches through a single
+# ``cached_source = "in_process"`` assignment — would silently break the
+# helper-pair test's invariant in production. This test catches that.
+
+
+def test_engine_memo_hit_writes_cache_source_memo_not_in_process(
+    tmp_path: Any,
+    mock_llm_client: Any,
+) -> None:
+    """Engine-driven memo HIT: run a workflow once to populate the memo
+    cache, then run it again with the same MemoizationCache. The second
+    run's trace event MUST have ``cache_source="memo"`` (NOT ``"in_process"``)
+    and ``cache_key`` populated and ``cache_age_sec`` non-None.
+    """
+    from pflow.registry import Registry
+    from pflow.runtime import WorkflowEngine, compile_workflow
+    from pflow.runtime.cache import MemoizationCache
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    mock_llm_client.set_response("anthropic/claude-sonnet-4-5", None, "ok")
+
+    ir: dict[str, Any] = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Summarize ${topic}",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    registry = Registry()
+    compiled = compile_workflow(ir, registry=registry, initial_params={"topic": "hello"})
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    # --- Run 1: populate memo cache ----------------------------------------
+    shared1: dict[str, Any] = {"topic": "hello"}
+    shared1.update(compiled.resolved_defaults)
+    shared1["__memoization_cache__"] = cache
+    trace1 = WorkflowTraceCollector(workflow_name="test", workflow_path=str(tmp_path / "wf"))
+    # ``self.trace`` on the engine drives ``record_node_execution``; the
+    # ``shared["__trace_collector__"]`` install is for cross-module readers
+    # (LLMNode hook). Set both — they're not interchangeable.
+    WorkflowEngine(trace_collector=trace1).run(compiled, shared1)
+
+    # Run-1 sanity: not a cached event (we just populated the cache).
+    summarize_events = [e for e in trace1.events if e.get("node_id") == "summarize"]
+    assert summarize_events, "no summarize event in run-1 trace"
+    assert not summarize_events[-1].get("cached"), "run-1 must not be cached"
+
+    # --- Run 2: same memo cache, fresh shared+trace → memo HIT -------------
+    shared2: dict[str, Any] = {"topic": "hello"}
+    shared2.update(compiled.resolved_defaults)
+    shared2["__memoization_cache__"] = cache
+    trace2 = WorkflowTraceCollector(workflow_name="test", workflow_path=str(tmp_path / "wf"))
+
+    # Tiny sleep so cache_age_sec is reliably > 0 even on fast machines.
+    time.sleep(0.05)
+
+    WorkflowEngine(trace_collector=trace2).run(compiled, shared2)
+
+    # --- Assertions on the trace event from run 2 -------------------------
+    summarize_events_2 = [e for e in trace2.events if e.get("node_id") == "summarize"]
+    assert summarize_events_2, "no summarize event in run-2 trace"
+    event = summarize_events_2[-1]
+    assert event.get("cached") is True, "run-2 must be a cache hit"
+
+    llm_call = event.get("llm_call")
+    assert isinstance(llm_call, dict), f"missing llm_call dict on cached event: {event!r}"
+
+    # Bug #1 regression gate: cache_source MUST be "memo" — NOT "in_process".
+    # The engine.py:440 ``cached_source = None`` branch is what makes this
+    # work; if a future refactor swaps that to "in_process", the helper
+    # ``handle_cached_execution`` would overwrite ``apply_memo_hit``'s
+    # ``"memo"`` augment and this assertion would fail.
+    assert llm_call.get("cache_source") == "memo", (
+        f"cache_source mismatch: got {llm_call.get('cache_source')!r}, expected 'memo'. "
+        "Bug #1 root: engine.py:440 cached_source=None branch was bypassed; "
+        "handle_cached_execution overwrote apply_memo_hit's 'memo' augment."
+    )
+    # The other E.1 fields must also be populated on memo hits.
+    assert llm_call.get("cache_key"), "cache_key must be populated on memo hits"
+    assert llm_call.get("cache_age_sec") is not None, "cache_age_sec must be populated on memo hits"
+    assert llm_call["cache_age_sec"] > 0, (
+        f"cache_age_sec must be > 0 (run-2 is later than run-1); got {llm_call['cache_age_sec']!r}"
+    )
+
+
 # --- Trace consumer integration: cache fields flow via llm_usage ----------
 
 
 def test_record_node_execution_passes_cache_metadata_to_llm_call() -> None:
-    """The ``_add_llm_data`` integration site does whole-dict assignment
-    (``event["llm_call"] = llm_usage``), so adding new keys to llm_usage at
-    the producer side flows through with no consumer-side changes. Verify
-    by recording an event with cache fields populated."""
-    collector = WorkflowTraceCollector(workflow_name="test")
-    node_output = {
+    """End-to-end producer→consumer test: ``apply_memo_hit`` writes the
+    cache-metadata fields into ``shared[node_id]['llm_usage']``, then
+    ``record_node_execution`` flows them through ``_add_llm_data`` to the
+    saved trace event.
+
+    Drives from the producer side (``apply_memo_hit``) rather than
+    hand-building a ``node_output`` dict with the cache fields pre-populated.
+    A bug where ``apply_memo_hit`` writes to a wrong key (e.g. ``"cache-source"``
+    with a hyphen, or moves ``cache_age_sec`` outside ``llm_usage``) would
+    NOT be caught by the hand-built shape — the producer-driven shape
+    catches it because the trace consumer reads exactly what the producer
+    wrote.
+    """
+    # Pre-populate shared with BARE llm_usage (no cache fields yet) — this
+    # is the shape ``apply_memo_hit`` sees on entry, since the cached blob
+    # was written before cache-metadata augmentation existed (or simply
+    # before the augmentation fires for THIS run's apply_memo_hit). We
+    # additionally pre-seed ``cache_chunks_skipped`` because that field
+    # comes through the cached output verbatim from a prior LLMNode.post —
+    # it's NOT written by apply_memo_hit but IS expected to flow through
+    # the trace event.
+    cached_output = {
         "llm_usage": {
             "input_tokens": 50,
             "output_tokens": 25,
-            "cache_key": "abc123",
-            "cache_source": "memo",
-            "cache_age_sec": 12.5,
             "cache_chunks_skipped": ["b"],
         }
     }
+    shared: dict[str, Any] = {}
+    created_at = time.time() - 12.5  # 12.5 seconds ago
+
+    apply_memo_hit(
+        node_id="my-node",
+        shared=shared,
+        cached_action="default",
+        cached_output=cached_output,
+        config_hash="hash123",
+        node_type_name="LLMNode",
+        cache_key="abc123",
+        created_at=created_at,
+    )
+
+    # Sanity: producer wrote the augmented fields where the consumer expects.
+    augmented_usage = shared["my-node"]["llm_usage"]
+    assert augmented_usage["cache_source"] == "memo"
+    assert augmented_usage["cache_key"] == "abc123"
+    assert augmented_usage["cache_age_sec"] == pytest.approx(12.5, abs=1.0)
+    assert augmented_usage["cache_chunks_skipped"] == ["b"]
+
+    # Consumer side: record_node_execution reads from the SAME shared.
+    collector = WorkflowTraceCollector(workflow_name="test")
     collector.record_node_execution(
         node_id="my-node",
         node_type="LLMNode",
         duration_ms=100.0,
         success=True,
-        node_output=node_output,
+        node_output=shared["my-node"],
     )
 
     event = collector.events[-1]
     assert event["llm_call"]["cache_key"] == "abc123"
     assert event["llm_call"]["cache_source"] == "memo"
-    assert event["llm_call"]["cache_age_sec"] == 12.5
+    assert event["llm_call"]["cache_age_sec"] == pytest.approx(12.5, abs=1.0)
     assert event["llm_call"]["cache_chunks_skipped"] == ["b"]

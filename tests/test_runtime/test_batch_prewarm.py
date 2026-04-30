@@ -280,9 +280,14 @@ def test_prewarm_no_cache_ctx_full_fanout() -> None:
 
 
 def test_collect_parallel_results_accepts_initial_completed_and_total() -> None:
-    """The widening must keep today's callers source-compatible (defaults).
-    Smoke test: invoke with the new kwargs explicitly."""
+    """The widening must keep today's callers source-compatible (defaults),
+    AND the new kwargs must flow through to the progress reporting site —
+    callback fires with ``batch_current = initial_completed + 1`` and
+    ``batch_total = total``. Without that flow-through the prewarm-split
+    progress numbers would silently desync (item[0] reported as 1/N from
+    synchronous run, item[1] reported as 1/N+1 from pool — off by one)."""
     from concurrent.futures import Future
+    from unittest.mock import Mock
 
     # Construct a single completed future to exercise the signature.
     future: Future = Future()
@@ -297,9 +302,11 @@ def test_collect_parallel_results_accepts_initial_completed_and_total() -> None:
     batch_config = config.batch_config
     assert batch_config is not None
 
+    progress_callback = Mock()
+
     # Calling with initial_completed=1, total=2 simulates "item[0] already
-    # ran synchronously; item[1] in the pool". The collector should not
-    # blow up; numbers are reported through the (no-op here) callback.
+    # ran synchronously; item[1] in the pool". After draining the single
+    # future, completed_count = 1 (initial) + 1 (drained) = 2 and total = 2.
     _collect_parallel_results(
         future_to_idx,
         items,
@@ -308,7 +315,7 @@ def test_collect_parallel_results_accepts_initial_completed_and_total() -> None:
         pending_errors,
         config,
         batch_config,
-        callback=None,
+        callback=progress_callback,
         depth=0,
         initial_completed=1,
         total=2,
@@ -316,6 +323,24 @@ def test_collect_parallel_results_accepts_initial_completed_and_total() -> None:
 
     assert results[0] == {"ok": True}
     assert pending_errors == []
+
+    # Verify the callback received the correct progress accounting kwargs.
+    # _report_batch_progress signature:
+    #   callback(node_id, "batch_progress", duration_ms, depth,
+    #            batch_current=..., batch_total=..., batch_success=...)
+    progress_calls = [
+        call for call in progress_callback.call_args_list if len(call.args) >= 2 and call.args[1] == "batch_progress"
+    ]
+    assert len(progress_calls) == 1, f"expected one batch_progress call, got {progress_calls}"
+    call = progress_calls[0]
+    assert call.kwargs["batch_current"] == 2, (
+        f"initial_completed kwarg did not flow through: expected batch_current=2 "
+        f"(initial=1 + drained=1), got {call.kwargs['batch_current']!r}"
+    )
+    assert call.kwargs["batch_total"] == 2, (
+        f"total kwarg did not flow through: expected batch_total=2, got {call.kwargs['batch_total']!r}"
+    )
+    assert call.kwargs["batch_success"] is True
 
 
 def test_collect_parallel_results_defaults_preserve_legacy_callers() -> None:

@@ -351,13 +351,33 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
     # Parent's pre-installed value is restored after the run completes.
     assert shared["__pflow_cache_render__"] is parent_initial
 
-    # During child execution the child's shell node saw a *different* mapping —
-    # NOT the parent's sentinel. The child engine.run installs its own dict.
+    # During child execution the child's shell node saw the proxy the child
+    # engine built from its OWN compiled workflow — NOT the parent's sentinel.
+    # Compare contents against a freshly-built proxy from
+    # ``build_cache_render_dict(child_workflow)``: the child workflow has no
+    # LLM node and no ``## Cache`` block, so the dict must be empty (sparse
+    # by design — see build_cache_render_dict's docstring).
+    child_ir = parse_markdown(_CHILD_PFLOW).ir
+    child_workflow = compile_workflow(
+        child_ir,
+        registry,
+        initial_params={"text": "hi"},
+    )
+    expected_child_render = build_cache_render_dict(child_workflow)
+    assert dict(expected_child_render) == {}, (
+        "production builder must produce an empty dict for the child shape — test invariant broken if this fails"
+    )
+
     child_captures = [val for nid, val in captured if nid == "echo"]
     assert child_captures, "child shell node prep never captured"
     for child_value in child_captures:
-        assert child_value is not parent_initial, (
-            "parent's __pflow_cache_render__ leaked into child execution — save/restore semantics broken"
-        )
         # Both child and parent install proxies, never None.
         assert isinstance(child_value, MappingProxyType)
+        # The child saw a proxy whose CONTENTS match what its own
+        # ``build_cache_render_dict`` produces — proves the install path is
+        # `MappingProxyType(build_cache_render_dict(child_workflow))` and
+        # NOT a leaked parent value.
+        assert dict(child_value) == dict(expected_child_render), (
+            "child saw a __pflow_cache_render__ that doesn't match its own "
+            f"build_cache_render_dict output: got {dict(child_value)!r}"
+        )

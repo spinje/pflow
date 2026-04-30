@@ -1450,3 +1450,124 @@ on write failure, not at every reader.
 
 > **Note to user**: working tree changes ready to commit. Test suite runs in 27s
 > down from 107s. All `make check` green. Awaiting commit instruction.
+
+---
+
+## Post-segment-4 follow-up: test fidelity cleanup (2026-04-30)
+
+Applied the 5 High + 9 Medium findings from
+`scratchpads/test-fidelity-review-2026-04-30.md`. No production code changed;
+all changes are in tests. 10 test files touched.
+
+### Deleted (tautologies / monkeypatch semantics / vacuous singleton)
+
+- **H1** `test_hash_render_and_prep_render_byte_equivalent_for_same_subset`
+  (`test_prompt_cache_rendering.py`) — synthetic-dict + top-level-keys-only
+  shape that hid Bug #2. The Bug-#2 regression
+  `test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store`
+  fully supersedes it. Comment block left at the deletion site pointing at
+  the replacement.
+- **H2** `test_in_memory_three_state_via_compile`
+  (`test_prompt_cache_hash.py`) — asserted `compute_node_config` ignores
+  cache fields without the `prompt_cache_content` kwarg, a tautology. The
+  next test (`test_plan_node_renders_cache_into_hash`) covers the real
+  divergence at the production-shaped plan_node site.
+- **H3** `test_resolve_chunk_value_bindings_are_independent`
+  (`test_prompt_cache_rendering.py`) — validated `monkeypatch.setattr`
+  semantics, not pflow behavior. The identity check at the same module
+  (`test_resolve_chunk_value_is_imported_locally_at_both_sites`) already
+  locks the load-bearing invariant. Updated that test's docstring to drop
+  the dangling reference to the deleted sibling.
+- **M2** `test_context_passthrough_fidelity` (12 parametrized;
+  `test_cache_analysis_warnings.py`) — pure passthrough
+  (`Diagnostic.context = {**kwargs}` ⇒ kwargs persist). Replaced with a
+  short comment pointing at the production-shaped dispatch tests at
+  lines 246-300 that ARE good.
+- **M9** `test_chunk_absent_is_a_singleton_via_isinstance`
+  (`test_prompt_cache_hash.py`) — true by construction.
+
+### Consolidated
+
+- **H5** five `test_make_serializable_rejects_chunk_absent_*` tests
+  collapsed into one `@pytest.mark.parametrize`-driven test with 5 cases
+  (top_level / inside_dict / inside_list / dict_of_list / list_of_dict).
+  Positive-control (`test_make_serializable_pass_through_for_normal_string`)
+  kept as a separate test.
+- **M1** `test_per_id_diagnostic_json_round_trip` reduced from 12
+  parametrized to 3 representative IDs (`cache.order-mismatch` for flat
+  context, `cache.discrepancy` for nested-dispatch payload,
+  `cache.invalid-on-non-llm` for V6 combined-diagnostic shape). Folded
+  the deleted `test_per_id_json_payload_carries_id_at_top_level`
+  invariant into the same assertion. Comment documents the structural-
+  vs-production-driven complementarity.
+
+### Strengthened
+
+- **M3** `test_collect_parallel_results_accepts_initial_completed_and_total`
+  now passes a `Mock` callback and asserts `_report_batch_progress` fired
+  with `batch_current=2, batch_total=2, batch_success=True` — proves the
+  new `initial_completed` / `total` kwargs flow through to the progress
+  reporting site.
+- **M5** `test_subworkflow_isolation_via_monkeypatch` replaces the weak
+  `child_value is not parent_initial` assertion with a positive equality
+  check against a freshly-built `build_cache_render_dict(child_workflow)`
+  (the production builder). For the no-cache child fixture, this is
+  `dict(child_value) == {}`.
+- **M6** `test_record_node_execution_passes_cache_metadata_to_llm_call`
+  refactored to drive from the producer side: pre-populate `shared`
+  with bare `llm_usage`, invoke `apply_memo_hit(...)`, then
+  `record_node_execution`. Catches a producer→consumer key-mismatch
+  (`cache-source` with hyphen, etc.) the hand-built shape would miss.
+- **M7** `test_analyze_cache_with_workflow_having_warnings_still_exits_zero`
+  replaces `if payload["warnings"]: pass` with
+  `assert any(w["id"] == "cache.below-min-tokens" for w in ...)` — surfaces
+  a "warnings stopped firing" regression instead of silently passing on
+  an empty list.
+- **M8** `test_async_tool_wrapping_returns_dict` replaces the shallow
+  `set(keys) == set(keys)` with full deep equality
+  (`assert result == sync_result`) after stripping the only
+  non-deterministic field (`analyzed_at`).
+
+### Added
+
+- **H4** `test_engine_memo_hit_writes_cache_source_memo_not_in_process`
+  (`tests/test_runtime/test_trace_format_2_1.py`) — the symmetric
+  counter-test to Bug #1. Builds a `CompiledWorkflow` with a single LLM
+  node, runs it once with a real `MemoizationCache` to populate the
+  cache, then runs it again with the same cache — asserts the second
+  run's trace event has `cache_source="memo"` (NOT `"in_process"`),
+  `cache_key` populated, and `cache_age_sec > 0`. Requires
+  `WorkflowEngine(trace_collector=...)` (the engine constructor takes
+  it; `shared["__trace_collector__"]` install alone won't fire
+  `record_node_execution`). **Sensitivity-verified**: temporarily
+  changing `cached_source = None` to `"in_process"` at engine.py:440
+  causes the test to fail with the locked Bug-#1 message.
+- **M4** `test_combined_declared_cache_and_auto_batch_prefix_through_namespaced_store`
+  (`tests/test_nodes/test_llm/test_batch_cache_prefix.py`) — wraps
+  shared in `NamespacedSharedStore(shared, "score-choruses")` (the
+  production engine.py:471 wrap) and asserts both the declared-cache
+  marker (system_blocks) and the auto-batch-prefix marker
+  (user_message_blocks) fire correctly. Locks the production execution
+  shape against a future Phase D extension that consumes
+  `${node.field}` references through
+  `_resolve_static_prefix_for_cache`.
+
+### Final state
+
+- **5886 tests passing**, 9 skipped (5920 → 5886, net −34 tests; matches
+  the expected delta from H1/H2/H3/H5/M1/M2/M9 deletes + H4/M4 adds).
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- `tests/test_execution/test_plan_drift.py` 33/33 green.
+- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) green.
+- 10 test files touched, +558 / −233 lines. No production code changed.
+- Test suite runs in ~50s under `pytest -q` (consistent with
+  pre-cleanup baseline).
+
+### Deviations from the 14 specified fixes
+
+None. All 14 applied as specified. The brief noted that M1 could fold
+`test_every_id_round_trips_through_make_diagnostic` deletion into M2 if
+M1 ran first; I left M2 to delete only `test_context_passthrough_fidelity`
+per the explicit M2 wording (kept `test_every_id_round_trips_through_make_diagnostic`
+in `test_cache_analysis_warnings.py` because no instruction explicitly
+deleted it).

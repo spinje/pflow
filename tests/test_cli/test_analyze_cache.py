@@ -116,16 +116,23 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     tmp_path: Path,
 ) -> None:
     """Per DD#36: analytical findings are advisory; ERROR severity findings
-    in `warnings[]` do NOT change exit code. Success → 0."""
+    in `warnings[]` do NOT change exit code. Success → 0.
+
+    The `_LLM_WORKFLOW` declares `prompt_cache: [topic]` referencing a small
+    string input — total cache content well below Anthropic's 1024-token
+    minimum, so `cache.below-min-tokens` MUST fire. If the warning stops
+    firing entirely (catalog regression / detection bypass), this test
+    surfaces the disappearance instead of silently passing on an empty list.
+    """
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
     runner = CliRunner()
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    # below-min-tokens fires (small prompt, anthropic min=1024).
-    if payload["warnings"]:
-        # Whatever fires, exit code is still 0.
-        pass
+    assert any(w["id"] == "cache.below-min-tokens" for w in payload["warnings"]), (
+        f"expected cache.below-min-tokens to fire on _LLM_WORKFLOW; "
+        f"got warnings={[w['id'] for w in payload['warnings']]}"
+    )
 
 
 # ---------------------------------------------------------------------------

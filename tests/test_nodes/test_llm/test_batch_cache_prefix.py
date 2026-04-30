@@ -488,3 +488,64 @@ def test_prewarm_without_images_unaffected_by_graceful_degradation(mock_llm_clie
     assert len(sent_blocks) == 2
     # No degradation warning fired.
     assert "score-choruses" not in shared.get("__warnings__", {})
+
+
+# --- Production execution shape: NamespacedSharedStore wrap ----------------
+# Engine.py:471 wraps shared in ``NamespacedSharedStore(shared, node_id)``
+# before calling ``node._run`` — every other test in this file uses
+# ``node.run(raw_dict)`` instead, the same shape that hid Bug #2 (dotted-path
+# chunk resolution silently dropping). Lock the production execution shape
+# for the combined-declared-cache + auto-batch-prefix path so a future Phase D
+# extension that consumes ``${node.field}`` references in
+# ``_resolve_static_prefix_for_cache`` can't silently regress through the
+# proxy boundary.
+
+
+def test_combined_declared_cache_and_auto_batch_prefix_through_namespaced_store(mock_llm_client) -> None:
+    """A batch LLM node with BOTH a static prefix AND ``prompt_cache: [...]``
+    declared must render correctly when ``shared`` is wrapped in
+    ``NamespacedSharedStore`` — the production shape engine.py:471 actually
+    applies. Asserts both markers fire (declared cache marker on system_blocks,
+    auto-batch-prefix marker on user_message_blocks) and the rendered bytes
+    match what the author wrote (no proxy-shape divergence).
+    """
+    from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
+
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node(
+        "score-choruses",
+        resolved_prompt="Rubric.\n\nScore: hello",
+    )
+    raw_shared: dict[str, Any] = {
+        "concept": "courage",
+        "score-choruses": {},
+    }
+    _install_cache_render(
+        raw_shared,
+        "score-choruses",
+        _ctx_batch(
+            unresolved_prompt="Rubric.\n\nScore: ${item.text}",
+            chunks=[("concept", "Concept:\n")],
+            subset=("concept",),
+        ),
+    )
+
+    # Production wrap — engine.py:471
+    store = NamespacedSharedStore(raw_shared, "score-choruses")
+    node.run(store)
+
+    sent = mock_llm_client.call_history_full[-1]
+    # Declared cache → system_blocks with marker on the last block
+    assert isinstance(sent["system"], list), "system_blocks must be a list when declared cache renders"
+    assert sent["system"][-1]["text"] == "Concept:\ncourage"
+    assert sent["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    # Auto-batch-prefix → user_message_blocks with marker on the static prefix
+    blocks = sent["user_message_blocks"]
+    assert blocks is not None
+    assert len(blocks) == 2
+    assert blocks[0]["text"] == "Rubric.\n\nScore: "
+    assert blocks[0]["cache_control"] == {"type": "ephemeral"}
+    assert blocks[1]["text"] == "hello"
+    assert "cache_control" not in blocks[1]
+    # Bytes-identical-to-author: prefix + suffix == resolved prompt
+    assert blocks[0]["text"] + blocks[1]["text"] == "Rubric.\n\nScore: hello"

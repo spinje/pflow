@@ -181,46 +181,12 @@ def _compile_with_mutations(ir_dict: dict[str, Any], registry: Registry) -> dict
     return out
 
 
-def test_in_memory_three_state_via_compile() -> None:
-    """Three-state via real IR + compile_workflow:
-
-    1. No prompt_cache field → hash X
-    2. Mutate node to add ``prompt_cache: []`` → recompile → hash X (byte-equal)
-    3. Mutate further to add ``prompt_cache: ["concept"]`` + top-level
-       ``cache:`` block → recompile → hash differs
-
-    The deep-copy guards against compile_workflow's in-place
-    ``resolve_file_references`` mutation. The fixture has no @./ refs, but
-    deepcopy is the safer pattern (Round 5).
-    """
-    base_ir = parse_markdown(_WORKFLOW_NO_CACHE).ir
-    h_absent = _compile_with_mutations(base_ir, Registry())["gen"]
-
-    # State 2: prompt_cache: []
-    ir_empty = copy.deepcopy(base_ir)
-    ir_empty["nodes"][0]["prompt_cache"] = []
-    h_empty = _compile_with_mutations(ir_empty, Registry())["gen"]
-    assert h_empty == h_absent, "absent and [] must hash byte-identically (DD#19)"
-
-    # State 3: prompt_cache: ["concept"] + cache block
-    ir_subset = copy.deepcopy(base_ir)
-    ir_subset["nodes"][0]["prompt_cache"] = ["concept"]
-    ir_subset["cache"] = {
-        "items": [{"name": "concept", "var": "concept", "prose_before": "About: "}],
-    }
-    h_subset = _compile_with_mutations(ir_subset, Registry())["gen"]
-    # NOTE: compute_node_config is called WITHOUT prompt_cache_content here
-    # — the helper above mirrors the script. To verify subset DOES affect
-    # the hash, we need to drive it through plan_node where cache rendering
-    # fires. That's tested separately below.
-    assert h_subset == h_absent, (
-        "compute_node_config alone (no prompt_cache_content kwarg) must remain "
-        "byte-identical regardless of IR cache fields — the actual hash "
-        "divergence happens at plan_node, not at compute_node_config alone."
-    )
-
-
 # --- The end-to-end hash divergence fires through plan_node ----------------
+# (A previous "three-state via compile" test asserted that ``compute_node_config``
+# without the ``prompt_cache_content`` kwarg ignores cache IR fields — a
+# tautology, since the helper never reads cache content unless it's passed in.
+# Removed; the production-shape divergence is covered by
+# ``test_plan_node_renders_cache_into_hash`` directly below.)
 
 
 def test_plan_node_renders_cache_into_hash() -> None:
@@ -266,44 +232,34 @@ def test_plan_node_renders_cache_into_hash() -> None:
 # --- _make_serializable defense (Round 5) ----------------------------------
 
 
-def test_make_serializable_rejects_chunk_absent_at_top_level() -> None:
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(_CHUNK_ABSENT, id="top_level"),
+        pytest.param({"key": _CHUNK_ABSENT}, id="inside_dict"),
+        pytest.param([_CHUNK_ABSENT], id="inside_list"),
+        pytest.param({"a": [_CHUNK_ABSENT]}, id="dict_of_list"),
+        pytest.param([{"a": _CHUNK_ABSENT}], id="list_of_dict"),
+    ],
+)
+def test_make_serializable_rejects_chunk_absent(value: Any) -> None:
+    """``_make_serializable`` must raise TypeError when ``_CHUNK_ABSENT``
+    appears anywhere in the input — directly, in a dict value, in a list
+    element, or nested inside any combination. A leak past the symmetric
+    ``_resolve_chunk_value`` filter would otherwise serialize to a stable
+    type-name string and silently key the memo cache on bytes the LLM never
+    actually saw.
+    """
     with pytest.raises(TypeError) as excinfo:
-        _make_serializable(_CHUNK_ABSENT)
+        _make_serializable(value)
+    # The locked error-message substring lets any future defense-bypass test
+    # pin against it without coupling to repr formatting.
     assert "_CHUNK_ABSENT must be filtered before serialization" in str(excinfo.value)
-
-
-def test_make_serializable_rejects_chunk_absent_inside_dict() -> None:
-    with pytest.raises(TypeError):
-        _make_serializable({"key": _CHUNK_ABSENT})
-
-
-def test_make_serializable_rejects_chunk_absent_inside_list() -> None:
-    with pytest.raises(TypeError):
-        _make_serializable([_CHUNK_ABSENT])
-
-
-def test_make_serializable_rejects_chunk_absent_in_nested_structure() -> None:
-    """Round-6: nested dict→list→sentinel must be caught (the catch-all
-    serialization path recurses through all containers)."""
-    with pytest.raises(TypeError):
-        _make_serializable({"a": [_CHUNK_ABSENT]})
-
-
-def test_make_serializable_rejects_chunk_absent_in_list_of_dicts() -> None:
-    with pytest.raises(TypeError):
-        _make_serializable([{"a": _CHUNK_ABSENT}])
 
 
 def test_make_serializable_pass_through_for_normal_string() -> None:
     """Positive control — protects against a defense that's too broad."""
     assert _make_serializable("normal_string") == "normal_string"
-
-
-def test_chunk_absent_is_a_singleton_via_isinstance() -> None:
-    """The sentinel is matched via isinstance, not identity, so the defense
-    survives an accidental re-import that creates a second class object
-    (defensive — Python's import system normally caches module objects)."""
-    assert isinstance(_CHUNK_ABSENT, _ChunkAbsentSentinel)
 
 
 # --- Branch-absent symmetry (hash side) -----------------------------------

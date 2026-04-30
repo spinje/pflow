@@ -134,8 +134,17 @@ def test_async_tool_wrapping_returns_dict(tmp_path: Path) -> None:
     sync_result = ExecutionService.analyze_cache(str(workflow_path))
     assert isinstance(result, dict)
     assert result["format_version"] == JSON_FORMAT_VERSION
-    # Same JSON shape — sync vs async paths are byte-equivalent for the same input.
-    assert set(result.keys()) == set(sync_result.keys())
+    # Strip the only non-deterministic field — ``analyzed_at`` uses
+    # ``datetime.now`` per analyze.py:257. Both calls land within the same
+    # second in practice, but exclude defensively so a tick-boundary doesn't
+    # flake the test.
+    result.pop("analyzed_at", None)
+    sync_result.pop("analyzed_at", None)
+    # Full deep equality — sync vs async paths are byte-equivalent for the
+    # same input. ``set(keys)`` would only catch top-level shape regressions;
+    # this catches any per-field divergence (e.g., async path losing a list
+    # ordering or stripping a nested context dict).
+    assert result == sync_result
 
 
 # ---------------------------------------------------------------------------
