@@ -416,7 +416,12 @@ class ExecutionService(BaseService):
             raise ValueError(str(e)) from e
 
         base_path = Path(resolved.file_path).parent if resolved.file_path else None
-        workflow_path_str = resolved.file_path or "<inline>"
+        # Inline (dict) workflows pass ``None``; ``analyze()`` derives the
+        # canonical ``ir-hash:<md5>`` identifier internally so autoload + memo
+        # + cross-workflow lookups correlate with what the trace writer / memo
+        # cache used at run time. The displayed ``"<inline>"`` label is
+        # produced separately inside ``analyze()`` for the rendered output.
+        workflow_path_str = resolved.file_path
 
         try:
             analysis = analyze(

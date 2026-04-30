@@ -1,8 +1,6 @@
 """Shared workflow execution runner for CLI and MCP entry points."""
 
 import contextlib
-import hashlib
-import json
 import logging
 import time
 from dataclasses import replace
@@ -26,6 +24,7 @@ from pflow.core.exceptions import (
 )
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
+from pflow.core.workflow_id import synthesize_inline_workflow_id
 
 from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
@@ -33,24 +32,11 @@ from .workflow_resolver import resolve_workflow
 logger = logging.getLogger(__name__)
 
 
-def _synthesize_inline_workflow_id(ir: dict[str, Any]) -> str:
-    """Produce a stable synthetic `_pflow_workflow_file` for inline runs.
-
-    SQL `WHERE workflow_path = NULL` matches zero rows (NULL semantics), so
-    writing NULL falls back to the unscoped read path — pooling cache
-    history across unrelated inline workflows. A content hash gives each
-    distinct inline IR its own scope without requiring a real filesystem
-    path.
-
-    Hashes the RAW parsed IR (pre file-reference resolution, pre defaults
-    fill) so the identifier represents what the caller submitted, not what
-    the runner derived. Cache-key invalidation already handles file-content
-    changes via `resolved_params` hashing; the `workflow_path` scope just
-    needs to partition across distinct inline submissions.
-    """
-    canonical = json.dumps(ir, sort_keys=True, default=str, separators=(",", ":"))
-    digest = hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
-    return f"ir-hash:{digest}"
+# Backward-compat alias: the helper moved to ``core/workflow_id.py`` so the
+# analyzer can import it without crossing the ``core/`` ← ``execution/`` layer
+# boundary. Tests and module-private callers under this prefix continue to
+# work unchanged.
+_synthesize_inline_workflow_id = synthesize_inline_workflow_id
 
 
 class WorkflowRunner:

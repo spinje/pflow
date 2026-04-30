@@ -135,8 +135,20 @@ def _output_from_trace(trace: dict[str, Any], node_id: str) -> int | None:
 
 
 def _llm_call_field_from_trace(trace: dict[str, Any], node_id: str, field: str) -> int | None:
-    """Read an integer field from the first matching ``llm_call`` event."""
-    events = trace.get("events")
+    """Read an integer field from the first matching ``llm_call`` event.
+
+    The trace JSON's top-level events list is keyed ``"nodes"`` (see
+    ``runtime/workflow_trace.WorkflowTraceCollector.save_to_file``). Other
+    consumers — ``core/trace_report.py`` and the runtime's own LLM-summary
+    walker — also read ``trace["nodes"]``. This walker is non-recursive: it
+    only finds ``node_id`` events at the top level. ``analyze.py`` only ever
+    asks for ``type: llm`` IR nodes which always appear at top level; sub-
+    workflow internal nodes (event["sub_workflow_events"]) and per-batch-item
+    events (event["batch_items"][i]["events"]) are out of scope for this
+    consumer. The recommendations-section plan's ``_iter_llm_events`` walker
+    (sub-segment C) handles recursive descent for discrepancy detection.
+    """
+    events = trace.get("nodes")
     if not isinstance(events, list):
         return None
     for event in events:

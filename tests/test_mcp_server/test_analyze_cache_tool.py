@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
 from pflow.mcp_server.services.execution_service import ExecutionService
@@ -204,3 +205,124 @@ def test_docstring_lists_every_catalog_id() -> None:
     doc = _docstring_text()
     for warning_id in CACHE_WARNING_CATALOG:
         assert warning_id in doc, f"docstring missing catalog ID: {warning_id}"
+
+
+# ---------------------------------------------------------------------------
+# Inline (dict) workflow autoload — the MCP-only path that adversarial drill
+# surfaced as silently broken. CLI never reaches the inline path
+# (``resolve_workflow`` always populates ``file_path`` from a string arg);
+# MCP ``analyze_cache`` accepts ``dict[str, Any]`` per the tool signature
+# (``execution_tools.py:355``), so it's the only surface where this matters.
+# Without the lookup-path canonicalization fix in ``analyze()``, the autoload
+# would compute ``md5("<inline>")`` while the trace writer stored
+# ``ir-hash:<md5>`` — autoload silently misses every inline-workflow trace.
+# ---------------------------------------------------------------------------
+
+
+def test_inline_workflow_autoload_finds_canonical_ir_hash_trace(tmp_path: Path, monkeypatch: Any) -> None:
+    """When the MCP service receives an inline (dict) workflow that was
+    previously run + traced, autoload must find the trace via the same
+    ``ir-hash:<md5>`` identifier the trace writer used.
+
+    Production-shape contract:
+    1. Call site (MCP service) passes ``workflow_path=resolved.file_path``
+       (which is ``None`` for inline dict input).
+    2. ``analyze()`` derives the canonical ``ir-hash:<md5>`` via
+       ``synthesize_inline_workflow_id(ir)`` for the autoload hash + memo
+       scoping (single source of truth across writer + reader).
+    3. Autoload computes the filename hash prefix from that canonical
+       identifier and finds the matching trace.
+    """
+    import json
+
+    from pflow.core.workflow_id import synthesize_inline_workflow_id
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    # Redirect ``Path.home()`` so the autoload reads from the test's tmp dir,
+    # not the user's real ``~/.pflow/debug/``. The runtime + analyzer both
+    # construct the path via ``Path.home() / ".pflow" / "debug"``.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    # Inline workflow IR — what the MCP tool would receive as a dict arg.
+    inline_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Summarize ${topic}.",
+                },
+                "prompt_cache": ["topic"],
+            },
+        ],
+        "cache": {
+            "items": [{"name": "topic", "var": "${topic}", "prose_before": "Topic: "}],
+        },
+    }
+
+    # Pre-seed a 2.1.0 trace under the canonical ``ir-hash:<md5>`` identifier
+    # — same path the runtime would store when this inline workflow runs.
+    expected_workflow_path = synthesize_inline_workflow_id(inline_ir)
+    assert expected_workflow_path.startswith("ir-hash:"), (
+        "synthesize_inline_workflow_id contract changed; inline trace correlation will silently break"
+    )
+
+    collector = WorkflowTraceCollector(
+        workflow_name="inline-mcp-test",
+        workflow_path=expected_workflow_path,
+    )
+    collector.record_node_execution(
+        node_id="review",
+        node_type="LLMNode",
+        duration_ms=1.0,
+        success=True,
+        node_output={
+            "response": "ok",
+            "llm_usage": {
+                "input_tokens": 8888,
+                "output_tokens": 5,
+                "model": "claude-sonnet-4-5",
+            },
+        },
+    )
+    saved_path = collector.save_to_file()
+    assert saved_path.exists()
+
+    # Sanity: the saved filename encodes the same hash the autoload will glob.
+    import hashlib
+
+    expected_hash = hashlib.md5(expected_workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    assert expected_hash in saved_path.name, (
+        f"trace filename {saved_path.name!r} missing expected hash prefix {expected_hash!r}"
+    )
+
+    # Drive the MCP service with the inline dict — what the tool would receive.
+    result = ExecutionService.analyze_cache(inline_ir)
+
+    # Autoload found the trace via the canonical inline ID:
+    assert result["trace_path"] == str(saved_path), (
+        f"autoload missed inline-workflow trace; trace_path={result['trace_path']!r} "
+        f"expected={str(saved_path)!r}. Likely cause: writer + reader diverged on the "
+        f"canonical inline-workflow identifier."
+    )
+    # Tier-1 trace fired for the per-call row (1 LLM node):
+    assert result["estimate_confidence"] == "high_from_trace", (
+        f"tier-1 trace unreachable for inline workflow; confidence={result['estimate_confidence']!r}"
+    )
+    coverage = result["estimate_confidence_coverage"]
+    assert coverage["trace"] == 1 and coverage["total"] == 1
+    # The trace's input_tokens (8888) propagated into per_call:
+    per_call = result["per_call"]
+    assert len(per_call) == 1
+    assert per_call[0]["data_source"] == "trace"
+    assert per_call[0]["input_tokens_estimated"] == 8888
+
+    # Sanity-check the displayed identifier — kept as ``"<inline>"`` for
+    # human-readable rendering (separate from the canonical lookup ID).
+    assert result["workflow_path"] == "<inline>"
+
+    # Round-trip: result is JSON-serializable.
+    json.dumps(result)

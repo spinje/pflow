@@ -1571,3 +1571,248 @@ M1 ran first; I left M2 to delete only `test_context_passthrough_fidelity`
 per the explicit M2 wording (kept `test_every_id_round_trips_through_make_diagnostic`
 in `test_cache_analysis_warnings.py` because no instruction explicitly
 deleted it).
+
+---
+
+## Pre-recommendations preparation: adversarial drill + 2 critical bug fixes (2026-04-30)
+
+Verification-specialist pass run before the recommendations-section plan
+implementation begins. Five preparation items defined in
+`scratchpads/recommendations-plan-preparation-2026-04-30.md`. Item 1
+(adversarial CLI drill on the autoload fix from `d917a55d`) surfaced
+**two critical silent bugs** that the unit-test surface had missed —
+same anti-pattern (Pitfall #19) that bit Segment 3 twice. Both fixed
+in this pass; the recommendations plan now ships against a clean base.
+
+### Bug #1 (P0) — Tier-1 trace data unreachable in production
+
+**Symptom:** every `pflow analyze-cache --from-trace` AND every autoload
+silently fell through to `estimator`/`heuristic` for input/output token
+estimation. Aggregate `confidence: high_from_trace` and per-call
+`data_source: "trace"` were unreachable in production, even when the
+analyzer correctly loaded a 2.1.0 trace file (verified via `trace_path`
+populated in JSON output).
+
+**Root cause:** `core/cache_analysis/token_estimation.py:139` read
+`trace.get("events")` while the trace JSON's top-level events list is
+keyed `"nodes"` (verified — `runtime/workflow_trace.py:550` writes
+`"nodes": self.events`; `core/trace_report.py:485,552,613,642` all read
+`"nodes"`). One-character typo.
+
+**Why tests missed it (Pitfall #19):** the synthetic fixture helper
+`_trace_with_node` at `tests/test_core/test_cache_analysis_token_estimation.py:38`
+constructed dicts with `"events"` key — matching the buggy reader.
+Every tier-1 trace test passed against a fake trace shape. Same anti-
+pattern as Bug #1 (`cache_source` overwrite) and Bug #2 (NamespacedSharedStore
+type taxonomy) from Segment 3's adversarial drill.
+
+**Fix:** `events = trace.get("events")` → `events = trace.get("nodes")`.
+Updated docstring documenting why the walker is non-recursive (the only
+consumer — `analyze.py:212`'s top-level IR-node iteration — never asks
+for sub-workflow internal nodes; the recommendations plan's
+`_iter_llm_events` walker handles the recursive consumer separately).
+
+**Test:** synthetic fixture key swap (`"events"` → `"nodes"`) PLUS one
+new production-shape test `test_tier_1_trace_works_with_real_collector_round_trip`
+that drives a real `WorkflowTraceCollector.save_to_file` round-trip.
+Mutation-test: re-introducing the typo fails the new test; restoring
+passes. Defends Pitfall #19 from re-occurring in this exact module.
+
+### Bug #2 (P1) — Inline workflow `workflow_path` divergence (MCP-only)
+
+**Symptom:** when MCP `analyze_cache` received an inline (dict) workflow
+that had been previously run + traced, autoload silently missed the
+trace because the writer's hash key and the reader's diverged.
+
+**Root cause:** the trace writer (`runner.py:130`) stores
+`workflow_path = resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)`
+— for inline workflows, the canonical `ir-hash:<md5>`. The analyze CLI
+(`cli/commands/analyze_cache.py:118`) and MCP service
+(`mcp_server/services/execution_service.py:419`) used `or "<inline>"`
+as the autoload key — a placeholder string, not the canonical id.
+`md5("<inline>")` ≠ `md5("ir-hash:<md5-of-ir>")` → glob never matched.
+CLI is unaffected today (always resolves a file/library path);
+MCP `analyze_cache` accepts `dict[str, Any]` per its tool signature
+so the inline path is reachable.
+
+**Fix shape (top-10% / simplicity-first lens — applied per user's
+mid-stream redirect):**
+
+Initial proposal duplicated `_synthesize_inline_workflow_id(ir)` at TWO
+call sites (CLI + MCP). Re-questioned through the simplicity rule:
+derive ONCE at the lowest layer that has the data. `analyze()` already
+takes `workflow_ir`. Single source of truth wins long-term. **Final
+shape:**
+
+1. Promoted `_synthesize_inline_workflow_id` to `core/workflow_id.py`
+   (NEW module) with public `synthesize_inline_workflow_id(ir)`. Pure
+   utility; no internal pflow imports.
+2. `execution/runner.py` imports from new home; keeps
+   `_synthesize_inline_workflow_id = synthesize_inline_workflow_id`
+   alias for the 3 existing test imports (`test_runner.py:15`,
+   `test_plan.py:303,329`) — zero churn at consumer sites.
+3. `core/cache_analysis/analyze.py` derives a `lookup_path` once at
+   function entry: `workflow_path if workflow_path is not None else
+   synthesize_inline_workflow_id(workflow_ir)`. Threaded through
+   autoload (filename-hash glob), memo cache (SQL `workflow_path`
+   scoping), AND cross-workflow walker — every site where lookup
+   correctness matters. The displayed `"<inline>"` label stays
+   separate at line 256 (display vs lookup are two concerns).
+4. CLI + MCP call sites simplified to pass `resolved.file_path`
+   (or `None` for inline) — single line each.
+
+**Test:** new production-shape test
+`test_inline_workflow_autoload_finds_canonical_ir_hash_trace`
+(`tests/test_mcp_server/test_analyze_cache_tool.py`) drives the MCP
+service with an inline dict workflow + a pre-seeded 2.1.0 trace under
+the canonical `ir-hash:*` filename. Asserts `trace_path` populated,
+`estimate_confidence == "high_from_trace"`, `data_source == "trace"`.
+Mutation-tested: reverting the `lookup_path` derivation fails the test.
+
+**Why this matters for the recommendations plan:** sub-segment C's
+`cache.discrepancy --from-trace` consumes per-call rows that come
+through `_build_per_call_row` → `estimate_tokens` → `_from_trace`. With
+Bug #1 alive, every C-shipped discrepancy fixture would have measured
+estimator-source numbers against trace-source assertions — whichever
+side held the bug at test time would silently mask the other. Fixing
+both before C ships removes a pre-existing landmine.
+
+### Plan amendment landed: A.6 — surface validator findings in `analyze()`
+
+Adversarial drill also surfaced a spec-vs-implementation gap
+(non-bug, but load-bearing for analyzer UX):
+`pflow analyze-cache` does NOT call `validate_data_flow()`, so the
+validator-shipped catalog IDs (`cache.order-mismatch`,
+`cache.unused-chunk`, `cache.invalid-on-non-llm`) silently disappear
+from analyze-cache output. Spec line 217 explicitly says they should
+surface there. After sub-segment A wires up the analytical detections,
+the asymmetry materially undermines analyze-cache's value: an agent
+would see "5 cache opportunities" while a hidden ERROR sits unrendered.
+
+User approved option (A): appended A.6 directly to
+`recommendations-section-plan.md` as a new sub-section under
+sub-segment A. ~10 LOC + 4 tests. Bundles into A's commit
+(executing agent already opens `analyze.py`). Exit-code contract kept
+advisory per DD#36 — agents that want to gate inspect
+`warnings[].severity == "error"` themselves. Sub-segment A header,
+files-to-modify table, total estimate (`~580 LOC + ~56 tests`) updated.
+
+### Verification items completed
+
+- **Item 4** (line-number citations): `prose_mismatches` /
+  `value_flow_opportunities` confirmed at `test_cache_analysis_renderers.py:97-98`
+  AND `test_analyze_cache_tool.py:95-96`. Plan citations exact, no drift.
+- **Item 5** (drift-test extension point):
+  `tests/test_execution/test_plan_drift.py:2088`
+  (`test_plan_matches_engine_for_workflow_with_prompt_cache`) verified
+  clean. `compiled` + `cache` + `registry` all in scope; cache db at
+  known `tmp_path`. PlanEntry confirmed has no `cache_key` field today
+  (sub-segment C adds it). The plan's specified ~10-line extension
+  lands without restructuring.
+- **Item 3** (TODO pointer): added near `_STUBBED_PRODUCERS_DEFERRED_TO_V1X`
+  in `tests/test_core/test_cache_analysis_per_id_coverage.py` directing
+  the recommendations executing agent to delete the set + parallel test
+  helpers (`_kwargs_for`, `_minimal_context_kwargs`,
+  `test_every_id_round_trips_through_make_diagnostic`) when sub-segment
+  C's producers wire up.
+
+### Files modified
+
+**Production (5 files + 1 new):**
+- NEW: `src/pflow/core/workflow_id.py` (~25 LOC) — single source of
+  truth for `synthesize_inline_workflow_id`.
+- `src/pflow/core/cache_analysis/token_estimation.py` (+12 / -1) —
+  events→nodes typo + docstring.
+- `src/pflow/core/cache_analysis/analyze.py` (+15 / -2) — `lookup_path`
+  derivation threaded through autoload + memo + cross-workflow.
+- `src/pflow/cli/commands/analyze_cache.py` (+5 / -1) — drop
+  `or "<inline>"`, pass `resolved.file_path` directly.
+- `src/pflow/mcp_server/services/execution_service.py` (+5 / -1) — same.
+- `src/pflow/execution/runner.py` (~+5 / -22; net -17) — relocate
+  helper, keep underscore alias.
+
+**Tests (3 files):**
+- `tests/test_core/test_cache_analysis_token_estimation.py` (+60 / -1) —
+  fixture key swap + production-shape round-trip test.
+- `tests/test_mcp_server/test_analyze_cache_tool.py` (+115 / -0) —
+  inline-workflow autoload test + `Any` import.
+- `tests/test_core/test_cache_analysis_per_id_coverage.py` (+12 / -0) —
+  TODO pointer.
+
+**Plan (1 file):**
+- `.taskmaster/tasks/task_159/implementation/recommendations-section-plan.md`
+  — A.6 amendment + 3 inline updates (sub-segment A header, files
+  table, total estimate).
+
+### Final state
+
+- **5888 tests passing** (was 5886 — +2 new production-shape tests).
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- `tests/test_execution/test_plan_drift.py` 34/34 green.
+- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) green.
+- End-to-end CLI drill (real Anthropic Haiku-4.5 call, ~$0.0006):
+  before-fix `confidence: low_no_data`, `data_source: ['estimator', 'estimator']`;
+  after-fix `confidence: high_from_trace`, `data_source: ['trace', 'trace']`.
+
+### Tacit knowledge for the next agent (Sub-segment A)
+
+1. **Pitfall #19 has bitten this codebase 3 times now** (Segment 3's
+   `cache_source` overwrite, Segment 3's NamespacedSharedStore type
+   taxonomy, this segment's events/nodes typo). The pattern: a synthetic
+   test fixture matches a buggy reader rather than production shape;
+   tests pass; production silently fails. **Defense for sub-segment A:**
+   every per-id emission test fixture should include at least one path
+   that drives a real `WorkflowTraceCollector` round-trip (or
+   `WorkflowRunner().run()`) — not just synthetic `Diagnostic`
+   construction. The plan's "production-shape testing" requirement (line
+   605 — "all fixtures call `analyze(...)` end-to-end with real
+   `MemoizationCache`") is the right floor. Don't fall back to
+   round-trip-only tests when emission tests are harder to write.
+
+2. **`synthesize_inline_workflow_id` is now in `core/workflow_id.py`**
+   (was at `execution/runner.py:36` until 2026-04-30). The underscore-
+   prefixed alias `_synthesize_inline_workflow_id` survives at
+   `runner.py` for backward-compat with 3 existing test imports. Any
+   NEW caller should import from the canonical home:
+   `from pflow.core.workflow_id import synthesize_inline_workflow_id`.
+
+3. **`analyze()`'s `lookup_path` is the single source of truth for
+   correlation** (autoload + memo + cross-workflow). If sub-segment C's
+   `_predict_cache_keys` needs a workflow path for its `build_plan`
+   call (`_parent_workflow_file=workflow_path`), use the same
+   `lookup_path`-equivalent (i.e., derive via
+   `synthesize_inline_workflow_id` for inline IRs) — NOT the displayed
+   `"<inline>"` placeholder. The two concerns are intentionally
+   separated: lookup correctness vs human display.
+
+4. **A.6's filter is `d.id and d.id.startswith("cache.")`** —
+   `validate_data_flow` returns ALL data-flow diagnostics (cycles,
+   undefined nodes, etc.). Surfacing those in analyze-cache would
+   expand scope to general workflow health; that's a separate task.
+   Cache-namespaced filter keeps analyze-cache focused on cache
+   concerns.
+
+5. **The token_estimation walker is intentionally non-recursive.** Only
+   `analyze.py:212`'s top-level `type: llm` IR-node iteration calls it.
+   Sub-workflow internal nodes are NEVER passed to this function (they
+   live inside a `type: workflow` IR node which is filtered out).
+   The recommendations plan's sub-segment C ships a SEPARATE
+   `_iter_llm_events` walker that recurses through `sub_workflow_events`
+   and `batch_items` — different consumer (discrepancy detection),
+   different shape need. Don't accidentally extend `_from_trace` to
+   recurse "for symmetry" — there's no symmetric consumer.
+
+### Open hedged claims (none blocking sub-segment A)
+
+- VERIFIED: tier-1 trace works with real collector round-trip (Bug #1
+  fix mutation-tested).
+- VERIFIED: MCP inline-workflow autoload via canonical `ir-hash:*` key
+  (Bug #2 fix mutation-tested).
+- VERIFIED: full test suite green (5888); all quality checks pass;
+  load-bearing DD#19 hash baseline holds.
+- VERIFIED: A.6 amendment landed in 4 places (new section, sub-segment
+  A header, files-to-modify table, total-estimate line).
+
+### Open user decisions surfaced
+
+None new. Pre-existing decisions from prior segments unchanged.

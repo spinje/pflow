@@ -204,6 +204,18 @@ def test_json_format_version_consumer_rule_holds() -> None:
 # Documented here for transparency; the production-driven test skips these
 # by design (the structural round-trip above provides coverage on the
 # ``make_diagnostic``-side until detection wires up in v1.x).
+#
+# TODO(task-159 recommendations-section-plan): when sub-segments A+B+C wire
+# up producers for the 7 IDs below, this set should empty out and the parallel
+# test helpers ``_kwargs_for`` (this file) and ``_minimal_context_kwargs`` +
+# ``test_every_id_round_trips_through_make_diagnostic`` (in
+# ``tests/test_core/test_cache_analysis_warnings.py``) become dead. Delete
+# all four in the same PR that lands sub-segment C; the production-driven
+# test ``test_emitted_diagnostics_round_trip_for_real_producer_paths`` will
+# cover all 12 IDs once stubs ship. Sub-segment A → ``cache.dynamic-before-static``,
+# ``cache.shared-context-undeclared``, ``cache.padding-advisory``,
+# ``cache.batch-prewarm-recommended``. Sub-segment B → ``cache.cross-workflow-*``.
+# Sub-segment C → ``cache.discrepancy``.
 _STUBBED_PRODUCERS_DEFERRED_TO_V1X = frozenset({
     "cache.dynamic-before-static",
     "cache.shared-context-undeclared",

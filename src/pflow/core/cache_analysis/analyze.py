@@ -43,6 +43,7 @@ from pflow.core.cache_render import (  # noqa: F401 — see docstring.
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_providers import detect_provider
+from pflow.core.workflow_id import synthesize_inline_workflow_id
 
 from .cross_workflow import walk_cross_workflow
 from .token_estimation import estimate_output_tokens, estimate_tokens
@@ -190,12 +191,25 @@ def analyze(
     trace_data: dict[str, Any] | None = None
     used_trace_path: str | None = None
 
+    # Canonical lookup identifier — mirrors ``runner.py``'s trace_workflow_path
+    # AND ``MemoizationCache.workflow_path`` at write time (both use
+    # ``resolved.file_path or synthesize_inline_workflow_id(ir)``). File/library
+    # callers pass ``workflow_path=resolved.file_path``; inline callers pass
+    # ``None`` and we derive the same ``ir-hash:<md5>`` the writer used.
+    # Threaded through autoload (filename-hash glob), memo cache (SQL
+    # ``workflow_path`` scoping), and cross-workflow walker (cycle detection /
+    # labeling) — every site that correlates analyzer-time and runtime state.
+    # Without this, inline workflows silently miss every cross-correlation.
+    # ``"<inline>"`` is reserved for the displayed identifier (line ~265) — a
+    # human-readable label kept separate from the lookup key.
+    lookup_path = workflow_path if workflow_path is not None else synthesize_inline_workflow_id(workflow_ir)
+
     # --- Trace loading --------------------------------------------------------
     if trace_path is not None:
         trace_data = _load_trace_explicit(trace_path, notes)
         used_trace_path = str(trace_path)
     elif auto_load_trace:
-        trace_data, used_trace_path = _autoload_trace(workflow_path, notes)
+        trace_data, used_trace_path = _autoload_trace(lookup_path, notes)
 
     # --- Per-call rows --------------------------------------------------------
     per_call_rows: list[PerCallRow] = []
@@ -214,7 +228,7 @@ def analyze(
             continue
         row = _build_per_call_row(
             node=node,
-            workflow_path=workflow_path,
+            workflow_path=lookup_path,
             trace_data=trace_data,
             memo_cache=memo_cache,
             declared_chunks=declared_chunks,
@@ -227,7 +241,7 @@ def analyze(
     cross_findings = _build_cross_workflow_findings(
         root_ir=workflow_ir,
         base_path=base_path,
-        root_workflow_path=workflow_path,
+        root_workflow_path=lookup_path,
         notes=notes,
     )
     warnings.extend(cross_findings.rename_detections)

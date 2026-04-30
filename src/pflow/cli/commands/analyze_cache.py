@@ -115,7 +115,12 @@ def analyze_cache(
     trace_path = Path(from_trace) if from_trace else None
 
     base_path = Path(resolved.file_path).parent if resolved.file_path else None
-    workflow_path_str = resolved.file_path or "<inline>"
+    # Inline workflows pass ``None``; ``analyze()`` derives the canonical
+    # ``ir-hash:<md5>`` identifier internally so autoload + memo + cross-workflow
+    # lookups correlate with what the trace writer / memo cache used at run
+    # time. The displayed ``"<inline>"`` label is computed separately inside
+    # ``analyze()`` for the rendered output.
+    workflow_path_str = resolved.file_path
 
     # Run the analyzer. Internal exceptions propagate so the CLI exits non-zero
     # rather than emitting empty-but-valid JSON (per the silent-failures rule
