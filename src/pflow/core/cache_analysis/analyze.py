@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -188,8 +189,7 @@ def analyze(
     tier. Pass ``None`` to disable that tier.
     """
     notes: list[str] = []
-    trace_data: dict[str, Any] | None = None
-    used_trace_path: str | None = None
+    suggested_blocks: list[SuggestedBlock] = []
 
     # Canonical lookup identifier — mirrors ``runner.py``'s trace_workflow_path
     # AND ``MemoizationCache.workflow_path`` at write time (both use
@@ -199,43 +199,30 @@ def analyze(
     # Threaded through autoload (filename-hash glob), memo cache (SQL
     # ``workflow_path`` scoping), and cross-workflow walker (cycle detection /
     # labeling) — every site that correlates analyzer-time and runtime state.
-    # Without this, inline workflows silently miss every cross-correlation.
-    # ``"<inline>"`` is reserved for the displayed identifier (line ~265) — a
-    # human-readable label kept separate from the lookup key.
+    # ``"<inline>"`` is reserved for the displayed identifier — a human-readable
+    # label kept separate from the lookup key.
     lookup_path = workflow_path if workflow_path is not None else synthesize_inline_workflow_id(workflow_ir)
 
-    # --- Trace loading --------------------------------------------------------
-    if trace_path is not None:
-        trace_data = _load_trace_explicit(trace_path, notes)
-        used_trace_path = str(trace_path)
-    elif auto_load_trace:
-        trace_data, used_trace_path = _autoload_trace(lookup_path, notes)
+    # CR-1305 W3: default-construct ``memo_cache`` from disk when the caller
+    # didn't supply one. Production entry points (CLI / MCP / dry-run nudge)
+    # don't manage ``MemoizationCache`` lifecycle; without this default,
+    # ``data_source: "memo"`` was unreachable in production. Top-10% pattern:
+    # construct dependencies at the lowest layer that has the data.
+    if memo_cache is None:
+        memo_cache = _default_memo_cache()
 
-    # --- Per-call rows --------------------------------------------------------
-    per_call_rows: list[PerCallRow] = []
-    warnings: list[Diagnostic] = []
-    suggested_blocks: list[SuggestedBlock] = []
+    trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
 
     cache_block = workflow_ir.get("cache")
-    declared_chunks: list[str] = []
-    if isinstance(cache_block, dict):
-        items = cache_block.get("items") or []
-        if isinstance(items, list):
-            declared_chunks = [item.get("name", "") for item in items if isinstance(item, dict) and item.get("name")]
+    declared_chunks = _extract_declared_chunks(cache_block)
 
-    for node in workflow_ir.get("nodes", []) or []:
-        if not isinstance(node, dict) or node.get("type") != "llm":
-            continue
-        row = _build_per_call_row(
-            node=node,
-            workflow_path=lookup_path,
-            trace_data=trace_data,
-            memo_cache=memo_cache,
-            declared_chunks=declared_chunks,
-        )
-        per_call_rows.append(row)
-        # Per-node analytical findings.
-        warnings.extend(_per_node_warnings(node, row))
+    per_call_rows, warnings = _build_per_call_rows_and_warnings(
+        workflow_ir=workflow_ir,
+        lookup_path=lookup_path,
+        trace_data=trace_data,
+        memo_cache=memo_cache,
+        declared_chunks=declared_chunks,
+    )
 
     # --- Cross-workflow walker ------------------------------------------------
     cross_findings = _build_cross_workflow_findings(
@@ -251,18 +238,10 @@ def analyze(
     # --- Confidence aggregation (STRICT per DD#34) ---------------------------
     confidence, coverage = _aggregate_confidence(per_call_rows)
 
-    # --- Summary --------------------------------------------------------------
-    cache_ttl: str | None = None
-    if isinstance(cache_block, dict):
-        ttl_value = cache_block.get("ttl")
-        if ttl_value in ("5m", "1h"):
-            cache_ttl = ttl_value
-    summary = _build_summary(per_call_rows, warnings, ttl=cache_ttl)
-
-    # --- Recommended actions (impact-descending) ----------------------------
+    summary = _build_summary(per_call_rows, warnings, ttl=_extract_cache_ttl(cache_block))
     recommended = _build_recommended_actions(warnings)
 
-    # --- Gemini telemetry note (Spike 1 outcome — last in note ordering) -----
+    # Gemini telemetry note (Spike 1 outcome — last in note ordering).
     if trace_data is not None:
         _maybe_append_gemini_note(per_call_rows, notes)
 
@@ -280,6 +259,44 @@ def analyze(
         warnings=tuple(warnings),
         notes=tuple(notes),
     )
+
+
+# ---------------------------------------------------------------------------
+# Memo cache default-construction
+# ---------------------------------------------------------------------------
+
+
+def _default_memo_cache() -> Any:
+    """Construct a read-only ``MemoizationCache`` from the default location.
+
+    Returns ``None`` when ``~/.pflow/cache/cache.db`` doesn't exist (greenfield
+    workflow that has never been run) or when construction fails (disk error,
+    permissions, corrupted file). Either way the analyzer falls back to the
+    ``estimator`` / ``heuristic`` tiers — no surprise SQLite file creation for
+    a read-only analyze invocation.
+
+    The existence-check before construction is load-bearing: ``MemoizationCache.__init__``
+    creates the parent directory + opens a connection + runs ``_init_db()``
+    which CREATES the schema. Skipping construction when the file is absent
+    keeps analyze invocations side-effect-free on greenfield workflows.
+
+    See CR-1305 W3 — pre-fix, the memo tier was unreachable from CLI/MCP/dry-run
+    because no production caller passed a ``MemoizationCache``. Default-construct
+    here unlocks ``data_source: "memo"`` in production at zero plumbing cost.
+    """
+    cache_path = Path.home() / ".pflow" / "cache" / "cache.db"
+    if not cache_path.exists():
+        return None
+    try:
+        from pflow.runtime.cache import MemoizationCache
+
+        return MemoizationCache(db_path=cache_path, read_enabled=True)
+    except Exception:
+        logger.debug(
+            "Failed to construct default memo_cache; analyzer falls back to estimator/heuristic",
+            exc_info=True,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +372,69 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
         if str(data.get("format_version", "")).startswith("2.1"):
             return data, str(trace_file)
     return None, None
+
+
+# ---------------------------------------------------------------------------
+# Pipeline helpers (lift complexity out of ``analyze()``)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_trace_data(
+    trace_path: Path | None,
+    auto_load_trace: bool,
+    lookup_path: str,
+    notes: list[str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Load trace data via explicit path or autoload, returning ``(data, path)``."""
+    if trace_path is not None:
+        return _load_trace_explicit(trace_path, notes), str(trace_path)
+    if auto_load_trace:
+        return _autoload_trace(lookup_path, notes)
+    return None, None
+
+
+def _extract_declared_chunks(cache_block: Any) -> list[str]:
+    """Extract chunk names from a workflow's ``## Cache`` block IR."""
+    if not isinstance(cache_block, dict):
+        return []
+    items = cache_block.get("items") or []
+    if not isinstance(items, list):
+        return []
+    return [item.get("name", "") for item in items if isinstance(item, dict) and item.get("name")]
+
+
+def _extract_cache_ttl(cache_block: Any) -> str | None:
+    """Read the validated TTL from a ``## Cache`` block (``"5m"`` / ``"1h"``)."""
+    if not isinstance(cache_block, dict):
+        return None
+    ttl_value = cache_block.get("ttl")
+    return ttl_value if ttl_value in ("5m", "1h") else None
+
+
+def _build_per_call_rows_and_warnings(
+    *,
+    workflow_ir: dict[str, Any],
+    lookup_path: str,
+    trace_data: dict[str, Any] | None,
+    memo_cache: Any,
+    declared_chunks: list[str],
+) -> tuple[list[PerCallRow], list[Diagnostic]]:
+    """Walk LLM nodes, build per-call rows, collect per-node analytical warnings."""
+    rows: list[PerCallRow] = []
+    warnings: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []) or []:
+        if not isinstance(node, dict) or node.get("type") != "llm":
+            continue
+        row = _build_per_call_row(
+            node=node,
+            workflow_path=lookup_path,
+            trace_data=trace_data,
+            memo_cache=memo_cache,
+            declared_chunks=declared_chunks,
+        )
+        rows.append(row)
+        warnings.extend(_per_node_warnings(node, row))
+    return rows, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -447,17 +527,23 @@ def _per_node_warnings(node: dict[str, Any], row: PerCallRow) -> list[Diagnostic
             )
 
     # cache.prewarm-no-prefix — prewarm: true with no static prefix before
-    # the first ${batch_alias.X} reference. Detected by inspecting the unresolved
+    # the first batch-scoped reference. Detected by inspecting the unresolved
     # template at position 0.
+    #
+    # Boundary regex MUST match the runtime gate at ``nodes/llm/llm.py``
+    # (``re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)")``) so analyzer
+    # and runtime agree on what counts as batch-scoped — both ``${item.field}``
+    # and ``${item[0].field}`` are batch references. Earlier dot-only matcher
+    # silently missed every ``${alias[N]...}`` workflow (CR-1430 C1).
     prewarm = node.get("prewarm")
     batch = node.get("batch")
     if prewarm is True and isinstance(batch, dict):
         alias = str(batch.get("as", "item"))
         prompt = node.get("params", {}).get("prompt", "") or ""
         if isinstance(prompt, str):
-            marker = "${" + alias + "."
-            position = prompt.find(marker)
-            if position == 0:
+            pattern = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)")
+            match = pattern.search(prompt)
+            if match is not None and match.start() == 0:
                 diagnostics.append(
                     make_diagnostic(
                         "cache.prewarm-no-prefix",
@@ -614,8 +700,25 @@ def _build_summary(rows: list[PerCallRow], warnings: list[Diagnostic], *, ttl: s
     output_tokens_by_node: dict[str, int | None] = {r.node_path: r.output_tokens_estimated for r in rows}
     cost = compute_aggregate_costs(rows, output_tokens_by_node=output_tokens_by_node, ttl=ttl)
 
-    savings_pct_first_run = _safe_pct_or_none(cost.savings_first_run_usd, cost.current_usd)
-    savings_pct_rerun = _safe_pct_or_none(cost.savings_rerun_usd, cost.current_usd)
+    # CR-1430 C2 fix: percentage numerator and denominator must be over the SAME
+    # rowset. ``cost.current_usd`` is computed over rows-with-output (subset);
+    # ``cost.savings_first_run_usd`` was input-only over ALL priced rows
+    # (superset) — dividing the two could yield ``savings > current`` →
+    # nonsensical ``-117%`` in the renderer. The cohort-consistent percentage
+    # is ``(current - optimized) / current`` — both sides over rows-with-output.
+    # The aggregate input-only savings figure remains separately exposed via
+    # ``aggregate_savings_first_run_usd`` so greenfield workflows still surface
+    # an absolute savings opportunity even when ``current_usd`` is None.
+    cohort_first_run_savings = (
+        cost.current_usd - cost.optimized_usd
+        if cost.current_usd is not None and cost.optimized_usd is not None
+        else None
+    )
+    cohort_rerun_savings = (
+        cost.current_usd - cost.rerun_usd if cost.current_usd is not None and cost.rerun_usd is not None else None
+    )
+    savings_pct_first_run = _safe_pct_or_none(cohort_first_run_savings, cost.current_usd)
+    savings_pct_rerun = _safe_pct_or_none(cohort_rerun_savings, cost.current_usd)
 
     return AnalysisSummary(
         current_cost_per_run_usd=cost.current_usd,

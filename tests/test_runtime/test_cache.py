@@ -7,6 +7,7 @@ graceful degradation on corrupted DB, and concurrent access safety.
 import sqlite3
 import threading
 import time
+from typing import Any
 
 from pflow.runtime.cache import (
     MemoizationCache,
@@ -353,6 +354,32 @@ def test_compute_node_cache_key_filter_only_targets_suffix():
     assert compute_node_cache_key("h", b) != compute_node_cache_key("h", {})
     # c vs missing-key: SAME (filtered out)
     assert compute_node_cache_key("h", c) == compute_node_cache_key("h", {})
+
+
+def test_compute_node_cache_key_filters_all_metadata_suffixes():
+    """Filter covers every parser-injected metadata suffix — not just the
+    singular ``_source_line``. ``markdown_parser.py`` also writes ``_source_lines``
+    (plural dict per code block) and ``_source_files`` (per-file-ref metadata).
+
+    Without this broader filter, the same regression class as GH #357 reopens
+    on the day either suffix lands in ``resolved_inputs`` (e.g. via a future
+    template-resolution path that includes nested node config). Defensive
+    tightening per CR-1430 C4.
+    """
+    base: dict[str, Any] = {"prompt": "hello"}
+    # Each metadata-suffix key must be filtered:
+    for metadata_key in ("_x_source_line", "_x_source_lines", "_x_source_files"):
+        with_meta = {**base, metadata_key: {"some": "value"}}
+        assert compute_node_cache_key("h", base) == compute_node_cache_key("h", with_meta), (
+            f"{metadata_key!r} must be filtered (cosmetic metadata, shifts on every edit)"
+        )
+
+    # User-defined keys that LOOK metadata-ish but don't end in a known
+    # metadata suffix must NOT be filtered (over-broad-filter regression):
+    user_input = {**base, "_user_internal": "data"}
+    assert compute_node_cache_key("h", base) != compute_node_cache_key("h", user_input), (
+        "_user_internal is a user-defined input — must NOT be filtered"
+    )
 
 
 # ---------------------------------------------------------------------------

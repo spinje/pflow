@@ -21,6 +21,18 @@ DEFAULT_TTL_SECONDS = 86400.0
 # Eviction frequency: run eviction every N puts
 _EVICTION_INTERVAL = 50
 
+# Parser-injected metadata key suffixes filtered from cache_key inputs (GH #357).
+# These shift on every workflow edit / saved-library frontmatter mutation but
+# carry no execution-relevant data — filtering them keeps memo cache hits stable
+# across cosmetic changes. Suffix-match (not exact) so per-node metadata like
+# ``nodes.foo._source_lines`` flows through after template resolution lands it
+# under a path-prefixed key.
+_METADATA_KEY_SUFFIXES = (
+    "_source_line",  # Singular — per-yaml-item line, set by markdown_parser entity flush
+    "_source_lines",  # Plural dict — per-code-block line ranges
+    "_source_files",  # Per-file-reference resolution metadata
+)
+
 
 def _make_serializable(obj: Any) -> Any:
     """Convert an object to a JSON-serializable representation for hashing.
@@ -91,18 +103,24 @@ def compute_node_cache_key(
     Returns:
         MD5 hex digest cache key
 
-    GH #357: ``_*_source_line`` keys are filtered from the cache key just
-    like ``compute_node_config`` filters them from the config hash. They
-    are cosmetic line-number metadata (used by python_code.py at runtime
-    for error reporting) that shift on every workflow edit AND on every
+    GH #357: parser-injected line-number metadata is filtered from the
+    cache key (mirrors ``compute_node_config``'s config-hash filter).
+    These keys are cosmetic — used by ``python_code.py`` at runtime for
+    error reporting — but they shift on every workflow edit AND on every
     invocation of a saved-library workflow (since the library mutates the
     file's frontmatter post-run, growing the prefix and shifting body
     line numbers). Without this filter, the cache_key changed on every
     saved-workflow run and memo cache never hit.
+
+    The filter targets the explicit suffix set ``_METADATA_KEY_SUFFIXES``
+    rather than a generic ``_``-prefix rule so user-defined inputs named
+    e.g. ``_internal`` pass through unchanged.
     """
     parts = [config_hash]
     if resolved_inputs is not None:
-        filtered = {k: v for k, v in resolved_inputs.items() if not k.endswith("_source_line")}
+        filtered = {
+            k: v for k, v in resolved_inputs.items() if not any(k.endswith(suffix) for suffix in _METADATA_KEY_SUFFIXES)
+        }
         parts.append(_deterministic_json(filtered))
     combined = "|".join(parts)
     return hashlib.md5(combined.encode()).hexdigest()  # noqa: S324

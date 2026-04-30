@@ -69,9 +69,13 @@ class CacheWarningSpec:
 
 
 # cache.order-mismatch — shipped by data_flow.py:740 (_make_order_mismatch_diagnostic)
+# The ``expected:`` line shows the subset reordered to match ## Cache declaration
+# order — i.e. the exact replacement the agent should write. (Earlier label was
+# ``declared:``; renamed for clarity since the line shows the subset, not the
+# full ## Cache block.)
 _ORDER_MISMATCH_MESSAGE = (
     "Node '{node_id}' prompt_cache order doesn't match ## Cache declaration\n"
-    "  declared:  {declared_str}\n"
+    "  expected:  {declared_str}\n"
     "  you wrote: {actual_str}\n"
     "  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order"
 )

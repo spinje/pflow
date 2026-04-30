@@ -209,10 +209,15 @@ Related but explicitly out of scope:
 
   ```
   ERROR: <node-name> prompt_cache order doesn't match ## Cache declaration
-    declared:  [concept, concept_brief, creative-direction.response]
+    expected:  [concept, concept_brief, creative-direction.response]
     you wrote: [concept_brief, concept, creative-direction.response]
     fix:       reorder the `prompt_cache:` field to match ## Cache declaration order
   ```
+
+  The `expected:` line shows the node's selected subset reordered to match the
+  containing `## Cache` block — i.e. the exact replacement to write into
+  `prompt_cache:`. (Earlier wording was `declared:`; renamed for clarity since
+  the line shows the node's subset, not the full `## Cache` declaration.)
 
 - Error is caught by both `pflow run` validation and `pflow analyze-cache` (via the shared `data_flow.py::validate_data_flow()` call site).
 - No auto-reorder. The workflow file is the source of truth. No escape hatch in v1; if a real use case emerges for per-node reorder, revisit.

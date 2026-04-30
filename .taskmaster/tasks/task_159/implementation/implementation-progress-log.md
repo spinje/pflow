@@ -1816,3 +1816,230 @@ files-to-modify table, total estimate (`~580 LOC + ~56 tests`) updated.
 ### Open user decisions surfaced
 
 None new. Pre-existing decisions from prior segments unchanged.
+
+---
+
+## Pre-recommendations baseline cleanup: 5 review-driven fixes (2026-04-30)
+
+Two code reviews (`scratchpads/code-review-task159-20260430-1305.md` and
+`scratchpads/code-review-task159-20260430-1430.md`) ran against the
+post-segment-4 + cost-wiring + autoload-speedup tree. After triage against
+the recommendations-section plan's planned scope, **5 findings landed as
+a pre-A baseline commit**, **2 findings filed as GH issues**, the rest
+deferred (already-in-plan, intentional v1.x polish, or defended in code).
+
+### What I implemented
+
+**5 fixes, one coherent commit:**
+
+1. **CR-1430 C1** — `cache.prewarm-no-prefix` regex parity. Pre-fix used
+   dot-only matcher (`marker = "${" + alias + "."`); runtime gate at
+   `nodes/llm/llm.py:350` uses `r"\$\{" + re.escape(alias) + r"(\.|\[)"`.
+   Workflows with `${item[0].field}` at position 0 silently missed the
+   detection. Fixed by importing `re` and using the same regex shape as
+   the runtime gate. Test parametrizes 6 cases (dot/bracket × position-0
+   / non-zero / no-batch-ref).
+
+2. **CR-1430 C2** — savings/optimized rowset asymmetry. `cost.current_usd`
+   was over `rows_with_output` (subset); `cost.savings_first_run_usd` was
+   input-only over ALL `priced_rows` (superset). Dividing them when
+   without-output rows contributed materially to savings produced
+   `savings > current` → percentage > 100% rendered as nonsensical
+   `-117%`. Fixed at the `_build_summary` site only — compute
+   `cohort_first_run_savings = current_usd - optimized_usd` (both
+   guaranteed over the same rowset by construction), then percentage.
+   Aggregate input-only `aggregate_savings_first_run_usd` field
+   unchanged — preserves greenfield contract. **Mutation-tested: pre-fix
+   formula yields `pct = 7657` on the new fixture; post-fix yields `pct
+   = 0` (Row A has no cache subset → cohort savings is 0).** Fixture is
+   structurally robust: includes a pre-condition `assert savings >
+   current` that fails with a clear message if the bug scenario isn't
+   actually exercised.
+
+3. **CR-1430 C3** — `declared:` → `expected:` rendered label rename.
+   Today's `declared:` label shows the node's selected SUBSET reordered
+   to match `## Cache` (it's the exact replacement to write into
+   `prompt_cache:`), not the full `## Cache` declaration. Renamed to
+   `expected:` for clarity. Sites: `data_flow.py:_make_order_mismatch_diagnostic`
+   + `warning_catalog.py::_ORDER_MISMATCH_MESSAGE` + 1 byte-equal test
+   fixture + spec amendment at `task-159.md:212`. Internal context keys
+   (`declared`, `declared_str`) and JSON-facing typed payload kept
+   unchanged for backward-compat — only the rendered label changes.
+
+4. **CR-1430 C4** — broaden `compute_node_cache_key` filter. Pre-fix
+   filtered only `_source_line` (singular). Parser also writes
+   `_source_lines` (plural, code-block line ranges) and `_source_files`
+   (per-file-ref provenance — verified across 5 production sites:
+   `file_resolver.py`, `ir_schema.py`, `path_validation.py`). Same
+   regression class as GH #357 would reopen on the day either suffix
+   lands in `resolved_inputs` (e.g. via a future template-resolution
+   path that includes nested node config). Fixed via explicit suffix
+   tuple `_METADATA_KEY_SUFFIXES = ("_source_line", "_source_lines",
+   "_source_files")` — targeted, NOT a generic `_`-prefix rule (would
+   over-filter user-defined inputs like `_internal`).
+
+5. **CR-1305 W3** — memo tier reachability via default-construct. Pre-fix
+   the `memo_cache` kwarg on `analyze()` accepted a `MemoizationCache`
+   but no production entry point (CLI, MCP, dry-run nudge) supplied
+   one. `data_source: "memo"` was unreachable in production despite
+   the codepath existing. **Top-10% reframe** (caught by re-reading the
+   handoff's "construct dependencies at the lowest layer" lens, NOT my
+   first proposal which threaded construction through 3 entry points):
+   default-construct in `analyze()` itself when `memo_cache is None`,
+   reading from `~/.pflow/cache/cache.db` if it exists. Same shape
+   ruff/clippy/mypy use for workspace caches. New `_default_memo_cache()`
+   helper checks file existence BEFORE construction (load-bearing — the
+   `MemoizationCache.__init__` runs `_init_db()` which CREATES schema;
+   skipping construction when absent keeps analyze invocations
+   side-effect-free on greenfield workflows). Two tests: production-shape
+   integration (seed → analyze → assert `data_source == "memo"`) AND
+   read-only invariant regression (greenfield → no cache.db side-effect).
+
+**Refactor in support of the no-`# noqa: C901` rule:** W3's addition pushed
+`analyze()` complexity from 10 → 11. Decomposed into 4 named pipeline
+helpers (`_resolve_trace_data`, `_extract_declared_chunks`,
+`_extract_cache_ttl`, `_build_per_call_rows_and_warnings`). `analyze()`
+now reads as a clean 7-step pipeline, each helper ≤4 complexity.
+
+### Files modified
+
+**Production (5 files):**
+- `src/pflow/runtime/cache.py` (+20 / -3) — C4 metadata-suffix tuple.
+- `src/pflow/core/workflow/data_flow.py` (+9 / -3) — C3 label.
+- `src/pflow/core/cache_analysis/warning_catalog.py` (+5 / -1) — C3 catalog template.
+- `src/pflow/core/cache_analysis/analyze.py` (~+97 / -25) — C1 regex,
+  C2 cohort math, W3 default-construct + helper, `analyze()`
+  decomposition.
+- `.taskmaster/tasks/task_159/task-159.md` (+6 / -1) — C3 spec amendment.
+
+**Tests (4 files, +11 tests):**
+- `tests/test_runtime/test_cache.py` (+27) — C4 metadata-suffix coverage.
+- `tests/test_core/test_prompt_cache_validation.py` (+3 / -2) — C3 fixture relabel.
+- `tests/test_core/test_cache_analysis_analyze.py` (+161) — C1 regex
+  parametrize + C2 cohort regression + greenfield aggregate-savings
+  preservation. C2 test is mutation-tested.
+- `tests/test_core/test_cache_analysis_token_estimation.py` (+85) — W3
+  memo-tier reachability + read-only invariant.
+
+### GH issues filed for the 2 deferrable findings
+
+Two findings worth tracking that fall outside the recommendations-section
+scope:
+
+- **GH #359** — `analyze-cache --format=json` emits LiteLLM cost-map fetch
+  warnings to stderr. CR-1305 W4. Real agent-UX concern; bounded fix
+  (configure LiteLLM to skip remote fetch or suppress its logger around
+  analyzer paths). v1.x scope.
+- **GH #360** — `analyze-cache` silently undercounts cost for dynamic
+  batch sizes. CR-1430 W7. Real correctness concern: workflows with
+  `batch: ${file_ref}` get cost figures that don't reflect 30× fan-out.
+  Minimum fix is an info note in `analysis.notes` when N nodes have
+  unknown batch size. v1.x cost-fidelity follow-up.
+
+Both issues encode the load-bearing context (root cause, fix shape,
+suggested test) so the scratchpads can be removed without losing
+information.
+
+### Findings deliberately NOT fixed (per critical-thinking triage)
+
+- **CR-1305 C1** (analyze-cache bypasses validator) — already in plan
+  as A.6 amendment; sub-segment A executes.
+- **CR-1305 C2** (stubbed analyzer math) — sub-segment A scope (4
+  catalog detections + per-chunk tokens + cost wiring).
+- **CR-1430 W1** (`_estimate_cacheable_tokens` 75% stub) — sub-segment
+  A scope (real per-chunk estimation).
+- **CR-1430 W2** (`_EMPTY_CACHE_RENDER` asymmetric restore) —
+  cosmetic, no consumer harm.
+- **CR-1430 W3** (parser silently drops non-YAML in `## Cache`) — UX
+  polish, no observed user trip-up.
+- **CR-1430 W4** (trace 2.1.0 emits `null` workflow_path) — minor
+  data-shape concern, consumer gate handles it.
+- **CR-1430 W5** (OpenAI no-op `cache_control` marker) — defended in
+  code (shape consistency across providers).
+- **CR-1430 W6** (`"LLMNode"` string hardcoded in gate) — debug log
+  already surfaces silent-bypass risk.
+- **CR-1430 W8** (non-string `node_type` skip) — intentional layered
+  defense documented in code.
+- **CR-1430 S1-S8** — comment density, test bloat, cosmetic. Better
+  as a focused cleanup PR than mixed in here.
+
+### Bonus observation (not fixed, flag inline when sub-segment A touches it)
+
+`tests/test_core/test_cache_analysis_per_id_coverage.py:369` uses
+`"item_alias": "item"` in a batch fixture, but the IR-level key is
+`"as"` (per `ir_schema.py:98`, `compiler.py:343`). Test passes by
+accident — the wrong key falls back to default `"item"` which matches
+the fixture's `${item.text}` prompt. Sub-segment A's executing agent
+will likely touch this fixture; flag inline as a comment when they do.
+
+### Tacit knowledge for the next agent (sub-segment A)
+
+1. **The cohort-consistent percentage fix changes JSON output semantics
+   subtly.** Pre-fix: `savings_pct_first_run` was `(input-only-savings,
+   priced-rows-superset) / (full-cost, rows-with-output-subset)` —
+   sometimes >100%, sometimes <0%, but always present. Post-fix:
+   percentage tracks `(current - optimized) / current` over the
+   rows-with-output cohort. **None on full greenfield**; agents read
+   the absolute `aggregate_savings_first_run_usd` figure for
+   greenfield-savings opportunities. The renderer / sub-segment A
+   recommendations consumers should respect this two-regime split.
+
+2. **`_default_memo_cache()` may surprise tests that previously got
+   `memo_cache=None` by default.** The conftest test isolation patches
+   `Path.home()` to `tmp_path`, so `~/.pflow/cache/cache.db` resolves
+   to a non-existent path → helper returns `None` → observable
+   behavior is unchanged for tests that don't explicitly seed a memo
+   cache. If sub-segment A tests start seeding `MemoizationCache(tmp_path/...)`
+   for SOME nodes and asserting other nodes have no memo data, be
+   aware that the seeded rows are visible to ALL nodes that share the
+   `workflow_path` scope.
+
+3. **The C3 rename is rendered-label only.** Diagnostic `context["declared"]`
+   and `context["declared_str"]` keep the original names — agents
+   reading JSON output dispatch on those typed payloads. The render
+   layer surfaces `expected:` for human readability. The asymmetry is
+   deliberate; surface to user before changing if a future task
+   depends on naming consistency.
+
+4. **C4's metadata-suffix tuple is the place to extend** when new
+   parser-injected metadata keys are added. Single source of truth at
+   `runtime/cache.py:_METADATA_KEY_SUFFIXES`. Same filter is applied
+   at `compute_node_config` for the config hash (different code path,
+   same conceptual contract — keep them in lockstep if either is
+   touched).
+
+### Open hedged claims and verifications
+
+- **VERIFIED**: 5899 tests pass (was 5888 + 11 new); 9 skipped; 0 xfailed.
+- **VERIFIED**: `make check` clean (ruff + ruff-format + mypy + deptry).
+- **VERIFIED**: `tests/test_execution/test_plan_drift.py` 34/34 green.
+- **VERIFIED**: `test_golden_baseline_hashes_match` (DD#19 load-bearing
+  gate) green — Segment-1-through-pre-A pipeline preserves
+  no-`prompt_cache` byte-identity.
+- **VERIFIED (mutation-tested)**: C2 cohort-percentage fix —
+  reverting the production fix to the buggy formula causes the new
+  test to fail with `pct = 7657 > 100`. Restoring the fix passes.
+  The test fixture's structural pre-condition (`assert savings >
+  current`) confirms the bug scenario IS exercised.
+- **VERIFIED**: GH #357 regression test (saved-library line shifts) still green
+  alongside C4's broader filter.
+
+### Open user decisions surfaced
+
+None new.
+
+### What's next
+
+**Sub-segment A** can now proceed against this clean baseline. The
+recommendations-section plan's prep-segment (events/nodes typo + MCP
+inline + A.6) plus this pre-A baseline cleanup mean the analyzer's
+correctness floor is locked: validator findings surface in `analyze()`,
+the cohort percentage is consistent, regex matches runtime, memo tier
+is reachable, cache_key filter is robust, the order-mismatch label is
+clear.
+
+The 4 stubbed analytical detections (`cache.batch-prewarm-recommended`,
+`cache.padding-advisory`, `cache.dynamic-before-static`,
+`cache.shared-context-undeclared`) + `suggested_blocks` populator are
+the load-bearing remaining work. Per the recommendations plan: ~580
+production LOC + ~56 tests across 3 commits (A → B → C).

@@ -204,3 +204,102 @@ def test_tier_1_trace_works_with_real_collector_round_trip(tmp_path: Any, monkey
     )
     assert source == "trace", f"Tier-1 unreachable in production shape: source={source!r}"
     assert count == 1234
+
+
+def test_memo_tier_reachable_via_default_construct_in_analyze(tmp_path: Any, monkeypatch: Any) -> None:
+    """CR-1305 W3 regression: ``analyze()`` default-constructs ``memo_cache``
+    from disk when the caller didn't supply one. Without this, ``data_source:
+    "memo"`` was unreachable from CLI/MCP/dry-run entry points (none pass a
+    ``MemoizationCache`` explicitly).
+
+    Production-shape: seeds ``~/.pflow/cache/cache.db`` (under patched
+    ``Path.home()``) with a real ``MemoizationCache.put`` call carrying
+    ``llm_usage.input_tokens``. Calls ``analyze()`` WITHOUT a ``memo_cache``
+    kwarg. The default-construct branch fires, finds the seeded entry, and
+    the per-call row's ``data_source`` is ``"memo"``.
+
+    Mutation-test thought: removing the ``if memo_cache is None: memo_cache =
+    _default_memo_cache()`` assignment in ``analyze()`` causes ``data_source``
+    to fall back to ``"estimator"`` (or ``"heuristic"`` for the unknown-model
+    case) — this assertion catches it.
+    """
+    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.runtime.cache import MemoizationCache
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_path = "/abs/path/sample.pflow.md"
+    node_id = "summarize"
+
+    # Seed the cache at the same default location ``_default_memo_cache`` reads.
+    cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
+    cache = MemoizationCache(db_path=cache_db_path)
+    cache.put(
+        cache_key="seeded-key-abc",
+        node_id=node_id,
+        workflow_path=workflow_path,
+        action="default",
+        output={
+            "response": "previous response",
+            "llm_usage": {"input_tokens": 8888, "output_tokens": 42, "model": "claude-haiku-4-5"},
+        },
+    )
+
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": node_id,
+                "type": "llm",
+                "params": {"model": "claude-haiku-4-5", "prompt": "Summarize ${topic}"},
+            }
+        ],
+        "edges": [],
+    }
+
+    # No memo_cache kwarg — default-construct path fires.
+    analysis = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False)
+    assert len(analysis.per_call) == 1
+    row = analysis.per_call[0]
+    assert row.data_source == "memo", (
+        f"data_source must be 'memo' when default-construct found the seeded entry; "
+        f"got {row.data_source!r}. Default-construct branch in analyze() may not be firing."
+    )
+    assert row.input_tokens_estimated == 8888
+
+
+def test_memo_tier_falls_back_gracefully_when_cache_db_absent(tmp_path: Any, monkeypatch: Any) -> None:
+    """Default-construct must NOT create ``cache.db`` as a side effect of an
+    analyze invocation. Greenfield workflow + analyze → no memo tier (returns
+    None), no SQLite file written.
+
+    Locks the load-bearing read-only invariant: analyze is a pure function of
+    the workflow + optional state; it never mutates disk.
+    """
+    from pflow.core.cache_analysis.analyze import analyze
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "x",
+                "type": "llm",
+                "params": {"model": "claude-haiku-4-5", "prompt": "hello"},
+            }
+        ],
+        "edges": [],
+    }
+
+    cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
+    assert not cache_db_path.exists(), "Pre-condition: cache.db must be absent"
+
+    analysis = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    assert len(analysis.per_call) == 1
+    # Falls back to estimator/heuristic — neither memo nor trace data available.
+    assert analysis.per_call[0].data_source in {"estimator", "heuristic"}
+
+    # Read-only invariant: analyze did NOT create cache.db.
+    assert not cache_db_path.exists(), (
+        "analyze() created cache.db as a side effect — read-only contract violated. "
+        "_default_memo_cache must check existence BEFORE constructing MemoizationCache."
+    )

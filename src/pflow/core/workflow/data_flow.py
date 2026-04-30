@@ -736,12 +736,18 @@ def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fi
 
 
 def _make_order_mismatch_diagnostic(node_id: str, declared: list[str], actual: list[str]) -> Diagnostic:
-    """Spec-locked four-line message format with bare-identifier bracketed lists."""
+    """Spec-locked four-line message format with bare-identifier bracketed lists.
+
+    The ``expected:`` line shows the node's selected subset reordered to match
+    ``## Cache`` declaration order — i.e. the exact replacement the agent
+    should write. (Earlier label was ``declared:``; renamed for clarity since
+    the line shows the subset, not the full ``## Cache`` block.)
+    """
     declared_str = _format_chunk_list(declared)
     actual_str = _format_chunk_list(actual)
     message = (
         f"Node '{node_id}' prompt_cache order doesn't match ## Cache declaration\n"
-        f"  declared:  {declared_str}\n"
+        f"  expected:  {declared_str}\n"
         f"  you wrote: {actual_str}\n"
         f"  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order"
     )

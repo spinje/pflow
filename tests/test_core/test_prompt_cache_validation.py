@@ -83,9 +83,12 @@ def test_order_mismatch_emits_exact_message_format() -> None:
     assert diag.source == "validator"
     assert diag.node_id == "write-lyrics"
     # Spec-locked message format (bare identifiers, exact whitespace).
+    # ``expected:`` shows the subset reordered to match ## Cache declaration —
+    # the exact replacement to write. Renamed from ``declared:`` for clarity
+    # (the line shows the subset, not the full ## Cache block).
     assert diag.message == (
         "Node 'write-lyrics' prompt_cache order doesn't match ## Cache declaration\n"
-        "  declared:  [concept, concept_brief]\n"
+        "  expected:  [concept, concept_brief]\n"
         "  you wrote: [concept_brief, concept]\n"
         "  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order"
     )

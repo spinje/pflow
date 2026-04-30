@@ -12,6 +12,7 @@ from pflow.core.cache_analysis.analyze import (
     CacheAnalysis,
     PerCallRow,
     _aggregate_confidence,
+    _build_summary,
     _maybe_append_gemini_note,
     analyze,
 )
@@ -300,3 +301,202 @@ def test_gemini_note_NOT_appended_for_anthropic_only_rows() -> None:
     ]
     _maybe_append_gemini_note(rows, notes)
     assert notes == []
+
+
+# ---------------------------------------------------------------------------
+# cache.prewarm-no-prefix — boundary regex must match runtime gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "prompt, should_emit",
+    [
+        # Dot-syntax batch ref at position 0 → emit (today's behavior).
+        ("${item.text}\n\nrubric here", True),
+        # Bracket-syntax at position 0 → MUST also emit (CR-1430 C1 — was silently
+        # missed by the dot-only matcher; runtime gate at nodes/llm/llm.py:350
+        # uses ``r"(\.|\[)"``).
+        ("${item[0].text}\n\nrubric here", True),
+        # Bracket without dot suffix at position 0 → emit (also batch-scoped).
+        ("${item[0]}\n\nrubric", True),
+        # Static prefix before batch ref → no emit (the auto-batch-prefix can fire).
+        ("Some stable rubric content.\n\n${item.text}", False),
+        ("Some stable rubric content.\n\n${item[0].text}", False),
+        # No batch ref at all → no emit.
+        ("Plain prompt with no ${item} reference at all.", False),
+    ],
+)
+def test_prewarm_no_prefix_matches_runtime_gate_for_dot_AND_bracket_syntax(prompt: str, should_emit: bool) -> None:
+    """The analyzer's prewarm-no-prefix detection must match the runtime
+    auto-batch-prefix gate at ``nodes/llm/llm.py``: both ``${alias.X}`` and
+    ``${alias[N]...}`` are batch-scoped references. Earlier dot-only matcher
+    silently missed every bracket-syntax workflow (CR-1430 C1)."""
+    workflow_ir = {
+        "inputs": {"items": {"type": "list"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": prompt, "model": "anthropic/claude-sonnet-4-5"},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, auto_load_trace=False)
+    emitted = [d for d in analysis.warnings if d.id == "cache.prewarm-no-prefix"]
+    if should_emit:
+        assert emitted, (
+            f"Expected cache.prewarm-no-prefix for prompt={prompt!r} "
+            f"(batch ref at position 0); got ids={[d.id for d in analysis.warnings]}"
+        )
+    else:
+        assert not emitted, (
+            f"Did NOT expect cache.prewarm-no-prefix for prompt={prompt!r}; got {len(emitted)} emission(s)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# CR-1430 C2: savings percentage must use a consistent rowset
+# ---------------------------------------------------------------------------
+
+
+def _summary_row(
+    *,
+    node_path: str,
+    input_tokens: int = 10_000,
+    cacheable_tokens: int,
+    declared_prompt_cache: list[str] | None,
+    output_tokens: int | None,
+) -> PerCallRow:
+    """Construct a PerCallRow at the granularity ``_build_summary`` consumes.
+
+    Mixed ``output_tokens=int`` / ``output_tokens=None`` per row is the
+    fixture shape that exercises the C2 bug: priced rows in different
+    output-availability cohorts.
+    """
+    ratio = round(100 * cacheable_tokens / input_tokens) if input_tokens else 0
+    return PerCallRow(
+        node_path=node_path,
+        model="claude-sonnet-4-5",
+        is_batch=False,
+        batch_size_estimated=None,
+        input_tokens_estimated=input_tokens,
+        cacheable_tokens_estimated=cacheable_tokens,
+        cache_ratio_pct=ratio,
+        data_source="estimator",
+        declared_prompt_cache=declared_prompt_cache,
+        output_tokens_estimated=output_tokens,
+        output_data_source="memo" if output_tokens is not None else "unavailable",
+    )
+
+
+def test_savings_pct_uses_cohort_consistent_denominator_not_input_only_superset() -> None:
+    """CR-1430 C2 regression — drives the buggy mixed-state cohort directly.
+
+    Pre-fix bug: ``cost.savings_first_run_usd`` was input-only over ALL priced
+    rows (superset); ``cost.current_usd`` was full-cost over rows-with-output
+    (subset). When without-output rows contributed materially to savings, the
+    division produced ``savings > current`` → percentages > 100% rendered as
+    nonsensical ``-117%``.
+
+    Mutation-test thought: revert the fix to
+    ``_safe_pct_or_none(cost.savings_first_run_usd, cost.current_usd)`` and
+    this test fails — the buggy formula yields a value > 100 for this fixture.
+    Post-fix ``(current - optimized) / current`` is bounded by ≤ 100% by
+    construction (assuming optimized ≥ 0).
+
+    Fixture: 4 priced rows. Row A has output tokens AND no cache subset (so
+    it dominates ``current_usd`` with full input+output cost but contributes
+    zero to savings). Rows B/C/D have NO output tokens AND large cache
+    subsets — they contribute substantial input-only savings to
+    ``savings_first_run_usd`` but ZERO to ``current_usd``. The fixture's
+    structural assertion (``aggregate_savings > current``) confirms the
+    bug scenario IS exercised before the percentage check fires.
+    """
+    # Row A: tiny input (100) + tiny output (50), no cache subset. This is
+    # the only row contributing to ``current_usd`` — and it's small.
+    # Rows B/C/D/E/F: large cache-using rows with NO output. They populate
+    # ``savings_first_run_usd`` (input-only superset) but NOT ``current_usd``.
+    # Result: savings >> current → pre-fix pct > 100% → bug.
+    rows = [
+        _summary_row(
+            node_path="A",
+            input_tokens=100,
+            cacheable_tokens=0,
+            declared_prompt_cache=None,
+            output_tokens=50,
+        ),
+        *[
+            _summary_row(
+                node_path=name,
+                input_tokens=10_000,
+                cacheable_tokens=8_000,
+                declared_prompt_cache=["topic"],
+                output_tokens=None,
+            )
+            for name in ("B", "C", "D", "E", "F")
+        ],
+    ]
+    summary = _build_summary(rows, warnings=[], ttl="5m")
+
+    # Sanity: fixture must induce the bug scenario before assertions fire.
+    assert summary.current_cost_per_run_usd is not None, "Row A must populate current_usd"
+    assert summary.aggregate_savings_first_run_usd is not None, "Rows B/C/D must populate savings"
+    assert summary.aggregate_savings_first_run_usd > summary.current_cost_per_run_usd, (
+        f"Fixture must induce ``savings > current`` to exercise the C2 bug: "
+        f"savings={summary.aggregate_savings_first_run_usd}, "
+        f"current={summary.current_cost_per_run_usd}. Adjust token sizes."
+    )
+
+    # Post-fix: percentage is cohort-consistent (rows-with-output only).
+    # Row A has no cache subset → its ``(current - optimized)`` is 0 → pct == 0.
+    # Pre-fix would render ``savings_first_run_usd / current_usd`` which is > 1
+    # → > 100% → bug.
+    pct = summary.savings_pct_first_run
+    assert pct is not None, "current_usd is non-None → pct must be computable"
+    assert pct <= 100, (
+        f"savings_pct_first_run = {pct} > 100 — denominator mismatch reopened. "
+        f"Numerator and denominator must be over the same rowset (rows-with-output)."
+    )
+    assert pct >= -100, f"savings_pct_first_run = {pct} < -100 — implausible; check cohort math"
+
+
+def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() -> None:
+    """CR-1430 C2 fix preserves the load-bearing greenfield contract: the
+    ``aggregate_savings_first_run_usd`` field continues to be input-only and
+    superset-of-priced-rows so greenfield workflows still surface a positive
+    absolute savings opportunity even when ``current_usd`` is None.
+
+    The fix is local to ``savings_pct_first_run`` — the absolute aggregate
+    savings figure is unchanged.
+    """
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string", "required": False}},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "topic", "var": "topic", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": f"node_{i}",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["topic"],
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": f"${{topic}}\n\nAnalyst {i}: " + ("x" * 6000),
+                },
+            }
+            for i in range(2)
+        ],
+        "edges": [],
+    }
+    analysis = analyze(workflow_ir, parameters={"topic": "alpha"}, auto_load_trace=False)
+    # Greenfield: no memo cache → no output tokens → current_usd is None.
+    assert analysis.summary.current_cost_per_run_usd is None
+    # But the aggregate savings figure IS populated (input-only, output cancels).
+    assert analysis.summary.aggregate_savings_first_run_usd is not None
+    assert analysis.summary.aggregate_savings_first_run_usd > 0
