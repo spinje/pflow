@@ -193,14 +193,37 @@ def test_analyze_surfaces_cache_invalid_on_non_llm() -> None:
 
 
 def test_analyze_filters_non_cache_data_flow_diagnostics() -> None:
+    """Negative control for A.6: validate_data_flow's non-cache diagnostics
+    (here: a forward template reference to an undeclared node) MUST be
+    filtered out by ``_cache_validator_findings`` so analyze() doesn't surface
+    workflow-health concerns under the cache-analyzer label.
+
+    Mutation-test: removing the ``d.id and d.id.startswith("cache.")`` filter
+    in ``_cache_validator_findings`` makes the non-cache diagnostic leak
+    through and fails the final assertion.
+    """
+    from pflow.core.workflow.data_flow import validate_data_flow
+
+    # Forward-reference shape: shell node 'a' references 'b' which appears
+    # after it in document order. validate_data_flow(check_inputs=False)
+    # still emits this ERROR (it's an order-of-execution problem, not an
+    # input-dependent check), and the diagnostic has id=None — which is
+    # exactly what the cache-namespaced filter is designed to drop.
     workflow_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "echo"}},
-            {"id": "b", "type": "shell", "params": {"command": "echo"}},
+            {"id": "a", "type": "shell", "params": {"command": "echo ${b.stdout}"}},
+            {"id": "b", "type": "shell", "params": {"command": "echo hi"}},
         ],
-        "edges": [{"from": "b", "to": "a"}],
+        "edges": [],
     }
+    # Sanity-check the fixture: the validator MUST emit at least one
+    # non-cache diagnostic, otherwise the assertion below is vacuous.
+    raw = validate_data_flow(workflow_ir, check_inputs=False)
+    has_non_cache = any((d.id is None) or not d.id.startswith("cache.") for d in raw)
+    assert has_non_cache, "Test fixture must produce at least one non-cache diagnostic to be a valid negative control."
+
     result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
+    # The actual A.6 contract: analyze.warnings carries ONLY cache.* IDs.
     assert all(d.id and d.id.startswith("cache.") for d in result.warnings)
 
 

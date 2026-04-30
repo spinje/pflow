@@ -341,6 +341,20 @@ def _format_cost(cost_usd: float) -> str:
     return f"${cost_usd:.4f}"
 
 
+_OPTIONAL_SCALAR_FIELDS: tuple[str, ...] = (
+    # Predicted cache_key from the planner. Useful for cache-debugging
+    # agents and consumed by ``analyze-cache --from-trace`` to detect
+    # discrepancies. Omitted when None (routing errors, opaque
+    # sub-workflows, BFS-downstream entries).
+    "cache_key",
+    "action",
+    "age_sec",
+    "last_cost_usd",
+    "last_duration_ms",
+    "last_run_age_sec",
+)
+
+
 def _entry_to_dict(entry: PlanEntry) -> dict[str, Any]:
     """Serialize a plan entry to dict."""
     result: dict[str, Any] = {
@@ -349,16 +363,10 @@ def _entry_to_dict(entry: PlanEntry) -> dict[str, Any]:
         "status": entry.status,
         "cause": entry.cause,
     }
-    if entry.action is not None:
-        result["action"] = entry.action
-    if entry.age_sec is not None:
-        result["age_sec"] = entry.age_sec
-    if entry.last_cost_usd is not None:
-        result["last_cost_usd"] = entry.last_cost_usd
-    if entry.last_duration_ms is not None:
-        result["last_duration_ms"] = entry.last_duration_ms
-    if entry.last_run_age_sec is not None:
-        result["last_run_age_sec"] = entry.last_run_age_sec
+    for field in _OPTIONAL_SCALAR_FIELDS:
+        value = getattr(entry, field)
+        if value is not None:
+            result[field] = value
     if entry.batch_count is not None:
         result["batch_count"] = entry.batch_count
         result["batch_parallel"] = entry.batch_parallel

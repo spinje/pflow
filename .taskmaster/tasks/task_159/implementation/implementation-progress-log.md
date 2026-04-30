@@ -2251,3 +2251,545 @@ At the end of this turn:
   `node_id`, matching the handoff's instruction not to solve heterogeneous
   batch sub-plan attribution in this pass.
 
+---
+
+## Post-recommendations 4-agent code review + applied fixes (2026-04-30)
+
+After the recommendations-section A+B+C work was staged, ran a 4-agent
+code review (silent-failures + impact-completeness + test-fidelity +
+feature-interactions — the 4 highest-leverage subagents for this surface).
+Findings concentrated on sub-segment C (discrepancy detection); A and B
+were largely clean. User reviewed findings, made decisions, then I applied
+fixes in two passes: a primary pass on the user's directly-confirmed
+decisions, then a self-audit pass that surfaced 4 additional loose ends.
+
+### User decisions (with verification before recommendations)
+
+Verified before surfacing the decisions:
+
+- **Trace 2.1.0 does NOT record input parameters** — confirmed via
+  `grep "parameters\|inputs\"" runtime/workflow_trace.py` (zero matches in
+  save path). This is load-bearing for Decision 1 — it eliminated
+  "compare against trace's recorded params" as a fix shape.
+- **`PlanEntry.cache_key` is NOT in `_entry_to_dict`** — confirmed at
+  `plan_formatter.py:344`. Required explicit surface decision.
+- **BFS-downstream cache_keys can't be predicted at plan time** —
+  `_make_downstream_entry` can't call `plan_node()` because BFS-
+  downstream nodes (by definition) depend on upstream that hasn't
+  materialized — template resolution would fail. The planner's design
+  is "boundary-of-miss = mark downstream, don't compute." This
+  reversed a reviewer's claim that line 745 was missing `cache_key=`
+  propagation; calling `plan_node` would crash, not improve. **See
+  tacit-knowledge #1 below for the broader implication**: this gap
+  isn't fixable without partial-execution or post-edit data that
+  doesn't exist anywhere; the right response is the silent-skip note,
+  not a fix.
+- **Heterogeneous batch sub-workflow note-only fix** matches the
+  handoff's explicit guidance ("don't try to fix this elegantly during
+  implementation; surface as notes entry; defer fine-grained handling
+  to v1.x").
+
+User decisions:
+
+- **D1 (importance 4/5)**: when CLI inputs ≠ trace's run inputs,
+  predicted_keys derived from defaults flood the report with false
+  `key_mismatch` attributions. **(A) Suppress predicted-key matching
+  when `params={}` + declared inputs, emit single note**. Rationale:
+  trace 2.1.0 lacks input fingerprint (no ground-truth comparison
+  possible without a 2.2.0 bump). Top-10% pattern from rustc's
+  incremental cache: when you don't have ground truth, **honest "I
+  can't tell" beats wrong answer**.
+- **D2 (importance 2/5)**: surface `PlanEntry.cache_key` in dry-run
+  JSON. Rationale from top-10% codebases (rustc `-Z`, mypy `--report`,
+  ruff rule IDs, TypeScript `.d.ts`): expose internal identity for
+  debugging; don't shove it in default human-readable output. Dry-run
+  JSON is the machine-readable surface — right home for cache_key.
+- **D3 (importance 3/5)**: Option **(B) — add ALL ~7 missing tests
+  now**, including the integration test that replaces the mocked
+  `_predict_cache_keys` test.
+- **D4**: heterogeneous batch attribution stays note-only; matches
+  handoff direction.
+
+### Production fixes applied (in order)
+
+**Batch 1 — single-line fixes:**
+1. **`chunks_skipped` gate fix** at `_emit_discrepancy_diagnostics`:
+   read `chunks_skipped` BEFORE the cache-disengaged gate; change gate
+   to `if cache_create == 0 and cache_read == 0 and not chunks_skipped`.
+   Without this, `chunk_skipped` attribution was unreachable for the
+   branch-absent scenario it was designed for (silent-failures C2).
+2. **Forward-compat trace `format_version`**: broadened
+   `startswith("2.1")` → `startswith("2.") and not startswith("2.0")`.
+   Future 2.2+ traces continue to work per the runtime/CLAUDE.md
+   additive consumer rule. 2.0.0 still skipped (missing fields; note
+   already emitted at trace-load time) (impact-completeness #5).
+3. **Broadened `_predict_cache_keys` except clause**: added
+   `MarkdownParseError`, `WorkflowValidationError`, `FileNotFoundError`,
+   `ValueError` to the catch list. CLI/MCP `analyze-cache` paths don't
+   wrap in broad `except` like `runner.py`'s dry-run nudge does, so a
+   stray exception would crash the whole command (silent-failures W4 +
+   impact-completeness #2).
+
+**Batch 2 — Decision 1 (predicted-key staleness):**
+4. **Decision 1 implementation**: `_predict_cache_keys` now checks
+   `if not parameters and isinstance(workflow_ir.get("inputs"), dict)
+   and workflow_ir["inputs"]:` and returns `({}, [note])` early. The
+   note explains the agent why predicted-key matching was skipped and
+   how to re-run for full detection.
+
+**Batch 3 — Decision 2 (cache_key in JSON):**
+5. **`_entry_to_dict` extension**: added `cache_key` serialization when
+   not None. Required decomposing the function into a constants-driven
+   loop (`_OPTIONAL_SCALAR_FIELDS` tuple) to satisfy C901 complexity
+   threshold without `# noqa`.
+
+**Batch 4 — heterogeneous batch + cap notes:**
+6. **`_flatten_plan_keys` collision detection**: added a second pass
+   that detects per-item cache_key divergence (heterogeneous batch
+   sub-workflow), drops colliding nodes from `predicted_keys`, returns
+   `(keys, notes)` tuple. Emits a notes entry explaining the coverage
+   gap (silent-failures C1, feature-interactions C2).
+7. **`_aggregate_and_cap_discrepancies` cap note**: added `notes`
+   parameter; when `len(aggregated) > max_total`, append
+   `"Discrepancies: N additional groups suppressed by cap..."`. No
+   more silent truncation (silent-failures W3).
+
+**Batch 5 — silent UX gaps:**
+8. **`_populate_suggested_blocks` D3 deferral note**: when
+   `## Cache` already declared, append note explaining steady-state
+   suggestions are deferred to v1.x. No silent return (silent-failures
+   W2).
+
+### Self-audit pass — 4 additional loose ends found and fixed
+
+After staging the primary fixes, the user asked "are you fully happy
+with the implementation?" — a forcing function for honest self-audit.
+Found 4 issues I'd glossed:
+
+#### Loose end 1: BFS-downstream coverage note miscounted
+
+**The bug I introduced.** My initial `_flatten_plan_keys` counted plan
+entries with `cause="downstream"` and emitted a "predicted-key matching
+unavailable for N nodes" note. But this counts **plan structure**, NOT
+**actual silent skips of trace events**. For a non-cache workflow + 2.1
+trace, the note would fire even though no discrepancies were possible
+(cache disengaged → all events skipped at the disengaged-cache gate,
+before predicted_key matters).
+
+**Root cause analysis**: I'd put the silent-skip counter at the wrong
+abstraction level. The semantically correct site is at the actual
+silent-skip decision point inside `_emit_discrepancy_diagnostics` —
+where the analyzer encounters a real trace event with cache engaged AND
+no predicted_key AND no observable signal AND silently `continue`s.
+
+**Fix**: removed the BFS-downstream count from `_flatten_plan_keys`
+(kept the heterogeneous-batch collision detection — that IS plan-time
+structural). Added `silent_skip_no_predicted_key` counter inside
+`_emit_discrepancy_diagnostics`. Note now fires only when real trace
+events were silently skipped, not when plan structure happens to
+contain downstream entries.
+
+**Lesson**: when adding observability for "the analyzer couldn't
+attribute X events", count at the decision point (event-walking),
+NOT a structural proxy (plan-walking). Top-10% codebases (rustc's
+diagnostic emission, mypy's stub-coverage warnings) all count at the
+moment-of-truth, not at structural dependencies.
+
+#### Loose end 2: validator producer-bugs crashed the analyzer
+
+**Real bug surfaced by my own test fixture.** When I added a test for
+the broadened `except` in `_predict_cache_keys`, my fixture (`batch:
+"not-a-dict-or-list"`) crashed `validate_data_flow` with
+`AttributeError: 'str' object has no attribute 'get'` at
+`data_flow.py:325` (`batch_config.get("as", "item")`). This happens
+BEFORE `_emit_discrepancy_diagnostics` runs — `_cache_validator_findings`
+is called first and propagates the exception unhandled.
+
+The reviewer (silent-failures S3) had flagged this exact concern and I
+dismissed it as low-priority. My own test surfaced it.
+
+**Fix**: wrapped `validate_data_flow` in a defensive `try/except` with
+debug logging in `_cache_validator_findings`. The `# noqa: BLE001` is
+appropriate here — defending against producer-bugs in a sibling module
+is the textbook case for `except Exception`. Malformed-IR cases still
+surface at `pflow run` validation; the analyzer's job is best-effort
+signal.
+
+**Lesson**: when a reviewer flags "X may crash on malformed IR" and you
+can't immediately reproduce, **don't dismiss — write a test that tries
+to reproduce**. If the test surfaces the bug, fix it. If it doesn't,
+the test becomes a regression gate.
+
+#### Loose end 3: missing negative fixtures for cross-workflow B.2/B.3
+
+Two structural defenses absent:
+
+- **`cache.cross-workflow-prose-mismatch` byte-equal negative**: no
+  fixture asserting "fires only when prose differs." Removing the
+  byte-comparison gate (`parent_prose != child_prose`) would emit
+  prose-mismatch on EVERY shared chunk name and pass all existing
+  tests.
+- **Rename-precedence DD#26 invariant**: no fixture asserting "rename
+  detection suppresses prose-mismatch on the same edge." Removing the
+  `if edge.is_rename: continue` gate would double-emit on every renamed
+  chunk.
+
+**Fix**: added both tests as parametrized fixtures with explicit
+mutation-test guards in the docstrings (so future contributors know
+exactly what removing the gate would break).
+
+**Lesson**: the **mutation-test thought experiment** rule from the plan
+(comment out the production code, fixture must fail) is the right
+litmus for negative fixtures. A negative fixture that "passes when the
+condition isn't met" is meaningless — it has to fail when the gate is
+removed. Document the mutation in the docstring so future readers know
+what the test guards.
+
+#### Loose end 4 — considered, deferred: `_cache_items` dedup
+
+`_cache_items` exists in both `analyze.py:842` and
+`cross_workflow.py:288` (8 lines each, slightly different return types
+— list vs tuple). Considered creating a shared helper.
+
+**Top-10% lens**: the cost of a shared module + 2 import edges exceeds
+the cost of trivial duplicate code that hasn't drifted. Both
+implementations enforce the same parser-validated shape contract; if
+either drifts, tests catch it. The DRY-vs-simplicity tradeoff favors
+simplicity here.
+
+**Lesson** for future contributors: don't dedup until the duplication
+has actually caused drift. Top-10% codebases (rustc, mypy) have many
+small shape-validation patterns duplicated in different files — they
+reach for shared helpers when the cost of drift exceeds the cost of
+new import edges.
+
+### Test additions (Decision 3 option B)
+
+Added to `tests/test_core/test_cache_analysis_per_id_emission.py` (the
+mocked-test replacement file from sub-segment C):
+
+**Replacements/refactors:**
+- Fixed vacuous `test_analyze_filters_non_cache_data_flow_diagnostics`
+  in `test_cache_analysis_analyze.py`. The original IR didn't produce
+  any diagnostic with `check_inputs=False`, so the assertion passed
+  vacuously over an empty list. Replaced with a forward-template-
+  reference IR that produces a non-cache validator diagnostic, plus a
+  sanity-check assertion that the fixture is non-vacuous.
+
+**New unit tests for boundary conditions (5):**
+- `test_discrepancy_silent_when_actual_matches_prediction` — locks
+  the in-agreement gate (`abs(predicted_pct - actual_pct) < 5`).
+- `test_discrepancy_skips_when_cache_disengaged_and_no_chunks_skipped`
+  — locks the disengaged-cache skip.
+- `test_discrepancy_FIRES_when_cache_disengaged_BUT_chunks_skipped` —
+  regression gate for Loose-end #1's chunks_skipped fix.
+- `test_discrepancy_skips_predicted_key_match_when_compile_fails_no_inputs`
+  — D11-A path coverage (Decision 1).
+- `test_discrepancy_compile_failure_falls_back_to_observable_only` —
+  exercises broadened except + defensive validator together.
+
+**New walker + aggregator tests (5):**
+- `test_iter_llm_events_includes_cached_events` — load-bearing walker
+  contract that distinguishes the analyzer's walker from the trace's
+  own (which skips cached events).
+- `test_iter_llm_events_recurses_into_batch_items` — covers the
+  previously untested `batch_items[].events` recursion path
+  (handoff gotcha #5).
+- `test_aggregator_groups_by_node_and_root_cause_with_affected_invocations`
+  — CRIT-4 from Round 1.
+- `test_aggregator_caps_at_max_total_and_notes_truncation` — locks the
+  cap behavior + truncation note (silent-failures W3 fix).
+- `test_aggregator_does_not_mutate_shared_context_refs` — verifies the
+  `dataclasses.replace` defensive pattern (Round-2 W-SILENT-2).
+
+**New silent-skip note tests (2):**
+- `test_discrepancy_emits_silent_skip_note_when_no_predicted_key_and_no_signal`
+  — locks Loose-end #1's note emission.
+- `test_discrepancy_emits_no_silent_skip_note_for_non_cache_workflow`
+  — regression gate for the bug I introduced (non-cache workflow MUST
+  NOT emit a coverage note).
+
+**New negative fixtures (2):**
+- `test_cross_workflow_prose_mismatch_silent_when_prose_byte_equal` —
+  byte-comparison gate.
+- `test_cross_workflow_prose_mismatch_suppressed_by_rename_precedence`
+  — DD#26 invariant.
+
+**New integration test — replaces mocked test (1):**
+- `test_discrepancy_key_mismatch_via_real_planner_consumption` — drives
+  the C.2 architectural pivot through real production code:
+  `WorkflowRunner.run()` populates the memo cache via real engine; SQL
+  reads engine's actual cache_key; analyzer is called with DIFFERENT
+  params + a synthetic 2.1.0 trace recording the engine's cache_key;
+  asserts `key_mismatch` attribution is correctly derived via
+  `build_plan` consumption (no monkeypatch of `_predict_cache_keys`).
+  Mutation-test: dropping `cache_key=planned.cache_key` from any
+  PlanEntry constructor in `plan.py` makes this test fail.
+
+The original mocked test
+`test_discrepancy_fires_for_key_mismatch_when_prediction_available`
+was kept — it's a unit test of `_attribute_root_cause`'s key_mismatch
+attribution path with controlled inputs. Both are valuable: integration
+locks the architectural pivot end-to-end; mocked locks the attribution
+logic.
+
+### Items considered but deferred (with reasoning)
+
+These were flagged by reviewers but evaluated and rejected for this PR:
+
+- **`storage_mode: shared` × parallel batch defensive note**
+  (feature-interactions C3). Already documented as v1-unsupported in
+  `runtime/CLAUDE.md`. Not a regression from this PR; not worth
+  detection complexity for a known-unsupported combo.
+- **Per-id `savings_usd` value assertions** (test-fidelity W10).
+  Tri-state contract is locked in catalog tests + renderer tests;
+  per-id emission tests would over-couple to specific cost values that
+  drift with LiteLLM pricing updates.
+- **`chunks_skipped is None` field-absent test** (test-fidelity W6,
+  CRIT-7). Production trace 2.1.0 always populates this field as `[]`;
+  the `None` branch is a synthetic-fixture defensive fallback. Adding
+  a test would lock dead-code behavior.
+- **`_aggregate_and_cap_discrepancies` ID-namespace per root_cause**
+  (impact-completeness #4). Forward-defensive against a hypothetical
+  future consumer applying `deduplicate_diagnostics()` on analyzer
+  warnings. No current consumer does this; defer until/unless the
+  dedup path lands.
+- **Padding-advisory empty-batch fixture** (test-fidelity W11). When
+  `batch_size_estimated == 0`, falsy fallback to `affected_calls=1`
+  produces a misleading `savings_usd` figure but the warning is
+  advisory, not a savings claim. Cosmetic.
+
+### Tacit knowledge for future agents
+
+These are the load-bearing insights from this session that aren't
+obvious from the code alone:
+
+**1. BFS-downstream cache_key gap: smaller than it looks; no fix
+actually addresses the dominant use case.** The reviewer flagged
+`_make_downstream_entry` (`plan.py:745`) for not passing `cache_key=`.
+When I dug in, the framing kept simplifying:
+
+- *Reviewer's claim*: pass `cache_key=planned.cache_key` from
+  `plan_node()`. Verified false — calling `plan_node()` from this
+  path would CRASH because BFS-downstream nodes' templates reference
+  upstream that wouldn't have executed yet. Strict mode raises
+  template_exception; permissive mode echoes literal `${node.X}`
+  strings into resolved input → produces a cache_key derived from
+  unresolved literals → guaranteed false `key_mismatch` on every
+  comparison. Worse than the current "don't predict."
+- *My initial framing*: "structurally undefined, defer Fix A
+  (memo speculation) to v1.x." This was still overstated. After the
+  user pushed back ("schema bumps are cheap, why is Fix B 250 LOC"),
+  re-decomposing showed Fix B is actually ~140 LOC, **but it doesn't
+  solve the dominant use case either.**
+
+The fundamental wall: predicting downstream cache_key for a fresh
+run requires knowing what upstream WOULD produce on a fresh run. For
+the upstream-edit cascade scenario (user edits node_A, runs
+`analyze-cache --from-trace` to see what's affected downstream),
+**no source has post-edit upstream output**:
+- Trace records pre-edit upstream output (frozen at trace time)
+- memo cache stores pre-edit output (keyed by old cache_key OR
+  retrieved by `get_latest_for_node` — both return pre-edit data)
+- Only running the workflow produces post-edit output, which is
+  exactly what dry-run avoids
+
+So Fix A (memo speculation) and Fix B (trace records resolved
+inputs) and Fix C (iterative trace cache_key walk) **all hit the
+same wall**. They differ only in implementation; none solves the
+cascade scenario.
+
+What the gap actually misses (after honest re-decomposition):
+
+| User intent | Tool that handles it | BFS-downstream gap impact |
+|---|---|---|
+| "Did my edit change THIS node's cache_key?" | Already works — edited node is the miss boundary; `plan_node()` IS called for it | None |
+| "Did caching work as expected on the LAST run?" | Observable attribution (TTL expiry, chunks_skipped) — **the spec mode-4 example uses TTL-expiry attribution, not key_mismatch** | None |
+| "What WOULD downstream cache_keys be after my edit?" | Requires running the workflow — not what `analyze-cache` is for | Fundamental |
+
+The third bucket is the only thing the gap affects. The right user
+workflow is: edit → re-run (engine produces fresh trace with cache
+misses) → `analyze-cache --from-trace fresh.json` (correctly
+identifies misses via observable attribution).
+
+**Action**: do not fix this in v1.x. The current implementation's
+silent-skip note correctly tells agents "I can't predict for these
+N events" — the right surface for a fundamentally-unfixable case.
+If/when a future change wants to address this anyway, recognize the
+upstream-cascade scenario can't be solved without:
+- Trace 2.2.0 recording **upstream OUTPUTS** (not inputs) — but
+  even then, the analyzer would only catch local-edit cases, which
+  already work
+- OR partial workflow re-execution at plan time — fundamentally
+  changes what dry-run means
+
+**Lesson**: when a reviewer flags a coverage gap, decompose the
+fix HONESTLY before estimating cost. My first instinct was "Fix B
+is 250 LOC" — handwaving. Decomposing showed it's 140. Then
+asking "what does Fix B actually buy" showed it doesn't buy what I
+thought. The cost question masked a more important question:
+**does the fix solve the actual problem?** Three "fixes" turned
+out to all hit the same wall once I traced the data flow. The user
+got me to this realization by pushing on cost; the actual finding
+was correctness, not cost.
+
+**2. Trace 2.1.0 lacks input fingerprint.** The most common
+analyze-cache invocation pattern is
+`pflow analyze-cache <wf> --from-trace <path>` WITHOUT
+re-supplying the original inputs. For workflows with default values,
+`compile_workflow` succeeds with empty params → `build_plan` predicts
+cache_keys derived from defaults → false `key_mismatch` for every
+input-referencing node. The fix (Decision 1) detects this case and
+suppresses predicted-key matching with an honest note. The
+principled long-term fix is trace 2.2.0 recording an input
+fingerprint — out of scope.
+
+**3. Silent-skip count belongs at the decision point, not a
+structural proxy.** When implementing observability for "X events
+weren't attributed," count at the moment-of-truth (event walking)
+not at structural dependencies (plan walking). Plan structure is a
+proxy that produces false positives for orthogonal scenarios. This
+mirrors how rustc emits diagnostics — at the moment the compiler
+gives up on a query, not at the AST node where the query was
+declared.
+
+**4. The validator can crash on malformed IR.** `validate_data_flow`
+has producer-bugs (`AttributeError` on `batch_config.get(...)` when
+batch is a string instead of dict). The analyzer's
+`_cache_validator_findings` MUST be defensive — wrap in
+`try/except Exception` with debug logging. Future agents adding new
+analyzer pipeline stages that consume `data_flow.py` outputs should
+follow the same pattern: `validate_data_flow` is a "best-effort
+producer" from the analyzer's POV.
+
+**5. Heterogeneous batch sub-workflow collision is plan-time
+detectable.** Per-item child plans share `node_id` but compute
+different `cache_key` per item. `_flatten_plan_keys` detects this and
+drops colliding nodes (observable-only fallback) rather than picking
+an arbitrary winner. Top-10% pattern from rustc/clippy: when in doubt,
+**refuse to attribute rather than misattribute**. The note explains
+the coverage gap so agents understand WHY some discrepancies aren't
+emitted.
+
+**6. The `dataclasses.replace` defensive pattern in
+`_aggregate_and_cap_discrepancies` is load-bearing.**
+`make_diagnostic` may share `context` dicts across diagnostics in the
+same group. In-place mutation (`representative.context["X"] = Y`)
+would leak `affected_invocations` to other diagnostics. Use
+`replace(representative, context=merged_context)` to create a fresh
+diagnostic with merged context. Documented inline; tested by
+`test_aggregator_does_not_mutate_shared_context_refs`.
+
+**7. The `_iter_llm_events` walker has 3 nesting paths — only 2 are
+event-yielding.** Trace events can appear directly,
+`event["batch_items"][i]` can have `llm_call` (flat-batch case), AND
+`event["batch_items"][i]["events"]` can recurse (sub-workflow
+batch-item case). Handoff gotcha #5 explicitly flagged the deep
+nested-recursion path as easy-to-miss. Both `batch_items` paths are
+now covered by tests.
+
+**8. Decision 3 option (B) was the right call.** Adding ALL ~7 missing
+tests up-front (~30 LOC each, ~210 LOC total) was strictly cheaper
+than the cost of a future regression. The handoff explicitly warned:
+"Segment 4's stubs survived 4-agent code review because per-id tests
+round-tripped through `make_diagnostic` (catalog dispatch) but never
+exercised emission paths." Don't fall back to round-trip tests when
+emission tests are harder to write.
+
+**9. The mocked `_predict_cache_keys` test still has value.** I
+considered deleting it after the integration test landed. But it
+tests `_attribute_root_cause`'s key_mismatch logic in isolation with
+controlled inputs — that's a legitimate unit test. Both tests are
+valuable: integration locks the architectural pivot end-to-end;
+mocked locks the attribution logic.
+
+**10. The "test fixture must produce a non-cache diagnostic" sanity
+check is the cure for vacuous negative controls.** When rewriting
+the A.6 negative control, my first IR (forward-template-reference)
+produced no diagnostic with `check_inputs=False` — the assertion
+would have passed vacuously over an empty `result.warnings`. Added a
+sanity-check assertion (`raw = validate_data_flow(...); assert
+any(d.id is None or not d.id.startswith("cache.") for d in raw)`)
+that fails the test if the fixture is vacuous. Future negative-control
+authors should do the same.
+
+**11. C901 force-decompose pattern.** The user's no-`# noqa: C901`
+directive turned a hard constraint into a refactoring tool. When
+adding the `cache_key` branch to `_entry_to_dict` pushed complexity
+to 11, decomposing into a constants-driven loop
+(`_OPTIONAL_SCALAR_FIELDS` tuple) brought it back to 10 AND made
+the function more readable. Future agents: when a function nudges
+past 10, decompose into helpers — the result is better code AND
+respects the lint contract.
+
+**12. PlanEntry.cache_key in JSON, not text output.** Decision 2 (A)
+chose JSON-only surface. Top-10% codebases (rustc `-Z`, mypy
+`--report`, ruff rule IDs) expose internal IDs for debugging via
+machine-readable surfaces, never default text output. The cache_key
+hex string is debugging info; surfacing in text would clutter the
+plan summary for the 95% of users who don't debug cache hashes.
+
+**13. The "did the reviewer claim X is a bug? verify before
+accepting" pattern.** Two reviewer claims in this session reversed
+on verification: (a) "BFS-downstream missing cache_key=" — actually
+structurally undefined; calling plan_node would crash. (b) "trace
+records params for comparison" — actually doesn't; eliminated an
+entire decision branch. Always run the verification grep BEFORE
+designing the fix; the right shape often diverges from the
+reviewer's framing.
+
+### Final state at end of this session
+
+- **5932 tests pass** (up from 5917 before this session's review pass;
+  +15 net new tests including the integration test).
+- **`make check`** clean (ruff + ruff-format + mypy + deptry).
+- **`tests/test_execution/test_plan_drift.py`** 34/34 green —
+  load-bearing engine ↔ planner cache_key parity holds.
+- **`test_golden_baseline_hashes_match`** (DD#19) green — silent-stale-
+  cache gate holds.
+- 4 production files modified (`analyze.py` heavily,
+  `plan_formatter.py`, plus self-audit pass touch-ups), 2 test files
+  modified (15 new tests).
+
+### Files modified in this session
+
+**Production:**
+- `src/pflow/core/cache_analysis/analyze.py` — chunks_skipped gate,
+  format_version forward-compat, broadened except, Decision 1
+  (params={}+declared inputs suppression), `_flatten_plan_keys`
+  collision detection + tuple return, `_aggregate_and_cap_discrepancies`
+  cap note, `_populate_suggested_blocks` D3 deferral note,
+  `_emit_discrepancy_diagnostics` silent-skip counter,
+  `_cache_validator_findings` defensive try/except. (+~80 LOC,
+  -~30 LOC.)
+- `src/pflow/execution/formatters/plan_formatter.py` — Decision 2:
+  `_entry_to_dict` extension via `_OPTIONAL_SCALAR_FIELDS` constant,
+  decomposed for C901. (+~10 LOC, -~5 LOC.)
+
+**Tests:**
+- `tests/test_core/test_cache_analysis_analyze.py` — fixed vacuous
+  negative-control test for A.6 (added sanity-check assertion +
+  forward-reference fixture).
+- `tests/test_core/test_cache_analysis_per_id_emission.py` — added
+  15 new tests (boundary conditions, walker, aggregator, silent-skip,
+  negative fixtures, integration test). (+~470 LOC.)
+
+**No commits.** Working tree ready for user review and commit.
+
+### Code-review process notes
+
+The 4-agent review pass (silent-failures + impact-completeness +
+test-fidelity + feature-interactions) was the right subset for this
+surface. Skipped agents were appropriate:
+
+- **review-validation-consistency**: Segment 1 owned cache validation;
+  this PR doesn't change validation surfaces.
+- **review-agent-ux**: cache trace fields are machine-readable;
+  user-facing diagnostics live in earlier segments.
+- **review-concurrency-safety**: no concurrency surface in this
+  change.
+
+For future Task 159 work that touches new surfaces, run the
+appropriate subset — full 7-agent battery is overkill when the change
+is bounded.
+

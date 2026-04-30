@@ -388,3 +388,671 @@ def test_discrepancy_recurses_into_sub_workflow_events(tmp_path: Path) -> None:
     result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
     diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
     assert diag.node_id == "child-gen"
+
+
+# ---------------------------------------------------------------------------
+# Discrepancy edge cases — production-shaped boundaries (review-fidelity 6)
+# ---------------------------------------------------------------------------
+
+
+def test_discrepancy_silent_when_actual_matches_prediction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When predicted_key == actual_key (cache healthy), no discrepancy fires.
+
+    Mutation-test guard for the in-agreement gate at ``analyze.py:1143``.
+    Flipping ``< 5`` to ``> 95`` would emit cache.discrepancy on every
+    healthy run.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(
+        analyze_module,
+        "_predict_cache_keys",
+        lambda *_args, **_kwargs: ({"gen": "shared-key"}, []),
+    )
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_key": "shared-key",
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 1000,
+                    "cache_age_sec": 30,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    assert "cache.discrepancy" not in {d.id for d in result.warnings}
+
+
+def test_discrepancy_skips_when_cache_disengaged_and_no_chunks_skipped(tmp_path: Path) -> None:
+    """When cache_creation==0 AND cache_read==0 AND no chunks_skipped, the
+    cache wasn't engaged at all; no discrepancy possible.
+
+    Mutation-test guard: removing this gate would emit phantom unknowns
+    on every non-cache trace event.
+    """
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 10,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    assert "cache.discrepancy" not in {d.id for d in result.warnings}
+
+
+def test_discrepancy_FIRES_when_cache_disengaged_BUT_chunks_skipped(tmp_path: Path) -> None:
+    """A node that DECLARED prompt_cache: but had a chunk skipped at runtime
+    (branch absent) can have BOTH zero create/read AND a populated
+    cache_chunks_skipped list — exactly what chunk_skipped attribution was
+    designed for.
+
+    Mutation-test guard: reverting the ``and not chunks_skipped`` term in
+    the disengaged-cache gate makes this test fail (chunk_skipped goes
+    silent).
+    """
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 10,
+                    "cache_chunks_skipped": ["concept-brief.response"],
+                },
+            }
+        ],
+    )
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "chunk_skipped"
+    assert diag.context["skipped_chunk"] == "concept-brief.response"
+
+
+def test_discrepancy_skips_predicted_key_match_when_compile_fails_no_inputs(tmp_path: Path) -> None:
+    """D11-A path: when params={} and the workflow declares inputs, the
+    analyzer suppresses predicted-key matching (would produce false
+    key_mismatch on every input-referencing node) and emits a notes entry.
+    Observable signals (here: TTL expiry) still attribute correctly.
+    """
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_key": "actual-from-trace",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 301,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [],
+    }
+
+    # Use a non-None memo_cache so we exercise the params-empty branch
+    # (memo_cache=None short-circuits earlier with a different note).
+    class _Stub:
+        pass
+
+    result = analyze(
+        workflow_ir,
+        workflow_path="parent.pflow.md",
+        trace_path=trace_path,
+        memo_cache=_Stub(),
+    )
+    # TTL-expiry attribution still fires (observable-only path).
+    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "ttl_expiry"
+    assert diag.context["predicted_cache_key"] is None
+    # The notes entry surfacing why predicted-key matching was skipped.
+    assert any("predicted-key matching skipped" in n and "weren't supplied" in n for n in result.notes)
+
+
+def test_discrepancy_emits_silent_skip_note_when_no_predicted_key_and_no_signal(
+    tmp_path: Path,
+) -> None:
+    """When predicted_keys is empty (D11-A) AND a trace event has cache
+    engaged but no observable signal (no chunks_skipped, age <= TTL), the
+    analyzer silently can't attribute. The new silent-skip note surfaces
+    the count so agents see the coverage gap.
+
+    Mutation-test guard: removing the ``silent_skip_no_predicted_key += 1``
+    or the trailing notes append makes this test fail.
+    """
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "downstream-node",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 50,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+    # Workflow declares an input but the analyzer sees params={} → D11-A
+    # path → predicted_keys empty → silent skip on the trace event.
+    workflow_ir = {"inputs": {"topic": {"type": "string"}}, "nodes": []}
+
+    class _Stub:
+        pass
+
+    result = analyze(
+        workflow_ir,
+        workflow_path="parent.pflow.md",
+        trace_path=trace_path,
+        memo_cache=_Stub(),
+    )
+    # No discrepancy emitted (no observable signal).
+    assert "cache.discrepancy" not in {d.id for d in result.warnings}
+    # But the silent-skip note IS emitted, with the right count.
+    assert any("skipped attribution for 1 trace event(s)" in n and "no predicted cache_key" in n for n in result.notes)
+
+
+def test_discrepancy_emits_no_silent_skip_note_for_non_cache_workflow(tmp_path: Path) -> None:
+    """For workflows with no cache opportunities (all events have
+    cache_create=cache_read=0 and no chunks_skipped), the disengaged-cache
+    gate skips them BEFORE the silent-skip counter — so no spurious note.
+
+    This is the regression that the BFS-downstream-count-by-plan-walking
+    approach would have produced. Counting silent skips at the actual
+    decision point (event walking) avoids it.
+    """
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "non-cache-llm",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 50,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    assert not any("skipped attribution for" in n for n in result.notes)
+
+
+def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Path) -> None:
+    """When ``compile_workflow`` raises (here: a malformed IR shape that
+    fails compile checks), the analyzer catches the exception, appends a
+    notes entry, and falls back to observable-only attribution. The
+    discrepancy is still emitted via the chunk_skipped observable path.
+
+    Mutation-test: narrowing the except clause back to just CompilationError
+    won't cover the ValueError this fixture triggers — analyze() would
+    crash entirely and this test would fail.
+    """
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 10,
+                    "cache_chunks_skipped": ["concept"],
+                },
+            }
+        ],
+    )
+    # This IR has no ``inputs`` declaration so D11-A doesn't fire, but
+    # the malformed batch shape (string instead of dict) triggers a
+    # ValueError downstream of compile_workflow during planning.
+    bad_ir = {
+        "nodes": [
+            {
+                "id": "gen",
+                "type": "llm",
+                "params": {"prompt": "hi"},
+                "batch": "not-a-dict-or-list",
+            }
+        ]
+    }
+
+    class _Stub:
+        pass
+
+    result = analyze(
+        bad_ir,
+        workflow_path="bad.pflow.md",
+        trace_path=trace_path,
+        memo_cache=_Stub(),
+    )
+    # The compile-failure note is appended.
+    assert any("predicted-key matching unavailable" in n for n in result.notes)
+    # Observable-only attribution still fires (chunk_skipped is observable).
+    diag = next((d for d in result.warnings if d.id == "cache.discrepancy"), None)
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "chunk_skipped"
+
+
+# ---------------------------------------------------------------------------
+# Cross-workflow B.2/B.3 negative fixtures (review-fidelity W11)
+# ---------------------------------------------------------------------------
+
+
+def test_cross_workflow_prose_mismatch_silent_when_prose_byte_equal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Negative fixture for B.2: when parent and child declare the same
+    chunk name with byte-equal prose_before, NO prose-mismatch fires.
+
+    Mutation-test guard: removing the byte-comparison gate
+    (``parent_prose != child_prose``) at ``_cross_workflow_prose_mismatches``
+    would emit prose-mismatch on every shared chunk — this test fails.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "cache": {
+            "items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "Same prose\n"}]
+        },
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"direction": "${creative.direction}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "cache": {
+            "items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "Same prose\n"}]
+        },
+        "nodes": [{"id": "noop", "type": "shell", "params": {"command": "echo ok"}}],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.cross-workflow-prose-mismatch" not in {d.id for d in result.warnings}
+
+
+def test_cross_workflow_prose_mismatch_suppressed_by_rename_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DD#26 invariant: when a rename is detected on the same edge, the
+    rename diagnostic takes precedence and prose-mismatch is suppressed —
+    even if the prose differs byte-for-byte.
+
+    Mutation-test guard: removing the ``if edge.is_rename: continue`` gate
+    in ``_cross_workflow_prose_mismatches`` would emit BOTH rename AND
+    prose-mismatch on the same edge — this test fails.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    # Parent passes ``${concept_brief}`` to child as ``creative_brief``
+    # (rename detected via tail-comparison) AND the child cache block has
+    # different prose for the same chunk name.
+    parent_ir = {
+        "cache": {"items": [{"name": "concept_brief", "var": "concept_brief", "prose_before": "Parent prose\n"}]},
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"creative_brief": "${concept_brief}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "cache": {"items": [{"name": "concept_brief", "var": "concept_brief", "prose_before": "Different prose\n"}]},
+        "nodes": [{"id": "noop", "type": "shell", "params": {"command": "echo ok"}}],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    ids = {d.id for d in result.warnings}
+    # Rename fires.
+    assert "cache.cross-workflow-rename-detected" in ids
+    # Prose-mismatch is suppressed by the rename precedence.
+    assert "cache.cross-workflow-prose-mismatch" not in ids
+
+
+# ---------------------------------------------------------------------------
+# `_iter_llm_events` walker — load-bearing structural tests (review-fidelity W4)
+# ---------------------------------------------------------------------------
+
+
+def test_iter_llm_events_includes_cached_events() -> None:
+    """The walker must yield cached events — that's the whole reason it
+    exists separately from ``_collect_llm_calls_from_events`` (which skips
+    cached for cost aggregation).
+    """
+    from pflow.core.cache_analysis.analyze import _iter_llm_events
+
+    events = [
+        {
+            "node_id": "memoized-llm",
+            "cached": True,
+            "llm_call": {"model": "anthropic/claude-sonnet-4-5", "cache_creation_input_tokens": 0},
+        }
+    ]
+    yielded = list(_iter_llm_events(events))
+    assert len(yielded) == 1
+    assert yielded[0][0] == "memoized-llm"
+    assert yielded[0][1].get("cached") is True
+
+
+def test_iter_llm_events_recurses_into_batch_items() -> None:
+    """Batch items have nested ``events`` lists for sub-workflow events
+    PER ITEM — easy to miss this nested-recursion path. Without it,
+    discrepancy detection would skip every batched LLM call inside a
+    batch sub-workflow.
+    """
+    from pflow.core.cache_analysis.analyze import _iter_llm_events
+
+    events = [
+        {
+            "node_id": "batch-parent",
+            "batch_items": [
+                {
+                    "node_id": "batch-parent",
+                    "events": [
+                        {
+                            "node_id": "inner-llm",
+                            "llm_call": {"model": "anthropic/claude-sonnet-4-5"},
+                        }
+                    ],
+                },
+                {
+                    "node_id": "batch-parent",
+                    "llm_call": {"model": "anthropic/claude-sonnet-4-5"},  # flat-batch case
+                },
+            ],
+        }
+    ]
+    yielded = [(node_id, ev) for node_id, ev in _iter_llm_events(events)]
+    yielded_node_ids = [y[0] for y in yielded]
+    # Should include BOTH the inner sub-workflow LLM and the flat-batch LLM.
+    assert "inner-llm" in yielded_node_ids
+    # Mutation-test: removing ``yield from _iter_llm_events(item.get("events", []))``
+    # makes ``inner-llm`` disappear from the yields.
+
+
+# ---------------------------------------------------------------------------
+# `_aggregate_and_cap_discrepancies` — coverage for CRIT-4 (review-fidelity W5)
+# ---------------------------------------------------------------------------
+
+
+def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() -> None:
+    """Three discrepancies for the same (node_id, root_cause) collapse into
+    one diagnostic with affected_invocations=3. Different root_cause stays
+    separate.
+
+    Mutation-test guard for the dataclasses.replace defensive pattern:
+    using in-place mutation (``representative.context["..."] = ...``) would
+    leak ``affected_invocations`` to other diagnostics in the same group
+    when ``make_diagnostic`` shares context refs.
+    """
+    from pflow.core.cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diags = [
+        make_diagnostic(
+            "cache.discrepancy",
+            node_id="gen",
+            trace_path="t",
+            predicted_pct=100,
+            actual_pct=0,
+            root_cause="ttl_expiry",
+            root_cause_summary="x",
+            affected_workflow="w",
+        )
+        for _ in range(3)
+    ]
+    diags.append(
+        make_diagnostic(
+            "cache.discrepancy",
+            node_id="gen",
+            trace_path="t",
+            predicted_pct=100,
+            actual_pct=0,
+            root_cause="key_mismatch",
+            root_cause_summary="y",
+        )
+    )
+
+    notes: list[str] = []
+    aggregated = _aggregate_and_cap_discrepancies(diags, max_total=20, notes=notes)
+    assert len(aggregated) == 2
+    assert aggregated[0].context is not None
+    assert aggregated[0].context["affected_invocations"] == 3
+    assert aggregated[0].context["root_cause"] == "ttl_expiry"
+    assert aggregated[1].context is not None
+    assert aggregated[1].context["affected_invocations"] == 1
+    assert aggregated[1].context["root_cause"] == "key_mismatch"
+    # Cap not engaged — no truncation note.
+    assert notes == []
+
+
+def test_aggregator_caps_at_max_total_and_notes_truncation() -> None:
+    """When the number of unique (node_id, root_cause) groups exceeds
+    max_total, the cap engages and a notes entry surfaces the suppressed
+    count. Without the note, agents see a silently-truncated discrepancy
+    list.
+    """
+    from pflow.core.cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diags = [
+        make_diagnostic(
+            "cache.discrepancy",
+            node_id=f"node-{i}",
+            trace_path="t",
+            predicted_pct=100,
+            actual_pct=0,
+            root_cause="key_mismatch",
+            root_cause_summary="x",
+        )
+        for i in range(25)
+    ]
+    notes: list[str] = []
+    aggregated = _aggregate_and_cap_discrepancies(diags, max_total=20, notes=notes)
+    assert len(aggregated) == 20
+    assert any("5 additional group(s) suppressed by cap" in n for n in notes)
+
+
+def test_aggregator_does_not_mutate_shared_context_refs() -> None:
+    """``make_diagnostic`` may share context dicts; aggregator must use
+    ``dataclasses.replace`` so the merged ``affected_invocations`` doesn't
+    leak to siblings (which would silently misreport invocation counts).
+    """
+    from pflow.core.cache_analysis.analyze import _aggregate_and_cap_discrepancies
+
+    shared_context = {"category": "cache_advisory", "root_cause": "ttl_expiry"}
+    from pflow.core.diagnostic import Diagnostic, Severity
+
+    d1 = Diagnostic(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        id="cache.discrepancy",
+        message="x",
+        node_id="gen",
+        context=shared_context,
+    )
+    d2 = Diagnostic(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        id="cache.discrepancy",
+        message="y",
+        node_id="gen",
+        context=shared_context,
+    )
+    aggregated = _aggregate_and_cap_discrepancies([d1, d2], max_total=20, notes=None)
+    # Shared dict must NOT have ``affected_invocations`` written to it.
+    assert "affected_invocations" not in shared_context
+    # The aggregated diagnostic carries the merged context separately.
+    assert aggregated[0].context is not None
+    assert aggregated[0].context["affected_invocations"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Integration test: replaces the mocked `_predict_cache_keys` test
+# (review-fidelity Critical 1)
+# ---------------------------------------------------------------------------
+
+
+def test_discrepancy_key_mismatch_via_real_planner_consumption(
+    tmp_path: Path,
+    isolate_pflow_config: dict[str, Any],
+    mock_llm_client: Any,
+) -> None:
+    """End-to-end test that drives the C.2 architectural pivot through
+    production code: real engine populates cache_key in memo, real
+    ``build_plan`` predicts cache_key from current params, the analyzer
+    consumes both and emits ``key_mismatch`` when they diverge.
+
+    Mutation-test: dropping ``cache_key=planned.cache_key`` from any
+    PlanEntry constructor in plan.py makes predicted_keys empty, the
+    analyzer falls back to observable-only attribution, and this test
+    fails (no key_mismatch diagnostic; root_cause is ``unknown`` instead).
+
+    No monkeypatch of ``_predict_cache_keys`` — the whole point is the
+    planner-consumption path is real.
+    """
+    import sqlite3
+
+    from pflow.core.cache_analysis.analyze import analyze as _analyze
+    from pflow.core.markdown_parser import parse_markdown
+    from pflow.execution.result import RunnerConfig
+    from pflow.execution.runner import WorkflowRunner
+    from pflow.runtime.cache import MemoizationCache
+
+    workflow_path = tmp_path / "wf.pflow.md"
+    workflow_path.write_text(
+        "# Cache Mismatch Test\n\n"
+        "Single-LLM workflow whose cache_key depends on ${topic}. "
+        "We run with topic=A, then ask the analyzer to predict for topic=B.\n\n"
+        "## Inputs\n\n"
+        "### topic\n\n"
+        "The topic to summarize.\n\n"
+        "- type: string\n\n"
+        "## Steps\n\n"
+        "### gen\n\n"
+        "Run the LLM with the topic.\n\n"
+        "- type: llm\n"
+        "- model: anthropic/claude-sonnet-4-5\n\n"
+        "```prompt\n"
+        "Summarize ${topic}.\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    # Run 1 with topic=A — engine populates the memo cache. The autouse
+    # mock_llm_client fixture handles the LLM call; we don't need a real
+    # API key.
+    config = RunnerConfig(trace_enabled=False, cache_enabled=True)
+    runner = WorkflowRunner()
+    result_1 = runner.run(str(workflow_path), {"topic": "A"}, config)
+    assert result_1.success, f"Run 1 failed: {result_1.diagnostics}"
+
+    # Read engine's actual cache_key from SQLite — same pattern as the
+    # extended test_plan_drift parity test. The MemoizationCache lives at
+    # ``~/.pflow/cache/cache.db`` and the conftest's ``isolate_pflow_config``
+    # patches ``Path.home()`` to ``tmp_path``, so this resolves under the
+    # isolated config dir.
+    cache_db = isolate_pflow_config["pflow_dir"] / "cache" / "cache.db"
+    assert cache_db.exists(), f"Memo cache should exist at {cache_db}"
+    conn = sqlite3.connect(cache_db)
+    try:
+        row = conn.execute(
+            "SELECT cache_key FROM cache_entries WHERE node_id = ? ORDER BY created_at DESC LIMIT 1",
+            ("gen",),
+        ).fetchone()
+        actual_engine_key = row[0] if row else None
+    finally:
+        conn.close()
+    assert actual_engine_key is not None, "Engine should have populated a cache row for 'gen'"
+
+    # Build a synthetic 2.1.0 trace recording the engine's cache_key.
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.1.0",
+            "workflow_path": str(workflow_path.resolve()),
+            "nodes": [
+                {
+                    "node_id": "gen",
+                    "llm_call": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "cache_key": actual_engine_key,
+                        "cache_creation_input_tokens": 100,
+                        "cache_read_input_tokens": 0,
+                        "cache_age_sec": 5,
+                        "cache_chunks_skipped": [],
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    # Now invoke analyze() with DIFFERENT params — planner predicts a
+    # different cache_key from the same workflow + new params.
+    parsed = parse_markdown(workflow_path.read_text(encoding="utf-8"))
+    memo_cache = MemoizationCache(db_path=cache_db, read_enabled=True)
+    cache_analysis = _analyze(
+        parsed.ir,
+        parameters={"topic": "B"},
+        workflow_path=str(workflow_path.resolve()),
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=memo_cache,
+    )
+
+    diag = next((d for d in cache_analysis.warnings if d.id == "cache.discrepancy"), None)
+    assert diag is not None, (
+        f"Expected cache.discrepancy via planner-consumption; got {[d.id for d in cache_analysis.warnings]}"
+    )
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "key_mismatch", (
+        f"Expected key_mismatch; got {diag.context['root_cause']!r}. "
+        "If predicted_cache_key is None, planner→PlanEntry propagation drifted."
+    )
+    assert diag.context["predicted_cache_key"] is not None
+    assert diag.context["predicted_cache_key"] != actual_engine_key
+    assert diag.context["actual_cache_key"] == actual_engine_key

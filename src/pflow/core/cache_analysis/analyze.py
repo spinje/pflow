@@ -235,6 +235,7 @@ def analyze(
         rows_by_node=rows_by_node,
         memo_cache=memo_cache,
         workflow_path=lookup_path,
+        notes=notes,
     )
     warnings.extend(shared_warnings)
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
@@ -697,10 +698,20 @@ def _populate_suggested_blocks(
     rows_by_node: dict[str, PerCallRow],
     memo_cache: Any,
     workflow_path: str,
+    notes: list[str],
 ) -> tuple[list[SuggestedBlock], list[Diagnostic]]:
-    """Build greenfield suggested ``## Cache`` blocks and matching advisory."""
+    """Build greenfield suggested ``## Cache`` blocks and matching advisory.
+
+    v1 covers greenfield only (per DD#3). When ``## Cache`` is already
+    declared, append a note so agents understand why no suggestion was
+    produced — silent return would otherwise hide the deferral.
+    """
     declared_names = set(_cache_item_names(workflow_ir))
     if declared_names:
+        notes.append(
+            "Suggested-blocks: workflow already declares ## Cache; steady-state "
+            "(partial-block) suggestions deferred to v1.x."
+        )
         return [], []
 
     ref_to_nodes, first_seen = _collect_llm_template_references(workflow_ir)
@@ -831,12 +842,21 @@ def _emit_padding_advisories(
 
 
 def _cache_validator_findings(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
-    """Surface validator-shipped cache findings in analyze-cache output."""
-    return [
-        diag
-        for diag in validate_data_flow(workflow_ir, check_inputs=False)
-        if diag.id is not None and diag.id.startswith("cache.")
-    ]
+    """Surface validator-shipped cache findings in analyze-cache output.
+
+    Defensive: ``validate_data_flow`` can raise ``AttributeError`` and
+    similar producer-bugs on malformed IR (e.g. batch config that's a
+    string rather than a dict). For an analysis tool, the safer path is
+    to log + skip surfacing rather than crash the entire ``analyze-cache``
+    invocation. The malformed-IR cases will surface separately at
+    ``pflow run`` validation; the analyzer's job is best-effort signal.
+    """
+    try:
+        diagnostics = validate_data_flow(workflow_ir, check_inputs=False)
+    except Exception:
+        logger.debug("validate_data_flow raised on malformed IR; skipping cache findings", exc_info=True)
+        return []
+    return [diag for diag in diagnostics if diag.id is not None and diag.id.startswith("cache.")]
 
 
 def _cache_items(workflow_ir: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1058,7 +1078,13 @@ def _predict_cache_keys(
     memo_cache: Any,
     workflow_path: str | None,
 ) -> tuple[dict[str, str], list[str]]:
-    """Consume planner-produced cache keys rather than re-deriving them."""
+    """Consume planner-produced cache keys rather than re-deriving them.
+
+    Returns ``(predicted_keys, notes)`` where ``predicted_keys`` is empty when
+    we can't trust the prediction (no memo cache, partial inputs, compilation
+    failure). Each empty-result branch appends a note explaining why so the
+    agent reading the analyzer output understands what's missing.
+    """
     notes: list[str] = []
     if memo_cache is None:
         notes.append(
@@ -1066,8 +1092,26 @@ def _predict_cache_keys(
             "Observable-field attributions (TTL expiry, chunk skipped) still apply."
         )
         return {}, notes
+
+    # When the workflow declares inputs but the caller passed none, predicted
+    # keys would be derived from defaults — diverging from the trace's run-time
+    # values and flooding the report with false ``key_mismatch`` attributions.
+    # Trace 2.1.0 doesn't carry an input fingerprint, so we can't compare; the
+    # honest fallback is observable-only attribution.
+    if not parameters and isinstance(workflow_ir.get("inputs"), dict) and workflow_ir["inputs"]:
+        notes.append(
+            "Discrepancy detection: predicted-key matching skipped — workflow declares inputs that "
+            "weren't supplied. Pass `key=value` pairs matching the trace's run for full detection. "
+            "Observable-field attributions (TTL expiry, chunk skipped) still apply."
+        )
+        return {}, notes
+
     try:
-        from pflow.core.exceptions import CompilationError
+        from pflow.core.exceptions import (
+            CompilationError,
+            MarkdownParseError,
+            WorkflowValidationError,
+        )
         from pflow.execution.plan import build_plan
         from pflow.registry import Registry
         from pflow.runtime import compile_workflow
@@ -1081,27 +1125,66 @@ def _predict_cache_keys(
             registry,
             _parent_workflow_file=workflow_path,
         )
-    except CompilationError as exc:
+    except (CompilationError, MarkdownParseError, WorkflowValidationError, FileNotFoundError, ValueError) as exc:
         notes.append(
             f"Discrepancy detection: predicted-key matching unavailable ({type(exc).__name__}). "
             "Provide required inputs via `pflow analyze-cache <workflow> key=value` for full detection. "
             "Observable-field attributions (TTL expiry, chunk skipped) still apply."
         )
         return {}, notes
-    return _flatten_plan_keys(plan), notes
+    keys, plan_notes = _flatten_plan_keys(plan)
+    notes.extend(plan_notes)
+    return keys, notes
 
 
-def _flatten_plan_keys(plan: Any, acc: dict[str, str] | None = None) -> dict[str, str]:
-    """Flatten parent and nested sub-plans to ``node_id -> cache_key``."""
-    keys = {} if acc is None else acc
-    for entry in getattr(plan, "entries", []) or []:
-        cache_key = getattr(entry, "cache_key", None)
-        if cache_key is not None:
-            keys[str(entry.node_id)] = str(cache_key)
-        sub_plan = getattr(entry, "sub_plan", None)
-        if sub_plan is not None:
-            _flatten_plan_keys(sub_plan, keys)
-    return keys
+def _flatten_plan_keys(plan: Any) -> tuple[dict[str, str], list[str]]:
+    """Flatten parent and nested sub-plans to ``node_id -> cache_key``.
+
+    Detects **heterogeneous batch sub-workflow collision**: per-item child
+    plans share ``node_id`` but compute different ``cache_key`` per item.
+    Drops colliding nodes (observable-only fallback) rather than picking an
+    arbitrary winner that would falsely flag ``key_mismatch`` for the other
+    items, and emits a notes entry explaining the coverage gap.
+
+    BFS-downstream coverage gaps are reported separately by
+    ``_emit_discrepancy_diagnostics`` based on actual silent-skip count
+    against trace events — counting plan structure here would emit false
+    notes for non-cache workflows whose downstream entries have
+    ``cache_key=None`` for orthogonal reasons.
+    """
+    keys: dict[str, str] = {}
+    collisions: set[str] = set()
+
+    def _walk(p: Any) -> None:
+        for entry in getattr(p, "entries", []) or []:
+            node_id = str(entry.node_id)
+            cache_key = getattr(entry, "cache_key", None)
+            if cache_key is not None:
+                key_str = str(cache_key)
+                existing = keys.get(node_id)
+                if existing is not None and existing != key_str:
+                    collisions.add(node_id)
+                else:
+                    keys[node_id] = key_str
+            sub_plan = getattr(entry, "sub_plan", None)
+            if sub_plan is not None:
+                _walk(sub_plan)
+
+    _walk(plan)
+
+    # Drop colliding nodes — keeping any one item's key would silently
+    # misattribute the others as ``key_mismatch``.
+    for node_id in collisions:
+        keys.pop(node_id, None)
+
+    notes: list[str] = []
+    if collisions:
+        notes.append(
+            f"Discrepancy detection: predicted-key matching skipped for {len(collisions)} "
+            "heterogeneous batch sub-workflow node(s); per-item upstream values diverge. "
+            "Observable-field attributions still apply."
+        )
+    return keys, notes
 
 
 def _emit_discrepancy_diagnostics(
@@ -1113,13 +1196,20 @@ def _emit_discrepancy_diagnostics(
     workflow_path: str | None,
     notes: list[str],
 ) -> list[Diagnostic]:
-    if not str(trace_data.get("format_version", "")).startswith("2.1"):
+    # Trace consumer rule (runtime/CLAUDE.md): gate on the major version and
+    # exclude 2.0.0 explicitly. 2.0.0 traces lack cache_key/cache_age_sec; a
+    # graceful note is already emitted at trace-load time. Future 2.2+ traces
+    # are forward-compat: they carry at least the 2.1 fields per the additive
+    # rule. Per-event guards below handle missing optional fields.
+    fv = str(trace_data.get("format_version", ""))
+    if not fv.startswith("2.") or fv.startswith("2.0"):
         return []
 
     predicted_keys, predict_notes = _predict_cache_keys(workflow_ir, parameters, memo_cache, workflow_path)
     notes.extend(predict_notes)
 
     diagnostics: list[Diagnostic] = []
+    silent_skip_no_predicted_key = 0
     for node_id, event in _iter_llm_events(trace_data.get("nodes", []) or []):
         llm_call = event.get("llm_call") or {}
         if not isinstance(llm_call, dict):
@@ -1127,18 +1217,28 @@ def _emit_discrepancy_diagnostics(
 
         cache_create = int(llm_call.get("cache_creation_input_tokens") or 0)
         cache_read = int(llm_call.get("cache_read_input_tokens") or 0)
-        if cache_create == 0 and cache_read == 0:
+        chunks_skipped = llm_call.get("cache_chunks_skipped")
+        # When cache wasn't engaged at all the discrepancy machinery has
+        # nothing to compare — UNLESS a chunk was skipped, which is exactly
+        # the reason the cache disengaged in the first place. Skipping that
+        # case would make `chunk_skipped` attribution unreachable for the
+        # branch-absent scenario it was designed for.
+        if cache_create == 0 and cache_read == 0 and not chunks_skipped:
             continue
 
         actual_key = llm_call.get("cache_key") or event.get("cache_key")
         cache_age_sec = llm_call.get("cache_age_sec") or event.get("cache_age_sec")
-        chunks_skipped = llm_call.get("cache_chunks_skipped")
         predicted_key = predicted_keys.get(node_id)
 
         actual_pct = _safe_pct(cache_read, cache_read + cache_create)
         predicted_pct = 100 if predicted_key is not None else 0
 
         if predicted_key is None and not (chunks_skipped or (cache_age_sec is not None and float(cache_age_sec) > 300)):
+            # Cache engaged but we have no predicted_key (BFS-downstream,
+            # heterogeneous batch collision, partial inputs, compile failure)
+            # AND no observable signal — count silently-skipped events so we
+            # can emit a single coverage note instead of misleading silence.
+            silent_skip_no_predicted_key += 1
             continue
         if predicted_key is not None and abs(predicted_pct - actual_pct) < 5:
             continue
@@ -1170,7 +1270,13 @@ def _emit_discrepancy_diagnostics(
                 **extra,
             )
         )
-    return _aggregate_and_cap_discrepancies(diagnostics, max_total=20)
+    if silent_skip_no_predicted_key > 0:
+        notes.append(
+            f"Discrepancy detection: skipped attribution for {silent_skip_no_predicted_key} "
+            "trace event(s) with no predicted cache_key and no observable signal "
+            "(BFS-downstream, heterogeneous batch, or partial inputs)."
+        )
+    return _aggregate_and_cap_discrepancies(diagnostics, max_total=20, notes=notes)
 
 
 def _attribute_root_cause(
@@ -1231,7 +1337,12 @@ def _attribute_root_cause(
     )
 
 
-def _aggregate_and_cap_discrepancies(diags: list[Diagnostic], *, max_total: int) -> list[Diagnostic]:
+def _aggregate_and_cap_discrepancies(
+    diags: list[Diagnostic],
+    *,
+    max_total: int,
+    notes: list[str] | None = None,
+) -> list[Diagnostic]:
     groups: dict[tuple[str | None, str], list[Diagnostic]] = {}
     for diag in diags:
         ctx = diag.context or {}
@@ -1241,8 +1352,17 @@ def _aggregate_and_cap_discrepancies(diags: list[Diagnostic], *, max_total: int)
     for group in groups.values():
         representative = group[0]
         merged_context = {**(representative.context or {}), "affected_invocations": len(group)}
+        # ``replace`` rather than in-place mutation: ``make_diagnostic`` may
+        # share context refs across diagnostics in the same group, so mutating
+        # ``representative.context`` would leak ``affected_invocations`` to
+        # the rest of the group (silent shared-state bug).
         aggregated.append(replace(representative, context=merged_context))
     aggregated.sort(key=lambda diag: -int((diag.context or {}).get("affected_invocations", 1)))
+    if notes is not None and len(aggregated) > max_total:
+        notes.append(
+            f"Discrepancies: {len(aggregated) - max_total} additional group(s) suppressed by cap "
+            f"(showing top {max_total} by frequency)."
+        )
     return aggregated[:max_total]
 
 
