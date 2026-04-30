@@ -164,15 +164,23 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
         return ""
     lines = ["## Recommended actions (ordered by impact)", ""]
     for action in analysis.recommended_actions:
-        savings = (
-            f"-${action.estimated_savings_usd:.2f}/run"
-            if action.estimated_savings_usd is not None
-            else "savings unavailable"
-        )
-        lines.append(f"  {action.rank}. [{action.warning_id}]  {savings}")
+        lines.append(f"  {action.rank}. [{action.warning_id}]  {_format_savings_usd(action.estimated_savings_usd)}")
         if action.node_id:
             lines.append(f"     Node: {action.node_id}")
     return "\n".join(lines)
+
+
+def _format_savings_usd(value: float | None) -> str:
+    """Tri-state savings rendering — mirrors ``warning_catalog.format_dry_run_nudge``.
+
+    ``None`` (no estimate) and sub-cent (``< $0.005``, rounds-to-zero) both
+    render as ``"savings unavailable"``. Emitting ``-$0.00/run`` would imply
+    "we computed it, it's zero" when the actual data is too sparse — same
+    tri-state contract violation top-10% codebases avoid (Bug D).
+    """
+    if value is None or value < 0.005:
+        return "savings unavailable"
+    return f"-${value:.2f}/run"
 
 
 def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
@@ -222,7 +230,18 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     if not analysis.per_call:
         return ""
     rows = list(analysis.per_call)
-    visible, hidden_count = _select_visible_rows(rows, all_rows=all_rows)
+    # Analytical detections (cache.dynamic-before-static, cache.padding-advisory,
+    # cache.batch-prewarm-recommended, cache.below-min-tokens, etc.) emit Diagnostic
+    # objects to ``analysis.warnings`` rather than populating ``row.warnings`` (the
+    # inline tuple). The default-hide rule MUST consult analysis-wide warnings;
+    # otherwise nodes with cache_ratio ≥ 80% AND analytical warnings get silently
+    # hidden from the default report — agents miss high-leverage recommendations.
+    nodes_with_warnings = {d.node_id for d in analysis.warnings if d.node_id}
+    visible, hidden_count = _select_visible_rows(
+        rows,
+        all_rows=all_rows,
+        nodes_with_warnings=nodes_with_warnings,
+    )
     if not visible and hidden_count == 0:
         return ""
 
@@ -231,10 +250,17 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     else:
         header = f"## Per-call cache report (showing {len(visible)} of {len(rows)} LLM nodes; all-clean rows hidden)"
 
+    # Build per-row inline warning markers from analysis.warnings keyed by node_id.
+    warnings_by_node: dict[str, list[str]] = {}
+    for diag in analysis.warnings:
+        if diag.node_id and diag.id:
+            warnings_by_node.setdefault(diag.node_id, []).append(diag.id)
+
     lines = [header, ""]
     for row in visible:
         marker = f"(×{row.batch_size_estimated})" if row.is_batch and row.batch_size_estimated else ""
-        warning_marker = ", ".join(row.warnings) if row.warnings else ""
+        inline_ids = warnings_by_node.get(row.node_path) or list(row.warnings)
+        warning_marker = ", ".join(inline_ids)
         lines.append(
             f"  {row.node_path:30s} {marker:<6} model={row.model:35s} "
             f"tokens={row.input_tokens_estimated:>5}  "
@@ -251,7 +277,12 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     return "\n".join(lines)
 
 
-def _select_visible_rows(rows: Iterable[PerCallRow], *, all_rows: bool) -> tuple[list[PerCallRow], int]:
+def _select_visible_rows(
+    rows: Iterable[PerCallRow],
+    *,
+    all_rows: bool,
+    nodes_with_warnings: set[str],
+) -> tuple[list[PerCallRow], int]:
     """Apply the default-hide-clean rule.
 
     Returns ``(visible_rows, hidden_count)``. Sorted: warnings first, then by
@@ -261,15 +292,15 @@ def _select_visible_rows(rows: Iterable[PerCallRow], *, all_rows: bool) -> tuple
     if all_rows:
         sorted_rows = sorted(rows_list, key=lambda r: -r.input_tokens_estimated)
         return sorted_rows, 0
-    visible = [r for r in rows_list if _is_row_visible_by_default(r)]
+    visible = [r for r in rows_list if _is_row_visible_by_default(r, nodes_with_warnings)]
     hidden = len(rows_list) - len(visible)
     sorted_visible = sorted(visible, key=lambda r: -r.input_tokens_estimated)
     return sorted_visible, hidden
 
 
-def _is_row_visible_by_default(row: PerCallRow) -> bool:
-    """Per spec — show rows with warnings OR ratio < 80%."""
-    if row.warnings:
+def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[str]) -> bool:
+    """Per spec — show rows with warnings (inline OR analysis-wide) OR ratio < 80%."""
+    if row.warnings or row.node_path in nodes_with_warnings:
         return True
     return row.cache_ratio_pct < _HIDDEN_RATIO_THRESHOLD
 

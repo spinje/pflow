@@ -30,6 +30,7 @@ from pflow.core.cache_analysis.warning_catalog import (
 _DISCREPANCY_BASE = {
     "trace_path": "songs[1]",
     "predicted_pct": 80,
+    "predicted_label": "hit",
     "actual_pct": 20,
     "root_cause_summary": "auto",
     "cache_age_sec": None,

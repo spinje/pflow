@@ -89,12 +89,16 @@ def _value_tail(expr: str) -> str:
 class CrossWorkflowResult:
     """Cross-workflow walk output.
 
-    ``cache_items_by_workflow`` is keyed by the same labels carried on
-    :class:`CrossWorkflowEdge` (``parent_workflow`` / ``child_workflow``).
+    ``cache_items_by_workflow`` and ``irs_by_workflow`` are keyed by the same
+    labels carried on :class:`CrossWorkflowEdge` (``parent_workflow`` /
+    ``child_workflow``). ``irs_by_workflow`` exposes each visited workflow's
+    full IR so consumers can count LLM nodes that reference a given value
+    (Bug E fix — B.3 cross-workflow value-flow needs an accurate ``node_count``).
     """
 
     edges: tuple[CrossWorkflowEdge, ...]
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]]
+    irs_by_workflow: dict[str, dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +138,10 @@ def walk_cross_workflow(
     seen = set(seen_paths) if seen_paths else set()
     edges: list[CrossWorkflowEdge] = []
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]] = {}
+    irs_by_workflow: dict[str, dict[str, Any]] = {}
     parent_label = root_workflow_path or "<root>"
     cache_items_by_workflow[parent_label] = _cache_items(root_ir)
+    irs_by_workflow[parent_label] = root_ir
     _walk_one_level(
         ir=root_ir,
         parent_label=parent_label,
@@ -147,8 +153,13 @@ def walk_cross_workflow(
         max_depth=max_depth,
         notes=notes,
         cache_items_by_workflow=cache_items_by_workflow,
+        irs_by_workflow=irs_by_workflow,
     )
-    return CrossWorkflowResult(edges=tuple(edges), cache_items_by_workflow=cache_items_by_workflow)
+    return CrossWorkflowResult(
+        edges=tuple(edges),
+        cache_items_by_workflow=cache_items_by_workflow,
+        irs_by_workflow=irs_by_workflow,
+    )
 
 
 def _walk_one_level(
@@ -163,6 +174,7 @@ def _walk_one_level(
     max_depth: int,
     notes: list[str] | None,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
+    irs_by_workflow: dict[str, dict[str, Any]],
 ) -> None:
     """Visit every ``type: workflow`` node in ``ir`` and recurse."""
     if depth >= max_depth:
@@ -195,6 +207,7 @@ def _walk_one_level(
                 max_depth=max_depth,
                 notes=notes,
                 cache_items_by_workflow=cache_items_by_workflow,
+                irs_by_workflow=irs_by_workflow,
             )
 
 
@@ -223,6 +236,7 @@ def _process_one_call(
     max_depth: int,
     notes: list[str] | None,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
+    irs_by_workflow: dict[str, dict[str, Any]],
 ) -> None:
     """Resolve one child call and emit edges + recurse."""
     result = resolver(params, base_path)
@@ -233,6 +247,7 @@ def _process_one_call(
     child_path_str = str(result.path) if result.path else None
     child_label = child_path_str or "<inline>"
     cache_items_by_workflow[child_label] = _cache_items(result.ir)
+    irs_by_workflow[child_label] = result.ir
     if child_path_str and child_path_str in seen:
         message = (
             f"Cross-workflow walker detected cycle: {child_path_str} "
@@ -280,6 +295,7 @@ def _process_one_call(
             max_depth=max_depth,
             notes=notes,
             cache_items_by_workflow=cache_items_by_workflow,
+            irs_by_workflow=irs_by_workflow,
         )
     finally:
         if child_path_str:

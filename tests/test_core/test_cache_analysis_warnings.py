@@ -235,6 +235,7 @@ _BASE_DISCREPANCY_KWARGS = {
     "node_id": "X",
     "trace_path": "songs[1]",
     "predicted_pct": 80,
+    "predicted_label": "hit",
     "actual_pct": 20,
     "root_cause_summary": "auto",
     "cache_age_sec": None,
@@ -483,3 +484,29 @@ def test_format_dry_run_nudge_drops_figure_when_only_pct_unavailable() -> None:
     actionable dollar estimate rather than hiding greenfield savings."""
     text = format_dry_run_nudge(opportunity_count=2, savings_usd=0.50, savings_pct=None)
     assert text == "Cache: 2 design opportunities available (estimated -$0.50/run)."
+
+
+def test_format_dry_run_nudge_drops_sub_cent_savings_as_unavailable() -> None:
+    """Bug D — sub-cent values (``< $0.005``) round to ``$0.00`` under
+    ``f"{x:.2f}"``, falsely implying "we computed it, it's zero" when the
+    actual data is too sparse. Tri-state contract treats sub-cent the same as
+    None: drop the figure rather than emit ``-$0.00/run``.
+
+    Mutation test: revert the sub-cent gate in ``format_dry_run_nudge`` to only
+    check ``savings_usd is None``; this test must fail.
+    """
+    text = format_dry_run_nudge(opportunity_count=1, savings_usd=0.001, savings_pct=None)
+    assert text == "Cache: 1 design opportunity available."
+    assert "-$0.00" not in text
+
+    text2 = format_dry_run_nudge(opportunity_count=3, savings_usd=0.0, savings_pct=0)
+    assert text2 == "Cache: 3 design opportunities available."
+    assert "-$0.00" not in text2
+
+
+def test_format_dry_run_nudge_renders_at_one_cent_threshold() -> None:
+    """Boundary check: ``$0.005`` renders, ``$0.0049`` does not."""
+    rendered = format_dry_run_nudge(opportunity_count=1, savings_usd=0.005, savings_pct=None)
+    assert "(estimated -$0.01/run)" in rendered  # rounds up to one cent
+    suppressed = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0049, savings_pct=None)
+    assert suppressed == "Cache: 1 design opportunity available."

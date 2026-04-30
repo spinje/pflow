@@ -81,7 +81,7 @@ Outputs include: per-node cache ratio, recommended actions, suggested ## Cache b
 
 ```
 ERROR: Node 'review' prompt_cache order doesn't match ## Cache declaration
-  declared:  [concept, concept_brief]
+  expected:  [concept, concept_brief]
   you wrote: [concept_brief, concept]
   fix:       reorder the `prompt_cache:` field to match ## Cache declaration order
 ```

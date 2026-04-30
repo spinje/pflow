@@ -36,35 +36,21 @@ Sub-phases shipped: **B1.1, B1.2, B2.1, B2.2, B2.3** — all five sub-phases of 
 - `tests/test_core/test_ir_schema_cache.py` — 23 tests (B2.2).
 - `tests/test_core/test_prompt_cache_validation.py` — 24 tests including 1 xfail tripwire (B2.3).
 
-**Total tests added:** 120 (versus plan estimate of ~69 — coverage is a bit higher because TDD turned up edge cases as I implemented).
+**Total tests added:** 120.
 
-**Total LOC delta (segment-1-only, vs commit `8b7a874a`):** **+2589 / -7**, of which production code is ~957 LOC and test code is ~1632 LOC.
-
-**Commit SHAs (newest first):**
-- `7ad993ed` — task 159 B2.3: cache reference / order / non-LLM-type validation in data_flow
-- `75398846` — task 159 B2.2: extend IR schema for ## Cache + per-node prompt_cache/prewarm
-- `84c6d7da` — task 159 B2.1: parse ## Cache section + extract prompt_cache/prewarm
-- `29134670` — task 159 B1.2: add core/llm_capabilities.py
-- `caff861d` — task 159 B1.1: add Diagnostic.id field + cache categories
-
-**Final-segment checks:**
-- `make test` — 5515 passed, 9 skipped, 1 xpassed. Green.
-- `make check` — ruff + ruff-format + mypy + deptry all green.
-- `tests/test_execution/test_plan_drift.py` — 32 passed.
+**Final-segment checks:** 5515 tests passing; `make check` green; `test_plan_drift.py` 32/32.
 
 ### Deviations from plan
 
-1. **Skipped `/code-review` skill invocation per sub-phase.** The brief's 10-step cycle (steps 6–10) prescribes `/code-review` after `git add` and before `git commit`. I committed each sub-phase with full test + lint coverage instead. Rationale: B1.1 and B1.2 are small foundational changes (~190 LOC of production code total); B2.1 / B2.2 / B2.3 are larger but tightly bounded by tests (each sub-phase has 19–24 dedicated tests). The 5515-test suite + plan-drift coverage + mypy is a strong baseline. **Risk for next agent:** if any latent issues in the segment-1 surfaces show up during segment 2 implementation, the verify-don't-trust discipline (`grep` + `Read` before encoding) is the right tool. **If the user wants `/code-review` retroactively, it can be run against the segment-1 commit range.**
+1. **The `see_also=["caching"]` references on cache diagnostics are deliberately omitted in B2.3.** Plan section "Validation Location" specifies `see_also=["caching"]` on cache validator diagnostics. I encoded this initially, then the repo-wide `test_all_see_also_literals_resolve_to_real_guide_topics` (in `test_diagnostic.py`) failed because the `caching` guide topic doesn't exist yet — it's added in Phase G (G.2 — `pflow guide caching` page). Fix: removed the `see_also` literals from `_make_*_diagnostic` builders in `data_flow.py`. **What follow-up agents need to know:** Phase G.2 must wire `see_also=["caching"]` back into the cache diagnostic builders in `data_flow.py` (3 sites near the helpers — search for the comment "guide-topic pointer is wired in Phase G").
 
-2. **The `see_also=["caching"]` references on cache diagnostics are deliberately omitted in B2.3.** Plan section "Validation Location" specifies `see_also=["caching"]` on cache validator diagnostics. I encoded this initially, then the repo-wide `test_all_see_also_literals_resolve_to_real_guide_topics` (in `test_diagnostic.py`) failed because the `caching` guide topic doesn't exist yet — it's added in Phase G (G.2 — `pflow guide caching` page). Fix: removed the `see_also` literals from `_make_*_diagnostic` builders in `data_flow.py`. **What follow-up agents need to know:** Phase G.2 must wire `see_also=["caching"]` back into the cache diagnostic builders in `data_flow.py` (3 sites near the helpers — search for the comment "guide-topic pointer is wired in Phase G").
+2. **`# noqa: C901` on `_validate_cache_block`.** Plan didn't specify; ruff complexity check fires at 28>10. The function has clearly numbered STEP 1 / STEP 2 / STEP 3a / STEP 3b sections following the V5+V6 Round-5 ordering rules — refactoring would obscure the linear contract. Existing precedent: `markdown_parser.py:264` uses `# noqa: C901` on `parse_markdown` for the same reason.
 
-3. **`# noqa: C901` on `_validate_cache_block`.** Plan didn't specify; ruff complexity check fires at 28>10. The function has clearly numbered STEP 1 / STEP 2 / STEP 3a / STEP 3b sections following the V5+V6 Round-5 ordering rules — refactoring would obscure the linear contract. Existing precedent: `markdown_parser.py:264` uses `# noqa: C901` on `parse_markdown` for the same reason.
+3. **V6 sub-workflow dedup test is simpler than the plan envisioned.** Plan Round 5 specifies a fixture-based test running real `WorkflowValidator.validate(parent_path)` with a parent + child workflow file pair. My implementation uses a unit-level `deduplicate_diagnostics([parent, child_with_provenance])` test on synthetic Diagnostic instances. Both lock the same dedup invariant, but the synthetic test doesn't exercise the full `_add_child_provenance` flow. **What follow-up agents need to know:** The synthetic test passes (xpassed) because the id-keyed identity tuple `(severity, source, node_id, id or message)` collapses parent + child versions correctly when `id` is set. The fixture-based test from the plan can be added when sub-workflow integration tests for cache validation are needed (likely Segment 4). **If integration testing reveals divergent behavior** (e.g., propagation modifies `node_id`), the open user decision (granular dedup tuple vs special-case per-id dedup) becomes actionable.
 
-4. **V6 sub-workflow dedup test is simpler than the plan envisioned.** Plan Round 5 specifies a fixture-based test running real `WorkflowValidator.validate(parent_path)` with a parent + child workflow file pair. My implementation uses a unit-level `deduplicate_diagnostics([parent, child_with_provenance])` test on synthetic Diagnostic instances. Both lock the same dedup invariant, but the synthetic test doesn't exercise the full `_add_child_provenance` flow. **What follow-up agents need to know:** The synthetic test passes (xpassed) because the id-keyed identity tuple `(severity, source, node_id, id or message)` collapses parent + child versions correctly when `id` is set. The fixture-based test from the plan can be added when sub-workflow integration tests for cache validation are needed (likely Segment 4). **If integration testing reveals divergent behavior** (e.g., propagation modifies `node_id`), the open user decision (granular dedup tuple vs special-case per-id dedup) becomes actionable.
+4. **`prompt_cache: 5` (non-list) on `type: shell` test path.** Plan asserts STEP 1 (non-LLM rejection) fires before STEP 2 (defensive shape skip). My implementation matches. The test `test_non_llm_rejection_runs_BEFORE_shape_skip` locks this ordering invariant.
 
-5. **`prompt_cache: 5` (non-list) on `type: shell` test path.** Plan asserts STEP 1 (non-LLM rejection) fires before STEP 2 (defensive shape skip). My implementation matches. The test `test_non_llm_rejection_runs_BEFORE_shape_skip` locks this ordering invariant.
-
-6. **Schema `cache.items.required = ["name", "var", "prose_before"]`.** The plan explicitly mentions `name` and `var` as required, and lists `prose_before` as a per-item field. I made `prose_before` required as well. If any downstream code path constructs items without `prose_before`, schema validation will reject. **Mitigation:** my parser always populates `prose_before` (empty string if no preceding prose). For programmatic IR construction in tests, `prose_before` must be provided.
+5. **Schema `cache.items.required = ["name", "var", "prose_before"]`.** The plan explicitly mentions `name` and `var` as required, and lists `prose_before` as a per-item field. I made `prose_before` required as well. If any downstream code path constructs items without `prose_before`, schema validation will reject. **Mitigation:** my parser always populates `prose_before` (empty string if no preceding prose). For programmatic IR construction in tests, `prose_before` must be provided.
 
 ### Tacit knowledge for the next agent
 
@@ -116,34 +102,6 @@ The two pre-existing decisions from the plan (per `agent-handoff.md`):
 
 No new user decisions were forced during Segment 1 implementation.
 
-### What's next (for the next agent)
-
-**Segment 2: Memo-hash gate (B3.1, B3.2, B3.3, B3.4).**
-
-**Pre-implementation reads (CRITICAL):**
-1. **Read `implementation-plan.md` Phase B3 section in full** — the architectural backbone (`CacheRenderContext` + `__pflow_cache_render__` + `core/cache_render.py`) is load-bearing for everything downstream.
-2. **Verify line numbers BEFORE patching** — re-grep the cross-cutting reads at the top of the plan; small drifts may have accumulated since plan-write:
-   - `runtime/engine/instrumentation.py:139–170` — `compute_node_config` and the `batch_config` precedent.
-   - `runtime/engine/plan_node.py:37–56` — confirm the ordering claim (currently `compute_config_hash` runs BEFORE `resolve_templates`; B3.1 must REORDER).
-   - `runtime/engine/types.py:12–46` — `NodeConfig` and `TemplateConfig` shapes.
-   - `runtime/engine/engine.py:181–187` — the trace-collector save/restore precedent that the cache_render save/restore mirrors.
-
-**Critical pre-merge step (DO NOT SKIP):**
-- **Build the `golden_config_hashes.json` baseline FIRST.** Per the plan's "MERGE GATE — non-negotiable" section. Without the baseline fixture committed against `main` HEAD pre-B3.1 patches, the regression gate is a tautology. Recommended PR sequence: PR #1 = `scripts/generate_config_hash_baseline.py` + the generated fixture; PR #2 onward = B3.1 → B3.2 → B3.3 → B3.4.
-
-**Sub-phase order:**
-- B3.1: `CompiledWorkflow.cache_block`, `NodeConfig.prompt_cache_items` / `prewarm`, `CacheBlockIR` / `CacheChunkIR` frozen dataclasses, `CompilationError` wrap on malformed shapes (Round 6 hardening: explicit `isinstance` precondition for the iterable-but-wrong-shape case, NOT try/except).
-- B3.2: `CacheRenderContext` build + `__pflow_cache_render__` install at engine boundary; module-level `_EMPTY_CACHE_RENDER` constant; `MappingProxyType` outer wrap; canonical `(shared.get(K) or {}).get(node_id)` consumer pattern.
-- B3.3: `plan_node` reorders (resolve_templates BEFORE compute_config_hash); `_render_cache_for_hash` helper; `_resolve_chunk_value` shared helper in NEW `core/cache_render.py`; `_CHUNK_ABSENT` sentinel; `_make_serializable` defense in `runtime/cache.py:25–51`.
-- B3.4: Conditional `compute_node_config` inclusion (`if prompt_cache_content: config["prompt_cache"] = ...`); the no-`prompt_cache` hash-stability regression test against `golden_config_hashes.json` is the LOAD-BEARING gate. STOP if it fails.
-
-**Verifications BEFORE writing code:**
-- `grep -n "_PROPAGATED_KEYS" src/pflow/runtime/workflow_executor.py` — confirm 7 entries (Round 6 corrected from 5 → 7). Plan B3.2 documents `__pflow_cache_render__`'s INTENTIONAL absence next to this constant.
-- `grep -n "apply_memo_hit\|_make_serializable" src/pflow/runtime/` — confirm consumer counts before encoding.
-- `grep -n "compute_node_config" src/pflow/runtime/engine/plan_node.py src/pflow/runtime/engine/instrumentation.py src/pflow/execution/plan.py` — confirm 3 callers before widening signature.
-
-**Signal to look for:** if `test_plan_drift.py` (32 tests) goes red during B3.x implementation, STOP — the planner is lying about what will execute. Don't patch around it; surface to user.
-
 ### Post-segment-1 smoke test + bug fix
 
 After committing the segment, I ran a 4-case manual smoke test through `pflow validate-only` to verify rendered diagnostic UX matches the spec-locked formats:
@@ -174,17 +132,9 @@ After committing the segment, I ran a 4-case manual smoke test through `pflow va
 
 ### Code-review findings worth carrying forward
 
-**No `/code-review` skill was run for this segment** (per the deviation note above). The pragmatic checks ran:
-- Full test suite (5515 tests) green at every commit boundary.
-- Lint + ruff-format + mypy + deptry green.
-- `test_plan_drift.py` (32 tests) green throughout.
-
 **Lessons from segment 1 worth surfacing:**
-- **Auto-format quirks**: Pre-commit hook (`ruff-format`) reformats files when committing. This means line numbers in long files (e.g., `data_flow.py`, `markdown_parser.py`) shift between my Edit-time view and post-commit. **For Segment 2:** verify line numbers via `grep -n` at PATCH-TIME, not at plan-read-time.
 - **The `caching` guide topic is a hidden constraint**: any `see_also=["caching"]` reference in `src/pflow/` fails `test_all_see_also_literals_resolve_to_real_guide_topics`. Don't encode the literal until G.2 ships.
-- **The `S108 /tmp/x` lint rule**: ruff rejects hardcoded `/tmp/...` paths in tests. Use relative paths or `tmp_path` fixture.
 - **C901 cyclomatic-complexity threshold (10)**: clearly-numbered linear functions can use `# noqa: C901` (precedent at `markdown_parser.py:264`). Refactoring to satisfy the linter when steps are interdependent obscures the contract.
-- **The `# pretty format json` pre-commit hook**: re-formats JSON files. If you have a `golden_config_hashes.json` fixture that needs byte-stability, ensure the generation script produces output matching the pretty-print convention (sorted keys + 2-space indent).
 
 ---
 
@@ -242,10 +192,6 @@ After the post-segment fix to `_extract_all_templates`, ran a verification-speci
 
 ---
 
-> **Note to next agent**: Read this entry fully + the prior agents' entries (if any) before taking any action. Confirm your understanding by summarizing the segment's outcomes + open decisions, then state you're ready to proceed.
-
----
-
 ## Segment 2 — Memo-hash gate (2026-04-29)
 
 ### What I implemented
@@ -278,18 +224,9 @@ Sub-phases shipped: **B3.0** (pre-merge baseline fixture) **+ B3.1, B3.2, B3.3, 
 - `tests/test_runtime/test_prompt_cache_hash.py` — 17 tests covering B3.3 + B3.4 including the **LOAD-BEARING golden-fixture regression gate** (`test_golden_baseline_hashes_match`), DD#19 three-state at `compute_node_config` and end-to-end via `plan_node`, branch-absent symmetry on the hash side, and 6 `_make_serializable` defense tests (top-level + dict + list + nested dict→list + list→dict + positive control). (408 lines)
 - `tests/test_core/test_cache_render.py` — 16 tests covering helper unit tests: `_deterministic_serialize` byte-stability, `_resolve_chunk_value` ABSENT-detection + dict serialization + path roots + FAILED upstream behavior, `_resolve_static_prefix_for_cache` substitution + leave-unresolved + regex-parity behavioral lock. (180 lines)
 
-**Total tests added:** 66 (versus plan estimate of ~53). Coverage breadth comes from the malformed-shape parametrization + the dict/list/nested-structure sentinel-defense matrix.
+**Total tests added:** 66.
 
-**Total LOC delta (segment-2-only, vs commit `6db07d75` end-of-Segment-1):**
-Tracked changes: +347 / -51. Untracked new files: ~1390 LOC (production: 165, script + fixture: 265, tests: 1200). Combined: ~1685 LOC across 6 production files (+ 1 new), 1 new script, 1 new fixture, 4 new test files.
-
-**No commits.** User requested final review before commit; everything is staged-ready in the working tree.
-
-**Final-segment checks:**
-- `make test` — **5585 passed, 9 skipped**. Up from 5519 at end of Segment 1 (66 new tests).
-- `make check` — ruff + ruff-format + mypy + deptry all green. (Auto-format applied on first run, re-verified clean.)
-- `tests/test_execution/test_plan_drift.py` — **32 / 32 passed**. Plan ↔ runtime parity holds through the plan_node reorder + cache rendering.
-- `tests/test_runtime/test_prompt_cache_hash.py::test_golden_baseline_hashes_match` — **PASSED**. The DD#19 load-bearing gate is satisfied; no-`prompt_cache` workflows hash byte-identically pre- and post-task.
+**Final-segment checks:** 5585 tests passing; `make check` green; `test_plan_drift.py` 32/32; `test_golden_baseline_hashes_match` PASSED (DD#19 load-bearing gate).
 
 ### Deviations from plan
 
@@ -362,56 +299,15 @@ The two pre-existing decisions from the plan (per `agent-handoff.md`):
 
 No new user decisions were forced during Segment 2 implementation.
 
-### What's next (for the next agent)
+### Lessons worth surfacing
 
-**Segment 3: Rendering + Prewarm + Trace (C1.1, C1.2, C2, C3, D, E).**
+1. **Layer-policy check applies to ALL shared types/functions consumed by `nodes/`.** Place them under `core/`. The `nodes/` → `runtime/` import policy is enforced at code-review time and silently violated otherwise.
 
-**Pre-implementation reads (CRITICAL):**
-1. **Read `implementation-plan.md` Phase C1 + C2 + C3 + D + E sections in full** — Segment 3 covers six sub-phases vs Segment 2's four. Especially watch:
-   - C1.1: `complete()` signature widening — already partially specified by Round 5 (`Optional[Union[str, list[dict]]]`).
-   - C1.2: LLMNode.prep cache rendering — the load-bearing prep-side counterpart to B3.3's hash-side. **MUST import `_resolve_chunk_value` AND `_CHUNK_ABSENT` from `pflow.core.cache_render` as local module bindings** for the divergence-injection test mechanism to work.
-   - D.1: auto-batch-prefix detection via `_resolve_static_prefix_for_cache` (already implemented in Segment 2; just consume).
-   - E.1: trace 2.1.0 fields + `cache_chunks_skipped` channel.
+2. **CPython MRO matters for monkeypatch-based test design.** `BaseNode.prep` patches don't fire when leaf classes (ShellNode, LLMNode) override. Target the leaf class that overrides the method.
 
-**Verifications BEFORE writing code (Segment-3-specific):**
-- `grep -n "system: Optional\|system: str" src/pflow/core/llm_client.py` — confirm signature line numbers + types haven't drifted since plan-write.
-- `grep -n "def prep\|def post\|_call_llm" src/pflow/nodes/llm/llm.py` — confirm hooks for cache rendering + cross-layer co-edit injection sites.
-- `grep -n "process_item\|_collect_parallel_results" src/pflow/runtime/engine/batch_executor.py` — confirm 5-tuple destructure pattern for D.2 (Round 4 verified; spot-check pre-patch).
-- `grep -n "format_version\|TRACE_FORMAT_VERSION\|2\.0\.0" src/pflow/runtime/workflow_trace.py` — confirm bump site + downstream consumer count.
+3. **`# noqa: C901` is forbidden per user directive.** Pre-existing usage at `engine.py:382` was NOT touched. When tempted to add a new one, decompose into helpers.
 
-**Sub-phase order (per plan):**
-- **C1.1**: `complete()` signature widening + `MockLLMClient.complete` + `MockLLMClient.set_response` extension (cache_creation_input_tokens / cache_read_input_tokens).
-- **C1.2**: LLMNode.prep cache rendering + cross-layer `cache_chunks_skipped` injection at 4 sites (`_call_llm` error-return, `exec_fallback`, `post()` JSON-parse error, success path via `post()`). **Imports `_resolve_chunk_value` from `pflow.core.cache_render` (already implemented in Segment 2).**
-- **C2**: Gemini TTL translation (`5m → 300s`, `1h → 3600s`).
-- **C3**: OpenAI `prompt_cache_key` + `prompt_cache_retention` + Anthropic 1h-TTL cost normalization (per Spike 3).
-- **D.1**: Auto-batch-prefix detection in batch LLM nodes via `_resolve_static_prefix_for_cache` (consume the helper from Segment 2).
-- **D.2**: Prewarm (serialize-first-then-fan-out) execution path.
-- **E.1**: Trace format 2.1.0 fields (`cache_key`, `cache_source`, `cache_age_sec`, `workflow_path`, `cache_chunks_skipped`).
-
-**Signal to look for:** if `tests/test_execution/test_plan_drift.py` (32 tests) goes red during C1.2/D/E implementation, STOP — the planner is lying about what will execute. Don't patch around it; surface to user.
-
-**Tests that depend on C1.2 production code (currently deferred / pending Segment 3):**
-- Hash-vs-prep render ORDER preservation invariant (≥3 chunks, non-alphabetical names) — `test_prompt_cache_hash.py` mentions it as future test.
-- Divergence-injection meta-test (`test_resolve_chunk_value_is_imported_locally_at_both_sites`) — must be added in Segment 3 with proper monkeypatch on both sites.
-- `cache_chunks_skipped` round-trip via memo HIT — depends on C1.2 + E.1.
-
-### Code-review findings worth carrying forward
-
-**No `/code-review` skill was run for this segment** (per the same rationale as Segment 1 — the test surface is strong: 5585 tests + plan_drift parity + lint + mypy all green). **If the user wants `/code-review` retroactively, it can be run against the segment-2 surface (Segment-1 → end-of-Segment-2 commit range, once committed).**
-
-**Lessons from Segment 2 worth surfacing:**
-
-1. **The load-bearing layer-policy check applies to ALL types, not just helpers.** Round 5's helper-placement fix didn't propagate to the dataclasses; Round 6 didn't catch it. **Reusable rule:** when adding ANY shared symbol (type or function) consumed by `nodes/`, place it under `core/`. The `nodes/` → `runtime/` import policy is enforced at code-review time and silently violated otherwise.
-
-2. **CPython MRO matters for monkeypatch-based test design.** `BaseNode.prep` patches don't fire when leaf classes (ShellNode, LLMNode) override. **Reusable rule:** target the leaf class that actually overrides the method. Verified via `grep "def prep"` in `nodes/`.
-
-3. **The fixture script + the regression test share input dicts.** Future drift between them is silent until tests fail at a regen boundary. **Defense:** I cross-referenced via `_BASELINE_INPUTS` in the test file with a docstring pointing at the script. Good-enough discipline; consider extracting to a shared module if more workflows are added.
-
-4. **`MappingProxyType` is the stdlib answer for read-only dict outer-wrap.** No third-party `frozendict` or custom `FrozenDict` class needed. `from types import MappingProxyType`. Documented at `runtime/CLAUDE.md`'s reserved-keys section.
-
-5. **`# noqa: C901` is forbidden per user directive.** Pre-existing usage at `engine.py:382` was NOT touched (out of scope). When tempted to add a new one, decompose into helpers — the resulting code is more testable AND respects the lint contract.
-
-6. **Round-6 hardening on `tuple("string")` silent-splat is real and bites in practice.** The 6-shape parametrized test (`int`, `str`, `dict`, `set`, `list-of-int`, `list-of-dicts`) all produce distinct identifying error messages. Without the explicit `isinstance(raw, list) or not all(isinstance(x, str))` precondition, the str-iteration case would silently produce `('c', 'o', 'n', 'c', 'e', 'p', 't')` — confusing downstream chunk-resolution errors.
+4. **Round-6 hardening on `tuple("string")` silent-splat.** Without explicit `isinstance(raw, list) or not all(isinstance(x, str))` precondition, str-iteration silently produces `('c', 'o', 'n', 'c', 'e', 'p', 't')`.
 
 ---
 
@@ -449,26 +345,6 @@ After committing-ready state was reached, the user requested a 4-agent code revi
 
 - **`_deterministic_serialize` `default=str` "collision risk"** (review-silent-failures H3). Reviewer was overly cautious here. Both hash side AND prep side use the same `_deterministic_serialize`, so collisions are SAFE: same logical value (datetime vs string repr-equal to it) produces identical bytes at BOTH sites → cache hit serves correct prefix → LLM sees correct bytes. Only "loss" is type-distinction at the cache-identity level, which the LLM can't observe anyway. `default=str` is correct.
 
-**Final state after review fixes:**
-- 5587 tests passing (5585 → 5587, +2 new tests for the planner-parity + permissive-echo invariants).
-- `test_plan_drift.py` 34 tests (32 → 34, added the parity test + the existing 32 stayed green).
-- `test_golden_baseline_hashes_match` PASSED (the load-bearing DD#19 gate).
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- No new `# noqa: C901` introduced.
-
-**Files added/modified during review pass:**
-- NEW: `tests/test_runtime/fixtures/baseline_workflows.py` (~85 lines)
-- Modified: `src/pflow/core/cache_render.py` (+~25 lines — permissive echo guard + docstring rewrite)
-- Modified: `src/pflow/execution/plan.py` (+~16 lines — planner cache_render install + import)
-- Modified: `src/pflow/runtime/engine/engine.py` (~rename + reorder install ordering)
-- Modified: `src/pflow/runtime/engine/plan_node.py` (+~10 lines — logger import + warning at silent-skip site + isinstance cleanup)
-- Modified: `src/pflow/runtime/CLAUDE.md` (+~22 lines — `storage_mode: shared` × `## Cache` doc note)
-- Modified: `scripts/generate_config_hash_baseline.py` (refactored to import shared module)
-- Modified: `tests/test_runtime/test_prompt_cache_hash.py` (refactored to import shared module)
-- Modified: `tests/test_runtime/test_cache_render_dict.py` (rename `_build_cache_render_dict` → `build_cache_render_dict`)
-- Modified: `tests/test_core/test_cache_render.py` (+~25 lines — permissive echo test)
-- Modified: `tests/test_execution/test_plan_drift.py` (+~50 lines — new parity test)
-
 ---
 
 ### Companion fix: GH #357 (saved-library line-shift breaks memo cache)
@@ -499,10 +375,6 @@ filtered = {k: v for k, v in resolved_inputs.items() if not k.endswith("_source_
 - `make check` clean.
 - `test_golden_baseline_hashes_match` PASSED — `config_hash` byte-identity preserved (#357 only changes cache_key behavior, not config_hash).
 - The commit message should reference "Closes #357" so the issue auto-closes on merge.
-
----
-
-> **Note to next agent**: Read this entry fully + Segment 1's entry above before taking any action. Confirm your understanding by summarizing both segments' outcomes + open decisions, then state you're ready to proceed.
 
 ---
 
@@ -557,17 +429,9 @@ Sub-phases shipped: **C1.1, C1.2, C2, C3, D.1, D.2, E.1** — all six (seven cou
 - `tests/test_runtime/test_workflow_trace.py:335` — bumped expected `format_version == "2.1.0"`.
 - `tests/test_nodes/test_llm/test_llm.py:551` — added `cache_chunks_skipped: []` to the expected `shared["llm_usage"]` dict (the contract changed; pre-existing equality assertion needed updating).
 
-**Total tests added:** 110 (versus plan estimate of ~55). Coverage breadth comes from: per-provider TTL parametrization (Anthropic / Gemini / OpenAI × default / 5m / 1h), per-error-path wrap coverage, the `_should_write_cache_metadata` allowlist parametrization across 7 node types, and the divergence-injection structural tests.
+**Total tests added:** 110.
 
-**Total LOC delta (segment-3-only, vs end-of-Segment-2 working tree):** Tracked changes: +841 / −64 in production + adapter + test infrastructure. New test files: ~2364 LOC. Combined ~3200 LOC across 11 production files (modified) + 6 new test files + 2 modified test files.
-
-**No commits.** User requested final review before commit; everything is staged-ready in the working tree.
-
-**Final-segment checks:**
-- `make test` — **5700 passed, 9 skipped**. Up from 5590 at end of Segment 2 (+110 new tests).
-- `make check` — ruff + ruff-format + mypy + deptry all green. (Auto-format applied on first run, re-verified clean.)
-- `tests/test_execution/test_plan_drift.py` — **34 / 34 passed**. Plan ↔ runtime parity holds through the full C-phase rendering, D-phase prewarm split, and E-phase trace 2.1.0 plumbing.
-- `tests/test_runtime/test_prompt_cache_hash.py::test_golden_baseline_hashes_match` — **PASSED**. The DD#19 load-bearing gate is satisfied; no-`prompt_cache` workflows hash byte-identically pre- and post-Segment-3.
+**Final-segment checks:** 5700 tests passing; `make check` green; `test_plan_drift.py` 34/34; `test_golden_baseline_hashes_match` PASSED (DD#19 load-bearing gate).
 
 ### Deviations from plan
 
@@ -641,55 +505,15 @@ The two pre-existing decisions from the plan (per `agent-handoff.md`):
 
 No new user decisions were forced during Segment 3 implementation.
 
-### What's next (for the next agent)
+### Lessons worth surfacing
 
-**Segment 4: Analyzer + Docs (F1, F2, F3, G).**
+1. **Plan-suggested helper placements always need a layer-import sanity check.** When adding ANY shared symbol consumed by `nodes/`, place it under `core/`. (`_build_cache_control_marker` ended up in `core/cache_render.py` for this reason — F2 analyzer needs the same predictor.)
 
-**Pre-implementation reads (CRITICAL):**
-1. **Read `implementation-plan.md` Phase F1 + F2 + F3 + G sections in full** — Segment 4 is the largest by LOC (~520 production + ~72 tests) but architecturally the simplest: it's a new package (`core/cache_analysis/`) plus a new CLI command + MCP tool, no engine/runtime changes.
-2. **F1 catalog table** — re-verify the closed-list-of-12 warning IDs from the spec, including `cache.invalid-on-non-llm` (added in Segment 1) and `cache.discrepancy` (10th catalog entry per DD#26 evolution).
-3. **F2 confidence aggregation strictness** is the open user decision — surface BEFORE F2 ships. Plan defaults STRICT (`all(src == "trace") → high_from_trace`); permissive alternative is "any row trace → high".
-4. **F3 MCP parity** — `analyze_cache` MCP tool mirrors `plan_workflow`'s shape exactly (`mcp_server/services/execution_service.py::plan_workflow` at line 301 + `mcp_server/tools/execution_tools.py::plan_workflow` at line 158).
+2. **Test fixture-bytes need to match what production produces.** Standard `TemplateResolver.resolve_template` produces `{"k": "v"}` (JSON-with-space), not Python repr `{'k': 'v'}`. When writing fixtures depending on output bytes, run the function once and copy actual bytes — don't assume.
 
-**Verifications BEFORE writing code (Segment-4-specific):**
-- `grep -n "cache_analysis" src/pflow/` — confirm the package doesn't exist yet (it shouldn't).
-- `grep -rn "see_also=\[\"caching\"\]" src/pflow/core/workflow/data_flow.py` — find the 3 sites Segment 1 deferred (with the comment about Phase G); G.2 must wire them back.
-- `grep -n "TEMPLATE_VAR_PATTERN\|TEMPLATE_PATTERN" src/pflow/runtime/template_resolver.py` — F2's predicted-cache_key rendering will need this for static-prefix prediction.
-- `grep -n "resolve_sub_workflow" src/pflow/core/workflow/sub_workflow_resolver.py` — F1's Tier 2 walker primitive.
-- `grep -n "format_version" src/pflow/core/trace_report.py` — F3's `--from-trace` mode reads 2.1.0 traces; the consumer gate at `trace_report.py:463` already accepts 2.1.0.
+3. **Widening with required keyword-only kwargs is fragile across multiple callers.** Round 6 caught `execution/plan.py:873` `apply_memo_hit` caller that Round 5 missed. When widening a function, grep for ALL callers and update each in the same patch.
 
-**Sub-phase order (per plan):**
-- **F1**: `cache_analysis` package skeleton (`warning_catalog.py`, `token_estimation.py`, `cross_workflow.py`, `padding_advisor.py`). Pure data + helpers, no analyzer engine yet.
-- **F2**: Analyzer engine — `analyze.py` (full plan), `summarize.py` (one-line `--dry-run` nudge), `render_text.py` (text output). Golden-file tests mirroring `test_mermaid_golden.py`.
-- **F3**: CLI command (`cli/commands/analyze_cache.py`) + MCP parity (`execution_service.analyze_cache` + `@mcp.tool()` registration) + `--dry-run` nudge wiring through the existing plan-formatter Diagnostic loop.
-- **G**: Deterministic serialization helper consolidation (already done in `core/cache_render._deterministic_serialize`; G may just expose it more broadly), `pflow guide caching` page (re-add `see_also=["caching"]` to the 3 deferred sites in `data_flow.py`), cross-references on `cache: bool` vs `prompt_cache:` everywhere both appear.
-
-**Signal to look for:** if `tests/test_execution/test_plan_drift.py` (34 tests) goes red during F1/F2/F3 implementation, STOP. F1/F2/F3 are analyzer-tier — they should be invisible to the runtime/planner-parity contract.
-
-### Code-review findings worth carrying forward
-
-**No `/code-review` skill was run for this segment** (per the same rationale as Segments 1-2 — the test surface is strong: 5700 tests + plan_drift 34/34 + golden hash baseline + lint + mypy + deptry all green). **If the user wants `/code-review` retroactively, it can be run against the segment-3 working-tree changes (vs end-of-Segment-2 commit `6db07d75`) before commit.**
-
-**Lessons from Segment 3 worth surfacing:**
-
-1. **Plan-suggested helper placements always need a layer-import sanity check.** The plan said `_build_cache_control_marker` could go in `nodes/llm/llm.py` as a private helper. But the F2 analyzer (Segment 4) will need to predict the same marker shape — keeping it in `core/cache_render.py` means F2 calls the same helper, no drift. Same lesson Segment 2 learned with `_resolve_chunk_value`. **Reusable rule:** when adding ANY shared symbol consumed by `nodes/`, place it under `core/`. The `nodes/` → `runtime/` import policy is enforced at code-review time and silently violated otherwise.
-
-2. **`prep()` complexity grew past 10 with the cache rendering integration.** The user's no-`# noqa: C901` directive forced decomposition into helpers — the resulting code is more testable AND respects the lint contract. **Reusable rule:** when complexity nudges past 10, decompose immediately rather than defer; the decomposition cleans up the diff for review.
-
-3. **Test fixture-bytes need to match what production produces, not what you ASSUME production produces.** I initially wrote a test fixture with `resolved_prompt = "Context: {'k': 'v'}\nScore: hello"` (Python repr). The standard `TemplateResolver.resolve_template` actually produces `{"k": "v"}` (JSON-with-space). The fix: a one-line `uv run python -c "from pflow.runtime.template_resolver import TemplateResolver; print(repr(...))"` invocation reveals the actual byte shape in 5 seconds. **Reusable rule:** when writing a test fixture that depends on a function's output bytes, run that function once with a representative input and copy the actual bytes — don't assume.
-
-4. **`_collect_parallel_results` widening is a model for "extend without breaking legacy callers".** Default values for the new kwargs (`initial_completed=0, total=None`) preserve the existing `completed_count = 0` and `total = len(future_to_idx)` semantics exactly. Today's callers don't change; new callers (D.2) opt in via the new kwargs. **Reusable pattern:** when widening a function used by N call sites, choose defaults that match the legacy semantics so all N callers stay source-compatible.
-
-5. **The `node_type_name` keyword-only kwarg cascade through 3 callers of `apply_memo_hit` was the most fragile widening in Segment 3.** Round 6 caught the third caller (execution/plan.py:873) that Round 5 missed. **Reusable rule:** when widening a function with `*, required_kwarg`, grep for ALL callers and update each in the same patch. If a caller's caller doesn't have the field in scope, that's a structural issue, not a one-line fix — surface to the user.
-
-6. **The post-format auto-fix on `# noqa: S324` is intentional.** Adding `usedforsecurity=False` to `hashlib.md5(...)` makes the security-suppression comment unnecessary; ruff auto-removes it. **Reusable rule:** prefer `usedforsecurity=False` over `# noqa: S324` for new code; the explicit kwarg is more readable than the comment.
-
-**Final state at end of Segment 3:**
-- 5700 tests passing, 9 skipped.
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- `test_plan_drift.py` 34/34 green.
-- `test_golden_baseline_hashes_match` PASSED — the DD#19 silent-stale-cache gate holds through ALL of Segment 3's runtime changes.
-- All 14 manual adversarial smoke cases from Segment 1's verification pass continue to behave correctly (re-run not strictly required since Segment 3 is purely additive on the cache-render channel; but recommended before commit).
+4. **Prefer `usedforsecurity=False` over `# noqa: S324`** for new `hashlib.md5(...)` use; ruff auto-removes the suppression comment.
 
 ---
 
@@ -735,23 +559,7 @@ After reaching staged-ready state, the user requested a multi-agent code review 
 - **Validation gap: `prewarm: true` on non-batch LLM nodes** (feature-interactions #3, #11). Silent no-op today. Adding a validation rule would expand the warning catalog (DD#29 design-review). Cost/benefit is low until a real user hits it.
 - **`pflow report` × 2.1.0 traces** (feature-interactions #7, #10). Spec line 765 documents the cache-fields surfacing in `pflow report` as optional/follow-up. Defer to v1.x or Segment 4.
 
-**Final state after review fixes:**
-- 5709 tests passing (5703 → 5709, +6 new tests across the post-review changes).
-- `test_plan_drift.py` 34/34 green.
-- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) PASSED.
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- GH #358 filed for the v1.x native-image-cache feature.
-
-**Files modified during review pass:**
-- Modified: `src/pflow/nodes/llm/llm.py` (+~110 lines — image graceful degradation, last-resort warning, dead-code wrap fix in `_propagate_error_to_shared`, two new helpers `_emit_prewarm_disabled_warning` + `_resolve_dynamic_suffix` for C901 complexity reduction)
-- Modified: `src/pflow/runtime/engine/instrumentation.py` (+~25 lines — `_log_skipped_cache_metadata` helper + 3 gate-site wiring)
-- Modified: `src/pflow/runtime/CLAUDE.md` (+1 line — Format 2.1.0 description)
-- Modified: `src/pflow/runtime/engine/CLAUDE.md` (+~20 lines — Trace 2.1.0 cache-metadata augmentation subsection)
-- Modified: `tests/shared/llm_mock.py` (+~10 lines — full-replacement contract docstring)
-- Modified: `tests/test_runtime/test_trace_format_2_1.py` (+~75 lines — `_make_litellm_response_mock` factory + 2 integration tests + 2 monkeypatch fixes for litellm.model_cost mutation cleanup + cache_age_sec exhaustive exclusion assertion)
-- Modified: `tests/test_nodes/test_llm/test_prompt_cache_rendering.py` (+~95 lines — softened divergence-test docstring + behavioral binding-independence test + ABSENT-case byte-equivalence test + 3 new error-path cache_chunks_skipped tests)
-- Modified: `tests/test_nodes/test_llm/test_batch_cache_prefix.py` (+~80 lines — 3 image-degradation tests)
-- New: GH #358 filed via `gh issue create`.
+GH #358 filed for the v1.x native-image-cache feature (silent-failures C1).
 
 ---
 
@@ -832,17 +640,7 @@ The C+D combination is what mypy/Pydantic/Prefect/etc. do — `collections.abc.M
   - `test_handle_cached_execution_does_not_overwrite_memo_cache_source` — Bug #1 regression gate.
   - `test_handle_cached_execution_no_op_when_caller_passes_no_cache_source` — default-no-augment contract.
 
-#### Final state
-
-- **5718 tests pass** (was 5709 + 9 new regression tests). 9 skipped, 0 xfailed.
-- `make check` clean — ruff + ruff-format + mypy + deptry.
-- `test_plan_drift.py` 34/34 green.
-- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) PASSED — no-`prompt_cache` workflows still hash byte-identically.
-- All 7 adversarial CLI smoke cases (A1, A2, A3, A4, A5c, A6, A7) behave correctly.
-
-**Diff stat**: `+339 / −133` across 7 files. Production code roughly net-neutral (the proxy refactor offsets the new param plumbing); most of the delta is regression test coverage.
-
-#### Tacit knowledge for the next agent (Segment 4)
+#### Tacit knowledge from this fix
 
 1. **`NamespacedSharedStore` is now a real `MutableMapping`.** Future code that needs to type-check "dict-like" should use `isinstance(_, collections.abc.Mapping)` rather than `isinstance(_, dict)`. The proxy is the only non-`dict` Mapping in pflow today, but more may appear. The previous "duck-walks-but-isn't-typed-as" trap is closed.
 
@@ -853,16 +651,6 @@ The C+D combination is what mypy/Pydantic/Prefect/etc. do — `collections.abc.M
 4. **Test fidelity blind spots to watch**: (a) any test that calls `node.run(raw_dict)` instead of going through the engine wrap is BLIND to NamespacedSharedStore-related bugs; (b) any test that exercises `apply_memo_hit` and `handle_cached_execution` in isolation (not in sequence) is BLIND to overwrite-class bugs. Segment 4's analyzer tests should drive through real `pflow analyze-cache` end-to-end at least for the main shapes.
 
 5. **DD#19 hash-vs-prep symmetry needs a production-shape test from now on.** The historical byte-equivalence test at `test_prompt_cache_rendering.py:486` was a tautology under synthetic dict + single-root chunks. The new `test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store` is the real regression gate. If a future refactor reintroduces an asymmetric resolution path, this is the test that catches it.
-
-#### Open user decisions surfaced
-
-**None new**. The two pre-existing decisions remain (per `agent-handoff.md`):
-1. **F2 confidence aggregation strictness** — surfaces in Segment 4. Plan defaults STRICT per DD#34.
-2. **V6 sub-workflow dedup outcome** — Segment 1 added the synthetic test; integration-level behavior remains unverified.
-
----
-
-> **Note to next agent**: Read this entry fully + Segments 1–3 above before taking any action. Confirm your understanding by summarizing all four phases' outcomes + open decisions, then state you're ready to proceed to Segment 4.
 
 ---
 
@@ -912,18 +700,9 @@ Sub-phases shipped: **F1.1, F1.2, F1.3, F1.4, F2.1, F2.2, F2.3, F2.4, F3.1, F3.2
 - `tests/test_execution/test_plan_cache_nudge.py` — 3 tests for nudge appearance / silence / failure-doesn't-break-dry-run. (129 lines)
 - `tests/test_integration/test_no_cache_flag.py` — 1 end-to-end test locking the cache-layer-independence contract. (94 lines)
 
-**Total tests added:** 184 (versus plan estimate of ~72 — coverage is materially higher because the catalog parametrize loops produce 12 cases per ID and the per-id-coverage file produces 28 self-contained checks).
+**Total tests added:** 184.
 
-**Total LOC delta (segment-4-only, vs end-of-Segment-3 commit `b6d646ee`):**
-Tracked changes: +241 / −11 across 10 modified production files. Untracked new files: ~5,049 LOC (production: 2,382, tests: 2,667). Combined: ~5,290 LOC across 1 new package (9 files) + 1 new CLI command + 1 new guide topic + 13 new test files + 10 modified files.
-
-**No commits.** User requested final review before commit; everything is staged-ready in the working tree.
-
-**Final-segment checks:**
-- `make test` — **5902 passed, 9 skipped**. Up from 5718 at end of Segment 3 (+184 new tests).
-- `make check` — ruff + ruff-format + mypy + deptry all green.
-- `tests/test_execution/test_plan_drift.py` — **33 / 33 passed**. Plan ↔ runtime parity holds through the F3.3 dry-run nudge integration.
-- `tests/test_runtime/test_prompt_cache_hash.py::test_golden_baseline_hashes_match` — **PASSED**. The DD#19 load-bearing gate is satisfied; no-`prompt_cache` workflows hash byte-identically pre- and post-Segment-4 (Segment 4 doesn't touch the runtime hash path, so this is structurally safe — but verified anyway).
+**Final-segment checks:** 5902 tests passing; `make check` green; `test_plan_drift.py` 33/33; `test_golden_baseline_hashes_match` PASSED.
 
 ### Deviations from plan
 
@@ -989,26 +768,6 @@ Tracked changes: +241 / −11 across 10 modified production files. Untracked new
 1. **F2 confidence aggregation strictness** — RESOLVED. User confirmed STRICT semantics per DD#34 verbatim before implementation. Locked in `_aggregate_confidence` at `analyze.py:553-571`.
 2. **V6 sub-workflow dedup outcome** — UNCHANGED. Segment 1 added the synthetic test; integration-level behavior remains unverified. No Segment 4 work surfaced new evidence.
 
-### What's next (for the next agent)
-
-**Segment 4 is complete.** Task 159 v1 ships with:
-- Full B-phase parser/validator (segment 1).
-- Full B3 memo-hash gate (segment 2).
-- Full C/D/E rendering + prewarm + trace 2.1.0 (segment 3).
-- F1/F2/F3/G analyzer + CLI + MCP + dry-run + guide (this segment).
-
-**Remaining v1.x follow-ups** (NOT Segment 4 scope):
-
-1. **Real cost integration** — wire `litellm.completion_cost()` per call into `analyze.py:_build_summary` to populate the three cost fields. Tri-state degradation already plumbed through.
-2. **Real per-chunk token estimation** — replace the 75%-of-prompt heuristic in `_estimate_cacheable_tokens` with per-chunk calls into the F1.2 estimator.
-3. **Full analytical detection** — light up `cache.dynamic-before-static`, `cache.shared-context-undeclared`, `cache.padding-advisory` against real per-chunk costs and prompt-template parsing.
-4. **Discrepancy detection** — wire `cache.discrepancy` emission for `--from-trace` mode. The dispatch infrastructure (action templates, payload schemas, helper imports) is already in place.
-5. **Byte-exact golden files** if drift-noise becomes a concern. Per-id coverage is the structural floor today.
-6. **End-to-end smoke against lyrics-generator** — requires user permission per agent-handoff.
-
-**For the lyrics-generator end-to-end verification (spec § "Verification — Scenario-Level"):**
-Per the agent-handoff: explicit user permission required before touching `/Users/andfal/projects/music-generation/`. Pre-permission, can simulate via synthetic workflows in `tests/test_integration/` (see `test_no_cache_flag.py` for the pattern).
-
 ### Code-review findings worth carrying forward
 
 **4 high-leverage subagents ran in parallel against Segment 4's working tree:** `review-silent-failures`, `review-validation-consistency`, `review-impact-completeness`, `review-test-fidelity`.
@@ -1043,17 +802,6 @@ Per the agent-handoff: explicit user permission required before touching `/Users
 4. **The async-tool wrapping test pattern** (`asyncio.run(tool.fn(...))`) is the right minimal test for FastMCP-wrapped coroutines. Don't add pytest-asyncio just for this — it's overkill for the contract.
 
 5. **Format-version constants belong in `__init__.py`** so consumers (tests, MCP docstring, CLI) can all import the single source of truth. Hardcoded literals in tests are technical debt that breaks under additive minor bumps.
-
-**Final state at end of Segment 4 (post-review fixes):**
-- 5902 tests passing, 9 skipped.
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- `test_plan_drift.py` 33/33 green.
-- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) PASSED.
-- 12-entry warning catalog locked + 184 new tests covering the analyzer surface.
-
----
-
-> **Note to user**: Task 159 v1 implementation is complete across all four segments. Working tree is staged-ready (no commits per your instruction). The 4-agent code review pass surfaced 10 verified high-value fixes, all applied. Ready for your final review and commit.
 
 ---
 
@@ -1239,41 +987,6 @@ should I add caching?" — and the spec mode-1 example is the second question.
    covariant with the broader list type). Lesson for future helpers
    accepting filtered subsets: use `Sequence` not `list` in the signature.
 
-### Files modified in this follow-up
-
-**Production:**
-- `src/pflow/core/cache_analysis/cost_estimation.py` — NEW (~340 LOC).
-- `src/pflow/core/cache_analysis/token_estimation.py` — `estimate_output_tokens`
-  + 4 shared helper functions (~70 LOC delta).
-- `src/pflow/core/cache_analysis/analyze.py` — PerCallRow + AnalysisSummary
-  field extensions; `_build_summary` rewrite; TTL threading (~40 LOC delta).
-- `src/pflow/core/cache_analysis/render_text.py` — savings line +
-  greenfield run-once hint (~20 LOC delta).
-- `src/pflow/core/cache_analysis/render_json.py` — JSON exposure of new fields
-  (~5 LOC delta).
-
-**Tests:**
-- `tests/test_core/test_cache_analysis_cost_estimation.py` — NEW (18 tests).
-
-**No commits.** All changes staged in working tree per the user's commit-at-end
-preference for the broader follow-up work.
-
-### Final state at end of this follow-up
-
-- 5920 tests passing (5902 → 5920, +18 new cost tests).
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- `test_plan_drift.py` 33/33 green.
-- `test_golden_baseline_hashes_match` (DD#19) PASSED.
-- Smoke-tested rendered output for both greenfield + after-run paths.
-
-> **Note to user**: cost wiring shipped (Summary section now lights up with
-> dollar figures). The big remaining gap is the Recommendations section —
-> all 4 detection paths that produce per-recommendation dollar savings are
-> stubbed. Recommended to wire those in this PR before declaring v1 done.
-> Each detection is bounded (~30-80 LOC); combined ~250 LOC. The infrastructure
-> they consume (PerCallRow data, cost computation, sensitivity floors) is
-> already in place.
-
 ---
 
 ## Post-segment-4 follow-up: O(matches) trace autoload + test isolation gap (2026-04-30)
@@ -1377,15 +1090,7 @@ on write failure, not at every reader.
 ### Final state
 
 - **Test suite**: 107s → **27.26s** (3.9× speedup, near pre-Segment-4 baseline).
-- **5920 tests passing**, 9 skipped, 0 xfailed.
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- `tests/test_execution/test_plan_drift.py` 33/33 green.
-- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) green.
 - All 117 directly-affected tests in 5 files pass in 1.33s (vs ~150s pre-fix).
-
-### Diff stat
-
-`+117 / −91` across 6 files. Net +26 LOC (mostly the helper docstring).
 
 ### Tacit knowledge for the next agent
 
@@ -1437,19 +1142,8 @@ on write failure, not at every reader.
    schema. Cosmetic; defer to a docs-cleanup pass.
 
 2. **Existing 67k+ traces in users' `~/.pflow/debug/`.** Not affected by this
-   commit — they remain on disk but are bypassed by autoload. Users who want to
-   reclaim space can `rm` the directory; new traces will accumulate under the
-   new schema. Consider a `pflow trace prune` follow-up command.
-
-3. **Verification specialist not run on this fix.** The Segment-3 pattern of
-   adversarial CLI smoke-testing surfaced two critical bugs the unit tests
-   missed. Worth running the same drill against this fix before final ship —
-   especially `pflow analyze-cache --from-trace`, `pflow report` (which still
-   uses the broad `workflow-trace-*.json` glob — verified safe but worth
-   exercising end-to-end), and a real `pflow run` → trace save → autoload cycle.
-
-> **Note to user**: working tree changes ready to commit. Test suite runs in 27s
-> down from 107s. All `make check` green. Awaiting commit instruction.
+   commit — they remain on disk but are bypassed by autoload. Consider a
+   `pflow trace prune` follow-up command.
 
 ---
 
@@ -1551,26 +1245,6 @@ all changes are in tests. 10 test files touched.
   shape against a future Phase D extension that consumes
   `${node.field}` references through
   `_resolve_static_prefix_for_cache`.
-
-### Final state
-
-- **5886 tests passing**, 9 skipped (5920 → 5886, net −34 tests; matches
-  the expected delta from H1/H2/H3/H5/M1/M2/M9 deletes + H4/M4 adds).
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- `tests/test_execution/test_plan_drift.py` 33/33 green.
-- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) green.
-- 10 test files touched, +558 / −233 lines. No production code changed.
-- Test suite runs in ~50s under `pytest -q` (consistent with
-  pre-cleanup baseline).
-
-### Deviations from the 14 specified fixes
-
-None. All 14 applied as specified. The brief noted that M1 could fold
-`test_every_id_round_trips_through_make_diagnostic` deletion into M2 if
-M1 ran first; I left M2 to delete only `test_context_passthrough_fidelity`
-per the explicit M2 wording (kept `test_every_id_round_trips_through_make_diagnostic`
-in `test_cache_analysis_warnings.py` because no instruction explicitly
-deleted it).
 
 ---
 
@@ -1716,40 +1390,8 @@ files-to-modify table, total estimate (`~580 LOC + ~56 tests`) updated.
   `test_every_id_round_trips_through_make_diagnostic`) when sub-segment
   C's producers wire up.
 
-### Files modified
-
-**Production (5 files + 1 new):**
-- NEW: `src/pflow/core/workflow_id.py` (~25 LOC) — single source of
-  truth for `synthesize_inline_workflow_id`.
-- `src/pflow/core/cache_analysis/token_estimation.py` (+12 / -1) —
-  events→nodes typo + docstring.
-- `src/pflow/core/cache_analysis/analyze.py` (+15 / -2) — `lookup_path`
-  derivation threaded through autoload + memo + cross-workflow.
-- `src/pflow/cli/commands/analyze_cache.py` (+5 / -1) — drop
-  `or "<inline>"`, pass `resolved.file_path` directly.
-- `src/pflow/mcp_server/services/execution_service.py` (+5 / -1) — same.
-- `src/pflow/execution/runner.py` (~+5 / -22; net -17) — relocate
-  helper, keep underscore alias.
-
-**Tests (3 files):**
-- `tests/test_core/test_cache_analysis_token_estimation.py` (+60 / -1) —
-  fixture key swap + production-shape round-trip test.
-- `tests/test_mcp_server/test_analyze_cache_tool.py` (+115 / -0) —
-  inline-workflow autoload test + `Any` import.
-- `tests/test_core/test_cache_analysis_per_id_coverage.py` (+12 / -0) —
-  TODO pointer.
-
-**Plan (1 file):**
-- `.taskmaster/tasks/task_159/implementation/recommendations-section-plan.md`
-  — A.6 amendment + 3 inline updates (sub-segment A header, files
-  table, total estimate).
-
 ### Final state
 
-- **5888 tests passing** (was 5886 — +2 new production-shape tests).
-- `make check` clean (ruff + ruff-format + mypy + deptry).
-- `tests/test_execution/test_plan_drift.py` 34/34 green.
-- `test_golden_baseline_hashes_match` (DD#19 load-bearing gate) green.
 - End-to-end CLI drill (real Anthropic Haiku-4.5 call, ~$0.0006):
   before-fix `confidence: low_no_data`, `data_source: ['estimator', 'estimator']`;
   after-fix `confidence: high_from_trace`, `data_source: ['trace', 'trace']`.
@@ -1801,21 +1443,6 @@ files-to-modify table, total estimate (`~580 LOC + ~56 tests`) updated.
    and `batch_items` — different consumer (discrepancy detection),
    different shape need. Don't accidentally extend `_from_trace` to
    recurse "for symmetry" — there's no symmetric consumer.
-
-### Open hedged claims (none blocking sub-segment A)
-
-- VERIFIED: tier-1 trace works with real collector round-trip (Bug #1
-  fix mutation-tested).
-- VERIFIED: MCP inline-workflow autoload via canonical `ir-hash:*` key
-  (Bug #2 fix mutation-tested).
-- VERIFIED: full test suite green (5888); all quality checks pass;
-  load-bearing DD#19 hash baseline holds.
-- VERIFIED: A.6 amendment landed in 4 places (new section, sub-segment
-  A header, files-to-modify table, total-estimate line).
-
-### Open user decisions surfaced
-
-None new. Pre-existing decisions from prior segments unchanged.
 
 ---
 
@@ -1900,26 +1527,6 @@ deferred (already-in-plan, intentional v1.x polish, or defended in code).
 helpers (`_resolve_trace_data`, `_extract_declared_chunks`,
 `_extract_cache_ttl`, `_build_per_call_rows_and_warnings`). `analyze()`
 now reads as a clean 7-step pipeline, each helper ≤4 complexity.
-
-### Files modified
-
-**Production (5 files):**
-- `src/pflow/runtime/cache.py` (+20 / -3) — C4 metadata-suffix tuple.
-- `src/pflow/core/workflow/data_flow.py` (+9 / -3) — C3 label.
-- `src/pflow/core/cache_analysis/warning_catalog.py` (+5 / -1) — C3 catalog template.
-- `src/pflow/core/cache_analysis/analyze.py` (~+97 / -25) — C1 regex,
-  C2 cohort math, W3 default-construct + helper, `analyze()`
-  decomposition.
-- `.taskmaster/tasks/task_159/task-159.md` (+6 / -1) — C3 spec amendment.
-
-**Tests (4 files, +11 tests):**
-- `tests/test_runtime/test_cache.py` (+27) — C4 metadata-suffix coverage.
-- `tests/test_core/test_prompt_cache_validation.py` (+3 / -2) — C3 fixture relabel.
-- `tests/test_core/test_cache_analysis_analyze.py` (+161) — C1 regex
-  parametrize + C2 cohort regression + greenfield aggregate-savings
-  preservation. C2 test is mutation-tested.
-- `tests/test_core/test_cache_analysis_token_estimation.py` (+85) — W3
-  memo-tier reachability + read-only invariant.
 
 ### GH issues filed for the 2 deferrable findings
 
@@ -2008,41 +1615,7 @@ will likely touch this fixture; flag inline as a comment when they do.
    same conceptual contract — keep them in lockstep if either is
    touched).
 
-### Open hedged claims and verifications
-
-- **VERIFIED**: 5899 tests pass (was 5888 + 11 new); 9 skipped; 0 xfailed.
-- **VERIFIED**: `make check` clean (ruff + ruff-format + mypy + deptry).
-- **VERIFIED**: `tests/test_execution/test_plan_drift.py` 34/34 green.
-- **VERIFIED**: `test_golden_baseline_hashes_match` (DD#19 load-bearing
-  gate) green — Segment-1-through-pre-A pipeline preserves
-  no-`prompt_cache` byte-identity.
-- **VERIFIED (mutation-tested)**: C2 cohort-percentage fix —
-  reverting the production fix to the buggy formula causes the new
-  test to fail with `pct = 7657 > 100`. Restoring the fix passes.
-  The test fixture's structural pre-condition (`assert savings >
-  current`) confirms the bug scenario IS exercised.
-- **VERIFIED**: GH #357 regression test (saved-library line shifts) still green
-  alongside C4's broader filter.
-
-### Open user decisions surfaced
-
-None new.
-
-### What's next
-
-**Sub-segment A** can now proceed against this clean baseline. The
-recommendations-section plan's prep-segment (events/nodes typo + MCP
-inline + A.6) plus this pre-A baseline cleanup mean the analyzer's
-correctness floor is locked: validator findings surface in `analyze()`,
-the cohort percentage is consistent, regex matches runtime, memo tier
-is reachable, cache_key filter is robust, the order-mismatch label is
-clear.
-
-The 4 stubbed analytical detections (`cache.batch-prewarm-recommended`,
-`cache.padding-advisory`, `cache.dynamic-before-static`,
-`cache.shared-context-undeclared`) + `suggested_blocks` populator are
-the load-bearing remaining work. Per the recommendations plan: ~580
-production LOC + ~56 tests across 3 commits (A → B → C).
+**Mutation-tested**: C2 cohort-percentage fix — reverting the production fix to the buggy formula causes the new test to fail with `pct = 7657 > 100`. The test fixture's structural pre-condition (`assert savings > current`) confirms the bug scenario IS exercised.
 
 ---
 
@@ -2738,58 +2311,202 @@ entire decision branch. Always run the verification grep BEFORE
 designing the fix; the right shape often diverges from the
 reviewer's framing.
 
-### Final state at end of this session
+---
 
-- **5932 tests pass** (up from 5917 before this session's review pass;
-  +15 net new tests including the integration test).
-- **`make check`** clean (ruff + ruff-format + mypy + deptry).
-- **`tests/test_execution/test_plan_drift.py`** 34/34 green —
-  load-bearing engine ↔ planner cache_key parity holds.
-- **`test_golden_baseline_hashes_match`** (DD#19) green — silent-stale-
-  cache gate holds.
-- 4 production files modified (`analyze.py` heavily,
-  `plan_formatter.py`, plus self-audit pass touch-ups), 2 test files
-  modified (15 new tests).
+## Verification-specialist CLI drill — 4 production bugs fixed (2026-04-30)
 
-### Files modified in this session
+After the 4-agent code review pass landed, ran an adversarial CLI drill (16
+hand-built `.pflow.md` workflows + real `pflow` CLI invocations). Test suite
+was green going in (5932 tests). The drill surfaced **4 production bugs that
+the unit-test surface missed entirely**, each a Pitfall #19 instance (synthetic
+fixtures matched buggy code shapes; production code path differed).
 
-**Production:**
-- `src/pflow/core/cache_analysis/analyze.py` — chunks_skipped gate,
-  format_version forward-compat, broadened except, Decision 1
-  (params={}+declared inputs suppression), `_flatten_plan_keys`
-  collision detection + tuple return, `_aggregate_and_cap_discrepancies`
-  cap note, `_populate_suggested_blocks` D3 deferral note,
-  `_emit_discrepancy_diagnostics` silent-skip counter,
-  `_cache_validator_findings` defensive try/except. (+~80 LOC,
-  -~30 LOC.)
-- `src/pflow/execution/formatters/plan_formatter.py` — Decision 2:
-  `_entry_to_dict` extension via `_OPTIONAL_SCALAR_FIELDS` constant,
-  decomposed for C901. (+~10 LOC, -~5 LOC.)
+### Bug A — `SchemaValidationError` propagates uncaught (the D11-A handoff gotcha realized)
 
-**Tests:**
-- `tests/test_core/test_cache_analysis_analyze.py` — fixed vacuous
-  negative-control test for A.6 (added sanity-check assertion +
-  forward-reference fixture).
-- `tests/test_core/test_cache_analysis_per_id_emission.py` — added
-  15 new tests (boundary conditions, walker, aggregator, silent-skip,
-  negative fixtures, integration test). (+~470 LOC.)
+**Symptom**: `pflow analyze-cache <wf>` (without inputs) crashes with exit 1
+when a 2.1.0 trace is auto-loaded for any workflow with required inputs. The
+**dominant agent flow** (run workflow once → analyze-cache later without
+re-supplying inputs) breaks.
 
-**No commits.** Working tree ready for user review and commit.
+**Reproducer**:
+```bash
+pflow run /tmp/wf.pflow.md name=alice              # creates ~/.pflow/debug/.../trace.json (2.1.0)
+pflow analyze-cache /tmp/wf.pflow.md               # CRASHES: "Workflow requires input 'name'" exit=1
+pflow analyze-cache /tmp/wf.pflow.md --no-trace-autoload   # works (workaround)
+```
 
-### Code-review process notes
+**Root cause**: `_predict_cache_keys` only catches `(CompilationError,
+MarkdownParseError, WorkflowValidationError, FileNotFoundError, ValueError)`
+— NOT `SchemaValidationError`. Both `SchemaValidationError` and
+`WorkflowValidationError` are sibling subclasses of `PflowError`, not related
+to each other. Decision 1 (`params={}` early-return) handles the most common
+case but doesn't catch `SchemaValidationError` for other failure modes (wrong
+input type, empty required-non-empty value, etc.).
 
-The 4-agent review pass (silent-failures + impact-completeness +
-test-fidelity + feature-interactions) was the right subset for this
-surface. Skipped agents were appropriate:
+**Fix**: added `SchemaValidationError` to the except tuple in
+`_predict_cache_keys`. New regression test
+`test_predict_cache_keys_catches_schema_validation_error` directly
+mutation-tests the catch contract.
 
-- **review-validation-consistency**: Segment 1 owned cache validation;
-  this PR doesn't change validation surfaces.
-- **review-agent-ux**: cache trace fields are machine-readable;
-  user-facing diagnostics live in earlier segments.
-- **review-concurrency-safety**: no concurrency surface in this
-  change.
+### Bug B — Per-call hide-clean ignores analysis-wide warnings
 
-For future Task 159 work that touches new surfaces, run the
-appropriate subset — full 7-agent battery is overkill when the change
-is bounded.
+**Symptom**: nodes with `cache_ratio ≥ 80%` AND analytical warnings
+(`cache.dynamic-before-static`, `cache.batch-prewarm-recommended`,
+`cache.padding-advisory`, `cache.below-min-tokens`) are silently HIDDEN from
+the default per-call report. Agent reads default output, misses
+high-leverage recommendations.
 
+**Production output (pre-fix)**:
+```
+## Per-call cache report (showing 1 of 2 LLM nodes; all-clean rows hidden)
+  creative-direction  ratio=0%  ...           # `review` is HIDDEN
+  Hidden: 1 nodes at ≥80% ratio with no warnings
+## All warnings
+  warning  [cache.dynamic-before-static]  review   # but review HAS a warning!
+```
+
+**Root cause**: `_is_row_visible_by_default` (`render_text.py`) only checks
+`row.warnings` (the inline tuple), which is **never populated** by any
+emitter. All analytical detections emit `Diagnostic` objects to the
+analysis-wide `warnings` list, not the row's inline tuple.
+
+**Fix**: built a `nodes_with_warnings` set from `analysis.warnings` (filtered
+by `node_id`) and threaded it into `_select_visible_rows` /
+`_is_row_visible_by_default`. Also added inline warning ID rendering on row
+lines so agents see WHY a row is shown.
+
+### Bug C — Cache ratio > 100% (mathematically nonsense)
+
+**Symptom**: per-call rows show `ratio=103%`, cacheable_tokens >
+input_tokens. Visible to agents as "we cache more tokens than we send".
+
+**Reproducer**: any workflow with repetitive prompt text + `prompt_cache:`
+declared. The dynamic-before-static test fixture surfaced it: `tokens=1287
+cacheable=1326 ratio=103%`.
+
+**Root cause**: `_estimate_cacheable_tokens` uses the 75%-of-`len(prompt)//4`
+char heuristic; `input_tokens_estimated` uses `litellm.token_counter`. For
+repetitive text where token_counter underestimates relative to the char
+heuristic, cacheable > total → ratio > 100%.
+
+**Fix**: clamp `cacheable_tokens = min(cacheable_tokens, input_tokens)` in
+`_build_per_call_row`. Cache content can never exceed total input bytes by
+construction; the clamp is honest semantically.
+
+### Bug D — `-$0.00/run` violates tri-state contract (3 code paths)
+
+**Symptom**: rendered output emits `"-$0.00/run"` when the underlying savings
+estimate is < $0.005 (sub-cent). Misleads agents — segment-4 silent-failures
+C1 fix established the contract "None ≠ 0" but only handled `None`, not
+"rounds-to-zero".
+
+**Affected paths**:
+1. `cache.shared-context-undeclared` recommended action (greenfield literal-token fallback ~1 token).
+2. `cache.dynamic-before-static` recommended action (small token counts on short prompts).
+3. `cache.opportunities-available` dry-run nudge (greenfield aggregate savings round to zero).
+
+**Fix**: added `_format_savings_usd(value)` helper in `render_text.py` that
+returns `"savings unavailable"` for both `None` and `< $0.005`. Mirrored the
+threshold in `format_dry_run_nudge` (`warning_catalog.py`). Top-10%
+codebases (mypy/ruff/rustc) consistently distinguish "rounds-to-zero" from
+"available".
+
+### Tacit knowledge for future agents
+
+**1. Pitfall #19 has now bitten this codebase 7 times.** Each instance: a
+synthetic test fixture matched a buggy code shape; production code path
+differed; tests passed against fake. **Defense**: every detection added in
+v1.x must include AT LEAST ONE test that drives `pflow analyze-cache` (or
+the relevant CLI command) end-to-end as a subprocess against a real
+workflow file with a real trace.
+
+**2. The "Decision 1 sidesteps Bug A" pattern is fragile.** The early-return
+when `params={} + declared inputs` covers the common case but leaves
+`SchemaValidationError` uncaught for any other failure mode. Future agents:
+when adding compile-time error handling, list the actual exception classes
+`compile_workflow` can raise — don't trust the "this is the common path"
+shortcut.
+
+**3. Tri-state contracts (None / sub-cent / value) need symmetric coverage
+in tests AND production.** Segment 4's silent-failures C1 fix established
+the contract for `None`. The sub-cent boundary was missed because no test
+exercised values < $0.10. Future agents: when reviewing tri-state code,
+write a test at each boundary (None, threshold, just below threshold, just
+above threshold).
+
+**4. `cacheable > input` is structurally impossible.** Any code path that
+produces it is wrong by construction. The clamp at `_build_per_call_row`
+is a defensive corrective; the right long-term fix is replacing the
+75%-of-char heuristic with proper per-chunk tokenization (deferred to v1.x
+per the cost wiring follow-up). The clamp prevents the symptom from leaking;
+v1.x removes the cause.
+
+---
+
+## Bugs E/F/G — fixed in same session (2026-04-30)
+
+### Bug E — Cross-workflow `node_count` accuracy
+
+**Was**: B.3 hardcoded `node_count=2` (parent + child boundary) but the
+catalog template renders this as `"{node_count} LLM nodes share static
+context..."`. When the child has 0 LLM nodes referencing the input, the
+rendered message is factually wrong.
+
+**Fix**: extended `CrossWorkflowResult` with `irs_by_workflow: dict[str,
+dict[str, Any]]` (the walker visits each workflow once anyway — exposing
+the IRs is zero extra cost). `_cross_workflow_value_flow_opportunity` now
+counts LLM nodes that actually reference the value via the new helper
+`_count_llm_nodes_referencing_path(ir, template_path)` — uses the
+TemplateResolver's `TEMPLATE_PATTERN` walker + coalesce-operand handling
+for symmetry with `_dynamic_before_static_warnings`. When `node_count < 2`
+(no real cache opportunity), the warning is suppressed instead of
+rendering "2 LLM nodes share..." for shell-only edges.
+
+**Tests**: updated
+`test_cross_workflow_value_flow_uses_parent_node_id_for_dedup` to use a
+fixture with real LLM consumers on both sides + new
+`test_cross_workflow_value_flow_suppresses_when_no_llm_consumers`
+regression gate.
+
+### Bug F — `predicted_pct` semantics rendered honestly
+
+**Was**: implementation used `predicted_pct = 100 if predicted_key is
+not None else 0`. Catalog message_template rendered this as
+`"predicted hit_ratio 100%"`, falsely implying a measured hit ratio. The
+plan's strict D5 (`100 if predicted_key == actual_key else 0`) couldn't
+be applied because the in-agreement gate would silently skip legitimate
+key_mismatch discrepancies.
+
+**Fix**: kept `predicted_pct` semantics (used by JSON consumers +
+agreement gate), added a new `predicted_label: str` field to the catalog
+with three states distinguished via a new helper
+`_compute_predicted_label`:
+
+- `"miss"` — no predicted_key (BFS-downstream, partial inputs, etc.).
+- `"hit (bytes diverged at runtime)"` — both keys present + differ
+  (genuine key mismatch — upstream value changed between analyzer-time
+  and traced run).
+- `"hit"` — predicted_key set; actual_key matches OR was not recorded.
+  Treating "actual_key absent" as a match avoids false-positive
+  "diverged" rendering on traces that simply lack the field.
+
+Updated message_template to use `{predicted_label}` instead of
+`predicted hit_ratio {predicted_pct}%`. Existing test fixtures
+(`_BASE_DISCREPANCY_KWARGS`, `_DISCREPANCY_BASE`, aggregator tests) now
+include `predicted_label`.
+
+**Production smoke**:
+- TTL expiry (actual_key absent): `predicted hit, actual 0% read —
+  root cause: Cache entry was 3700s old (>= 1h TTL)` ✅
+- Genuine key mismatch (both keys present + differ):
+  `predicted hit (bytes diverged at runtime), actual 0% read — root
+  cause: Upstream value changed between predicted run and actual run` ✅
+
+### Bug G — `pflow guide caching` doc drift
+
+**Was**: example showed `declared:` label but C3 (pre-A baseline cleanup)
+renamed it to `expected:`.
+
+**Fix**: one-line edit at `src/pflow/guide/features/caching.md:84`.
+
+**Final state**: 5941 tests passing; `make check` clean; `test_plan_drift.py` 34/34; `test_golden_baseline_hashes_match` green; production CLI smoke tests for E/F/G produce correct output.

@@ -223,6 +223,63 @@ def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest
 
 def test_cross_workflow_value_flow_uses_parent_node_id_for_dedup(monkeypatch: pytest.MonkeyPatch) -> None:
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    # Parent has an LLM node that references ${creative.direction} AND a child
+    # workflow call that passes the same value through. Child has its own LLM
+    # node referencing the input. Bug E fix counts these accurately:
+    # parent_count=1 + child_count=1 → node_count=2.
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "use-direction",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Use ${creative.direction}"},
+            },
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"direction": "${creative.direction}"}},
+            },
+        ]
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "use-input",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Use ${direction}"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.shared-context-undeclared")
+    assert diag.node_id == "child-call"  # CRIT-5 dedup boundary
+    assert diag.context is not None
+    assert diag.context["shared_chunks"] == ["direction"]
+    assert diag.context["affected_workflow"] == "parent.pflow.md"
+    # Bug E fix — node_count is the COUNT of LLM nodes referencing the value
+    # (parent's ``use-direction`` + child's ``use-input``), not the hardcoded 2.
+    assert diag.context["node_count"] == 2
+
+
+def test_cross_workflow_value_flow_suppresses_when_no_llm_consumers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bug E regression — when neither side has LLM nodes referencing the
+    value, declaring it in ## Cache wouldn't help (no consumers to share
+    with). The warning is suppressed rather than rendering the misleading
+    "2 LLM nodes share static context..." message that the hardcoded count
+    used to produce.
+
+    Mutation test: revert ``node_count = parent_count + child_count`` to the
+    hardcoded ``2``; this test fails (warning fires for shell-only workflows).
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -238,13 +295,10 @@ def test_cross_workflow_value_flow_uses_parent_node_id_for_dedup(monkeypatch: py
         "resolve_sub_workflow",
         lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
     )
-
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
-    diag = next(d for d in result.warnings if d.id == "cache.shared-context-undeclared")
-    assert diag.node_id == "child-call"
-    assert diag.context is not None
-    assert diag.context["shared_chunks"] == ["direction"]
-    assert diag.context["affected_workflow"] == "parent.pflow.md"
+    # No cache.shared-context-undeclared warning fires for the cross-workflow
+    # path when neither side has LLM consumers.
+    assert all(not (d.id == "cache.shared-context-undeclared" and d.node_id == "child-call") for d in result.warnings)
 
 
 def _write_trace(tmp_path: Path, events: list[dict[str, Any]], *, format_version: str = "2.1.0") -> Path:
@@ -610,6 +664,99 @@ def test_discrepancy_emits_no_silent_skip_note_for_non_cache_workflow(tmp_path: 
     assert not any("skipped attribution for" in n for n in result.notes)
 
 
+def test_discrepancy_predicted_label_distinguishes_match_mismatch_and_miss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug F regression — ``predicted_label`` distinguishes the three planner
+    prediction states. The prior implementation rendered all "predicted_key
+    not None" cases as "predicted hit_ratio 100%" — falsely implying a
+    measured hit ratio when actually it's a binary "did the planner produce
+    a cache_key" signal that may or may not match the trace's actual key.
+
+    This test exercises three discrepancy emissions and verifies each gets
+    the correct label in its rendered message.
+
+    Mutation test: revert ``_compute_predicted_label`` to always return
+    ``"hit"``; the mismatched-key + miss assertions fail.
+    """
+    from pflow.core.cache_analysis.analyze import _compute_predicted_label
+
+    # Helper logic — direct unit assertions on the predicate function.
+    assert _compute_predicted_label("abc", "abc") == "hit"
+    assert _compute_predicted_label("abc", "def") == "hit (bytes diverged at runtime)"
+    assert _compute_predicted_label(None, "abc") == "miss"
+    assert _compute_predicted_label(None, None) == "miss"
+
+    # End-to-end check: the rendered message uses the label, not "hit_ratio N%".
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(
+        analyze_module,
+        "_predict_cache_keys",
+        lambda *_args, **_kwargs: ({"gen": "predicted-key"}, []),
+    )
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_key": "actual-key",  # ≠ predicted-key
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 10,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
+    # Rendered message uses the label — NOT "hit_ratio 100%".
+    assert "predicted hit (bytes diverged at runtime)" in diag.message
+    assert "hit_ratio" not in diag.message
+    # JSON consumers still see the binary predicted_pct.
+    assert diag.context is not None
+    assert diag.context["predicted_pct"] == 100
+    assert diag.context["predicted_label"] == "hit (bytes diverged at runtime)"
+
+
+def test_predict_cache_keys_catches_schema_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bug A regression — ``_predict_cache_keys`` must catch ``SchemaValidationError``
+    in addition to ``CompilationError`` / ``WorkflowValidationError``. They're
+    sibling subclasses of ``PflowError``, not related; the original except clause
+    let ``SchemaValidationError`` propagate uncaught and crashed
+    ``pflow analyze-cache`` whenever a 2.1.0 trace was auto-loaded for a
+    workflow with required-but-malformed inputs (the dominant agent flow).
+
+    Mutation test: drop ``SchemaValidationError`` from the except tuple in
+    ``_predict_cache_keys``; this test fails with an unhandled exception.
+    """
+    from pflow.core.cache_analysis.analyze import _predict_cache_keys
+    from pflow.core.exceptions import SchemaValidationError
+
+    # Inject a SchemaValidationError at the compile_workflow boundary.
+    def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise SchemaValidationError("Validation error at inputs.name: empty", path="inputs.name")
+
+    monkeypatch.setattr("pflow.runtime.compile_workflow", _boom)
+
+    class _Stub:
+        pass
+
+    # Pass non-empty parameters so Decision 1 (params={} + declared inputs) doesn't fire.
+    keys, notes = _predict_cache_keys(
+        workflow_ir={"inputs": {"name": {"type": "string"}}, "nodes": []},
+        parameters={"name": "alice"},
+        memo_cache=_Stub(),
+        workflow_path="x.pflow.md",
+    )
+    assert keys == {}
+    assert any("predicted-key matching unavailable" in n for n in notes)
+    assert any("SchemaValidationError" in n for n in notes)
+
+
 def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Path) -> None:
     """When ``compile_workflow`` raises (here: a malformed IR shape that
     fails compile checks), the analyzer catches the exception, appends a
@@ -837,6 +984,7 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
             node_id="gen",
             trace_path="t",
             predicted_pct=100,
+            predicted_label="hit",
             actual_pct=0,
             root_cause="ttl_expiry",
             root_cause_summary="x",
@@ -850,6 +998,7 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
             node_id="gen",
             trace_path="t",
             predicted_pct=100,
+            predicted_label="hit",
             actual_pct=0,
             root_cause="key_mismatch",
             root_cause_summary="y",
@@ -884,6 +1033,7 @@ def test_aggregator_caps_at_max_total_and_notes_truncation() -> None:
             node_id=f"node-{i}",
             trace_path="t",
             predicted_pct=100,
+            predicted_label="hit",
             actual_pct=0,
             root_cause="key_mismatch",
             root_cause_summary="x",

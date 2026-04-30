@@ -511,6 +511,13 @@ def _build_per_call_row(
         declared_subset=declared_subset,
         declared_chunks=declared_chunks,
     )
+    # Clamp to input_tokens. The 75%-of-char heuristic in
+    # ``_estimate_cacheable_tokens`` and ``litellm.token_counter`` for
+    # ``input_tokens_estimated`` use independent estimators; for repetitive text
+    # the char-heuristic can exceed token_counter, producing nonsense ``ratio>100%``
+    # in user-facing output. Cacheable can never exceed total input bytes by
+    # construction, so the clamp is honest semantically.
+    cacheable_tokens = min(cacheable_tokens, input_tokens)
     ratio = _safe_pct(cacheable_tokens, input_tokens)
 
     return PerCallRow(
@@ -992,7 +999,11 @@ def _build_cross_workflow_findings(
             continue
 
         prose_mismatches.extend(_cross_workflow_prose_mismatches(edge, result.cache_items_by_workflow))
-        opportunity = _cross_workflow_value_flow_opportunity(edge, result.cache_items_by_workflow)
+        opportunity = _cross_workflow_value_flow_opportunity(
+            edge,
+            result.cache_items_by_workflow,
+            result.irs_by_workflow,
+        )
         if opportunity is not None:
             value_flow_opportunities.append(opportunity)
 
@@ -1032,6 +1043,7 @@ def _cross_workflow_prose_mismatches(
 def _cross_workflow_value_flow_opportunity(
     edge: Any,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
+    irs_by_workflow: dict[str, dict[str, Any]],
 ) -> Diagnostic | None:
     if edge.parent_value_expr is None:
         return None
@@ -1039,14 +1051,69 @@ def _cross_workflow_value_flow_opportunity(
     child_declared = set(_items_by_name(cache_items_by_workflow.get(edge.child_workflow, ())))
     if edge.parent_value_expr in parent_declared or edge.child_input_name in child_declared:
         return None
+
+    # Bug E fix — count LLM nodes that actually reference this value on each
+    # side of the boundary. The catalog message_template renders ``{node_count}
+    # LLM nodes share static context``; pre-fix used a hardcoded ``2`` (parent
+    # + child boundary), which was factually wrong when the child has 0 LLM
+    # nodes referencing the input. Counting ``len(refs) >= 1`` rather than the
+    # boundary is the honest report.
+    parent_count = _count_llm_nodes_referencing_path(
+        irs_by_workflow.get(edge.parent_workflow, {}),
+        edge.parent_value_expr,
+    )
+    child_count = _count_llm_nodes_referencing_path(
+        irs_by_workflow.get(edge.child_workflow, {}),
+        edge.child_input_name,
+    )
+    node_count = parent_count + child_count
+    if node_count < 2:
+        # No or only one LLM consumer on the combined boundary — declaring
+        # this value in ## Cache wouldn't share across enough calls to be
+        # worthwhile. Suppress the noisy advisory; agents see real
+        # opportunities, not boundary trivia.
+        return None
     return make_diagnostic(
         "cache.shared-context-undeclared",
         node_id=edge.parent_node_id,
-        node_count=2,
+        node_count=node_count,
         shared_chunks=[edge.child_input_name],
         affected_workflow=edge.parent_workflow,
         savings_usd=None,
     )
+
+
+def _count_llm_nodes_referencing_path(ir: dict[str, Any], template_path: str) -> int:
+    """Count LLM nodes whose ``params.prompt`` references ``${template_path}``.
+
+    Uses the template-pattern walker to handle both bare references
+    (``${X}``) and dotted-path references (``${X.field}``, ``${X[0]}``).
+    For coalesce expressions (``${a ?? b}``), each operand is checked
+    independently — symmetric with ``_dynamic_before_static_warnings``.
+    """
+    if not isinstance(ir, dict):
+        return 0
+    nodes = ir.get("nodes")
+    if not isinstance(nodes, list):
+        return 0
+    count = 0
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "llm":
+            continue
+        prompt = node.get("params", {}).get("prompt", "")
+        if not isinstance(prompt, str):
+            continue
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                # Match exact path OR dotted-prefix (``${creative.direction}``
+                # references the ``creative`` chunk identifier when keyed by root).
+                if operand == template_path or operand.startswith(f"{template_path}."):
+                    count += 1
+                    break
+            else:
+                continue
+            break  # each LLM node counted at most once
+    return count
 
 
 def _items_by_name(items: tuple[dict[str, Any], ...]) -> dict[str, dict[str, Any]]:
@@ -1110,6 +1177,7 @@ def _predict_cache_keys(
         from pflow.core.exceptions import (
             CompilationError,
             MarkdownParseError,
+            SchemaValidationError,
             WorkflowValidationError,
         )
         from pflow.execution.plan import build_plan
@@ -1125,7 +1193,14 @@ def _predict_cache_keys(
             registry,
             _parent_workflow_file=workflow_path,
         )
-    except (CompilationError, MarkdownParseError, WorkflowValidationError, FileNotFoundError, ValueError) as exc:
+    except (
+        CompilationError,
+        MarkdownParseError,
+        SchemaValidationError,
+        WorkflowValidationError,
+        FileNotFoundError,
+        ValueError,
+    ) as exc:
         notes.append(
             f"Discrepancy detection: predicted-key matching unavailable ({type(exc).__name__}). "
             "Provide required inputs via `pflow analyze-cache <workflow> key=value` for full detection. "
@@ -1232,6 +1307,7 @@ def _emit_discrepancy_diagnostics(
 
         actual_pct = _safe_pct(cache_read, cache_read + cache_create)
         predicted_pct = 100 if predicted_key is not None else 0
+        predicted_label = _compute_predicted_label(predicted_key, actual_key)
 
         if predicted_key is None and not (chunks_skipped or (cache_age_sec is not None and float(cache_age_sec) > 300)):
             # Cache engaged but we have no predicted_key (BFS-downstream,
@@ -1261,6 +1337,7 @@ def _emit_discrepancy_diagnostics(
                 node_id=node_id,
                 trace_path=str(trace_data.get("workflow_path") or "<unknown>"),
                 predicted_pct=predicted_pct,
+                predicted_label=predicted_label,
                 actual_pct=actual_pct,
                 root_cause=root_cause,
                 root_cause_summary=summary,
@@ -1277,6 +1354,32 @@ def _emit_discrepancy_diagnostics(
             "(BFS-downstream, heterogeneous batch, or partial inputs)."
         )
     return _aggregate_and_cap_discrepancies(diagnostics, max_total=20, notes=notes)
+
+
+def _compute_predicted_label(predicted_key: str | None, actual_key: Any) -> str:
+    """Compute a human-readable label for the planner's prediction.
+
+    Bug F fix — ``predicted_pct`` is binary (100 if planner produced a
+    cache_key, 0 otherwise) and rendering it as ``"predicted hit_ratio 100%"``
+    is misleading: it sounds like a measured hit ratio. The label
+    distinguishes:
+
+    - ``"miss"`` — planner couldn't produce a cache_key (BFS-downstream,
+      heterogeneous batch, partial inputs); discrepancy attribution falls back
+      to observable signals.
+    - ``"hit (bytes diverged at runtime)"`` — both keys are present AND
+      different (e.g., upstream value changed between analyzer-time and the
+      traced run). Triggers ``key_mismatch`` attribution downstream.
+    - ``"hit"`` — predicted_key is set; the actual_key either matches OR was
+      not recorded by the trace (older fixtures, future schema changes).
+      Treating "actual_key absent" as a match avoids false-positive
+      "diverged" rendering on traces that simply lack the field.
+    """
+    if predicted_key is None:
+        return "miss"
+    if actual_key is not None and predicted_key != actual_key:
+        return "hit (bytes diverged at runtime)"
+    return "hit"
 
 
 def _attribute_root_cause(

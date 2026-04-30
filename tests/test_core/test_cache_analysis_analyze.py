@@ -107,6 +107,42 @@ def test_analyze_skips_non_llm_nodes_in_per_call() -> None:
     assert {row.node_path for row in result.per_call} == {"llm-step"}
 
 
+def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
+    """Bug C regression — ``cacheable_tokens_estimated`` and
+    ``input_tokens_estimated`` come from independent estimators (75%-of-char
+    heuristic vs ``litellm.token_counter``). For repetitive text the
+    char-heuristic can exceed token_counter; without clamping this rendered
+    as ``ratio=103%`` in production, mathematically nonsense.
+
+    Mutation test: drop the ``cacheable_tokens = min(cacheable_tokens, input_tokens)``
+    line in ``_build_per_call_row``; this test fails (ratio > 100% surfaces).
+    """
+    # Repetitive text where ``len(text)//4 * 0.75`` exceeds litellm.token_counter's
+    # estimate. The exact balance depends on the tokenizer; we assert the
+    # invariant rather than try to hit the precise overshoot threshold.
+    long_repetitive = "abcd " * 2000
+    workflow_ir = {
+        "cache": {"items": [{"name": "concept", "var": "concept", "prose_before": "P:\n"}]},
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "x",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["concept"],
+                "params": {"prompt": long_repetitive + "${concept}"},
+            }
+        ],
+    }
+    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False, memo_cache=None)
+    for row in result.per_call:
+        assert row.cache_ratio_pct <= 100, f"row {row.node_path} has nonsense ratio {row.cache_ratio_pct}%"
+        assert row.cacheable_tokens_estimated <= row.input_tokens_estimated, (
+            f"cacheable={row.cacheable_tokens_estimated} > input={row.input_tokens_estimated} "
+            "violates the 'cache cannot exceed total' invariant"
+        )
+
+
 def test_analyze_summary_counts_warnings_and_info() -> None:
     """Summary tracks blocking_errors / warnings_count / info_count separately."""
     workflow_ir = {

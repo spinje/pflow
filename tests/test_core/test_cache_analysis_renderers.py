@@ -197,6 +197,85 @@ def test_text_rows_with_warnings_show_even_above_threshold() -> None:
     assert "noisy" in text
 
 
+def test_text_rows_with_analysis_wide_warning_show_even_above_threshold() -> None:
+    """Bug B regression — a row at ≥80% ratio with NO inline warnings but a
+    matching ``analysis.warnings`` Diagnostic (the production shape; analytical
+    detections emit Diagnostics, not row-inline tuples) must NOT be hidden.
+
+    Mutation test: remove the ``row.node_path in nodes_with_warnings`` clause
+    from ``_is_row_visible_by_default``; this test must fail.
+    """
+    rows = [_row("review", 95)]  # row.warnings = () — empty inline tuple
+    diag = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.dynamic-before-static",
+        message="x",
+        node_id="review",
+    )
+    text = render_text(_make_analysis(rows=rows, warnings=[diag]))
+    assert "review" in text
+    assert "Hidden: 1" not in text
+
+
+def test_text_per_call_inline_marker_includes_analysis_wide_warning_id() -> None:
+    """When a row has an analysis-wide warning, render its ID inline next to
+    the row (so agents reading the per-call report see WHY the row is shown).
+    """
+    rows = [_row("review", 30)]  # already visible due to ratio
+    diag = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.dynamic-before-static",
+        message="x",
+        node_id="review",
+    )
+    text = render_text(_make_analysis(rows=rows, warnings=[diag]))
+    # The warning ID surfaces inline on the row line.
+    review_lines = [line for line in text.splitlines() if "review" in line and "model=" in line]
+    assert review_lines, "expected a per-call row line for review"
+    assert "cache.dynamic-before-static" in review_lines[0]
+
+
+def test_text_recommended_actions_drop_sub_cent_savings() -> None:
+    """Bug D — sub-cent estimated_savings_usd must render as 'savings unavailable',
+    not '-$0.00/run'. Tri-state contract: rounds-to-zero == unavailable."""
+    from pflow.core.cache_analysis.analyze import RecommendedAction
+
+    actions = (
+        RecommendedAction(
+            rank=1, warning_id="cache.shared-context-undeclared", node_id=None, estimated_savings_usd=0.001
+        ),
+        RecommendedAction(rank=2, warning_id="cache.dynamic-before-static", node_id="x", estimated_savings_usd=None),
+        RecommendedAction(
+            rank=3, warning_id="cache.batch-prewarm-recommended", node_id="y", estimated_savings_usd=0.42
+        ),
+    )
+    analysis = _make_analysis()
+    analysis = type(analysis)(  # rebuild with non-empty recommended_actions
+        workflow_path=analysis.workflow_path,
+        analyzed_at=analysis.analyzed_at,
+        estimate_confidence=analysis.estimate_confidence,
+        estimate_confidence_coverage=analysis.estimate_confidence_coverage,
+        trace_path=analysis.trace_path,
+        summary=analysis.summary,
+        recommended_actions=actions,
+        suggested_blocks=analysis.suggested_blocks,
+        per_call=analysis.per_call,
+        cross_workflow=analysis.cross_workflow,
+        warnings=analysis.warnings,
+        notes=analysis.notes,
+    )
+    text = render_text(analysis)
+    # Sub-cent (0.001) and None both render as "savings unavailable".
+    assert "1. [cache.shared-context-undeclared]  savings unavailable" in text
+    assert "2. [cache.dynamic-before-static]  savings unavailable" in text
+    # Above-threshold value still renders the dollar figure.
+    assert "3. [cache.batch-prewarm-recommended]  -$0.42/run" in text
+    # Critical: NO "$0.00" anywhere.
+    assert "$0.00" not in text
+
+
 # ---------------------------------------------------------------------------
 # Text renderer — notes
 # ---------------------------------------------------------------------------

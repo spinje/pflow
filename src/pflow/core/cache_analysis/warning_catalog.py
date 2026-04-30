@@ -301,14 +301,24 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         severity=Severity.INFO,
         source="cache_analyzer",
         category=CACHE_ADVISORY_CATEGORY,
+        # ``predicted_label`` distinguishes "hit" (predicted_key == actual_key),
+        # "hit (bytes diverged at runtime)" (planner expected a hit; trace's
+        # cache_key didn't match), and "miss" (no predicted_key). Bug F fix:
+        # the prior template "predicted hit_ratio {predicted_pct}%" implied we
+        # MEASURED a hit ratio, but ``predicted_pct`` is binary (100 if planner
+        # produced a cache_key, 0 otherwise) — different concept from the
+        # actual measured hit ratio. ``predicted_pct`` stays in the context
+        # for JSON consumers that read raw values; the rendered message uses
+        # the explicit label.
         message_template=(
-            "{node_id} (path: {trace_path}): predicted hit_ratio {predicted_pct}%, "
-            "actual {actual_pct}% — root cause: {root_cause_summary}"
+            "{node_id} (path: {trace_path}): predicted {predicted_label}, "
+            "actual {actual_pct}% read — root cause: {root_cause_summary}"
         ),
         required_context_keys=(
             ("node_id", str),
             ("trace_path", str),
             ("predicted_pct", int),
+            ("predicted_label", str),
             ("actual_pct", int),
             ("root_cause", str),
             ("root_cause_summary", str),
@@ -583,13 +593,17 @@ def format_dry_run_nudge(
 ) -> str:
     """Format the spec-locked dry-run nudge text per § "—dry-run Cache Nudge".
 
-    When ``savings_usd`` or ``savings_pct`` is ``None``, drop the dollar figure
-    rather than emit a misleading ``-$0.00/run, -0%``. Mirrors the cost
-    tri-state rule in ``render_text._format_cost``: ``None`` means
-    "unavailable", never "zero".
+    Tri-state savings contract:
+    - ``None`` (no estimate available) → drop the dollar figure entirely.
+    - ``< $0.005`` (rounds-to-zero) → drop the dollar figure entirely. Sub-cent
+      values render as ``-$0.00/run`` with ``f"{x:.2f}"``, which falsely
+      implies "we computed it, it's zero" when the actual data is too sparse.
+      Top-10% codebases (mypy/ruff/rustc) consistently distinguish "rounds to
+      zero" from "unavailable" — both are user-facing "we don't know".
+    - ``≥ $0.005`` → render the dollar figure (and percentage when known).
     """
     word = "opportunity" if opportunity_count == 1 else "opportunities"
-    if savings_usd is None:
+    if savings_usd is None or savings_usd < 0.005:
         return f"Cache: {opportunity_count} design {word} available."
     if savings_pct is None:
         return f"Cache: {opportunity_count} design {word} available (estimated -${savings_usd:.2f}/run)."
