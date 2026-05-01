@@ -189,7 +189,10 @@ def _per_call_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: 
     if output_tokens is None:
         return None
     invocations = _invocation_count(row)
-    cacheable = row.cacheable_tokens_estimated
+    # Option C: cacheable may be None when greenfield-no-memo (no projection
+    # data). Treat as 0 — same as "no caching" → cost reduces to all-input-rate.
+    # Aggregate savings naturally → 0 for these rows (honest "we don't know").
+    cacheable = row.cacheable_tokens_estimated or 0
     non_cacheable = max(0, row.input_tokens_estimated - cacheable)
     per_call_input = cacheable * pricing.cache_read_rate + non_cacheable * pricing.input_rate
     return float(invocations) * (per_call_input + output_tokens * pricing.output_rate)
@@ -322,7 +325,8 @@ def _aggregate_optimized_cost(
         first = True
         for row, pricing, output_tokens in group:
             invocations = _invocation_count(row)
-            cacheable = row.cacheable_tokens_estimated
+            # See Option C note above — None → 0.
+            cacheable = row.cacheable_tokens_estimated or 0
             non_cacheable = max(0, row.input_tokens_estimated - cacheable)
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
 
@@ -356,7 +360,8 @@ def _aggregate_first_run_savings(
         first = True
         for row, pricing in group:
             invocations = _invocation_count(row)
-            cacheable = row.cacheable_tokens_estimated
+            # See Option C note above — None → 0.
+            cacheable = row.cacheable_tokens_estimated or 0
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
 
             for i in range(invocations):
@@ -382,7 +387,8 @@ def _aggregate_rerun_savings(
         if not row.declared_prompt_cache:
             continue
         invocations = _invocation_count(row)
-        cacheable = row.cacheable_tokens_estimated
+        # See Option C note in `_full_cost_with_caching` — None → 0.
+        cacheable = row.cacheable_tokens_estimated or 0
         # current: cacheable x input_rate ; rerun: cacheable x read_rate
         total_savings += invocations * cacheable * (pricing.input_rate - pricing.cache_read_rate)
     return total_savings

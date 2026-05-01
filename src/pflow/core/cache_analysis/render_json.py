@@ -25,8 +25,21 @@ from pflow.core.diagnostic import Diagnostic
 
 from .analyze import CacheAnalysis, PerCallRow, RecommendedAction, SuggestedBlock
 
-JSON_FORMAT_VERSION: Final[str] = "1.0"
-"""Current JSON output format version. Bump minor on additive changes."""
+JSON_FORMAT_VERSION: Final[str] = "1.1"
+"""Current JSON output format version. Bump minor on additive changes.
+
+Version history:
+
+- ``1.0`` — initial agent-facing JSON shape (Phase F).
+- ``1.1`` — Stage-1 final pass (Concern B): ``per_call[].cacheable_tokens_estimated``
+  and ``per_call[].cache_ratio_pct`` semantics extended to include PROJECTED
+  values in greenfield mode (sum of detected shared-context chunks the node
+  would use if the suggested ## Cache block were declared). Pre-1.1, both
+  fields were always 0 in greenfield. Field shapes unchanged; consumers that
+  treated the prior 0-values as "no opportunity" should reread under the new
+  semantic — projected values match the spec mode-1 example's intent.
+  Recommended-actions ``warning_id`` field unchanged (full ``cache.*`` ID).
+"""
 
 JSON_FORMAT_VERSION_MAJOR: Final[str] = "1"
 """Major version prefix. Consumer rule: ``format_version.startswith("1.")``."""

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import Diagnostic
 
 from .analyze import CacheAnalysis, PerCallRow
 
@@ -68,10 +68,10 @@ def render_text(analysis: CacheAnalysis, *, all_rows: bool = False) -> str:
     if per_call:
         lines.append(per_call)
 
-    # ``_render_warnings`` ("## All warnings") deliberately NOT called from text
-    # output (CP4 #16 — see module docstring). Recommended Actions IS the
-    # canonical warnings view, sorted by impact. JSON consumers get the
-    # full ``warnings[]`` list machine-readable via ``--format=json``.
+    # "## All warnings" section was removed entirely (CP4 #16 — see module
+    # docstring). Recommended Actions IS the canonical warnings view, sorted
+    # by impact. JSON consumers get the full ``warnings[]`` list via
+    # ``--format=json``.
 
     notes = _render_notes(analysis)
     if notes:
@@ -224,27 +224,56 @@ def _format_cost(value: float | None, partial: bool, unavailable_models: tuple[s
 
 
 def _render_recommended_actions(analysis: CacheAnalysis) -> str:
+    """Render the agent-skim list: action headline + scope + reason paragraph.
+
+    Stage-1 final UX pass: dropped the ``[cache.X]`` bracket prefix (visually
+    coded category names as error codes — top-10% codebases like mypy/ruff
+    don't bracket long namespaced descriptors). Headline now leads from the
+    catalog's ``headline_template`` ("<category> — <action>"); scope on its
+    own line; descriptive message indented underneath as the reason. Same
+    Diagnostic data, restructured presentation.
+    """
     if not analysis.recommended_actions:
         return ""
     lines = ["## Recommended actions (ordered by impact)", ""]
     for action in analysis.recommended_actions:
-        lines.append(f"  {action.rank}. [{action.warning_id}]  {_format_savings_usd(action.estimated_savings_usd)}")
+        # Headline + savings on the rank line. Falls back to message when no
+        # catalog headline (defense-in-depth for non-catalog diagnostics).
+        title = action.headline or action.message or action.warning_id
+        savings = _format_savings_usd(action.estimated_savings_usd)
+        lines.append(f"  {action.rank}. {title}{_pad_savings(title, savings)}{savings}")
         if action.node_id:
-            lines.append(f"     Node: {action.node_id}")
+            lines.append(f"     {action.node_id}")
         elif action.scope_workflow:
             # Workflow-level finding (e.g. shared-context spanning N nodes in one
-            # file). Without this branch, the scope line would be absent and the
-            # finding would render indistinguishable from per-node ones — the
-            # GH #2 surface. Use basename to keep the line short.
-            lines.append(f"     Workflow: {_short_workflow_label(action.scope_workflow)}")
-        # CP5 #5: render the diagnostic's message below scope so each
-        # recommendation is self-explanatory. Without this, four findings
-        # sharing the same warning_id looked byte-identical except for the
-        # scope line — agents had to drill into other sections to learn
-        # what each one was about.
-        if action.message:
+            # file). Without this line the scope would be absent and findings
+            # would render indistinguishable from per-node ones (the GH #2
+            # surface). Basename keeps the line short.
+            lines.append(f"     {_short_workflow_label(action.scope_workflow)}")
+        # Reason paragraph — only rendered when distinct from the headline.
+        # Skipping when message ≡ headline avoids duplicating the same prose
+        # twice in narrow terminals.
+        if action.message and action.message != action.headline:
             lines.extend(_indent_message(action.message, prefix="     "))
+        lines.append("")
+    # Drop trailing blank.
+    while lines and lines[-1] == "":
+        lines.pop()
     return "\n".join(lines)
+
+
+def _pad_savings(title: str, savings: str) -> str:
+    """Right-align savings so the rank line reads as a column.
+
+    Target column at 70; clamp to a minimum 2-space gap when the title is
+    long. Mirrors the canonical mode-1 example in the spec where savings
+    sit at a stable right column.
+    """
+    target = 70
+    needed = target - len(title) - 2  # 2-char minimum gap before savings
+    if needed < 2:
+        return "  "
+    return " " * needed
 
 
 def _indent_message(message: str, *, prefix: str) -> list[str]:
@@ -318,21 +347,15 @@ def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
 
 
 def _render_cross_workflow(analysis: CacheAnalysis) -> str:
-    """Render the "Sub-workflow boundaries" section (CP5 #3).
+    """Render the "Sub-workflow boundaries" section.
 
-    Each finding renders as a multi-line block:
-      ▸ <parent> → <child>  (<context>)
-        <what was detected, in plain language>
-        → <action the agent should take>
-        [<warning_id>]
-
-    This shape replaced the single-line "Cross-workflow alignment (Tier 2)"
-    output which produced byte-identical-looking lines on lyrics-generator
-    (the catalog message text alone wasn't enough to distinguish multiple
-    findings of the same ID). The new section pulls structured data from
-    ``diag.context`` per finding type so each block is self-explanatory and
-    actionable, without requiring agents to look up what an ID means or
-    where the boundary lives.
+    Stage-1 final UX pass: numbered findings using the same headline + scope +
+    reason shape as Recommended actions, dropping the ``[cache.X]`` footer.
+    The section header tells the agent the category; the per-finding
+    headline + reason paragraph carries the discriminator without an ID
+    lookup. Section structure (parent → child header + line number) provides
+    the boundary scope; the catalog's ``headline_template`` provides the
+    action.
     """
     cf = analysis.cross_workflow
     if not (cf.rename_detections or cf.prose_mismatches or cf.value_flow_opportunities):
@@ -340,25 +363,70 @@ def _render_cross_workflow(analysis: CacheAnalysis) -> str:
     lines = [
         "## Sub-workflow boundaries",
         "",
-        "  When this workflow calls a sub-workflow, values that flow across can be",
-        "  cached on either side. Each finding below describes one missed opportunity.",
+        "  Values that flow between workflows can be cached on either side.",
+        "  Each finding below is a missed caching opportunity.",
         "",
     ]
     # Order: value-flow first (highest leverage — these unlock new caching),
     # rename + prose-mismatch second (alignment fixes for already-declared caches).
+    rank = 1
     for diag in cf.value_flow_opportunities:
-        lines.extend(_format_value_flow_finding(diag))
+        lines.extend(_format_boundary_finding(diag, rank, scope_kind="value_flow"))
         lines.append("")
+        rank += 1
     for diag in cf.rename_detections:
-        lines.extend(_format_rename_finding(diag))
+        lines.extend(_format_boundary_finding(diag, rank, scope_kind="rename"))
         lines.append("")
+        rank += 1
     for diag in cf.prose_mismatches:
-        lines.extend(_format_prose_mismatch_finding(diag))
+        lines.extend(_format_boundary_finding(diag, rank, scope_kind="prose_mismatch"))
         lines.append("")
+        rank += 1
     # Drop trailing blank line.
     while lines and lines[-1] == "":
         lines.pop()
     return "\n".join(lines)
+
+
+def _format_boundary_finding(diag: Diagnostic, rank: int, *, scope_kind: str) -> list[str]:
+    """Format one cross-workflow finding as headline + scope + reason.
+
+    Layout mirrors Recommended actions:
+      <rank>. <headline>
+         <scope: parent → child  (via <node>, line N)>
+         <reason paragraph from diag.message>
+
+    No ``[id]`` footer. The catalog's ``headline_template`` carries the
+    action; ``diag.message`` carries the descriptive reason.
+    """
+    ctx = diag.context or {}
+    parent = _workflow_short_name(str(ctx.get("parent_workflow", ctx.get("affected_workflow", ""))))
+    child = _workflow_short_name(str(ctx.get("child_workflow", "")))
+
+    # Scope formatting depends on which finding type — different context keys
+    # are populated for each. Value-flow has a parent_node_id (via <node>);
+    # rename has line_in_parent (line N); prose-mismatch has neither.
+    if scope_kind == "value_flow":
+        via = diag.node_id or ctx.get("parent_node_id") or "?"
+        scope = f"{parent} → {child}  (via {via})"
+    elif scope_kind == "rename":
+        line = ctx.get("line_in_parent", "?")
+        scope = f"{parent} → {child}  (line {line})"
+    else:  # prose_mismatch
+        scope = f"{parent} → {child}"
+
+    # Catalog-as-SSoT (see warning_catalog.resolve_headline_for) — works for
+    # both make_diagnostic-emitted and directly-constructed Diagnostics.
+    from .warning_catalog import resolve_headline_for
+
+    headline = resolve_headline_for(diag)
+    title = headline or diag.message or (diag.id or "")
+
+    out = [f"  {rank}. {title}"]
+    out.append(f"     {scope}")
+    if diag.message and diag.message != headline:
+        out.extend(_indent_message(diag.message, prefix="     "))
+    return out
 
 
 def _workflow_short_name(path: str) -> str:
@@ -374,85 +442,23 @@ def _workflow_short_name(path: str) -> str:
     return path
 
 
-def _format_value_flow_finding(diag: Diagnostic) -> list[str]:
-    """Format a ``cache.shared-context-undeclared`` boundary finding.
-
-    Layout:
-      ▸ <parent-name> → <child-name>  (via <type:workflow node-id>)
-        <chunks> are used by N LLM nodes across the boundary;
-        no ## Cache block on either side.
-        → Add <chunks> to either workflow's ## Cache.
-        [cache.shared-context-undeclared]
-    """
-    ctx = diag.context or {}
-    parent = _workflow_short_name(str(ctx.get("affected_workflow", "")))
-    child = _workflow_short_name(str(ctx.get("child_workflow", "")))
-    via_node = diag.node_id or "?"
-    chunks = ctx.get("shared_chunks") or []
-    chunks_text = ", ".join(f"`{c}`" for c in chunks) or "value"
-    node_count = ctx.get("node_count", "?")
-    chunk_word = "are" if len(chunks) != 1 else "is"
-    return [
-        f"  ▸ {parent} → {child}  (via {via_node})",
-        f"    {chunks_text} {chunk_word} used by {node_count} LLM nodes across the boundary; no ## Cache block on either side.",
-        f"    → Add {chunks_text} to either workflow's ## Cache block.",
-        f"    [{diag.id}]",
-    ]
-
-
-def _format_rename_finding(diag: Diagnostic) -> list[str]:
-    """Format a ``cache.cross-workflow-rename-detected`` finding.
-
-    Layout:
-      ▸ <parent-name> → <child-name>  (line N)
-        Parent passes `<parent-expr>` as input named `<child-input>` —
-        same value, two names across the boundary.
-        → Rename one side or use matching prose in both ## Cache blocks.
-        [cache.cross-workflow-rename-detected]
-    """
-    ctx = diag.context or {}
-    parent = _workflow_short_name(str(ctx.get("parent_workflow", "")))
-    child = _workflow_short_name(str(ctx.get("child_workflow", "")))
-    parent_expr = ctx.get("parent_value_expr", "?")
-    child_input = ctx.get("child_input_name", "?")
-    line = ctx.get("line_in_parent", "?")
-    return [
-        f"  ▸ {parent} → {child}  (line {line})",
-        f"    Parent passes `{parent_expr}` as input named `{child_input}` — same value, two names across the boundary.",
-        "    → Rename one side, or use the same chunk identifier and prose in both ## Cache blocks.",
-        f"    [{diag.id}]",
-    ]
-
-
-def _format_prose_mismatch_finding(diag: Diagnostic) -> list[str]:
-    """Format a ``cache.cross-workflow-prose-mismatch`` finding.
-
-    Layout:
-      ▸ <parent-name> → <child-name>
-        Chunk `<name>` is declared in both ## Cache blocks with different
-        prose-before-${var}; cross-workflow byte-level cache hit won't fire.
-        → Pick one prose label and use it in both files.
-        [cache.cross-workflow-prose-mismatch]
-    """
-    ctx = diag.context or {}
-    parent = _workflow_short_name(str(ctx.get("parent_workflow", "")))
-    child = _workflow_short_name(str(ctx.get("child_workflow", "")))
-    chunk_name = ctx.get("chunk_name", "?")
-    return [
-        f"  ▸ {parent} → {child}",
-        (
-            f"    Chunk `{chunk_name}` declared in both ## Cache blocks with "
-            "different prose-before-${var}; the byte-level cache hit won't fire."
-        ),
-        f"    → Pick one prose label and use it in both files' ## Cache blocks for `{chunk_name}`.",
-        f"    [{diag.id}]",
-    ]
-
-
 def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     if not analysis.per_call:
         return ""
     rows = list(analysis.per_call)
+    # Option C — per-row data filter. A row is "real-data-bearing" iff:
+    #   - input_tokens reflects ACTUAL runtime tokens (data_source in
+    #     {trace, memo}), OR
+    #   - the row has a declared subset (steady-state — declared chunks ARE
+    #     the cacheable signal regardless of memo).
+    # Pure greenfield (estimator/heuristic + no declared subset) rows are
+    # filtered out: their input_tokens column shows TEMPLATE size (with
+    # ${var} as ~5-token literals — NOT actual runtime size) and their
+    # cacheable column is unprojectable without memo. Both columns mislead.
+    # When ALL rows are filtered, the section is hidden entirely.
+    real_data_rows = [r for r in rows if _row_has_real_data(r)]
+    if not real_data_rows:
+        return ""
     # Analytical detections (cache.dynamic-before-static, cache.padding-advisory,
     # cache.batch-prewarm-recommended, cache.below-min-tokens, etc.) emit Diagnostic
     # objects to ``analysis.warnings`` rather than populating ``row.warnings`` (the
@@ -461,7 +467,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # hidden from the default report — agents miss high-leverage recommendations.
     nodes_with_warnings = {d.node_id for d in analysis.warnings if d.node_id}
     visible, hidden_count = _select_visible_rows(
-        rows,
+        real_data_rows,
         all_rows=all_rows,
         nodes_with_warnings=nodes_with_warnings,
     )
@@ -469,10 +475,13 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
         return ""
 
     # Build per-row inline warning markers from analysis.warnings keyed by node_id.
+    # The ``cache.`` namespace prefix is stripped — every ID in this output is
+    # ``cache.*`` so the prefix is 100% redundant in the per-call notes column.
+    # Full IDs stay in JSON for machine consumers (DD#27).
     warnings_by_node: dict[str, list[str]] = {}
     for diag in analysis.warnings:
         if diag.node_id and diag.id:
-            warnings_by_node.setdefault(diag.node_id, []).append(diag.id)
+            warnings_by_node.setdefault(diag.node_id, []).append(_strip_cache_prefix(diag.id))
 
     lines = ["## Per-call cache report"]
     explainer = _per_call_scope_explainer(rows)
@@ -485,13 +494,21 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     lines.append("")
     for row in visible:
         marker = f"(×{row.batch_size_estimated})" if row.is_batch and row.batch_size_estimated else ""
-        inline_ids = warnings_by_node.get(row.node_path) or list(row.warnings)
+        inline_ids = warnings_by_node.get(row.node_path) or [_strip_cache_prefix(w) for w in row.warnings]
         warning_marker = ", ".join(inline_ids)
+        # Mixed-state rendering: a row that survives the filter (has memo
+        # data for input) might still have None cacheable if the workflow
+        # mixes nodes with/without memo for their refs. Render ``?`` to
+        # distinguish from numeric zero.
+        cacheable_str = (
+            f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
+        )
+        ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
         lines.append(
             f"  {row.node_path:30s} {marker:<6} model={row.model:35s} "
             f"tokens={row.input_tokens_estimated:>5}  "
-            f"cacheable={row.cacheable_tokens_estimated:>5}  "
-            f"ratio={row.cache_ratio_pct:>3}%  "
+            f"cacheable={cacheable_str}  "
+            f"ratio={ratio_str}  "
             f"src={_data_source_display(row.data_source)}  {warning_marker}"
         )
     if hidden_count > 0:
@@ -527,23 +544,46 @@ def _data_source_display(value: str) -> str:
 def _per_call_scope_explainer(rows: list[PerCallRow]) -> str:
     """Return a one-line explainer describing what ``ratio=`` means here.
 
-    CP4 #7: greenfield workflows (no ``prompt_cache:`` declared anywhere)
-    show ``ratio=0%`` for every row, which alongside ``N opportunities`` in
-    the summary produces a confusing top-to-bottom read. The explainer
-    tells the agent which scenario they're in:
+    Two modes that survive the Option C row filter:
 
-    - Greenfield: ratios are CURRENT (always 0% pre-cache); opportunities are
-      what's recoverable. Returns the recoverable-savings hint.
-    - Steady-state: ratios reflect actual cache hits from declared subsets.
-      Returns the actual-cache hint.
-
-    Detection: if any row has ``declared_prompt_cache != None``, at least one
-    node has opted into a declared subset → steady-state mode.
+    - **Steady-state**: at least one row has ``declared_prompt_cache``.
+      Values reflect declared subsets.
+    - **Post-run greenfield**: rows have memo/trace data; values are projected
+      from real run history.
     """
     is_steady_state = any(row.declared_prompt_cache is not None for row in rows)
     if is_steady_state:
         return "Actual cache ratios from declared `prompt_cache:` subsets."
-    return "Current ratios (always 0% pre-cache); see Recommended actions for the recoverable opportunities."
+    return "Projected cache ratios from prior run data."
+
+
+def _row_has_real_data(row: PerCallRow) -> bool:
+    """Per-row visibility check for the per-call cache report (Option C).
+
+    A row is real-data-bearing iff it has a substantive signal to display:
+
+    - ``data_source in {"trace", "memo"}`` — input_tokens is actual runtime
+      size (post-substitution); cacheable can be projected from real chunks.
+    - ``declared_prompt_cache`` non-empty — steady-state mode where the row
+      is interesting regardless of memo (the declared subset itself IS the
+      caching contract).
+
+    Pure-greenfield-no-memo rows fail both checks: input_tokens is template
+    size with ``${var}`` references counted as ~5-token literals (NOT actual
+    runtime size), and cacheable is unprojectable. Hiding such rows is more
+    honest than rendering misleading numbers.
+    """
+    return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache)
+
+
+def _strip_cache_prefix(warning_id: str) -> str:
+    """Strip the ``cache.`` namespace prefix for compact text rendering.
+
+    Every catalog ID is namespaced ``cache.*`` so the prefix is redundant in
+    the analyze-cache text output. Full IDs stay in JSON via
+    ``Diagnostic.to_dict()`` for machine consumers (DD#27).
+    """
+    return warning_id.removeprefix("cache.") if warning_id else warning_id
 
 
 def _select_visible_rows(
@@ -568,26 +608,17 @@ def _select_visible_rows(
 
 
 def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[str]) -> bool:
-    """Per spec — show rows with warnings (inline OR analysis-wide) OR ratio < 80%."""
+    """Per spec — show rows with warnings (inline OR analysis-wide) OR ratio < 80%.
+
+    ``cache_ratio_pct`` may be ``None`` (mixed-state row that survived the
+    real-data filter but has no projection). Treat None as "below threshold"
+    — show by default since the agent should at least see that the row exists.
+    """
     if row.warnings or row.node_path in nodes_with_warnings:
         return True
+    if row.cache_ratio_pct is None:
+        return True
     return row.cache_ratio_pct < _HIDDEN_RATIO_THRESHOLD
-
-
-def _render_warnings(analysis: CacheAnalysis) -> str:
-    if not analysis.warnings:
-        return ""
-    lines = ["## All warnings", ""]
-    for diag in analysis.warnings:
-        sev = {
-            Severity.ERROR: "error",
-            Severity.WARNING: "warning",
-            Severity.INFO: "info",
-        }.get(diag.severity, "")
-        node_part = f"  {diag.node_id}" if diag.node_id else ""
-        id_part = f"[{diag.id}]" if diag.id else ""
-        lines.append(f"  {sev:8s} {id_part}{node_part}")
-    return "\n".join(lines)
 
 
 def _render_notes(analysis: CacheAnalysis) -> str:

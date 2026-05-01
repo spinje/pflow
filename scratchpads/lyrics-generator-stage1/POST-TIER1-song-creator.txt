@@ -1,0 +1,97 @@
+# Cache Analysis: /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  ~7 LLM calls · 1 models in use
+  Confidence: low_no_data
+
+## Summary
+
+  Current cost per run:        unavailable
+  Optimized cost per run:      unavailable
+  Cost on rerun (within 1h):   unavailable
+
+  4 opportunities (0 warnings, 4 info)
+
+  Absolute cost figures need a prior run (output token counts come from memo cache or a 2.1.0 trace). Run the workflow once and re-run analyze-cache.
+
+## Recommended actions (ordered by impact)
+
+  1. [cache.shared-context-undeclared]  savings unavailable
+     Workflow: song-creator.pflow.md
+  2. [cache.shared-context-undeclared]  savings unavailable
+     Node: choose-chorus
+  3. [cache.shared-context-undeclared]  savings unavailable
+     Node: emotional-reviews
+  4. [cache.shared-context-undeclared]  savings unavailable
+     Node: craft-reviews
+
+## Suggested ## Cache block — /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  Paste between ## Inputs and ## Steps:
+
+  ## Cache
+
+  - ttl: 5m
+
+  ```cache
+  <DESCRIBE concept.core_idea — appears verbatim in cached system prefix>
+
+  ${concept.core_idea}
+
+  <DESCRIBE concept.title — appears verbatim in cached system prefix>
+
+  ${concept.title}
+
+  <DESCRIBE concept_brief — appears verbatim in cached system prefix>
+
+  ${concept_brief}
+
+  <DESCRIBE creative-direction.response — appears verbatim in cached system prefix>
+
+  ${creative-direction.response}
+
+  <DESCRIBE concept.angle — appears verbatim in cached system prefix>
+
+  ${concept.angle}
+
+  <DESCRIBE song-architecture.response — appears verbatim in cached system prefix>
+
+  ${song-architecture.response}
+
+  <DESCRIBE easter-eggs.response — appears verbatim in cached system prefix>
+
+  ${easter-eggs.response}
+
+  ```
+
+  Per-node prompt_cache: assignments:
+
+    creative-direction: ['concept.core_idea', 'concept.title', 'concept_brief', 'concept.angle']
+    easter-eggs: ['concept.core_idea', 'concept.title', 'concept_brief', 'creative-direction.response', 'concept.angle', 'song-architecture.response']
+    generate-suno-prompt: ['creative-direction.response']
+    rewrite-craft: ['concept.core_idea', 'concept.title', 'concept_brief', 'creative-direction.response', 'song-architecture.response']
+    rewrite-emotional: ['concept.core_idea', 'concept.title', 'concept_brief', 'creative-direction.response', 'concept.angle', 'song-architecture.response', 'easter-eggs.response']
+    song-architecture: ['concept.core_idea', 'concept.title', 'concept_brief', 'creative-direction.response', 'concept.angle']
+    write-lyrics: ['concept.core_idea', 'concept.title', 'concept_brief', 'creative-direction.response', 'concept.angle', 'song-architecture.response', 'easter-eggs.response']
+
+## Cross-workflow alignment (Tier 2)
+
+  ▸ [cache.shared-context-undeclared]  6 LLM nodes share static context that isn't in any ## Cache block (saves savings unavailable/run)
+  ▸ [cache.shared-context-undeclared]  6 LLM nodes share static context that isn't in any ## Cache block (saves savings unavailable/run)
+  ▸ [cache.shared-context-undeclared]  6 LLM nodes share static context that isn't in any ## Cache block (saves savings unavailable/run)
+
+## Per-call cache report (showing 7 of 7 LLM nodes; all-clean rows hidden)
+
+  write-lyrics                          model=gemini/gemini-3.1-pro-preview       tokens= 3289  cacheable=    0  ratio=  0%  src=estimator
+  song-architecture                     model=                                    tokens= 2879  cacheable=    0  ratio=  0%  src=heuristic
+  rewrite-emotional                     model=gemini/gemini-3.1-pro-preview       tokens= 2315  cacheable=    0  ratio=  0%  src=estimator
+  rewrite-craft                         model=gemini/gemini-3.1-pro-preview       tokens= 2180  cacheable=    0  ratio=  0%  src=estimator
+  generate-suno-prompt                  model=                                    tokens= 1354  cacheable=    0  ratio=  0%  src=heuristic
+  creative-direction                    model=                                    tokens= 1314  cacheable=    0  ratio=  0%  src=heuristic
+  easter-eggs                           model=                                    tokens= 1100  cacheable=    0  ratio=  0%  src=heuristic
+
+## All warnings
+
+  info     [cache.shared-context-undeclared]
+  info     [cache.shared-context-undeclared]  choose-chorus
+  info     [cache.shared-context-undeclared]  emotional-reviews
+  info     [cache.shared-context-undeclared]  craft-reviews

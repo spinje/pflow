@@ -1,0 +1,17 @@
+# Cache Analysis: /Users/andfal/projects/music-generation/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md
+
+  2 LLM nodes using anthropic/claude-sonnet-4-5
+
+## Summary
+
+  Current cost per run:        unavailable
+  Optimized cost per run:      unavailable
+  Cost on rerun (within 1h):   unavailable
+
+  0 opportunities (0 warnings, 0 info)
+
+  Absolute cost figures need a prior run (output token counts come from memo cache or a 2.1.0 trace). Run the workflow once and re-run analyze-cache.
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once to populate memo cache; analyze-cache then shows real per-node token estimates and cacheable projections.

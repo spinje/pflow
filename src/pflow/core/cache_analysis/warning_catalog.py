@@ -53,6 +53,13 @@ class CacheWarningSpec:
     caller MUST pass to ``make_diagnostic``. ``nullable_cost_keys`` lists
     keys whose value may legitimately be ``None`` (cost degradation).
     Everything else is mandatory and validated at construction.
+
+    ``headline_template`` is the short action-led title used by
+    ``analyze-cache`` text rendering (Recommended actions + Sub-workflow
+    boundaries). Pattern: ``"<category> — <action>"`` (rustc-style: fixed
+    title per ID + per-instance specifics). When empty, the renderer falls
+    back to ``message`` truncated to first sentence. Catalog-driven so per-id
+    headline policy lives in one SSoT — no scattered renderer if/elif logic.
     """
 
     severity: Severity
@@ -63,6 +70,7 @@ class CacheWarningSpec:
     suggestions_template: tuple[str, ...]
     path_template: str
     nullable_cost_keys: frozenset[str] = frozenset()
+    headline_template: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +129,12 @@ _SHARED_CONTEXT_BOUNDARY_TEMPLATE = (
 )
 
 
+# Headline templates — short action-led titles for analyze-cache text output.
+# Per-id, catalog-driven; the renderer reads these without knowing the IDs.
+_SHARED_CONTEXT_WORKFLOW_HEADLINE = "Shared context undeclared — declare {shared_chunks_short} in ## Cache"
+_SHARED_CONTEXT_BOUNDARY_HEADLINE = "Cross-boundary value undeclared — declare {shared_chunks_short} in either ## Cache"
+
+
 CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
     # === Run-validation tier (always emitted at pflow run) ===
     "cache.order-mismatch": CacheWarningSpec(
@@ -137,6 +151,11 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         suggestions_template=(),  # message itself carries the fix line
         path_template="nodes[id={node_id}].prompt_cache",
+        # ERRORs render through diagnostic_render.py with title `[id]` next to
+        # the title. analyze-cache's recommendations section sees ERRORs too
+        # (after A.6 wired validator findings into analyze output) — the
+        # headline shows there.
+        headline_template="`prompt_cache:` order mismatch on {node_id}",
     ),
     "cache.unused-chunk": CacheWarningSpec(
         severity=Severity.WARNING,
@@ -148,6 +167,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "Remove '{chunk_name}' from ## Cache, OR reference it from a node's `- prompt_cache: [{chunk_name}]`.",
         ),
         path_template="cache.items[name={chunk_name}]",
+        headline_template="Unused cache chunk — remove `{chunk_name}` from ## Cache",
     ),
     "cache.invalid-on-non-llm": CacheWarningSpec(
         severity=Severity.ERROR,
@@ -167,6 +187,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "OR move the LLM logic into a type: llm node.",
         ),
         path_template="nodes[id={node_id}]",
+        headline_template="Cache field on non-LLM node — remove {invalid_fields_csv} from {node_id}",
     ),
     # === Analytical tier (emitted by analyze-cache / --dry-run only) ===
     "cache.shared-context-undeclared": CacheWarningSpec(
@@ -178,6 +199,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         # is replaced at make_diagnostic time — see ``_dispatch_shared_context``.
         # Two distinct sentences are needed because workflow-internal sharing
         # and cross-boundary value flow have different remediation paths.
+        # Headline is also dispatched (see ``_select_headline_template``).
         message_template=_SHARED_CONTEXT_WORKFLOW_TEMPLATE,
         required_context_keys=(
             ("node_count", int),
@@ -191,6 +213,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="workflows[path={affected_workflow}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template=_SHARED_CONTEXT_WORKFLOW_HEADLINE,
     ),
     "cache.batch-prewarm-recommended": CacheWarningSpec(
         severity=Severity.WARNING,
@@ -214,6 +237,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="nodes[id={node_id}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template="Batch prewarm not declared — add `- prewarm: true` to {node_id}",
     ),
     "cache.dynamic-before-static": CacheWarningSpec(
         severity=Severity.WARNING,
@@ -240,6 +264,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="nodes[id={node_id}].prompt",
         nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template="Dynamic ref blocks caching on {node_id} — move `${{{dynamic_ref}}}` after stable content",
     ),
     "cache.padding-advisory": CacheWarningSpec(
         severity=Severity.INFO,
@@ -261,6 +286,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="nodes[id={node_id}].prompt_cache",
         nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template="Padding advisory — extend `prompt_cache:` on {node_id} to hit upstream cache",
     ),
     "cache.below-min-tokens": CacheWarningSpec(
         severity=Severity.WARNING,
@@ -283,6 +309,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "won't fire anyway.",
         ),
         path_template="nodes[id={node_id}].prompt_cache",
+        headline_template="Cache content below provider minimum on {node_id}",
     ),
     "cache.cross-workflow-prose-mismatch": CacheWarningSpec(
         severity=Severity.INFO,
@@ -304,6 +331,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "Pick one prose label and use it in both files' ## Cache blocks for chunk `{chunk_name}`.",
         ),
         path_template="workflows[path={parent_workflow}].cache.items[name={chunk_name}]",
+        headline_template="Cross-workflow prose mismatch — align `{chunk_name}` in both ## Cache blocks",
     ),
     "cache.cross-workflow-rename-detected": CacheWarningSpec(
         severity=Severity.INFO,
@@ -328,6 +356,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "## Cache blocks use the same chunk identifier and identical prose.",
         ),
         path_template=("workflows[path={parent_workflow}].nodes[id={parent_node_id}].inputs[name={child_input_name}]"),
+        headline_template="Cross-workflow rename — `{parent_value_expr}` ↔ `{child_input_name}`",
     ),
     "cache.discrepancy": CacheWarningSpec(
         severity=Severity.INFO,
@@ -358,6 +387,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         suggestions_template=(),  # DISPATCHED on root_cause — see CACHE_DISCREPANCY_*
         path_template="nodes[id={node_id}]",
         nullable_cost_keys=frozenset({"cache_age_sec", "predicted_cache_key", "actual_cache_key"}),
+        headline_template="Cache hit discrepancy on {node_id} — {root_cause_summary}",
     ),
     "cache.prewarm-no-prefix": CacheWarningSpec(
         severity=Severity.INFO,
@@ -380,6 +410,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "has nothing to cache.",
         ),
         path_template="nodes[id={node_id}].prompt",
+        headline_template="Prewarm has no static prefix on {node_id}",
     ),
     "cache.consolidate-to-root-recommended": CacheWarningSpec(
         severity=Severity.INFO,
@@ -410,6 +441,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "so consolidation pays off after the first read.",
         ),
         path_template="workflows[path={affected_workflow}]",
+        headline_template="Consolidate sub-paths of `{root}` to root in ## Cache",
     ),
 }
 
@@ -521,6 +553,22 @@ def _format_savings(savings_usd: Any) -> str:
     if savings_usd is None:
         return "savings unavailable"
     return f"-${float(savings_usd):.2f}"
+
+
+def _format_chunks_short(chunks: Any, *, max_inline: int = 2) -> str:
+    """Compact headline-friendly chunk list. ``max_inline+1`` items use ``+N more``.
+
+    ``["concept"]`` → ``"`concept`"``
+    ``["concept", "concept_brief"]`` → ``"`concept`, `concept_brief`"``
+    ``["concept", "concept_brief", "x"]`` → ``"`concept`, `concept_brief` +1 more"``
+    """
+    if not chunks:
+        return ""
+    items = [str(c) for c in chunks]
+    if len(items) <= max_inline:
+        return ", ".join(f"`{c}`" for c in items)
+    head = ", ".join(f"`{c}`" for c in items[:max_inline])
+    return f"{head} +{len(items) - max_inline} more"
 
 
 def _format_savings_clause(savings_usd: Any) -> str:
@@ -670,9 +718,15 @@ def make_diagnostic(
     # undeclared`` rendered three identical lines on lyrics-generator
     # song-creator (one per cross-workflow boundary) — agents couldn't tell
     # which chunk each line was about.
+    #
+    # ``shared_chunks_short`` is the headline-friendly compact form: keeps the
+    # first 2 chunks inline, then ``+N more`` for the rest. Long lists wrap
+    # awkwardly in the rank-line header; the full list still appears in the
+    # message body via ``shared_chunks_csv``.
     if "shared_chunks" in context_kwargs:
         chunks = context_kwargs["shared_chunks"]
         format_dict["shared_chunks_csv"] = ", ".join(str(c) for c in chunks) if chunks else ""
+        format_dict["shared_chunks_short"] = _format_chunks_short(chunks)
 
     # ``sub_paths_csv`` mirrors ``shared_chunks_csv`` for the consolidate-to-root
     # advisory. Same join-free pattern; same passthrough-to-context fidelity.
@@ -718,6 +772,13 @@ def make_diagnostic(
         context = dict(context_kwargs)
         context["category"] = spec.category
         context["path"] = path
+
+    # Headline rendering is now sourced via ``resolve_headline_for(diag)`` at
+    # render time (catalog-as-SSoT). The make_diagnostic path no longer writes
+    # ``context["headline"]`` — keeping the catalog as the single source of
+    # truth means validator-emitted diagnostics (built via raw Diagnostic(...)
+    # in data_flow.py, NOT via this helper) get headlines too. See
+    # ``resolve_headline_for`` below for the lookup logic.
 
     title = _CATEGORY_TITLE.get(spec.category)
 
@@ -772,6 +833,58 @@ def format_dry_run_nudge(
     return f"Cache: {opportunity_count} design {word} available (estimated -${savings_usd:.2f}/run, -{savings_pct}%)."
 
 
+# ---------------------------------------------------------------------------
+# Headline resolution — catalog-as-SSoT for analyze-cache rendering.
+# ---------------------------------------------------------------------------
+
+
+def resolve_headline_for(diag: Diagnostic) -> str:
+    """Format the catalog's ``headline_template`` for a Diagnostic.
+
+    Returns an empty string when the diagnostic has no headline (non-cache
+    diagnostic, catalog row without a headline_template, or a formatting
+    error). Catalog-as-SSoT: this works regardless of HOW the Diagnostic was
+    constructed — both ``make_diagnostic`` (cache_analyzer-emitted) and raw
+    ``Diagnostic(...)`` (validator-emitted in ``data_flow.py``) get headlines.
+
+    Dispatches the boundary headline for ``cache.shared-context-undeclared``
+    when ``context["child_workflow"]`` is present (mirrors the message
+    dispatch in ``make_diagnostic``).
+
+    Used by ``analyze.py:_build_recommended_actions`` for the rank line and
+    by ``render_text.py:_format_boundary_finding`` for the cross-workflow
+    findings. Both consumers in the same package layer.
+    """
+    if not diag.id or diag.id not in CACHE_WARNING_CATALOG:
+        return ""
+    spec = CACHE_WARNING_CATALOG[diag.id]
+    if not spec.headline_template:
+        return ""
+    ctx = dict(diag.context or {})
+    if diag.node_id is not None:
+        ctx.setdefault("node_id", diag.node_id)
+
+    template = spec.headline_template
+    if diag.id == "cache.shared-context-undeclared" and "child_workflow" in ctx:
+        template = _SHARED_CONTEXT_BOUNDARY_HEADLINE
+
+    # Mirror make_diagnostic's typed-alias derivations so headline templates
+    # can use the same placeholders. ``shared_chunks_short`` only matters for
+    # cache.shared-context-undeclared; cheap unconditional derivation.
+    if "shared_chunks" in ctx:
+        ctx.setdefault("shared_chunks_short", _format_chunks_short(ctx["shared_chunks"]))
+
+    try:
+        return template.format(**ctx)
+    except (KeyError, IndexError) as exc:
+        # Defense-in-depth: catalog drift could leave a template referencing
+        # a placeholder the diagnostic doesn't carry. Log + return empty so
+        # the renderer falls back to message-led shape rather than raising
+        # in the rendering hot path.
+        logger.debug("Headline template formatting failed for %s: %s", diag.id, exc)
+        return ""
+
+
 __all__ = [
     "CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS",
     "CACHE_DISCREPANCY_ACTION_TEMPLATES",
@@ -784,4 +897,5 @@ __all__ = [
     "CacheWarningSpec",
     "format_dry_run_nudge",
     "make_diagnostic",
+    "resolve_headline_for",
 ]

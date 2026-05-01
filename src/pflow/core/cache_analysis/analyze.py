@@ -66,15 +66,27 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PerCallRow:
-    """One row of the per-call cache report."""
+    """One row of the per-call cache report.
+
+    Tri-state nullability for tokens / cacheable / ratio:
+
+    - ``input_tokens_estimated`` is always populated (template tokenization
+      always succeeds; ``estimate_tokens`` falls back to char-heuristic).
+    - ``cacheable_tokens_estimated`` is ``None`` when no run data exists for
+      the projection (Option C — pure greenfield, no memo/trace). ``int``
+      otherwise. Renderer hides such rows from the per-call section; JSON
+      exposes ``null`` for machine consumers.
+    - ``cache_ratio_pct`` mirrors ``cacheable_tokens_estimated`` — ``None``
+      when cacheable is None; derived ``int`` otherwise.
+    """
 
     node_path: str
     model: str
     is_batch: bool
     batch_size_estimated: int | None
     input_tokens_estimated: int
-    cacheable_tokens_estimated: int
-    cache_ratio_pct: int
+    cacheable_tokens_estimated: int | None
+    cache_ratio_pct: int | None
     data_source: str  # "trace" | "memo" | "estimator" | "heuristic"
     declared_prompt_cache: list[str] | None
     warnings: tuple[str, ...] = ()
@@ -117,6 +129,11 @@ class RecommendedAction:
     # the message lets the agent see WHAT each finding is about without having
     # to scroll to the cross-workflow / per-call sections.
     message: str = ""
+    # Stage-1 final pass: short action-led title for the rank line. Sourced
+    # from the catalog's ``headline_template`` via ``diag.context["headline"]``.
+    # Renderer prefers this over message when present; empty falls back to
+    # message (safety net for diagnostics not yet catalog-driven).
+    headline: str = ""
 
 
 @dataclass(frozen=True)
@@ -254,7 +271,7 @@ def analyze(
     )
     rows_by_node = {row.node_path: row for row in per_call_rows}
 
-    suggested_blocks, shared_warnings = _populate_suggested_blocks(
+    suggested_blocks, shared_warnings, cacheable_by_node = _populate_suggested_blocks(
         workflow_ir=workflow_ir,
         rows_by_node=rows_by_node,
         memo_cache=memo_cache,
@@ -262,6 +279,26 @@ def analyze(
         notes=notes,
     )
     warnings.extend(shared_warnings)
+
+    # Stage-1 final pass (Concern B): enrich greenfield per-call rows with
+    # PROJECTED cacheable token counts from the suggested-blocks pass. Memo
+    # data drives projection; without it, ``cacheable_by_node`` carries None
+    # for affected nodes → ``_enrich_with_projected_cacheable`` propagates
+    # None → renderer hides the row (Option C).
+    if cacheable_by_node:
+        per_call_rows = [_enrich_with_projected_cacheable(row, cacheable_by_node) for row in per_call_rows]
+        rows_by_node = {row.node_path: row for row in per_call_rows}
+
+    # Option C — surface a Notes entry when the per-call section will render
+    # empty so agents understand the absence is intentional. The renderer uses
+    # the same predicate (``_row_has_real_data``) to decide visibility; we
+    # mirror it here at analyze-time so the note appears in JSON too.
+    if per_call_rows and not any(_row_has_real_data_in_analyze(r) for r in per_call_rows):
+        notes.append(
+            "Per-call cache report hidden — workflow has no run data yet. "
+            "Run once to populate memo cache; analyze-cache then shows real "
+            "per-node token estimates and cacheable projections."
+        )
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
     warnings.extend(
         _consolidate_to_root_advisories(
@@ -552,14 +589,18 @@ def _build_per_call_row(
         declared_subset=declared_subset,
         declared_chunks=declared_chunks,
     )
-    # Clamp to input_tokens. The 75%-of-char heuristic in
-    # ``_estimate_cacheable_tokens`` and ``litellm.token_counter`` for
-    # ``input_tokens_estimated`` use independent estimators; for repetitive text
-    # the char-heuristic can exceed token_counter, producing nonsense ``ratio>100%``
-    # in user-facing output. Cacheable can never exceed total input bytes by
-    # construction, so the clamp is honest semantically.
-    cacheable_tokens = min(cacheable_tokens, input_tokens)
-    ratio = _safe_pct(cacheable_tokens, input_tokens)
+    # Initial cacheable/ratio:
+    # - Steady-state (declared subset): heuristic value > 0; show real ratio.
+    # - Greenfield (no declared subset): cacheable=0 placeholder. ``analyze()``
+    #   may overwrite via ``_enrich_with_projected_cacheable`` if memo data
+    #   exists; otherwise the row is hidden by the renderer (Option C).
+    cacheable_tokens_with_clamp: int | None
+    if cacheable_tokens > 0:
+        cacheable_tokens_with_clamp = min(cacheable_tokens, input_tokens)
+        ratio: int | None = _safe_pct(cacheable_tokens_with_clamp, input_tokens)
+    else:
+        cacheable_tokens_with_clamp = 0
+        ratio = 0
 
     return PerCallRow(
         node_path=node_id,
@@ -567,12 +608,58 @@ def _build_per_call_row(
         is_batch=is_batch,
         batch_size_estimated=batch_size,
         input_tokens_estimated=input_tokens,
-        cacheable_tokens_estimated=cacheable_tokens,
+        cacheable_tokens_estimated=cacheable_tokens_with_clamp,
         cache_ratio_pct=ratio,
         data_source=source,
         declared_prompt_cache=list(declared_subset) if declared_subset else None,
         output_tokens_estimated=output_tokens,
         output_data_source=output_source,
+    )
+
+
+def _row_has_real_data_in_analyze(row: PerCallRow) -> bool:
+    """Mirror of ``render_text._row_has_real_data`` for analyze-time decisions.
+
+    Kept as a private duplicate (analyze.py shouldn't depend on render_text.py)
+    that MUST stay byte-equivalent — see ``render_text._row_has_real_data``
+    for contract documentation.
+    """
+    return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache)
+
+
+def _enrich_with_projected_cacheable(row: PerCallRow, cacheable_by_node: dict[str, int | None]) -> PerCallRow:
+    """Replace greenfield ``cacheable_tokens_estimated`` with projected value.
+
+    When the suggested-blocks pass detected shared context for this node:
+
+    - ``int`` value (memo populated): replace with the projected sum, clamped
+      to ``input_tokens_estimated``. Ratio re-derives.
+    - ``None`` value (memo empty for at least one chunk — Option C): set
+      cacheable AND ratio to ``None`` so the renderer can hide the row.
+
+    Nodes not in ``cacheable_by_node`` (no detected shared refs) are returned
+    unchanged. Steady-state rows are NOT enriched here —
+    ``_populate_suggested_blocks`` skips workflows with declared ``## Cache``,
+    so this only fires for greenfield.
+    """
+    if row.node_path not in cacheable_by_node:
+        return row
+    projected = cacheable_by_node[row.node_path]
+    if projected is None:
+        # No memo data — cacheable unmeasurable. Tri-state contract: explicit
+        # None instead of misleading 0.
+        return replace(
+            row,
+            cacheable_tokens_estimated=None,
+            cache_ratio_pct=None,
+        )
+    if projected <= 0:
+        return row
+    bounded = min(projected, row.input_tokens_estimated)
+    return replace(
+        row,
+        cacheable_tokens_estimated=bounded,
+        cache_ratio_pct=_safe_pct(bounded, row.input_tokens_estimated),
     )
 
 
@@ -586,15 +673,19 @@ def _per_node_warnings(node: dict[str, Any], row: PerCallRow, *, declared_chunks
     node_id = row.node_path
 
     # cache.below-min-tokens — declared cache content below provider minimum.
-    if row.declared_prompt_cache and row.cacheable_tokens_estimated > 0 and row.model:
+    # ``cacheable_tokens_estimated`` may be None for greenfield rows without
+    # memo data; this warning gates on declared_prompt_cache so it only fires
+    # in steady-state where cacheable is always int.
+    cacheable = row.cacheable_tokens_estimated
+    if row.declared_prompt_cache and cacheable is not None and cacheable > 0 and row.model:
         min_tokens = get_min_cache_tokens(row.model)
-        if row.cacheable_tokens_estimated < min_tokens:
+        if cacheable < min_tokens:
             diagnostics.append(
                 make_diagnostic(
                     "cache.below-min-tokens",
                     node_id=node_id,
                     model=row.model,
-                    cacheable_tokens=int(row.cacheable_tokens_estimated),
+                    cacheable_tokens=int(cacheable),
                     min_tokens=int(min_tokens),
                 )
             )
@@ -747,12 +838,23 @@ def _populate_suggested_blocks(
     memo_cache: Any,
     workflow_path: str,
     notes: list[str],
-) -> tuple[list[SuggestedBlock], list[Diagnostic]]:
-    """Build greenfield suggested ``## Cache`` blocks and matching advisory.
+) -> tuple[list[SuggestedBlock], list[Diagnostic], dict[str, int | None]]:
+    """Build greenfield suggested ``## Cache`` blocks + advisory + per-node cacheable.
+
+    Returns ``(blocks, warnings, cacheable_by_node)``. The per-node map
+    carries projected cacheable token counts:
+
+    - ``int`` value: every chunk the node uses had memo data → real projection.
+    - ``None`` value: at least one chunk had no memo data → projection
+      unavailable. The renderer hides rows where the value is ``None`` (per
+      Option C — pure-greenfield-no-memo rows would otherwise show
+      misleading template-tokens-as-cacheable numbers).
 
     v1 covers greenfield only (per DD#3). When ``## Cache`` is already
     declared, append a note so agents understand why no suggestion was
-    produced — silent return would otherwise hide the deferral.
+    produced — silent return would otherwise hide the deferral. Cacheable
+    map is empty in steady-state; existing declared-subset heuristic on
+    rows is unaffected.
     """
     declared_names = set(_cache_item_names(workflow_ir))
     if declared_names:
@@ -760,12 +862,12 @@ def _populate_suggested_blocks(
             "Suggested-blocks: workflow already declares ## Cache; steady-state "
             "(partial-block) suggestions deferred to v1.x."
         )
-        return [], []
+        return [], [], {}
 
     ref_to_nodes, first_seen = _collect_llm_template_references(workflow_ir)
     shared_refs = [(ref, nodes) for ref, nodes in ref_to_nodes.items() if len(nodes) >= 2]
     if not shared_refs:
-        return [], []
+        return [], [], {}
 
     # Sort key has 5 dimensions (CP3 #4 fix — sibling clustering):
     #   1. Most-shared root first. Roots like ``concept`` (used by 7 nodes via
@@ -804,16 +906,29 @@ def _populate_suggested_blocks(
     assignments: dict[str, list[str]] = {}
     total_savings: float | None = 0.0
     affected_nodes: set[str] = set()
+    # Per-node projected cacheable totals. Value semantics:
+    # - ``int``: all chunks the node uses had memo data → real projection.
+    # - ``None`` (sentinel): at least one chunk had no memo data → projection
+    #   unavailable. ``analyze()`` propagates None through PerCallRow; the
+    #   renderer hides such rows per Option C. Once a node's total is None,
+    #   it stays None even if subsequent chunks have data — partial info
+    #   would still mislead, so honest "unknown" is the contract.
+    cacheable_by_node: dict[str, int | None] = {}
 
     for ref, node_ids in shared_refs:
         first_row = rows_by_node.get(node_ids[0])
         model = first_row.model if first_row else ""
         size_tokens = _estimate_ref_tokens(ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path)
+        # ``size_tokens_est`` on the suggested-block chunk stays ``int`` — the
+        # block is paste-ready prose so we render 0 (or the real value) rather
+        # than expose ``None``. Agents reading the chunk size see "0" and know
+        # to disregard until run data exists.
+        display_size = size_tokens if size_tokens is not None else 0
         chunks.append(
             SuggestedBlockChunk(
                 name=ref,
                 var=f"${{{ref}}}",
-                size_tokens_est=size_tokens,
+                size_tokens_est=display_size,
                 prose_placeholder=f"<DESCRIBE {ref} — appears verbatim in cached system prefix>",
             )
         )
@@ -825,6 +940,13 @@ def _populate_suggested_blocks(
         for node_id in node_ids:
             affected_nodes.add(node_id)
             assignments.setdefault(node_id, []).append(ref)
+            # None propagation: once a node has any unknown chunk, the whole
+            # node's projection is unknown.
+            existing = cacheable_by_node.get(node_id, 0)
+            if size_tokens is None or existing is None:
+                cacheable_by_node[node_id] = None
+            else:
+                cacheable_by_node[node_id] = existing + size_tokens
 
     target_file = workflow_path or "<root>"
     block = SuggestedBlock(
@@ -842,7 +964,7 @@ def _populate_suggested_blocks(
         affected_workflow=target_file,
         savings_usd=total_savings,
     )
-    return [block], [warning]
+    return [block], [warning], cacheable_by_node
 
 
 def _collect_llm_template_references(workflow_ir: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, int]]:
@@ -998,16 +1120,24 @@ def _check_root_for_consolidation(
     sub_path_tokens = [
         _estimate_ref_tokens(sp, model=model, memo_cache=memo_cache, workflow_path=workflow_path) for sp in sub_paths
     ]
-    max_subpath = max(sub_path_tokens)
+    # Pre-Option-C this advisory relied on ``_estimate_ref_tokens`` returning
+    # ~3-5 tokens (literal ``${ref}``) on memo miss — implicit suppression via
+    # "small number trickles past threshold". Now ``_estimate_ref_tokens``
+    # returns ``None`` on memo miss; explicit check needed. The advisory's
+    # whole premise (compare sub-path tokens vs root tokens vs threshold) is
+    # only meaningful with real value sizes. Any None → skip.
+    if any(t is None for t in sub_path_tokens):
+        return None
+    max_subpath = max(t for t in sub_path_tokens if t is not None)
     if max_subpath >= min_tokens:
         # At least one sub-path is large enough to cache on its own;
         # cache_control on the largest sub-path already fires.
         return None
     root_tokens = _estimate_ref_tokens(root, model=model, memo_cache=memo_cache, workflow_path=workflow_path)
-    if root_tokens < min_tokens:
-        # Even consolidation wouldn't cross the threshold — the real fix is
-        # "add more chunks to ## Cache", which ``cache.below-min-tokens``
-        # already covers.
+    if root_tokens is None or root_tokens < min_tokens:
+        # Either no run data for the root (unmeasurable) or even consolidation
+        # wouldn't cross the threshold (``cache.below-min-tokens`` covers
+        # the latter case for declared subsets).
         return None
     return make_diagnostic(
         "cache.consolidate-to-root-recommended",
@@ -1113,11 +1243,26 @@ def _estimate_chunk_tokens(item: dict[str, Any], model: str) -> int:
     return estimate_tokens(model, text)[0]
 
 
-def _estimate_ref_tokens(ref: str, *, model: str, memo_cache: Any, workflow_path: str | None) -> int:
+def _estimate_ref_tokens(ref: str, *, model: str, memo_cache: Any, workflow_path: str | None) -> int | None:
+    """Tokenize a template reference's resolved value.
+
+    Returns:
+        - Real token count when memo cache holds a recent value for the ref's
+          root node (high-fidelity).
+        - ``None`` when memo is empty / lookup fails (no run data — projection
+          unavailable). Callers MUST distinguish ``None`` from a small int.
+
+    The previous fallback (tokenize the literal ``${ref}`` string, ~3-5 tokens)
+    was structurally misleading: it produced a tiny number that looked like a
+    real estimate but actually represented "we have no data" — agents reading
+    ``cacheable=38`` thought the opportunity was small when actually it was
+    unmeasured. ``None`` propagation lets the renderer hide misleading rows
+    explicitly per Option C (see render_text._render_per_call).
+    """
     value = _latest_value_for_ref(ref, memo_cache=memo_cache, workflow_path=workflow_path)
     if value is not None:
         return estimate_tokens(model, deterministic_serialize(value))[0]
-    return estimate_tokens(model, f"${{{ref}}}")[0]
+    return None
 
 
 def _latest_value_for_ref(ref: str, *, memo_cache: Any, workflow_path: str | None) -> Any:
@@ -1144,8 +1289,12 @@ def _savings_for_shared_ref(
     ref: str,
     node_ids: list[str],
     rows_by_node: dict[str, PerCallRow],
-    tokens: int,
+    tokens: int | None,
 ) -> float | None:
+    if tokens is None:
+        # No memo data → can't compute savings honestly. Mirror the existing
+        # cost tri-state contract: None propagates rather than fabricating 0.
+        return None
     total = 0.0
     for node_id in node_ids[1:]:
         row = rows_by_node.get(node_id)
@@ -1771,7 +1920,12 @@ def _build_summary(rows: list[PerCallRow], warnings: list[Diagnostic], *, ttl: s
 
     total_calls = len(rows)
     total_input = sum(r.input_tokens_estimated for r in rows)
-    total_cacheable = sum(r.cacheable_tokens_estimated for r in rows)
+    # ``cacheable_tokens_estimated`` may be ``None`` for greenfield rows
+    # without memo (Option C — projection unmeasurable). Sum only the known
+    # values; None rows contribute 0 to the aggregate (honest "we don't know"
+    # rather than fabricated 0). Top-level summary still useful — agents
+    # see the partial signal from steady-state / post-run rows.
+    total_cacheable = sum(r.cacheable_tokens_estimated or 0 for r in rows)
     models = sorted({r.model for r in rows if r.model})
     blocking_errors = sum(1 for d in warnings if d.severity == Severity.ERROR)
     warnings_count = sum(1 for d in warnings if d.severity == Severity.WARNING)
@@ -1882,6 +2036,13 @@ def _build_recommended_actions(
             affected = ctx.get("affected_workflow")
             if isinstance(affected, str) and affected:
                 scope_workflow = affected
+        # Catalog-as-SSoT: looks up headline_template by diag.id and formats
+        # against context. Works whether the diag came from make_diagnostic OR
+        # was built directly via Diagnostic(...) (validator emitters in
+        # data_flow.py — _make_order_mismatch_diagnostic etc.).
+        from .warning_catalog import resolve_headline_for
+
+        headline = resolve_headline_for(d)
         actions.append(
             RecommendedAction(
                 rank=rank,
@@ -1890,6 +2051,7 @@ def _build_recommended_actions(
                 estimated_savings_usd=float(savings) if savings is not None else None,
                 scope_workflow=scope_workflow,
                 message=d.message or "",
+                headline=headline,
             )
         )
     return actions

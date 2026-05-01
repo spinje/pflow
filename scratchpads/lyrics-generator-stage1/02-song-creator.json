@@ -1,0 +1,1032 @@
+{
+  "format_version": "1.0",
+  "workflow_path": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+  "analyzed_at": "2026-04-30T15:01:09Z",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 3,
+    "heuristic": 4,
+    "total": 7
+  },
+  "trace_path": null,
+  "summary": {
+    "current_cost_per_run_usd": null,
+    "optimized_cost_per_run_usd": null,
+    "rerun_cost_per_run_usd": null,
+    "savings_pct_first_run": null,
+    "savings_pct_rerun": null,
+    "aggregate_savings_first_run_usd": 0.0,
+    "aggregate_savings_rerun_usd": 0.0,
+    "blocking_errors": 0,
+    "actionable_opportunities": 17,
+    "warnings_count": 0,
+    "info_count": 17,
+    "total_llm_calls_estimated": 7,
+    "total_input_tokens_estimated": 46,
+    "total_cacheable_tokens_estimated": 0,
+    "models_in_use": [
+      "gemini/gemini-3.1-pro-preview"
+    ],
+    "partial_cost_usd": false,
+    "unavailable_models": []
+  },
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 3,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 4,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 5,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 6,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 7,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 8,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 9,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 10,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 11,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 12,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 13,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 14,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 15,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 16,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    },
+    {
+      "rank": 17,
+      "warning_id": "cache.cross-workflow-rename-detected",
+      "node_id": null,
+      "estimated_savings_usd": null
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "creative-direction",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 7,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "heuristic",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "song-architecture",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 7,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "heuristic",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "easter-eggs",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 5,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "heuristic",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "write-lyrics",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 7,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "rewrite-emotional",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "rewrite-craft",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "generate-suno-prompt",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 8,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "heuristic",
+      "declared_prompt_cache": null,
+      "warnings": []
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 25,
+    "rename_detections": [
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 0,
+          "parent_node_id": "choose-chorus",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `song-architecture.response` as input named `architecture` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "architecture",
+          "line_in_parent": 0,
+          "parent_node_id": "choose-chorus",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `concept_brief` as input named `creative_brief` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "parent_value_expr": "concept_brief",
+          "child_input_name": "creative_brief",
+          "line_in_parent": 0,
+          "parent_node_id": "choose-chorus",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_brief]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 0,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 0,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 0,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 0,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 0,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 0,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 0,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 0,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 0,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 0,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 0,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 0,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 0,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 0,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      }
+    ],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 0,
+        "parent_node_id": "choose-chorus",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `song-architecture.response` as input named `architecture` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "architecture",
+        "line_in_parent": 0,
+        "parent_node_id": "choose-chorus",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `concept_brief` as input named `creative_brief` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "parent_value_expr": "concept_brief",
+        "child_input_name": "creative_brief",
+        "line_in_parent": 0,
+        "parent_node_id": "choose-chorus",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_brief]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 0,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 0,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 0,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 0,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 0,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 0,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 0,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 0,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 0,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 0,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 0,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 0,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 0,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 0); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 0,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    }
+  ],
+  "notes": []
+}

@@ -3253,3 +3253,227 @@ without the cacheable column, OR with `cacheable=—`.
 
 ---
 
+## Stage-1 final UX pass — Concerns A + B + Option C (2026-05-01)
+
+After CP5 the user reviewed the output and flagged two remaining nits
+(Concerns A + B), then a third (Option C) emerged from analyzing the
+greenfield output's per-call section honestly. All three shipped as one
+coherent agent-readability pass.
+
+### Concern A — drop bracketed `[cache.X]` IDs from text rendering
+
+**Was**: every rank line in Recommended Actions and every cross-workflow
+finding had a `[cache.shared-context-undeclared]`-style bracket prefix
+mimicking rustc/mypy error codes. pflow's IDs aren't error codes — they're
+long namespaced category descriptors. Bracketing visually coded them as
+codes when they're actually descriptions.
+
+**Top-10% lens**: mypy default hides codes; ruff/rustc use SHORT codes;
+none bracket long namespaced descriptors. The brackets added noise
+without value for non-ERROR diagnostics.
+
+**Fix**: dropped `[cache.X]` brackets from `render_text.py` at 4 sites
+(rec rank line + 3 cross-workflow finding footers); stripped the `cache.`
+prefix from per-call inline notes column (`dynamic-before-static` instead
+of `[cache.dynamic-before-static]`); deleted the dead `_render_warnings`
+function entirely. The `diagnostic_render.py` ERROR title bracket
+(`Error: Cache Failure [cache.invalid-on-non-llm]`) is unchanged — that
+surface keeps the agent-routing handle for hard errors.
+
+**Headlines via catalog SSoT**: added `headline_template` field to
+`CacheWarningSpec` (per-id action-led title, `"<category> — <action>"`
+pattern). Each rank line now leads with the headline (e.g., `"Shared
+context undeclared — declare \`concept\` in ## Cache"`); the descriptive
+message goes below as the reason paragraph. Recommendations restructured
+from `[id]` + scope label + message to action-headline + plain scope +
+reason paragraph.
+
+**`resolve_headline_for(diag)` helper** in `warning_catalog.py` is the
+SSoT for headline lookup. Works for diagnostics built via `make_diagnostic`
+AND directly via `Diagnostic(...)` (validator emitters in `data_flow.py`
+— `_make_order_mismatch_diagnostic` etc.). Closed the structural gap the
+post-implementation test-writer-fixer flagged: validator-emitted ERROR
+diagnostics now get their catalog headlines through analyze-cache rendering.
+
+### Concern B — greenfield `cacheable_tokens_estimated` populates from suggested-blocks pass
+
+**Was**: pre-fix `_estimate_cacheable_tokens` returned 0 for any node
+without a declared subset. Greenfield rows always showed `cacheable=0
+ratio=0%` even when shared context was detected — the per-call section
+was useless in the dominant authoring scenario.
+
+**Fix**: `_populate_suggested_blocks` already computed per-chunk token
+sizes (via `_estimate_ref_tokens` against memo data) and per-node
+assignments — but threw the data away. Refactored to also return
+`cacheable_by_node: dict[str, int | None]`. `analyze()` enriches greenfield
+per-call rows via new `_enrich_with_projected_cacheable` helper using
+`dataclasses.replace` (PerCallRow stays frozen).
+
+**JSON_FORMAT_VERSION 1.0 → 1.1**: semantic shift on
+`per_call[].cacheable_tokens_estimated` (was always 0 in greenfield;
+now projected from detected shared context when memo populated, `null`
+when not). Field shapes unchanged; consumer rule
+(`startswith("1.")`) holds.
+
+### Option C — hide per-call rows without real data
+
+**The deeper issue**: even after Concern B landed, lyrics-generator
+song-creator showed `cacheable=38 ratio=1%` on greenfield write-lyrics
+(3289 input tokens). The numbers were technically computed (sum of
+literal-`${ref}` token counts via fallback) but practically misleading
+— agents skimming would think "tiny opportunity" when actually it was
+unmeasured.
+
+**The user's sharper observation**: even the `tokens` column is
+misleading in greenfield. `tokens=3289` represents the prompt TEMPLATE
+size (with `${var}` references counted as ~5-token literals), NOT the
+actual runtime size after substitution. With memo data, `estimate_tokens`
+returns real runtime tokens (post-substitution). Without memo, it
+tokenizes the template with `${var}` as literals → wrong number with
+authoritative-looking `src=medium` confidence label. Both columns lie
+in pure greenfield.
+
+**Top-10% answer — distinguish data from no-data**: same tri-state
+contract as cost (None ≠ 0). Option C visibility rule:
+
+```python
+def _row_has_real_data(row: PerCallRow) -> bool:
+    return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache)
+```
+
+A row passes iff input_tokens reflects actual runtime size (memo/trace)
+OR steady-state with a declared subset. Pure-greenfield-no-memo rows
+fail both → hidden. When ALL rows fail → entire `## Per-call cache
+report` section hidden, with a Notes entry: "Per-call cache report
+hidden — workflow has no run data yet. Run once to populate memo cache;
+analyze-cache then shows real per-node token estimates and cacheable
+projections."
+
+**Implementation**:
+
+- `_estimate_ref_tokens` returns `int | None` (memo miss → `None`
+  instead of the prior ~3-5 token literal-`${ref}` fallback).
+- `cacheable_by_node: dict[str, int | None]` propagates None per-node.
+- `PerCallRow.cacheable_tokens_estimated: int | None`,
+  `cache_ratio_pct: int | None`.
+- `_consolidate_to_root_advisories` got an explicit None-check
+  (replacing implicit suppression-via-tiny-numbers — now that
+  `_estimate_ref_tokens` returns None on memo miss).
+- Renderer: filter rows by `_row_has_real_data`, hide section when
+  filtered set is empty, render `cacheable=?` / `ratio=?%` for None
+  values that survive the filter (mixed-state rows).
+- `cost_estimation.py` treats None as 0 at five sites (greenfield-no-memo
+  → savings naturally compute to 0 — honest "we don't know").
+
+### Files modified (total Stage-1 final pass)
+
+Production:
+- `src/pflow/core/cache_analysis/warning_catalog.py` — `headline_template`
+  field on CacheWarningSpec, headlines for all 13 IDs, dispatched
+  workflow/boundary headlines for shared-context-undeclared,
+  `resolve_headline_for` SSoT helper, `_format_chunks_short` for compact
+  list rendering. (~85 LOC)
+- `src/pflow/core/cache_analysis/analyze.py` — `RecommendedAction.headline`
+  field, `_populate_suggested_blocks` 3-tuple return shape with
+  `cacheable_by_node`, `_enrich_with_projected_cacheable` helper,
+  `_estimate_ref_tokens` returns `int | None`, `_row_has_real_data_in_analyze`
+  helper, `_check_root_for_consolidation` explicit None-check, summary
+  aggregation handles None, Notes entry when section hidden. (~90 LOC)
+- `src/pflow/core/cache_analysis/render_text.py` — restructured
+  `_render_recommended_actions` (action-headline + scope + reason),
+  collapsed three `_format_*_finding` helpers into one
+  `_format_boundary_finding` (numbered shape, no bullet/arrow/`[id]`
+  footer), per-call inline notes strips `cache.` prefix, removed
+  dead `_render_warnings`, two-mode scope explainer (steady-state +
+  post-run greenfield), `_row_has_real_data` filter, nullable
+  cacheable/ratio rendering. (~60 LOC net)
+- `src/pflow/core/cache_analysis/render_json.py` — JSON_FORMAT_VERSION
+  bumped 1.0 → 1.1 with semantic-shift documentation in module
+  docstring. (+10 LOC)
+- `src/pflow/core/cache_analysis/cost_estimation.py` — None-as-0
+  normalization at five cacheable-read sites. (+10 LOC)
+
+Tests:
+- `tests/test_core/test_cache_analysis_renderers.py` — 12+ fixture
+  updates: bracket assertions removed, headline assertions added,
+  section-hidden assertions for pure-greenfield, `_row` fixture default
+  switched to `data_source="memo"` so existing per-call tests survive
+  the Option C filter.
+- `tests/test_core/test_cache_analysis_per_id_coverage.py` —
+  `JSON_FORMAT_VERSION` literal bumped to "1.1".
+
+### Verification
+
+- **6,001 tests passing**, 9 skipped
+- `make check` clean: ruff + ruff-format + mypy + deptry
+- `test_plan_drift.py` 34/34
+- `test_golden_baseline_hashes_match` (DD#19) green
+- 4 lyrics-generator targets re-rendered + brownfield smoke test;
+  snapshots saved as `scratchpads/lyrics-generator-stage1/POST-STAGE1-FINAL-*.txt`
+- Brownfield ERROR case (`cache.order-mismatch`) verified rendering
+  the new headline shape (`prompt_cache:` order mismatch on write-lyrics)
+
+### Tacit knowledge for the next agent
+
+1. **Catalog-as-SSoT for rendering policy.** When the renderer needs a
+   per-id presentation field (headline today, possibly icons / colors /
+   sort priorities later), put it on `CacheWarningSpec` and access via
+   a helper like `resolve_headline_for`. Don't write context keys in
+   `make_diagnostic` and read them back at render time — that breaks for
+   diagnostics built via raw `Diagnostic(...)` outside the helper.
+
+2. **`_row_has_real_data` is duplicated in `analyze.py` and
+   `render_text.py`.** Both must stay byte-equivalent. Explicit comment
+   at each site documents the layer policy (analyze.py shouldn't import
+   from render_text.py). If a third predicate is needed in the future,
+   consider moving the helper to a neutral module (`utils.py` in the
+   same package) — but the duplication cost is ~3 LOC, not worth a
+   refactor today.
+
+3. **Option C's tri-state is honest about a fundamental limit.** The
+   analyzer can't project cacheable values for greenfield workflows
+   without memo data — `${var}` reference sizes depend on runtime
+   resolution. Hiding the row is more useful than fabricating a small
+   number. After the first run populates memo, the section becomes
+   high-fidelity for the same workflow — predictable state transition
+   the agent can rely on.
+
+4. **JSON 1.1 bump is the first non-additive minor.** The field shapes
+   are additive (cacheable/ratio became `int | null`), but the SEMANTIC
+   of `cacheable_tokens_estimated` changed: was always 0 in greenfield,
+   now projects from detected shared context when memo data exists.
+   Documented in `render_json.py`'s `JSON_FORMAT_VERSION` docstring.
+   Future minor bumps should follow the same pattern: add a
+   version-history block in the docstring, document semantic shifts.
+
+5. **GH #363 — shared prose detection (v1.x)** complements the existing
+   `${var}` detection. Currently agents who repeat persona/output-format
+   prose verbatim across multiple prompts get no caching suggestion. The
+   issue outlines an n-gram / longest-common-substring algorithm that
+   would catch this case. Filed as v1.x with detailed acceptance
+   criteria.
+
+### Open hedged claims and verifications still pending
+
+- **VERIFIED**: end-to-end on lyrics-generator song-creator (greenfield)
+  — per-call section hidden, Notes entry surfaced, recommendations
+  use action-headlines, suggested ## Cache block intact, sub-workflow
+  boundaries renumbered with new shape.
+- **VERIFIED**: brownfield (steady-state) — per-call section visible,
+  headlines render for ERROR-severity diagnostics from `data_flow.py`
+  (resolve_headline_for SSoT works for both make_diagnostic and direct
+  Diagnostic(...) construction).
+- **NEEDS VERIFICATION (Stage 2)**: real-LLM run with `## Cache` declared
+  delivers spec's locked ≥40% input-cost reduction. Stage-1 polish is
+  done; Stage 2 (real spend) is the next gate.
+
+### Open user decisions surfaced
+
+**None new.** Stage-1 polish is complete; agent-readability bar set per
+"as usable as possible in v1" framing. Stage 2 verification is the next
+major item; architectural concerns (Path 2 #361, catalog redesign,
+Python-assembled prompts) remain documented in
+`agent-handoff-stage1-stage2.md` for future decisions.
+
+---
+

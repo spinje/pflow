@@ -1,0 +1,464 @@
+{
+  "format_version": "1.0",
+  "workflow_path": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+  "analyzed_at": "2026-04-30T20:52:48Z",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 7,
+    "heuristic": 0,
+    "total": 7
+  },
+  "trace_path": null,
+  "summary": {
+    "current_cost_per_run_usd": null,
+    "optimized_cost_per_run_usd": null,
+    "rerun_cost_per_run_usd": null,
+    "savings_pct_first_run": null,
+    "savings_pct_rerun": null,
+    "aggregate_savings_first_run_usd": 0.0,
+    "aggregate_savings_rerun_usd": 0.0,
+    "blocking_errors": 0,
+    "actionable_opportunities": 4,
+    "warnings_count": 0,
+    "info_count": 4,
+    "total_llm_calls_estimated": 7,
+    "total_input_tokens_estimated": 13550,
+    "total_cacheable_tokens_estimated": 0,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5",
+      "gemini/gemini-3.1-pro-preview"
+    ],
+    "partial_cost_usd": false,
+    "unavailable_models": []
+  },
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.shared-context-undeclared",
+      "node_id": null,
+      "estimated_savings_usd": 0.0002988,
+      "scope_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md"
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.shared-context-undeclared",
+      "node_id": "choose-chorus",
+      "estimated_savings_usd": null,
+      "scope_workflow": null
+    },
+    {
+      "rank": 3,
+      "warning_id": "cache.shared-context-undeclared",
+      "node_id": "emotional-reviews",
+      "estimated_savings_usd": null,
+      "scope_workflow": null
+    },
+    {
+      "rank": 4,
+      "warning_id": "cache.shared-context-undeclared",
+      "node_id": "craft-reviews",
+      "estimated_savings_usd": null,
+      "scope_workflow": null
+    }
+  ],
+  "suggested_blocks": [
+    {
+      "target_file": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "ttl": "5m",
+      "chunks": [
+        {
+          "name": "concept.core_idea",
+          "var": "${concept.core_idea}",
+          "size_tokens_est": 6,
+          "prose_placeholder": "<DESCRIBE concept.core_idea \u2014 appears verbatim in cached system prefix>"
+        },
+        {
+          "name": "concept.title",
+          "var": "${concept.title}",
+          "size_tokens_est": 4,
+          "prose_placeholder": "<DESCRIBE concept.title \u2014 appears verbatim in cached system prefix>"
+        },
+        {
+          "name": "concept.angle",
+          "var": "${concept.angle}",
+          "size_tokens_est": 4,
+          "prose_placeholder": "<DESCRIBE concept.angle \u2014 appears verbatim in cached system prefix>"
+        },
+        {
+          "name": "concept_brief",
+          "var": "${concept_brief}",
+          "size_tokens_est": 5,
+          "prose_placeholder": "<DESCRIBE concept_brief \u2014 appears verbatim in cached system prefix>"
+        },
+        {
+          "name": "creative-direction.response",
+          "var": "${creative-direction.response}",
+          "size_tokens_est": 5,
+          "prose_placeholder": "<DESCRIBE creative-direction.response \u2014 appears verbatim in cached system prefix>"
+        },
+        {
+          "name": "song-architecture.response",
+          "var": "${song-architecture.response}",
+          "size_tokens_est": 6,
+          "prose_placeholder": "<DESCRIBE song-architecture.response \u2014 appears verbatim in cached system prefix>"
+        },
+        {
+          "name": "easter-eggs.response",
+          "var": "${easter-eggs.response}",
+          "size_tokens_est": 8,
+          "prose_placeholder": "<DESCRIBE easter-eggs.response \u2014 appears verbatim in cached system prefix>"
+        }
+      ],
+      "per_node_assignments": {
+        "creative-direction": [
+          "concept.core_idea",
+          "concept.title",
+          "concept.angle",
+          "concept_brief"
+        ],
+        "easter-eggs": [
+          "concept.core_idea",
+          "concept.title",
+          "concept.angle",
+          "concept_brief",
+          "creative-direction.response",
+          "song-architecture.response"
+        ],
+        "generate-suno-prompt": [
+          "creative-direction.response"
+        ],
+        "rewrite-craft": [
+          "concept.core_idea",
+          "concept.title",
+          "concept_brief",
+          "creative-direction.response",
+          "song-architecture.response"
+        ],
+        "rewrite-emotional": [
+          "concept.core_idea",
+          "concept.title",
+          "concept.angle",
+          "concept_brief",
+          "creative-direction.response",
+          "song-architecture.response",
+          "easter-eggs.response"
+        ],
+        "song-architecture": [
+          "concept.core_idea",
+          "concept.title",
+          "concept.angle",
+          "concept_brief",
+          "creative-direction.response"
+        ],
+        "write-lyrics": [
+          "concept.core_idea",
+          "concept.title",
+          "concept.angle",
+          "concept_brief",
+          "creative-direction.response",
+          "song-architecture.response",
+          "easter-eggs.response"
+        ]
+      },
+      "estimated_savings_usd": 0.0002988
+    }
+  ],
+  "per_call": [
+    {
+      "node_path": "creative-direction",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1137,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "song-architecture",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2555,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "easter-eggs",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 927,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "write-lyrics",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 3289,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "rewrite-emotional",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2315,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "rewrite-craft",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2180,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    },
+    {
+      "node_path": "generate-suno-prompt",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1147,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 0,
+      "cache_ratio_pct": 0,
+      "data_source": "estimator",
+      "declared_prompt_cache": null,
+      "warnings": []
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 25,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": [
+      {
+        "severity": "info",
+        "message": "`concept` flows from this workflow into sub-workflow `chorus-chooser.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.",
+        "source": "cache_analyzer",
+        "id": "cache.shared-context-undeclared",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.",
+          "Per-node `prompt_cache:` assignments are listed in the same section."
+        ],
+        "node_id": "choose-chorus",
+        "context": {
+          "node_count": 6,
+          "shared_chunks": [
+            "concept"
+          ],
+          "affected_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "savings_usd": null,
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "`concept_brief` flows from this workflow into sub-workflow `review-emotional-architecture.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.",
+        "source": "cache_analyzer",
+        "id": "cache.shared-context-undeclared",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.",
+          "Per-node `prompt_cache:` assignments are listed in the same section."
+        ],
+        "node_id": "emotional-reviews",
+        "context": {
+          "node_count": 6,
+          "shared_chunks": [
+            "concept_brief"
+          ],
+          "affected_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+          "savings_usd": null,
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "`concept_brief` flows from this workflow into sub-workflow `review-accuracy.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.",
+        "source": "cache_analyzer",
+        "id": "cache.shared-context-undeclared",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.",
+          "Per-node `prompt_cache:` assignments are listed in the same section."
+        ],
+        "node_id": "craft-reviews",
+        "context": {
+          "node_count": 6,
+          "shared_chunks": [
+            "concept_brief"
+          ],
+          "affected_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+          "savings_usd": null,
+          "category": "cache_advisory",
+          "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "severity": "info",
+      "message": "`concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response` is referenced by 7 LLM nodes in this workflow but no ## Cache block declares it. Each call sends those tokens fresh; declaring them caches the bytes once and reuses at 0.1\u00d7 input cost.",
+      "source": "cache_analyzer",
+      "id": "cache.shared-context-undeclared",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.",
+        "Per-node `prompt_cache:` assignments are listed in the same section."
+      ],
+      "context": {
+        "node_count": 7,
+        "shared_chunks": [
+          "concept.core_idea",
+          "concept.title",
+          "concept.angle",
+          "concept_brief",
+          "creative-direction.response",
+          "song-architecture.response",
+          "easter-eggs.response"
+        ],
+        "affected_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "savings_usd": 0.0002988,
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "`concept` flows from this workflow into sub-workflow `chorus-chooser.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.",
+      "source": "cache_analyzer",
+      "id": "cache.shared-context-undeclared",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.",
+        "Per-node `prompt_cache:` assignments are listed in the same section."
+      ],
+      "node_id": "choose-chorus",
+      "context": {
+        "node_count": 6,
+        "shared_chunks": [
+          "concept"
+        ],
+        "affected_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "savings_usd": null,
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "`concept_brief` flows from this workflow into sub-workflow `review-emotional-architecture.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.",
+      "source": "cache_analyzer",
+      "id": "cache.shared-context-undeclared",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.",
+        "Per-node `prompt_cache:` assignments are listed in the same section."
+      ],
+      "node_id": "emotional-reviews",
+      "context": {
+        "node_count": 6,
+        "shared_chunks": [
+          "concept_brief"
+        ],
+        "affected_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+        "savings_usd": null,
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "`concept_brief` flows from this workflow into sub-workflow `review-accuracy.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.",
+      "source": "cache_analyzer",
+      "id": "cache.shared-context-undeclared",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.",
+        "Per-node `prompt_cache:` assignments are listed in the same section."
+      ],
+      "node_id": "craft-reviews",
+      "context": {
+        "node_count": 6,
+        "shared_chunks": [
+          "concept_brief"
+        ],
+        "affected_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+        "savings_usd": null,
+        "category": "cache_advisory",
+        "path": "workflows[path=/Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    }
+  ],
+  "notes": []
+}
