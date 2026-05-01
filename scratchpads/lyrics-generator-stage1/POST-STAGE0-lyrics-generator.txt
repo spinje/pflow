@@ -1,0 +1,17 @@
+# Cache Analysis: /Users/andfal/projects/music-generation/workflows/lyrics-generator/lyrics-generator.pflow.md
+
+  2 LLM nodes using anthropic/claude-sonnet-4-5
+
+## Summary
+
+  Current cost per run:        unavailable
+  Optimized cost per run:      unavailable
+  Cost on rerun (within 1h):   unavailable
+
+  0 opportunities (0 warnings, 0 info)
+
+  Absolute cost figures need a prior run. Run the workflow once, then re-run analyze-cache for real cost figures and cacheable projections.
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.

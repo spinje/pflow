@@ -372,10 +372,19 @@ async def analyze_cache(
     ``cross_workflow``, ``warnings``, ``notes``.
 
     **Version policy**: ``format_version`` follows semver-ish. Minor bumps
-    (``1.0`` → ``1.1``) are additive (new fields, new warning IDs); consumers
-    tolerant via ``format_version.startswith("1.")`` continue to work.
-    Major bumps (``1.x`` → ``2.x``) are breaking; pinned consumers refuse to
-    consume. Mirrors the trace ``2.x`` consumer policy.
+    (``2.0`` → ``2.1``) are additive (new fields, new warning IDs); consumers
+    tolerant via ``format_version.startswith("2.")`` continue to work.
+    Major bumps (``2.x`` → ``3.x``) are breaking; pinned consumers refuse to
+    consume. Mirrors the trace ``2.x`` consumer policy (note: distinct
+    namespace — analyze-cache JSON and trace JSON share major-version
+    vocabulary but are independent schemas).
+
+    **Stage 0 (2.0) shape changes**: ``recommended_actions`` is a
+    renderer-derived view (cross-workflow alignment IDs filtered into
+    ``cross_workflow.*`` only). ``cross_workflow.{rename, prose, value_flow}``
+    arrays are derived from ``warnings`` by ``Diagnostic.id``. ``per_call[]``
+    no longer carries ``warnings``; per-row markers derive from the top-level
+    ``warnings`` filtered by ``node_id``.
 
     **Closed catalog of cache.* warning IDs** that may appear in
     ``warnings[].id`` (14 entries in v1):

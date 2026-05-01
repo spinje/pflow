@@ -242,6 +242,14 @@ def compute_aggregate_costs(
     seen_unavailable: set[str] = set()
 
     for row in rows:
+        # Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
+        # carry per-item models we can't aggregate as one. The upstream sets
+        # ``model = ""`` so the ``if row.model`` truthy check below ALSO
+        # short-circuits, but checking the flag explicitly here makes the
+        # intent visible and protects against future contributors who might
+        # change the empty-string convention.
+        if row.model_is_heterogeneous:
+            continue
         pricing = get_model_pricing(row.model) if row.model else None
         if pricing is None:
             if row.model and row.model not in seen_unavailable:

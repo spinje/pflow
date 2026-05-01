@@ -89,13 +89,27 @@ class PerCallRow:
     cache_ratio_pct: int | None
     data_source: str  # "trace" | "memo" | "estimator" | "heuristic"
     declared_prompt_cache: list[str] | None
-    warnings: tuple[str, ...] = ()
     # Output token data — None on greenfield (never run); ``output_data_source ∈
     # {"trace", "memo", "unavailable"}``. See ``cost_estimation.py`` for how
     # ``None`` propagates through the absolute-cost figures (per the
     # tri-state contract).
     output_tokens_estimated: int | None = None
     output_data_source: str = "unavailable"
+    # Stage C.1 (Task 159): True when the IR's ``params.model`` is an
+    # unresolved ``${...}`` template (heterogeneous batch sub-workflow —
+    # model varies per item). Such rows can't be priced as one model;
+    # ``cost_estimation`` skips them and the renderer shows ``model=<varies>``
+    # instead of leaking the literal template string. ``model`` is set to ``""``
+    # for these rows so the existing pricing-iteration ``if row.model`` check
+    # also short-circuits — defense-in-depth against future contributors who
+    # forget to consult this flag.
+    model_is_heterogeneous: bool = False
+    # Stage 0.3 (Task 159): the inline ``warnings: tuple[str, ...]`` field was
+    # vestigial — single production producer never populated it; renderer
+    # fallbacks at ``render_text.py:497, 617`` and the JSON ``per_call.warnings``
+    # key were dead. Per-row inline warning markers are derived at render time
+    # from ``analysis.warnings`` filtered by node_id (see
+    # ``render_text._render_per_call``).
 
 
 @dataclass(frozen=True)
@@ -155,10 +169,16 @@ class SuggestedBlock:
 
 @dataclass(frozen=True)
 class CrossWorkflowFindings:
+    """Pure topology data about cross-workflow boundaries.
+
+    Stage 0 (Task 159): the rename / prose-mismatch / value-flow Diagnostic
+    tuples that used to live here have been removed. Findings live in
+    ``CacheAnalysis.warnings``; renderers filter by ``Diagnostic.id`` to
+    recover each category. JSON output preserves the per-category arrays
+    as derived views (no duplication in the data model).
+    """
+
     boundaries_analyzed: int
-    rename_detections: tuple[Diagnostic, ...]
-    prose_mismatches: tuple[Diagnostic, ...]
-    value_flow_opportunities: tuple[Diagnostic, ...]
 
 
 @dataclass(frozen=True)
@@ -185,11 +205,30 @@ class AnalysisSummary:
     # rows have any ``prompt_cache:`` declared.
     aggregate_savings_first_run_usd: float | None = None
     aggregate_savings_rerun_usd: float | None = None
+    # Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
+    # can't be priced as one model. ``models_in_use`` excludes them so the
+    # literal ``${...}`` template doesn't leak into the rendered scale line;
+    # these counters surface the count + node identities separately so the
+    # agent knows WHICH nodes vary (named in ``_format_scale_line``).
+    # ``_render_summary`` also gates the "no model resolved" branch on these
+    # to avoid the wrong "set settings.default_model" hint when the actual
+    # cause is "varies per item."
+    heterogeneous_model_node_count: int = 0
+    heterogeneous_model_node_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class CacheAnalysis:
-    """Structured analyzer result. Renderers transform this into text or JSON."""
+    """Structured analyzer result. Renderers transform this into text or JSON.
+
+    Stage 0 (Task 159): ``recommended_actions`` is a renderer-derived view, not
+    a pre-computed field. ``warnings`` is the single source of truth for
+    findings; ranked / categorized / filtered views live in
+    :mod:`view_helpers` (text + JSON renderers). mypy / rustc / clippy / ruff
+    all use this shape — pre-computed views in the data model create
+    duplication, drift, and ordering invariants that test fixtures encode
+    incorrectly.
+    """
 
     workflow_path: str
     analyzed_at: str
@@ -197,7 +236,6 @@ class CacheAnalysis:
     estimate_confidence_coverage: dict[str, int]
     trace_path: str | None
     summary: AnalysisSummary
-    recommended_actions: tuple[RecommendedAction, ...]
     suggested_blocks: tuple[SuggestedBlock, ...]
     per_call: tuple[PerCallRow, ...]
     cross_workflow: CrossWorkflowFindings
@@ -296,8 +334,8 @@ def analyze(
     if per_call_rows and not any(_row_has_real_data_in_analyze(r) for r in per_call_rows):
         notes.append(
             "Per-call cache report hidden — workflow has no run data yet. "
-            "Run once to populate memo cache; analyze-cache then shows real "
-            "per-node token estimates and cacheable projections."
+            "Run once, then re-run analyze-cache for real per-node token "
+            "estimates and cacheable projections."
         )
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
     warnings.extend(
@@ -312,15 +350,16 @@ def analyze(
     warnings.extend(_cache_validator_findings(workflow_ir))
 
     # --- Cross-workflow walker ------------------------------------------------
-    cross_findings = _build_cross_workflow_findings(
+    # Stage 0: walker now returns (graph_info, findings). Findings flow into
+    # ``warnings`` (single source of truth); renderers categorize at output
+    # time by filtering on ``Diagnostic.id``.
+    cross_findings, cross_diagnostics = _build_cross_workflow_findings(
         root_ir=workflow_ir,
         base_path=base_path,
         root_workflow_path=lookup_path,
         notes=notes,
     )
-    warnings.extend(cross_findings.rename_detections)
-    warnings.extend(cross_findings.prose_mismatches)
-    warnings.extend(cross_findings.value_flow_opportunities)
+    warnings.extend(cross_diagnostics)
     if trace_data is not None:
         warnings.extend(
             _emit_discrepancy_diagnostics(
@@ -337,7 +376,10 @@ def analyze(
     confidence, coverage = _aggregate_confidence(per_call_rows)
 
     summary = _build_summary(per_call_rows, warnings, ttl=_extract_cache_ttl(cache_block))
-    recommended = _build_recommended_actions(warnings)
+
+    # Recommended actions are a renderer-side projection over ``warnings``
+    # (see ``view_helpers.build_recommended_actions``). No longer pre-computed
+    # in the data model — Stage 0 of the data-shape redesign.
 
     # Gemini telemetry note (Spike 1 outcome — last in note ordering).
     if trace_data is not None:
@@ -350,7 +392,6 @@ def analyze(
         estimate_confidence_coverage=coverage,
         trace_path=used_trace_path,
         summary=summary,
-        recommended_actions=tuple(recommended),
         suggested_blocks=tuple(suggested_blocks),
         per_call=tuple(per_call_rows),
         cross_workflow=cross_findings,
@@ -564,8 +605,22 @@ def _build_per_call_row(
     # default, ``models_in_use`` undercounts, and cost computation can never
     # price these rows. Tests that need deterministic model values monkeypatch
     # ``pflow.core.cache_analysis.analyze.get_default_workflow_model``.
+    #
+    # Stage C.1: when the explicit model is an unresolved ``${...}`` template
+    # (heterogeneous batch sub-workflow — model varies per item), neither the
+    # literal template nor the default-model fallback is honest. Mark the row
+    # as heterogeneous; ``model = ""`` so the existing ``if row.model`` checks
+    # in ``cost_estimation`` and ``_format_scale_line`` short-circuit, and
+    # rendering shows ``model=<varies>`` instead of the literal ``${item.model}``
+    # leaking through.
     explicit = node.get("params", {}).get("model") or node.get("model")
-    model = str(explicit) if explicit else (get_default_workflow_model() or "")
+    model_is_heterogeneous = isinstance(explicit, str) and "${" in explicit
+    if model_is_heterogeneous:
+        model = ""
+    elif explicit:
+        model = str(explicit)
+    else:
+        model = get_default_workflow_model() or ""
     prompt = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt, str):
         prompt = str(prompt) if prompt is not None else ""
@@ -621,6 +676,7 @@ def _build_per_call_row(
         declared_prompt_cache=list(declared_subset) if declared_subset else None,
         output_tokens_estimated=output_tokens,
         output_data_source=output_source,
+        model_is_heterogeneous=model_is_heterogeneous,
     )
 
 
@@ -631,7 +687,7 @@ def _row_has_real_data_in_analyze(row: PerCallRow) -> bool:
     that MUST stay byte-equivalent — see ``render_text._row_has_real_data``
     for contract documentation.
     """
-    return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache)
+    return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache) or row.model_is_heterogeneous
 
 
 def _enrich_with_projected_cacheable(row: PerCallRow, cacheable_by_node: dict[str, int | None]) -> PerCallRow:
@@ -1025,7 +1081,7 @@ def _populate_suggested_blocks(
                 name=ref,
                 var=f"${{{ref}}}",
                 size_tokens_est=display_size,
-                prose_placeholder=f"<DESCRIBE {ref} — appears verbatim in cached system prefix>",
+                prose_placeholder=f"<TODO: describe {ref} for the LLM (1-2 sentences)>",
             )
         )
         chunk_savings = _savings_for_shared_ref(ref, node_ids, rows_by_node, size_tokens)
@@ -1434,8 +1490,14 @@ def _build_cross_workflow_findings(
     base_path: Path | None,
     root_workflow_path: str | None,
     notes: list[str],
-) -> CrossWorkflowFindings:
+) -> tuple[CrossWorkflowFindings, list[Diagnostic]]:
     """Run the F1.3 walker and emit rename / prose-mismatch / value-flow diagnostics.
+
+    Stage 0 (Task 159): returns ``(graph_info, findings)``. Diagnostics flow
+    into the analyzer's single ``warnings`` list; the renderers categorize at
+    output time by filtering on ``Diagnostic.id``. The graph_info field carries
+    pure topology (``boundaries_analyzed``) for JSON consumers that need the
+    edge count without inspecting individual findings.
 
     The walker appends notes to the supplied list when it stops descending
     a branch (max_depth or cycle) — the analyzer surfaces these via
@@ -1455,7 +1517,7 @@ def _build_cross_workflow_findings(
 
     rename_diags: list[Diagnostic] = []
     prose_mismatches: list[Diagnostic] = []
-    value_flow_opportunities: list[Diagnostic] = []
+    value_flow_candidates: list[_ValueFlowCandidate] = []
     for edge in edges:
         if edge.is_rename and edge.parent_value_expr is not None:
             # Evidence-basis principle: the rename warning predicts that
@@ -1489,20 +1551,19 @@ def _build_cross_workflow_findings(
             continue
 
         prose_mismatches.extend(_cross_workflow_prose_mismatches(edge, result.cache_items_by_workflow))
-        opportunity = _cross_workflow_value_flow_opportunity(
-            edge,
-            result.cache_items_by_workflow,
-            result.irs_by_workflow,
-        )
-        if opportunity is not None:
-            value_flow_opportunities.append(opportunity)
+        candidate = _value_flow_candidate(edge, result.cache_items_by_workflow, result.irs_by_workflow)
+        if candidate is not None:
+            value_flow_candidates.append(candidate)
 
-    return CrossWorkflowFindings(
-        boundaries_analyzed=len(edges),
-        rename_detections=tuple(rename_diags),
-        prose_mismatches=tuple(prose_mismatches),
-        value_flow_opportunities=tuple(value_flow_opportunities),
-    )
+    # Stage B.1 (Task 159): collapse per-edge candidates into per-(parent_workflow,
+    # value_root) groups. Aggregation key is the root segment of parent_value_expr
+    # so ``${concept}``, ``${concept.title}``, ``${concept.core_idea}`` all map
+    # to one group keyed by ``concept`` — one ## Cache addition covers all
+    # sub-paths simultaneously.
+    value_flow_diagnostics = _emit_value_flow_groups(value_flow_candidates, result.irs_by_workflow)
+
+    findings: list[Diagnostic] = [*rename_diags, *prose_mismatches, *value_flow_diagnostics]
+    return (CrossWorkflowFindings(boundaries_analyzed=len(edges)), findings)
 
 
 def _cross_workflow_prose_mismatches(
@@ -1530,11 +1591,41 @@ def _cross_workflow_prose_mismatches(
     return diagnostics
 
 
-def _cross_workflow_value_flow_opportunity(
+@dataclass(frozen=True)
+class _ValueFlowCandidate:
+    """One per-edge value-flow finding before group collapse (Stage B.1).
+
+    Carries the data the walker produced + per-side LLM-consumer counts so
+    ``_emit_value_flow_groups`` can build the destinations list and total
+    consumer count without re-walking the IR.
+    """
+
+    parent_workflow: str
+    parent_value_expr: str
+    parent_node_id: str
+    line_in_parent: int
+    child_workflow: str
+    child_input_name: str
+    child_count: int
+
+
+def _value_flow_candidate(
     edge: Any,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
     irs_by_workflow: dict[str, dict[str, Any]],
-) -> Diagnostic | None:
+) -> _ValueFlowCandidate | None:
+    """Return a candidate for one boundary edge, or None if suppressed.
+
+    Suppression rules (Stage B.1 preserves the per-edge contract):
+    - ``parent_value_expr is None``: literal or multi-ref string at the
+      boundary; no template to track.
+    - Either side already declares the chunk in ## Cache: declaring is
+      already in place, so the finding has no value to surface.
+
+    The minimum-consumer threshold (``< 2``) does NOT apply per-edge anymore;
+    Stage B.1 aggregates multiple destinations into one finding, so the
+    threshold applies to ``total_consumer_count`` at group emission time.
+    """
     if edge.parent_value_expr is None:
         return None
     parent_declared = set(_items_by_name(cache_items_by_workflow.get(edge.parent_workflow, ())))
@@ -1542,40 +1633,127 @@ def _cross_workflow_value_flow_opportunity(
     if edge.parent_value_expr in parent_declared or edge.child_input_name in child_declared:
         return None
 
-    # Bug E fix — count LLM nodes that actually reference this value on each
-    # side of the boundary. The catalog message_template renders ``{node_count}
-    # LLM nodes share static context``; pre-fix used a hardcoded ``2`` (parent
-    # + child boundary), which was factually wrong when the child has 0 LLM
-    # nodes referencing the input. Counting ``len(refs) >= 1`` rather than the
-    # boundary is the honest report.
-    parent_count = _count_llm_nodes_referencing_path(
-        irs_by_workflow.get(edge.parent_workflow, {}),
-        edge.parent_value_expr,
-    )
+    # Per-destination child consumer count. Counts LLM nodes in the child IR
+    # that reference ``${child_input_name}`` (or sub-paths). Exact match +
+    # dotted-prefix per ``_count_llm_nodes_referencing_path``.
     child_count = _count_llm_nodes_referencing_path(
         irs_by_workflow.get(edge.child_workflow, {}),
         edge.child_input_name,
     )
-    node_count = parent_count + child_count
-    if node_count < 2:
-        # No or only one LLM consumer on the combined boundary — declaring
-        # this value in ## Cache wouldn't share across enough calls to be
-        # worthwhile. Suppress the noisy advisory; agents see real
-        # opportunities, not boundary trivia.
-        return None
-    return make_diagnostic(
-        "cache.shared-context-undeclared",
-        node_id=edge.parent_node_id,
-        node_count=node_count,
-        shared_chunks=[edge.child_input_name],
-        affected_workflow=edge.parent_workflow,
-        # CP5 #5: presence of ``child_workflow`` in context selects the
-        # boundary-scope message template (see make_diagnostic dispatch).
-        # Workflow-scope emission at ``_populate_suggested_blocks`` does NOT
-        # set this key — it gets the workflow-scope template by default.
+    return _ValueFlowCandidate(
+        parent_workflow=edge.parent_workflow,
+        parent_value_expr=edge.parent_value_expr,
+        parent_node_id=edge.parent_node_id,
+        line_in_parent=edge.line_in_parent,
         child_workflow=edge.child_workflow,
-        savings_usd=None,
+        child_input_name=edge.child_input_name,
+        child_count=child_count,
     )
+
+
+def _emit_value_flow_groups(
+    candidates: list[_ValueFlowCandidate],
+    irs_by_workflow: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    """Group candidates by ``(parent_workflow, value_root)`` and emit one Diagnostic per group.
+
+    Stage B.1 (Task 159): one ## Cache addition covers ${concept},
+    ${concept.title}, ${concept.core_idea} simultaneously. Aggregating by
+    root collapses N per-edge findings into the agent's "one resolution
+    edit" model.
+
+    Determinism (review-silent-failures W-A): destinations sorted lex by
+    child_workflow; within a destination, the lex-smallest parent_node_id
+    is the representative when the same child is reachable from multiple
+    parent nodes.
+
+    Threshold: total_consumer_count < 2 → group suppressed (declaring would
+    share across at most one call — not worth declaring). Symmetric with
+    the per-edge ``node_count < 2`` rule prior to Stage B.1.
+    """
+    # Group by (parent_workflow, value_root).
+    groups: dict[tuple[str, str], list[_ValueFlowCandidate]] = {}
+    for candidate in candidates:
+        root = _template_root_segment(candidate.parent_value_expr)
+        if not root:
+            # Defensive: empty/None root signals an unparseable parent_value_expr.
+            # Skip silently — a Diagnostic with no value_root would be useless.
+            continue
+        groups.setdefault((candidate.parent_workflow, root), []).append(candidate)
+
+    diagnostics: list[Diagnostic] = []
+    # Iterate groups in lex order for stable output across runs.
+    for (parent_workflow, root), group_candidates in sorted(groups.items()):
+        # Build destinations: one entry per unique child_workflow, with the
+        # lex-smallest parent_node_id as representative. Filter out destinations
+        # with no LLM consumers in the child — the cross-boundary recommendation
+        # has no incremental value over the workflow-internal finding when the
+        # child doesn't directly consume the value (e.g., processes via code
+        # nodes before hitting LLM prompts). On lyrics-generator, chorus-chooser
+        # consumes ``${concept.title}`` / ``${concept.core_idea}`` via code
+        # nodes — its LLM prompts use ``concept_title`` (resolved string), so
+        # caching ``${concept}`` doesn't help the child's cache hit rate.
+        by_child: dict[str, _ValueFlowCandidate] = {}
+        for candidate in group_candidates:
+            if candidate.child_count == 0:
+                continue  # No LLM consumer in this child — boundary has no cache value.
+            existing = by_child.get(candidate.child_workflow)
+            if existing is None or candidate.parent_node_id < existing.parent_node_id:
+                by_child[candidate.child_workflow] = candidate
+
+        if not by_child:
+            # All destinations filtered (no child LLM consumers). The
+            # workflow-internal finding already covers parent-side caching;
+            # the cross-boundary recommendation would be redundant noise.
+            continue
+
+        destinations: list[dict[str, Any]] = []
+        for child_workflow in sorted(by_child.keys()):
+            c = by_child[child_workflow]
+            child_basename = c.child_workflow.rsplit("/", 1)[-1] if "/" in c.child_workflow else c.child_workflow
+            destinations.append({
+                "child_workflow": c.child_workflow,
+                "child_workflow_basename": child_basename,
+                "node_count": c.child_count,
+                "parent_node_id": c.parent_node_id,
+                "line_in_parent": c.line_in_parent,
+            })
+
+        # Parent count is computed against the ROOT (not parent_value_expr)
+        # so all sub-paths in the group contribute. Otherwise sub-paths to
+        # different children would each compute against their leaf, missing
+        # nodes that reference other sub-paths of the same root.
+        parent_count = _count_llm_nodes_referencing_path(irs_by_workflow.get(parent_workflow, {}), root)
+        total_consumer_count = parent_count + sum(int(d["node_count"]) for d in destinations)
+
+        # Group-level suppression mirrors the per-edge ``< 2`` rule: declaring
+        # in ## Cache shares across at most one call when total < 2 — not
+        # worth surfacing as a recommendation.
+        if total_consumer_count < 2:
+            continue
+
+        diagnostics.append(
+            make_diagnostic(
+                "cache.shared-context-undeclared",
+                # node_id=None → workflow-level action (renderer shows scope_workflow).
+                # Old keys for ``_validate_required`` compat — semantics symmetric to
+                # workflow scope (node_count = total consumers, shared_chunks = [root]).
+                node_count=total_consumer_count,
+                shared_chunks=[root],
+                affected_workflow=parent_workflow,
+                savings_usd=None,
+                # New keys for boundary template + headline rendering (Stage B.1).
+                value_root=root,
+                destinations=destinations,
+                destination_count=len(destinations),
+                total_consumer_count=total_consumer_count,
+                # Presence of ``child_workflow`` triggers the boundary-scope
+                # template/headline dispatch in ``make_diagnostic``. Use the
+                # first (lex-smallest) destination's path.
+                child_workflow=destinations[0]["child_workflow"],
+            )
+        )
+    return diagnostics
 
 
 def _count_llm_nodes_referencing_path(ir: dict[str, Any], template_path: str) -> int:
@@ -1650,7 +1828,7 @@ def _predict_cache_keys(
     notes: list[str] = []
     if memo_cache is None:
         notes.append(
-            "Discrepancy detection: predicted-key matching unavailable (no memo cache available). "
+            "Discrepancy detection: predicted-key matching unavailable (workflow has no run history). "
             "Observable-field attributions (TTL expiry, chunk skipped) still apply."
         )
         return {}, notes
@@ -2022,7 +2200,14 @@ def _build_summary(rows: list[PerCallRow], warnings: list[Diagnostic], *, ttl: s
     # rather than fabricated 0). Top-level summary still useful — agents
     # see the partial signal from steady-state / post-run rows.
     total_cacheable = sum(r.cacheable_tokens_estimated or 0 for r in rows)
-    models = sorted({r.model for r in rows if r.model})
+    # Stage C.1: heterogeneous rows have ``model = ""`` AND
+    # ``model_is_heterogeneous = True``. The ``if r.model`` truthy check below
+    # already short-circuits empty strings — the explicit
+    # ``not r.model_is_heterogeneous`` clause is defense-in-depth so future
+    # contributors who change the empty-string convention don't silently leak
+    # ``${item.model}`` literals back into the aggregate.
+    models = sorted({r.model for r in rows if r.model and not r.model_is_heterogeneous})
+    heterogeneous_paths = tuple(sorted(r.node_path for r in rows if r.model_is_heterogeneous))
     blocking_errors = sum(1 for d in warnings if d.severity == Severity.ERROR)
     warnings_count = sum(1 for d in warnings if d.severity == Severity.WARNING)
     info_count = sum(1 for d in warnings if d.severity == Severity.INFO)
@@ -2069,6 +2254,8 @@ def _build_summary(rows: list[PerCallRow], warnings: list[Diagnostic], *, ttl: s
         unavailable_models=cost.unavailable_models,
         aggregate_savings_first_run_usd=cost.savings_first_run_usd,
         aggregate_savings_rerun_usd=cost.savings_rerun_usd,
+        heterogeneous_model_node_count=len(heterogeneous_paths),
+        heterogeneous_model_node_paths=heterogeneous_paths,
     )
 
 
@@ -2087,70 +2274,20 @@ def _safe_pct_or_none(numerator: float | None, denominator: float | None) -> int
 def _build_recommended_actions(
     warnings: list[Diagnostic],
 ) -> list[RecommendedAction]:
-    """Order warnings by impact descending; rank starts at 1.
+    """Compatibility shim — relocated to ``view_helpers.build_recommended_actions``.
 
-    Sort key dimensions (lexicographic, all ascending after negation/inversion):
+    Stage 0 of the data-shape redesign moved this function to the renderer
+    layer (recommended actions are a presentation projection over a stable
+    findings list, not a data-model field). Direct callers — the 4 algorithm
+    tests at ``test_cache_analysis_analyze.py:670-734`` — keep working through
+    this shim; new callers should import from ``view_helpers`` directly.
 
-    1. **Severity** (ERROR > WARNING > INFO) — structural blockers first.
-    2. **Detection-class priority** (``RECOMMENDED_ACTION_PRIORITY`` in
-       ``warning_catalog``) — actionable opportunities ahead of informational
-       alignment findings. Resolves the common "all INFO, no savings" case
-       where alphabetical tie-break used to bury ``cache.shared-context-
-       undeclared`` (priority 10) under ``cache.cross-workflow-rename-
-       detected`` (priority 50). See GH #1 / #361 thread for the surface.
-    3. **Savings** (when known) — higher dollar impact ranks ahead within a
-       priority tier.
-    4. **Stable alphabetical** on ``d.id`` — deterministic tie-break.
+    Filters cross-workflow alignment findings (rename, prose-mismatch) to
+    match the unified renderer behavior; see ``view_helpers`` docstring.
     """
-    from .warning_catalog import DEFAULT_RECOMMENDED_ACTION_PRIORITY, RECOMMENDED_ACTION_PRIORITY
+    from .view_helpers import build_recommended_actions
 
-    def _key(d: Diagnostic) -> tuple[int, int, float, str]:
-        # Severity weight (higher = more impactful when no savings_usd).
-        sev_weight = {Severity.ERROR: 2, Severity.WARNING: 1, Severity.INFO: 0}.get(d.severity, 0)
-        priority = RECOMMENDED_ACTION_PRIORITY.get(d.id or "", DEFAULT_RECOMMENDED_ACTION_PRIORITY)
-        savings = 0.0
-        ctx = d.context or {}
-        savings_value = ctx.get("savings_usd")
-        if isinstance(savings_value, (int, float)):
-            savings = float(savings_value)
-        return (-sev_weight, priority, -savings, d.id or "")
-
-    sorted_warnings = sorted(warnings, key=_key)
-    actions: list[RecommendedAction] = []
-    for rank, d in enumerate(sorted_warnings, start=1):
-        ctx = d.context or {}
-        savings = ctx.get("savings_usd")
-        if not isinstance(savings, (int, float)):
-            savings = None
-        # Workflow-level scope: when the warning has no per-node ``node_id`` but
-        # ``context.affected_workflow`` is set, surface that as ``scope_workflow``
-        # so the renderer can label it "Workflow: <path>" instead of leaving the
-        # scope line absent (which makes workflow-level findings indistinguishable
-        # from per-node findings in agent-readable output — the GH #2 surface).
-        scope_workflow: str | None = None
-        if d.node_id is None:
-            affected = ctx.get("affected_workflow")
-            if isinstance(affected, str) and affected:
-                scope_workflow = affected
-        # Catalog-as-SSoT: looks up headline_template by diag.id and formats
-        # against context. Works whether the diag came from make_diagnostic OR
-        # was built directly via Diagnostic(...) (validator emitters in
-        # data_flow.py — _make_order_mismatch_diagnostic etc.).
-        from .warning_catalog import resolve_headline_for
-
-        headline = resolve_headline_for(d)
-        actions.append(
-            RecommendedAction(
-                rank=rank,
-                warning_id=d.id or "",
-                node_id=d.node_id,
-                estimated_savings_usd=float(savings) if savings is not None else None,
-                scope_workflow=scope_workflow,
-                message=d.message or "",
-                headline=headline,
-            )
-        )
-    return actions
+    return build_recommended_actions(warnings)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,106 @@
+# Cache Analysis: /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  7 LLM nodes using 2 models: anthropic/claude-sonnet-4-5, gemini/gemini-3.1-pro-preview
+
+## Summary
+
+  Current cost per run:        unavailable
+  Optimized cost per run:      unavailable
+  Cost on rerun (within 1h):   unavailable
+
+  4 opportunities (0 warnings, 4 info)
+
+  Absolute cost figures need a prior run. Run the workflow once, then re-run analyze-cache for real cost figures and cacheable projections.
+
+## Recommended actions (ordered by impact)
+
+  1. Shared context undeclared — declare `concept.core_idea`, `concept.title` +5 more in ## Cache  savings unavailable
+     song-creator.pflow.md
+     `concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response` is referenced by 7 LLM nodes in this workflow but no ## Cache block declares it. Each call sends those tokens fresh; declaring them caches the bytes once and reuses at 0.1× input cost.
+
+  2. Cross-boundary value undeclared — declare `concept` in either ## Cache  savings unavailable
+     choose-chorus
+     `concept` flows from this workflow into sub-workflow `chorus-chooser.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.
+
+  3. Cross-boundary value undeclared — declare `concept_brief` in either ## Cache  savings unavailable
+     emotional-reviews
+     `concept_brief` flows from this workflow into sub-workflow `review-emotional-architecture.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.
+
+  4. Cross-boundary value undeclared — declare `concept_brief` in either ## Cache  savings unavailable
+     craft-reviews
+     `concept_brief` flows from this workflow into sub-workflow `review-accuracy.pflow.md` where 6 LLM nodes use it; no ## Cache block declares it on either side. Add it to either workflow's ## Cache to share cached bytes across the boundary.
+
+## Suggested ## Cache block — /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  Paste between ## Inputs and ## Steps. Replace each `<TODO>` below with
+  a short description of the value (1-2 sentences). The LLM reads this
+  prose right before the value, so a clear label helps the LLM understand
+  what it's looking at.
+
+  Example: "The core narrative idea this song is built around:" before
+           ${concept.core_idea}.
+
+  ## Cache
+
+  - ttl: 5m
+
+  ```cache
+  <TODO: describe concept.core_idea for the LLM (1-2 sentences)>
+
+  ${concept.core_idea}
+
+  <TODO: describe concept.title for the LLM (1-2 sentences)>
+
+  ${concept.title}
+
+  <TODO: describe concept.angle for the LLM (1-2 sentences)>
+
+  ${concept.angle}
+
+  <TODO: describe concept_brief for the LLM (1-2 sentences)>
+
+  ${concept_brief}
+
+  <TODO: describe creative-direction.response for the LLM (1-2 sentences)>
+
+  ${creative-direction.response}
+
+  <TODO: describe song-architecture.response for the LLM (1-2 sentences)>
+
+  ${song-architecture.response}
+
+  <TODO: describe easter-eggs.response for the LLM (1-2 sentences)>
+
+  ${easter-eggs.response}
+
+  ```
+
+  Per-node `prompt_cache:` declarations
+
+  Add to each node's params. Order MUST match the ## Cache block above —
+  pflow rejects mismatched orders as `cache.order-mismatch` ERROR.
+
+  ### creative-direction
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief]
+
+  ### easter-eggs
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response]
+
+  ### generate-suno-prompt
+  - prompt_cache: [creative-direction.response]
+
+  ### rewrite-craft
+  - prompt_cache: [concept.core_idea, concept.title, concept_brief, creative-direction.response, song-architecture.response]
+
+  ### rewrite-emotional
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response]
+
+  ### song-architecture
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response]
+
+  ### write-lyrics
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response]
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.

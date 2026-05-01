@@ -1,7 +1,7 @@
 """F2.3 — text and JSON renderer tests.
 
 Locks the agent-facing format contracts:
-- JSON ``format_version`` is the constant ``JSON_FORMAT_VERSION`` (current ``"1.0"``).
+- JSON ``format_version`` is the constant ``JSON_FORMAT_VERSION`` (current ``"2.0"``).
 - Empty-array contract for ``cross_workflow.*`` fields.
 - Tri-state cost rendering (priced / partial / unavailable — never silent ``$0.00``).
 - Default-hide-clean per-call rule + ``--all-rows`` override.
@@ -67,10 +67,9 @@ def _make_analysis(
             partial_cost_usd=partial,
             unavailable_models=unavailable,
         ),
-        recommended_actions=(),
         suggested_blocks=(),
         per_call=tuple(rows),
-        cross_workflow=CrossWorkflowFindings(0, (), (), ()),
+        cross_workflow=CrossWorkflowFindings(0),
         warnings=tuple(warnings),
         notes=tuple(notes or []),
     )
@@ -85,8 +84,11 @@ def test_json_format_version_is_constant() -> None:
     """JSON output reads from JSON_FORMAT_VERSION; consumer rule passes."""
     result = render_json(_make_analysis())
     assert result["format_version"] == JSON_FORMAT_VERSION
-    # Consumer rule contract — would still pass on a future "1.1" minor bump.
+    # Consumer rule contract — would still pass on a future "2.x" minor bump.
     assert result["format_version"].startswith(JSON_FORMAT_VERSION_MAJOR + ".")
+    # Strengthened post-Stage-0: literal "2." prefix check catches the next
+    # major bump (constant change wouldn't propagate without this).
+    assert result["format_version"].startswith("2.")
 
 
 def test_json_cross_workflow_empty_arrays_are_present() -> None:
@@ -152,12 +154,172 @@ def test_text_renders_partial_cost_with_marker() -> None:
     assert "ollama/llama3.2:8b" in text
 
 
+def test_text_summary_greenfield_cost_note_drops_pflow_internals() -> None:
+    """Stage A.1 — the greenfield "absolute cost figures need a prior run"
+    note must not leak pflow-internals language ("memo cache", "2.1.0 trace")
+    that requires agent context to interpret. The actionable bit ("run once,
+    re-run analyze-cache") survives; the parenthetical pointing at internal
+    storage layers is replaced with the agent-readable "real cost figures
+    and cacheable projections" symmetric with the Notes string.
+
+    Mutation test: revert ``_render_summary`` at ``render_text.py:185-188`` to
+    the old wording; both negative assertions fire — "memo cache" and
+    "2.1.0 trace" return to the rendered output.
+    """
+    from pflow.core.cache_analysis.analyze import AnalysisSummary
+
+    # Greenfield path: no current cost, but aggregate_savings is set so the
+    # branch fires (mirrors ``_render_summary:181``).
+    base = _make_analysis()
+    summary = AnalysisSummary(**{**base.summary.__dict__, "aggregate_savings_first_run_usd": 0.50})
+    analysis = CacheAnalysis(**{**base.__dict__, "summary": summary})
+    text = render_text(analysis)
+
+    # NEW agent-readable wording is present.
+    assert "Absolute cost figures need a prior run." in text
+    assert "real cost figures and cacheable projections" in text
+    # OLD pflow-internals language is gone — agent doesn't need to know
+    # about pflow's two cache layers or trace format versioning to act.
+    assert "memo cache" not in text
+    assert "2.1.0 trace" not in text
+
+
+def test_text_renders_suggested_block_placeholder_verbatim() -> None:
+    """Stage A.2 — the renderer outputs the chunk's ``prose_placeholder``
+    verbatim into the cache code fence. This locks the RENDERER side: given
+    a SuggestedBlockChunk with placeholder X, X appears in the output.
+
+    NOT an end-to-end test for production placeholder shape — see
+    ``test_analyze_emits_llm_audience_placeholder_end_to_end`` below for
+    the end-to-end mutation gate that catches production-side changes to
+    ``analyze.py:1028``.
+
+    Mutation test: change the renderer at ``_render_suggested_blocks`` to
+    skip ``chunk.prose_placeholder`` (e.g. emit a hardcoded string instead);
+    this test fails because the placeholder is missing from output.
+    """
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept",
+                var="${concept}",
+                size_tokens_est=500,
+                prose_placeholder="<TODO: describe concept for the LLM (1-2 sentences)>",
+            ),
+        ),
+        per_node_assignments={"write-lyrics": ["concept"]},
+        estimated_savings_usd=None,
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+    text = render_text(analysis)
+
+    # Renderer outputs the placeholder verbatim.
+    assert "<TODO: describe concept for the LLM (1-2 sentences)>" in text
+
+
+def test_analyze_emits_llm_audience_placeholder_end_to_end() -> None:
+    """Stage A.2 end-to-end — drive ``analyze()`` against a workflow with
+    shared LLM context so ``_populate_suggested_blocks`` emits a real
+    SuggestedBlock. The chunk's ``prose_placeholder`` must read
+    ``<TODO: describe X for the LLM (1-2 sentences)>``.
+
+    This is the production-side mutation gate. Reverting ``analyze.py:1028``
+    to the old ``<DESCRIBE X — appears verbatim in cached system prefix>``
+    shape causes this test to fail because the placeholder bytes change.
+
+    Why end-to-end matters (Pitfall #19): the renderer-only test above
+    constructs a SuggestedBlockChunk with the placeholder string directly,
+    so reverting the analyze-side production code wouldn't break it. This
+    test drives analyze() so the production placeholder shape is what
+    flows into the assertion.
+    """
+    from pflow.core.cache_analysis.analyze import analyze
+
+    # Two LLM nodes referencing the same input so ``_populate_suggested_blocks``
+    # detects shared context and emits a SuggestedBlock with a chunk for ``topic``.
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "node-a",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "About ${topic}: ..."},
+            },
+            {
+                "id": "node-b",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "More on ${topic}: ..."},
+            },
+        ],
+    }
+    result = analyze(workflow_ir, parameters={"topic": "x"}, workflow_path="/abs/x.pflow.md")
+
+    # End-to-end: at least one suggested block was emitted with the new
+    # production placeholder shape.
+    assert result.suggested_blocks, "Analyzer should detect shared context"
+    placeholders = [c.prose_placeholder for b in result.suggested_blocks for c in b.chunks]
+    # Every placeholder names the LLM audience.
+    assert all("for the LLM" in p for p in placeholders), f"Placeholders missing LLM audience cue: {placeholders}"
+    # No leftover pflow-internals language anywhere.
+    assert not any("DESCRIBE" in p for p in placeholders), placeholders
+    assert not any("appears verbatim" in p for p in placeholders), placeholders
+
+
+def test_text_suggested_block_intro_explains_audience_with_example() -> None:
+    """Stage A.2 — block-level intro above the cache code fence tells the
+    agent that the LLM (NOT a future maintainer) reads the prose, AND
+    anchors the shape with a concrete example. Per-chunk placeholders are
+    short; this intro carries the WHY/HOW once.
+
+    Mutation test: drop the intro lines from ``_render_suggested_blocks``;
+    every assertion below fires (audience cue + example are missing).
+    """
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept.core_idea",
+                var="${concept.core_idea}",
+                size_tokens_est=500,
+                prose_placeholder="<TODO: describe concept.core_idea for the LLM (1-2 sentences)>",
+            ),
+        ),
+        per_node_assignments={"write-lyrics": ["concept.core_idea"]},
+        estimated_savings_usd=None,
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+    text = render_text(analysis)
+
+    # The intro establishes the audience (LLM, not maintainer). Substrings
+    # chosen to be robust against the renderer's text wrapping — the phrase
+    # "The LLM reads this" sits on one line, with "prose" wrapping to the
+    # next via indented continuation.
+    assert "The LLM reads this" in text
+    # The intro anchors the shape with a concrete example.
+    assert "The core narrative idea this song is built around:" in text
+    assert "${concept.core_idea}" in text
+    # The intro lives ABOVE the ``## Cache`` heading (markdown, not parsed
+    # as cache content). Verify ordering.
+    intro_pos = text.find("The LLM reads this")
+    cache_heading_pos = text.find("  ## Cache")
+    assert intro_pos < cache_heading_pos, "Block-level intro must precede the ## Cache heading"
+
+
 # ---------------------------------------------------------------------------
 # Text renderer — default-hide-clean per-call rule
 # ---------------------------------------------------------------------------
 
 
-def _row(node_path: str, ratio: int, warnings: tuple[str, ...] = ()) -> PerCallRow:
+def _row(node_path: str, ratio: int) -> PerCallRow:
     """Build a PerCallRow that survives the Option C real-data filter.
 
     Default ``data_source="memo"`` makes the row visible in the per-call cache
@@ -166,6 +328,12 @@ def _row(node_path: str, ratio: int, warnings: tuple[str, ...] = ()) -> PerCallR
     Tests that specifically exercise the data-source display mapping override
     this with ``"estimator"``/``"heuristic"`` AND set ``declared_prompt_cache``
     so the row passes the filter via the steady-state branch.
+
+    Stage 0.3 (Task 159): the inline ``warnings`` parameter is gone — the
+    field was vestigial and its only test exercised the dead fallback path.
+    Per-row warning markers in production are derived from
+    ``analysis.warnings`` filtered by ``node_id``; tests inject Diagnostics
+    via ``warnings=[diag]`` on ``_make_analysis``.
     """
     return PerCallRow(
         node_path=node_path,
@@ -177,7 +345,6 @@ def _row(node_path: str, ratio: int, warnings: tuple[str, ...] = ()) -> PerCallR
         cache_ratio_pct=ratio,
         data_source="memo",
         declared_prompt_cache=None,
-        warnings=warnings,
     )
 
 
@@ -197,13 +364,6 @@ def test_text_all_rows_flag_shows_everything() -> None:
     assert "clean2" in text
     assert "dirty" in text
     assert "Hidden:" not in text
-
-
-def test_text_rows_with_warnings_show_even_above_threshold() -> None:
-    """A row at 95% ratio but with an inline warning must NOT be hidden."""
-    rows = [_row("noisy", 95, warnings=("cache.below-min-tokens",))]
-    text = render_text(_make_analysis(rows=rows))
-    assert "noisy" in text
 
 
 def test_text_rows_with_analysis_wide_warning_show_even_above_threshold() -> None:
@@ -254,58 +414,42 @@ def test_text_per_call_inline_marker_includes_analysis_wide_warning_id() -> None
 
 
 def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findings() -> None:
-    """When ``RecommendedAction.node_id is None`` AND ``scope_workflow`` is set,
+    """When a finding has ``node_id is None`` AND ``affected_workflow`` set,
     the renderer surfaces the workflow basename on its scope line so
     workflow-level findings are distinguishable from per-node ones (the GH #2
     surface).
 
-    Stage-1 final UX pass: the ``[cache.X]`` bracket prefix and ``Workflow:``/
-    ``Node:`` labels were dropped — the rank-line headline + scope-line
-    basename/node_id carry enough discriminator. The load-bearing contract is
-    that workflow-level and per-node findings render with DIFFERENT scope
-    lines.
+    Stage 0: ``recommended_actions`` is a renderer-derived view; tests build
+    warnings via ``make_diagnostic`` and trust the production derivation
+    (``view_helpers.build_recommended_actions``) — Pitfall #19 defense.
 
     Mutation test: comment out the ``elif action.scope_workflow:`` branch in
     ``render_text._render_recommended_actions`` and this test fails — the
     workflow-level finding renders with no scope line, indistinguishable
     from a fully-unscoped finding.
     """
-    from pflow.core.cache_analysis.analyze import RecommendedAction
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
-    actions = (
-        RecommendedAction(
-            rank=1,
-            warning_id="cache.shared-context-undeclared",
-            node_id=None,
-            estimated_savings_usd=None,
-            scope_workflow="/abs/path/song-creator.pflow.md",
-            headline="Shared context undeclared — declare `concept` in ## Cache",
+    warnings = [
+        # Workflow-scope finding (no node_id; affected_workflow is the path).
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/path/song-creator.pflow.md",
+            savings_usd=None,
         ),
         # Per-node finding alongside (existing rendering preserved).
-        RecommendedAction(
-            rank=2,
-            warning_id="cache.shared-context-undeclared",
+        make_diagnostic(
+            "cache.shared-context-undeclared",
             node_id="emotional-reviews",
-            estimated_savings_usd=None,
-            headline="Shared context undeclared — declare `concept` in ## Cache",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/path/song-creator.pflow.md",
+            savings_usd=None,
         ),
-    )
-    base = _make_analysis()
-    analysis = type(base)(
-        workflow_path=base.workflow_path,
-        analyzed_at=base.analyzed_at,
-        estimate_confidence=base.estimate_confidence,
-        estimate_confidence_coverage=base.estimate_confidence_coverage,
-        trace_path=base.trace_path,
-        summary=base.summary,
-        recommended_actions=actions,
-        suggested_blocks=base.suggested_blocks,
-        per_call=base.per_call,
-        cross_workflow=base.cross_workflow,
-        warnings=base.warnings,
-        notes=base.notes,
-    )
-    text = render_text(analysis)
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
     # The headline is the rank-line title.
     assert "Shared context undeclared" in text
     # Workflow-level finding gets the basename on its scope line, NOT the full path.
@@ -328,77 +472,48 @@ def test_text_recommended_actions_inline_label_passes_through() -> None:
     load-bearing contract is that ``<inline>`` survives intact (no
     accidental basename chopping).
     """
-    from pflow.core.cache_analysis.analyze import RecommendedAction
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
-    actions = (
-        RecommendedAction(
-            rank=1,
-            warning_id="cache.shared-context-undeclared",
-            node_id=None,
-            estimated_savings_usd=None,
-            scope_workflow="<inline>",
-            headline="Shared context undeclared — declare `concept` in ## Cache",
+    warnings = [
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="<inline>",
+            savings_usd=None,
         ),
-    )
-    base = _make_analysis()
-    analysis = type(base)(
-        workflow_path=base.workflow_path,
-        analyzed_at=base.analyzed_at,
-        estimate_confidence=base.estimate_confidence,
-        estimate_confidence_coverage=base.estimate_confidence_coverage,
-        trace_path=base.trace_path,
-        summary=base.summary,
-        recommended_actions=actions,
-        suggested_blocks=base.suggested_blocks,
-        per_call=base.per_call,
-        cross_workflow=base.cross_workflow,
-        warnings=base.warnings,
-        notes=base.notes,
-    )
-    text = render_text(analysis)
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
     # ``<inline>`` survives intact on its scope line — no basename chopping.
     assert "<inline>" in text
 
 
 def test_text_recommended_actions_unscoped_finding_omits_scope_line() -> None:
-    """When neither node_id nor scope_workflow is set (defensive fallback),
+    """When neither node_id nor affected_workflow is set (defensive fallback),
     the renderer omits the scope line entirely rather than showing an empty
     line.
 
-    Stage-1 final UX pass: the rank line carries the headline (no
-    ``[cache.X]`` prefix anymore). The load-bearing invariant is still:
-    no spurious blank scope line for fully-unscoped findings.
+    Stage 0: this test uses raw ``Diagnostic(...)`` (not ``make_diagnostic``)
+    because the catalog REQUIRES ``affected_workflow`` for
+    ``cache.shared-context-undeclared``. The defensive fallback path
+    represents a non-catalog diagnostic that flows through the renderer; the
+    contract is "no spurious blank scope line for fully-unscoped findings."
     """
-    from pflow.core.cache_analysis.analyze import RecommendedAction
+    from pflow.core.diagnostic import Diagnostic, Severity
 
     headline = "Shared context undeclared — declare `concept` in ## Cache"
-    actions = (
-        RecommendedAction(
-            rank=1,
-            warning_id="cache.shared-context-undeclared",
+    warnings = [
+        Diagnostic(
+            severity=Severity.INFO,
+            source="cache_analyzer",
+            id="cache.shared-context-undeclared",
             node_id=None,
-            estimated_savings_usd=None,
-            scope_workflow=None,
-            headline=headline,
+            message="Used by 2 LLM nodes. Chunks: concept.",
+            context={"shared_chunks": ["concept"], "category": "cache_advisory"},
         ),
-    )
-    base = _make_analysis()
-    analysis = type(base)(
-        workflow_path=base.workflow_path,
-        analyzed_at=base.analyzed_at,
-        estimate_confidence=base.estimate_confidence,
-        estimate_confidence_coverage=base.estimate_confidence_coverage,
-        trace_path=base.trace_path,
-        summary=base.summary,
-        recommended_actions=actions,
-        suggested_blocks=base.suggested_blocks,
-        per_call=base.per_call,
-        cross_workflow=base.cross_workflow,
-        warnings=base.warnings,
-        notes=base.notes,
-    )
-    text = render_text(analysis)
-    # Headline renders as the rank line.
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
+    # Headline renders as the rank line (catalog-derived via resolve_headline_for).
     assert headline in text
     # The bracketed ID prefix is GONE (Stage-1 UX pass).
     assert "[cache.shared-context-undeclared]" not in text
@@ -407,10 +522,17 @@ def test_text_recommended_actions_unscoped_finding_omits_scope_line() -> None:
     lines = text.splitlines()
     rank_line_idx = next(i for i, line in enumerate(lines) if headline in line)
     # Whatever is on the next non-empty line should NOT be a stray scope line
-    # belonging to this action — there should be no scope content here.
-    # The line immediately after the rank line should be blank or end-of-section.
+    # belonging to this action — the message indents under the rank line as
+    # the "reason paragraph", but there should be no scope-line ALONE between
+    # the rank line and the message. Verify by checking the immediate next
+    # line: it should be the message indent (5 spaces + "Used by..."), not
+    # a bare path/node_id scope line.
     next_line = lines[rank_line_idx + 1] if rank_line_idx + 1 < len(lines) else ""
-    assert next_line.strip() == "", f"Expected no scope line after unscoped rank entry; got: {next_line!r}"
+    # The reason paragraph IS rendered (message != headline), but there should
+    # be NO scope line preceding it. The reason starts with "Used by".
+    assert next_line.strip().startswith("Used by") or next_line.strip() == "", (
+        f"Expected message line or blank after unscoped rank entry; got: {next_line!r}"
+    )
 
 
 def test_text_recommended_actions_drop_sub_cent_savings() -> None:
@@ -420,48 +542,43 @@ def test_text_recommended_actions_drop_sub_cent_savings() -> None:
     Stage-1 final UX pass: the ``[cache.X]`` bracket prefix is gone from rank
     lines. The savings tri-state contract (None / sub-cent → 'savings
     unavailable'; real value → '-$X.XX/run') is unchanged.
-    """
-    from pflow.core.cache_analysis.analyze import RecommendedAction
 
-    actions = (
-        RecommendedAction(
-            rank=1,
-            warning_id="cache.shared-context-undeclared",
-            node_id=None,
-            estimated_savings_usd=0.001,
-            headline="Shared context undeclared — declare `concept` in ## Cache",
+    Stage 0: warnings are built via ``make_diagnostic``; ``recommended_actions``
+    is renderer-derived via ``view_helpers.build_recommended_actions``.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warnings = [
+        # Sub-cent savings (0.001) — must render as "savings unavailable".
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/wf.pflow.md",
+            savings_usd=0.001,
         ),
-        RecommendedAction(
-            rank=2,
-            warning_id="cache.dynamic-before-static",
+        # None savings — must render as "savings unavailable".
+        make_diagnostic(
+            "cache.dynamic-before-static",
             node_id="x",
-            estimated_savings_usd=None,
-            headline="Dynamic ref blocks caching on x — move ref after stable content",
+            dynamic_ref="ref",
+            dynamic_line=3,
+            cacheable_tokens=1000,
+            affected_calls=10,
+            projected_ratio_pct=85,
+            savings_usd=None,
         ),
-        RecommendedAction(
-            rank=3,
-            warning_id="cache.batch-prewarm-recommended",
+        # Above-threshold ($0.42) — renders the dollar figure.
+        make_diagnostic(
+            "cache.batch-prewarm-recommended",
             node_id="y",
-            estimated_savings_usd=0.42,
-            headline="Batch prewarm not declared — add `- prewarm: true` to y",
+            batch_size=8,
+            prefix_tokens_estimated=2000,
+            savings_pct=89,
+            savings_usd=0.42,
         ),
-    )
-    analysis = _make_analysis()
-    analysis = type(analysis)(  # rebuild with non-empty recommended_actions
-        workflow_path=analysis.workflow_path,
-        analyzed_at=analysis.analyzed_at,
-        estimate_confidence=analysis.estimate_confidence,
-        estimate_confidence_coverage=analysis.estimate_confidence_coverage,
-        trace_path=analysis.trace_path,
-        summary=analysis.summary,
-        recommended_actions=actions,
-        suggested_blocks=analysis.suggested_blocks,
-        per_call=analysis.per_call,
-        cross_workflow=analysis.cross_workflow,
-        warnings=analysis.warnings,
-        notes=analysis.notes,
-    )
-    text = render_text(analysis)
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
     # Sub-cent (0.001) and None both render as "savings unavailable".
     # Two findings render with this label — both rank lines must carry it.
     savings_unavailable_count = text.count("savings unavailable")
@@ -502,20 +619,52 @@ def test_text_renders_notes_in_locked_order() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_value_flow_diag(node_id: str, chunk: str, child_workflow: str = "/abs/child.pflow.md") -> Diagnostic:
+def _make_value_flow_diag(
+    node_id: str,
+    chunk: str,
+    child_workflow: str = "/abs/child.pflow.md",
+    *,
+    destinations: list[dict[str, object]] | None = None,
+) -> Diagnostic:
     """Build a cache.shared-context-undeclared diag mirroring how the analyzer
-    emits it for cross-workflow value-flow boundaries (analyze.py:_cross_workflow_value_flow_opportunity).
+    emits it for cross-workflow value-flow boundaries (Stage B.1 by-value
+    collapse — ``analyze.py:_emit_value_flow_groups``).
+
+    Stage B.1 emission shape: ``node_id=None`` (workflow-level action),
+    ``destinations: list[dict]`` carrying per-child detail. Old keys
+    (``node_count``, ``shared_chunks``, ``savings_usd``) preserved for
+    ``_validate_required`` compat.
+
+    The legacy ``node_id`` parameter is kept for backwards-compat with the
+    pre-Stage-B.1 test fixtures — it now propagates as the
+    ``destinations[0].parent_node_id`` (group representative).
     """
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
+    if destinations is None:
+        child_basename = child_workflow.rsplit("/", 1)[-1] if "/" in child_workflow else child_workflow
+        destinations = [
+            {
+                "child_workflow": child_workflow,
+                "child_workflow_basename": child_basename,
+                "node_count": 6,
+                "parent_node_id": node_id,
+                "line_in_parent": 0,
+            }
+        ]
     return make_diagnostic(
         "cache.shared-context-undeclared",
-        node_id=node_id,
-        node_count=6,
+        node_count=6 * len(destinations),
         shared_chunks=[chunk],
         affected_workflow="/abs/parent.pflow.md",
-        child_workflow=child_workflow,
         savings_usd=None,
+        # Stage B.1 keys:
+        value_root=chunk,
+        destinations=destinations,
+        destination_count=len(destinations),
+        total_consumer_count=6 * len(destinations),
+        # ``child_workflow`` triggers the boundary-scope dispatch in make_diagnostic.
+        child_workflow=destinations[0]["child_workflow"],
     )
 
 
@@ -523,84 +672,83 @@ def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> No
     """CP5 #3 — section renamed from 'Cross-workflow alignment (Tier 2)' to
     'Sub-workflow boundaries' so agents don't have to know what 'Tier 2' is.
 
+    Stage 0.2: cross-workflow section renders rename + prose-mismatch findings
+    only; value-flow surfaces in Recommended actions. Use a rename diag to
+    trigger the section.
+
     Mutation test: revert the header in ``_render_cross_workflow``; this test
     fails because the agent-facing section name regresses to internal pflow
     architecture jargon.
     """
-    diag = _make_value_flow_diag("choose-chorus", "concept")
-    analysis = _make_analysis()
-    analysis = CacheAnalysis(**{
-        **analysis.__dict__,
-        "cross_workflow": CrossWorkflowFindings(1, (), (), (diag,)),
-    })
-    text = render_text(analysis)
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.cross-workflow-rename-detected",
+        node_id="parent-step",
+        parent_workflow="/abs/song-creator.pflow.md",
+        child_workflow="/abs/chorus-chooser.pflow.md",
+        parent_value_expr="concept_brief",
+        child_input_name="creative_brief",
+        line_in_parent=42,
+        parent_node_id="parent-step",
+    )
+    text = render_text(_make_analysis(warnings=[diag]))
     assert "## Sub-workflow boundaries" in text
     assert "Cross-workflow alignment" not in text
     assert "Tier 2" not in text
 
 
 def test_text_cross_workflow_findings_are_distinguishable() -> None:
-    """CP5 #3 — three findings with different node_id / shared_chunks render
-    as three DISTINCT multi-line blocks.
+    """Stage B.1 (Task 159) — by-value collapse + boundary template dispatch
+    produces distinct ranked entries per (parent_workflow, value_root) group.
 
-    Multiple findings of the same warning_id MUST produce different output;
-    pre-CP2 they were byte-identical (the lyrics-generator three-line bug).
+    Stage B.1 emits ONE Diagnostic per value root. To surface multiple distinct
+    findings in this test, we use different chunk names. Each rec entry
+    carries the value_root in its headline as the discriminator.
 
-    Mutation test: revert the value-flow finding renderer to drop ``node_id``
-    or ``shared_chunks`` from the boundary header — the three blocks collapse
-    to identical text and this test fails.
+    Mutation test: drop ``value_root`` from the boundary headline template
+    (SINGLE form) and the three rec entries collapse to identical text.
     """
     diag1 = _make_value_flow_diag("choose-chorus", "concept", child_workflow="/abs/chorus-chooser.pflow.md")
     diag2 = _make_value_flow_diag("emotional-reviews", "concept_brief", child_workflow="/abs/review-emotional.pflow.md")
-    diag3 = _make_value_flow_diag("craft-reviews", "concept_brief", child_workflow="/abs/review-craft.pflow.md")
+    diag3 = _make_value_flow_diag("craft-reviews", "concept_other", child_workflow="/abs/review-craft.pflow.md")
 
-    analysis = _make_analysis()
-    analysis = CacheAnalysis(**{
-        **analysis.__dict__,
-        "cross_workflow": CrossWorkflowFindings(3, (), (), (diag1, diag2, diag3)),
-    })
-    text = render_text(analysis)
+    text = render_text(_make_analysis(warnings=[diag1, diag2, diag3]))
 
-    # Each block has a distinct boundary header line.
-    assert "→ chorus-chooser" in text
-    assert "→ review-emotional" in text
-    assert "→ review-craft" in text
-    # Via the parent's type:workflow node ID — distinguishes findings that
-    # share the same parent → child pair (heterogeneous batches, etc.).
-    assert "via choose-chorus" in text
-    assert "via emotional-reviews" in text
-    assert "via craft-reviews" in text
-    # The chunks each finding is about.
+    # Three distinct rec entries appear (rank 1/2/3).
+    assert "1. " in text
+    assert "2. " in text
+    assert "3. " in text
+    # Each value_root appears as a discriminator in the rendered output.
     assert "`concept`" in text
     assert "`concept_brief`" in text
+    assert "`concept_other`" in text
+    # SINGLE-destination boundary headlines name BOTH parent and child workflow
+    # basenames so the agent knows declaring on either side is valid.
+    assert "parent.pflow.md" in text
+    assert "chorus-chooser.pflow.md" in text
+    assert "review-emotional.pflow.md" in text
+    assert "review-craft.pflow.md" in text
 
 
 def test_text_cross_workflow_value_flow_emits_action_line() -> None:
-    """Stage-1 final UX pass: every finding has an explicit headline-led action
-    so the agent knows what to do without inferring from the symptom prose.
+    """Stage B.1 (Task 159): single-destination boundary findings render in
+    Recommended actions with the SINGLE template. The headline names BOTH
+    parent and child workflow basenames so the agent knows declaring on
+    either side is valid (single-destination case keeps "either side"
+    framing per review-agent-ux Finding 1).
 
-    Pre-fix this was a bullet-led ``→ Add`` action line; post-fix it's the
-    catalog's headline_template at the top of the finding block (rank line).
-    The catalog headline for ``cache.shared-context-undeclared`` boundary
-    scope is "Cross-boundary value undeclared — declare ``X`` in either
-    ## Cache".
-
-    Mutation test: drop the headline source from
-    ``_format_boundary_finding``; this test fails because the finding
-    renders with the prose message as the rank-line title and the
-    discriminator-bearing headline disappears.
+    Mutation test: drop the boundary template dispatch in ``make_diagnostic``;
+    this test fails because the workflow-scope template fires instead and
+    the discriminator-bearing "either workflow's ## Cache" prose disappears.
     """
     diag = _make_value_flow_diag("choose-chorus", "concept")
-    analysis = _make_analysis()
-    analysis = CacheAnalysis(**{
-        **analysis.__dict__,
-        "cross_workflow": CrossWorkflowFindings(1, (), (), (diag,)),
-    })
-    text = render_text(analysis)
-    # New shape: headline carries the action, the message body explains why.
+    text = render_text(_make_analysis(warnings=[diag]))
+    # Headline surfaces in Recommended actions section.
     assert "Cross-boundary value undeclared" in text
     assert "`concept`" in text
-    # Action context still surfaces in the message paragraph.
+    # SINGLE-destination message: "either workflow's ## Cache" framing
+    # (per-agent-ux Finding 1 — declaring on the child is equally valid).
     assert "either workflow's ## Cache" in text
     # Stage-1 UX pass: per-finding ``[cache.X]`` footer is gone.
     assert "[cache.shared-context-undeclared]" not in text
@@ -633,12 +781,7 @@ def test_text_cross_workflow_rename_finding_full_format() -> None:
         line_in_parent=42,
         parent_node_id="parent-step",
     )
-    analysis = _make_analysis()
-    analysis = CacheAnalysis(**{
-        **analysis.__dict__,
-        "cross_workflow": CrossWorkflowFindings(1, (diag,), (), ()),
-    })
-    text = render_text(analysis)
+    text = render_text(_make_analysis(warnings=[diag]))
     # Headline rank line carries the rename arrow + both names.
     assert "Cross-workflow rename" in text
     assert "`concept_brief`" in text
@@ -680,12 +823,7 @@ def test_text_cross_workflow_prose_mismatch_finding_full_format() -> None:
         parent_prose="Parent prose",
         child_prose="Different prose",
     )
-    analysis = _make_analysis()
-    analysis = CacheAnalysis(**{
-        **analysis.__dict__,
-        "cross_workflow": CrossWorkflowFindings(1, (), (diag,), ()),
-    })
-    text = render_text(analysis)
+    text = render_text(_make_analysis(warnings=[diag]))
     # Headline rank line carries the discriminator-bearing chunk name.
     assert "Cross-workflow prose mismatch" in text
     assert "`concept`" in text
@@ -841,23 +979,13 @@ def test_shared_chunks_csv_typed_alias_in_make_diagnostic() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _analysis_with_actions(actions: tuple) -> CacheAnalysis:
-    """Replace the recommended_actions tuple on a base analysis."""
-    base = _make_analysis()
-    return CacheAnalysis(
-        workflow_path=base.workflow_path,
-        analyzed_at=base.analyzed_at,
-        estimate_confidence=base.estimate_confidence,
-        estimate_confidence_coverage=base.estimate_confidence_coverage,
-        trace_path=base.trace_path,
-        summary=base.summary,
-        recommended_actions=actions,
-        suggested_blocks=base.suggested_blocks,
-        per_call=base.per_call,
-        cross_workflow=base.cross_workflow,
-        warnings=base.warnings,
-        notes=base.notes,
-    )
+def _analysis_with_warnings(warnings: list) -> CacheAnalysis:
+    """Build an analysis with the given warnings.
+
+    Stage 0: ``recommended_actions`` is renderer-derived from ``warnings``.
+    Tests inject scenario data via warnings (production code path).
+    """
+    return _make_analysis(warnings=warnings)
 
 
 def test_text_does_NOT_render_all_warnings_section() -> None:
@@ -876,8 +1004,7 @@ def test_text_does_NOT_render_all_warnings_section() -> None:
     branch to ``render_text()``; this test fails because "## All warnings"
     re-appears in the text output.
     """
-    from pflow.core.cache_analysis.analyze import RecommendedAction
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic, resolve_headline_for
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.shared-context-undeclared",
@@ -887,22 +1014,7 @@ def test_text_does_NOT_render_all_warnings_section() -> None:
         affected_workflow="/abs/x.pflow.md",
         savings_usd=None,
     )
-    # Resolve the headline via the catalog (catalog-as-SSoT — works whether
-    # the diag came from make_diagnostic or was built directly).
-    headline = resolve_headline_for(diag)
-    actions = (
-        RecommendedAction(
-            rank=1,
-            warning_id="cache.shared-context-undeclared",
-            node_id="some-node",
-            estimated_savings_usd=None,
-            headline=headline,
-            message=diag.message,
-        ),
-    )
-    base = _analysis_with_actions(actions)
-    analysis = CacheAnalysis(**{**base.__dict__, "warnings": (diag,)})
-    text = render_text(analysis)
+    text = render_text(_analysis_with_warnings([diag]))
     assert "## All warnings" not in text, "All warnings section should be dropped from text output"
     # Recommended Actions IS the warnings view — agent visibility into the
     # warning MUST still surface there. The new shape carries this via
@@ -1061,8 +1173,8 @@ def test_text_pure_greenfield_hides_per_call_section_with_explanatory_note() -> 
     # surfaces the agent-facing explanation.
     hidden_note = (
         "Per-call cache report hidden — workflow has no run data yet. "
-        "Run once to populate memo cache; analyze-cache then shows real "
-        "per-node token estimates and cacheable projections."
+        "Run once, then re-run analyze-cache for real per-node token "
+        "estimates and cacheable projections."
     )
     text = render_text(_make_analysis(rows=rows, notes=[hidden_note]))
     # Per-call section is hidden entirely.

@@ -670,22 +670,48 @@ def _make_diag(diag_id: str, severity: Severity, savings_usd: float | None = Non
 def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     """When two warnings share severity AND have no savings, detection-class
     priority decides the order. Tier 1 IDs (shared-context-undeclared,
-    priority 10) sort ahead of Tier 6 IDs (cross-workflow-rename-detected,
-    priority 50).
+    priority 10) sort ahead of Tier 5 IDs (unused-chunk, priority 30).
 
-    Pre-fix: alphabetical tie-break put rename-detected first (sorts before
-    shared-context-undeclared lexically). Agent reading top of "Recommended
-    actions" got noise instead of the real opportunity.
+    Pre-fix: alphabetical tie-break could bury actionable findings under
+    informational ones. Agent reading top of "Recommended actions" got noise
+    instead of the real opportunity.
+
+    (Pre-Stage-0 used cross-workflow-rename-detected to demonstrate the
+    sort; that ID is now filtered OUT of Recommended actions entirely — see
+    ``test_recommended_actions_filters_cross_workflow_alignment_ids`` for
+    that contract.)
+    """
+    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+
+    actions = _build_recommended_actions([
+        _make_diag("cache.unused-chunk", Severity.INFO),
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),
+    ])
+    # shared-context-undeclared MUST come first (priority 10 < 30).
+    assert actions[0].warning_id == "cache.shared-context-undeclared"
+    assert actions[1].warning_id == "cache.unused-chunk"
+
+
+def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
+    """Cross-workflow alignment findings (rename, prose-mismatch) are
+    EXCLUDED from Recommended actions — they render in the "Sub-workflow
+    boundaries" section. This keeps each finding visible in exactly ONE
+    section (Stage 0 + B.3).
+
+    Mutation contract: remove the ``_CROSS_WORKFLOW_ALIGNMENT_IDS`` filter
+    in ``view_helpers.build_recommended_actions``; this test fails because
+    the rename diag enters the ranked list.
     """
     from pflow.core.cache_analysis.analyze import _build_recommended_actions
 
     actions = _build_recommended_actions([
         _make_diag("cache.cross-workflow-rename-detected", Severity.INFO),
+        _make_diag("cache.cross-workflow-prose-mismatch", Severity.INFO),
         _make_diag("cache.shared-context-undeclared", Severity.INFO),
     ])
-    # shared-context-undeclared MUST come first (priority 10 < 50).
-    assert actions[0].warning_id == "cache.shared-context-undeclared"
-    assert actions[1].warning_id == "cache.cross-workflow-rename-detected"
+    # Only the non-alignment finding survives.
+    ids = [a.warning_id for a in actions]
+    assert ids == ["cache.shared-context-undeclared"], f"alignment IDs leaked into recommended actions: {ids}"
 
 
 def test_recommended_actions_severity_overrides_priority() -> None:
@@ -898,3 +924,228 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
     # "no model resolved" branches should be excluded.
     assert "workflow has no LLM nodes" not in rendered
     assert "no model resolved" not in rendered
+
+
+# ---------------------------------------------------------------------------
+# Stage C.1 — heterogeneous batch sub-workflow model detection
+# ---------------------------------------------------------------------------
+
+
+def test_heterogeneous_model_detected_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A node with ``model: ${item.model}`` is flagged heterogeneous, not leaked.
+
+    Pitfall #19 defense: drives ``analyze(...)`` end-to-end. Synthetic
+    ``PerCallRow(...)`` construction would bypass the upstream detection at
+    ``analyze.py:_build_per_call_row``.
+
+    Mutation contract: dropping the ``"${" in raw_model`` check causes the
+    literal ``${item.model}`` to land in ``models_in_use``. This test fails
+    with that string in the aggregate.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score-choruses",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "score this chorus"},
+            },
+            {
+                "id": "creative-direction",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "set direction"},
+            },
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    assert len(result.per_call) == 2
+    by_node = {r.node_path: r for r in result.per_call}
+    # Heterogeneous row — model emptied, flag set.
+    assert by_node["score-choruses"].model == ""
+    assert by_node["score-choruses"].model_is_heterogeneous is True
+    # Homogeneous row — flag stays False.
+    assert by_node["creative-direction"].model_is_heterogeneous is False
+
+    # ``models_in_use`` excludes heterogeneous; the literal template never
+    # leaks into the aggregate.
+    assert "${item.model}" not in result.summary.models_in_use
+    assert "anthropic/claude-sonnet-4-5" in result.summary.models_in_use
+    assert result.summary.heterogeneous_model_node_count == 1
+    assert result.summary.heterogeneous_model_node_paths == ("score-choruses",)
+
+
+def test_heterogeneous_model_excluded_from_pricing_aggregation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Heterogeneous rows don't fabricate cost figures.
+
+    Mutation contract: enabling cost lookup on heterogeneous rows would
+    produce a non-None ``current_cost_per_run_usd`` even though the model
+    is unresolvable. This test asserts the cost figure stays unavailable.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    # All-heterogeneous workflow — every row is unpriceable.
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "p"},
+            },
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    # No priced rows → all cost figures are None (matches cost_estimation
+    # contract — heterogeneous rows skipped before pricing lookup).
+    assert result.summary.current_cost_per_run_usd is None
+    assert result.summary.optimized_cost_per_run_usd is None
+    # Heterogeneous models DO NOT enter unavailable_models (they have model="")
+    # so the "all 1 models lack pricing" branch doesn't fire.
+    assert result.summary.unavailable_models == ()
+
+
+def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All-heterogeneous workflow renders the right cause, not the wrong one.
+
+    Mutation contract: removing the ``heterogeneous_model_node_count ==
+    total_llm_calls_estimated`` branch in ``_render_summary`` causes the
+    "set settings.default_model" hint to fire. That hint is wrong here —
+    model resolution isn't the problem; per-batch-item models can't be
+    aggregated as one model. This test fails if that branch reverts.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    from pflow.core.cache_analysis.render_text import _render_summary
+
+    workflow_ir = {
+        "nodes": [
+            {"id": "n1", "type": "llm", "params": {"model": "${item.model}", "prompt": "p1"}},
+            {"id": "n2", "type": "llm", "params": {"model": "${item.model}", "prompt": "p2"}},
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    rendered = _render_summary(result)
+
+    assert "all LLM nodes use models that vary per batch item" in rendered
+    # The wrong-cause messages must NOT fire here.
+    assert "set settings.default_model" not in rendered
+    assert "workflow has no LLM nodes" not in rendered
+
+
+def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-call section shows heterogeneous rows even on pure greenfield.
+
+    Without this, heterogeneous nodes would be hidden by Option C (no memo,
+    no declared subset → would normally fail ``_row_has_real_data``). The
+    agent would only see ``+ N nodes with model varying`` in the header
+    and have no place to grep for which node varies.
+
+    Mutation contract: removing the ``model_is_heterogeneous`` clause from
+    ``_row_has_real_data`` causes the section to be hidden entirely (all
+    rows fail the predicate), this test fails with no per-call section in
+    the rendered output.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    from pflow.core.cache_analysis.render_text import render_text
+
+    workflow_ir = {
+        "nodes": [
+            {"id": "score-choruses", "type": "llm", "params": {"model": "${item.model}", "prompt": "p"}},
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    rendered = render_text(result)
+
+    assert "## Per-call cache report" in rendered
+    assert "score-choruses" in rendered
+    # Renderer uses ``<varies>``, not the literal ``${item.model}``.
+    assert "model=<varies>" in rendered
+    assert "${item.model}" not in rendered
+
+
+def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Header names which nodes have varying models, not just the count.
+
+    Mutation contract: dropping the ``heterogeneous_node_paths`` kwarg
+    propagation in the header caller (``_render_header``) causes the
+    name to disappear; agent would have to scan per-call to find which
+    node varies. This test asserts the name is in the rendered scale line.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    from pflow.core.cache_analysis.render_text import render_text
+
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score-choruses",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "p"},
+            },
+            {
+                "id": "creative-direction",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "p"},
+            },
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    rendered = render_text(result)
+
+    # Scale line names the heterogeneous node + tag.
+    assert "score-choruses" in rendered
+    assert "model varies per batch item" in rendered
+    # Literal template MUST NOT leak.
+    assert "${item.model}" not in rendered
+
+
+# ---------------------------------------------------------------------------
+# Stage C.2 — _format_cost grammar / N=1 model name
+# ---------------------------------------------------------------------------
+
+
+def test_format_cost_names_single_unpriced_model() -> None:
+    """When exactly one model lacks pricing, name it directly.
+
+    Mutation contract: reverting the N==1 branch to the plural phrasing
+    would render ``"all 1 models lack pricing data"`` — agent can't tell
+    which model from the summary alone. Test asserts the model name is
+    surfaced.
+    """
+    from pflow.core.cache_analysis.render_text import _format_cost
+
+    rendered = _format_cost(value=None, partial=False, unavailable_models=("ollama/llama3.2:8b",))
+
+    assert "ollama/llama3.2:8b lacks pricing data" in rendered
+    assert "all 1 models" not in rendered  # Old buggy phrasing must NOT appear.
+
+
+def test_format_cost_keeps_plural_phrasing_for_multiple_unpriced() -> None:
+    """N>1 keeps the count phrasing — naming each would clutter the summary line.
+
+    The footer ``Unpriced models: ...`` (rendered separately by
+    ``_render_summary`` when ``partial_cost_usd``) lists them all, so this
+    line stays terse.
+    """
+    from pflow.core.cache_analysis.render_text import _format_cost
+
+    rendered = _format_cost(
+        value=None,
+        partial=False,
+        unavailable_models=("ollama/llama3.2:8b", "custom/foo", "custom/bar"),
+    )
+
+    assert "all 3 models lack pricing data" in rendered

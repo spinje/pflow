@@ -3585,3 +3585,508 @@ gate.
 
 ---
 
+## Stage A + Stage 0 — analyze-cache UX text fixes + data-model redesign (2026-05-01)
+
+After Stage 1.5 the user surfaced 4 agent-readability concerns on the
+lyrics-generator song-creator snapshot (sub-workflow boundaries triple
+repetition, opaque `<DESCRIBE...>` placeholder, redundant recommended
+actions, "memo cache or 2.1.0 trace" pflow internals). Plan-mode review with
+8 subagents traced all four to one architectural smell: the analyzer
+pre-computes views (`recommended_actions`, `cross_workflow.{rename,prose,value_flow}`)
+that duplicate findings already in `warnings`. Stage 0 collapses the
+duplication; Stages A+B+C polish on top.
+
+This entry covers Stages A + 0; B + C are pending. Plan file at
+`/Users/andfal/.claude/plans/yes-lets-write-the-streamed-turing.md`.
+
+### Stage A — text-only UX fixes (committed earlier this session)
+
+- `analyze.py:1028` placeholder rewritten: `<DESCRIBE X — appears verbatim
+  in cached system prefix>` → `<TODO: describe X for the LLM (1-2 sentences)>`.
+  Per-agent-ux review Finding 3: "for the LLM" closes the audience-cue gap
+  (agents skimming TODOs without the block intro could write internal-facing
+  prose).
+- `render_text._render_suggested_blocks` adds block-level intro above the
+  cache code fence (markdown, not parsed as cache content): explains the
+  TODO-replacement task + LLM-reads-this-prose-immediately + concrete prose
+  example. Bounded cache pollution if not filled in.
+- `_render_summary` greenfield-cost note: "memo cache or a 2.1.0 trace"
+  pflow-internals leak replaced with "real cost figures and cacheable
+  projections" symmetric to the parallel Notes string.
+
+### Stage 0 — data-model redesign (committing now)
+
+**Files modified (production):**
+- **NEW** `src/pflow/core/cache_analysis/view_helpers.py` — relocated
+  `_build_recommended_actions` (renamed `build_recommended_actions`).
+  `_CROSS_WORKFLOW_ALIGNMENT_IDS = frozenset({"cache.cross-workflow-rename-detected",
+  "cache.cross-workflow-prose-mismatch"})` filter ensures cross-workflow
+  alignment findings render in EXACTLY ONE section (Sub-workflow boundaries),
+  not in both (the latent duplication that was dormant on lyrics-generator
+  but would re-appear the moment a workflow had divergent prose labels).
+- `analyze.py` — drop `recommended_actions` field from `CacheAnalysis`; drop
+  three Diagnostic tuples from `CrossWorkflowFindings` (keep
+  `boundaries_analyzed: int` only); drop `PerCallRow.warnings`. Keep
+  `_build_recommended_actions` as a 5-line shim that delegates to
+  `view_helpers.build_recommended_actions` (preserves the 4 algorithm tests
+  at `test_cache_analysis_analyze.py:670-734` via import-line edits only).
+  `_build_cross_workflow_findings` returns `(graph_info, findings)` tuple;
+  caller does `warnings.extend(cross_diagnostics)`.
+- `render_text.py` — `_render_recommended_actions` calls
+  `build_recommended_actions(list(analysis.warnings))` on demand.
+  `_render_cross_workflow` filters `analysis.warnings` by `Diagnostic.id`
+  for rename + prose-mismatch; value-flow findings (boundary-scope
+  `cache.shared-context-undeclared`) are NOT rendered here (per Stage B.3
+  Option d Mix). `_is_row_visible_by_default` drops the dead `row.warnings`
+  fallback.
+- `render_json.py` — `JSON_FORMAT_VERSION` 1.1 → 2.0; `_MAJOR` 1 → 2.
+  `recommended_actions` and `cross_workflow.*` arrays computed on demand by
+  filtering `analysis.warnings`. `per_call[].warnings` key dropped.
+  Version-history block extended with full Stage 0 changelog (semantic
+  changes documented for JSON consumers).
+- `__init__.py` and `mcp_server/services/execution_service.py:383-386`
+  docstrings updated 1.x → 2.x (CLI/MCP parity per Task 152).
+- `mcp_server/tools/execution_tools.py:374-378` — version policy +
+  Stage-0-shape-changes documented.
+
+**Tests updated (one logical change per stage):**
+- 5 renderer tests rewritten from synthetic `RecommendedAction` tuples →
+  `make_diagnostic(...)` warnings (production code path; Pitfall #19
+  defense). The test that exercised the dead `row.warnings` fallback at
+  line 202 was deleted (sibling at line 209 covers production-shape
+  contract).
+- New regression test `test_recommended_actions_filters_cross_workflow_alignment_ids`
+  (mutation contract: removing `_CROSS_WORKFLOW_ALIGNMENT_IDS` filter
+  causes rename + prose findings to leak into Recommended actions).
+- Test at `test_cache_analysis_analyze.py:670` rewritten to use
+  `cache.unused-chunk` (priority 30) vs `cache.shared-context-undeclared`
+  (priority 10) for the priority-sort contract — old version used
+  `cache.cross-workflow-rename-detected` which is now filtered out.
+- Hardcoded `JSON_FORMAT_VERSION == "1.1"` pin at
+  `test_cache_analysis_per_id_coverage.py:216` updated to `"2.0"`.
+- MCP docstring assertion at `test_analyze_cache_tool.py:182` tightened
+  from `"1.x" in doc or "1.0" in doc` (OR-shaped — passes on partial
+  reverts) to single `"2.x" in doc`.
+- `test_json_format_version_is_constant` strengthened with literal `"2."`
+  prefix check (was tautology post-bump).
+
+### Deviations from plan
+
+1. **Cross-workflow `node_id` semantics preserved per-edge for now.** Plan
+   B.1 spec'd by-value collapse (`node_id=None`, `destinations: list[dict]`).
+   Stage 0 ships the data-model change ONLY; emission stays per-edge until
+   Stage B.1 lands. Recommended actions on song-creator still shows 4
+   entries (1 workflow + 3 per-edge boundary), not the 2 entries the
+   collapse will produce. Snapshots reflect the interim state.
+
+2. **`view_helpers.py` naming kept** (plan listed "derived_views.py /
+   render_projections.py" as alternatives). Single-word "view_helpers" is
+   compact and matches the existing pflow naming pattern (`format_helpers`,
+   etc. in adjacent modules).
+
+3. **Algorithm tests survive without import-path changes.** The plan said 4
+   tests at `test_cache_analysis_analyze.py:670-734` would need
+   import-line edits to `view_helpers`. Implementation kept
+   `analyze._build_recommended_actions` as a 5-line shim that delegates —
+   tests import unchanged. Saves the import churn AND keeps the algorithm
+   test name visible from `analyze.py` (the natural place to grep).
+
+4. **`_format_scale_line` signature unchanged in Stage 0.** Plan C-3 (from
+   review) listed signature change as Stage C work. Stage 0's data-model
+   refactor doesn't touch model resolution; chorus-chooser snapshot still
+   shows `${item.model}` literal until Stage C lands.
+
+### Critical insights
+
+1. **The shim pattern saves ~70 test-import-line edits.** When relocating a
+   public-internal function, leave a 5-line delegating shim at the old
+   import path. Existing tests don't churn; new code uses the canonical
+   path. The algorithm tests at `test_cache_analysis_analyze.py` survived
+   completely intact — only the production `analyze.py:340` call site
+   changed.
+
+2. **Pitfall #19 defense via production-path tests.** The 5 renderer tests
+   that built synthetic `RecommendedAction` tuples directly bypassed the
+   real ranking + headline derivation code path. Rewriting them to use
+   `make_diagnostic(...)` warnings + the renderer's on-demand
+   `build_recommended_actions(list(analysis.warnings))` exercises the SAME
+   shape production sees. If `view_helpers.build_recommended_actions`
+   ever drifts from production semantics, these tests catch it.
+
+3. **The cross-workflow filter is keyed on Diagnostic.id, NOT category.**
+   Considered using a `category` constant (e.g.
+   `CACHE_CROSS_WORKFLOW_ALIGNMENT_CATEGORY`) for the filter dispatch;
+   chose id-frozenset for v1 because (a) the catalog is closed at 14 IDs
+   per DD#29, (b) adding new cross-workflow alignment IDs goes through
+   design review anyway (extends the constant in lockstep), (c) categories
+   already serve a different concern (cache_failure / cache_warning /
+   cache_advisory — severity-aligned). One source of truth at
+   `view_helpers._CROSS_WORKFLOW_ALIGNMENT_IDS`.
+
+4. **JSON shape `recommended_actions` / `cross_workflow.*` arrays
+   PRESERVED via derived views.** External consumers never see the
+   internal data-shape change. The 2.0 bump is for the SEMANTIC shift
+   (cross-workflow alignment IDs no longer appear in `recommended_actions`;
+   per-call `warnings` field dropped) — not for shape breakage. Internal
+   purity (`warnings` is the single source of truth) without external
+   contract breakage. Top-10% pattern: data-model purity vs JSON-shape
+   stability decoupled.
+
+5. **The dead `PerCallRow.warnings` field had ONE test exercising the
+   dead path.** Sibling test at `:209` already covered the production-
+   shape contract via `analysis.warnings` filter. Deleting the
+   dead-path test + the field is genuinely zero-risk. The renderer's
+   `inline_ids = warnings_by_node.get(row.node_path) or [_strip_cache_prefix(w)
+   for w in row.warnings]` fallback is gone; new shape is just
+   `inline_ids = warnings_by_node.get(row.node_path, [])`.
+
+### Verification
+
+- `make test`: **6011 passed**, no regressions.
+- `make check`: ruff + ruff-format + mypy + deptry **all green** (3 files
+  auto-formatted on first run; clean on second).
+- `test_plan_drift.py` **34/34** ✓; `test_golden_baseline_hashes_match`
+  (DD#19) ✓.
+- Lyrics-generator smoke: greenfield song-creator + parent + chorus-chooser
+  + brownfield all render correctly. Snapshots saved at
+  `scratchpads/lyrics-generator-stage1/POST-STAGE0-*.txt`.
+- JSON shape contract verified via `--format=json | jq`:
+  `format_version: "2.0"`, `cross_workflow.*` arrays present (derived from
+  warnings — `boundaries_analyzed: 25`, `value_flow_opportunities: 3`),
+  `recommended_actions: 4` entries, `per_call[].warnings` absent,
+  top-level `warnings: 4` entries (single source of truth).
+
+### Open hedged claims and verifications still pending
+
+- **NEEDS VERIFICATION (Stage B)**: cross-workflow value-flow findings
+  collapse from per-edge to per-value (3 → 2 on song-creator); boundary
+  template + headline destination-count-aware (1-dest names BOTH
+  workflows; N-dest action says "this workflow's"); distribution clause
+  (uniform vs per-destination breakdown).
+- **NEEDS VERIFICATION (Stage C)**: `${item.model}` literal in header
+  replaced with named heterogeneous nodes; "all 1 models lack pricing
+  data" → "1 model lacks pricing data" or model-named.
+- **NEEDS VERIFICATION (Stage 2)**: real-LLM run with `## Cache` declared
+  delivers spec's locked ≥40% input-cost reduction.
+
+### Open user decisions surfaced
+
+**None.** All Stage 0 decisions resolved during planning + 5-agent plan
+review. Stage B + C decisions documented in plan file under "Open user
+decisions" section — tackle when those stages start.
+
+---
+
+## Stage B — by-value cross-boundary collapse (2026-05-01)
+
+### What I implemented
+
+**B.1** — `_cross_workflow_value_flow_opportunity` refactored. New
+`_ValueFlowCandidate` frozen dataclass collects per-edge data; new
+`_emit_value_flow_groups` aggregates by `(parent_workflow,
+_template_root_segment(parent_value_expr))` and emits ONE Diagnostic per
+group. Destinations sorted lex by `child_workflow`; lex-smallest
+`parent_node_id` is the group representative (deterministic per
+review-silent-failures W-A). `node_id=None` (workflow-level action).
+Boundary emission carries BOTH old keys (`node_count`, `shared_chunks`,
+`savings_usd` — required by `_validate_required`) AND new keys
+(`value_root`, `destinations`, `destination_count`,
+`total_consumer_count`).
+
+**B.2** — replaced single `_SHARED_CONTEXT_BOUNDARY_TEMPLATE` with SINGLE
++ MULTI variants; same split for headlines. Dispatch on
+`destination_count` in both `make_diagnostic` and `resolve_headline_for`.
+Per-agent-ux Finding 1 (1-destination case names BOTH parent and child
+workflows preserving "either side" framing) and Finding 2
+(distribution-aware message — uniform vs per-destination breakdown via
+new `_compute_distribution_clause` helper).
+
+**B.3** — `_render_cross_workflow` preamble updated to "alignment fixes"
+narrowed scope + cross-reference pointing at Recommended actions for
+value-flow opportunities. Filter implementation already shipped in
+Stage 0 via `view_helpers._CROSS_WORKFLOW_ALIGNMENT_IDS`; B.3 just
+finished the preamble prose.
+
+**B.4** — `_render_recommended_actions` block-level intro added once
+above ranked items ("Each item below is one edit that unlocks
+LLM-provider caching..."). `_SHARED_CONTEXT_WORKFLOW_TEMPLATE` tightened
+from a 3-sentence mechanic explanation to "Used by N LLM nodes. Chunks:
+{csv}.{savings_clause}" — section intro carries the WHY once.
+
+### Deviations from plan
+
+1. **NEW: destination-level `child_count == 0` suppression**
+   (smoke-test-driven). Plan's threshold was `total_consumer_count < 2`
+   only. Smoke test on lyrics-generator song-creator produced "used by 0
+   LLM nodes there" findings — chorus-chooser etc. consume `${concept}`
+   via code nodes (concept_title, concept_core_idea), so their LLM
+   prompts don't directly reference the value. The cross-boundary
+   recommendation provided NO incremental value over the
+   workflow-internal finding. Filter destinations with `child_count == 0`
+   inside `_emit_value_flow_groups`; if all destinations filter out, the
+   group is suppressed entirely. Result: 4 → 1 opportunities on
+   song-creator (workflow-internal action #1 covers parent-side caching;
+   the 3 cross-boundary findings would have been redundant noise).
+
+2. **`is_rename` branch traps unmatched names — affects test fixtures.**
+   A walker edge with `last_segment(parent_value_expr) != child_input_name`
+   takes the rename branch, NOT the value-flow branch. Initial test
+   fixtures used `inputs: {brief: ${concept_brief}}` (rename → suppressed
+   when no `## Cache` declared per evidence-basis principle) and produced
+   zero Diagnostics. Fixed by using matching names
+   (`inputs: {concept_brief: ${concept_brief}}`). **Lesson for future
+   tests:** when testing the value-flow branch, use matching input names
+   across the boundary; renames have their own dedicated tests.
+
+### Files modified
+
+- `src/pflow/core/cache_analysis/analyze.py` — `_build_cross_workflow_findings`
+  refactored; `_value_flow_candidate` + `_emit_value_flow_groups`
+  replace old `_cross_workflow_value_flow_opportunity`.
+- `src/pflow/core/cache_analysis/warning_catalog.py` — SINGLE/MULTI
+  templates + headlines, `_basename_for_workflow` helper,
+  `_compute_distribution_clause`, dispatch updates in `make_diagnostic`
+  and `resolve_headline_for`.
+- `src/pflow/core/cache_analysis/render_text.py` —
+  `_render_recommended_actions` block intro;
+  `_render_cross_workflow` preamble update.
+
+### Tests
+
+- 5 new end-to-end aggregation tests in `test_cache_analysis_per_id_emission.py`
+  (Pitfall #19 defense — each drives `analyze(...)` end-to-end with
+  monkeypatched sub-workflow resolution, NOT direct Diagnostic
+  construction):
+  - `test_cross_workflow_value_flow_collapses_per_value_with_destinations`
+    (replaces pre-B.1 per-edge contract test)
+  - `test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children`
+  - `test_value_flow_collapses_sub_paths_to_root`
+    (concept + concept.title + concept.core_idea → 1 group)
+  - `test_value_flow_brownfield_suppression_when_parent_declares`
+  - `test_value_flow_distribution_clause_uniform_vs_nonuniform`
+- 2 renderer tests updated for new boundary template shape (SINGLE
+  destination names BOTH workflows; multi-destination shows distribution).
+- `_make_value_flow_diag` test helper extended with `destinations=` kwarg
+  for B.1-shaped fixtures.
+
+### Verification
+
+- 6,015 tests passing (was 6,011 + 4 new B.1 tests, -1 old per-edge
+  contract test). `make check` clean. `test_plan_drift.py` 34/34;
+  `test_golden_baseline_hashes_match` ✓.
+- Lyrics-generator song-creater: 4 → 1 opportunity (cross-boundary
+  findings correctly suppressed when child consumes via code nodes).
+  Headline now shows multi-destination form when applicable; SINGLE form
+  names both workflows. Snapshots at
+  `scratchpads/lyrics-generator-stage1/POST-STAGEB-*.txt`.
+- Brownfield (`/tmp/brownfield-stage-b.pflow.md` with order-mismatch
+  ERROR + below-min-tokens warning) renders correctly with new section
+  intro.
+
+### What's next
+
+Stage C — `${item.model}` literal leak fix at `analyze.py:589-590`
+(read raw IR without template resolution); `_format_scale_line`
+heterogeneous-node naming; `_render_summary` heterogeneous gating;
+`_format_cost` N=1 model-naming. Plan file documents full spec.
+
+---
+
+## Stage C — heterogeneous model detection + grammar fixes (2026-05-01)
+
+Stage A + 0 + B left two pflow-internals leaks visible in the lyrics-generator
+chorus-chooser snapshot: the literal `${item.model}` template string in the
+header line, and the awkward "all 1 models lack pricing data" grammar.
+Stage C fixes both at the upstream model-resolution boundary, not just at
+render time.
+
+### What I implemented
+
+**C.1 — heterogeneous model detection.** When a node's `params.model` is
+an unresolved `${...}` template (heterogeneous batch sub-workflow — model
+varies per item), neither the literal template nor the `get_default_workflow_model()`
+fallback is honest. New `PerCallRow.model_is_heterogeneous: bool` field;
+`model = ""` for these rows (so existing `if row.model` checks short-circuit
+in `cost_estimation` and `_format_scale_line`); detection at
+`analyze.py:_build_per_call_row` reads raw IR before any template resolution.
+
+**Plumbed through:**
+- `AnalysisSummary` adds `heterogeneous_model_node_count: int` +
+  `heterogeneous_model_node_paths: tuple[str, ...]` (sorted lex). The
+  `models = sorted({r.model for r in rows if r.model and not r.model_is_heterogeneous})`
+  comprehension gates on BOTH the empty-string truthy check (already there
+  pre-Stage-C) AND the explicit flag — defense-in-depth so future
+  contributors who change the empty-string convention don't silently leak
+  `${item.model}` literals back into the aggregate.
+- `_format_scale_line` signature change: new `heterogeneous_node_paths:
+  tuple[str, ...] = ()` keyword-only kwarg; new `_format_heterogeneous_suffix`
+  helper renders `+ <node_name> (model varies per batch item)` for 1
+  heterogeneous node, `+ N nodes with model varying per batch item (csv)`
+  for many. Names are surfaced (review-agent-ux Finding 6) — agent doesn't
+  have to scan per-call to find which node varies.
+- `_render_per_call` renders `model=<varies>` (not the literal `${item.model}`)
+  when `row.model_is_heterogeneous=True`.
+- `_row_has_real_data` (and its mirror `_row_has_real_data_in_analyze`)
+  extended: heterogeneous rows survive Option C even on pure greenfield —
+  the model-varies fact IS the signal; hiding the row would force the
+  agent to grep JSON.
+- `_render_summary`'s "no model resolved" branch now gates on
+  `s.heterogeneous_model_node_count == s.total_llm_calls_estimated` —
+  all-heterogeneous workflow renders "all LLM nodes use models that vary
+  per batch item" instead of the wrong "set settings.default_model" hint
+  (review-silent-failures #6).
+- `cost_estimation.py` adds explicit `if row.model_is_heterogeneous: continue`
+  ahead of the pricing lookup — defense-in-depth alongside the
+  existing `if row.model` truthy short-circuit.
+- `render_json.py` exposes `per_call[].model_is_heterogeneous` (additive),
+  `summary.heterogeneous_model_node_count` (additive),
+  `summary.heterogeneous_model_node_paths` (additive). JSON 2.0
+  consumer-rule continues to apply (additive shape change documented in
+  the version-history block).
+
+**C.2 — `_format_cost` N=1 names the model.** When exactly ONE model lacks
+pricing, `unavailable (1 model lacks pricing data)` becomes
+`unavailable (gemini/gemini-3.1-pro-preview lacks pricing data)`. N>1 keeps
+the count phrasing. Agent reads the model name directly from the cost
+line — no need to scan `models_in_use` for the culprit.
+
+### Files modified
+
+- `src/pflow/core/cache_analysis/analyze.py` — `PerCallRow` field added,
+  `AnalysisSummary` two new fields, `_build_per_call_row` heterogeneous
+  detection, `_build_summary` `models` exclusion + new field population,
+  `_row_has_real_data_in_analyze` extended.
+- `src/pflow/core/cache_analysis/render_text.py` —
+  `_HETEROGENEOUS_MODEL_TAG` constant, `_format_scale_line` signature +
+  branches, `_format_heterogeneous_suffix` helper, per-call row rendering
+  for `<varies>`, `_render_summary` heterogeneous-only branch,
+  `_format_cost` N=1 naming, `_row_has_real_data` extended.
+- `src/pflow/core/cache_analysis/cost_estimation.py` — explicit skip for
+  `row.model_is_heterogeneous`.
+- `src/pflow/core/cache_analysis/render_json.py` — `_per_call_to_dict` +
+  `_summary_to_dict` additions, version-history docstring extended.
+
+### Tests added (Pitfall #19 defense — all end-to-end)
+
+7 new tests in `test_cache_analysis_analyze.py`, each driving `analyze(...)`
+end-to-end (NOT direct `Diagnostic`/`PerCallRow` construction):
+
+1. `test_heterogeneous_model_detected_end_to_end` — mutation contract:
+   dropping the `"${" in raw_model` check causes the literal to land in
+   `models_in_use`. Test fails with that string in the aggregate.
+2. `test_heterogeneous_model_excluded_from_pricing_aggregation` — mutation
+   contract: enabling cost lookup on heterogeneous rows produces a non-None
+   `current_cost_per_run_usd`. Test asserts the figure stays unavailable.
+3. `test_heterogeneous_only_summary_renders_explicit_message` — mutation
+   contract: removing the heterogeneous-only branch in `_render_summary`
+   causes "set settings.default_model" to fire (wrong cause for this case).
+4. `test_heterogeneous_row_survives_option_c_filter` — mutation contract:
+   removing `model_is_heterogeneous` from `_row_has_real_data` hides the
+   row entirely (whole section disappears).
+5. `test_heterogeneous_node_named_in_scale_line` — mutation contract:
+   dropping the `heterogeneous_node_paths` kwarg propagation in
+   `_render_header` causes the name to disappear from the scale line.
+6. `test_format_cost_names_single_unpriced_model` — mutation contract:
+   reverting the N==1 branch renders the old "all 1 models" phrasing.
+7. `test_format_cost_keeps_plural_phrasing_for_multiple_unpriced` — keeps
+   the count phrasing for N>1.
+
+### Deviations from plan
+
+1. **Three-branch if/elif/else** instead of nested ternary in
+   `_build_per_call_row`. Plan's pseudocode used a nested `str(explicit)
+   if explicit else (get_default_workflow_model() or "")` ternary inside
+   an `if/else` (heterogeneous vs not). Ruff's SIM108 fires on the
+   resulting `if/else` shape. Restructured to:
+   ```python
+   if model_is_heterogeneous:
+       model = ""
+   elif explicit:
+       model = str(explicit)
+   else:
+       model = get_default_workflow_model() or ""
+   ```
+   Three branches → SIM108 doesn't fire (only triggers on if/else),
+   AND the code reads more linearly than the nested ternary.
+
+2. **Plan's `_format_scale_line` examples didn't match my final shape.**
+   Plan listed 4 examples (0/1/N/all heterogeneous). Implementation
+   produces:
+   - `3 LLM nodes using anthropic/... + score-choruses (model varies per batch item)` — single hetero
+   - `3 LLM nodes using anthropic/... + 2 nodes with model varying per batch item (n1, n2)` — multi hetero
+   - `2 LLM nodes (n1: model varies per batch item)` — single all-hetero
+   - `2 LLM nodes with model varies per batch item (2 nodes: n1, n2)` — multi all-hetero
+   The all-hetero branches use slightly different phrasing because there's
+   no homogeneous-models clause to anchor against. Names are surfaced in
+   ALL cases — solves Finding 6 uniformly.
+
+### Verification
+
+- **6,022 tests passing** (up from 6,015 + 7 new C tests; verified across 3
+  consecutive full-suite runs to rule out the earlier flake).
+- `make check` clean: ruff + ruff-format + mypy + deptry.
+- `test_plan_drift.py` 33/33 ✓; `test_golden_baseline_hashes_match` (DD#19) ✓.
+- **Lyrics-generator chorus-chooser smoke** (the canonical heterogeneous
+  case): `${item.model}` literal leak GONE; header now reads
+  `3 LLM nodes using anthropic/claude-sonnet-4-5 + generate-chorus-options
+  (model varies per batch item)`. Per-call row shows `model=<varies>`.
+  `Current cost per run: unavailable` (heterogeneous rows skip pricing
+  cleanly without polluting `unavailable_models`).
+- **Lyrics-generator song-creater + parent**: byte-identical to Stage B
+  output (no heterogeneous nodes). Stage C is purely additive for
+  heterogeneous workflows.
+- **Brownfield smoke** with one unpriced model
+  (`/tmp/brownfield-stage-c.pflow.md`): renders
+  `unavailable (ollama/some-fictional-model lacks pricing data)` —
+  C.2 N=1 grammar working.
+- **JSON 2.0 shape contract verified**: `summary.heterogeneous_model_node_count: 1`,
+  `summary.heterogeneous_model_node_paths: ['generate-chorus-options']`,
+  `summary.models_in_use: ['anthropic/claude-sonnet-4-5']` (no literal),
+  `per_call[].model_is_heterogeneous=True` with `model=""`.
+
+Snapshots saved at `scratchpads/lyrics-generator-stage1/POST-STAGEC-*.txt`.
+
+### Critical insights
+
+1. **Empty-string convention as a contract.** Stage C sets `model = ""`
+   for heterogeneous rows so existing `if row.model` checks short-circuit
+   automatically. Adding the explicit `model_is_heterogeneous` flag could
+   have been treated as the only signal; instead it's defense-in-depth.
+   The two checks together prevent the regression class where a future
+   contributor changes the empty-string convention (e.g., to `model =
+   "<varies>"` for "honesty") and silently re-introduces the leak into
+   `models_in_use`. Documented inline at the field declaration.
+
+2. **The naming-vs-counting tradeoff.** Plan suggested showing both a
+   count AND names: `+ N nodes with model varying per batch item (n1, n2)`.
+   That's what the multi-hetero branch does. For single-hetero, the
+   simpler `+ <name> (model varies per batch item)` is more readable and
+   the count is implicit (1 node = the named one). The branch dispatch
+   keeps both forms agent-readable.
+
+3. **The earlier "4 failed" full-suite run was a stale-state flake.**
+   Initial test runs after `git stash pop` showed 4 unrelated tests
+   failing in `test_failed_node_invariant.py` and `test_prep_error_action.py`.
+   Investigation confirmed: those tests pass standalone, pass when run
+   together with `test_core/`, AND pass on the same suite repeatedly after
+   the first reproduction. 3 consecutive full-suite runs all clean (6022
+   each). Likely cause: leftover state from the stash-pop sequence
+   (probably a `~/.pflow/cache.db` row from a prior test run that wasn't
+   cleaned up by `isolate_pflow_config`). NOT a Stage C regression.
+
+### Open hedged claims and verifications still pending
+
+- **NEEDS VERIFICATION (Stage 2)**: real-LLM run with `## Cache` declared
+  delivers spec's locked ≥40% input-cost reduction. Stage A + 0 + B + C
+  shipped the analyzer + UX changes; Stage 2 verifies the cache-rendering
+  layer actually produces the savings on a real run.
+
+### Open user decisions surfaced
+
+**None.** All Stage C decisions resolved during planning + 5-agent plan
+review. All four user-surfaced agent-readability concerns + the Stage C
+heterogeneous-model bug + the C.2 grammar fix shipped. Stage 2 (real-LLM
+verification) is the next gate.
+
+---
+

@@ -1,0 +1,97 @@
+# Cache Analysis: /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  7 LLM nodes using 2 models: anthropic/claude-sonnet-4-5, gemini/gemini-3.1-pro-preview
+
+## Summary
+
+  Current cost per run:        unavailable
+  Optimized cost per run:      unavailable
+  Cost on rerun (within 1h):   unavailable
+
+  1 opportunity (0 warnings, 1 info)
+
+  Absolute cost figures need a prior run. Run the workflow once, then re-run analyze-cache for real cost figures and cacheable projections.
+
+## Recommended actions (ordered by impact)
+
+  Each item below is one edit that unlocks LLM-provider caching.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Shared context undeclared — declare `concept.core_idea`, `concept.title` +5 more in ## Cache  savings unavailable
+     song-creator.pflow.md
+     Used by 7 LLM nodes. Chunks: concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response.
+
+## Suggested ## Cache block — /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  Paste between ## Inputs and ## Steps. Replace each `<TODO>` below with
+  a short description of the value (1-2 sentences). The LLM reads this
+  prose right before the value, so a clear label helps the LLM understand
+  what it's looking at.
+
+  Example: "The core narrative idea this song is built around:" before
+           ${concept.core_idea}.
+
+  ## Cache
+
+  - ttl: 5m
+
+  ```cache
+  <TODO: describe concept.core_idea for the LLM (1-2 sentences)>
+
+  ${concept.core_idea}
+
+  <TODO: describe concept.title for the LLM (1-2 sentences)>
+
+  ${concept.title}
+
+  <TODO: describe concept.angle for the LLM (1-2 sentences)>
+
+  ${concept.angle}
+
+  <TODO: describe concept_brief for the LLM (1-2 sentences)>
+
+  ${concept_brief}
+
+  <TODO: describe creative-direction.response for the LLM (1-2 sentences)>
+
+  ${creative-direction.response}
+
+  <TODO: describe song-architecture.response for the LLM (1-2 sentences)>
+
+  ${song-architecture.response}
+
+  <TODO: describe easter-eggs.response for the LLM (1-2 sentences)>
+
+  ${easter-eggs.response}
+
+  ```
+
+  Per-node `prompt_cache:` declarations
+
+  Add to each node's params. Order MUST match the ## Cache block above —
+  pflow rejects mismatched orders as `cache.order-mismatch` ERROR.
+
+  ### creative-direction
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief]
+
+  ### easter-eggs
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response]
+
+  ### generate-suno-prompt
+  - prompt_cache: [creative-direction.response]
+
+  ### rewrite-craft
+  - prompt_cache: [concept.core_idea, concept.title, concept_brief, creative-direction.response, song-architecture.response]
+
+  ### rewrite-emotional
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response]
+
+  ### song-architecture
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response]
+
+  ### write-lyrics
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response]
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.

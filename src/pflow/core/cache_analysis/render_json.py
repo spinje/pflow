@@ -2,10 +2,13 @@
 
 Format-version policy locked at this module:
 
-- Current version is :data:`JSON_FORMAT_VERSION` (current literal ``"1.0"``).
+- Current version is :data:`JSON_FORMAT_VERSION` (current literal ``"2.0"``).
 - Consumer rule: ``format_version.startswith(JSON_FORMAT_VERSION_MAJOR + ".")``.
-  Minor bumps (``1.0`` → ``1.1``) are additive; major bumps (``2.x``) are
+  Minor bumps (``2.0`` → ``2.1``) are additive; major bumps (``3.x``) are
   breaking. Mirrors the trace ``2.x`` policy at ``trace_report.py:463``.
+  This is NOT the trace ``2.x`` namespace — analyze-cache JSON output and
+  trace JSON files share the major-version vocabulary but are independent
+  schemas.
 
 The constants live here (where they're used) and the package ``__init__``
 re-exports them for the public API surface. Top-10% precedent: pytest's
@@ -25,7 +28,7 @@ from pflow.core.diagnostic import Diagnostic
 
 from .analyze import CacheAnalysis, PerCallRow, RecommendedAction, SuggestedBlock
 
-JSON_FORMAT_VERSION: Final[str] = "1.1"
+JSON_FORMAT_VERSION: Final[str] = "2.0"
 """Current JSON output format version. Bump minor on additive changes.
 
 Version history:
@@ -35,14 +38,44 @@ Version history:
   and ``per_call[].cache_ratio_pct`` semantics extended to include PROJECTED
   values in greenfield mode (sum of detected shared-context chunks the node
   would use if the suggested ## Cache block were declared). Pre-1.1, both
-  fields were always 0 in greenfield. Field shapes unchanged; consumers that
-  treated the prior 0-values as "no opportunity" should reread under the new
-  semantic — projected values match the spec mode-1 example's intent.
-  Recommended-actions ``warning_id`` field unchanged (full ``cache.*`` ID).
+  fields were always 0 in greenfield. Field shapes unchanged.
+- ``2.0`` — Task 159 Stage 0 data-model redesign. Top-level shape stable;
+  internal data sources changed:
+
+  * ``recommended_actions`` is now a renderer-derived view computed on demand
+    from ``warnings`` (was pre-computed on ``CacheAnalysis``). JSON entries
+    are byte-equivalent to 1.1 for the same input findings — agents see no
+    shape change. Cross-workflow alignment IDs (``cache.cross-workflow-rename-detected``,
+    ``cache.cross-workflow-prose-mismatch``) are now FILTERED from this
+    array — they appear under ``cross_workflow.*`` only. Consumers that
+    relied on the latent duplication will see those IDs disappear from
+    ``recommended_actions``.
+  * ``cross_workflow.{rename_detections, prose_mismatches, value_flow_opportunities}``
+    arrays are now derived views (filtered from ``warnings`` by
+    ``Diagnostic.id``). Empty-array contract preserved.
+  * ``per_call[].warnings`` array DROPPED — the field was vestigial in 1.x
+    (single producer never populated it). Per-row warning markers are
+    derivable by filtering the top-level ``warnings`` array by
+    ``node_id``.
+
+  Structural intent: ``warnings`` is the single source of truth for
+  findings; views are projections. mypy / rustc / clippy / ruff all use
+  this shape — pre-computed views in the data model create duplication and
+  drift.
+- ``2.0`` (Stage C.1, additive): new ``per_call[].model_is_heterogeneous``
+  boolean field — ``True`` when the IR's ``params.model`` was an
+  unresolved ``${...}`` template (heterogeneous batch sub-workflow); when
+  ``True`` the ``model`` field is empty string so consumers can dispatch
+  on either. New ``summary.heterogeneous_model_node_count`` (int) and
+  ``summary.heterogeneous_model_node_paths`` (list[str]) surface the
+  count and node identities — the ``${item.model}`` literal no longer
+  leaks into ``models_in_use`` (which previously rendered as
+  ``"${item.model}"`` in the scale line). Field shapes additive; consumers
+  matching ``format_version.startswith("2.")`` ignore the new fields.
 """
 
-JSON_FORMAT_VERSION_MAJOR: Final[str] = "1"
-"""Major version prefix. Consumer rule: ``format_version.startswith("1.")``."""
+JSON_FORMAT_VERSION_MAJOR: Final[str] = "2"
+"""Major version prefix. Consumer rule: ``format_version.startswith("2.")``."""
 
 
 def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
@@ -51,7 +84,16 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
     Output shape mirrors spec § "Output Format — JSON" verbatim. Reuses
     :meth:`Diagnostic.to_dict` for warnings so agents see the same shape they
     get from any other pflow diagnostic surface.
+
+    Stage 0 (Task 159): ``recommended_actions`` is computed on demand from
+    ``analysis.warnings`` via ``view_helpers.build_recommended_actions``;
+    cross-workflow alignment findings (rename, prose-mismatch) are excluded
+    from the ranked list (they're surfaced under ``cross_workflow.*``). The
+    JSON shape stays stable.
     """
+    from .view_helpers import build_recommended_actions
+
+    actions = build_recommended_actions(list(analysis.warnings))
     return {
         "format_version": JSON_FORMAT_VERSION,
         "workflow_path": analysis.workflow_path,
@@ -60,7 +102,7 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
         "estimate_confidence_coverage": dict(analysis.estimate_confidence_coverage),
         "trace_path": analysis.trace_path,
         "summary": _summary_to_dict(analysis),
-        "recommended_actions": [_action_to_dict(a) for a in analysis.recommended_actions],
+        "recommended_actions": [_action_to_dict(a) for a in actions],
         "suggested_blocks": [_block_to_dict(b) for b in analysis.suggested_blocks],
         "per_call": [_per_call_to_dict(r) for r in analysis.per_call],
         "cross_workflow": _cross_workflow_to_dict(analysis),
@@ -89,6 +131,13 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "models_in_use": list(s.models_in_use),
         "partial_cost_usd": s.partial_cost_usd,
         "unavailable_models": list(s.unavailable_models),
+        # Stage C.1 (2.0 minor-additive): heterogeneous batch sub-workflows
+        # whose ``model: ${item.model}`` can't be aggregated as one model.
+        # Excluded from ``models_in_use`` so the literal template doesn't
+        # leak into the rendered list. Node paths surfaced separately so
+        # agents can see WHICH nodes vary without scanning ``per_call[]``.
+        "heterogeneous_model_node_count": s.heterogeneous_model_node_count,
+        "heterogeneous_model_node_paths": list(s.heterogeneous_model_node_paths),
     }
 
 
@@ -137,18 +186,50 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "cache_ratio_pct": row.cache_ratio_pct,
         "data_source": row.data_source,
         "declared_prompt_cache": row.declared_prompt_cache,
-        "warnings": list(row.warnings),
+        # Stage C.1 (2.0 minor-additive): True when the IR's ``params.model``
+        # was an unresolved ``${...}`` template (heterogeneous batch
+        # sub-workflow). When True, ``model`` is the empty string so consumers
+        # have a single clear discriminator.
+        "model_is_heterogeneous": row.model_is_heterogeneous,
+        # Stage 0.3 (Task 159): per-call ``warnings`` array dropped — production
+        # never populated it. JSON consumers needing per-row warning markers
+        # filter ``warnings[]`` (top-level) by ``node_id``.
     }
 
 
 def _cross_workflow_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
-    """Empty-array contract: always present, even when no findings."""
+    """Empty-array contract: always present, even when no findings.
+
+    Stage 0 (Task 159): the three arrays are DERIVED from ``analysis.warnings``
+    by filtering on ``Diagnostic.id``. Pre-Stage-0, the same Diagnostics were
+    duplicated on ``analysis.cross_workflow.{rename_detections, prose_mismatches,
+    value_flow_opportunities}`` AND in ``analysis.warnings`` — that
+    pre-computed-view smell is gone. JSON shape preserved for consumer
+    compatibility (1.x → 2.x bump documents the source change in the
+    version-history block at module top).
+
+    Filter discriminators:
+    - ``rename_detections``: ``Diagnostic.id == "cache.cross-workflow-rename-detected"``
+    - ``prose_mismatches``: ``Diagnostic.id == "cache.cross-workflow-prose-mismatch"``
+    - ``value_flow_opportunities``: ``Diagnostic.id == "cache.shared-context-undeclared"``
+      AND ``"child_workflow" in (Diagnostic.context or {})`` (the boundary-scope
+      dispatch — workflow-scope shared-context findings are NOT
+      cross-workflow).
+    """
     cf = analysis.cross_workflow
     return {
         "boundaries_analyzed": cf.boundaries_analyzed,
-        "rename_detections": [_warning_to_dict(d) for d in cf.rename_detections],
-        "prose_mismatches": [_warning_to_dict(d) for d in cf.prose_mismatches],
-        "value_flow_opportunities": [_warning_to_dict(d) for d in cf.value_flow_opportunities],
+        "rename_detections": [
+            _warning_to_dict(d) for d in analysis.warnings if d.id == "cache.cross-workflow-rename-detected"
+        ],
+        "prose_mismatches": [
+            _warning_to_dict(d) for d in analysis.warnings if d.id == "cache.cross-workflow-prose-mismatch"
+        ],
+        "value_flow_opportunities": [
+            _warning_to_dict(d)
+            for d in analysis.warnings
+            if d.id == "cache.shared-context-undeclared" and "child_workflow" in (d.context or {})
+        ],
     }
 
 

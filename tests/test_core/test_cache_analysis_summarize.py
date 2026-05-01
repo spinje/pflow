@@ -42,10 +42,9 @@ def _analysis_with(
         estimate_confidence_coverage={"trace": 0, "memo": 0, "estimator": 10, "heuristic": 0, "total": 10},
         trace_path=None,
         summary=summary,
-        recommended_actions=(),
         suggested_blocks=(),
         per_call=(),
-        cross_workflow=CrossWorkflowFindings(0, (), (), ()),
+        cross_workflow=CrossWorkflowFindings(0),
         warnings=(),
         notes=(),
     )

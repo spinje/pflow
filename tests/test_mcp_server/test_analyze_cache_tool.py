@@ -179,7 +179,11 @@ def test_docstring_contains_format_version() -> None:
 def test_docstring_contains_version_policy() -> None:
     doc = _docstring_text()
     assert "startswith" in doc
-    assert "1.x" in doc or "1.0" in doc
+    # Tightened post-Stage-0: single check on the current major. The OR-shaped
+    # check ``"1.x" in doc or "1.0" in doc`` accepted partial reverts (one
+    # half passes while the other regresses); the single-check shape catches
+    # the next major bump cleanly.
+    assert "2.x" in doc
 
 
 def test_docstring_contains_partial_cost_usd() -> None:
