@@ -28,6 +28,13 @@ from dataclasses import dataclass
 
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
 
+# Task 94 cross-reference (Display Available LLM Models) — when Task 94 ships
+# `pflow llm list` with capability filters, the table below becomes the data
+# source for `--min-cache-tokens=<N>` filtering. The analyzer's
+# `cache.below-min-tokens` suggestion will then point agents at that command.
+# See .taskmaster/tasks/task_94/research/cache-threshold-cross-reference-from-task-159.md
+# for the bidirectional cross-reference plan and design choices.
+
 # Conservative fallback when the model isn't in the table or its provider is
 # unrecognized. Per DD#32: pick a value high enough that small/incidental cache
 # blocks DON'T silently no-op without a warning. 4096 covers the highest known

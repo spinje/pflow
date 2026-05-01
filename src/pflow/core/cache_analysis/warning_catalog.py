@@ -337,6 +337,11 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template="Padding advisory — extend `prompt_cache:` on {node_id} to hit upstream cache",
     ),
+    # When Task 94 (Display Available LLM Models) ships, extend the suggestion
+    # below to reference `pflow llm list --min-cache-tokens=<N>` so agents can
+    # pivot from "this model can't cache my content" to "here are models that
+    # can." See .taskmaster/tasks/task_94/research/cache-threshold-cross-reference-from-task-159.md
+    # for design rationale and the bidirectional cross-reference plan.
     "cache.below-min-tokens": CacheWarningSpec(
         severity=Severity.WARNING,
         source="cache_analyzer",
