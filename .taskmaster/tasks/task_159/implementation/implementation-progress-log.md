@@ -4213,3 +4213,26 @@ silent.
 
 ---
 
+## Suggested-block placeholder: TODO marker → starter prose (2026-05-01)
+
+User flagged that `<TODO: describe X for the LLM (1-2 sentences)>` reads
+weird in CLI output / docs (TODO is a code convention, conflates author
+voice with instructor voice, undersells the load-bearing semantic role
+of the prose). Replaced with auto-generated starter prose: ``The concept:``
+for single-segment refs, ``The response from creative-direction:`` for
+dotted refs (underscores in field segments → spaces). Block-level intro
+now says "labels are auto-generated starters — replace each with a 1-2
+sentence description"; the structural call-out about cache invalidation
+on prose changes is dropped per user direction. Starter prose is
+byte-valid as-is so first-run caching works without editing.
+
+Files: `core/cache_analysis/analyze.py` (new `_starter_prose_for_ref`
+helper), `core/cache_analysis/render_text.py` (intro rewrite). 3 tests
+replaced with 4 (renderer-verbatim + end-to-end production-shape +
+dotted-path helper unit + intro mutation gate).
+
+**Final state**: 6029 tests passing; `make check` clean; smoke-test on
+lyrics-generator song-creator reads like docs.
+
+---
+

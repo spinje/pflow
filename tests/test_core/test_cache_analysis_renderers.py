@@ -256,14 +256,13 @@ def test_text_summary_omits_blocking_line_when_no_errors() -> None:
 
 
 def test_text_renders_suggested_block_placeholder_verbatim() -> None:
-    """Stage A.2 — the renderer outputs the chunk's ``prose_placeholder``
-    verbatim into the cache code fence. This locks the RENDERER side: given
-    a SuggestedBlockChunk with placeholder X, X appears in the output.
+    """The renderer outputs the chunk's ``prose_placeholder`` verbatim into
+    the cache code fence. This locks the RENDERER side: given a
+    SuggestedBlockChunk with placeholder X, X appears in the output.
 
     NOT an end-to-end test for production placeholder shape — see
-    ``test_analyze_emits_llm_audience_placeholder_end_to_end`` below for
-    the end-to-end mutation gate that catches production-side changes to
-    ``analyze.py:1028``.
+    ``test_analyze_emits_starter_prose_placeholder_end_to_end`` below for
+    the end-to-end mutation gate that catches production-side changes.
 
     Mutation test: change the renderer at ``_render_suggested_blocks`` to
     skip ``chunk.prose_placeholder`` (e.g. emit a hardcoded string instead);
@@ -279,7 +278,7 @@ def test_text_renders_suggested_block_placeholder_verbatim() -> None:
                 name="concept",
                 var="${concept}",
                 size_tokens_est=500,
-                prose_placeholder="<TODO: describe concept for the LLM (1-2 sentences)>",
+                prose_placeholder="The concept:",
             ),
         ),
         per_node_assignments={"write-lyrics": ["concept"]},
@@ -290,18 +289,21 @@ def test_text_renders_suggested_block_placeholder_verbatim() -> None:
     text = render_text(analysis)
 
     # Renderer outputs the placeholder verbatim.
-    assert "<TODO: describe concept for the LLM (1-2 sentences)>" in text
+    assert "The concept:" in text
 
 
-def test_analyze_emits_llm_audience_placeholder_end_to_end() -> None:
-    """Stage A.2 end-to-end — drive ``analyze()`` against a workflow with
-    shared LLM context so ``_populate_suggested_blocks`` emits a real
-    SuggestedBlock. The chunk's ``prose_placeholder`` must read
-    ``<TODO: describe X for the LLM (1-2 sentences)>``.
+def test_analyze_emits_starter_prose_placeholder_end_to_end() -> None:
+    """End-to-end — drive ``analyze()`` against a workflow with shared LLM
+    context so ``_populate_suggested_blocks`` emits a real SuggestedBlock.
 
-    This is the production-side mutation gate. Reverting ``analyze.py:1028``
-    to the old ``<DESCRIBE X — appears verbatim in cached system prefix>``
-    shape causes this test to fail because the placeholder bytes change.
+    The chunk's ``prose_placeholder`` must read as auto-generated starter
+    prose (``The X:`` for single-segment refs, ``The Y from X:`` for dotted).
+    No leftover ``<TODO>`` markers, no ``<DESCRIBE>`` markers, no
+    ``appears verbatim`` pflow-internals language.
+
+    This is the production-side mutation gate. Reverting
+    ``_starter_prose_for_ref`` to a TODO/DESCRIBE shape causes this test
+    to fail because the placeholder bytes change.
 
     Why end-to-end matters (Pitfall #19): the renderer-only test above
     constructs a SuggestedBlockChunk with the placeholder string directly,
@@ -330,25 +332,42 @@ def test_analyze_emits_llm_audience_placeholder_end_to_end() -> None:
     }
     result = analyze(workflow_ir, parameters={"topic": "x"}, workflow_path="/abs/x.pflow.md")
 
-    # End-to-end: at least one suggested block was emitted with the new
-    # production placeholder shape.
     assert result.suggested_blocks, "Analyzer should detect shared context"
     placeholders = [c.prose_placeholder for b in result.suggested_blocks for c in b.chunks]
-    # Every placeholder names the LLM audience.
-    assert all("for the LLM" in p for p in placeholders), f"Placeholders missing LLM audience cue: {placeholders}"
-    # No leftover pflow-internals language anywhere.
+    # Starter prose form: "The <ref>:" — natural-language label, byte-valid.
+    assert all(p.startswith("The ") and p.endswith(":") for p in placeholders), placeholders
+    # No leftover marker conventions.
+    assert not any("TODO" in p for p in placeholders), placeholders
     assert not any("DESCRIBE" in p for p in placeholders), placeholders
     assert not any("appears verbatim" in p for p in placeholders), placeholders
 
 
-def test_text_suggested_block_intro_explains_audience_with_example() -> None:
-    """Stage A.2 — block-level intro above the cache code fence tells the
-    agent that the LLM (NOT a future maintainer) reads the prose, AND
-    anchors the shape with a concrete example. Per-chunk placeholders are
-    short; this intro carries the WHY/HOW once.
+def test_starter_prose_for_dotted_path_renders_field_from_node() -> None:
+    """Dotted refs (``creative-direction.response``) render as
+    ``The Y from X:`` form — ``Y`` is the field, ``X`` is the node id.
+    Underscores in the field segment become spaces.
+
+    Mutation test: revert ``_starter_prose_for_ref`` to the simpler
+    ``The {ref}:`` form for dotted paths; the assertion fails because
+    ``creative-direction.response`` would render as
+    ``The creative-direction.response:`` instead.
+    """
+    from pflow.core.cache_analysis.analyze import _starter_prose_for_ref
+
+    assert _starter_prose_for_ref("concept") == "The concept:"
+    assert _starter_prose_for_ref("concept_brief") == "The concept brief:"
+    assert _starter_prose_for_ref("creative-direction.response") == "The response from creative-direction:"
+    assert _starter_prose_for_ref("chorus-chooser.winning_chorus") == "The winning chorus from chorus-chooser:"
+
+
+def test_text_suggested_block_intro_explains_starter_prose_audience() -> None:
+    """The block-level intro above the cache code fence tells the agent
+    that the labels are auto-generated starters they should replace, AND
+    that the LLM reads the prose. Per-chunk placeholders are short; this
+    intro carries the WHY/HOW once.
 
     Mutation test: drop the intro lines from ``_render_suggested_blocks``;
-    every assertion below fires (audience cue + example are missing).
+    every assertion below fires.
     """
     from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
 
@@ -360,7 +379,7 @@ def test_text_suggested_block_intro_explains_audience_with_example() -> None:
                 name="concept.core_idea",
                 var="${concept.core_idea}",
                 size_tokens_est=500,
-                prose_placeholder="<TODO: describe concept.core_idea for the LLM (1-2 sentences)>",
+                prose_placeholder="The core idea from concept:",
             ),
         ),
         per_node_assignments={"write-lyrics": ["concept.core_idea"]},
@@ -370,17 +389,13 @@ def test_text_suggested_block_intro_explains_audience_with_example() -> None:
     analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
     text = render_text(analysis)
 
-    # The intro establishes the audience (LLM, not maintainer). Substrings
-    # chosen to be robust against the renderer's text wrapping — the phrase
-    # "The LLM reads this" sits on one line, with "prose" wrapping to the
-    # next via indented continuation.
+    # Intro names the labels as starters the agent should replace.
+    assert "auto-generated starters" in text
+    assert "replace each" in text
+    # Intro establishes the LLM as the audience.
     assert "The LLM reads this" in text
-    # The intro anchors the shape with a concrete example.
-    assert "The core narrative idea this song is built around:" in text
-    assert "${concept.core_idea}" in text
-    # The intro lives ABOVE the ``## Cache`` heading (markdown, not parsed
-    # as cache content). Verify ordering.
-    intro_pos = text.find("The LLM reads this")
+    # Intro lives ABOVE the ``## Cache`` heading.
+    intro_pos = text.find("auto-generated starters")
     cache_heading_pos = text.find("  ## Cache")
     assert intro_pos < cache_heading_pos, "Block-level intro must precede the ## Cache heading"
 

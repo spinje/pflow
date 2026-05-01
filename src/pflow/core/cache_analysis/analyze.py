@@ -983,6 +983,24 @@ def _estimate_cacheable_tokens(*, prompt: str, declared_subset: list[str] | None
     return max(0, len(prompt) * 75 // 400)
 
 
+def _starter_prose_for_ref(ref: str) -> str:
+    """Auto-generated humble label for a suggested cache chunk.
+
+    Single-segment paths render as ``The X:`` (underscores → spaces).
+    Dotted paths render as ``The Y from X:`` (Y = field, X = node).
+
+    The agent should replace these with workflow-domain-specific prose
+    before first run; the analyzer can't synthesize semantic descriptions
+    because it doesn't know the workflow's domain. The starter form is
+    byte-valid as-is so caching works on first run even without editing.
+    """
+    if "." in ref:
+        node, _, tail = ref.partition(".")
+        field = tail.replace("_", " ")
+        return f"The {field} from {node}:"
+    return f"The {ref.replace('_', ' ')}:"
+
+
 def _populate_suggested_blocks(
     *,
     workflow_ir: dict[str, Any],
@@ -1081,7 +1099,7 @@ def _populate_suggested_blocks(
                 name=ref,
                 var=f"${{{ref}}}",
                 size_tokens_est=display_size,
-                prose_placeholder=f"<TODO: describe {ref} for the LLM (1-2 sentences)>",
+                prose_placeholder=_starter_prose_for_ref(ref),
             )
         )
         chunk_savings = _savings_for_shared_ref(ref, node_ids, rows_by_node, size_tokens)
