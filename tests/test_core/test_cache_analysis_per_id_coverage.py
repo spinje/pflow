@@ -129,6 +129,13 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
+        "cache.opaque-prompt": (
+            "process-items",
+            {
+                "var_ref": "item.prompt",
+                "upstream_node_id": "prepare-items",
+            },
+        ),
     }
     return samples[warning_id]
 
@@ -636,6 +643,27 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.discrepancy: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.discrepancy")
+
+    # cache.opaque-prompt: LLM batch consumes ${item.X}; batch.items sources
+    # from a type: code node. Static walkers can't see the assembled prompt.
+    opaque_prompt_ir: dict[str, Any] = {
+        "nodes": [
+            {"id": "prepare-items", "type": "code", "params": {}},
+            {
+                "id": "process-items",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": "${prepare-items.result}", "as": "item"},
+                "params": {"prompt": "${item.prompt}"},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(opaque_prompt_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.opaque-prompt"]
+    assert found, f"analyze did not emit cache.opaque-prompt: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.opaque-prompt")
 
     # --- summarize-emitted id (summarize.py) -----------------------------
     # cache.opportunities-available: the dry-run nudge fires when actionable

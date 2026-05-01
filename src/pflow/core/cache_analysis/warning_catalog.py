@@ -5,12 +5,14 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-13 entries in v1: 9 from spec § "Stable Warning ID Catalog" + ``cache.discrepancy``
+14 entries in v1: 9 from spec § "Stable Warning ID Catalog" + ``cache.discrepancy``
 (Round 2, dispatch over ``root_cause`` enum), ``cache.invalid-on-non-llm``
 (Round 3, validator-reach gap closure for non-LLM nodes),
 ``cache.prewarm-no-prefix`` (Round 3, prewarm-without-static-prefix advisory),
-and ``cache.consolidate-to-root-recommended`` (CP3, sub-paths below threshold
-that would cross when consolidated to the parent dict).
+``cache.consolidate-to-root-recommended`` (CP3, sub-paths below threshold
+that would cross when consolidated to the parent dict), and
+``cache.opaque-prompt`` (Stage-1.5, LLM nodes whose prompt is a single var-ref
+to a ``type: code`` node — opaque to static analysis).
 
 The dry-run nudge ID ``cache.opportunities-available`` is reserved separately —
 it's emitted by ``summarize()`` not ``analyze()``, so it isn't part of the
@@ -443,6 +445,39 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="workflows[path={affected_workflow}]",
         headline_template="Consolidate sub-paths of `{root}` to root in ## Cache",
     ),
+    "cache.opaque-prompt": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        # Fires when an LLM node's prompt is a single var-ref (e.g. ``${X}``)
+        # whose ultimate source is a ``type: code`` node. Static walkers
+        # (cache.dynamic-before-static, cache.batch-prewarm-recommended,
+        # cache.shared-context-undeclared) read the literal IR template and
+        # see only one ref — even when the assembled prompt has substantial
+        # cache potential. The fix is structural: refactor to an inline
+        # declarative prompt so static walkers can inspect it.
+        message_template=(
+            "{node_id}: prompt is `${{{var_ref}}}`, assembled by `{upstream_node_id}` "
+            "(type: code). Static analysis cannot inspect the assembled prompt's "
+            "structure, so cache opportunities (shared prefixes, prewarm) are not "
+            "detected. If the assembled prompt has a stable prefix and per-call "
+            "dynamic content, refactoring to an inline declarative prompt unlocks "
+            "detection."
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("var_ref", str),
+            ("upstream_node_id", str),
+        ),
+        suggestions_template=(
+            "Inline the prompt template on `{node_id}`: replace `${{{var_ref}}}` "
+            "with the literal prompt content, with stable bytes BEFORE per-call "
+            "dynamic references.",
+            "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern.",
+        ),
+        path_template="nodes[id={node_id}].prompt",
+        headline_template=("Prompt opaque to static analysis on {node_id} — refactor inline for cache detection"),
+    ),
 }
 
 
@@ -491,6 +526,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.below-min-tokens": 30,
     "cache.prewarm-no-prefix": 30,
     "cache.consolidate-to-root-recommended": 30,
+    "cache.opaque-prompt": 30,
     # Tier 6 — cross-workflow alignment (informational; no concrete savings).
     "cache.cross-workflow-prose-mismatch": 50,
     "cache.cross-workflow-rename-detected": 50,

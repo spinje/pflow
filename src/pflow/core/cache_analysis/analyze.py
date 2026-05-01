@@ -520,7 +520,14 @@ def _build_per_call_rows_and_warnings(
     """Walk LLM nodes, build per-call rows, collect per-node analytical warnings."""
     rows: list[PerCallRow] = []
     warnings: list[Diagnostic] = []
-    for node in workflow_ir.get("nodes", []) or []:
+    nodes = workflow_ir.get("nodes", []) or []
+    # Pre-build node-id → node lookup once so per-node detectors that need to
+    # inspect upstream nodes (e.g. ``cache.opaque-prompt`` checks the upstream
+    # type) don't re-scan the IR per LLM node.
+    nodes_by_id: dict[str, dict[str, Any]] = {
+        str(n.get("id", "")): n for n in nodes if isinstance(n, dict) and n.get("id")
+    }
+    for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "llm":
             continue
         row = _build_per_call_row(
@@ -531,7 +538,7 @@ def _build_per_call_rows_and_warnings(
             declared_chunks=declared_chunks,
         )
         rows.append(row)
-        warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks))
+        warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks, nodes_by_id=nodes_by_id))
     return rows, warnings
 
 
@@ -663,11 +670,21 @@ def _enrich_with_projected_cacheable(row: PerCallRow, cacheable_by_node: dict[st
     )
 
 
-def _per_node_warnings(node: dict[str, Any], row: PerCallRow, *, declared_chunks: list[str]) -> list[Diagnostic]:
+def _per_node_warnings(
+    node: dict[str, Any],
+    row: PerCallRow,
+    *,
+    declared_chunks: list[str],
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
     """Emit analytical-tier warnings for one LLM node.
 
     Full-path matching is load-bearing: cache chunk identifiers are
     ``creative-direction.response`` rather than root ids.
+
+    ``nodes_by_id`` is the workflow-wide node lookup (id → node dict). Detectors
+    that need to inspect upstream node types (e.g. ``cache.opaque-prompt``)
+    consume it; detectors that only inspect the focal node ignore it.
     """
     diagnostics: list[Diagnostic] = []
     node_id = row.node_path
@@ -692,6 +709,7 @@ def _per_node_warnings(node: dict[str, Any], row: PerCallRow, *, declared_chunks
 
     diagnostics.extend(_batch_prewarm_recommendations(node, row))
     diagnostics.extend(_dynamic_before_static_warnings(node, row, declared_chunks=declared_chunks))
+    diagnostics.extend(_opaque_prompt_warnings(node, row, nodes_by_id=nodes_by_id))
 
     # cache.prewarm-no-prefix — prewarm: true with no static prefix before
     # the first batch-scoped reference. Detected by inspecting the unresolved
@@ -805,6 +823,84 @@ def _dynamic_before_static_warnings(
             )
         ]
     return []
+
+
+def _opaque_prompt_warnings(
+    node: dict[str, Any],
+    row: PerCallRow,
+    *,
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> list[Diagnostic]:
+    """Detect LLM nodes whose prompt is a single var-ref to a code-node output.
+
+    Static walkers (``cache.dynamic-before-static``, ``cache.batch-prewarm-recommended``,
+    ``cache.shared-context-undeclared``) read ``node.params.prompt`` as a literal
+    template. When the prompt is just ``${X}`` and X resolves through a
+    ``type: code`` node, those walkers see one ref and find nothing — even when
+    the assembled prompt has substantial cache potential. This detector points
+    the agent at the refactor.
+
+    Two patterns trigger:
+      - **Direct**: ``prompt: ${some_code.result.field}``.
+      - **Through batch alias**: ``prompt: ${item.X}`` AND
+        ``batch.items: ${some_code.result}``.
+
+    Coalesce expressions (``${a ?? b}``) are skipped — they have multiple paths
+    and the "opaque" framing doesn't fit cleanly.
+    """
+    prompt = node.get("params", {}).get("prompt", "")
+    if not isinstance(prompt, str):
+        return []
+    stripped = prompt.strip()
+    if not TemplateResolver.is_simple_template(stripped):
+        return []
+
+    inner = stripped[2:-1]
+    if TemplateResolver.is_coalesce_expression(inner):
+        return []
+    root = TemplateResolver.extract_root_node_id(inner)
+
+    upstream_node = nodes_by_id.get(root)
+    if upstream_node is None:
+        # Try one level of indirection through the batch alias.
+        upstream_node = _resolve_through_batch_alias(node, root, nodes_by_id)
+
+    if upstream_node is None or upstream_node.get("type") != "code":
+        return []
+
+    return [
+        make_diagnostic(
+            "cache.opaque-prompt",
+            node_id=row.node_path,
+            var_ref=inner,
+            upstream_node_id=str(upstream_node.get("id", "?")),
+        )
+    ]
+
+
+def _resolve_through_batch_alias(
+    node: dict[str, Any],
+    root: str,
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """If ``root`` is the node's batch alias, follow ``batch.items`` to its source node."""
+    batch = node.get("batch")
+    if not isinstance(batch, dict):
+        return None
+    alias = str(batch.get("as", "item"))
+    if root != alias:
+        return None
+    items_expr = batch.get("items", "")
+    if not isinstance(items_expr, str):
+        return None
+    items_stripped = items_expr.strip()
+    if not TemplateResolver.is_simple_template(items_stripped):
+        return None
+    items_inner = items_stripped[2:-1]
+    if TemplateResolver.is_coalesce_expression(items_inner):
+        return None
+    items_root = TemplateResolver.extract_root_node_id(items_inner)
+    return nodes_by_id.get(items_root)
 
 
 def _estimate_batch_size(batch: dict[str, Any]) -> int | None:

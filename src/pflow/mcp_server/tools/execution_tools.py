@@ -378,7 +378,7 @@ async def analyze_cache(
     consume. Mirrors the trace ``2.x`` consumer policy.
 
     **Closed catalog of cache.* warning IDs** that may appear in
-    ``warnings[].id`` (13 entries in v1):
+    ``warnings[].id`` (14 entries in v1):
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared
@@ -392,6 +392,7 @@ async def analyze_cache(
       - cache.invalid-on-non-llm
       - cache.prewarm-no-prefix
       - cache.consolidate-to-root-recommended
+      - cache.opaque-prompt
 
     **Cost-degradation tri-state** (per the F2 contract): when some node
     models lack pricing data, ``summary.partial_cost_usd`` becomes ``true``,

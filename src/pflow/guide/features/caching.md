@@ -127,6 +127,64 @@ Score every chorus against the rubric.
 
 Without `prewarm`, all N items race to write the cache simultaneously and pay the write cost without reads. `pflow analyze-cache` emits `cache.batch-prewarm-recommended` when prewarming would save ≥5%.
 
+## Python-Assembled Prompts
+
+When an LLM node's `prompt:` is just a single `${...}` reference whose source is a `type: code` node, static analysis cannot inspect what's inside the assembled prompt. Cache opportunities (shared prefixes, prewarm candidates) go undetected. `pflow analyze-cache` emits `cache.opaque-prompt` for this pattern.
+
+This commonly looks like one of these shapes:
+
+```markdown
+### prepare-items
+- type: code
+- inputs:
+    rubric: ${rubric}
+```python code
+items = []
+for x in dataset:
+    items.append({
+        "prompt": f"{rubric}\n\nProcess this: {x}",  # static prefix + dynamic tail
+        ...
+    })
+result: list = items
+```
+
+### process-items
+- type: llm
+- batch:
+    items: ${prepare-items.result}
+- prompt: ${item.prompt}     # opaque to static analysis
+```
+
+When the assembly produces a stable prefix + per-item dynamic tail, refactor the LLM node to consume the dynamic data directly and inline the stable bytes:
+
+```markdown
+### prepare-items
+- type: code
+- inputs:
+    dataset: ${dataset}
+```python code
+# Code node now produces only per-item dynamic data — no prompt assembly.
+result: list = [{"input_text": x} for x in dataset]
+```
+
+### process-items
+- type: llm
+- batch:
+    items: ${prepare-items.result}
+- prompt: |
+    [stable rubric / instructions / persona — same bytes for every item]
+    ${rubric}
+
+    Process this: ${item.input_text}
+```
+
+After the refactor the static walkers see the prompt template directly:
+- `cache.batch-prewarm-recommended` fires on the stable prefix when savings ≥ 5%
+- `cache.shared-context-undeclared` detects shared `${var}` references for declaration in `## Cache`
+- `cache.dynamic-before-static` flags ordering issues that would block caching
+
+**When refactoring doesn't apply.** If each per-item prompt is structurally different (different sections, different ordering, content that varies based on per-item branching), the prompts are inherently uncacheable — provider-level prefix caching needs byte-identical prefixes across calls. In that case the code-node assembly is the right shape; `cache.opaque-prompt` is honestly telling you no caching opportunity is detectable, not that the workflow is broken.
+
 ## Sub-Workflows
 
 Each `.pflow.md` declares its own `## Cache` block. Sub-workflows render their own cache; they do NOT inherit the parent's. Cross-workflow cache hits happen incidentally at the byte level when prose labels match across boundaries.
@@ -158,5 +216,6 @@ Each `.pflow.md` declares its own `## Cache` block. Sub-workflows render their o
 | `cache.cross-workflow-prose-mismatch` | info | same chunk identifier, different prose across files |
 | `cache.discrepancy` | info | `--from-trace` mode found predicted ≠ actual hit ratio |
 | `cache.prewarm-no-prefix` | info | `prewarm: true` declared but no static prefix exists |
+| `cache.opaque-prompt` | info | LLM node's prompt is a single `${var}` ref to a `type: code` node — refactor inline for cache detection |
 
 `cache.opportunities-available` is the dry-run nudge ID (separate from the catalog).

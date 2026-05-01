@@ -3477,3 +3477,111 @@ Python-assembled prompts) remain documented in
 
 ---
 
+## Stage 1.5 — `cache.opaque-prompt` catalog ID + lyrics-generator refactor (2026-05-01)
+
+User asked to address the Concern-2 gap (Python-assembled prompts invisible to
+static analysis) before Stage 2. Reframed during planning: run-once detection
+was over-engineered. The right shape is detect + nudge — point the agent at
+the refactor when the pattern is visible, accept the limit when it isn't.
+
+### What I implemented
+
+**14th catalog ID `cache.opaque-prompt`** (DD#29 user-approved, 13 → 14).
+Severity info, category cache_advisory, priority 30. Detector covers two
+patterns at the existing `_per_node_warnings` site:
+- **Direct**: `prompt: ${some_code.result.field}` where `some_code` is `type: code`.
+- **Batch alias**: `prompt: ${item.X}` AND `batch.items: ${some_code.result}`.
+
+Plumbing: `_build_per_call_rows_and_warnings` builds `nodes_by_id` once and
+threads it through `_per_node_warnings(..., nodes_by_id=)` (kwarg-only).
+Coalesce expressions (`${a ?? b}`) skipped — semantics don't fit the
+"opaque passthrough" framing.
+
+**Files changed (production, 4):**
+- `core/cache_analysis/warning_catalog.py` — catalog row + priority entry + docstring count
+- `core/cache_analysis/analyze.py` — `_opaque_prompt_warnings` + `_resolve_through_batch_alias` helpers + `nodes_by_id` plumbing
+- `guide/features/caching.md` — new "Python-Assembled Prompts" section (general instructions, no workflow-specific names) + catalog table row
+- `mcp_server/tools/execution_tools.py` — docstring catalog list 13 → 14
+
+**Tests (3 files):** 5 emission tests in `test_cache_analysis_per_id_emission.py`
+(direct, batch-alias, 3 negatives — mutation-test verified for the
+`is_simple_template` gate); `_kwargs_for` + production-driven round-trip in
+`test_cache_analysis_per_id_coverage.py`; `_minimal_context_kwargs` +
+`assert len == 14` in `test_cache_analysis_warnings.py`.
+
+**Lyrics-generator refactor (in-place per user direction):**
+- `chorus-chooser/score-chorus.prompt.md` — NEW. Full ~1.6k-token rubric;
+  `${item.chorus_text}` at the END (canonical spec mode-1 fix).
+- `chorus-chooser/chorus-chooser.pflow.md` — `build-scoring-items` now
+  produces `{items, genre_only, narrator_info}` (no inline prompt assembly);
+  `score-choruses` uses `prompt: ./score-chorus.prompt.md` (matches the
+  existing `select-chorus.prompt.md` pattern in this directory).
+
+### Verification
+
+- 6007 tests passing (was 6001 + 6 new); `make check` clean.
+- Mutation-tested: removing `is_simple_template` gate causes the negative
+  test to fail with a clear false positive. Gate is load-bearing.
+- 4 high-leverage manual fixtures at `/tmp/opaque-regression/0[1-4]-*.pflow.md`:
+  direct-opaque (positive), batch-alias-opaque (canonical), inline-shared
+  (false-positive guard), brownfield-mixed (new detector + `cache.below-min-tokens`
+  co-fire). All emit expected IDs.
+- song-creator regression diff vs `POST-STAGE1-FINAL-song-creator.txt`:
+  identical (1 trailing newline, cosmetic).
+- JSON shape: `id` at top level, structured `context` with `var_ref` +
+  `upstream_node_id`, `format_version` unchanged at 1.1.
+
+### Lyrics-generator analyzer behavior post-refactor
+
+`pflow analyze-cache chorus-chooser.pflow.md`:
+- `cache.opaque-prompt` does NOT fire on `score-choruses` ✓ (refactor unblocked detection)
+- `cache.opaque-prompt` correctly fires on `generate-chorus-options` (Case B
+  — random shuffles + per-item dynamic group sizes; genuinely uncacheable)
+- `cache.shared-context-undeclared` now detects `concept.core_idea` shared
+  between `score-choruses` and `select-chorus` (was invisible pre-refactor)
+
+`cache.batch-prewarm-recommended` doesn't fire because `batch.items` is
+template-resolved (`${build-scoring-items.result.items}`) and static batch-size
+inference doesn't follow templates — that's the pre-existing GH #360 limit.
+
+### Tacit knowledge for the next agent
+
+1. **Multi-line YAML `prompt: |` is not safe in `.pflow.md`.** The parser's
+   `_parse_yaml_items` drops content after the first blank line in the
+   scalar AND can confuse the section state machine when the scalar contains
+   `## Heading`-shaped lines. Use either single-line quoted strings (`prompt:
+   "first\n\n${var}"`) or external file refs (`prompt: ./file.prompt.md`).
+   The latter is the established pattern in lyrics-generator and is what
+   `score-choruses` now uses; Path 1's file-resolution boundary contract
+   substitutes the file content into the IR before the analyzer walks it.
+
+2. **`is_simple_template` is the load-bearing gate** in `_opaque_prompt_warnings`.
+   Without it, prompts shaped `${X} trailing literal text` produce false
+   positives because `extract_root_node_id` recovers a real node id from the
+   malformed inner string. The original test fixture (with leading literal +
+   `${X}`) doesn't actually exercise this — the malformed extraction breaks
+   downstream. Updated the negative test to use the leading-`${X}` shape so
+   the mutation-test is real.
+
+3. **The refactor pattern documented in the guide** (general terms,
+   `prepare-items`/`process-items` placeholder names, no workflow-specific
+   references). When in-workflow detection of Python-assembled prompts
+   matters, the agent gets pointed at `pflow guide caching` →
+   "Python-Assembled Prompts" via the diagnostic's `suggestions` field.
+
+### Open hedged claims
+
+- **VERIFIED**: regression-clean on song-creator (existing fixture); 4 manual
+  fixtures match expectations; mutation tests guard the load-bearing gates.
+- **NEEDS VERIFICATION (Stage 2)**: real-LLM run on `chorus-chooser` standalone
+  with manually-added `## Cache` declaring `concept.core_idea` should produce
+  measurable savings. This was Stage 2.2's purpose.
+
+### Open user decisions surfaced
+
+**None new.** Concern 1 (rename → discrepancy fold) deferred per low criticality.
+Concern 2 was resolved by Stage 1.5. Stage 2 (real-LLM verification) is the next
+gate.
+
+---
+

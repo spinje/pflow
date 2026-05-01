@@ -1669,3 +1669,148 @@ def test_consolidate_to_root_advisory_silent_when_root_already_declared(
     analysis = analyze(workflow_ir, auto_load_trace=False)
     found = [d for d in analysis.warnings if d.id == "cache.consolidate-to-root-recommended"]
     assert not found
+
+
+# ---------------------------------------------------------------------------
+# cache.opaque-prompt — LLM nodes whose prompt is a single var-ref to a code node
+#
+# Detector: ``_opaque_prompt_warnings`` in ``analyze.py``.
+# Two patterns trigger:
+#   - Direct: ``prompt: ${some_code.result.field}``.
+#   - Through batch alias: ``prompt: ${item.X}`` AND
+#     ``batch.items: ${some_code.result}``.
+# ---------------------------------------------------------------------------
+
+
+def test_opaque_prompt_fires_on_batch_alias_through_code_node() -> None:
+    """Canonical case: LLM batch consumes ``${item.prompt}``; ``batch.items``
+    sources from a ``type: code`` node. Static walkers see one ref → silent.
+    Detector points the agent at the refactor.
+
+    Mutation test: remove the ``_resolve_through_batch_alias`` indirection in
+    ``_opaque_prompt_warnings`` — this test fails because the direct ``root``
+    lookup misses (``item`` isn't a node id; it's a batch alias).
+    """
+    workflow_ir = {
+        "nodes": [
+            {"id": "prepare-items", "type": "code", "params": {}},
+            {
+                "id": "process-items",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": "${prepare-items.result}", "as": "item"},
+                "params": {"prompt": "${item.prompt}"},
+            },
+        ]
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.opaque-prompt")
+    assert diag.node_id == "process-items"
+    assert diag.context is not None
+    assert diag.context["var_ref"] == "item.prompt"
+    assert diag.context["upstream_node_id"] == "prepare-items"
+
+
+def test_opaque_prompt_fires_on_direct_code_node_ref() -> None:
+    """Direct case: ``prompt: ${some_code.result}`` (no batch indirection).
+
+    Mutation test: drop the direct ``nodes_by_id.get(root)`` lookup in favor
+    of the batch-alias indirection only — this test fails because no batch
+    alias is involved.
+    """
+    workflow_ir = {
+        "nodes": [
+            {"id": "build-prompt", "type": "code", "params": {}},
+            {
+                "id": "run",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "${build-prompt.result}"},
+            },
+        ]
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.opaque-prompt")
+    assert diag.node_id == "run"
+    assert diag.context is not None
+    assert diag.context["var_ref"] == "build-prompt.result"
+    assert diag.context["upstream_node_id"] == "build-prompt"
+
+
+def test_opaque_prompt_silent_when_prompt_has_inline_content() -> None:
+    """Negative: prompt contains literal bytes alongside ``${...}``. Static
+    walkers can already inspect this — the warning would be noise.
+
+    Mutation test (verified): drop the ``is_simple_template`` check in
+    ``_opaque_prompt_warnings`` — this test fires because the leading
+    ``${build-prompt.result}`` recovers a real root id even when trailing
+    text is present, making every "prefix var-ref + literal tail" pattern a
+    false positive.
+    """
+    workflow_ir = {
+        "nodes": [
+            {"id": "build-prompt", "type": "code", "params": {}},
+            {
+                "id": "run",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                # Leading ${X} + trailing literal — the shape that recovers a
+                # real root id without the gate (see mutation-test docstring).
+                "params": {"prompt": "${build-prompt.result} and then some literal text"},
+            },
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.opaque-prompt" not in {d.id for d in result.warnings}
+
+
+def test_opaque_prompt_silent_when_upstream_is_not_code_node() -> None:
+    """Negative: ``${some-llm.response}`` chains an LLM output into another
+    LLM call. Different pattern (LLM chaining), different remediation. The
+    opaque-prompt detector intentionally narrows to ``type: code`` upstreams.
+
+    Mutation test: drop the ``upstream_node.get("type") != "code"`` check —
+    this test fires on legitimate LLM chaining patterns.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Draft something."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "${draft.response}"},
+            },
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.opaque-prompt" not in {d.id for d in result.warnings}
+
+
+def test_opaque_prompt_silent_when_root_not_in_workflow() -> None:
+    """Negative: ``${some-input}`` where ``some-input`` is a workflow input,
+    not a node. Workflow inputs are static values agents can already see.
+
+    Mutation test: emit unconditionally when ``upstream_node is None`` —
+    this test fires on every prompt that's just a workflow input passthrough.
+    """
+    workflow_ir = {
+        "inputs": {"some-input": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "run",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "${some-input}"},
+            },
+        ],
+    }
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.opaque-prompt" not in {d.id for d in result.warnings}
