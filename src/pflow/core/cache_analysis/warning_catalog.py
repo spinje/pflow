@@ -177,9 +177,11 @@ def _compute_distribution_clause(destinations: list[dict[str, Any]]) -> str:
     total = sum(counts)
     # Uniform when all counts equal AND > 0 (zero-count is degenerate; pre-suppression should catch it).
     if counts and all(c == counts[0] for c in counts) and counts[0] > 0:
-        return f"Used by {counts[0]} LLM nodes per destination ({csv})."
+        noun = "node" if counts[0] == 1 else "nodes"
+        return f"Used by {counts[0]} LLM {noun} per destination ({csv})."
     breakdown = ", ".join(f"{name}: {count}" for name, count in zip(basenames, counts, strict=True))
-    return f"Used by {total} LLM nodes ({breakdown})."
+    total_noun = "node" if total == 1 else "nodes"
+    return f"Used by {total} LLM {total_noun} ({breakdown})."
 
 
 CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {

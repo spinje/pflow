@@ -184,6 +184,77 @@ def test_text_summary_greenfield_cost_note_drops_pflow_internals() -> None:
     assert "2.1.0 trace" not in text
 
 
+def test_text_summary_renders_blocking_errors_categorically() -> None:
+    """Top-10% pattern (mypy / rustc / clippy / ruff): errors render
+    categorically separate from opportunities. The data model already
+    separates ``blocking_errors`` from ``actionable_opportunities``;
+    the renderer must match. An agent skimming the count needs to see
+    "blocking" categorically — lumping errors into the opportunity count
+    hides them.
+
+    Mutation test: drop the ``if s.blocking_errors > 0`` block in
+    ``_render_summary``; this test fails because "1 error blocking" no
+    longer appears, and an agent could read "2 opportunities" and miss
+    the structural blocker.
+    """
+    from pflow.core.cache_analysis.analyze import AnalysisSummary
+    from pflow.core.diagnostic import Diagnostic, Severity
+
+    base = _make_analysis()
+    summary = AnalysisSummary(**{
+        **base.summary.__dict__,
+        "blocking_errors": 1,
+        "actionable_opportunities": 2,
+        "warnings_count": 2,
+        "info_count": 0,
+    })
+    err = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Cache Failure",
+        node_id="bad-call",
+        message="Order mismatch",
+        id="cache.order-mismatch",
+    )
+    analysis = CacheAnalysis(**{**base.__dict__, "summary": summary, "warnings": (err,)})
+    text = render_text(analysis)
+
+    # Blocking-errors line surfaces categorically.
+    assert "1 error blocking" in text, (
+        "Summary should render '1 error blocking' on its own line when "
+        "blocking_errors > 0. Without this, agents skimming the count see "
+        "'2 opportunities' and miss the ERROR-severity finding entirely."
+    )
+    # Opportunity line still present, distinct from the error line.
+    assert "2 opportunities (2 warnings, 0 info)" in text
+    # The blocking line precedes the opportunity line (errors first).
+    assert text.index("1 error blocking") < text.index("2 opportunities")
+
+
+def test_text_summary_omits_blocking_line_when_no_errors() -> None:
+    """Conditional emission: greenfield workflows (zero ERRORs) must not
+    show "0 errors blocking" — that's noise, not signal.
+
+    Mutation test: change the conditional to an unconditional emission;
+    this test fails on a greenfield analysis.
+    """
+    from pflow.core.cache_analysis.analyze import AnalysisSummary
+
+    base = _make_analysis()
+    summary = AnalysisSummary(**{
+        **base.summary.__dict__,
+        "blocking_errors": 0,
+        "actionable_opportunities": 1,
+        "warnings_count": 0,
+        "info_count": 1,
+    })
+    analysis = CacheAnalysis(**{**base.__dict__, "summary": summary})
+    text = render_text(analysis)
+
+    assert "blocking" not in text
+    assert "1 opportunity (0 warnings, 1 info)" in text
+
+
 def test_text_renders_suggested_block_placeholder_verbatim() -> None:
     """Stage A.2 — the renderer outputs the chunk's ``prose_placeholder``
     verbatim into the cache code fence. This locks the RENDERER side: given

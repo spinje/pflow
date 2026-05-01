@@ -337,6 +337,59 @@ def test_cross_workflow_value_flow_suppresses_when_no_llm_consumers(monkeypatch:
     )
 
 
+def test_value_flow_filtered_groups_emit_transparency_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When entire groups filter out (no LLM consumer in any child), surface a
+    transparency note so agents have an answer for "why didn't analyze flag X?"
+
+    Mutation test: drop the ``fully_filtered_roots.append(root)`` line OR the
+    note append at the end of ``_emit_value_flow_groups`` and this test fails
+    (silence on a value that visibly crosses the boundary).
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    # Parent has 2 LLM consumers of ${opaque} so the workflow-internal finding
+    # fires AND the boundary edge to a code-only child also exists. Without
+    # the transparency note, the agent sees workflow-internal advice but
+    # zero signal explaining why the cross-boundary flow was dropped.
+    parent_ir = {
+        "nodes": [
+            {"id": "consumer-a", "type": "llm", "params": {"prompt": "Use ${opaque}"}},
+            {"id": "consumer-b", "type": "llm", "params": {"prompt": "Also use ${opaque}"}},
+            {
+                "id": "branch",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"opaque": "${opaque}"}},
+            },
+        ]
+    }
+    # Child receives `opaque` but feeds it only into a code node — no LLM
+    # template-references it, so child_count == 0 and the destination filters.
+    child_ir = {
+        "nodes": [
+            {"id": "transform", "type": "code", "params": {"code": "result = opaque.upper()"}},
+            {"id": "llm", "type": "llm", "params": {"prompt": "Process ${transform.result}"}},
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    # Cross-boundary finding is correctly suppressed (no LLM consumer in child).
+    cross_boundary = [
+        d
+        for d in result.warnings
+        if d.id == "cache.shared-context-undeclared" and d.context and "child_workflow" in d.context
+    ]
+    assert not cross_boundary, "Expected destination filter to drop the cross-boundary value-flow finding"
+
+    # AND the transparency note explains the silence.
+    assert any("Cross-boundary value-flow suppressed" in note and "`opaque`" in note for note in result.notes), (
+        f"Expected transparency note explaining filtered cross-boundary value-flow. Got notes: {result.notes}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Stage B.1 (Task 159) — by-value cross-boundary collapse + Pitfall #19 defense
 #

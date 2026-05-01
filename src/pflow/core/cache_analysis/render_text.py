@@ -215,12 +215,22 @@ def _render_summary(analysis: CacheAnalysis) -> str:
         else:
             summary_lines.append(f"  Estimated savings if applied: {first_str}")
 
-    summary_lines.extend([
-        "",
+    summary_lines.append("")
+    # Top-10% pattern (mypy / rustc / clippy / ruff): errors render
+    # categorically separate from opportunities. The data model already
+    # separates ``blocking_errors`` from ``actionable_opportunities``;
+    # the renderer matches. An agent skimming the count needs to see
+    # "blocking" categorically — lumping errors into "opportunities" hides
+    # them. Pre-existing semantic gap surfaced during Stage A/0/B/C
+    # verification on the brownfield smoke fixture.
+    if s.blocking_errors > 0:
+        error_word = "error" if s.blocking_errors == 1 else "errors"
+        summary_lines.append(f"  {s.blocking_errors} {error_word} blocking")
+    summary_lines.append(
         f"  {s.actionable_opportunities} {actionable_word} "
         f"({s.warnings_count} warning{'s' if s.warnings_count != 1 else ''}, "
-        f"{s.info_count} info)",
-    ])
+        f"{s.info_count} info)"
+    )
 
     if s.partial_cost_usd and s.unavailable_models:
         models_csv = ", ".join(s.unavailable_models)

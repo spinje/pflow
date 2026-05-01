@@ -4090,3 +4090,126 @@ verification) is the next gate.
 
 ---
 
+## Post-Stage-C verification fix: cross-workflow file-resolution gap (2026-05-01)
+
+Verification-specialist drill on commit `f248a03f` surfaced a critical
+regression: lyrics-generator song-creator dropped from 4 → 1 opportunities
+(JSON `cross_workflow.value_flow_opportunities: []`). All 25 boundary edges
+had `child_count == 0`, suppressing every cross-boundary finding. Pitfall
+#19 instance #8 in this branch.
+
+### Root cause
+
+Stage B.1's `_emit_value_flow_groups` added a `child_count == 0` filter
+(implementer's deviation from plan, smoke-test-driven). The filter calls
+`_count_llm_nodes_referencing_path` against `irs_by_workflow` populated
+by `walk_cross_workflow` via `resolve_sub_workflow`. That primitive did
+NOT file-resolve child IRs, so every `prompt: ./*.prompt.md` reference
+appeared as a 24-char path string instead of inlined content. The filter
+was operating on broken data and silently suppressing real opportunities.
+
+The progress-log deviation rationale ("chorus-chooser consumes `${concept}`
+via code nodes, so its LLM prompts don't directly reference the value")
+was empirically wrong — chorus-chooser's `score-chorus.prompt.md` and
+`select-chorus.prompt.md` BOTH directly reference `${concept.core_idea}`
+and `${concept.title}`. The filter's INTENT was right; the data it ran
+against was broken.
+
+### Fix — Option A (architectural)
+
+Extended Path 1's "resolve at boundary" contract to the sub-workflow load
+primitive. `resolve_sub_workflow` now file-resolves child IRs before
+returning, mirroring `resolve_workflow` for the root boundary. Every
+consumer (cache analyzer's cross-workflow walker, validator, compiler)
+inherits resolved IRs for free; no consumer-side `resolve_file_references`
+calls needed.
+
+Why option A over surgical band-aid (option B: file-resolve in walker
+only) or filter-removal (option C): A makes resolve-at-boundary the
+analyzer's load-bearing contract for ALL sub-workflow loads, not just
+this caller. Top-10% codebases (mypy, rustc, clippy, ruff) all enforce
+single-resolution at the load primitive. The contract test catches the
+regression class structurally.
+
+### Files changed
+
+- `src/pflow/core/workflow/sub_workflow_resolver.py` (+44/-8) — new
+  `_resolve_file_refs_at_boundary` helper, applied in both
+  `_resolve_from_file` and `_resolve_from_saved`. Module docstring
+  documents the boundary contract with cross-references to Path 1
+  (commit `a3044f42`). Mocked-WorkflowManager test isolation preserved
+  via `path.exists()` guard.
+- `src/pflow/core/cache_analysis/analyze.py` — corrected
+  `_emit_value_flow_groups` rationale comment (chorus-chooser example
+  removed — it was based on the wrong observation). Added explicit NOTE
+  documenting the contract dependency: "if the boundary contract test
+  fails, the filter's signal is corrupt — fix the boundary, don't relax
+  the filter." Decomposed into `_build_destinations_for_group` helper
+  (C901 ≤ 10). New transparency note: when entire groups filter out (no
+  LLM consumer in any child), surface a Notes line so agents have an
+  answer for "why didn't analyze flag X crossing the boundary?" rather
+  than silence.
+- `tests/test_core/test_sub_workflow_resolver.py` (+184) — two contract
+  tests mirroring `test_workflow_resolver_contract.py`'s pattern:
+  structural invariant + production-shape end-to-end. Mutation-tested:
+  reverting the fix causes both to fail loudly with diagnostic messages
+  pointing at `_resolve_file_refs_at_boundary`.
+- `tests/test_core/test_cache_analysis_per_id_emission.py` —
+  `test_value_flow_filtered_groups_emit_transparency_note` locks the
+  Notes-line emission. Mutation-tested.
+
+### Filter decision
+
+**Kept the filter.** Now that data is correct (post-boundary-fix), the
+filter is genuine signal-to-noise improvement: it suppresses
+cross-boundary advice that would be redundant with the workflow-internal
+finding when the child's LLM prompts don't actually template-reference
+the value. Symmetric with rename suppression (#362) under the
+"evidence-basis principle." Transparency note ensures suppression isn't
+silent.
+
+### Verification
+
+- 6,025 tests passing (was 6,022 + 3 new: 2 boundary contract + 1
+  transparency note).
+- `make check` clean: ruff + ruff-format + mypy + deptry.
+- Lyrics-generator song-creator: **4 opportunities restored** (was 1
+  pre-fix). All three dispatch branches verified end-to-end:
+  - 1-dest: `concept` → chorus-chooser, names BOTH workflows in headline
+  - Multi-dest uniform: `concept_brief` → 2 sub-workflows, "per destination" form
+  - Multi-dest uniform: `extract-emotional-lyrics` → 5 sub-workflows
+- JSON 2.0 shape: `cross_workflow.value_flow_opportunities: 3`,
+  `recommended_actions: 4`, `summary.actionable_opportunities: 4`.
+- Mutation tests: reverting either fix (boundary helper OR filter
+  transparency note) fails the locked contracts.
+
+### Tacit knowledge
+
+1. **Path 1's contract now extends to TWO IR-load primitives**:
+   `resolve_workflow` (root) and `resolve_sub_workflow` (children). Both
+   return file-resolved IR by contract. The validator and compiler
+   continue to call `resolve_file_references` at their own resolution
+   points; those calls are now defense-in-depth (idempotent on resolved
+   IR per `is_file_reference`'s False-on-resolved-content rule). Could
+   be deleted in follow-up cleanup.
+
+2. **The `child_count == 0` filter's signal correctness depends on the
+   boundary contract.** If a future refactor moves IR loading to a path
+   that doesn't go through `resolve_sub_workflow`, the filter silently
+   re-breaks. The contract test (`test_resolve_sub_workflow_cross_workflow_walker_sees_resolved_prompts`)
+   catches the regression class — it drives the cross-workflow walker
+   end-to-end with a file-ref child workflow and asserts
+   `_count_llm_nodes_referencing_path` returns the right answer.
+
+3. **Pitfall #19 has now bitten Task 159 EIGHT times.** The pattern: a
+   smoke test produces an observation that LOOKS right, the implementer
+   draws the wrong conclusion, the wrong conclusion ships. The defense
+   that worked here: verification specialist runs analyze-cache against
+   a real workflow and notices the count drop (4 → 1). The unit tests
+   the implementer added used inline-prompt children — they passed
+   correctly because inline prompts don't trip the boundary gap.
+   Production workflows using the documented external-prompt-file
+   pattern silently regressed.
+
+---
+

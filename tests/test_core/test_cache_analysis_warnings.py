@@ -526,3 +526,47 @@ def test_format_dry_run_nudge_renders_at_one_cent_threshold() -> None:
     assert "(estimated -$0.01/run)" in rendered  # rounds up to one cent
     suppressed = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0049, savings_pct=None)
     assert suppressed == "Cache: 1 design opportunity available."
+
+
+def test_compute_distribution_clause_pluralizes_node_noun_correctly() -> None:
+    """Singular vs plural noun in the boundary distribution clause.
+
+    Pre-fix surfaced on lyrics-generator song-creator: ``concept_brief`` and
+    ``extract-emotional-lyrics`` flow to N sub-workflows with 1 LLM consumer
+    each — the rendered output read "Used by 1 LLM nodes per destination"
+    (grammatically wrong). The helper must agree number for both the
+    uniform-per-destination case and the non-uniform total.
+
+    Mutation test: revert either pluralization branch in
+    ``_compute_distribution_clause`` and the matching parametrized case
+    fails with the literal "1 LLM nodes" string in output.
+    """
+    from pflow.core.cache_analysis.warning_catalog import _compute_distribution_clause
+
+    def _dest(name: str, count: int) -> dict:
+        return {
+            "child_workflow": f"/abs/{name}.pflow.md",
+            "child_workflow_basename": f"{name}.pflow.md",
+            "node_count": count,
+        }
+
+    # Uniform with count=1 per destination → "1 LLM node per destination" (singular).
+    out = _compute_distribution_clause([_dest("a", 1), _dest("b", 1)])
+    assert "1 LLM node per destination" in out
+    assert "1 LLM nodes" not in out
+
+    # Uniform with count>1 per destination → "N LLM nodes per destination" (plural).
+    out = _compute_distribution_clause([_dest("a", 3), _dest("b", 3)])
+    assert "3 LLM nodes per destination" in out
+
+    # Non-uniform with total=1 → "1 LLM node" (singular total).
+    out = _compute_distribution_clause([_dest("a", 1), _dest("b", 0)])
+    # b is filtered upstream; if it slipped through, the total should still pluralize correctly.
+    # This case exercises total==1 specifically:
+    out_single = _compute_distribution_clause([_dest("only", 1)])
+    assert "Used by 1 LLM node " in out_single  # trailing space anchors the noun position
+    assert "1 LLM nodes" not in out_single
+
+    # Non-uniform with total>1 → "N LLM nodes" (plural total).
+    out = _compute_distribution_clause([_dest("a", 1), _dest("b", 2)])
+    assert "Used by 3 LLM nodes (" in out
