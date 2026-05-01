@@ -53,7 +53,13 @@ from pflow.runtime.template_resolver import TemplateResolver
 
 from .cross_workflow import walk_cross_workflow
 from .padding_advisor import PaddingCandidate, compute_padding_advisories
-from .token_estimation import estimate_output_tokens, estimate_tokens
+from .token_estimation import (
+    _estimate_ref_tokens,
+    _find_llm_event,
+    estimate_cacheable_tokens,
+    estimate_output_tokens,
+    estimate_tokens,
+)
 from .warning_catalog import make_diagnostic
 
 logger = logging.getLogger(__name__)
@@ -104,6 +110,12 @@ class PerCallRow:
     # also short-circuits — defense-in-depth against future contributors who
     # forget to consult this flag.
     model_is_heterogeneous: bool = False
+    # Tier label for ``cacheable_tokens_estimated``. Independent from
+    # ``data_source`` (input) and ``output_data_source`` — the three metrics
+    # may legitimately diverge (e.g., trace fires for input but cacheable
+    # falls through to memo when ``cache_creation+cache_read == 0``).
+    # Sources: ``"trace"``, ``"memo"``, ``"estimator"``, ``"unavailable"``.
+    cacheable_data_source: str = "unavailable"
     # Stage 0.3 (Task 159): the inline ``warnings: tuple[str, ...]`` field was
     # vestigial — single production producer never populated it; renderer
     # fallbacks at ``render_text.py:497, 617`` and the JSON ``per_call.warnings``
@@ -300,16 +312,24 @@ def analyze(
     cache_block = workflow_ir.get("cache")
     declared_chunks = _extract_declared_chunks(cache_block)
 
+    # Pass 1 (cheap): walk IR for shared template references — no tokenization.
+    # Tier 2 of ``estimate_cacheable_tokens`` consumes the per-node candidate
+    # subset to project cacheable counts via memo data.
+    candidate_subsets_by_node = _detect_candidate_subsets(workflow_ir)
+
     per_call_rows, warnings = _build_per_call_rows_and_warnings(
         workflow_ir=workflow_ir,
         lookup_path=lookup_path,
         trace_data=trace_data,
         memo_cache=memo_cache,
         declared_chunks=declared_chunks,
+        candidate_subsets_by_node=candidate_subsets_by_node,
     )
     rows_by_node = {row.node_path: row for row in per_call_rows}
 
-    suggested_blocks, shared_warnings, cacheable_by_node = _populate_suggested_blocks(
+    # Pass 2 (heavy): build paste-ready blocks. Uses ``model`` from rows +
+    # tokenization for chunk sizes. Brownfield early-return preserved.
+    suggested_blocks, shared_warnings = _populate_suggested_blocks(
         workflow_ir=workflow_ir,
         rows_by_node=rows_by_node,
         memo_cache=memo_cache,
@@ -317,15 +337,6 @@ def analyze(
         notes=notes,
     )
     warnings.extend(shared_warnings)
-
-    # Stage-1 final pass (Concern B): enrich greenfield per-call rows with
-    # PROJECTED cacheable token counts from the suggested-blocks pass. Memo
-    # data drives projection; without it, ``cacheable_by_node`` carries None
-    # for affected nodes → ``_enrich_with_projected_cacheable`` propagates
-    # None → renderer hides the row (Option C).
-    if cacheable_by_node:
-        per_call_rows = [_enrich_with_projected_cacheable(row, cacheable_by_node) for row in per_call_rows]
-        rows_by_node = {row.node_path: row for row in per_call_rows}
 
     # Option C — surface a Notes entry when the per-call section will render
     # empty so agents understand the absence is intentional. The renderer uses
@@ -557,6 +568,7 @@ def _build_per_call_rows_and_warnings(
     trace_data: dict[str, Any] | None,
     memo_cache: Any,
     declared_chunks: list[str],
+    candidate_subsets_by_node: dict[str, list[str]],
 ) -> tuple[list[PerCallRow], list[Diagnostic]]:
     """Walk LLM nodes, build per-call rows, collect per-node analytical warnings."""
     rows: list[PerCallRow] = []
@@ -571,16 +583,40 @@ def _build_per_call_rows_and_warnings(
     for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "llm":
             continue
+        node_id = str(node.get("id", "?"))
         row = _build_per_call_row(
             node=node,
             workflow_path=lookup_path,
             trace_data=trace_data,
             memo_cache=memo_cache,
             declared_chunks=declared_chunks,
+            candidate_subset=candidate_subsets_by_node.get(node_id),
         )
         rows.append(row)
         warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks, nodes_by_id=nodes_by_id))
     return rows, warnings
+
+
+def _detect_candidate_subsets(workflow_ir: dict[str, Any]) -> dict[str, list[str]]:
+    """Map LLM node_id → list of shared template refs (≥2 nodes share each).
+
+    Pure walker — no tokenization. Tier 2 of ``estimate_cacheable_tokens``
+    consumes the per-node candidate to project cacheable counts via memo.
+
+    Returns an empty dict when the workflow already declares ``## Cache``
+    (greenfield-only signal — declared subsets win at Tier 1/2; candidates
+    don't apply when ``prompt_cache:`` is set).
+    """
+    if _cache_item_names(workflow_ir):
+        return {}
+    ref_to_nodes, _ = _collect_llm_template_references(workflow_ir)
+    candidates_by_node: dict[str, list[str]] = {}
+    for ref, node_ids in ref_to_nodes.items():
+        if len(node_ids) < 2:
+            continue
+        for node_id in node_ids:
+            candidates_by_node.setdefault(node_id, []).append(ref)
+    return candidates_by_node
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +631,7 @@ def _build_per_call_row(
     trace_data: dict[str, Any] | None,
     memo_cache: Any,
     declared_chunks: list[str],
+    candidate_subset: list[str] | None = None,
 ) -> PerCallRow:
     """Compose a single PerCallRow for an LLM node."""
     node_id = str(node.get("id", "?"))
@@ -646,22 +683,36 @@ def _build_per_call_row(
     if declared_subset is not None and not isinstance(declared_subset, list):
         declared_subset = None
 
-    cacheable_tokens = _estimate_cacheable_tokens(
-        prompt=prompt,
+    # Tiered cacheable estimation (mirrors ``estimate_tokens`` /
+    # ``estimate_output_tokens``). Trace beats memo beats heuristic; honest
+    # ``None`` when nothing is projectable. ``declared_chunks`` (workflow-level
+    # ## Cache items) is consumed elsewhere; here we pass declared_subset
+    # (this node's ``prompt_cache:``) and candidate_subset (greenfield
+    # candidates from shared template references).
+    trace_event = _find_llm_event(trace_data, node_id) if trace_data else None
+    cacheable_tokens, cacheable_source = estimate_cacheable_tokens(
         declared_subset=declared_subset,
-        declared_chunks=declared_chunks,
+        candidate_subset=candidate_subset,
+        trace_event=trace_event,
+        memo_cache=memo_cache,
+        model=model,
+        workflow_path=workflow_path,
+        prompt=prompt,
     )
-    # Initial cacheable/ratio:
-    # - Steady-state (declared subset): heuristic value > 0; show real ratio.
-    # - Greenfield (no declared subset): cacheable=0 placeholder. ``analyze()``
-    #   may overwrite via ``_enrich_with_projected_cacheable`` if memo data
-    #   exists; otherwise the row is hidden by the renderer (Option C).
-    cacheable_tokens_with_clamp: int | None
-    if cacheable_tokens > 0:
-        cacheable_tokens_with_clamp = min(cacheable_tokens, input_tokens)
-        ratio: int | None = _safe_pct(cacheable_tokens_with_clamp, input_tokens)
+
+    # Explicit 3-way: None / 0 / positive (preserves Option C visibility
+    # contract — None hides the row, 0 shows "no cacheable yet", positive
+    # shows the real estimate).
+    cacheable_with_clamp: int | None
+    ratio: int | None
+    if cacheable_tokens is None:
+        cacheable_with_clamp = None
+        ratio = None
+    elif cacheable_tokens > 0:
+        cacheable_with_clamp = min(cacheable_tokens, input_tokens)
+        ratio = _safe_pct(cacheable_with_clamp, input_tokens)
     else:
-        cacheable_tokens_with_clamp = 0
+        cacheable_with_clamp = 0
         ratio = 0
 
     return PerCallRow(
@@ -670,13 +721,14 @@ def _build_per_call_row(
         is_batch=is_batch,
         batch_size_estimated=batch_size,
         input_tokens_estimated=input_tokens,
-        cacheable_tokens_estimated=cacheable_tokens_with_clamp,
+        cacheable_tokens_estimated=cacheable_with_clamp,
         cache_ratio_pct=ratio,
         data_source=source,
         declared_prompt_cache=list(declared_subset) if declared_subset else None,
         output_tokens_estimated=output_tokens,
         output_data_source=output_source,
         model_is_heterogeneous=model_is_heterogeneous,
+        cacheable_data_source=cacheable_source,
     )
 
 
@@ -688,42 +740,6 @@ def _row_has_real_data_in_analyze(row: PerCallRow) -> bool:
     for contract documentation.
     """
     return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache) or row.model_is_heterogeneous
-
-
-def _enrich_with_projected_cacheable(row: PerCallRow, cacheable_by_node: dict[str, int | None]) -> PerCallRow:
-    """Replace greenfield ``cacheable_tokens_estimated`` with projected value.
-
-    When the suggested-blocks pass detected shared context for this node:
-
-    - ``int`` value (memo populated): replace with the projected sum, clamped
-      to ``input_tokens_estimated``. Ratio re-derives.
-    - ``None`` value (memo empty for at least one chunk — Option C): set
-      cacheable AND ratio to ``None`` so the renderer can hide the row.
-
-    Nodes not in ``cacheable_by_node`` (no detected shared refs) are returned
-    unchanged. Steady-state rows are NOT enriched here —
-    ``_populate_suggested_blocks`` skips workflows with declared ``## Cache``,
-    so this only fires for greenfield.
-    """
-    if row.node_path not in cacheable_by_node:
-        return row
-    projected = cacheable_by_node[row.node_path]
-    if projected is None:
-        # No memo data — cacheable unmeasurable. Tri-state contract: explicit
-        # None instead of misleading 0.
-        return replace(
-            row,
-            cacheable_tokens_estimated=None,
-            cache_ratio_pct=None,
-        )
-    if projected <= 0:
-        return row
-    bounded = min(projected, row.input_tokens_estimated)
-    return replace(
-        row,
-        cacheable_tokens_estimated=bounded,
-        cache_ratio_pct=_safe_pct(bounded, row.input_tokens_estimated),
-    )
 
 
 def _per_node_warnings(
@@ -748,9 +764,19 @@ def _per_node_warnings(
     # cache.below-min-tokens — declared cache content below provider minimum.
     # ``cacheable_tokens_estimated`` may be None for greenfield rows without
     # memo data; this warning gates on declared_prompt_cache so it only fires
-    # in steady-state where cacheable is always int.
+    # in steady-state where cacheable is always int. ALSO gates on
+    # ``cacheable_data_source != "trace"``: when source is trace AND cacheable
+    # is nonzero, cache demonstrably worked at this size; the warning would
+    # contradict trace evidence. When source is memo/estimator (or trace
+    # fell through), the warning fires correctly.
     cacheable = row.cacheable_tokens_estimated
-    if row.declared_prompt_cache and cacheable is not None and cacheable > 0 and row.model:
+    if (
+        row.declared_prompt_cache
+        and cacheable is not None
+        and cacheable > 0
+        and row.model
+        and row.cacheable_data_source != "trace"
+    ):
         min_tokens = get_min_cache_tokens(row.model)
         if cacheable < min_tokens:
             diagnostics.append(
@@ -967,22 +993,6 @@ def _estimate_batch_size(batch: dict[str, Any]) -> int | None:
     return None
 
 
-def _estimate_cacheable_tokens(*, prompt: str, declared_subset: list[str] | None, declared_chunks: list[str]) -> int:
-    """Conservative estimate of how many prompt tokens are cacheable.
-
-    v1: assume each declared chunk in the node's subset contributes a uniform
-    fraction of the total prompt token budget; if no subset declared but the
-    file has a ``## Cache`` block, return 0 (the chunks aren't yet referenced
-    by this node). For more nuanced numbers we'd need per-chunk token counts
-    from the F1.2 estimator — deferred until the algorithm proves out.
-    """
-    if not declared_subset:
-        return 0
-    # Stub: 75% of prompt is cacheable when there's a declared subset (proxy
-    # for "the system prefix dominates the prompt budget"). Refined in v1.x.
-    return max(0, len(prompt) * 75 // 400)
-
-
 def _starter_prose_for_ref(ref: str) -> str:
     """Auto-generated humble label for a suggested cache chunk.
 
@@ -1008,23 +1018,17 @@ def _populate_suggested_blocks(
     memo_cache: Any,
     workflow_path: str,
     notes: list[str],
-) -> tuple[list[SuggestedBlock], list[Diagnostic], dict[str, int | None]]:
-    """Build greenfield suggested ``## Cache`` blocks + advisory + per-node cacheable.
-
-    Returns ``(blocks, warnings, cacheable_by_node)``. The per-node map
-    carries projected cacheable token counts:
-
-    - ``int`` value: every chunk the node uses had memo data → real projection.
-    - ``None`` value: at least one chunk had no memo data → projection
-      unavailable. The renderer hides rows where the value is ``None`` (per
-      Option C — pure-greenfield-no-memo rows would otherwise show
-      misleading template-tokens-as-cacheable numbers).
+) -> tuple[list[SuggestedBlock], list[Diagnostic]]:
+    """Build greenfield suggested ``## Cache`` blocks + advisory.
 
     v1 covers greenfield only (per DD#3). When ``## Cache`` is already
     declared, append a note so agents understand why no suggestion was
-    produced — silent return would otherwise hide the deferral. Cacheable
-    map is empty in steady-state; existing declared-subset heuristic on
-    rows is unaffected.
+    produced — silent return would otherwise hide the deferral.
+
+    Per-node cacheable projection used to flow back via this pass; that
+    responsibility now lives in ``estimate_cacheable_tokens`` (Tier 2 reads
+    candidate subsets directly from the IR walker via
+    ``_detect_candidate_subsets``).
     """
     declared_names = set(_cache_item_names(workflow_ir))
     if declared_names:
@@ -1032,12 +1036,12 @@ def _populate_suggested_blocks(
             "Suggested-blocks: workflow already declares ## Cache; steady-state "
             "(partial-block) suggestions deferred to v1.x."
         )
-        return [], [], {}
+        return [], []
 
     ref_to_nodes, first_seen = _collect_llm_template_references(workflow_ir)
     shared_refs = [(ref, nodes) for ref, nodes in ref_to_nodes.items() if len(nodes) >= 2]
     if not shared_refs:
-        return [], [], {}
+        return [], []
 
     # Sort key has 5 dimensions (CP3 #4 fix — sibling clustering):
     #   1. Most-shared root first. Roots like ``concept`` (used by 7 nodes via
@@ -1076,14 +1080,6 @@ def _populate_suggested_blocks(
     assignments: dict[str, list[str]] = {}
     total_savings: float | None = 0.0
     affected_nodes: set[str] = set()
-    # Per-node projected cacheable totals. Value semantics:
-    # - ``int``: all chunks the node uses had memo data → real projection.
-    # - ``None`` (sentinel): at least one chunk had no memo data → projection
-    #   unavailable. ``analyze()`` propagates None through PerCallRow; the
-    #   renderer hides such rows per Option C. Once a node's total is None,
-    #   it stays None even if subsequent chunks have data — partial info
-    #   would still mislead, so honest "unknown" is the contract.
-    cacheable_by_node: dict[str, int | None] = {}
 
     for ref, node_ids in shared_refs:
         first_row = rows_by_node.get(node_ids[0])
@@ -1110,13 +1106,6 @@ def _populate_suggested_blocks(
         for node_id in node_ids:
             affected_nodes.add(node_id)
             assignments.setdefault(node_id, []).append(ref)
-            # None propagation: once a node has any unknown chunk, the whole
-            # node's projection is unknown.
-            existing = cacheable_by_node.get(node_id, 0)
-            if size_tokens is None or existing is None:
-                cacheable_by_node[node_id] = None
-            else:
-                cacheable_by_node[node_id] = existing + size_tokens
 
     target_file = workflow_path or "<root>"
     block = SuggestedBlock(
@@ -1134,7 +1123,7 @@ def _populate_suggested_blocks(
         affected_workflow=target_file,
         savings_usd=total_savings,
     )
-    return [block], [warning], cacheable_by_node
+    return [block], [warning]
 
 
 def _collect_llm_template_references(workflow_ir: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, int]]:
@@ -1411,48 +1400,6 @@ def _cache_item_names(workflow_ir: dict[str, Any]) -> list[str]:
 def _estimate_chunk_tokens(item: dict[str, Any], model: str) -> int:
     text = f"{item.get('prose_before', '')}\n${{{item.get('var', item.get('name', ''))}}}"
     return estimate_tokens(model, text)[0]
-
-
-def _estimate_ref_tokens(ref: str, *, model: str, memo_cache: Any, workflow_path: str | None) -> int | None:
-    """Tokenize a template reference's resolved value.
-
-    Returns:
-        - Real token count when memo cache holds a recent value for the ref's
-          root node (high-fidelity).
-        - ``None`` when memo is empty / lookup fails (no run data — projection
-          unavailable). Callers MUST distinguish ``None`` from a small int.
-
-    The previous fallback (tokenize the literal ``${ref}`` string, ~3-5 tokens)
-    was structurally misleading: it produced a tiny number that looked like a
-    real estimate but actually represented "we have no data" — agents reading
-    ``cacheable=38`` thought the opportunity was small when actually it was
-    unmeasured. ``None`` propagation lets the renderer hide misleading rows
-    explicitly per Option C (see render_text._render_per_call).
-    """
-    value = _latest_value_for_ref(ref, memo_cache=memo_cache, workflow_path=workflow_path)
-    if value is not None:
-        return estimate_tokens(model, deterministic_serialize(value))[0]
-    return None
-
-
-def _latest_value_for_ref(ref: str, *, memo_cache: Any, workflow_path: str | None) -> Any:
-    if memo_cache is None:
-        return None
-    root = TemplateResolver.extract_root_node_id(ref)
-    try:
-        latest = memo_cache.get_latest_for_node(root, workflow_path=workflow_path)
-    except Exception:
-        logger.debug("memo_cache.get_latest_for_node failed while estimating %s", ref, exc_info=True)
-        return None
-    if latest is None:
-        return None
-    output, _created_at = latest
-    if not isinstance(output, dict):
-        return None
-    resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
-    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
-        return None
-    return resolved
 
 
 def _savings_for_shared_ref(

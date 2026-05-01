@@ -1,0 +1,38 @@
+# Cache Analysis: /Users/andfal/projects/music-generation/workflows/lyrics-generator/lyrics-generator.pflow.md
+
+  2 LLM nodes using anthropic/claude-sonnet-4-5
+
+## Summary
+
+  Current cost per run:        unavailable
+  Optimized cost per run:      unavailable
+  Cost on rerun (within 1h):   unavailable
+
+  4 opportunities (0 warnings, 4 info)
+
+  Absolute cost figures need a prior run. Run the workflow once, then re-run analyze-cache for real cost figures and cacheable projections.
+
+## Recommended actions (ordered by impact)
+
+  Each item below is one edit that unlocks LLM-provider caching.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Cross-boundary value undeclared — declare `item` in lyrics-generator.pflow.md's or song-creator.pflow.md's ## Cache  savings unavailable
+     lyrics-generator.pflow.md
+     `item` flows to `song-creator.pflow.md` (used by 6 LLM nodes there). Declare it in either workflow's ## Cache to share cached bytes across the boundary.
+
+  2. Cross-boundary value undeclared — declare `concept` in song-creator.pflow.md's or chorus-chooser.pflow.md's ## Cache  savings unavailable
+     song-creator.pflow.md
+     `concept` flows to `chorus-chooser.pflow.md` (used by 2 LLM nodes there). Declare it in either workflow's ## Cache to share cached bytes across the boundary.
+
+  3. Cross-boundary value undeclared — declare `concept_brief` in song-creator.pflow.md's ## Cache (covers 2 sub-workflows)  savings unavailable
+     song-creator.pflow.md
+     `concept_brief` flows to 2 sub-workflows. Used by 1 LLM node per destination (review-accuracy.pflow.md, review-emotional-architecture.pflow.md). Declare in this workflow's ## Cache to cover all destinations in one edit.
+
+  4. Cross-boundary value undeclared — declare `extract-emotional-lyrics` in song-creator.pflow.md's ## Cache (covers 5 sub-workflows)  savings unavailable
+     song-creator.pflow.md
+     `extract-emotional-lyrics` flows to 5 sub-workflows. Used by 1 LLM node per destination (review-accuracy.pflow.md, review-ai-tells.pflow.md, review-cliche.pflow.md, review-genre.pflow.md, review-rhyme.pflow.md). Declare in this workflow's ## Cache to cover all destinations in one edit.
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.

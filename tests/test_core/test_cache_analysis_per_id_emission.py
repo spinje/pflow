@@ -26,7 +26,15 @@ def _word_count(_model: str | None, text: str | None, **_kwargs: Any) -> tuple[i
 @pytest.fixture(autouse=True)
 def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", _word_count)
+    # Mirror the patch in token_estimation.py — analyze.py-resident callers
+    # see the first; token_estimation.py-resident callers (``_estimate_ref_tokens``,
+    # ``_sum_resolved_chunk_tokens``) see the second. Without both, Tier 2 of
+    # ``estimate_cacheable_tokens`` calls real ``litellm.token_counter`` and
+    # tests that exercise memo-resolved chunk tokenization see non-deterministic
+    # values.
+    monkeypatch.setattr(token_estimation_module, "estimate_tokens", _word_count)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: None)
 

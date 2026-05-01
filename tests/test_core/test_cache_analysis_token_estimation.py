@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 
 from pflow.core.cache_analysis.token_estimation import (
+    _find_llm_event,
+    estimate_cacheable_tokens,
     estimate_tokens,
 )
 
@@ -303,3 +305,310 @@ def test_memo_tier_falls_back_gracefully_when_cache_db_absent(tmp_path: Any, mon
         "analyze() created cache.db as a side effect — read-only contract violated. "
         "_default_memo_cache must check existence BEFORE constructing MemoizationCache."
     )
+
+
+# ---------------------------------------------------------------------------
+# estimate_cacheable_tokens — 4-tier hierarchy (Task 159 unified function)
+# ---------------------------------------------------------------------------
+
+
+def _cache_trace_event(creation: int, read: int) -> dict[str, Any]:
+    """Build a trace event payload with cache_creation + cache_read fields."""
+    return {
+        "input_tokens": creation + read,
+        "cache_creation_input_tokens": creation,
+        "cache_read_input_tokens": read,
+    }
+
+
+def test_cacheable_tier_1_trace_returns_creation_plus_read_with_asymmetric_values() -> None:
+    """Tier 1: declared subset + trace event with asymmetric creation/read.
+
+    Asymmetric values defend against ``creation + read`` → ``creation`` alone
+    mutation. Reversed asymmetry (creation=599, read=1000) also returns the
+    sum — defends against returning either field alone.
+    """
+    event = _cache_trace_event(creation=1000, read=599)
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=["a"],
+        candidate_subset=None,
+        trace_event=event,
+        memo_cache=None,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="",
+    )
+    assert source == "trace"
+    assert tokens == 1599
+
+    reversed_event = _cache_trace_event(creation=599, read=1000)
+    tokens2, source2 = estimate_cacheable_tokens(
+        declared_subset=["a"],
+        candidate_subset=None,
+        trace_event=reversed_event,
+        memo_cache=None,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="",
+    )
+    assert source2 == "trace"
+    assert tokens2 == 1599
+
+
+def test_cacheable_tier_1_falls_through_when_zero() -> None:
+    """Declared + trace event with creation=0, read=0 (cache declared but
+    didn't fire — sub-threshold etc.) falls through. Source MUST NOT be
+    ``"trace"`` AND tokens MUST NOT be 0 (we want Tier 3's heuristic to fire
+    so ``cache.below-min-tokens`` warning still works).
+    Mutation: keep ``>= 0`` instead of ``> 0`` → returns ``(0, "trace")`` —
+    both assertions catch it.
+    """
+    event = _cache_trace_event(creation=0, read=0)
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=["a"],
+        candidate_subset=None,
+        trace_event=event,
+        memo_cache=None,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="x" * 1000,
+    )
+    assert source != "trace"
+    assert tokens != 0
+
+
+def test_cacheable_tier_2_memo_sums_resolved_chunk_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: declared subset + memo data → sum of per-chunk tokens.
+
+    Mutation: revert summation to first-only → returns 100, fails.
+    """
+
+    def _fake_estimate(ref: str, **_kw: Any) -> int | None:
+        return {"a": 100, "b": 200}.get(ref)
+
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        _fake_estimate,
+    )
+    memo = _FakeMemoCache({"some": "data"})
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=["a", "b"],
+        candidate_subset=None,
+        trace_event=None,
+        memo_cache=memo,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="",
+    )
+    assert source == "memo"
+    assert tokens == 300
+
+
+def test_cacheable_tier_2_for_declared_partial_memo_falls_through_to_estimator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declared subset + partial memo (one chunk has no data) → falls
+    through to Tier 3 estimator (NOT to Tier 4 unavailable). Pinned to
+    estimator — preserves ``cache.below-min-tokens`` fidelity.
+    """
+
+    def _fake_estimate(ref: str, **_kw: Any) -> int | None:
+        return 100 if ref == "a" else None  # b has no data
+
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        _fake_estimate,
+    )
+    memo = _FakeMemoCache({"some": "data"})
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=["a", "b"],
+        candidate_subset=None,
+        trace_event=None,
+        memo_cache=memo,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="x" * 1000,
+    )
+    assert source == "estimator"
+    assert tokens is not None
+    assert tokens > 0
+
+
+def test_cacheable_tier_3_estimator_for_declared_no_history() -> None:
+    """Tier 3: declared subset + no trace + no memo + prompt populated.
+
+    Formula ``len(prompt) * 75 // 400`` intentionally locked here.
+    Refactoring the heuristic requires updating this value AND its
+    docstring rationale.
+    """
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=["a"],
+        candidate_subset=None,
+        trace_event=None,
+        memo_cache=None,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="X" * 1000,
+    )
+    assert source == "estimator"
+    assert tokens == 187  # len("X" * 1000) * 75 // 400
+
+
+def test_cacheable_tier_3_skips_for_candidate_only() -> None:
+    """Candidate (no declared) + no memo → Tier 4 unavailable.
+
+    Mutation: apply heuristic to candidate-only → fabricates a number.
+    """
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=None,
+        candidate_subset=["a"],
+        trace_event=None,
+        memo_cache=None,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="X" * 1000,
+    )
+    assert source == "unavailable"
+    assert tokens is None
+
+
+def test_cacheable_tier_4_returns_none_for_pure_greenfield() -> None:
+    """Nothing declared, nothing candidate → (None, "unavailable")."""
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=None,
+        candidate_subset=None,
+        trace_event=None,
+        memo_cache=None,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="X" * 1000,
+    )
+    assert source == "unavailable"
+    assert tokens is None
+
+
+def test_cacheable_tier_2_short_circuits_when_model_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Heterogeneous batch (``model=""``) + declared + memo populated →
+    falls through to Tier 3 estimator. Verifies the gate
+    ``if chunks and memo_cache is not None and model:``.
+    """
+
+    def _fake_estimate(ref: str, **_kw: Any) -> int | None:
+        return 100  # would return data if called — but Tier 2 short-circuits
+
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        _fake_estimate,
+    )
+    memo = _FakeMemoCache({"some": "data"})
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=["a"],
+        candidate_subset=None,
+        trace_event=None,
+        memo_cache=memo,
+        model="",
+        workflow_path=None,
+        prompt="X" * 1000,
+    )
+    assert source == "estimator"  # Tier 3 fires; Tier 2 gated out by empty model
+
+
+def test_cacheable_tier_1_does_not_fire_without_declared() -> None:
+    """Candidate set + trace populated → Tier 1 N/A (only fires for declared).
+
+    Mutation: drop the ``declared_subset and`` precondition → Tier 1 fires
+    for candidate, fails this assertion.
+    """
+    event = _cache_trace_event(creation=1000, read=599)
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=None,
+        candidate_subset=["a"],
+        trace_event=event,
+        memo_cache=None,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="",
+    )
+    assert source != "trace"  # Tier 1 doesn't fire
+    # Falls to Tier 2 (no memo) → Tier 4 unavailable.
+    assert source == "unavailable"
+    assert tokens is None
+
+
+def test_sum_resolved_chunk_tokens_returns_none_on_unmeasurable_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """3 chunks, mid-list chunk (position 2) is None. Returns None even
+    though chunks 1 and 3 have data. Verifies the early-exit isn't
+    dependent on chunk position.
+    """
+
+    def _fake_estimate(ref: str, **_kw: Any) -> int | None:
+        return {"a": 100, "b": None, "c": 200}.get(ref)
+
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        _fake_estimate,
+    )
+    memo = _FakeMemoCache({"some": "data"})
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=["a", "b", "c"],
+        candidate_subset=None,
+        trace_event=None,
+        memo_cache=memo,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="X" * 1000,
+    )
+    # Declared falls through to Tier 3 when memo is partial.
+    assert source == "estimator"
+    assert tokens is not None
+    assert tokens > 0
+
+
+def test_cacheable_tier_2_for_candidate_with_full_memo_fires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Candidate + full memo (no declared) → Tier 2 memo fires.
+
+    Closes the unit-test gap: existing tests cover declared+memo and
+    candidate+no-memo but not candidate+memo. Mutation: break the
+    ``declared_subset or candidate_subset`` precedence → candidate path
+    returns None.
+    """
+
+    def _fake_estimate(ref: str, **_kw: Any) -> int | None:
+        return {"a": 50, "b": 75}.get(ref)
+
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        _fake_estimate,
+    )
+    memo = _FakeMemoCache({"some": "data"})
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=None,
+        candidate_subset=["a", "b"],
+        trace_event=None,
+        memo_cache=memo,
+        model="claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="",
+    )
+    assert source == "memo"
+    assert tokens == 125
+
+
+def test_find_llm_event_returns_first_matching_event() -> None:
+    """Trace with two ``llm_call`` events for same node_id → returns first.
+    Locks deterministic event selection (cf. needs-decision item B about
+    batch averaging).
+    """
+    trace: dict[str, Any] = {
+        "nodes": [
+            {"node_id": "X", "llm_call": {"input_tokens": 100, "marker": "first"}},
+            {"node_id": "X", "llm_call": {"input_tokens": 200, "marker": "second"}},
+            {"node_id": "Y", "llm_call": {"input_tokens": 999}},
+        ],
+    }
+    event = _find_llm_event(trace, "X")
+    assert event is not None
+    assert event.get("marker") == "first"
+    assert event.get("input_tokens") == 100

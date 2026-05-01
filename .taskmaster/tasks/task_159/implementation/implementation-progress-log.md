@@ -4236,3 +4236,279 @@ lyrics-generator song-creator reads like docs.
 
 ---
 
+## Stage 2 Anthropic smoke + plan + 4-agent review (2026-05-01)
+
+Ran Stage 2 cache-rendering verification on a 1393-token Sonnet 4.5
+fixture (~$0.024, 3 runs at `scratchpads/stage2-verification/anthropic-smoke/`):
+
+- **Cache rendering layer VERIFIED** end-to-end: `cache_creation=1599`
+  / `cache_read=1599`; first-run −25%, rerun within TTL −73%.
+- **`pflow analyze-cache` bugs surfaced**: with-cache+trace reported
+  `cacheable=14` (trace truth: 1599 — 100× off); no-cache+trace
+  reported `savings_pct=0` (vs 25-73% achievable).
+
+Single root cause: `cacheable_tokens_estimated` used a static heuristic
+on the prompt template literal; `input_tokens_estimated` had a 4-tier
+hierarchy (trace → memo → estimator → heuristic). Plan
+`cacheable-tokens-tier-hierarchy-plan.md` proposed unifying the
+function symmetric with the other two metrics. `/code-review` 4-agent
+pass (review-plan, review-silent-failures, review-feature-interactions,
+review-test-fidelity) added 14 confirmed action items pre-implementation
++ caught one inverted mechanical claim (5 monkeypatch sites stay at
+`analyze_module._estimate_ref_tokens` — would have broken existing tests).
+
+---
+
+## Unified `estimate_cacheable_tokens` — 4-tier hierarchy (2026-05-01)
+
+Stage 2 Anthropic smoke surfaced bugs in `pflow analyze-cache`'s cacheable
+metric: 100× off on cacheable_tokens (14 vs 1599 actual), 0% reported
+savings on no-cache trace mode (vs ~25-73% achievable). Single root cause:
+`cacheable_tokens_estimated` used a static heuristic on the prompt template
+literal while `input_tokens_estimated` had a 4-tier hierarchy (trace → memo
+→ estimator → heuristic). Fix: unified `estimate_cacheable_tokens` symmetric
+with the other two metrics; replaces both the static stub
+(`_estimate_cacheable_tokens`) and the post-hoc overlay
+(`_enrich_with_projected_cacheable`).
+
+### What I implemented
+
+**`estimate_cacheable_tokens` in `token_estimation.py`** with 4-tier
+hierarchy:
+- Tier 1: trace event's `cache_creation + cache_read` (declared subset only;
+  falls through when sum=0 — declared but didn't fire).
+- Tier 2: sum of memo-resolved chunk tokens via `_estimate_ref_tokens`
+  (declared OR candidate). Asymmetric fall-through: declared+partial-memo
+  → Tier 3 (preserves `cache.below-min-tokens` fidelity);
+  candidate-only+partial-memo → Tier 4 (Option C honest unmeasurable).
+- Tier 3: `len(prompt) * 75 // 400` heuristic (declared subset only).
+- Tier 4: `(None, "unavailable")`.
+
+**Helpers added/moved**:
+- `_find_llm_event(trace, node_id)` — non-recursive top-level walker.
+  `_llm_call_field_from_trace` refactored to consume it for symmetry.
+- `_sum_resolved_chunk_tokens` — Tier 2 helper.
+- `_estimate_ref_tokens` and `_latest_value_for_ref` MOVED from
+  `analyze.py` to `token_estimation.py` (token-estimation primitives;
+  natural home). `analyze.py` re-imports them — internal binding stays
+  resolvable through `analyze.py` namespace, so existing monkeypatch
+  sites at `analyze_module._estimate_ref_tokens` work unchanged.
+
+**`PerCallRow.cacheable_data_source`** field added. Independent from
+`data_source` (input) and `output_data_source` — the three may
+legitimately diverge (e.g., trace fires for input but cacheable falls
+through to memo when `cache_creation + cache_read == 0`). Sources:
+`"trace"`, `"memo"`, `"estimator"`, `"unavailable"`.
+
+**`analyze()` two-pass restructure**:
+- Pass 1 (cheap): `_detect_candidate_subsets(workflow_ir)` walks IR for
+  shared template references (≥2 nodes share each); returns
+  `dict[node_id → list[str]]`. No tokenization.
+- Pass 2 (heavy): `_populate_suggested_blocks` builds paste-ready blocks.
+  Returns `(blocks, warnings)` — dropped 3rd tuple element
+  (`cacheable_by_node`); the post-hoc `_enrich_with_projected_cacheable`
+  call is GONE.
+
+**Explicit 3-way clamp/ratio in `_build_per_call_row`** distinguishes
+`None` (Option C — hide row) / `0` (no cacheable yet) / positive (real
+estimate). Without this, the `if x > 0 / else 0` form would coerce the
+new `None` returns from Tier 4 into 0 and break visibility.
+
+**`cache.below-min-tokens` gate** in `_per_node_warnings` adds
+`cacheable_data_source != "trace"` clause: when source is trace and
+cacheable is nonzero, cache demonstrably worked at this size; the
+warning would contradict trace evidence. Analyzer-side consumption
+(NOT renderer) — must consume the new field at the emission site.
+
+### Files modified (production)
+
+- `core/cache_analysis/token_estimation.py` (+196/-29) — new function +
+  3 helpers + 2 moved helpers + module docstring updated.
+- `core/cache_analysis/analyze.py` (+62/-148) — two-pass restructure;
+  deleted `_estimate_cacheable_tokens`, `_enrich_with_projected_cacheable`,
+  `_estimate_ref_tokens`, `_latest_value_for_ref`; added
+  `_detect_candidate_subsets`; `_build_per_call_row` rewired with
+  explicit 3-way clamp; `_per_node_warnings` gate updated; new field
+  on `PerCallRow`; `_populate_suggested_blocks` simplified.
+- `core/cache_analysis/render_json.py` (+18) — `cacheable_data_source`
+  exposed; version-history entry (additive, no version bump).
+
+Net production LOC: roughly even (~80 LOC moved/refactored), structurally
+simpler — replaces 3 scattered mechanisms (stub + overlay + brownfield
+blind spot) with 1 tiered function.
+
+### Tests (17 new + 1 strengthened)
+
+- 12 unit tier-coverage tests in `test_cache_analysis_token_estimation.py`:
+  Tier 1 trace asymmetric values (1000+599=1599); Tier 1 zero
+  fall-through; Tier 2 memo sums; Tier 2 declared-partial-memo →
+  estimator; Tier 3 heuristic locked at 187 for `"X"*1000`; Tier 3
+  candidate-only skip; Tier 4 pure greenfield; Tier 2 short-circuit
+  on empty model; Tier 1 declared-only precondition; mid-list None;
+  candidate+full-memo → Tier 2; `_find_llm_event` first-match.
+- 5 E2E production-shape tests in `test_cache_analysis_analyze.py`,
+  each driving `analyze()` end-to-end with REAL `MemoizationCache.put`
+  calls (Pitfall #19 defense): brownfield+memo→memo tier;
+  brownfield+trace asymmetric (creation=1000, read=599); no-cache+memo
+  candidate projection; heterogeneous batch+declared→estimator;
+  declared+partial-memo end-to-end fall-through.
+- `test_analyze_summary_counts_warnings_and_info` strengthened to
+  assert specific `cache.below-min-tokens` ID (catches "warning
+  disappears" AND "different warning fires for the wrong reason").
+
+**Autouse fixture extended** in `test_per_id_emission.py` to patch
+BOTH `analyze_module.estimate_tokens` AND
+`token_estimation_module.estimate_tokens` — the moved
+`_estimate_ref_tokens` / new `_sum_resolved_chunk_tokens` resolve
+`estimate_tokens` from their own module's globals, bypassing the
+analyze.py-only patch.
+
+### Deviations from plan
+
+1. **5 existing monkeypatch sites at `analyze_module._estimate_ref_tokens`
+   STAY pointing at analyze_module — unchanged.** The plan's first
+   draft (Stage 1) had the direction inverted; the `/code-review` pass
+   caught it. After moving the function, `analyze.py` re-imports
+   `_estimate_ref_tokens` into its namespace via
+   `from .token_estimation import _estimate_ref_tokens`. Patches via
+   `monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", ...)`
+   still work — Python resolves the unqualified name through analyze.py's
+   module dict, which holds the imported binding. Verified by running
+   `test_cache_analysis_per_id_emission.py` BEFORE adding any new tests:
+   51/51 passed unchanged.
+
+2. **`data_source` (input) vs `cacheable_data_source` divergence in test
+   #13.** The first draft of the brownfield-memo E2E test asserted
+   BOTH `data_source == "memo"` AND `cacheable_data_source == "memo"`.
+   The first failed: `data_source` resolves via
+   `estimate_tokens(node_id="summarize")` which looks up the LLM node's
+   own ID in memo (no entry) → falls through to estimator. Cacheable
+   resolves via `_latest_value_for_ref("context.response")` which looks
+   up the chunk's root node "context" in memo → finds the seeded entry
+   → memo tier. Two metrics, two independent lookups, two legitimate
+   labels. The fix: drop the `data_source == "memo"` assertion, keep
+   `cacheable_data_source == "memo"` (the test's actual contract), and
+   add a comment documenting the asymmetry.
+
+3. **Smoke-fixture no-cache+trace expectation refined.** Plan claimed
+   `savings_pct_first_run` would shift from 0 to ~25% post-fix. Empirically
+   it stayed at 0 because the smoke fixture's `${context}` is a workflow
+   INPUT, not a node OUTPUT — no memo data for the chunk's "root node"
+   exists, so Tier 2 returns None, falls to Tier 4 unavailable. The
+   plan's "~25% achievable" claim required memo data for `context`,
+   which the no-cache run doesn't seed (the trace records LLM call
+   tokens, not workflow input values). Verified working cases:
+   with-cache+trace cacheable=1599/src=trace (was 14/heuristic);
+   brownfield+memo memo tier with deterministic value; brownfield
+   no-trace+no-memo correctly tagged as `estimator` (was implicit
+   heuristic).
+
+### Critical insights
+
+1. **The unified function as data-architecture symmetry.** Pre-fix, three
+   metrics had three different shapes:
+   `input_tokens_estimated` (4-tier),
+   `output_tokens_estimated` (2-tier),
+   `cacheable_tokens_estimated` (static heuristic + post-hoc overlay).
+   The asymmetry hid bugs because each metric's tier label communicated
+   different fidelity levels — agents reading "cacheable=14, input=8888,
+   data_source=memo" couldn't tell whether the cacheable number was
+   fellow-tier-memo or static-heuristic without scrolling the source.
+   Post-fix all three use the same shape (tiered + per-metric source
+   label). The independent `cacheable_data_source` is load-bearing —
+   it's how agents tell trace-fires-but-cache-didn't from
+   trace-fires-and-cache-did.
+
+2. **Two-pass ordering (cheap walker → row build) was load-bearing.**
+   `_populate_suggested_blocks` runs heavy chunk-size tokenization that
+   needs `model` from the rows. The new `_detect_candidate_subsets`
+   runs cheap (no tokenization) and produces the per-node candidate
+   list `_build_per_call_row` needs. If the order had been reversed
+   (rows first, then candidate detection), Tier 2 of
+   `estimate_cacheable_tokens` would have no candidate to project from
+   on greenfield workflows — back to the pre-fix bug.
+
+3. **The asymmetric fall-through (declared→Tier3 vs candidate→Tier4) is
+   a semantic distinction, not an implementation choice.** When the
+   user has declared `prompt_cache:`, they've committed to caching;
+   showing `cacheable=0` would suggest a config error. The estimator's
+   heuristic value (~187 for 1000-char prompt) is honest "we don't
+   know exactly but cache is intended" + the source label says
+   "estimator." For a candidate-only greenfield projection,
+   fabricating a heuristic where the user hasn't even declared yet
+   would mislead — Option C unavailable is the honest signal. Both
+   sides of the asymmetry are necessary; collapsing them either way
+   regresses real UX.
+
+4. **`cache.below-min-tokens` gate update is a non-deferrable
+   analyzer-side concern.** Initial plan considered renderer-side
+   suppression of the warning. That's wrong — the warning lives in
+   `analysis.warnings` which agents consume via JSON. Renderer-only
+   suppression would surface different warnings in text vs JSON.
+   The fix has to consume `cacheable_data_source` at the emission
+   site (`_per_node_warnings`).
+
+5. **JSON_FORMAT_VERSION stays at "2.0" (additive only).** New field
+   `cacheable_data_source` is additive. Per the consumer rule
+   (`format_version.startswith("2.")`), additive fields don't trigger
+   a minor bump. Precedent: Stage C.1 added `model_is_heterogeneous`
+   et al. without bumping. Documented in the version-history block.
+   Note: SEMANTIC of `cacheable_tokens_estimated` shifted (was static
+   heuristic; now tiered), but field shapes are unchanged. Some
+   heterogeneous-batch greenfield rows shift `0 → null` (no projection
+   possible without model); documented as additive 2.x change.
+
+### Verification
+
+- **6,046 tests passing** (was 6,029 + 17 new); `make check` clean.
+- `test_plan_drift.py` 33/33 ✓; `test_prompt_cache_hash.py` 15/15 ✓
+  (golden baseline, DD#19).
+- All 5 existing monkeypatch sites at
+  `analyze_module._estimate_ref_tokens` work unchanged (mechanical
+  verification: 51/51 in `test_cache_analysis_per_id_emission.py`).
+- **Smoke-test verified**:
+  - with-cache + trace: cacheable=1599 (was 14), ratio=98% (was 1%),
+    src="trace" — Bug A/B/C fixed.
+  - brownfield no-trace no-memo: cacheable=14 NOW labeled `src=estimator`
+    (honest low-fidelity) — was implicit heuristic.
+- **Lyrics-generator regression**: song-creator + lyrics-generator
+  parent byte-identical to POST-STARTER-PROSE snapshots.
+  (chorus-chooser path differs — file-path artifact unrelated to this
+  refactor.)
+
+### Open hedged claims and verifications still pending
+
+- **NEEDS VERIFICATION (Stage 2.1)**: real-LLM run on lyrics-generator
+  song-creator with `## Cache` declared (or chorus-chooser with
+  `concept.core_idea` declared) delivers spec's locked ≥40% input-cost
+  reduction. The unified analyzer makes the "what would I save?"
+  projection honest; Stage 2.1 verifies the projection matches reality
+  on a real spend.
+- **CONFIRMED**: brownfield + memo data lights up the memo tier
+  through `analyze()` end-to-end (test #13 production-shape).
+- **CONFIRMED**: trace asymmetric values (creation=1000, read=599) sum
+  correctly to 1599 (test #14 + smoke fixture).
+
+### Open user decisions surfaced
+
+**Three deferred to renderer/v1.x polish** — none block this refactor:
+
+A. `cache_ratio_pct` (cacheable/input) vs `cache.discrepancy.actual_pct`
+   (cache_read/total) semantic clarity. Pre-fix the static heuristic
+   made the row's ratio obviously low-fidelity (1%) so divergence was
+   visible. Post-fix both look authoritative. Renderer polish, not a
+   correctness bug. v1.x text pass.
+
+B. Batch event selection: first-match deterministic vs averaging across
+   multiple events for the same node_id. Documented in
+   `_find_llm_event` docstring. Real-world impact unclear without
+   prewarm trace data; revisit when prewarm hits Stage 2.
+
+C. Implementation timing: fix-first (this commit) vs fix-after Stage
+   2.1. Resolved fix-first per plan rationale — Stage 2.1 produces a
+   no-cache baseline; agent's natural follow-up is "how much would
+   I save if I added ## Cache?" which is exactly the case this
+   refactor addresses.
+
+---
+

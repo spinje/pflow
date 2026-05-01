@@ -159,6 +159,11 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
     }
     result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
     # cache.below-min-tokens fires (small prompt, anthropic min=1024).
+    # Tighter assertion: lock the specific id so a different warning firing
+    # for the wrong reason fails the test (not just total count).
+    assert any(w.id == "cache.below-min-tokens" for w in result.warnings), (
+        f"Expected cache.below-min-tokens; got: {[w.id for w in result.warnings]}"
+    )
     sum_ = result.summary
     assert sum_.warnings_count + sum_.info_count >= 1
 
@@ -1149,3 +1154,538 @@ def test_format_cost_keeps_plural_phrasing_for_multiple_unpriced() -> None:
     )
 
     assert "all 3 models lack pricing data" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Unified ``estimate_cacheable_tokens`` — end-to-end production-shape tests
+# (Pitfall #19 defense: drive ``analyze()`` end-to-end with real
+# ``MemoizationCache.put`` calls / real trace dicts; assert BOTH
+# ``cacheable_tokens_estimated`` value AND ``cacheable_data_source`` tier.)
+# ---------------------------------------------------------------------------
+
+
+def test_brownfield_memo_populates_cacheable_via_memo_tier(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Brownfield (`## Cache` declared) + memo data → cacheable from memo tier.
+
+    Closes the silent-gap regression class: pre-fix ``_estimate_cacheable_tokens``
+    was a static heuristic on the prompt template, ignoring memo data even
+    when present. Post-fix Tier 2 fires.
+
+    Mutation: revert to static heuristic → cacheable becomes ~187 (heuristic
+    value) and source becomes ``"estimator"`` instead of ``"memo"``.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    # Lock token counter to a deterministic value (defends against tokenizer drift).
+    monkeypatch.setattr("litellm.token_counter", lambda model, text: 1500)
+
+    workflow_path = "/abs/brownfield.pflow.md"
+    cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
+    cache = MemoizationCache(db_path=cache_db_path)
+    cache.put(
+        cache_key="seeded-context",
+        node_id="context",
+        workflow_path=workflow_path,
+        action="default",
+        output={"response": "long context body that the analyzer will tokenize"},
+    )
+
+    workflow_ir = {
+        "inputs": {},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "context", "var": "context.response", "prose_before": "Context:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"model": "claude-sonnet-4-5", "prompt": "${context.response}\n\nSummarize."},
+                "prompt_cache": ["context.response"],
+            }
+        ],
+        "edges": [],
+    }
+
+    analysis = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False)
+    assert len(analysis.per_call) == 1
+    row = analysis.per_call[0]
+    assert row.cacheable_data_source == "memo", (
+        f"expected memo tier for brownfield + memo data; got {row.cacheable_data_source!r}"
+    )
+    assert row.cacheable_tokens_estimated == 1500, (
+        f"expected 1500 (deterministic memo value); got {row.cacheable_tokens_estimated}"
+    )
+    # Note: ``data_source`` (input tokens) and ``cacheable_data_source``
+    # (cacheable tokens) are independent. The memo entry was seeded for
+    # ``context`` (the chunk's root); ``estimate_tokens`` looks up the LLM
+    # node's own ID (``summarize``) which has no memo entry → estimator
+    # tier for input. Tier 2 for cacheable resolves the ``context.response``
+    # ref via ``_latest_value_for_ref`` → memo. Two metrics, two labels.
+
+
+def test_brownfield_trace_populates_cacheable_via_trace_tier_with_asymmetric_values(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Brownfield + 2.1.0 trace with asymmetric cache_creation+cache_read.
+
+    Asymmetric values (1000 + 599 = 1599) defend against
+    ``creation + read`` → ``creation`` alone mutation.
+    """
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_path = "/abs/withtrace.pflow.md"
+    workflow_ir = {
+        "inputs": {},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "context", "var": "context", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"model": "claude-sonnet-4-5", "prompt": "${context}\n\nDo work."},
+                "prompt_cache": ["context"],
+            }
+        ],
+        "edges": [],
+    }
+
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.1.0",
+            "workflow_path": workflow_path,
+            "nodes": [
+                {
+                    "node_id": "summarize",
+                    "llm_call": {
+                        "input_tokens": 1599,
+                        "output_tokens": 50,
+                        "cache_creation_input_tokens": 1000,
+                        "cache_read_input_tokens": 599,
+                    },
+                }
+            ],
+        })
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+    )
+    assert len(analysis.per_call) == 1
+    row = analysis.per_call[0]
+    assert row.cacheable_data_source == "trace"
+    assert row.cacheable_tokens_estimated == 1599
+
+
+def test_no_cache_trace_with_memo_projects_via_candidate(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No-cache workflow with shared ``${context}`` reference + memo data:
+    the candidate-detection walker collects the shared ref and Tier 2 of
+    ``estimate_cacheable_tokens`` projects from memo.
+
+    Three assertions defend against (a) value miss, (b) tier mislabel,
+    (c) candidate-walker breakage.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("litellm.token_counter", lambda model, text: 800)
+
+    workflow_path = "/abs/no_cache_with_memo.pflow.md"
+    cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
+    cache = MemoizationCache(db_path=cache_db_path)
+    cache.put(
+        cache_key="ctx-key",
+        node_id="context",
+        workflow_path=workflow_path,
+        action="default",
+        output={"response": "long context"},
+    )
+
+    workflow_ir = {
+        "inputs": {},
+        "nodes": [
+            {
+                "id": "context",
+                "type": "code",
+                "params": {"code": "result = {'response': 'something'}"},
+            },
+            {
+                "id": "node_a",
+                "type": "llm",
+                "params": {"model": "claude-sonnet-4-5", "prompt": "${context.response}\n\nA"},
+            },
+            {
+                "id": "node_b",
+                "type": "llm",
+                "params": {"model": "claude-sonnet-4-5", "prompt": "${context.response}\n\nB"},
+            },
+        ],
+        "edges": [],
+    }
+
+    analysis = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False)
+    llm_rows = [r for r in analysis.per_call if r.node_path in ("node_a", "node_b")]
+    assert len(llm_rows) == 2
+    for row in llm_rows:
+        assert row.cacheable_tokens_estimated is not None and row.cacheable_tokens_estimated > 0, (
+            f"row {row.node_path!r} should have projected cacheable tokens; got {row.cacheable_tokens_estimated}"
+        )
+        assert row.cacheable_data_source == "memo", (
+            f"row {row.node_path!r} expected memo tier; got {row.cacheable_data_source!r}"
+        )
+
+    # Candidate-detection signal: shared-context-undeclared warning fires
+    # AND shared chunks include context.response.
+    shared = [d for d in analysis.warnings if d.id == "cache.shared-context-undeclared"]
+    assert shared, "expected cache.shared-context-undeclared for shared ${context.response}"
+    chunks_seen: list[str] = []
+    for diag in shared:
+        ctx = diag.context or {}
+        chunks_seen.extend(ctx.get("shared_chunks", []) or [])
+    assert "context.response" in chunks_seen, f"expected 'context.response' in shared chunks; got {chunks_seen}"
+
+
+def test_heterogeneous_batch_with_declared_cache_uses_estimator_tier(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Heterogeneous batch (``model: ${item.model}``) + declared
+    ``prompt_cache`` → Tier 2 short-circuits on empty model; Tier 3 fires.
+
+    Closes Case 8a end-to-end gap: unit test #8 covers the gate; this
+    verifies the full path through ``analyze()``.
+    """
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_ir = {
+        "inputs": {"items": {"type": "array"}},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "context", "var": "context", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {
+                    "model": "${item.model}",
+                    "prompt": "${context}\n\nScore the thing." + ("x" * 1000),
+                },
+                "prompt_cache": ["context"],
+            }
+        ],
+        "edges": [],
+    }
+
+    analysis = analyze(workflow_ir, workflow_path="/abs/het.pflow.md", auto_load_trace=False)
+    assert len(analysis.per_call) == 1
+    row = analysis.per_call[0]
+    assert row.model_is_heterogeneous is True
+    assert row.cacheable_tokens_estimated is not None and row.cacheable_tokens_estimated > 0
+    assert row.cacheable_data_source == "estimator", (
+        f"heterogeneous declared row should fall through to estimator; got {row.cacheable_data_source!r}"
+    )
+
+
+def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cache.below-min-tokens`` MUST NOT fire when ``cacheable_data_source``
+    is ``"trace"``: trace evidence (cache_creation + cache_read > 0) shows
+    the cache demonstrably worked at this size, so the warning would
+    contradict reality.
+
+    Mutation contract: remove the ``row.cacheable_data_source != "trace"``
+    clause in ``_per_node_warnings`` and the warning fires anyway —
+    breaking the trace-evidence-respects-itself contract. This test
+    catches that mutation.
+
+    Fixture: trace event with cache_creation=600, cache_read=200 (sum=800)
+    AND model has min_cache_tokens=1024 (anthropic). Without the gate,
+    the warning would fire because 800 < 1024. With the gate, it
+    correctly suppresses.
+    """
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_path = "/abs/below_min_with_trace.pflow.md"
+    workflow_ir = {
+        "inputs": {},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "context", "var": "context", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "${context}\n\nDo work."},
+                "prompt_cache": ["context"],
+            }
+        ],
+        "edges": [],
+    }
+
+    # Trace shows cache fired but below the model's claimed min — exactly
+    # the case where the analyzer's static threshold check would falsely
+    # contradict trace evidence.
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.1.0",
+            "workflow_path": workflow_path,
+            "nodes": [
+                {
+                    "node_id": "summarize",
+                    "llm_call": {
+                        "input_tokens": 800,
+                        "output_tokens": 50,
+                        "cache_creation_input_tokens": 600,
+                        "cache_read_input_tokens": 200,
+                    },
+                }
+            ],
+        })
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+    )
+    row = analysis.per_call[0]
+    # Sanity: this is the trace-evidence path.
+    assert row.cacheable_data_source == "trace"
+    assert row.cacheable_tokens_estimated == 800
+    # The contract: warning MUST NOT fire when trace shows cache worked.
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    assert not below_min, (
+        f"cache.below-min-tokens fired despite trace showing cache fired (cacheable=800, "
+        f"src=trace). Gate ``cacheable_data_source != 'trace'`` regression. "
+        f"warnings: {[w.id for w in analysis.warnings]}"
+    )
+
+
+def test_below_min_tokens_still_fires_when_estimator_says_below_min(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Companion to the suppression test: when source is NOT trace,
+    the warning still fires correctly. Locks the inverse contract —
+    suppression is keyed on ``"trace"`` specifically, not on cacheable
+    > 0 alone.
+
+    Mutation: change the gate to ``cacheable_data_source != "memo"`` (or
+    any other tier name) → this test fails because the warning would
+    suppress for estimator/memo too.
+    """
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_ir = {
+        "inputs": {},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "context", "var": "context", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "tiny prompt"},
+                "prompt_cache": ["context"],
+            }
+        ],
+        "edges": [],
+    }
+    # No trace, no memo — Tier 3 estimator fires; tiny prompt → small
+    # cacheable < anthropic's 1024 min → warning SHOULD fire.
+    analysis = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    row = analysis.per_call[0]
+    assert row.cacheable_data_source == "estimator"
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    assert below_min, (
+        f"cache.below-min-tokens did NOT fire for estimator-tier row below min_tokens. "
+        f"Gate suppression mis-keyed. warnings: {[w.id for w in analysis.warnings]}"
+    )
+
+
+def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declared subset + 2.1.0 trace recording cache_creation=0, cache_read=0
+    (cache declared but didn't fire — sub-threshold etc.). Tier 1 MUST fall
+    through; Tier 2 fires via memo; ``cache.below-min-tokens`` MUST fire
+    because the gate's ``cacheable_data_source != "trace"`` clause is now
+    True.
+
+    This is the matrix Case 9 — the case that exists specifically to
+    preserve ``cache.below-min-tokens`` fidelity when cache fails to engage.
+    Without Tier 1 fall-through (e.g., short-circuit returning
+    ``(0, "trace")`` per the disputed review-silent-failures C1 finding),
+    cacheable_data_source would be ``"trace"``, the gate would suppress the
+    warning, and agents would not learn that their declared chunks are
+    sub-threshold.
+
+    Mutation contracts:
+      A. Replace Tier 1 fall-through with ``return (0, "trace")`` —
+         cacheable_data_source becomes ``"trace"``, the gate at
+         ``analyze.py:778`` suppresses, ``cache.below-min-tokens`` fails to
+         fire. This test catches it.
+      B. Drop the ``> 0`` precondition (use ``>= 0``) — cacheable becomes
+         0 with source ``"trace"`` for the 0+0 case, same outcome as A.
+      C. Drop the gate clause ``cacheable_data_source != "trace"`` —
+         spurious; this test wouldn't catch it (companion test 1485
+         catches that direction).
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    # Lock memo tokenization to a deterministic value BELOW Sonnet 4.5's
+    # 1024-token threshold so cache.below-min-tokens fires for genuine
+    # sub-threshold cache content.
+    monkeypatch.setattr("litellm.token_counter", lambda model, text: 500)
+
+    workflow_path = "/abs/zero_zero_falls_through.pflow.md"
+    cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
+    cache = MemoizationCache(db_path=cache_db_path)
+    cache.put(
+        cache_key="context-key",
+        node_id="context",
+        workflow_path=workflow_path,
+        action="default",
+        output={"response": "context body that tokenizes to 500 (mocked)"},
+    )
+
+    workflow_ir = {
+        "inputs": {},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "context.response", "var": "context.response", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "${context.response}\n\nDo work."},
+                "prompt_cache": ["context.response"],
+            }
+        ],
+        "edges": [],
+    }
+
+    # Trace records cache declared but didn't fire — Tier 1 MUST fall through.
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.1.0",
+            "workflow_path": workflow_path,
+            "nodes": [
+                {
+                    "node_id": "summarize",
+                    "llm_call": {
+                        "input_tokens": 510,
+                        "output_tokens": 50,
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                    },
+                }
+            ],
+        })
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+    )
+    row = analysis.per_call[0]
+    # Tier 1 falls through — source MUST NOT be ``"trace"``.
+    assert row.cacheable_data_source == "memo", (
+        f"Tier 1 should fall through when creation+read==0; got "
+        f"cacheable_data_source={row.cacheable_data_source!r} (expected 'memo' from Tier 2)"
+    )
+    # Memo tokenization returned 500 (mocked); clamps to input_tokens (510).
+    assert row.cacheable_tokens_estimated == 500, (
+        f"expected memo-tier value of 500; got {row.cacheable_tokens_estimated}"
+    )
+    # The whole point of the fall-through: warning fires correctly.
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    assert below_min, (
+        f"cache.below-min-tokens did NOT fire for declared-but-cache-didn't-fire "
+        f"sub-threshold case. Tier 1 fall-through regression. "
+        f"warnings: {[w.id for w in analysis.warnings]}"
+    )
+
+
+def test_declared_partial_memo_falls_through_to_estimator_end_to_end(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declared subset of 2 chunks; memo populated for one only. End-to-end
+    fall-through to Tier 3 estimator (preserves ``cache.below-min-tokens``
+    fidelity for declared-but-incomplete-memo case).
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_path = "/abs/partial_memo.pflow.md"
+    cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
+    cache = MemoizationCache(db_path=cache_db_path)
+    # Only seed chunk_a's source; chunk_b is missing — partial memo.
+    cache.put(
+        cache_key="a-key",
+        node_id="chunk_a",
+        workflow_path=workflow_path,
+        action="default",
+        output={"response": "value-a"},
+    )
+
+    workflow_ir = {
+        "inputs": {},
+        "cache": {
+            "ttl": "5m",
+            "items": [
+                {"name": "chunk_a.response", "var": "chunk_a.response", "prose_before": "A:\n"},
+                {"name": "chunk_b.response", "var": "chunk_b.response", "prose_before": "B:\n"},
+            ],
+        },
+        "nodes": [
+            {
+                "id": "consumer",
+                "type": "llm",
+                "params": {
+                    "model": "claude-sonnet-4-5",
+                    "prompt": "${chunk_a.response} ${chunk_b.response}" + ("x" * 1000),
+                },
+                "prompt_cache": ["chunk_a.response", "chunk_b.response"],
+            }
+        ],
+        "edges": [],
+    }
+
+    analysis = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False)
+    assert len(analysis.per_call) == 1
+    row = analysis.per_call[0]
+    assert row.cacheable_data_source == "estimator", (
+        f"declared partial-memo should fall through to estimator; got {row.cacheable_data_source!r}"
+    )
+    assert row.cacheable_tokens_estimated is not None and row.cacheable_tokens_estimated > 0

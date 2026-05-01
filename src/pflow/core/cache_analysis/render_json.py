@@ -72,6 +72,18 @@ Version history:
   leaks into ``models_in_use`` (which previously rendered as
   ``"${item.model}"`` in the scale line). Field shapes additive; consumers
   matching ``format_version.startswith("2.")`` ignore the new fields.
+- ``2.0`` (unified ``estimate_cacheable_tokens``, additive): new
+  ``per_call[].cacheable_data_source`` string field. Sources: ``"trace"``,
+  ``"memo"``, ``"estimator"``, ``"unavailable"``. Independent from
+  ``data_source`` (input) — Tier 1 for cacheable reads
+  ``cache_creation_input_tokens + cache_read_input_tokens`` from the trace
+  event (not ``input_tokens``), so the two metrics may legitimately
+  diverge. SEMANTIC change: ``cacheable_tokens_estimated`` previously
+  ran a static heuristic on the prompt template; now it follows the
+  4-tier hierarchy (trace → memo → estimator → unavailable) symmetric
+  with ``input_tokens_estimated``. Heterogeneous-batch greenfield rows
+  may shift from ``0`` to ``null`` (no projection possible without
+  model). Field shapes additive.
 """
 
 JSON_FORMAT_VERSION_MAJOR: Final[str] = "2"
@@ -185,6 +197,12 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "cacheable_tokens_estimated": row.cacheable_tokens_estimated,
         "cache_ratio_pct": row.cache_ratio_pct,
         "data_source": row.data_source,
+        # Independent tier label for the cacheable metric. Sources:
+        # ``"trace"``, ``"memo"``, ``"estimator"``, ``"unavailable"``.
+        # Independent from ``data_source`` (input) — the two may legitimately
+        # diverge (e.g., trace fires for input but cacheable falls through
+        # to memo when ``cache_creation+cache_read == 0``).
+        "cacheable_data_source": row.cacheable_data_source,
         "declared_prompt_cache": row.declared_prompt_cache,
         # Stage C.1 (2.0 minor-additive): True when the IR's ``params.model``
         # was an unresolved ``${...}`` template (heterogeneous batch
