@@ -174,13 +174,13 @@ should detect this. **NEEDS VERIFICATION via Stage 2.3.**
 discrepancy fold) in v1. They might decide it's a v1.x cleanup. Don't
 assume either way; surface and let them decide.
 
-### The "felt wrong" moments — partially resolved by CP4
+### The "felt wrong" moments — fully resolved by Stage-1 final pass
 
-> All three of my Session-1 instincts here were RESOLVED in CP4 (commit
-> `17ed9e73`). Preserved for the lesson: **listen to the "this feels
-> redundant" instinct**. Following all three would have been right.
-> The cacheable=0 column issue (Concern B in handoff doc) is what
-> remains of the third instinct's territory.
+> All three of my Session-1 instincts here were RESOLVED — first two by
+> CP4 (commit `17ed9e73`), the cacheable=0 column issue by the Stage-1
+> final pass (commit `fa0b93f7`). Preserved for the lesson: **listen to
+> the "this feels redundant" instinct**. Following all three would have
+> been right.
 
 ### What I almost did wrong
 
@@ -400,6 +400,13 @@ GH issues:
 > Session 1 above is preserved verbatim. This section is what's only in
 > MY head — the CP1-CP5 work that picked up where Session 1 left off.
 > All of Session 1's principles still apply; this is what I learned ON TOP.
+
+> **RESOLVED post-session-2**: Concerns A + B + Option C all shipped in
+> commit `fa0b93f7` (Stage-1 final pass). All "the next agent owns this"
+> / "3 options to pick from" references below are HISTORICAL — preserved
+> for the lessons but no longer actionable. Stage 2 (real-LLM verification)
+> is the next gate. See `agent-handoff-stage1-stage2.md` for the current
+> forward-facing context.
 
 ## Where I picked up
 
@@ -808,10 +815,12 @@ GH issues unchanged from Session 1 (no new issues filed during CP1-CP5).
 
 Start by reading:
 
-1. `agent-handoff-stage1-stage2.md` (structured handoff) — full,
-   ESPECIALLY the Concerns A + B sections
+1. `agent-handoff-stage1-stage2.md` (structured handoff) — Stage 2 plan
+   + architectural questions. Stage 1 is fully complete (commit
+   `fa0b93f7` shipped Concerns A + B + Option C).
 2. **Both sessions** of THIS document — Session 1 (Path 1 + Tier 1) and
-   Session 2 (CP1-CP5). Don't skip either.
+   Session 2 (CP1-CP5). Both contain useful tacit knowledge for the
+   broader codebase even though their specific "next steps" are done.
 3. `recommendations-section-handoff.md` (existing analyzer-internals doc)
    — skim, deep-read when you touch analyze.py
 
@@ -837,14 +846,11 @@ Should match. The delta from POST-TIER1 to POST-CP5 is what CP1-CP5 changed.
 - "As usable as possible in v1" — not "ship + defer to v1.x"
 
 **Surface to user before doing**:
-- Concern A design (3 options listed in handoff doc)
-- Concern B design (3 options listed in handoff doc)
 - ANY catalog change beyond message tweaks (DD#29 review territory)
 - Stage 2 spending — confirm the analyzer is "perfect enough" first
 - Architectural Concerns 1-3 from handoff
 
 **Move forward without checking**:
-- Concerns A + B implementation IF user has approved a specific shape
 - Test fixture updates (substring-based assertions)
 - Progress log + handoff doc updates
 

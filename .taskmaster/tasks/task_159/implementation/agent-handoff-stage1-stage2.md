@@ -1,24 +1,22 @@
 # Handoff: Stage 1 wrap + Stage 2 verification
 
-You're picking this up cold. The cache analyzer's Stage 1 work is essentially
-done — Path 1 (file resolution centralized), Tier 1 fixes (4 issues), and
-CP5 (agent-UX message clarity pass) all shipped. The output is now genuinely
-agent-actionable on the lyrics-generator workflow. Two small UX nits remain
-flagged by the user (Concerns A + B below).
+You're picking this up cold. The cache analyzer's Stage 1 work is **complete**:
+Path 1 (file resolution centralized), Tier 1 fixes (4 issues), CP5 (agent-UX
+message clarity), and the Stage-1 final pass (Concerns A + B + Option C —
+drop bracketed IDs, headlines via catalog SSoT, hide per-call rows without
+real data). The output is genuinely agent-actionable on lyrics-generator.
 
 Your mandate, in order:
 
-1. **Address the two remaining UX nits** (Concerns A + B). Together
-   ~1-2 hours. Surface designs to the user before committing.
-2. **Stage 2** — real LLM verification on lyrics-generator. Sub-workflow
+1. **Stage 2** — real LLM verification on lyrics-generator. Sub-workflow
    standalone runs first, then full pipeline. Expected ≥40% input-cost
    reduction per spec line 1030.
-3. **Architectural decisions** — three open questions documented at the
+2. **Architectural decisions** — three open questions documented at the
    end. Not Stage 2 blockers.
 
 > **Detailed account of what each pass changed lives in
-> `implementation-progress-log.md`** (Path 1, Tier 1, CP5 entries). This
-> doc only carries forward-facing context.
+> `implementation-progress-log.md`** (Path 1, Tier 1, CP5, Stage-1 final).
+> This doc only carries forward-facing context.
 
 ---
 
@@ -26,104 +24,56 @@ Your mandate, in order:
 
 ```
 git log --oneline -5
-[head]    [unstaged] CP5 — agent-UX message clarity (Pass 1+2+3)
-[parent]  [unstaged] Tier 1 AG/UX fixes (4 issues) + CP1-4 (issues 8/11/3/4/16/9/7/6+13)
-a3044f42  refactor: centralize file resolution at resolve_workflow boundary  ← Path 1
+fa0b93f7  task 159 stage-1 final: drop bracketed IDs + headlines + Option C row filter
+17ed9e73  task 159 CP1-5: lyrics-generator stage 1 — agent-actionable analyze-cache output
+0c1e46db  fix: tier 1 AG/UX issues in pflow analyze-cache (closes #362)
+a3044f42  refactor: centralize file resolution at resolve_workflow boundary
 11230abb  task 159: verification-specialist CLI drill — fix bugs A/B/G + E/F/G
-b38ae7c5  task 159: post-recommendations 4-agent review fixes
 ```
 
-**Working tree is unstaged** — the user controls when to commit. CP1-CP5
-work has not been broken into separate commits; the user may choose
-single-commit or multi-commit.
+**All Stage-1 work committed.** Working tree clean.
 
 State:
-- 6,000 tests passing, 9 skipped
+- 6,001 tests passing, 9 skipped
 - `make check` clean (ruff + ruff-format + mypy + deptry)
 - `test_plan_drift.py` 34/34 green
 - `test_golden_baseline_hashes_match` (DD#19) green
-- 13 catalog IDs (added `cache.consolidate-to-root-recommended` in CP3)
+- 13 catalog IDs, each with a `headline_template` (Stage-1 final pass)
+- JSON_FORMAT_VERSION 1.1 (semantic shift on `per_call.cacheable_tokens_estimated`)
 
-GH issues filed during Stage 1 (still open):
+GH issues:
 
 - **#361** — Path 2 architectural umbrella (closes #321 + #334 in lockstep
-  when complete). Path 1 is the first slice.
-- **#362** — Cross-workflow rename signal/noise. **CLOSED in this branch**
-  by Tier 1.1 fix.
+  when complete). Path 1 is the first slice. **Open, not blocking Stage 2**.
+- **#362** — Cross-workflow rename signal/noise. **CLOSED** by Tier 1.1 fix.
+- **#363** — shared-prose detection (v1.x — complements `${var}` reference
+  detection by catching repeated raw text across prompts). **Filed during
+  Stage-1 final pass; v1.x.**
 - **#357 (closed)**, **#358 (open, v1.x — image+prewarm)**, **#359 (open,
   v1.x — LiteLLM stderr noise)**, **#360 (open, v1.x — dynamic batch-size
   cost undercounting)**.
 
 ---
 
-## The two open UX nits (your immediate Stage-1 wrap)
+## What shipped in the Stage-1 final pass (commit `fa0b93f7`)
 
-User reviewed the CP5 output, found it dramatically improved, and flagged
-these two as still imperfect. Both have design questions — surface a
-specific shape to the user before coding.
+**Concern A — bracketed `[cache.X]` IDs dropped.** Catalog has new
+`headline_template` field per ID; rank lines lead with the headline
+(`<category> — <action>` pattern). `resolve_headline_for(diag)` is the
+SSoT — works for both `make_diagnostic` and direct `Diagnostic(...)`
+construction (validator emitters in `data_flow.py` get headlines via
+the catalog now). Per-call notes column strips `cache.` prefix.
 
-### Concern A — `[cache.shared-context-undeclared]` ID still visibly opaque
+**Concern B + Option C — greenfield per-call rows hide when no real data.**
+`_estimate_ref_tokens` returns `int | None`; `PerCallRow.cacheable_tokens_estimated`
+and `cache_ratio_pct` are nullable. New `_row_has_real_data` predicate
+filters rows; section hidden entirely when all rows fail; Notes entry
+explains the absence. Steady-state and post-run rows show real numbers.
 
-After CP5, every Recommended Action AND every Sub-workflow boundary line
-shows the bracketed ID. Spec DD#27 makes IDs first-class for machine
-filtering, but the user's feedback is that the rendered TEXT shouldn't
-require ID-lookup to be readable.
+**JSON 1.0 → 1.1**: semantic shift on `per_call.cacheable_tokens_estimated`
+documented in module docstring.
 
-**Three shapes worth pricing:**
-
-1. **Drop brackets from text, keep in JSON.** Users running
-   `--format=json` get the granular ID; text consumers see only the
-   message. ~10 LOC + test updates.
-2. **Replace with human-readable category prefix.** E.g. `[shared context
-   undeclared]` instead of `[cache.shared-context-undeclared]`. Reads
-   naturally without losing meaning. ~30 LOC (per-id mapping).
-3. **Move ID to less prominent position.** Keep at end of bullet as
-   `... (id: cache.shared-context-undeclared)` so it's discoverable but
-   not the first thing read. ~15 LOC.
-
-I lean (3) — preserves the discoverability without dominating the read.
-But this is the user's call.
-
-### Concern B — `cacheable=0 ratio=0%` in per-call report unexplained
-
-The per-call section header explainer addresses `ratio=0%` ("always 0%
-pre-cache") but `cacheable=0` has no context. In greenfield mode,
-`cacheable_tokens_estimated` is always 0 because no node has declared
-`prompt_cache:`. Agents reading the table can't tell whether
-`cacheable=0` means "no opportunity" or "we haven't measured it yet" —
-neither is right; it means "no declared subset, so cacheable token count
-is 0 by construction."
-
-**Three shapes worth pricing:**
-
-1. **Drop the `cacheable` column from greenfield rendering** (always 0,
-   so the column is noise). Steady-state mode keeps it. ~15 LOC.
-2. **Render `cacheable=—` in greenfield**. Distinguishes "0 by definition"
-   from "0 measured." ~10 LOC.
-3. **Add column legend below per-call header.** "cacheable = tokens
-   covered by declared `prompt_cache:` subsets" — explains what the
-   column means without changing values. ~10 LOC.
-
-I lean (1) — the column genuinely has no information in greenfield.
-Top-10% codebases (mypy, ruff) hide columns when they're useless rather
-than padding with empty values.
-
-### Test strategy for Concerns A + B
-
-Same pattern as CP5: behavioral tests with mutation-test docstrings.
-Don't add tests just for coverage — focus on:
-- The new rendering produces the new shape
-- The OLD rendering would fail an assertion (regression gate)
-- JSON output is unaffected (machine-readable contract preserved)
-
-Use `test-writer-fixer` if needed but most renderer assertions are
-simple substring checks; inline updates are fine.
-
-### Once both concerns ship
-
-Re-run `pflow analyze-cache` against all 4 lyrics-generator targets +
-brownfield smoke. Compare with `scratchpads/lyrics-generator-stage1/POST-CP5-*.txt`.
-Save POST-STAGE1-FINAL-*.txt. Confirm with user before Stage 2 spend.
+Snapshots saved at `scratchpads/lyrics-generator-stage1/POST-STAGE1-FINAL-*.txt`.
 
 ---
 
@@ -324,11 +274,16 @@ tests that constructed RecommendedAction without `message=` still work
 output, populate it. The renderer indents the message under the scope
 line; long messages wrap.
 
-**6. Stage 1 mostly polish-complete.** Path 2 is genuine architectural
-work; Concerns A + B are 1-2 hour polish; Concerns 1-3 are open
-decisions. Stage 2 verification is the next major gate. Don't sink
-more time into rendering polish without user direction — diminishing
-returns territory.
+**6. Stage 1 is complete.** All UX polish shipped in commit `fa0b93f7`
+(Concerns A + B + Option C). Stage 2 verification is the next gate.
+Don't sink more time into rendering polish without user direction —
+diminishing returns territory.
+
+**7. Catalog headlines are SSoT via `resolve_headline_for(diag)`.** When
+adding a new catalog ID, populate `headline_template` alongside the
+other fields. The renderer reads via the helper — works for diagnostics
+constructed outside `make_diagnostic` too. See progress log entry
+"Stage-1 final UX pass" for the structural defense.
 
 ---
 
@@ -337,31 +292,21 @@ returns territory.
 ```bash
 # Verify the branch state
 git log --oneline -5
-make test                   # expect 6,000 passing, 9 skipped
+make test                   # expect 6,001 passing, 9 skipped
 make check                  # expect all green
 
 # Re-run the canonical analyze-cache smoke test
 uv run pflow analyze-cache /path/to/lyrics-generator/song-creator/song-creator.pflow.md --no-trace-autoload
 
-# Compare with the post-CP5 baseline
-diff scratchpads/lyrics-generator-stage1/POST-CP5-song-creator.txt <(uv run pflow analyze-cache ...)
-
-# Find Concern A fix sites
-grep -n "warning_id" src/pflow/core/cache_analysis/render_text.py
-
-# Find Concern B fix sites
-grep -n "cacheable=" src/pflow/core/cache_analysis/render_text.py
+# Compare with the post-Stage-1-final baseline
+diff scratchpads/lyrics-generator-stage1/POST-STAGE1-FINAL-song-creator.txt <(uv run pflow analyze-cache ...)
 ```
 
 ---
 
 ## Final ask
 
-Before committing CP5, the user wants Concerns A + B addressed (or
-explicitly deferred with a documented reason). Once those are in,
-the user controls commit shape (single CP5 commit vs multiple).
-
-After commit, surface to the user **before**:
+Surface to the user **before**:
 - Stage 2 spending
 - Touching the catalog (DD#29 design review territory)
 - Any architectural decision (Concerns 1-3)
