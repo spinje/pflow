@@ -197,8 +197,16 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     current_str = _format_cost(
         s.current_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models, tier_annotation=cost_tier
     )
-    # Optimized + rerun are always projections — never tier-annotated.
-    optimized_str = _format_cost(s.optimized_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
+    # ``optimized_cost_per_run_usd`` is the no-cache hypothetical (recomputed
+    # full price as if no ``## Cache`` were declared) — it's the BASELINE for
+    # comparison, not the optimization target. Labelling it "Optimized" misled
+    # agents because the value is HIGHER than ``current_cost`` on declared
+    # workflows: the trace-honored ``current`` reflects actual cached cost,
+    # while ``optimized_cost`` reflects what you'd pay without caching. See
+    # progress log entry "Cost-projection fix: Tracks A + B + C", deviation
+    # #5: optimized = recomputed_no_cache_hypothetical, NOT a goal state.
+    # Both projections — never tier-annotated.
+    no_cache_str = _format_cost(s.optimized_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
 
     actionable_word = "opportunity" if s.actionable_opportunities == 1 else "opportunities"
@@ -206,7 +214,7 @@ def _render_summary(analysis: CacheAnalysis) -> str:
         "## Summary",
         "",
         f"  Current cost per run:        {current_str}",
-        f"  Optimized cost per run:      {optimized_str}",
+        f"  Cost without caching:        {no_cache_str}",
         f"  Cost on rerun (within 1h):   {rerun_str}",
     ]
 

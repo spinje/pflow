@@ -4912,3 +4912,28 @@ scoping leak loud if it existed (would have produced $99.005 vs the
 correct $0.015).
 
 ---
+
+## Renderer label fix: "Optimized cost per run" → "Cost without caching" (2026-05-02)
+
+Single-line label rename in `render_text.py` summary block. The underlying
+field `optimized_cost_per_run_usd` is the recomputed-no-cache hypothetical,
+NOT a goal state — labelling it "Optimized" misled agents reading the text
+output: on declared workflows where `current_cost` honors trace, the
+"Optimized" value is HIGHER than current (because current already reflects
+caching benefits), reading as "the optimized state costs more than current"
+which agents could interpret as "don't add caching."
+
+Fix: rendered label "Cost without caching" matches the semantic on every
+path (greenfield / declared / Gemini-implicit). Internal variable renamed
+to `no_cache_str` for code clarity; load-bearing comment added pointing at
+the deeper variable-naming inversion still present (`optimized_*` symbols
+across `analyze.py`/`cost_estimation.py` mean "no-cache hypothetical").
+
+The deeper code-naming inversion is flagged in `agent-brief-walker-consolidation.md`
+under "Related — cost-projection naming inversion" for the agent picking up
+walker consolidation (#364) + sub-workflow cost rollup (#365) to assess.
+
+6,061 tests pass; `make check` clean. No test fixtures pin the rendered
+label string, so no test updates required.
+
+---
