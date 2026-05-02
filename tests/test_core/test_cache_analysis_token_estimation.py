@@ -612,3 +612,142 @@ def test_find_llm_event_returns_first_matching_event() -> None:
     assert event is not None
     assert event.get("marker") == "first"
     assert event.get("input_tokens") == 100
+
+
+# ---------------------------------------------------------------------------
+# Track B — Tier-2 parameters fallback for workflow-input refs.
+#
+# Before the fix, workflow inputs referenced in cache chunks (``${context}``)
+# could only be projected from memo data — but no node has the ID
+# ``context`` so memo lookup always returned None and projections fell to
+# Tier 4 unavailable. With the AnalysisContext threading parameters,
+# greenfield projections light up when the agent passes ``--inputs``.
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_cacheable_tokens_uses_parameters_for_workflow_input_ref() -> None:
+    """Test 2 — Greenfield Tier-2 parameters fallback.
+
+    Mutation contract: revert the ``ctx is not None`` clause in the
+    ``estimate_cacheable_tokens`` Tier 2 dispatch → cacheable falls
+    through to Tier 3 / 4 and returns 0 / unavailable instead of the
+    parameters-tier projection.
+    """
+    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.cache_analysis.token_estimation import estimate_cacheable_tokens
+
+    workflow_ir = {"inputs": {"context": {"type": "string"}}}
+    ctx = AnalysisContext(
+        workflow_ir=workflow_ir,
+        parameters={"context": "X" * 5000},
+        memo_cache=None,
+        trace_data=None,
+        workflow_path=None,
+        base_path=None,
+    )
+    tokens, source = estimate_cacheable_tokens(
+        declared_subset=None,
+        candidate_subset=["context"],
+        trace_event=None,
+        memo_cache=None,
+        model="anthropic/claude-sonnet-4-5",
+        workflow_path=None,
+        prompt="some prompt",
+        ctx=ctx,
+    )
+    assert tokens is not None
+    assert tokens > 100  # Real tokenization of 5000-char string.
+    assert source == "parameters"
+
+
+def test_resolve_ref_value_workflow_input_wins_over_memo() -> None:
+    """Test 12 — Workflow-input parameters wins over memo (Track B asymmetry).
+
+    The agent's ``--inputs`` represent their CURRENT question; memo from a
+    prior run with different inputs MUST NOT override.
+
+    Mutation contract: invert the parameters-vs-memo precedence in
+    ``AnalysisContext.resolve_ref_value`` → memo's stale value wins →
+    the assertion comparing to the parameters value fails.
+    """
+    from pflow.core.cache_analysis.context import AnalysisContext
+
+    class FakeMemo:
+        def get_latest_for_node(self, node_id, *, workflow_path=None):  # type: ignore[no-untyped-def]
+            if node_id == "context":
+                return ({"context": "OLD memo value"}, 0.0)
+            return None
+
+    workflow_ir = {"inputs": {"context": {"type": "string"}}}
+    ctx = AnalysisContext(
+        workflow_ir=workflow_ir,
+        parameters={"context": "NEW question from agent"},
+        memo_cache=FakeMemo(),
+        trace_data=None,
+        workflow_path=None,
+        base_path=None,
+    )
+    value = ctx.resolve_ref_value("context")
+    assert value == "NEW question from agent"
+
+
+def test_resolve_ref_value_returns_none_for_empty_string() -> None:
+    """Test 9 — Empty-string parameter (silent-failures defense).
+
+    Empty values would collapse to ~0 tokens through tokenization, falsely
+    signaling "we have a real value." Returning None pushes the caller to
+    Tier-4 unavailable.
+
+    Mutation contract: drop the ``_normalize_empty`` call → empty values
+    propagate as real values → cacheable=0 + data_source=parameters
+    instead of unavailable → false signal.
+    """
+    from pflow.core.cache_analysis.context import AnalysisContext
+
+    workflow_ir = {"inputs": {"context": {"type": "string"}}}
+    ctx = AnalysisContext(
+        workflow_ir=workflow_ir,
+        parameters={"context": ""},
+        memo_cache=None,
+        trace_data=None,
+        workflow_path=None,
+        base_path=None,
+    )
+    assert ctx.resolve_ref_value("context") is None
+
+
+# ---------------------------------------------------------------------------
+# Track C — Resolve prompt template before tokenization.
+#
+# Greenfield ``estimate_tokens`` previously tokenized the literal template
+# (``${context}`` → ~5 chars). Track C resolves against parameters/memo
+# before tokenization so the count reflects the real prompt size.
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_tokens_marks_partial_when_unresolved_refs_present() -> None:
+    """Test 10 — Partial-resolution detection (silent-failures defense).
+
+    When the caller passes ``has_unresolved_refs=True`` (some ``${...}``
+    couldn't be substituted), the source label shifts to
+    ``"estimator-partial"`` so agents see the lower confidence.
+
+    Mutation contract: drop the ``has_unresolved_refs`` branch → label
+    stays ``"estimator"`` and looks authoritative.
+    """
+    from pflow.core.cache_analysis.token_estimation import estimate_tokens
+
+    tokens, source = estimate_tokens(
+        "anthropic/claude-sonnet-4-5",
+        "Some text with ${unresolved} ref left in it.",
+        has_unresolved_refs=True,
+    )
+    assert tokens > 0
+    assert source == "estimator-partial"
+
+    tokens2, source2 = estimate_tokens(
+        "anthropic/claude-sonnet-4-5",
+        "Same text but fully resolved.",
+        has_unresolved_refs=False,
+    )
+    assert source2 == "estimator"

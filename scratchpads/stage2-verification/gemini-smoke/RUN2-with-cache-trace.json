@@ -1,0 +1,142 @@
+{
+  "format_version": "2.1.0",
+  "execution_id": "eaf7e025-b8f5-44ad-8ab5-de581a6091b0",
+  "workflow_name": "smoke-with-cache",
+  "workflow_path": "/Users/andfal/projects/pflow-feat-prompt-caching/scratchpads/stage2-verification/gemini-smoke/smoke-with-cache.pflow.md",
+  "start_time": "2026-05-01T22:09:05.675360",
+  "end_time": "2026-05-01T22:09:10.513593",
+  "duration_ms": 4838.21,
+  "final_status": "success",
+  "nodes_executed": 2,
+  "nodes_failed": 0,
+  "failed_node_ids": [],
+  "nodes": [
+    {
+      "node_id": "answer-a",
+      "node_type": "LLMNode",
+      "duration_ms": 3525.26,
+      "success": true,
+      "timestamp": "2026-05-01T22:09:09.209248",
+      "node_params": {
+        "model": "gemini/gemini-2.5-flash",
+        "max_tokens": 80,
+        "_prompt_source_line": 65,
+        "prompt": "Question: What is the magic value of a MERIDIAN frame, and which byte offset carries it?\n\nAnswer in one sentence using the reference document."
+      },
+      "template_resolutions": {
+        "prompt": {
+          "template": "Question: ${question_a}\n\nAnswer in one sentence using the reference document.",
+          "resolved": "Question: What is the magic value of a MERIDIAN frame, and which byte offset carries it?\n\nAnswer in one sentence using the reference document."
+        }
+      },
+      "node_output": {
+        "prompt": "Question: What is the magic value of a MERIDIAN frame, and which byte offset carries it?\n\nAnswer in one sentence using the reference document.",
+        "llm_usage": {
+          "model": "gemini/gemini-2.5-flash",
+          "input_tokens": 4714,
+          "output_tokens": 76,
+          "total_tokens": 4790,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 4682,
+          "thinking_tokens": 72,
+          "thinking_budget": 0,
+          "cache_chunks_skipped": [],
+          "cost_usd": 0.00034006,
+          "cache_key": "4479e99128a6f33f86c63c67bead8f5c"
+        },
+        "response": "The magic value of"
+      },
+      "mutations": {
+        "added": [
+          "answer-a"
+        ],
+        "removed": [],
+        "modified": []
+      },
+      "llm_call": {
+        "model": "gemini/gemini-2.5-flash",
+        "input_tokens": 4714,
+        "output_tokens": 76,
+        "total_tokens": 4790,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 4682,
+        "thinking_tokens": 72,
+        "thinking_budget": 0,
+        "cache_chunks_skipped": [],
+        "cost_usd": 0.00034006,
+        "cache_key": "4479e99128a6f33f86c63c67bead8f5c"
+      },
+      "llm_prompt": "Question: What is the magic value of a MERIDIAN frame, and which byte offset carries it?\n\nAnswer in one sentence using the reference document.",
+      "llm_response": "The magic value of"
+    },
+    {
+      "node_id": "answer-b",
+      "node_type": "LLMNode",
+      "duration_ms": 1298.92,
+      "success": true,
+      "timestamp": "2026-05-01T22:09:10.508311",
+      "node_params": {
+        "model": "gemini/gemini-2.5-flash",
+        "max_tokens": 80,
+        "_prompt_source_line": 80,
+        "prompt": "Question: How are MERIDIAN error codes grouped by class?\n\nAnswer in one sentence using the reference document."
+      },
+      "template_resolutions": {
+        "prompt": {
+          "template": "Question: ${question_b}\n\nAnswer in one sentence using the reference document.",
+          "resolved": "Question: How are MERIDIAN error codes grouped by class?\n\nAnswer in one sentence using the reference document."
+        }
+      },
+      "node_output": {
+        "prompt": "Question: How are MERIDIAN error codes grouped by class?\n\nAnswer in one sentence using the reference document.",
+        "llm_usage": {
+          "model": "gemini/gemini-2.5-flash",
+          "input_tokens": 4706,
+          "output_tokens": 76,
+          "total_tokens": 4782,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 4682,
+          "thinking_tokens": 57,
+          "thinking_budget": 0,
+          "cache_chunks_skipped": [],
+          "cost_usd": 0.00033766000000000004,
+          "cache_key": "f303ffbbeeb69f51b6c830fd07da5e44"
+        },
+        "response": "MERIDIAN error codes are grouped into classes for graceful conditions, framing errors, handshake errors,"
+      },
+      "mutations": {
+        "added": [
+          "answer-b"
+        ],
+        "removed": [],
+        "modified": []
+      },
+      "llm_call": {
+        "model": "gemini/gemini-2.5-flash",
+        "input_tokens": 4706,
+        "output_tokens": 76,
+        "total_tokens": 4782,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 4682,
+        "thinking_tokens": 57,
+        "thinking_budget": 0,
+        "cache_chunks_skipped": [],
+        "cost_usd": 0.00033766000000000004,
+        "cache_key": "f303ffbbeeb69f51b6c830fd07da5e44"
+      },
+      "llm_prompt": "Question: How are MERIDIAN error codes grouped by class?\n\nAnswer in one sentence using the reference document.",
+      "llm_response": "MERIDIAN error codes are grouped into classes for graceful conditions, framing errors, handshake errors,"
+    }
+  ],
+  "llm_summary": {
+    "total_calls": 2,
+    "total_tokens": 9572,
+    "total_input_tokens": 9420,
+    "total_output_tokens": 152,
+    "models_used": [
+      "gemini/gemini-2.5-flash"
+    ],
+    "total_cost_usd": 0.000678,
+    "pricing_available": true
+  }
+}

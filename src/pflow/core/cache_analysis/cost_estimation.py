@@ -170,13 +170,37 @@ def _write_rate_for_ttl(pricing: ModelPricing, ttl: str | None, model: str) -> f
 
 
 def _per_call_current_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int | None) -> float | None:
-    """Cost of one call without any caching: input x rate + output x rate.
+    """Cost of one call without any caching.
 
-    Returns ``None`` when output tokens are unavailable — refuses to fabricate
-    per the tri-state contract.
+    Track A (Phase A): when ``row.cost_usd`` is set (trace data exists),
+    return it directly. The recorded cost reflects what the workflow ACTUALLY
+    paid — including provider-side implicit caching (Gemini) and any other
+    discount the trace's recorded cost reflects. Recomputing from
+    ``tokens x full_rate`` ignores those discounts and over-estimates by
+    50-200%+ on cached runs (the bug this fix targets).
+
+    Falls back to recomputing (input x rate + output x rate) when no trace
+    data is available — preserving the pre-fix behavior for greenfield
+    workflows.
+
+    Returns ``None`` when both paths are unavailable (no trace AND no
+    output tokens) — refuses to fabricate per the tri-state contract.
     """
+    if row.cost_usd is not None:
+        return row.cost_usd
     if output_tokens is None:
         return None
+    return _per_call_current_cost_recomputed(row, pricing, output_tokens)
+
+
+def _per_call_current_cost_recomputed(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
+    """Recompute current cost from tokens x rate (no trace path).
+
+    Used by ``_aggregate_optimized_cost`` for the no-declared-subset path —
+    optimized cost projects what would happen IF the row had no caching
+    declared, so the trace's recorded cost (which may include caching) is
+    NOT what we want there. Mirrors the pre-Track-A formula.
+    """
     invocations = _invocation_count(row)
     return float(invocations) * (row.input_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
 
@@ -237,54 +261,28 @@ def compute_aggregate_costs(
     by construction (output cancels), so they're always computable when
     pricing is available — even on greenfield (no output tokens needed).
     """
-    priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]] = []
-    unavailable_models: list[str] = []
-    seen_unavailable: set[str] = set()
-
-    for row in rows:
-        # Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
-        # carry per-item models we can't aggregate as one. The upstream sets
-        # ``model = ""`` so the ``if row.model`` truthy check below ALSO
-        # short-circuits, but checking the flag explicitly here makes the
-        # intent visible and protects against future contributors who might
-        # change the empty-string convention.
-        if row.model_is_heterogeneous:
-            continue
-        pricing = get_model_pricing(row.model) if row.model else None
-        if pricing is None:
-            if row.model and row.model not in seen_unavailable:
-                unavailable_models.append(row.model)
-                seen_unavailable.add(row.model)
-            continue
-        output_tokens = output_tokens_by_node.get(row.node_path)
-        priced_rows.append((row, pricing, output_tokens))
+    priced_rows, unavailable_models, heterogeneous_recorded_cost, has_heterogeneous_recorded = _partition_rows(
+        rows, output_tokens_by_node
+    )
 
     if not priced_rows:
-        return AggregateCostBreakdown(
-            current_usd=None,
-            optimized_usd=None,
-            rerun_usd=None,
-            savings_first_run_usd=None,
-            savings_rerun_usd=None,
-            partial=False,
-            unavailable_models=tuple(unavailable_models),
-        )
+        return _empty_priced_rows_breakdown(heterogeneous_recorded_cost, has_heterogeneous_recorded, unavailable_models)
 
-    # --- Absolute cost figures (require output tokens) ----------------------
+    current_usd, has_partial_costs = _compute_current_usd(
+        priced_rows,
+        heterogeneous_recorded_cost,
+        has_heterogeneous_recorded,
+        unavailable_models,
+    )
+
     rows_with_output = [(r, p, o) for r, p, o in priced_rows if o is not None]
-    rows_without_output = [(r, p, o) for r, p, o in priced_rows if o is None]
-    has_partial_costs = bool(rows_with_output) and (bool(rows_without_output) or bool(unavailable_models))
-
     if rows_with_output:
-        current_usd: float | None = sum(_per_call_current_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
         rerun_usd: float | None = sum(_per_call_rerun_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
         optimized_usd: float | None = _aggregate_optimized_cost(rows_with_output, ttl)
     else:
-        current_usd = None
         rerun_usd = None
         optimized_usd = None
 
-    # --- Savings (input-only — greenfield-safe) ------------------------------
     savings_first_run_usd = _aggregate_first_run_savings(priced_rows, ttl)
     savings_rerun_usd = _aggregate_rerun_savings(priced_rows)
 
@@ -297,6 +295,103 @@ def compute_aggregate_costs(
         partial=has_partial_costs,
         unavailable_models=tuple(unavailable_models),
     )
+
+
+def _partition_rows(
+    rows: list[PerCallRow],
+    output_tokens_by_node: dict[str, int | None],
+) -> tuple[list[tuple[PerCallRow, ModelPricing, int | None]], list[str], float, bool]:
+    """Split ``rows`` into priced rows + heterogeneous recorded cost + unavailable model list.
+
+    Heterogeneous batch sub-workflows (``model: ${item.X}``) carry per-item
+    models we can't price as one model. When their trace recorded a cost,
+    Track A still surfaces it in ``current_usd`` (separate code path).
+    """
+    priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]] = []
+    unavailable_models: list[str] = []
+    seen_unavailable: set[str] = set()
+    heterogeneous_recorded_cost: float = 0.0
+    has_heterogeneous_recorded: bool = False
+
+    for row in rows:
+        if row.model_is_heterogeneous:
+            if row.cost_usd is not None:
+                heterogeneous_recorded_cost += row.cost_usd
+                has_heterogeneous_recorded = True
+            continue
+        pricing = get_model_pricing(row.model) if row.model else None
+        if pricing is None:
+            if row.model and row.model not in seen_unavailable:
+                unavailable_models.append(row.model)
+                seen_unavailable.add(row.model)
+            continue
+        output_tokens = output_tokens_by_node.get(row.node_path)
+        priced_rows.append((row, pricing, output_tokens))
+
+    return priced_rows, unavailable_models, heterogeneous_recorded_cost, has_heterogeneous_recorded
+
+
+def _empty_priced_rows_breakdown(
+    heterogeneous_recorded_cost: float,
+    has_heterogeneous_recorded: bool,
+    unavailable_models: list[str],
+) -> AggregateCostBreakdown:
+    """Build the breakdown when there are no priced rows.
+
+    Even with no priced rows, heterogeneous-batch recorded cost may still
+    be a real signal worth surfacing (workflow that's exclusively
+    heterogeneous batches but was actually run produced a real total).
+    """
+    if has_heterogeneous_recorded:
+        return AggregateCostBreakdown(
+            current_usd=heterogeneous_recorded_cost,
+            optimized_usd=None,
+            rerun_usd=None,
+            savings_first_run_usd=None,
+            savings_rerun_usd=None,
+            partial=True,
+            unavailable_models=tuple(unavailable_models),
+        )
+    return AggregateCostBreakdown(
+        current_usd=None,
+        optimized_usd=None,
+        rerun_usd=None,
+        savings_first_run_usd=None,
+        savings_rerun_usd=None,
+        partial=False,
+        unavailable_models=tuple(unavailable_models),
+    )
+
+
+def _compute_current_usd(
+    priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]],
+    heterogeneous_recorded_cost: float,
+    has_heterogeneous_recorded: bool,
+    unavailable_models: list[str],
+) -> tuple[float | None, bool]:
+    """Sum recorded + recomputed costs into ``current_usd``.
+
+    Track A: per-call current cost honors row.cost_usd directly; falls back
+    to recompute (which needs output tokens) only when no trace data is
+    available. So a row with ``cost_usd is not None`` is "priceable" even
+    without output tokens.
+    """
+    rows_priceable_for_current = [(r, p, o) for r, p, o in priced_rows if r.cost_usd is not None or o is not None]
+    rows_without_output = [(r, p, o) for r, p, o in priced_rows if o is None and r.cost_usd is None]
+    has_partial_costs = bool(rows_priceable_for_current) and (bool(rows_without_output) or bool(unavailable_models))
+
+    if rows_priceable_for_current:
+        current_total: float = sum(_per_call_current_cost(r, p, o) or 0.0 for r, p, o in rows_priceable_for_current)
+        if has_heterogeneous_recorded:
+            current_total += heterogeneous_recorded_cost
+            has_partial_costs = True
+        current_usd: float | None = current_total
+    else:
+        current_usd = heterogeneous_recorded_cost if has_heterogeneous_recorded else None
+        if has_heterogeneous_recorded:
+            has_partial_costs = True
+
+    return current_usd, has_partial_costs
 
 
 def _aggregate_optimized_cost(
@@ -320,10 +415,15 @@ def _aggregate_optimized_cost(
     total = 0.0
     for subset, group in by_subset.items():
         if subset is None:
+            # Track A: optimized cost is a HYPOTHETICAL — what would the cost
+            # be IF this row had no caching declared. Use the recompute path
+            # (tokens x full_rate) instead of ``row.cost_usd``, because the
+            # trace's recorded cost may include caching benefits we want to
+            # exclude here (otherwise optimized < current is impossible to
+            # observe for already-cached runs).
             for row, pricing, output_tokens in group:
-                cost = _per_call_current_cost(row, pricing, output_tokens)
-                if cost is not None:
-                    total += cost
+                if output_tokens is not None:
+                    total += _per_call_current_cost_recomputed(row, pricing, output_tokens)
             continue
 
         # First call in the group pays write rate; remaining pay read rate.

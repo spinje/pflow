@@ -189,7 +189,15 @@ def _format_heterogeneous_suffix(heterogeneous_node_paths: tuple[str, ...]) -> s
 
 def _render_summary(analysis: CacheAnalysis) -> str:
     s = analysis.summary
-    current_str = _format_cost(s.current_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
+    # Track A: when current_cost is sourced from trace, annotate so agents
+    # know it reflects what the workflow actually paid (vs the recompute
+    # path which projects from tokens x full_rate). Tier label sourced from
+    # the per-call rows — see ``_summarize_cost_tier``.
+    cost_tier = _summarize_cost_tier(analysis)
+    current_str = _format_cost(
+        s.current_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models, tier_annotation=cost_tier
+    )
+    # Optimized + rerun are always projections — never tier-annotated.
     optimized_str = _format_cost(s.optimized_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
 
@@ -206,11 +214,12 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     # input-only math). Only render when ``prompt_cache:`` is declared on at
     # least one node (otherwise the figure is 0 by construction).
     if s.aggregate_savings_first_run_usd is not None and s.aggregate_savings_first_run_usd > 0:
-        first_str = f"~${s.aggregate_savings_first_run_usd:.2f}/run"
+        first_str = f"{_format_dollar_amount(s.aggregate_savings_first_run_usd)}/run"
         rerun_savings = s.aggregate_savings_rerun_usd
         if rerun_savings is not None and rerun_savings > 0:
             summary_lines.append(
-                f"  Estimated savings if applied: {first_str} (first run); ~${rerun_savings:.2f}/run on rerun"
+                f"  Estimated savings if applied: {first_str} (first run); "
+                f"{_format_dollar_amount(rerun_savings)}/run on rerun"
             )
         else:
             summary_lines.append(f"  Estimated savings if applied: {first_str}")
@@ -275,12 +284,25 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     return "\n".join(summary_lines)
 
 
-def _format_cost(value: float | None, partial: bool, unavailable_models: tuple[str, ...]) -> str:
+def _format_cost(
+    value: float | None,
+    partial: bool,
+    unavailable_models: tuple[str, ...],
+    *,
+    tier_annotation: str = "",
+) -> str:
     """Tri-state cost rendering per the F2 contract.
 
     Stage C.2: when exactly ONE model is unpriced, name it directly so the
     agent doesn't have to scan ``models_in_use`` to find the culprit. The
     plural-count phrasing remains for N>1.
+
+    Track A: optional ``tier_annotation`` (e.g. ``"trace"``,
+    ``"trace_partial"``, ``"recomputed"``) appended in parentheses so the
+    agent sees whether the figure reflects what the workflow actually paid
+    (trace) or a projection (recomputed). Empty string skips the suffix
+    (preserves the bare-cost format for unannotated callers like optimized
+    / rerun projections).
     """
     if value is None:
         if len(unavailable_models) == 1:
@@ -288,11 +310,63 @@ def _format_cost(value: float | None, partial: bool, unavailable_models: tuple[s
         if unavailable_models:
             return f"unavailable (all {len(unavailable_models)} models lack pricing data)"
         return "unavailable"
+    annotation = f" ({tier_annotation})" if tier_annotation else ""
+    amount = _format_dollar_amount(value)
     if partial:
         # Partial — caller must already have appended " (partial — N of M ...)" to value.
         # We don't have N/M here, so just mark as partial.
-        return f"~${value:.2f} (partial)"
-    return f"~${value:.2f}"
+        return f"{amount} (partial){annotation}"
+    return f"{amount}{annotation}"
+
+
+def _format_dollar_amount(value: float) -> str:
+    """Format a USD amount with adaptive precision.
+
+    Track A's accuracy surfaces sub-cent costs that the prior ``:.2f``
+    format silently rounded to ``$0.00`` (Gemini Flash, cached calls,
+    Haiku). Adaptive precision keeps the common ``~$2.18`` shape for cents+
+    while showing real digits for sub-cent.
+
+    - ``value >= 0.01``: ``~$2.18`` / ``~$0.42`` (2 decimals — unchanged).
+    - ``0.0001 <= value < 0.01``: ``~$0.0042`` (4 decimals — sub-cent
+      precision, agent reads the actual paid amount).
+    - ``0 < value < 0.0001``: ``~<$0.0001`` (smaller than displayable,
+      effectively free).
+    - ``value == 0``: ``~$0.00`` (genuine zero — e.g. cached event,
+      reads cleanly with a ``(trace)`` suffix).
+    """
+    if value >= 0.01 or value == 0:
+        return f"~${value:.2f}"
+    if value >= 0.0001:
+        return f"~${value:.4f}"
+    return "~<$0.0001"
+
+
+def _summarize_cost_tier(analysis: CacheAnalysis) -> str:
+    """Aggregate ``cost_data_source`` across rows into a single label.
+
+    Mirrors the cost tri-state contract:
+
+    - All rows ``trace`` → ``"trace"`` (high confidence — what was paid).
+    - Any row ``trace_partial`` → ``"trace_partial"`` (medium-high).
+    - Mix of trace + recomputed → ``"trace_partial"`` (some priced via
+      trace, some via recompute).
+    - All rows ``recomputed`` → ``""`` (no annotation — preserves the
+      pre-Track-A bare-cost format for greenfield workflows).
+    - All rows ``unavailable`` → ``""`` (the cost is None upstream; the
+      caller renders ``unavailable`` directly).
+    """
+    sources = [r.cost_data_source for r in analysis.per_call]
+    if not sources:
+        return ""
+    if all(s == "trace" for s in sources):
+        return "trace"
+    if any(s == "trace_partial" for s in sources):
+        return "trace_partial"
+    if any(s == "trace" for s in sources):
+        # Mix of trace + recomputed — treat as partial.
+        return "trace_partial"
+    return ""
 
 
 def _render_recommended_actions(analysis: CacheAnalysis) -> str:

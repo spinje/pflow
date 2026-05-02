@@ -1,0 +1,11 @@
+Executing workflow (2 nodes):
+WARNING: Declared output 'answer_a' cannot be traced to any node in the workflow. This may be fine if nodes write dynamic keys.
+WARNING: Declared output 'answer_b' cannot be traced to any node in the workflow. This may be fine if nodes write dynamic keys.
+  answer-a... ✓ 3.5s
+  answer-b... ✓ 1.3s
+
+✓ Workflow completed in 4.837s
+💰 Cost: $0.0007
+cli: Workflow declares 2 outputs (answer_a, answer_b). Streaming 'answer_a' to stdout. Mark one output with `- stdout: true`, pass `-o <name>`, or use `--output-format json` to emit all.
+Workflow executed successfully
+📊 Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-d6e9396e-smoke-with-cache-20260501-220910.json

@@ -1352,3 +1352,27 @@ def test_text_header_keeps_medium_from_memo_with_coverage() -> None:
     text = render_text(analysis)
     assert "Confidence: medium_from_memo" in text
     assert "(2 of 2 nodes)" in text
+
+
+# ---------------------------------------------------------------------------
+# Sub-cent cost rendering (Track A follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_text_renders_sub_cent_cost_with_four_decimals() -> None:
+    """Track A surfaces sub-cent costs; the renderer must show them with
+    enough precision to be useful.
+
+    Mutation contract: revert ``_format_dollar_amount`` to use ``:.2f``
+    unconditionally -> sub-cent costs render as ``$0.00`` and the
+    ``(trace)`` annotation decorates a useless number.
+    """
+    text = render_text(_make_analysis(current=0.0021, optimized=0.0023, partial=False))
+    assert "~$0.0021" in text
+    assert "~$0.0023" in text
+    # Genuine zero stays in 2-decimal format (cleaner with annotations).
+    text_zero = render_text(_make_analysis(current=0.0, optimized=0.0, partial=False))
+    assert "~$0.00" in text_zero
+    # Below-threshold values render as a less-than indicator.
+    text_tiny = render_text(_make_analysis(current=0.00001, optimized=0.00002, partial=False))
+    assert "~<$0.0001" in text_tiny

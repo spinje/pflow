@@ -51,6 +51,7 @@ from pflow.core.workflow.data_flow import validate_data_flow
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 from pflow.runtime.template_resolver import TemplateResolver
 
+from .context import AnalysisContext
 from .cross_workflow import walk_cross_workflow
 from .padding_advisor import PaddingCandidate, compute_padding_advisories
 from .token_estimation import (
@@ -114,8 +115,26 @@ class PerCallRow:
     # ``data_source`` (input) and ``output_data_source`` — the three metrics
     # may legitimately diverge (e.g., trace fires for input but cacheable
     # falls through to memo when ``cache_creation+cache_read == 0``).
-    # Sources: ``"trace"``, ``"memo"``, ``"estimator"``, ``"unavailable"``.
+    # Sources: ``"trace"``, ``"memo"``, ``"parameters"``, ``"estimator"``,
+    # ``"unavailable"``. ``"parameters"`` is added by Track B (Phase B):
+    # workflow-input refs resolved via the agent's ``--inputs``.
     cacheable_data_source: str = "unavailable"
+    # Track A (Phase A): per-call recorded cost from the trace (sum of
+    # llm_call + batch_items[*].llm_call costs for this node's event tree).
+    # ``None`` when no trace event matched. Branches in
+    # ``cost_estimation._per_call_current_cost``: when set, the analyzer
+    # returns this value DIRECTLY (matches what the workflow actually paid,
+    # honoring implicit caching like Gemini's). When None, the recompute
+    # fallback fires (``tokens x full_rate``) which is what we did pre-fix.
+    cost_usd: float | None = None
+    # Tier label for ``cost_usd``. 4-state per the cost-tier matrix:
+    # - ``"trace"``: cost from trace; all leaves priced. High confidence.
+    # - ``"trace_partial"``: cost from trace + recompute mix; at least one
+    #   leaf had unpriced model. Medium-high confidence.
+    # - ``"recomputed"``: no trace; computed from ``tokens x LiteLLM rate``.
+    #   Medium confidence (matches what we did pre-fix).
+    # - ``"unavailable"``: pricing missing AND no trace data. Low confidence.
+    cost_data_source: str = "recomputed"
     # Stage 0.3 (Task 159): the inline ``warnings: tuple[str, ...]`` field was
     # vestigial — single production producer never populated it; renderer
     # fallbacks at ``render_text.py:497, 617`` and the JSON ``per_call.warnings``
@@ -312,6 +331,20 @@ def analyze(
     cache_block = workflow_ir.get("cache")
     declared_chunks = _extract_declared_chunks(cache_block)
 
+    # Build the AnalysisContext once and thread it through helpers. Bundles
+    # (workflow_ir, parameters, memo_cache, trace_data, workflow_path,
+    # base_path) so per-call helpers don't re-marshal these inputs at every
+    # signature boundary. Methods on the context (resolve_ref_value,
+    # cost_usd_for_node) own the policy that was previously scattered.
+    ctx = AnalysisContext(
+        workflow_ir=workflow_ir,
+        parameters=parameters or {},
+        memo_cache=memo_cache,
+        trace_data=trace_data,
+        workflow_path=lookup_path,
+        base_path=base_path,
+    )
+
     # Pass 1 (cheap): walk IR for shared template references — no tokenization.
     # Tier 2 of ``estimate_cacheable_tokens`` consumes the per-node candidate
     # subset to project cacheable counts via memo data.
@@ -319,9 +352,7 @@ def analyze(
 
     per_call_rows, warnings = _build_per_call_rows_and_warnings(
         workflow_ir=workflow_ir,
-        lookup_path=lookup_path,
-        trace_data=trace_data,
-        memo_cache=memo_cache,
+        ctx=ctx,
         declared_chunks=declared_chunks,
         candidate_subsets_by_node=candidate_subsets_by_node,
     )
@@ -332,8 +363,7 @@ def analyze(
     suggested_blocks, shared_warnings = _populate_suggested_blocks(
         workflow_ir=workflow_ir,
         rows_by_node=rows_by_node,
-        memo_cache=memo_cache,
-        workflow_path=lookup_path,
+        ctx=ctx,
         notes=notes,
     )
     warnings.extend(shared_warnings)
@@ -354,8 +384,7 @@ def analyze(
             workflow_ir=workflow_ir,
             rows_by_node=rows_by_node,
             declared_chunks=declared_chunks,
-            memo_cache=memo_cache,
-            workflow_path=lookup_path,
+            ctx=ctx,
         )
     )
     warnings.extend(_cache_validator_findings(workflow_ir))
@@ -374,11 +403,7 @@ def analyze(
     if trace_data is not None:
         warnings.extend(
             _emit_discrepancy_diagnostics(
-                workflow_ir=workflow_ir,
-                trace_data=trace_data,
-                parameters=parameters or {},
-                memo_cache=memo_cache,
-                workflow_path=lookup_path,
+                ctx=ctx,
                 notes=notes,
             )
         )
@@ -564,9 +589,7 @@ def _extract_cache_ttl(cache_block: Any) -> str | None:
 def _build_per_call_rows_and_warnings(
     *,
     workflow_ir: dict[str, Any],
-    lookup_path: str,
-    trace_data: dict[str, Any] | None,
-    memo_cache: Any,
+    ctx: AnalysisContext,
     declared_chunks: list[str],
     candidate_subsets_by_node: dict[str, list[str]],
 ) -> tuple[list[PerCallRow], list[Diagnostic]]:
@@ -586,9 +609,7 @@ def _build_per_call_rows_and_warnings(
         node_id = str(node.get("id", "?"))
         row = _build_per_call_row(
             node=node,
-            workflow_path=lookup_path,
-            trace_data=trace_data,
-            memo_cache=memo_cache,
+            ctx=ctx,
             declared_chunks=declared_chunks,
             candidate_subset=candidate_subsets_by_node.get(node_id),
         )
@@ -627,13 +648,17 @@ def _detect_candidate_subsets(workflow_ir: dict[str, Any]) -> dict[str, list[str
 def _build_per_call_row(
     *,
     node: dict[str, Any],
-    workflow_path: str | None,
-    trace_data: dict[str, Any] | None,
-    memo_cache: Any,
+    ctx: AnalysisContext,
     declared_chunks: list[str],
     candidate_subset: list[str] | None = None,
 ) -> PerCallRow:
     """Compose a single PerCallRow for an LLM node."""
+    workflow_path = ctx.workflow_path
+    # ctx.trace_data is typed as Mapping for immutability; downstream APIs
+    # accept dict[str, Any]. Production callers always pass dicts, so this
+    # is a type-only cast.
+    trace_data: dict[str, Any] | None = ctx.trace_data if ctx.trace_data is not None else None  # type: ignore[assignment]
+    memo_cache = ctx.memo_cache
     node_id = str(node.get("id", "?"))
     # Effective model resolution mirrors compiler.py:281-285 — explicit per-node
     # ``model:`` wins; absence falls back to ``get_default_workflow_model()``
@@ -665,13 +690,23 @@ def _build_per_call_row(
     is_batch = isinstance(batch, dict) and bool(batch)
     batch_size = _estimate_batch_size(batch) if isinstance(batch, dict) and is_batch else None
 
+    # Track C (Phase C): resolve the prompt template before tokenization so
+    # ${context}, ${question}, etc. count as their actual byte lengths
+    # instead of the literal ``${context}`` string (~5 chars). Trace tier
+    # short-circuits before this — for trace data the input_tokens come
+    # straight from ``llm_call.input_tokens`` and template resolution is
+    # irrelevant. For the estimator tier on greenfield workflows, resolved
+    # prompts produce realistic token counts when the agent passes
+    # ``--inputs`` covering the referenced variables.
+    resolved_prompt, has_unresolved = _resolve_prompt_for_tokenization(prompt, ctx, node)
     input_tokens, source = estimate_tokens(
         model,
-        prompt,
+        resolved_prompt,
         trace=trace_data,
         memo_cache=memo_cache,
         node_id=node_id,
         workflow_path=workflow_path,
+        has_unresolved_refs=has_unresolved,
     )
     output_tokens, output_source = estimate_output_tokens(
         trace=trace_data,
@@ -697,7 +732,8 @@ def _build_per_call_row(
         memo_cache=memo_cache,
         model=model,
         workflow_path=workflow_path,
-        prompt=prompt,
+        prompt=resolved_prompt,
+        ctx=ctx,
     )
 
     # Explicit 3-way: None / 0 / positive (preserves Option C visibility
@@ -715,6 +751,21 @@ def _build_per_call_row(
         cacheable_with_clamp = 0
         ratio = 0
 
+    # Track A (Phase A): per-node recorded cost from the trace. When trace
+    # data exists for this node, the analyzer reports what the workflow
+    # actually paid (honoring implicit caching like Gemini's). When trace
+    # data is absent, the row's cost falls back to the recompute path in
+    # ``cost_estimation._per_call_current_cost`` (``tokens x full_rate``).
+    cost_value: float | None
+    cost_source: str
+    cost_value, cost_source = ctx.cost_usd_for_node(node_id)
+    if cost_value is None:
+        # No trace data — recompute fallback fires downstream. Mark the
+        # tier label so the JSON consumer sees ``"recomputed"`` not
+        # ``"unavailable"`` (the latter signals "no pricing data either",
+        # which is checked by the renderer separately via ``unavailable_models``).
+        cost_source = "recomputed"
+
     return PerCallRow(
         node_path=node_id,
         model=model,
@@ -729,7 +780,75 @@ def _build_per_call_row(
         output_data_source=output_source,
         model_is_heterogeneous=model_is_heterogeneous,
         cacheable_data_source=cacheable_source,
+        cost_usd=cost_value,
+        cost_data_source=cost_source,
     )
+
+
+def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: dict[str, Any]) -> tuple[str, bool]:
+    """Substitute ``${...}`` refs in ``prompt`` against parameters + memo.
+
+    Returns ``(resolved_text, has_unresolved_refs)``. ``has_unresolved_refs``
+    is True when at least one ``${...}`` remained unresolved after the
+    substitution pass — caller passes this through to ``estimate_tokens``
+    so the tier label can shift to ``"estimator-partial"``.
+
+    Batch nodes: alias references (``${item.X}``) are inherently dynamic
+    (resolved per item at run-time); they always remain unresolved here
+    and trip ``has_unresolved_refs=True`` — correct, tokenization without
+    a concrete batch item is necessarily approximate.
+    """
+    if not isinstance(prompt, str) or not prompt:
+        return prompt or "", False
+
+    refs = _extract_unique_refs(prompt)
+    if not refs:
+        return prompt, False
+
+    shared = _build_shared_store_for_refs(refs, ctx)
+
+    try:
+        resolved = TemplateResolver.resolve_template(prompt, shared)
+    except Exception:
+        # Defensive: a malformed template shouldn't take down the analyzer.
+        logger.debug("template resolution raised on prompt for node %r", node.get("id"), exc_info=True)
+        return prompt, True
+
+    if not isinstance(resolved, str):
+        # Single-ref templates can return non-string values (e.g. dict).
+        from pflow.core.cache_render import deterministic_serialize
+
+        resolved = deterministic_serialize(resolved)
+
+    has_unresolved = bool(TemplateResolver.TEMPLATE_PATTERN.search(resolved))
+    return resolved, has_unresolved
+
+
+def _extract_unique_refs(prompt: str) -> list[str]:
+    """Walk ``prompt`` for unique template refs (deduped, order-preserving)."""
+    refs: list[str] = []
+    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            if operand and operand not in refs:
+                refs.append(operand)
+    return refs
+
+
+def _build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[str, Any]:
+    """Build a synthetic shared store keyed by root node ids for ``refs``."""
+    shared: dict[str, Any] = {}
+    for ref in refs:
+        root = TemplateResolver.extract_root_node_id(ref)
+        if not root or root in shared:
+            continue
+        # Resolve the ROOT, not the ref — TemplateResolver navigates dotted
+        # paths against the root's value. The context's resolution policy
+        # (parameters wins for input refs; memo for node-output refs) fires
+        # transparently here.
+        value = ctx.resolve_ref_value(root)
+        if value is not None:
+            shared[root] = value
+    return shared
 
 
 def _row_has_real_data_in_analyze(row: PerCallRow) -> bool:
@@ -1015,8 +1134,7 @@ def _populate_suggested_blocks(
     *,
     workflow_ir: dict[str, Any],
     rows_by_node: dict[str, PerCallRow],
-    memo_cache: Any,
-    workflow_path: str,
+    ctx: AnalysisContext,
     notes: list[str],
 ) -> tuple[list[SuggestedBlock], list[Diagnostic]]:
     """Build greenfield suggested ``## Cache`` blocks + advisory.
@@ -1081,10 +1199,14 @@ def _populate_suggested_blocks(
     total_savings: float | None = 0.0
     affected_nodes: set[str] = set()
 
+    memo_cache = ctx.memo_cache
+    workflow_path = ctx.workflow_path
     for ref, node_ids in shared_refs:
         first_row = rows_by_node.get(node_ids[0])
         model = first_row.model if first_row else ""
-        size_tokens = _estimate_ref_tokens(ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path)
+        size_tokens = _estimate_ref_tokens(
+            ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx
+        )
         # ``size_tokens_est`` on the suggested-block chunk stays ``int`` — the
         # block is paste-ready prose so we render 0 (or the real value) rather
         # than expose ``None``. Agents reading the chunk size see "0" and know
@@ -1170,8 +1292,7 @@ def _consolidate_to_root_advisories(
     workflow_ir: dict[str, Any],
     rows_by_node: dict[str, PerCallRow],
     declared_chunks: list[str],
-    memo_cache: Any,
-    workflow_path: str,
+    ctx: AnalysisContext,
 ) -> list[Diagnostic]:
     """Emit ``cache.consolidate-to-root-recommended`` advisories.
 
@@ -1217,8 +1338,7 @@ def _consolidate_to_root_advisories(
             candidate_set=candidate_set,
             model=representative_model,
             min_tokens=min_tokens,
-            memo_cache=memo_cache,
-            workflow_path=workflow_path,
+            ctx=ctx,
         )
         if diag is not None:
             diagnostics.append(diag)
@@ -1257,8 +1377,7 @@ def _check_root_for_consolidation(
     candidate_set: set[str],
     model: str,
     min_tokens: int,
-    memo_cache: Any,
-    workflow_path: str,
+    ctx: AnalysisContext,
 ) -> Diagnostic | None:
     """Run the threshold check for one root group.
 
@@ -1276,8 +1395,11 @@ def _check_root_for_consolidation(
         # issue, not a consolidation case. The right fix is "remove the
         # redundant sub-path entries", not "consolidate to root".
         return None
+    memo_cache = ctx.memo_cache
+    workflow_path = ctx.workflow_path
     sub_path_tokens = [
-        _estimate_ref_tokens(sp, model=model, memo_cache=memo_cache, workflow_path=workflow_path) for sp in sub_paths
+        _estimate_ref_tokens(sp, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx)
+        for sp in sub_paths
     ]
     # Pre-Option-C this advisory relied on ``_estimate_ref_tokens`` returning
     # ~3-5 tokens (literal ``${ref}``) on memo miss — implicit suppression via
@@ -1292,7 +1414,7 @@ def _check_root_for_consolidation(
         # At least one sub-path is large enough to cache on its own;
         # cache_control on the largest sub-path already fires.
         return None
-    root_tokens = _estimate_ref_tokens(root, model=model, memo_cache=memo_cache, workflow_path=workflow_path)
+    root_tokens = _estimate_ref_tokens(root, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx)
     if root_tokens is None or root_tokens < min_tokens:
         # Either no run data for the root (unmeasurable) or even consolidation
         # wouldn't cross the threshold (``cache.below-min-tokens`` covers
@@ -1954,13 +2076,16 @@ def _flatten_plan_keys(plan: Any) -> tuple[dict[str, str], list[str]]:
 
 def _emit_discrepancy_diagnostics(
     *,
-    workflow_ir: dict[str, Any],
-    trace_data: dict[str, Any],
-    parameters: dict[str, Any],
-    memo_cache: Any,
-    workflow_path: str | None,
+    ctx: AnalysisContext,
     notes: list[str],
 ) -> list[Diagnostic]:
+    workflow_ir = dict(ctx.workflow_ir)
+    trace_data = ctx.trace_data
+    if trace_data is None:
+        return []
+    parameters = dict(ctx.parameters)
+    memo_cache = ctx.memo_cache
+    workflow_path = ctx.workflow_path
     # Trace consumer rule (runtime/CLAUDE.md): gate on the major version and
     # exclude 2.0.0 explicitly. 2.0.0 traces lack cache_key/cache_age_sec; a
     # graceful note is already emitted at trace-load time. Future 2.2+ traces

@@ -4512,3 +4512,403 @@ C. Implementation timing: fix-first (this commit) vs fix-after Stage
 
 ---
 
+## Stage 2.x follow-up issues filed (2026-05-01)
+
+While planning the analyze-cache cost-projection fix (see prior entry for the
+Gemini smoke verification surfacing 53–240% cost overestimates), the
+deferred-to-v1.x list was triaged for items worth filing publicly. Verified
+via 2 parallel `pflow-codebase-searcher` subagents before filing.
+
+- **GH #364** — Multi-walker consolidation in trace event traversal. **5+
+  walkers**, not 4 as initially drafted, with **3 distinct `cached: True`
+  policies** (skip / include-at-recorded / include-at-0.0 — the third
+  introduced by Task 159 Track A's `cost_usd_for_node`). The documented sync
+  invariant at `core/trace_report.py:205-206` is currently FALSE — Walker #3
+  has an extra top-level `events` recursion branch that #1/#2 lack.
+  Cross-references #321, #334, Task 133.
+
+- **GH #365** — Sub-workflow cost rollup in `pflow analyze-cache`. Per-call
+  rows iterate `type: llm` only; sub-workflow LLM costs at
+  `event.sub_workflow_events[*].llm_call.cost_usd` are invisible at parent
+  scope. Concrete impact: lyrics-generator `analyze-cache song-creator`
+  underreports ~22% of cost (chorus-chooser sub-workflow's $0.10 missing).
+  Proposes separate `summary.sub_workflow_cost_usd` field; keeps focal-scope
+  projection contract unchanged. Cross-references closed #125 (trace-side
+  precursor) and open #360 (adjacent batch-size gap).
+
+A third candidate (JSON auto-parse interaction with parameter values) NOT
+filed — likely no-op already; verification cheaper than speculative ticket.
+
+Neither #364 nor #365 blocks the v1 analyze-cache cost-projection fix.
+Both filed as separate v1.x workstreams.
+
+---
+
+
+## Cost-projection fix: Tracks A + B + C (2026-05-01)
+
+After the Gemini smoke surfaced 53–240% cost overestimates and a 99%
+under-estimate of greenfield input tokens, this commit lands the three
+parallel fixes the v2 plan called out. All three share a common
+architectural axis — the analyzer wasn't carrying **resolved values**
+through its pipeline. Introduced `AnalysisContext` to thread inputs +
+methods through helpers, then wired each track to the new context.
+
+### What I implemented
+
+**New: `core/cache_analysis/context.py` — `AnalysisContext` frozen
+dataclass.** Bundles `(workflow_ir, parameters, memo_cache, trace_data,
+workflow_path, base_path)` so per-call helpers don't re-marshal these
+inputs at every signature boundary. Three load-bearing methods:
+
+- `trace_event_for(node_id)` — top-level event lookup (mirrors
+  `_find_llm_event` non-recursive contract).
+- `cost_usd_for_node(node_id)` — bounded recursion (top-level
+  `llm_call` + `batch_items[*].llm_call`) returning 3-state
+  `(cost, source)` per Track A. Cached events contribute 0.0 explicitly
+  (this run paid 0 for that item). Unpriced leaves propagate as
+  `"trace_partial"`. Does NOT descend into `sub_workflow_events`
+  (parent-scope LLM nodes only — sub-workflow cost rollup deferred to
+  GH #365).
+- `resolve_ref_value(ref)` — input-vs-node-output asymmetry per Track B.
+  Workflow-input refs: `parameters` wins over memo (current question
+  wins over historical). Node-output refs: memo only. Empty values
+  (`""`, `{}`, `[]`) normalize to None to avoid false ~0-token
+  projections.
+
+**Track A — Cost honors trace.** Added `PerCallRow.cost_usd: float | None`
++ `cost_data_source: str` (4-state: `"trace"`, `"trace_partial"`,
+`"recomputed"`, `"unavailable"`). `_per_call_current_cost` returns
+`row.cost_usd` directly when set; falls back to recompute otherwise.
+Added `_per_call_current_cost_recomputed` for `_aggregate_optimized_cost`
+which needs the hypothetical projection (NOT the recorded cost — they
+diverge on already-cached runs). Heterogeneous batch rows surface
+recorded cost into `current_usd` via a separate accumulator pass
+(extracted into `_partition_rows`/`_compute_current_usd` to keep
+complexity ≤ 10).
+
+**Track B — Tier-2 parameters fallback.** `_estimate_ref_tokens` and
+`_latest_value_for_ref` accept `ctx`; when provided, delegates to
+`AnalysisContext.resolve_ref_value`. New
+`_classify_resolution_source` labels chunks resolved exclusively via
+parameters as `cacheable_data_source: "parameters"` so agents see the
+real tier (was previously `"memo"` even when the data came from
+parameters). Backward-compat shim preserved: helpers accept both `ctx`
+and legacy `(memo_cache, workflow_path)` kwargs.
+
+**Track C — Resolve prompt template before tokenization.**
+`_build_per_call_row` calls new `_resolve_prompt_for_tokenization(prompt,
+ctx, node)` which substitutes refs against the synthetic shared store
+built from parameters + memo. `estimate_tokens` accepts
+`has_unresolved_refs: bool`; emits `"estimator-partial"` source label
+when the prompt still contains `${...}` after substitution (greenfield
+without complete inputs).
+
+**JSON_FORMAT_VERSION 2.0 → 2.1** (additive). New `per_call[].cost_usd`
++ `per_call[].cost_data_source` fields; `cacheable_data_source` gains
+new value `"parameters"`. Renderer surface: `_render_summary` cost line
+shows `(trace)` / `(trace_partial)` annotation when applicable;
+optimized + rerun stay unannotated (they're projections regardless of
+trace presence). New `_summarize_cost_tier` aggregates per-row tier
+labels for the summary annotation.
+
+### Files modified
+
+**Production** (~250 LOC):
+- **NEW** `src/pflow/core/cache_analysis/context.py` — `AnalysisContext`
+  dataclass + 3 methods + `_normalize_empty` helper.
+- `src/pflow/core/cache_analysis/analyze.py` — `PerCallRow` 2 new
+  fields; `analyze()` constructs ctx; helpers thread ctx
+  (`_build_per_call_rows_and_warnings`, `_build_per_call_row`,
+  `_populate_suggested_blocks`, `_consolidate_to_root_advisories`,
+  `_check_root_for_consolidation`, `_emit_discrepancy_diagnostics`).
+  New `_resolve_prompt_for_tokenization` + helpers
+  (`_extract_unique_refs`, `_build_shared_store_for_refs`).
+- `src/pflow/core/cache_analysis/cost_estimation.py` —
+  `_per_call_current_cost` branches on `row.cost_usd`; new
+  `_per_call_current_cost_recomputed` for projection paths;
+  `compute_aggregate_costs` decomposed into `_partition_rows` +
+  `_empty_priced_rows_breakdown` + `_compute_current_usd` (C901 ≤ 10);
+  heterogeneous batch rows surface recorded cost.
+- `src/pflow/core/cache_analysis/token_estimation.py` —
+  `estimate_cacheable_tokens`, `_sum_resolved_chunk_tokens`,
+  `_estimate_ref_tokens`, `_latest_value_for_ref` accept `ctx`; new
+  `_classify_resolution_source`. `estimate_tokens` accepts
+  `has_unresolved_refs` for `"estimator-partial"` tier label.
+- `src/pflow/core/cache_analysis/render_text.py` — `_format_cost`
+  accepts `tier_annotation`; `_render_summary` calls new
+  `_summarize_cost_tier`; cost line shows `(trace)` / `(trace_partial)`
+  when applicable.
+- `src/pflow/core/cache_analysis/render_json.py` —
+  `JSON_FORMAT_VERSION` 2.0 → 2.1; per-call dict adds `cost_usd` +
+  `cost_data_source`; module docstring extended with 2.1 changelog.
+
+**Tests added** (8 high-value tests, all mutation-tested):
+- `test_cache_analysis_cost_estimation.py` — Tests 1, 8 (Track A:
+  recorded cost honored + heterogeneous batch surface).
+- `test_cache_analysis_token_estimation.py` — Tests 2, 9, 10, 12
+  (Track B: parameters fallback + parameters-wins-over-memo +
+  empty-string normalization + Track C estimator-partial label).
+- `test_cache_analysis_analyze.py` — Tests 3, 4 (end-to-end through
+  `analyze()` for resolved-prompt tokenization + recorded cost
+  surfacing in summary).
+
+**Tests updated**:
+- `test_cache_analysis_per_id_coverage.py` — version pin loosened from
+  `== "2.0"` to `startswith("2.")` (forward-compat with the 2.1 bump
+  AND any future 2.x minor). Pre-fix the literal pin would have failed
+  loudly on the bump; post-fix the consumer rule is the actual contract.
+
+### Deviations from plan
+
+1. **No standalone Phase 0 byte-equivalence regression test (Test 11
+   from plan).** The plan called for capturing pre-refactor `render_json`
+   output for 4 fixtures, asserting byte-equivalent post-refactor. In
+   practice, the existing 6,049 tests cover the regression surface
+   sufficiently — none of them broke through Phase 0 (only one test
+   pinned to `JSON_FORMAT_VERSION == "2.0"` needed updating, which is
+   intentional, not a regression). Skipping Test 11 saves ~50 LOC of
+   fixture maintenance. Reasoning: the byte-equivalence test would
+   only catch unintended semantic drift in Phase 0; subsequent phases
+   intentionally change semantics, so the test would need rewriting at
+   each phase anyway.
+
+2. **No standalone `RefResolver` class (per Decision 4).** Confirmed
+   — the methods on `AnalysisContext` carry the resolution policy.
+   Adding a separate class would double the abstraction count.
+
+3. **Phased rollout collapsed to single coordinated commit.** The plan
+   proposed Phase 0 (refactor) → A (cost) → B (parameters) → C
+   (template). In practice the changes are small enough to ship as one
+   coordinated change because:
+   - The new `AnalysisContext` is independent of any phase's logic.
+   - Each phase's production change is < 20 LOC.
+   - The full test suite catches cross-phase regressions in one pass.
+   The phased rollout would have been the right call for a higher-risk
+   refactor; the actual delta is small enough that a single commit
+   minimizes review overhead.
+
+4. **`cost_data_source` 4-state implemented; renderer annotation
+   surfaces only `(trace)` / `(trace_partial)` per state**, not all 4.
+   `"recomputed"` is the default — annotating it would clutter
+   greenfield output. `"unavailable"` collapses to `"unavailable"` in
+   `_format_cost` (the cost itself is None upstream). Cleaner than
+   per-state suffix.
+
+5. **`_aggregate_optimized_cost` for the no-declared-subset path uses
+   `_per_call_current_cost_recomputed` directly** (NOT
+   `_per_call_current_cost`). Critical insight: optimized cost is
+   HYPOTHETICAL (what would the cost be IF this row had no caching
+   declared). The trace's recorded cost reflects what was paid WITH
+   caching, so honoring it here would make `optimized < current`
+   impossible to observe for already-cached runs (defeats the purpose
+   of the optimization projection).
+
+### Critical insights
+
+1. **The cost-tier 4-state is load-bearing.** Pre-fix the analyzer
+   silently recomputed when the trace had a real cost — agents reading
+   `current_cost: $0.0032` couldn't tell whether the figure was a
+   projection or what the workflow paid. Post-fix the tier label
+   distinguishes `"trace"` (real, high confidence) from `"recomputed"`
+   (projection, medium confidence) from `"trace_partial"` (mix, with
+   at least one unpriced model). The renderer annotation `(trace)` /
+   `(trace_partial)` surfaces this directly in the summary so agents
+   see fidelity at a glance.
+
+2. **Heterogeneous batch rows need a separate code path for recorded
+   cost.** They can't be priced as one model so they're excluded from
+   the `priced_rows` projection pipeline — but if the trace recorded
+   a cost, ignoring it produces an under-estimate of `current_usd`.
+   `_partition_rows` accumulates `heterogeneous_recorded_cost` in a
+   parallel pass; `_compute_current_usd` adds it to the priced-rows
+   sum. Sets `partial=True` so the renderer shows the appropriate
+   confidence marker.
+
+3. **Workflow-input refs need parameters precedence; node-output refs
+   need memo-only.** This asymmetry mirrors runtime: workflow inputs
+   come from the user at runtime; node outputs come from prior
+   execution. Mixing the two — letting memo override parameters for
+   workflow inputs — would break the load-bearing principle that the
+   agent's CURRENT question wins. `AnalysisContext.resolve_ref_value`
+   enforces this via `if root in declared_inputs: parameters first`.
+
+4. **Empty-value normalization (Test 9 mutation contract).** The
+   `_normalize_empty` helper returns None for empty string / dict /
+   list. Without it, an agent passing `--inputs context=""` would see
+   `cacheable_tokens=0` with `data_source=parameters` — looks like "we
+   measured it and got 0" when actually we have no data. Returning
+   None pushes the caller to Tier 4 unavailable — honest signal.
+
+5. **Resolved-prompt tokenization only matters at Tier 3 (estimator).**
+   Tier 1 (trace) and Tier 2 (memo) read tokens directly from the
+   recorded data; the prompt template is irrelevant. Track C's
+   resolved-prompt path fires when there's no trace AND no memo data
+   for the LLM node's own ID — i.e., greenfield with `--inputs`
+   covering the referenced refs. The `estimator-partial` label tells
+   agents when resolution was incomplete (some refs left unresolved).
+
+6. **Backward-compat shim on `_estimate_ref_tokens` / `_latest_value_for_ref`
+   saves ~5 monkeypatch site updates.** When `ctx is None`, helpers
+   fall back to legacy memo-only resolution. Existing tests at
+   `test_cache_analysis_per_id_emission.py` (5 monkeypatch sites) work
+   unchanged. The shim is the ONLY production code with `ctx=None`
+   handling — production callers always thread ctx via `analyze()`'s
+   single construction site.
+
+### Verification
+
+- **6,057 tests passing** (was 6,049 + 8 new); `make check` clean.
+- `test_plan_drift.py` 33/33 ✓; `test_prompt_cache_hash.py` 15/15 ✓
+  (golden baseline, DD#19).
+- **Gemini smoke re-verification** (the canonical bug fixtures):
+  - RUN1 trace ($0.00210488 actual paid):
+    `summary.current_cost_per_run_usd = 0.00210488` ✓ (was $0.0032,
+    53% over).
+  - RUN2 trace ($0.00067772 actual paid):
+    `summary.current_cost_per_run_usd = 0.00067772` ✓ (was $0.0032,
+    240% over).
+  - Per-call rows show `cost_data_source: "trace"`; `cost_usd` matches
+    individual `llm_call.cost_usd` from each trace event.
+  - Greenfield + `--inputs context=<5000-token>`: `cacheable_data_source:
+    "parameters"`, `cacheable_tokens_estimated: 1376` ✓ (was null —
+    Tier 4 unavailable pre-fix).
+
+### Open hedged claims and verifications still pending
+
+- **NEEDS VERIFICATION (Stage 2.1 — song-creator standalone)**: now
+  meaningful per acceptance criterion 8 (Stage 2.1 song-creator
+  becomes meaningful with the cost-projection fix). Run a real
+  song-creator fixture with `## Cache` declared and verify the
+  projection matches the actual spend within ±5%.
+- **DEFERRED (GH #364)**: 5-walker consolidation. `cost_usd_for_node`
+  introduces a 3rd `cached: True` policy (include-at-0.0); the
+  documented sync invariant at `trace_report.py:205-206` is now FALSE
+  (3 distinct policies, not 1). Filed as v1.x workstream.
+- **DEFERRED (GH #365)**: sub-workflow cost rollup. Track A
+  intentionally does NOT descend into `sub_workflow_events` (parent
+  scope only); the renderer underreports parent cost when sub-workflows
+  carry significant LLM spend. Filed as v1.x workstream.
+
+### Open user decisions surfaced
+
+**None.** All design decisions resolved during planning + 4-agent plan
+review (review-plan, review-impact-completeness, review-silent-failures,
+review-feature-interactions). The phased rollout was collapsed to a
+single commit per the deviations note above.
+
+---
+
+## Cost-projection fix follow-up: cached events + missing tests
+
+Self-audit caught one real loose end + three missing tests from the v2
+plan's high-value list. Added in a follow-up pass.
+
+### Loose end: cached events returned `(None, "unavailable")` not `(0.0, "trace")`
+
+`AnalysisContext.cost_usd_for_node` only checked `event.llm_call`; cached
+events (`cached: True` with no `llm_call` — produced by the runtime's
+memoization fast-path at `workflow_trace.py:312`) fell through to
+`(None, "unavailable")`. On rerun-within-TTL traces this would force the
+recompute fallback to fabricate fictional cost when the actual paid was
+$0.
+
+**Fix**: explicit branch at the top of `cost_usd_for_node` returns
+`(0.0, "trace")` when the event has `cached: True`, no `llm_call`, and
+no batch items. Cached batch items inside a non-cached parent contribute
+to `found_any` (priced-at-zero) without inflating the sum — so a partial
+batch (some cached, some not) reports trace-tier cost = sum of non-cached
+items.
+
+**Refactor**: extracted `_walk_event_for_cost` helper (kept
+`cost_usd_for_node` C901 ≤ 10).
+
+### Tests 5, 6, 7 (added)
+
+The first commit shipped Tests 1, 2, 3, 4, 8, 9, 10, 12 (8 of 12 from
+the plan). The remaining 3 lock the walker semantics that emerged from
+the loose-end fix:
+
+- **Test 5** — Cached events contribute 0.0 (NOT unavailable). Mutation
+  contract: drop the cached-event branch -> recompute fabricates a
+  fictional cost.
+- **Test 6** — `cost_usd_for_node` does NOT descend into
+  `sub_workflow_events`. Mutation contract: add a recursion ->
+  parent-scope cost double-counts sub-workflow cost.
+- **Test 7** — `cost_usd: None` propagates as `"trace_partial"`.
+  Mutation contract: drop the `has_unpriced` flag -> unpriced leaves
+  silently contribute 0 -> cost reports as `"trace"` (looks fully
+  authoritative when it isn't).
+
+### Tests 11 (intentionally skipped)
+
+Phase 0 byte-equivalence regression test from the plan was intentionally
+skipped — see prior progress log entry's "Deviations from plan" section.
+The existing 6,049 tests cover the regression surface; the only test
+that broke through Phase 0 (`test_json_format_version == "2.0"`) was
+intentional (additive 2.0 -> 2.1 bump).
+
+### Verification
+
+- **6,060 tests passing** (was 6,057 + 3 new walker tests); `make check`
+  clean.
+- Mutation-verified each new test by reverting its production branch
+  manually before adding the test (cached -> None instead of 0; descend
+  -> wrong total; drop has_unpriced -> wrong source label).
+
+---
+
+## Verification specialist pass — 7 manual CLI tests (2026-05-02)
+
+After the cost-projection + loose-end fixes, ran 7 high-leverage manual
+tests through the CLI on real-shape data (not just unit-test mocks).
+
+### Tests run
+
+1. **Text renderer cost annotation** — `(trace)` annotation appears
+   correctly. ⚠ Pre-existing UX gap surfaced: `_format_cost`'s `:.2f`
+   rounds sub-cent costs to `$0.00`. Not a regression (pre-fix
+   over-estimates also rounded), but Track A's accurate sub-cent
+   figures make it more visible. JSON consumers unaffected.
+2. **0-LLM-nodes workflow** — `analyze-cache` doesn't crash; renders
+   "Cost data unavailable: workflow has no LLM nodes."
+3. **Cached LLM event end-to-end** — synthetic trace matching
+   production shape (`cached: true`, no `llm_call`) → CLI reports
+   `cost_usd: 0.0`, `cost_data_source: "trace"`. The loose-end fix
+   fires through the full pipeline.
+4. **Greenfield + `--inputs` through CLI** — Track B fires:
+   `cacheable_data_source: "parameters"`. Suggested ## Cache block
+   shows real `estimated_savings_usd: 0.0135` (~90% input savings on
+   2-LLM workflow with 5000-token shared `${context}`).
+5. **Empty-string `--inputs context=""`** — Track B silent-failures
+   defense fires: `cacheable_tokens_estimated: null`,
+   `cacheable_data_source: "unavailable"`.
+6. **Real runtime trace shape** — ran a shell workflow twice;
+   second run produced `cached: true` + no `llm_call` events
+   (matches the synthetic shape M3 used).
+7. **Combined edge cases in one synthetic trace** — priced node
+   ($0.01) + cached node ($0.00) + node with sub-workflow
+   carrying $99.99 child cost (deliberately absurd to make a
+   leak loud). Walker correctly returned $0.015 total — sub-workflow
+   excluded. Walker leak would have produced $99.005 (6,600x off).
+
+8. **Regression: lyrics-generator song-creator** — 7 LLM nodes,
+   4 opportunities, recommendations preserved. No behavioral break.
+
+### Findings
+
+- **No real regressions** in Track A / B / C or the cached-event
+  loose-end fix. All behaviors verified end-to-end through the CLI
+  on real-shape data.
+- **One pre-existing UX gap** (M1): sub-cent costs render as `$0.00`
+  in text mode. Filed for v1.x renderer pass; doesn't block this fix.
+
+### Verification cost
+
+$0. M3 + M7 used hand-written trace JSON files — no LLM calls, no
+workflow executions. M6 ran shell-only `echo` workflows locally.
+The $99.99 in M7 was a synthetic value chosen to make a sub-workflow
+scoping leak loud if it existed (would have produced $99.005 vs the
+correct $0.015).
+
+---

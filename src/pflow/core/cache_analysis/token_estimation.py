@@ -2,14 +2,18 @@
 
 ``estimate_tokens`` (input):
 
-1. ``trace``      — from a 2.1.0 JSON trace's per-event ``llm_call.input_tokens``.
-                    Only path that gets discrepancy analysis in ``--from-trace`` mode.
-2. ``memo``       — from ``MemoizationCache.get_latest_for_node()`` returning a recent
-                    entry whose payload includes ``llm_usage.input_tokens``.
-3. ``estimator``  — from ``litellm.token_counter(model=, text=)``.
-4. ``heuristic``  — last-resort ``len(text) // 4`` (only place pflow uses a
-                    char-based heuristic — flagged via the source label so
-                    agents see the low-fidelity fallback).
+1. ``trace``              — from a 2.1.0 JSON trace's per-event ``llm_call.input_tokens``.
+                            Only path that gets discrepancy analysis in ``--from-trace`` mode.
+2. ``memo``               — from ``MemoizationCache.get_latest_for_node()`` returning a recent
+                            entry whose payload includes ``llm_usage.input_tokens``.
+3. ``estimator``          — from ``litellm.token_counter(model=, text=)`` on a
+                            FULLY RESOLVED prompt (every ``${...}`` substituted).
+3a. ``estimator-partial`` — same as ``estimator``, but at least one ``${...}``
+                            ref couldn't be resolved (greenfield-no-data).
+                            Caller flags this via ``has_unresolved_refs=True``.
+4. ``heuristic``          — last-resort ``len(text) // 4`` (only place pflow uses
+                            a char-based heuristic — flagged via the source label
+                            so agents see the low-fidelity fallback).
 
 ``estimate_output_tokens``: ``trace → memo → unavailable``. Output tokens
 cannot be predicted ahead of an LLM call.
@@ -35,7 +39,10 @@ the analyzer package import-cheap. Lazy-imports ``TemplateResolver`` inside
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from .context import AnalysisContext
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +63,20 @@ def estimate_tokens(
     memo_cache: _MemoCacheLike | None = None,
     node_id: str | None = None,
     workflow_path: str | None = None,
+    has_unresolved_refs: bool = False,
 ) -> tuple[int, str]:
     """Return ``(token_count, source)`` per the four-tier strategy.
 
-    ``source ∈ {"trace", "memo", "estimator", "heuristic"}``. Confidence
-    aggregation upstream uses these labels per DD#34.
+    ``source ∈ {"trace", "memo", "estimator", "estimator-partial", "heuristic"}``.
+    The ``estimator-partial`` source is emitted when the caller resolved the
+    prompt template before tokenization but at least one ``${...}`` reference
+    couldn't be substituted (greenfield-no-data for some refs). It signals
+    "estimator ran on a prompt that's still partially literal" — agents
+    treat the count as low-confidence per DD#34's confidence aggregation.
+
+    Confidence aggregation treats ``estimator-partial`` as estimator-tier
+    (not heuristic) so STRICT semantics still classify a workflow with
+    partial-resolution as ``low_no_data`` only if other rows are heuristic.
     """
     # --- Tier 1: trace --------------------------------------------------------
     if trace is not None and node_id is not None:
@@ -95,7 +111,7 @@ def estimate_tokens(
             )
             return _heuristic(text), "heuristic"
         else:
-            return token_count, "estimator"
+            return token_count, "estimator-partial" if has_unresolved_refs else "estimator"
 
     # --- Tier 4: heuristic ----------------------------------------------------
     return _heuristic(text), "heuristic"
@@ -110,6 +126,7 @@ def estimate_cacheable_tokens(
     model: str,
     workflow_path: str | None,
     prompt: str = "",
+    ctx: AnalysisContext | None = None,
 ) -> tuple[int | None, str]:
     """Return ``(cacheable_tokens, source)`` using highest-fidelity available data.
 
@@ -139,11 +156,18 @@ def estimate_cacheable_tokens(
         # "what was attempted" so cache.below-min-tokens fires correctly.
 
     # Tier 2: memo-resolved chunk tokenization (declared OR candidate).
+    # When ``ctx`` is supplied, parameters fallback fires for workflow-input
+    # refs (Track B). Without ctx, fall back to memo-only resolution for
+    # backward compatibility with legacy direct callers.
     chunks = declared_subset or candidate_subset
-    if chunks and memo_cache is not None and model:
-        total = _sum_resolved_chunk_tokens(chunks, model, memo_cache, workflow_path)
+    if chunks and model and (ctx is not None or memo_cache is not None):
+        total = _sum_resolved_chunk_tokens(chunks, model, memo_cache, workflow_path, ctx=ctx)
         if total is not None:
-            return (total, "memo")
+            # When the source is exclusively parameters, label accordingly so
+            # agents can see WHICH tier produced the projection. Detection is
+            # cheap when ``ctx`` is provided — re-resolve via parameters only.
+            label = _classify_resolution_source(chunks, ctx)
+            return (total, label)
         # Fall through to Tier 3 for declared (preserves below-min-tokens fidelity).
         # For candidate-only, fall through to Tier 4 (Option C — honest unmeasurable).
 
@@ -158,17 +182,47 @@ def estimate_cacheable_tokens(
 def _sum_resolved_chunk_tokens(
     chunks: list[str],
     model: str,
-    memo_cache: _MemoCacheLike,
+    memo_cache: _MemoCacheLike | None,
     workflow_path: str | None,
+    *,
+    ctx: AnalysisContext | None = None,
 ) -> int | None:
-    """Sum memo-resolved chunk token counts. None if any chunk has no memo data."""
+    """Sum chunk token counts via parameters (preferred) then memo.
+
+    None if any chunk resolves to no value (Tier 4 unmeasurable propagates).
+    """
     total = 0
     for ref in chunks:
-        tokens = _estimate_ref_tokens(ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path)
+        tokens = _estimate_ref_tokens(ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx)
         if tokens is None:
             return None
         total += tokens
     return total
+
+
+def _classify_resolution_source(chunks: list[str], ctx: AnalysisContext | None) -> str:
+    """Return ``"parameters"`` when every chunk resolves via parameters; else ``"memo"``.
+
+    Matches the agent-facing tier label set documented in the module
+    docstring. Greenfield + ``--inputs`` lights up the parameters tier so
+    ``cacheable_data_source`` reads ``"parameters"`` instead of an
+    unhelpful generic label.
+    """
+    if ctx is None:
+        return "memo"
+    declared_inputs = ctx.workflow_ir.get("inputs") if isinstance(ctx.workflow_ir, dict) else None
+    if not isinstance(declared_inputs, dict):
+        return "memo"
+    # Lazy-import (matches existing pattern in this module).
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    all_from_params = True
+    for ref in chunks:
+        root = TemplateResolver.extract_root_node_id(ref)
+        if not root or root not in declared_inputs or root not in ctx.parameters:
+            all_from_params = False
+            break
+    return "parameters" if all_from_params else "memo"
 
 
 def estimate_output_tokens(
@@ -311,23 +365,28 @@ def _heuristic(text: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _estimate_ref_tokens(ref: str, *, model: str, memo_cache: Any, workflow_path: str | None) -> int | None:
+def _estimate_ref_tokens(
+    ref: str,
+    *,
+    model: str,
+    memo_cache: Any,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None = None,
+) -> int | None:
     """Tokenize a template reference's resolved value.
 
-    Returns:
-        - Real token count when memo cache holds a recent value for the ref's
-          root node (high-fidelity).
-        - ``None`` when memo is empty / lookup fails (no run data — projection
-          unavailable). Callers MUST distinguish ``None`` from a small int.
+    When ``ctx`` is supplied, resolution honors the input-vs-node-output
+    asymmetry from :class:`AnalysisContext.resolve_ref_value` (parameters
+    win for workflow-input refs; memo only for node-output refs). Without
+    ``ctx``, falls back to the legacy memo-only path for backward
+    compatibility with existing test monkeypatch sites.
 
-    The previous fallback (tokenize the literal ``${ref}`` string, ~3-5 tokens)
-    was structurally misleading: it produced a tiny number that looked like a
-    real estimate but actually represented "we have no data" — agents reading
-    ``cacheable=38`` thought the opportunity was small when actually it was
-    unmeasured. ``None`` propagation lets the renderer hide misleading rows
-    explicitly per Option C (see render_text._render_per_call).
+    Returns:
+        - Real token count when a value is available (parameters or memo).
+        - ``None`` when no value resolved — callers MUST distinguish
+          ``None`` from a small int (per Option C — honest unmeasurable).
     """
-    value = _latest_value_for_ref(ref, memo_cache=memo_cache, workflow_path=workflow_path)
+    value = _latest_value_for_ref(ref, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx)
     if value is not None:
         # Lazy-import to avoid heavy ``cache_render`` import at module load.
         from pflow.core.cache_render import deterministic_serialize
@@ -336,8 +395,22 @@ def _estimate_ref_tokens(ref: str, *, model: str, memo_cache: Any, workflow_path
     return None
 
 
-def _latest_value_for_ref(ref: str, *, memo_cache: Any, workflow_path: str | None) -> Any:
-    """Resolve ``ref`` to its latest memoized value, or None if unavailable."""
+def _latest_value_for_ref(
+    ref: str,
+    *,
+    memo_cache: Any,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None = None,
+) -> Any:
+    """Resolve ``ref`` to its latest known value, or None if unavailable.
+
+    When ``ctx`` is provided, delegates to :meth:`AnalysisContext.resolve_ref_value`
+    (parameters fallback + empty-value handling). Without ctx, uses the
+    legacy memo-only resolution.
+    """
+    if ctx is not None:
+        return ctx.resolve_ref_value(ref)
+
     if memo_cache is None:
         return None
     # Lazy-import keeps token_estimation.py layer-clean (mirrors litellm pattern).

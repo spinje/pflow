@@ -28,7 +28,7 @@ from pflow.core.diagnostic import Diagnostic
 
 from .analyze import CacheAnalysis, PerCallRow, RecommendedAction, SuggestedBlock
 
-JSON_FORMAT_VERSION: Final[str] = "2.0"
+JSON_FORMAT_VERSION: Final[str] = "2.1"
 """Current JSON output format version. Bump minor on additive changes.
 
 Version history:
@@ -84,6 +84,37 @@ Version history:
   with ``input_tokens_estimated``. Heterogeneous-batch greenfield rows
   may shift from ``0`` to ``null`` (no projection possible without
   model). Field shapes additive.
+- ``2.1`` (Track A / B / C): three new ``per_call[]`` fields, all additive.
+
+  * ``cost_usd`` (number | null): per-call recorded cost from the trace
+    when available (sum of llm_call + batch_items[*].llm_call costs); null
+    for rows without trace data (recompute path fires).
+  * ``cost_data_source`` (string): tier label for the cost figure. 4-state:
+    ``"trace"`` (priced; all leaves priced — high confidence),
+    ``"trace_partial"`` (cost from trace + recompute mix; at least one leaf
+    had unpriced model — medium-high confidence),
+    ``"recomputed"`` (no trace; computed from ``tokens x LiteLLM rate`` —
+    medium confidence; matches pre-Track-A behavior),
+    ``"unavailable"`` (pricing missing AND no trace data — low confidence).
+  * ``cacheable_data_source`` gains a new value: ``"parameters"`` — fired
+    when greenfield workflow-input refs resolve via the agent's
+    ``--inputs`` (was previously labeled ``"memo"`` even though the
+    underlying data came from parameters).
+
+  SEMANTIC fixes (no shape changes):
+  * ``current_cost_per_run_usd`` now reflects what the workflow actually
+    paid (honoring implicit caching like Gemini's). Pre-fix, it recomputed
+    from ``tokens x full_rate`` and over-estimated by 50-200%+ on cached
+    runs. Tier label on ``per_call[].cost_data_source`` lets consumers
+    distinguish trace-honored from recomputed.
+  * ``input_tokens_estimated`` for greenfield workflow-input refs now
+    counts the RESOLVED prompt's tokens (via ``--inputs``) instead of the
+    literal template's ~5-char ``${context}`` placeholder. Before fix,
+    greenfield projections under-estimated by 99% on input-heavy prompts.
+  * ``data_source`` on rows whose prompt resolved partially (some
+    ``${...}`` refs left unsubstituted) now reports ``"estimator-partial"``
+    instead of ``"estimator"`` — high-confidence projection requires full
+    resolution.
 """
 
 JSON_FORMAT_VERSION_MAJOR: Final[str] = "2"
@@ -209,6 +240,11 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         # sub-workflow). When True, ``model`` is the empty string so consumers
         # have a single clear discriminator.
         "model_is_heterogeneous": row.model_is_heterogeneous,
+        # Track A (2.1 minor-additive): per-node recorded cost from trace.
+        # ``null`` when no trace data — see ``cost_data_source`` for the
+        # 4-state tier label.
+        "cost_usd": row.cost_usd,
+        "cost_data_source": row.cost_data_source,
         # Stage 0.3 (Task 159): per-call ``warnings`` array dropped — production
         # never populated it. JSON consumers needing per-row warning markers
         # filter ``warnings[]`` (top-level) by ``node_id``.

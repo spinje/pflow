@@ -205,15 +205,18 @@ def test_per_id_diagnostic_json_round_trip(warning_id: str) -> None:
 
 def test_json_format_version_consumer_rule_holds() -> None:
     """Consumer rule: ``format_version.startswith(JSON_FORMAT_VERSION_MAJOR + ".")``
-    accepts current ``"2.0"`` AND any future ``"2.x"`` minor bump. Lock both.
+    accepts current ``"2.x"`` AND any future ``"2.x"`` minor bump. Lock both.
 
     Stage-1 final UX pass (Concern B): version bumped 1.0 → 1.1 because
     ``per_call[].cacheable_tokens_estimated`` and
     ``per_call[].cache_ratio_pct`` semantics extended to populate from the
     suggested-blocks pass in greenfield mode. Field shapes unchanged; the
     consumer rule (1.x catches both) remains valid.
+
+    Track A bumped 2.0 → 2.1 (additive: ``per_call[].cost_usd``,
+    ``per_call[].cost_data_source``).
     """
-    assert JSON_FORMAT_VERSION == "2.0"
+    assert JSON_FORMAT_VERSION.startswith("2.")
     assert JSON_FORMAT_VERSION.startswith(JSON_FORMAT_VERSION_MAJOR + ".")
 
 

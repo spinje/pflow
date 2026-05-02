@@ -1689,3 +1689,114 @@ def test_declared_partial_memo_falls_through_to_estimator_end_to_end(
         f"declared partial-memo should fall through to estimator; got {row.cacheable_data_source!r}"
     )
     assert row.cacheable_tokens_estimated is not None and row.cacheable_tokens_estimated > 0
+
+
+# ---------------------------------------------------------------------------
+# Track A / B / C end-to-end through ``analyze()`` (Pitfall #19 defense —
+# drives the public API, not internal helpers).
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_end_to_end_resolves_prompt_template_for_tokenization() -> None:
+    """Test 3 — Resolved prompt for tokenization.
+
+    Mutation contract: revert ``_resolve_prompt_for_tokenization`` to pass
+    the raw prompt to ``estimate_tokens`` → input_tokens reflects the
+    template literal (~50 tokens for the prompt prose + ``${context}`` as
+    5 chars) instead of the resolved 5000-char value.
+    """
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"context": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "answer",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Reference document follows.\n\n${context}\n\nAnswer briefly.",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    # 2000 unique-ish words generate a real (uncompressed) token count.
+    # Repeating chars compress through any tokenizer's BPE / WordPiece —
+    # use distinct tokens so the post-resolution count is observable.
+    big_context = " ".join(f"word{i}" for i in range(2000))
+    analysis = analyze(workflow_ir, parameters={"context": big_context}, auto_load_trace=False)
+    assert len(analysis.per_call) == 1
+    row = analysis.per_call[0]
+    # Pre-fix: tokenization on raw template ~30 tokens.
+    # Post-fix: resolved prompt has ~2000+ distinct tokens.
+    assert row.input_tokens_estimated > 1000
+
+
+def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
+    """Test 4 — Brownfield end-to-end (Track A through analyze()).
+
+    Drives the public ``analyze()`` API with synthetic trace data carrying
+    a known ``cost_usd``. Verifies that ``summary.current_cost_per_run_usd``
+    reflects the recorded cost, NOT the recompute fallback.
+
+    Mutation contract: revert ``cost_usd_for_node`` to always return None
+    -> analyzer falls back to ``tokens x full_rate`` recompute -> assertion
+    on the smaller recorded cost fails.
+    """
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "answer-a",
+                "type": "llm",
+                "params": {"model": "gemini/gemini-2.5-flash", "prompt": "What is 2+2?"},
+            }
+        ],
+        "edges": [],
+    }
+    # Fake a 2.1 trace with a recorded cost much lower than tokens x full_rate.
+    trace = {
+        "format_version": "2.1.0",
+        "workflow_path": "ir-hash:fake",
+        "nodes": [
+            {
+                "node_id": "answer-a",
+                "node_type": "LLMNode",
+                "llm_call": {
+                    "model": "gemini/gemini-2.5-flash",
+                    "input_tokens": 4709,
+                    "output_tokens": 76,
+                    "cost_usd": 0.00210488,  # The number recorded by the actual trace.
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            }
+        ],
+    }
+    # Bypass auto-load by passing trace_data directly via internal API.
+    # ``analyze`` doesn't have a trace_data kwarg, so simulate by building
+    # a temp file. Simpler: the analyzer accepts trace_path, so we'd need
+    # a real file. Instead, drive via an explicit test-only path: write
+    # the trace JSON to tmp.
+    import json
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(trace, f)
+        trace_file = f.name
+
+    try:
+        analysis = analyze(
+            workflow_ir,
+            trace_path=Path(trace_file),
+            auto_load_trace=False,
+        )
+    finally:
+        Path(trace_file).unlink(missing_ok=True)
+
+    assert analysis.summary.current_cost_per_run_usd is not None
+    # Within ±5% of recorded cost (no recompute drift).
+    assert abs(analysis.summary.current_cost_per_run_usd - 0.00210488) / 0.00210488 < 0.05
+    # Cost data source on the row reflects trace tier.
+    assert analysis.per_call[0].cost_data_source == "trace"
+    assert analysis.per_call[0].cost_usd is not None
