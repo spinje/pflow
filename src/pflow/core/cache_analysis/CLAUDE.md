@@ -1,0 +1,264 @@
+# Cache Analysis Module
+
+Static + trace-based analysis of a workflow's prompt-cache plan. Surfaces `pflow analyze-cache`, the `--dry-run` cache nudge, and the MCP `analyze_cache` tool. Reads workflow IR + optional execution trace; emits `CacheAnalysis` (data) and `Diagnostic` lists (findings).
+
+> **Refactor planned (task 160).** This module is structured around a 3,293-LOC `analyze.py` that absorbed multiple concerns. A pure-structural cleanup is specified in `.taskmaster/tasks/task_160/`. This document describes the **current** state — what's actually here, not what's planned.
+
+## Disambiguation: pflow has TWO independent "cache" concepts
+
+This is the most common source of agent confusion. Read this before anything else.
+
+| Concept | Per-node field | Substrate | Owner |
+|---|---|---|---|
+| **Memoization** (pflow's local cache layer) | `cache: bool` (default `true`; `false` opts out) | `runtime/cache.py` `MemoizationCache` (SQLite at `~/.pflow/cache/cache.db`) | Memo hits skip re-execution entirely |
+| **LLM provider prompt cache** (Anthropic / OpenAI / Gemini) | `prompt_cache: [name1, name2, ...]` (subset of `## Cache` block) | `cache_render.py` (renders content blocks with `cache_control` markers); LiteLLM adapter at `llm_client.py` emits to provider | Provider serves cached prefix; pflow still calls the LLM |
+
+**This package (`cache_analysis/`) is exclusively about the second.** The CLI flag `--no-cache` controls *memoization* — orthogonal to this package's analysis.
+
+The two layers interact at one point: per DD#19 (task-159.md), declared `prompt_cache` content is conditionally included in the memoization config-hash so that workflows upgraded to declare prompt caching produce a fresh memo cache_key (not a stale hit on a cached output computed without the prompt prefix).
+
+## Three different "cache key" namespaces (also confusing)
+
+| Name | What it is | Where it lives |
+|---|---|---|
+| **Memo config-hash** | MD5 of the per-node config dict (resolved templates, model, params, conditional `prompt_cache` content per DD#19). Determines memoization hits. | `runtime/engine/instrumentation.py::compute_node_config` |
+| **LLM provider prompt cache key** | `prompt_cache_key` MD5 of the rendered cache-block content. Sent to OpenAI for sticky-routing requests sharing the prefix to the same backend (read-rate hits). | `nodes/llm/llm.py::_build_openai_cache_kwargs` |
+| **Provider-side cacheable token counts** | `cache_creation_input_tokens` / `cache_read_input_tokens` reported by the provider in trace events. | Trace 2.1.0 — read by `token_estimation.py` |
+
+The discrepancy stage in `analyze.py` predicts **memo config-hashes** (not provider prompt cache keys) and compares them to trace events to detect when the analyzer's prediction diverged from what the engine actually computed.
+
+## Module Structure
+
+```
+src/pflow/core/cache_analysis/
+├── __init__.py                  # 35 LOC  — public API re-exports
+├── analyze.py                   # 3,293 LOC — orchestrator + 9 dataclasses + 6 algorithm clusters
+├── context.py                   # 245 LOC — AnalysisContext (immutable input bundle)
+├── cross_workflow.py            # 416 LOC — sub-workflow walker (DATA primitive, NOT a stage)
+├── cost_estimation.py           # 561 LOC — row-level cost projections + actually-paid math
+├── token_estimation.py          # 419 LOC — 4-tier token estimation hierarchy
+├── padding_advisor.py           # 63 LOC — sensitivity-floored padding advisories
+├── render_json.py               # 399 LOC — JSON projection of CacheAnalysis
+├── render_text.py               # 1,008 LOC — text projection (orchestrator + 7 sections)
+├── summarize.py                 # 113 LOC — one-line dry-run nudge Diagnostic
+├── view_helpers.py              # 143 LOC — recommended-actions ranking + cross-workflow filter
+└── warning_catalog.py           # 1,171 LOC — 14-entry frozen catalog + factory + dispatch
+```
+
+Total: 7,865 LOC. Refactor planned to split `analyze.py` into a thin orchestrator plus `stages/` and `rendering/` subdirectories — see task 160.
+
+## Key Components — Non-Obvious Details
+
+### analyze.py
+
+**It is one orchestrator with internal clusters, not a flat pile of helpers.** `analyze()` (lines 376-563) builds an `AnalysisContext` and chains ~10 named stages by calling private helpers in sequence. The 3,293 LOC contains:
+
+- **9 frozen public dataclasses** (lines 81-374, ~294 LOC): `CacheAnalysis`, `AnalysisSummary`, `PerCallRow`, `RecommendedAction`, `SuggestedBlock`, `SuggestedBlockChunk`, `CrossWorkflowFindings`, `SubWorkflowRollup`, `SubWorkflowRollupEntry`, plus internal `TraceExecutionIndex`. These are the package's public language but live inside the orchestrator file — this forces a documented circular-import workaround at `view_helpers.py:84`.
+- **The orchestrator** (lines 382-568, ~187 LOC).
+- **Trace + memo I/O loaders** (lines 576-756): autoload from `~/.pflow/debug/`, MemoizationCache default-construction.
+- **Per-call row assembly** (lines 963-1372, ~410 LOC): walks LLM nodes, builds `PerCallRow`s.
+- **Per-node warning visitors** (lines 1375-1628, ~254 LOC): **four separate functions** — `_per_node_warnings`, `_batch_prewarm_recommendations`, `_dynamic_before_static_warnings`, `_opaque_prompt_warnings`. Looks like one concern, split four ways.
+- **Suggested blocks + chunk-level pricing helpers** (lines 1631-2127, ~405 LOC): greenfield discovery.
+- **Cross-workflow analytical logic** (lines 2134-2500, ~367 LOC): rename / prose-mismatch / value-flow detection. **The walker is in `cross_workflow.py`; the analytical logic is here.**
+- **Discrepancy detection** (lines 2502-3028, ~527 LOC): compile workflow + simulate planner + compare to trace.
+- **Summary builders** (scattered across lines 759-961, 3035-3192, 3243-3270): aggregation glue.
+
+**`_cache_validator_findings` (lines 2035-2080) is NOT validation logic.** Despite the name, it's a 46-LOC adapter that calls `core/workflow/data_flow.py::validate_data_flow()`, filters to `cache.*` IDs, and enriches each diagnostic with `context["affected_workflow"]` for cross-workflow scoping. Per DD#20 (task-159.md), all cache validation lives in `data_flow.py:522-1020`. The adapter exists because (a) validator constructors are workflow-agnostic, (b) the analyzer needs to scope per-workflow when running cross-workflow analysis, and (c) `analyze-cache` should not crash on malformed IR (it swallows producer-bug exceptions; the validator path correctly raises).
+
+### context.py
+
+`AnalysisContext` is the immutable input bundle threaded through all stages. The single canonical construction path is `AnalysisContext.build()` — it materializes the `TraceTree` from raw trace dict once. Direct constructor calls would skip this and produce an incoherent state.
+
+**`resolve_ref_value(ref)` has asymmetric tier order**:
+
+- For refs whose root is a `## Inputs` declaration: **parameters WIN over memo**. The agent's `--inputs` represents their current question; memo from a prior run with different inputs MUST NOT override.
+- For refs whose root is a node id: **memo only**. Parameters never reach here because node outputs aren't passable as `--inputs`.
+
+Empty-value normalization: returns `None` for empty string / dict / list. This is distinct from "we have a real value" and propagates as Tier-4 unavailable rather than producing false ~0-token projections.
+
+### cross_workflow.py
+
+**This is a WALKER, not an analytical stage.** It produces typed `CrossWorkflowEdge` and `CrossWorkflowResult` data. The cross-workflow analytical logic (rename detection, prose-mismatch, value-flow grouping) lives in `analyze.py:2134-2500` — not here.
+
+The walker has **four downstream consumers** in `analyze.py`:
+1. `_edge_child_paths(cw_result)` — extracts edge child paths for trace correlation
+2. `_build_trace_execution_index(...)` — uses edge child paths
+3. `_build_parameters_by_workflow(cw_result, ...)` — cross-workflow parameter resolution
+4. `_build_cross_workflow_findings(cw_result=...)` — the analytical stage
+
+Cycle handling: the root workflow path is seeded into `seen` from the outset so cycles back to the root (A → B → A) are detected at the cycle-check rather than producing a back-edge. Without this seed, downstream `_build_parameters_by_workflow` would mutate the root parameter dict.
+
+**`is_rename` and `is_batch_alias_root` are SYNTACTIC predicates.** They answer "are the names different?" / "is the root segment the batch alias?" without judgment about whether the difference matters for caching. The decision to emit a `cache.cross-workflow-rename-detected` warning is made downstream in `analyze.py`, gated on actionability.
+
+### cost_estimation.py
+
+**Operates at row-level (post-aggregation projections), NOT chunk-level.** Two public functions:
+- `compute_projections(rows, ...)` — pure tokens × rate math; never reads `row.cost_usd`. Returns `ProjectionBreakdown`.
+- `compute_actually_paid(rows, *, trace=...)` — trace-driven recorded cost. Returns `ActuallyPaidCost`.
+
+Chunk-level pricing helpers (the "if this ref were cached, how much would N callsites save?" math used by greenfield suggested-block discovery) live in `analyze.py` lines 2082-2127 — `_input_rate`, `_estimate_token_savings_usd`, `_savings_for_shared_ref`, `_estimate_chunk_tokens`. These are different abstraction levels; not duplication.
+
+**Tri-state contract (load-bearing)**: `priced` / `partial` / `unavailable`. Mirrors the LiteLLM adapter's runtime tri-state. Aggregate fields stay `None` on full unavailability.
+
+**Output tokens dominate, but caching savings are input-only.** Anthropic Sonnet output rate is 5× input rate; on output-heavy workflows, output cost is 60-85% of total. But `no_cache - first_run_with_cache` collapses to input-side terms because output cost cancels — so aggregate savings figures work on greenfield even when output token data is unavailable.
+
+**1h-TTL Anthropic multiplier (DD#37)**: LiteLLM's `cache_creation_input_token_cost` is the 5-min rate (1.25× base); 1h-TTL writes cost 2× base. `_write_rate_for_ttl` applies the multiplier. Mirrors the runtime override at `llm_client.py::_maybe_normalize_anthropic_1h_cost` — keep in lockstep so predicted and actual costs price the same byte at the same rate.
+
+### token_estimation.py
+
+**4-tier hierarchy with documented fall-through rules**: `trace → memo → estimator → heuristic`. The `estimator-partial` source is emitted when the prompt was partially-resolvable (some `${...}` refs missed); confidence aggregation treats it as estimator-tier (not heuristic) so a partially-resolved row doesn't classify the workflow as `low_no_data`.
+
+**Asymmetric fall-through for cacheable-token estimation**:
+- For DECLARED subsets: partial memo data → falls through to Tier 3 (heuristic) to preserve `cache.below-min-tokens` warning fidelity.
+- For CANDIDATE-only (greenfield projection): partial memo data → returns `(None, "unavailable")` (Option C — honest unmeasurable).
+
+**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2/3. Downstream `cache.below-min-tokens` warning is gated on `cacheable_data_source != "trace"` so it fires correctly without contradicting trace evidence when cache demonstrably worked.
+
+**LiteLLM is lazy-imported** (mirrors the `llm_client.py` lazy-import pattern) to keep the analyzer package import-cheap.
+
+### warning_catalog.py
+
+**Frozen catalog of 14 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract.
+
+**`Diagnostic.id` is a top-level field, not nested in `context["warning_id"]`.** Mirrors mypy / rustc / ruff / eslint / clippy convention. Identity tuple updated from `(severity, source, node_id, message)` to `(severity, source, node_id, id or message)` — when `id` is set it's the dedup key, falling back to message-keyed dedup when absent (preserves legacy sub-workflow warning dedup byte-for-byte).
+
+**Catalog-as-SSoT for headlines**: `resolve_headline_for(diag)` looks up `headline_template` from the catalog by `diag.id` and formats against `diag.context`. **Works whether the diagnostic came from `make_diagnostic(...)` OR was built directly via `Diagnostic(id="cache.X", ...)`** — the validator emitters in `data_flow.py` use direct construction; the analyzer-side emitters use `make_diagnostic`. Both produce equivalent renderable diagnostics.
+
+**Dispatch tables** for `cache.shared-context-undeclared` (workflow vs boundary scope) and `cache.discrepancy` (per-`root_cause`) live in this file. Validation of required context keys happens in `make_diagnostic` so missing context fails at construction, not at render.
+
+**About 75% of the file is data**: catalog dict + message templates + headline templates. The remaining 25% is constructors and dispatch logic.
+
+### render_text.py and render_json.py
+
+Both are projections of `CacheAnalysis` — read-only, no mutation. `render_text` is one orchestrator (`render_text(analysis, all_rows=False)`) calling 7 section renderers (header / cost block / summary / recommended actions / suggested blocks / cross-workflow / per-call rows / sub-workflow drill-in / notes). Each section reads only the fields it needs.
+
+**Section visibility is deterministic from `CacheAnalysis`.** When per-call rows have no real data (greenfield, no execution), the renderer hides them and emits a Notes entry explaining the absence is intentional. The analyzer mirrors this predicate at analyze-time so the absence note appears in JSON too.
+
+**JSON `format_version` policy (mirrors trace 2.x)**: minor bumps (`4.0` → `4.1`) are additive — new fields, new warning IDs. Major bumps (`4.x` → `5.x`) are breaking. Consumers should match `format_version.startswith("4.")`.
+
+### view_helpers.py
+
+Renderer-side projections. Two exports: `build_recommended_actions(warnings) → list[RecommendedAction]` and `is_cross_workflow_alignment(diag) → bool`.
+
+**Lazy import at line 84** is a documented circular-import workaround: `RecommendedAction` is defined in `analyze.py` but built here from a list of `Diagnostic`s. Top-level import would cycle.
+
+**`_CROSS_WORKFLOW_ALIGNMENT_IDS` is a frozenset of warning IDs** (`cache.cross-workflow-rename-detected`, `cache.cross-workflow-prose-mismatch`) that render in the "Sub-workflow boundaries" section ONLY — filtered OUT of recommended actions to keep each finding visible in exactly one section. **Adding a new cross-workflow alignment ID requires extending this constant in lockstep.**
+
+**Recommended-actions ranking key** (lexicographic, all ascending after negation/inversion): severity (ERROR > WARNING > INFO) → detection-class priority (from `RECOMMENDED_ACTION_PRIORITY` in `warning_catalog`) → savings (descending within priority tier) → stable alphabetical on `id`. The detection-class priority resolves the common "all INFO, no savings" case where alphabetical tiebreak used to bury actionable findings.
+
+### padding_advisor.py
+
+**Sensitivity floors are load-bearing** (per spec § "Prefix-Padding Advisory"):
+- Skip any individual advisory worth less than $0.005.
+- Skip the entire batch when cumulative savings across surviving candidates is less than $0.05.
+
+Without these floors, the report floods with non-actionable micro-savings advisories on workflows where padding only saves cents.
+
+By the time a `PaddingCandidate` reaches `compute_padding_advisories`, `savings_usd` is the pre-computed dollar saving — net-positive math (extending the subset to include earlier items costs read-rate but might unlock prefix hits) is the analyzer's job upstream.
+
+### summarize.py
+
+**`summarize()` runs the full `analyze()` pipeline.** It is NOT a cheap shortcut — per DD#36 (task-159.md), `--dry-run` runs the full analytical pass because agents opted in. The cheaper variant `summarize_from_analysis(analysis)` exists for callers that already ran `analyze()`.
+
+The dry-run nudge stays **silent when no actionable opportunities exist** (returns `None`). The text format is locked: `Cache: {n} design opportunit{y_or_ies} available (estimated -${savings:.2f}/run, -{pct}%).`.
+
+The savings anchor is `summary.actually_paid_usd` when a trace contributed; otherwise `summary.no_cache_hypothetical_usd`. Both atoms carry one meaning — agents reading the dry-run nudge see "savings vs what was paid" or "savings vs no-cache baseline" depending on which is available.
+
+## Runtime → analyzer trace contract
+
+The discrepancy stage and the actually-paid cost path read trace 2.1.0 fields the engine writes:
+
+| Field | Source in runtime | Read by |
+|---|---|---|
+| `event["cache_source"]` (`"memo"` \| `"in_process"`) | `runtime/engine/instrumentation.py::apply_memo_hit`, `write_memo_cache`, etc. | discrepancy diagnose; trace cost summation |
+| `event["cache_key"]` | same — the memo config-hash MD5 | discrepancy diagnose (compares predicted vs actual) |
+| `event["cache_age_sec"]` (cache-hit events only) | `apply_memo_hit` | reserved (TTL analysis) |
+| `trace["workflow_path"]` | `runtime/workflow_trace.py::WorkflowTraceCollector` (constructor accepts it; saved to JSON unconditionally) | autoload matching by `cache_analysis.analyze:_autoload_trace`; cross-trace correlation |
+
+**2.0.0 traces lack these fields and are skipped by autoload.** Agents pass `--from-trace <path>` to use a 2.0.0 trace explicitly. `format_version.startswith("2.")` keeps 2.0.0 readers compatible (they ignore the new fields).
+
+**There is no Python type for this contract.** The fields are agreed-upon JSON keys. Producer and consumer must be kept in sync manually. A `TypedDict` is a candidate future addition.
+
+## Discrepancy stage — shared predictor with --dry-run
+
+**Both `pflow run --dry-run` and the analyzer's discrepancy stage call the same primitives:**
+- `runtime/engine/plan_node.py::plan_node()` — the engine's cache-key authority
+- `execution/plan.py::create_planner_shared()` — sets up the shared store
+
+There is no duplicate predictor. `create_planner_shared` was originally `_create_planner_shared` (private) and was renamed to public in the task 159 PR specifically so the analyzer could share it. A backwards-compat alias `_create_planner_shared = create_planner_shared` exists at `execution/plan.py:503`.
+
+**Lazy imports in the discrepancy cluster are intentional.** `_build_predict_scaffold` (analyze.py ~2589) lazy-imports `compile_workflow`, `Registry`, `create_planner_shared`, `plan_node`. These are lazy because:
+
+- `cache_analysis.__init__` re-exports `summarize`, called on every `pflow run --dry-run`.
+- LiteLLM (transitively imported by the runtime modules) costs ~700ms to load.
+- Eager runtime imports would slow every dry-run by ~700ms.
+
+**`__pflow_cache_render__` is installed by `create_planner_shared`** (per the docstring at `execution/plan.py:464`) so the planner's `plan_node` produces a `config_hash` matching the engine's hash for cache-using workflows. Without this install, the analyzer's predictions would diverge silently for workflows declaring `## Cache`.
+
+## Validator delegation
+
+Per DD#20 (task-159.md), all cache structural validation lives in `core/workflow/data_flow.py::_validate_cache_block` (lines 522-1020). The analyzer never re-implements:
+
+| Warning ID | Defined in | Severity |
+|---|---|---|
+| `cache.invalid-on-non-llm` | `data_flow.py:730` | ERROR |
+| `cache.order-mismatch` | `data_flow.py:766` | ERROR |
+| `cache.unused-chunk` | `data_flow.py:1004` | WARNING |
+| `cache.prompt-body-duplicates-cache` | `data_flow.py:977` | ERROR |
+| `cache.prompt-body-shadows-cache` | `data_flow.py:991` | WARNING |
+
+Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_make_undeclared_chunk_diagnostic`, `_make_chunk_resolution_diagnostic`, `_make_batch_scoped_rejection_diagnostic`) that flow only through the run-time validation path. The analyzer filters on `diag.id.startswith("cache.")` and only surfaces ID-bearing diagnostics.
+
+**WorkflowValidator entry points** (`save_service`, `compile_validation`) and `analyze-cache` all call `validate_data_flow()`. The analyzer adds `affected_workflow` enrichment after-the-fact via `dataclasses.replace`.
+
+## External integration
+
+### Production consumers (do not break these)
+
+| Consumer | Imports | Notes |
+|---|---|---|
+| `cli/commands/analyze_cache.py:90` | `analyze, render_json, render_text` | package-level |
+| `execution/runner.py:440` | `analyze, summarize_from_analysis` | package-level (the `--dry-run` path) |
+| `mcp_server/services/execution_service.py:394` | `analyze, render_json` | package-level |
+| `core/workflow/data_flow.py:945` | `warning_catalog.make_diagnostic` | direct sub-module import |
+
+### Imports OUT of this package
+
+| Imported | From | Why |
+|---|---|---|
+| `pflow.core.trace_tree.TraceTree` | `core/trace_tree.py` | shared trace-walking primitive (5 consumers across 4 packages) |
+| `pflow.core.cache_render.deterministic_serialize` | `core/cache_render.py` | canonical JSON for chunk values (token estimation) |
+| `pflow.runtime.template_resolver.TemplateResolver` | `runtime/template_resolver.py` | template ref resolution (lazy-imported in context.py) |
+| `pflow.execution.plan.create_planner_shared` | `execution/plan.py` | discrepancy stage (lazy-imported) |
+| `pflow.runtime.engine.plan_node.plan_node` | `runtime/engine/plan_node.py` | discrepancy stage (lazy-imported) |
+| `pflow.runtime.compile_workflow` | `runtime/__init__.py` | discrepancy stage (lazy-imported) |
+| `pflow.core.workflow.data_flow.validate_data_flow` | `core/workflow/data_flow.py` | validator delegation |
+| `pflow.core.llm_providers.detect_provider` | `core/llm_providers.py` | TTL multiplier dispatch (Anthropic-only) |
+
+## Subtle quirks worth knowing
+
+- **`_workflow_short_name` is duplicated** at `analyze.py:2911` and `render_text.py:721`. Both implement the same basename-strip-`.pflow.md` logic. The duplication is a known follow-up (task 160).
+- **`_iter_llm_events` (analyze.py:2456)** is consumed only by tests after the per-call rendering migration to `TraceTree.iter_llm_leaves`. Lives in production code but has no production caller.
+- **`_build_recommended_actions` (analyze.py:3219)** is a 17-LOC compatibility shim that delegates to `view_helpers.build_recommended_actions`. The shim exists because the call site predates the `view_helpers` extraction; tests import the shim by name from `analyze`.
+- **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`, plus the JSON format-version constants. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
+- **Stable warning ID catalog has 14 entries** as of v1: 10 from the original spec + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt`. Per DD#29 (task-159.md), adding new IDs requires design review.
+
+## Where to add a new feature
+
+| Want to... | Edit |
+|---|---|
+| Add a new cache-related warning | Catalog entry in `warning_catalog.py::CACHE_WARNING_CATALOG`, emit site in the appropriate cluster of `analyze.py` (or `data_flow.py` for structural-validation tier), test in `tests/test_core/test_cache_analysis_per_id_emission.py` |
+| Change how cost projections aggregate | `cost_estimation.py::compute_projections` or `compute_actually_paid` |
+| Add a new token-estimation tier | `token_estimation.py::estimate_tokens` (input) or `estimate_cacheable_tokens` |
+| Change rendered text output | `render_text.py` (find the section renderer for the affected output region) |
+| Change rendered JSON shape | `render_json.py` (the relevant `_X_to_dict` projection) |
+| Add a new dry-run nudge condition | `summarize.py::summarize_from_analysis` (locked text format) |
+| Change cross-workflow walk semantics | `cross_workflow.py` (walker only); analytical logic is in `analyze.py:_build_cross_workflow_findings` |
+| Change discrepancy detection | `analyze.py` lines ~2502-3028 (predict + diagnose halves, glued at `_emit_discrepancy_diagnostics → _predict_cache_keys`) |
+
+## See also
+
+- `.taskmaster/tasks/task_159/task-159.md` — the feature spec; design decisions DD#5, DD#19, DD#20, DD#26, DD#27, DD#29, DD#36, DD#37 are most relevant for this package.
+- `.taskmaster/tasks/task_160/` — planned structural refactor (orchestrator split, types module, stages/ + rendering/ subdirs).
+- `src/pflow/runtime/CLAUDE.md` — the runtime side of the cache-key prediction substrate (`plan_node`, `create_planner_shared`).
+- `src/pflow/core/workflow/CLAUDE.md` — `data_flow.py` cache validation (the canonical home of structural cache rules).
