@@ -227,6 +227,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 
 **Next**
 - Task 159: Prompt Caching
+- Task 160: Cache Analysis Architectural Refactor
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**
