@@ -29,7 +29,6 @@ from pflow.core.markdown_parser import (
     parse_markdown,
 )
 from tests.shared.markdown_utils import ir_to_markdown
-from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -4856,17 +4855,8 @@ class TestNodeSourceLine:
     field for boundary attribution, got ``None``, and rendered ``(line 0)``
     everywhere. Setting it from ``entity.heading_line`` makes the field
     consistently available across all node types.
-
-    Mutation contract: comment out ``node["_source_line"] = entity.heading_line``
-    in ``_build_node_dict`` and these tests fail.
     """
 
-    @mutation_contract(
-        file="src/pflow/core/markdown_parser.py",
-        line=1614,
-        revert='node["_source_line"] = entity.heading_line',
-        expected_failure="_source_line missing on parsed node — None != entity.heading_line",
-    )
     def test_source_line_set_on_workflow_type_node(self) -> None:
         """Workflow-type nodes (the case that originally surfaced the bug —
         cross-workflow walker reads from these)."""

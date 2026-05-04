@@ -19,7 +19,6 @@ from pflow.core.cache_analysis.analyze import (
 )
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.execution.workflow_resolver import resolve_workflow
-from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Confidence aggregation — STRICT semantics per DD#34 line 634 verbatim
@@ -95,19 +94,11 @@ def test_analyze_returns_cache_analysis_dataclass() -> None:
     assert len(result.per_call) == 1
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=2826,
-    revert="actually_paid_usd=actually_paid.total_usd",
-    expected_failure="actually-paid atom dropped — summary.actually_paid_usd is None (test asserts 0.15)",
-)
 def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation contract: use aggregate row cost for current_cost -> result is 0.05.
-
-    Defends trace-driven current-cost rollup: workflow nodes are not LLM rows,
+    """Defends trace-driven current-cost rollup: workflow nodes are not LLM rows,
     but their ``sub_workflow_events`` still represent real paid calls.
     """
     import pflow.core.cache_analysis.cross_workflow as cross_module
@@ -177,16 +168,8 @@ def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
     }
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=1085,
-    revert="if did_not_execute_in_trace:",
-    expected_failure="phantom row still gets recomputed cost — rerun savings inflates beyond ground truth",
-)
 def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() -> None:
-    """Mutation contract: let did-not-execute rows enter cost aggregation -> rerun savings grows.
-
-    Defends phantom-cost suppression for child workflows that error after an
+    """Defends phantom-cost suppression for child workflows that error after an
     earlier LLM: static IR rows remain visible, but unexecuted LLMs do not
     fabricate recomputed projection dollars.
     """
@@ -221,19 +204,11 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() 
     assert result.summary.aggregate_savings_rerun_usd < 0.003
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=880,
-    revert="child_params[str(child_input_name)] = resolved",
-    expected_failure="child params never populated — cacheable_data_source falls to 'estimator' or 'unavailable'",
-)
 def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation contract: resolve child inputs against root ctx.parameters only -> child row unavailable.
-
-    Defends per-workflow parameter views for parent input -> child input
+    """Defends per-workflow parameter views for parent input -> child input
     mappings; the child prompt/cache tokenizer must use child parameters, not
     the root parameter dict.
     """
@@ -284,17 +259,14 @@ def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
     assert row.cacheable_tokens_estimated is not None
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=895,
-    revert="resolved = TemplateResolver.resolve_template(value, shared)",
-    expected_failure="resolved undefined — child input falls to None and child prompt token count stays at literal-template size",
-)
 def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation contract: skip memo-backed child input resolution -> child prompt stays tiny/partial."""
+    """Defends memo-backed child input resolution: parent's memoized output
+    must propagate to child prompt tokenization, otherwise the child prompt
+    stays tiny/partial.
+    """
     import pflow.core.cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
     from pflow.runtime.cache import MemoizationCache
@@ -353,17 +325,13 @@ def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization(
     assert row.input_tokens_estimated > 100
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=899,
-    revert="if isinstance(resolved, str) and TemplateResolver.TEMPLATE_PATTERN.search(resolved):",
-    expected_failure="unresolved-template fall-through accepts ${...} as a value — cacheable becomes a token count for the literal placeholder",
-)
 def test_child_workflow_unresolved_input_remains_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation contract: coerce unresolved child inputs to empty strings -> cacheable becomes 0/estimator."""
+    """Defends: unresolved child inputs (``${missing.output}``) must NOT be
+    coerced to a tokenizable literal; they fall back to estimator-partial.
+    """
     import pflow.core.cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
@@ -673,9 +641,9 @@ def test_analyze_filters_non_cache_data_flow_diagnostics() -> None:
     filtered out by ``_cache_validator_findings`` so analyze() doesn't surface
     workflow-health concerns under the cache-analyzer label.
 
-    Mutation-test: removing the ``d.id and d.id.startswith("cache.")`` filter
-    in ``_cache_validator_findings`` makes the non-cache diagnostic leak
-    through and fails the final assertion.
+    Defends: ``_cache_validator_findings`` filters on
+    ``d.id and d.id.startswith("cache.")``; without that filter, non-cache
+    diagnostics leak through and contaminate cache-analyzer output.
     """
     from pflow.core.workflow.data_flow import validate_data_flow
 
@@ -1086,7 +1054,7 @@ def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() ->
 # ---------------------------------------------------------------------------
 # _build_recommended_actions sort priority (Tier 1 #1)
 #
-# Mutation contract: drop the ``priority`` dimension from the sort key in
+# Defends: drop the ``priority`` dimension from the sort key in
 # ``_build_recommended_actions._key`` and the priority test fails — the
 # alphabetical tie-break re-buries actionable findings under informational
 # ones (the lyrics-generator regression we observed).
@@ -1109,12 +1077,6 @@ def _make_diag(diag_id: str, severity: Severity, savings_usd: float | None = Non
     )
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/view_helpers.py",
-    line=99,
-    revert='return (-sev_weight, priority, -savings, d.id or "")',
-    expected_failure="sort key undefined — sorted() falls back to non-priority order, alphabetical tie-break wins",
-)
 def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     """When two warnings share severity AND have no savings, detection-class
     priority decides the order. Tier 1 IDs (shared-context-undeclared,
@@ -1140,21 +1102,11 @@ def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     assert actions[1].warning_id == "cache.unused-chunk"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/view_helpers.py",
-    line=105,
-    revert="eligible = [d for d in warnings if not is_cross_workflow_alignment(d)]",
-    expected_failure="filter dropped — rename/prose-mismatch findings appear in recommended actions",
-)
 def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
     """Cross-workflow alignment findings (rename, prose-mismatch) are
     EXCLUDED from Recommended actions — they render in the "Sub-workflow
     boundaries" section. This keeps each finding visible in exactly ONE
     section (Stage 0 + B.3).
-
-    Mutation contract: remove the ``_CROSS_WORKFLOW_ALIGNMENT_IDS`` filter
-    in ``view_helpers.build_recommended_actions``; this test fails because
-    the rename diag enters the ranked list.
     """
     from pflow.core.cache_analysis.analyze import _build_recommended_actions
 
@@ -1222,11 +1174,11 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
 def test_effective_model_falls_back_to_workflow_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """A node without per-node ``model:`` picks up ``get_default_workflow_model()``.
 
-    Mutation-test: if the fallback in ``_build_per_call_row`` (``analyze.py:499``)
-    is reverted to ``str(node.get("params", {}).get("model") or node.get("model") or "")``,
-    this test fails with ``model == ""`` instead of the patched default. The
+    Defends: ``_build_per_call_row`` must include
+    ``or get_default_workflow_model() or ""`` in the model fallback. Without it
+    a node lacking per-node ``model:`` ends up with ``model == ""`` and the
     lyrics-generator parent workflow's ``~2 LLM calls · 0 models in use`` bug
-    would re-appear.
+    re-appears.
     """
     # ``pflow.core.cache_analysis.analyze`` resolves to the FUNCTION via
     # ``__init__.py``'s ``from .analyze import analyze`` re-export, shadowing the
@@ -1302,9 +1254,9 @@ def test_effective_model_empty_when_no_default_resolved(monkeypatch: pytest.Monk
 def test_summary_message_zero_llm_nodes() -> None:
     """Zero LLM nodes → message says exactly that, doesn't mention pricing.
 
-    Mutation-test: if the renderer's branch logic in
-    ``render_text._render_summary`` re-conflates the three sub-cases, this
-    test fails because the message would mention LLM nodes.
+    Defends: ``render_text._render_summary`` must keep its three sub-cases
+    distinct; re-conflating them lets the zero-LLM message mention LLM
+    nodes.
     """
     from pflow.core.cache_analysis.render_text import _render_summary
 
@@ -1322,8 +1274,8 @@ def test_summary_message_no_model_resolved(monkeypatch: pytest.MonkeyPatch) -> N
     This is the lyrics-generator parent workflow case: 2 LLM nodes, neither
     has per-node ``model:``, no default configured → before CP1 the message
     said "workflow has no LLM nodes" (factually wrong with 2 visible in the
-    table below). Mutation-test: reverting either the analyzer fallback OR
-    the renderer branch produces the wrong message.
+    table below). Defends: both the analyzer fallback AND the renderer
+    branch must hold; reverting either produces the wrong message.
     """
     import sys
 
@@ -1385,22 +1337,12 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=1007,
-    revert='model_is_heterogeneous = isinstance(explicit, str) and "${" in explicit',
-    expected_failure="heterogeneous detection NameError — row attribute undefined → TypeError downstream",
-)
 def test_heterogeneous_model_detected_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     """A node with ``model: ${item.model}`` is flagged heterogeneous, not leaked.
 
     Pitfall #19 defense: drives ``analyze(...)`` end-to-end. Synthetic
     ``PerCallRow(...)`` construction would bypass the upstream detection at
     ``analyze.py:_build_per_call_row``.
-
-    Mutation contract: dropping the ``"${" in raw_model`` check causes the
-    literal ``${item.model}`` to land in ``models_in_use``. This test fails
-    with that string in the aggregate.
     """
     import sys
 
@@ -1438,18 +1380,12 @@ def test_heterogeneous_model_detected_end_to_end(monkeypatch: pytest.MonkeyPatch
     assert result.summary.heterogeneous_model_node_paths == ("score-choruses",)
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/cost_estimation.py",
-    line=390,
-    revert="if row.model_is_heterogeneous:",
-    expected_failure="heterogeneous skip dropped — pricing lookup runs on empty model and projections fabricate",
-)
 def test_heterogeneous_model_excluded_from_pricing_aggregation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Heterogeneous rows don't fabricate cost figures.
 
-    Mutation contract: enabling pricing lookup on heterogeneous rows would
-    produce a non-None ``current_cost_per_run_usd`` even though the model
-    is unresolvable. This test asserts the cost figure stays unavailable.
+    Defends: pricing lookup must skip heterogeneous rows, otherwise a
+    non-None ``current_cost_per_run_usd`` surfaces despite the model
+    being unresolvable.
     """
     import sys
 
@@ -1477,20 +1413,13 @@ def test_heterogeneous_model_excluded_from_pricing_aggregation(monkeypatch: pyte
     assert result.summary.unavailable_models == ()
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/render_text.py",
-    line=371,
-    revert="elif s.heterogeneous_model_node_count == s.total_llm_calls_estimated:",
-    expected_failure="all-heterogeneous branch never fires — wrong-cause 'set settings.default_model' hint surfaces",
-)
 def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest.MonkeyPatch) -> None:
     """All-heterogeneous workflow renders the right cause, not the wrong one.
 
-    Mutation contract: removing the ``heterogeneous_model_node_count ==
-    total_llm_calls_estimated`` branch in ``_render_summary`` causes the
-    "set settings.default_model" hint to fire. That hint is wrong here —
-    model resolution isn't the problem; per-batch-item models can't be
-    aggregated as one model. This test fails if that branch reverts.
+    Defends: when every LLM node has a heterogeneous model, the renderer
+    must NOT show the "set settings.default_model" hint — model
+    resolution isn't the problem; per-batch-item models can't be
+    aggregated as one model.
     """
     import sys
 
@@ -1513,12 +1442,6 @@ def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest
     assert "workflow has no LLM nodes" not in rendered
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/render_text.py",
-    line=924,
-    revert='return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache) or row.model_is_heterogeneous',
-    expected_failure="heterogeneous-row clause dropped — pure-greenfield het rows hidden, no per-call section",
-)
 def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     """Per-call section shows heterogeneous rows even on pure greenfield.
 
@@ -1526,11 +1449,6 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
     no declared subset → would normally fail ``_row_has_real_data``). The
     agent would only see ``+ N nodes with model varying`` in the header
     and have no place to grep for which node varies.
-
-    Mutation contract: removing the ``model_is_heterogeneous`` clause from
-    ``_row_has_real_data`` causes the section to be hidden entirely (all
-    rows fail the predicate), this test fails with no per-call section in
-    the rendered output.
     """
     import sys
 
@@ -1553,19 +1471,12 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
     assert "${item.model}" not in rendered
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/render_text.py",
-    line=120,
-    revert="heterogeneous_node_paths=s.heterogeneous_model_node_paths",
-    expected_failure="kwarg dropped from caller — heterogeneous node names absent from scale line",
-)
 def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch) -> None:
     """Header names which nodes have varying models, not just the count.
 
-    Mutation contract: dropping the ``heterogeneous_node_paths`` kwarg
-    propagation in the header caller (``_render_header``) causes the
-    name to disappear; agent would have to scan per-call to find which
-    node varies. This test asserts the name is in the rendered scale line.
+    Defends: ``heterogeneous_node_paths`` must propagate to ``_render_header``
+    so the name surfaces in the scale line; otherwise an agent would have
+    to scan per-call to find which node varies.
     """
     import sys
 
@@ -1602,19 +1513,12 @@ def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch)
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/render_text.py",
-    line=418,
-    revert='return f"unavailable ({unavailable_models[0]} lacks pricing data)"',
-    expected_failure="N==1 branch missing — falls through to plural form 'all 1 models lack pricing'",
-)
 def test_format_cost_names_single_unpriced_model() -> None:
     """When exactly one model lacks pricing, name it directly.
 
-    Mutation contract: reverting the N==1 branch to the plural phrasing
-    would render ``"all 1 models lack pricing data"`` — agent can't tell
-    which model from the summary alone. Test asserts the model name is
-    surfaced.
+    Defends: the N==1 branch must render the model name; the plural
+    phrasing ``"all 1 models lack pricing data"`` would not let the agent
+    tell which model from the summary alone.
     """
     from pflow.core.cache_analysis.render_text import _format_cost
 
@@ -1660,8 +1564,9 @@ def test_brownfield_memo_populates_cacheable_via_memo_tier(
     was a static heuristic on the prompt template, ignoring memo data even
     when present. Post-fix Tier 2 fires.
 
-    Mutation: revert to static heuristic → cacheable becomes ~187 (heuristic
-    value) and source becomes ``"estimator"`` instead of ``"memo"``.
+    Defends: reverting to a static heuristic drops cacheable to ~187
+    (heuristic value) and the source label to ``"estimator"`` instead
+    of ``"memo"``.
     """
     from pflow.runtime.cache import MemoizationCache
 
@@ -1888,12 +1793,6 @@ def test_heterogeneous_batch_with_declared_cache_uses_estimator_tier(
     )
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=1261,
-    revert='and row.cacheable_data_source != "trace"',
-    expected_failure="trace-evidence guard dropped — below-min-tokens fires even when trace shows cache fired",
-)
 def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -1902,11 +1801,6 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     is ``"trace"``: trace evidence (cache_creation + cache_read > 0) shows
     the cache demonstrably worked at this size, so the warning would
     contradict reality.
-
-    Mutation contract: remove the ``row.cacheable_data_source != "trace"``
-    clause in ``_per_node_warnings`` and the warning fires anyway —
-    breaking the trace-evidence-respects-itself contract. This test
-    catches that mutation.
 
     Fixture: trace event with cache_creation=600, cache_read=200 (sum=800)
     AND model has min_cache_tokens=1024 (anthropic). Without the gate,
@@ -1983,9 +1877,9 @@ def test_below_min_tokens_still_fires_when_estimator_says_below_min(
     suppression is keyed on ``"trace"`` specifically, not on cacheable
     > 0 alone.
 
-    Mutation: change the gate to ``cacheable_data_source != "memo"`` (or
-    any other tier name) → this test fails because the warning would
-    suppress for estimator/memo too.
+    Defends: the suppression gate must be keyed on ``"trace"`` specifically;
+    any other tier name (``"memo"``, ``"estimator"``) would suppress the
+    warning for those sources too.
     """
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
@@ -2189,19 +2083,12 @@ def test_declared_partial_memo_falls_through_to_estimator_end_to_end(
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=1029,
-    revert="resolved_prompt, has_unresolved = _resolve_prompt_for_tokenization(prompt, ctx, node)",
-    expected_failure="resolved_prompt undefined — NameError on next call to _estimate_row_tokens",
-)
 def test_analyze_end_to_end_resolves_prompt_template_for_tokenization() -> None:
     """Test 3 — Resolved prompt for tokenization.
 
-    Mutation contract: revert ``_resolve_prompt_for_tokenization`` to pass
-    the raw prompt to ``estimate_tokens`` → input_tokens reflects the
-    template literal (~50 tokens for the prompt prose + ``${context}`` as
-    5 chars) instead of the resolved 5000-char value.
+    Defends: ``_resolve_prompt_for_tokenization`` must run before
+    ``estimate_tokens`` so the resolved 5000-char value is counted, not
+    the template literal (~50 tokens).
     """
     workflow_ir = {
         "ir_version": "0.1.0",
@@ -2310,17 +2197,10 @@ def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=755,
-    revert="if leaf.is_cached:",
-    expected_failure="cached LLM cost inflates current_cost_by_workflow — child rollup actually_paid_usd reports historical cost",
-)
 def test_build_trace_execution_index_excludes_cached_llm_cost() -> None:
-    """Mutation contract: drop the ``if leaf.is_cached: continue`` filter at
-    analyze.py:_build_trace_execution_index → cached LLM cost inflates
-    current_cost_by_workflow → rollup's actually_paid_usd reports historical
-    cost despite the run paying $0.
+    """Defends: cached LLM leaves must NOT contribute to
+    ``current_cost_by_workflow``; otherwise the rollup's actually_paid_usd
+    reports historical cost despite the run paying $0.
 
     Drives the ``parent-child-memo-hit-trace.json`` committed fixture
     end-to-end via analyze().

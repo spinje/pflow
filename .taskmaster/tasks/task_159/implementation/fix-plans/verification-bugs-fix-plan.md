@@ -252,4 +252,3 @@ End-to-end manual verification per phase: see each phase's "Verification" block 
 - **Trace-recording-layer normalization of `billed_input_tokens`**: would let the analyzer drop its provider-aware sum. (Phase A workaround documented.)
 - **Sub-workflow consolidation advisories** (`_consolidate_to_root_advisories` walks parent IR only): drill-in section is the documented mitigation today.
 - **Dynamic-batch / template-items child workflow attribution** (#360 / #366): trace 2.2 schema with per-event `workflow_path` is the long-term fix.
-- **`mutation-audit` ad-hoc**: not a per-PR gate; run before release.

@@ -12,7 +12,6 @@ from pflow.core.cache_analysis.token_estimation import (
     estimate_cacheable_tokens,
     estimate_tokens,
 )
-from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -361,8 +360,8 @@ def test_cacheable_tier_1_falls_through_when_zero() -> None:
     didn't fire — sub-threshold etc.) falls through. Source MUST NOT be
     ``"trace"`` AND tokens MUST NOT be 0 (we want Tier 3's heuristic to fire
     so ``cache.below-min-tokens`` warning still works).
-    Mutation: keep ``>= 0`` instead of ``> 0`` → returns ``(0, "trace")`` —
-    both assertions catch it.
+    Defends: the gate must require ``> 0``, not ``>= 0``; ``>= 0`` would
+    return ``(0, "trace")`` and both assertions catch it.
     """
     event = _cache_trace_event(creation=0, read=0)
     tokens, source = estimate_cacheable_tokens(
@@ -381,7 +380,8 @@ def test_cacheable_tier_1_falls_through_when_zero() -> None:
 def test_cacheable_tier_2_memo_sums_resolved_chunk_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: declared subset + memo data → sum of per-chunk tokens.
 
-    Mutation: revert summation to first-only → returns 100, fails.
+    Defends: per-chunk tokens must SUM, not first-only; first-only
+    returns 100 and fails.
     """
 
     def _fake_estimate(ref: str, **_kw: Any) -> int | None:
@@ -458,7 +458,8 @@ def test_cacheable_tier_3_estimator_for_declared_no_history() -> None:
 def test_cacheable_tier_3_skips_for_candidate_only() -> None:
     """Candidate (no declared) + no memo → Tier 4 unavailable.
 
-    Mutation: apply heuristic to candidate-only → fabricates a number.
+    Defends: applying the heuristic to candidate-only would fabricate a
+    number; Tier 3 must require declared subset.
     """
     tokens, source = estimate_cacheable_tokens(
         declared_subset=None,
@@ -517,8 +518,8 @@ def test_cacheable_tier_2_short_circuits_when_model_empty(monkeypatch: pytest.Mo
 def test_cacheable_tier_1_does_not_fire_without_declared() -> None:
     """Candidate set + trace populated → Tier 1 N/A (only fires for declared).
 
-    Mutation: drop the ``declared_subset and`` precondition → Tier 1 fires
-    for candidate, fails this assertion.
+    Defends: the ``declared_subset and`` precondition must hold; dropping
+    it lets Tier 1 fire for candidate-only and breaks this assertion.
     """
     event = _cache_trace_event(creation=1000, read=599)
     tokens, source = estimate_cacheable_tokens(
@@ -626,19 +627,12 @@ def test_find_llm_event_returns_first_matching_event() -> None:
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/token_estimation.py",
-    line=163,
-    revert="if chunks and model and (ctx is not None or memo_cache is not None):",
-    expected_failure="Tier-2 dispatch skipped — cacheable falls to Tier 3/4 unavailable",
-)
 def test_estimate_cacheable_tokens_uses_parameters_for_workflow_input_ref() -> None:
     """Test 2 — Greenfield Tier-2 parameters fallback.
 
-    Mutation contract: revert the ``ctx is not None`` clause in the
-    ``estimate_cacheable_tokens`` Tier 2 dispatch → cacheable falls
-    through to Tier 3 / 4 and returns 0 / unavailable instead of the
-    parameters-tier projection.
+    Defends: the ``ctx is not None`` clause in ``estimate_cacheable_tokens``
+    Tier 2 dispatch must light up the parameters-tier projection;
+    otherwise cacheable falls through to Tier 3 / 4 unavailable.
     """
     from pflow.core.cache_analysis.context import AnalysisContext
     from pflow.core.cache_analysis.token_estimation import estimate_cacheable_tokens
@@ -663,21 +657,11 @@ def test_estimate_cacheable_tokens_uses_parameters_for_workflow_input_ref() -> N
     assert source == "parameters"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/context.py",
-    line=174,
-    revert="if value is not None:",
-    expected_failure="parameters-first precedence dropped — memo's stale value wins",
-)
 def test_resolve_ref_value_workflow_input_wins_over_memo() -> None:
     """Test 12 — Workflow-input parameters wins over memo (Track B asymmetry).
 
     The agent's ``--inputs`` represent their CURRENT question; memo from a
     prior run with different inputs MUST NOT override.
-
-    Mutation contract: invert the parameters-vs-memo precedence in
-    ``AnalysisContext.resolve_ref_value`` → memo's stale value wins →
-    the assertion comparing to the parameters value fails.
     """
     from pflow.core.cache_analysis.context import AnalysisContext
 
@@ -697,22 +681,12 @@ def test_resolve_ref_value_workflow_input_wins_over_memo() -> None:
     assert value == "NEW question from agent"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/context.py",
-    line=239,
-    revert="if isinstance(value, (str, list, dict, tuple, set)) and not value:",
-    expected_failure="empty-collection guard dropped — empty string returns as real value, not None",
-)
 def test_resolve_ref_value_returns_none_for_empty_string() -> None:
     """Test 9 — Empty-string parameter (silent-failures defense).
 
     Empty values would collapse to ~0 tokens through tokenization, falsely
     signaling "we have a real value." Returning None pushes the caller to
     Tier-4 unavailable.
-
-    Mutation contract: drop the ``_normalize_empty`` call → empty values
-    propagate as real values → cacheable=0 + data_source=parameters
-    instead of unavailable → false signal.
     """
     from pflow.core.cache_analysis.context import AnalysisContext
 
@@ -733,21 +707,12 @@ def test_resolve_ref_value_returns_none_for_empty_string() -> None:
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/token_estimation.py",
-    line=114,
-    revert='return token_count, "estimator-partial" if has_unresolved_refs else "estimator"',
-    expected_failure="partial branch dropped — unresolved-refs case still labels 'estimator' (over-confident)",
-)
 def test_estimate_tokens_marks_partial_when_unresolved_refs_present() -> None:
     """Test 10 — Partial-resolution detection (silent-failures defense).
 
     When the caller passes ``has_unresolved_refs=True`` (some ``${...}``
     couldn't be substituted), the source label shifts to
     ``"estimator-partial"`` so agents see the lower confidence.
-
-    Mutation contract: drop the ``has_unresolved_refs`` branch → label
-    stays ``"estimator"`` and looks authoritative.
     """
     from pflow.core.cache_analysis.token_estimation import estimate_tokens
 

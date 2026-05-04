@@ -41,11 +41,6 @@ test-with-skipped: ## Run tests showing all skipped tests (useful for debugging)
 	@echo "🚀 Testing code: Running all tests (showing skipped)"
 	@uv run python -m pytest --doctest-modules -v | grep -E "PASSED|FAILED|SKIPPED|ERROR"
 
-.PHONY: mutation-audit
-mutation-audit: ## Audit @mutation_contract markers (ad-hoc test-honesty check; not a per-PR gate)
-	@echo "🚀 Auditing @mutation_contract markers"
-	@uv run python scripts/check_mutation_contracts.py
-
 .PHONY: build
 build: clean-build ## Build wheel file
 	@echo "🚀 Creating wheel file"

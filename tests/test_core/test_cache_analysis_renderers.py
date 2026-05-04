@@ -27,7 +27,6 @@ from pflow.core.cache_analysis.analyze import (
 )
 from pflow.core.cache_analysis.cost_estimation import CostTier
 from pflow.core.diagnostic import Diagnostic, Severity
-from tests.shared.mutation_contract import mutation_contract
 
 
 def _make_analysis(
@@ -1470,19 +1469,10 @@ def test_text_header_keeps_medium_from_memo_with_coverage() -> None:
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/render_text.py",
-    line=450,
-    revert='return f"~${value:.4f}"',
-    expected_failure="sub-cent path returns None — assertion '~$0.0021' missing",
-)
 def test_text_renders_sub_cent_cost_with_four_decimals() -> None:
     """Track A surfaces sub-cent costs; the renderer must show them with
-    enough precision to be useful.
-
-    Mutation contract: revert ``_format_dollar_amount`` to use ``:.2f``
-    unconditionally -> sub-cent costs render as ``$0.00`` and the
-    ``(trace)`` annotation decorates a useless number.
+    enough precision to be useful. ``:.2f`` unconditionally would render
+    sub-cent costs as ``$0.00`` and decorate them with ``(trace)``.
     """
     text = render_text(_make_analysis(actually_paid=0.0021, no_cache=0.0023, rerun=0.0017, partial=False))
     assert "~$0.0021" in text
@@ -1495,14 +1485,11 @@ def test_text_renders_sub_cent_cost_with_four_decimals() -> None:
     assert "~<$0.0001" in text_tiny
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/render_text.py",
-    line=796,
-    revert='lines.append(f"### {_format_workflow_group_heading(workflow_path, analysis)}")',
-    expected_failure="### child.pflow.md heading missing — workflow grouping breaks",
-)
 def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
-    """Mutation contract: revert workflow grouping -> child called-by subheader disappears."""
+    """Defends: workflow-path grouping in ``render_text`` produces the
+    ``### child.pflow.md (called by ...)`` subheader; reverting it
+    collapses per-call rows back into a flat list.
+    """
     rows = [
         PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"}),
         PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/child.pflow.md"}),
@@ -1593,14 +1580,11 @@ def test_render_json_includes_rollup_workflow_paths_and_unavailable_models_by_wo
     assert payload["per_call"][0]["workflow_path"] == "/abs/child.pflow.md"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/warning_catalog.py",
-    line=429,
-    revert="{node_id} in {workflow_path_short} (trace: {trace_path}): predicted",
-    expected_failure="message template misses workflow_path_short — 'draft in child' substring absent",
-)
 def test_discrepancy_message_includes_workflow_scope() -> None:
-    """Mutation contract: remove workflow_path_short from catalog template -> child scope disappears."""
+    """Defends: the discrepancy diagnostic template includes
+    ``workflow_path_short`` so the rendered message names the child
+    scope (``draft in child``).
+    """
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(

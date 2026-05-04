@@ -33,7 +33,6 @@ from pflow.core.cache_analysis.cost_estimation import (
     compute_projections,
     get_model_pricing,
 )
-from tests.shared.mutation_contract import mutation_contract
 
 
 def _row(
@@ -201,14 +200,11 @@ def test_with_cache_projection_amortizes_writes_across_subset_group() -> None:
     assert projections.rerun_within_ttl_hypothetical_usd < projections.first_run_with_cache_hypothetical_usd
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/cost_estimation.py",
-    line=426,
-    revert="subset = (row.workflow_path, tuple(row.declared_prompt_cache or ()))",
-    expected_failure="subset undefined — NameError on by_subset.setdefault",
-)
 def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> None:
-    """Mutation contract: group by bare subset only -> second workflow pays read instead of write."""
+    """Defends: subset grouping must include ``workflow_path``; bare subset
+    grouping would let a child workflow pay a cache READ when it should
+    pay a cache WRITE.
+    """
     parent = PerCallRow(**{
         **_row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]).__dict__,
         "workflow_path": "parent.pflow.md",
@@ -240,14 +236,11 @@ def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> Non
     assert scoped.first_run_with_cache_hypothetical_usd > single_scope.first_run_with_cache_hypothetical_usd
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/cost_estimation.py",
-    line=388,
-    revert="if row.did_not_execute_in_trace:",
-    expected_failure="phantom row passes through partition; no_cache_hypothetical / rerun aggregates inflate",
-)
 def test_did_not_execute_rows_do_not_contribute_to_projection_costs() -> None:
-    """Mutation contract: remove partition skip -> phantom row adds projection costs and savings."""
+    """Defends: phantom (did-not-execute) rows must be partitioned out
+    before projection — otherwise they inflate ``no_cache_hypothetical``
+    and rerun aggregates.
+    """
     fired = _row(
         node_path="fired",
         input_tokens=10_000,
@@ -427,12 +420,6 @@ def _row_with_cost(
     )
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/cost_estimation.py",
-    line=543,
-    revert="if row.cost_usd is not None:",
-    expected_failure="row.cost_usd skipped — actually-paid total reported as None instead of $0.0021",
-)
 def test_actually_paid_sums_row_cost_usd_when_set() -> None:
     """Track A primary contract: ``compute_actually_paid`` sums ``row.cost_usd``
     via the row-fallback path (no TraceTree provided).
@@ -440,10 +427,6 @@ def test_actually_paid_sums_row_cost_usd_when_set() -> None:
     Real Gemini smoke RUN1 baseline cost: $0.0021 (recorded in trace).
     Pre-Track-A the analyzer recomputed ~$0.0032 (53% over) by ignoring
     ``row.cost_usd``. The fallback path mirrors the same contract.
-
-    Mutation contract: revert the ``if row.cost_usd is not None`` guard in
-    the row-fallback loop → ``found_any`` stays False → returns
-    ``(None, "unavailable")``.
     """
     row = _row_with_cost(cost_usd=0.00210488, input_tokens=4709)
     actually_paid = compute_actually_paid([row])
@@ -490,12 +473,6 @@ def test_actually_paid_returns_unavailable_when_no_rows_have_cost_usd() -> None:
     assert actually_paid.tier == "unavailable"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/cost_estimation.py",
-    line=390,
-    revert="if row.model_is_heterogeneous:",
-    expected_failure="heterogeneous skip dropped — pricing lookup runs on empty model and projections fabricate",
-)
 def test_heterogeneous_rows_excluded_from_priced_projections() -> None:
     """Defensive guard: ``_partition_priced_rows`` excludes heterogeneous rows
     BEFORE the pricing lookup runs. Without the guard, ``model = ""`` flows
@@ -526,12 +503,6 @@ def test_heterogeneous_rows_excluded_from_priced_projections() -> None:
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/trace_tree.py",
-    line=232,
-    revert='if event.get("cached") and not include_cached:',
-    expected_failure="cached short-circuit dropped — degrades to (None, 'unavailable') and recompute fabricates",
-)
 def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None:
     """Test 5 — Cached events contribute 0.0 (NOT unavailable).
 
@@ -539,10 +510,6 @@ def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None
     no ``llm_call``). The agent paid $0 for that node. Returning
     ``(None, "unavailable")`` would force the recompute fallback to
     fabricate a fictional cost based on tokens x rate.
-
-    Mutation contract: drop the ``event.get("cached") and event.get("llm_call") is None``
-    branch in ``cost_usd_for_node`` -> the whole node degrades to
-    ``(None, "unavailable")`` -> recompute fabricates a non-zero cost.
     """
     from pflow.core.cache_analysis.context import AnalysisContext
 
@@ -563,12 +530,6 @@ def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None
     assert source == "trace"
 
 
-@mutation_contract(
-    file="src/pflow/core/trace_tree.py",
-    line=234,
-    revert="leaves = self.iter_llm_leaves((event,), descend_sub_workflows=False)",
-    expected_failure="cost_for_node descends into sub_workflow_events — parent inflated by child LLM cost",
-)
 def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:
     """Test 6 — Sub-workflow scoping.
 
@@ -576,10 +537,6 @@ def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:
     nodes have their own analyze-cache invocation. Including
     sub_workflow_events in the parent's cost would double-count + leak
     sub-workflow cost into parent attribution.
-
-    Mutation contract: add a recursion into ``event.get("sub_workflow_events")``
-    in ``cost_usd_for_node`` → parent reports inflated cost (sum of own
-    LLM + sub-workflow LLM).
     """
     from pflow.core.cache_analysis.context import AnalysisContext
 
@@ -607,12 +564,6 @@ def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:
     assert source == "trace"
 
 
-@mutation_contract(
-    file="src/pflow/core/trace_tree.py",
-    line=273,
-    revert="has_unpriced = True",
-    expected_failure="has_unpriced never set — unpriced leaves report 'trace' (over-confident)",
-)
 def test_cost_usd_for_node_returns_trace_partial_when_some_leaves_unpriced() -> None:
     """Test 7 — ``cost_usd: None`` propagation (4-state trace_partial).
 
@@ -621,10 +572,6 @@ def test_cost_usd_for_node_returns_trace_partial_when_some_leaves_unpriced() -> 
     surface ``"trace_partial"`` so consumers know the figure is incomplete.
     Without the 4-state distinction, agents can't tell pure trace from
     mixed.
-
-    Mutation contract: drop the ``has_unpriced`` accumulation → unpriced
-    leaves silently contribute 0 → cost reports as ``"trace"`` (looks
-    fully authoritative when it isn't).
     """
     from pflow.core.cache_analysis.context import AnalysisContext
 

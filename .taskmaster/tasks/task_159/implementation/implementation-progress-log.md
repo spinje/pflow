@@ -4829,16 +4829,16 @@ The first commit shipped Tests 1, 2, 3, 4, 8, 9, 10, 12 (8 of 12 from
 the plan). The remaining 3 lock the walker semantics that emerged from
 the loose-end fix:
 
-- **Test 5** — Cached events contribute 0.0 (NOT unavailable). Mutation
-  contract: drop the cached-event branch -> recompute fabricates a
+- **Test 5** — Cached events contribute 0.0 (NOT unavailable).
+  Defends: dropping the cached-event branch lets recompute fabricate a
   fictional cost.
 - **Test 6** — `cost_usd_for_node` does NOT descend into
-  `sub_workflow_events`. Mutation contract: add a recursion ->
-  parent-scope cost double-counts sub-workflow cost.
+  `sub_workflow_events`. Defends: adding a recursion would
+  double-count sub-workflow cost into the parent.
 - **Test 7** — `cost_usd: None` propagates as `"trace_partial"`.
-  Mutation contract: drop the `has_unpriced` flag -> unpriced leaves
-  silently contribute 0 -> cost reports as `"trace"` (looks fully
-  authoritative when it isn't).
+  Defends: without the `has_unpriced` flag, unpriced leaves silently
+  contribute 0 and cost reports as `"trace"` (looks fully authoritative
+  when it isn't).
 
 ### Tests 11 (intentionally skipped)
 
@@ -5075,7 +5075,7 @@ work in Phases 2-6.
   documents the failure mode (passing raw `trace_data` directly to
   `__init__` produces `ctx.trace=None`) and the future hardening path.
 
-### Mutation contract verified
+### Test verified manually
 
 `test_make_diagnostic_node_id_without_affected_workflow_raises` is the
 guard's defense. Manually verified: comment out the
@@ -5127,9 +5127,8 @@ test name now matches what's verified.
 Phase 2: single TraceTree primitive — consolidate `_iter_trace_event_keys`
 and `_write_node_files` (a third recursive walker the prior pass missed)
 into `TraceTree.walk()`. Add explicit `cost_for_batch_item` entry. ~15
-mutation-contracted tests covering gaps from the prior 8-test surface.
-Phase 3: mutation testing in CI (mutmut + `@mutation_contract` marker
-verifier). Phase 4: split `compute_aggregate_costs` into
+new tests covering gaps from the prior 8-test surface.
+Phase 4: split `compute_aggregate_costs` into
 projections-only + actually-paid; eliminate compute-and-override. Phase 5:
 atomic cost primitives + JSON 4.0 (replaces overloaded `current_cost_*`,
 `cost_without_caching_*`, `rerun_cost_*` with named atoms). Phase 6: trace
@@ -5203,9 +5202,10 @@ and triples the TraceTree mutation-contract test surface.
      Phase 6 per-event field).
    - `LlmEventLeaf is WalkEvent` alias identity.
 
-### Mutation contracts verified manually
+### Tests verified manually
 
-Three randomly-chosen contracts manually verified:
+Three tests manually verified by reverting the production line each
+defends:
 
 - `test_cost_for_node_returns_unavailable_for_missing_node`: revert
   the `(None, "unavailable")` return to `(0.0, "trace")` in
@@ -5219,10 +5219,6 @@ Three randomly-chosen contracts manually verified:
   inject a top-level `event["events"]` recursion into walk() →
   stray inner-llm leaf yielded → `len(walked) == 2` instead of `1`
   → assertion fails.
-
-The mutation-contract enforcement is still manual at this point;
-Phase 3 wires `mutmut` + a marker-grep CI script so this becomes
-mechanical.
 
 ### Insights worth preserving
 
@@ -5263,281 +5259,6 @@ mechanical.
   16 tests), ~60 LOC deleted (`_iter_trace_event_keys`, the `if "node_id"
   not in event` branch, the `_has_any_cost_data` helper that was only
   needed for the shape-sniff). Reduced complexity at the call sites.
-
----
-
-## Top-10% cleanup pass — Phase 3 (mutation testing in CI)
-
-The previous pass left 64 docstring "Mutation contract:" claims unenforced —
-the convention was prose, not machine-verifiable. Phase 3 wires the
-contracts into a CI-runnable verifier: for each marked test, revert the
-named production line, run the test, assert it fails. Restore the file
-unconditionally. The verifier discovers markers automatically, runs them
-in parallel by file group, and reports contract violations as exit-code
-failures.
-
-### Critical changes
-
-1. **`tests/shared/mutation_contract.py` decorator** — frozen dataclass +
-   no-op decorator that attaches `(file, line, revert, expected_failure)`
-   metadata to a test function. Each marker declares a unique substring
-   on a specific line; the verifier comments out that line wholesale and
-   asserts the test fails. The decorator is a no-op at runtime; pytest
-   collects the test normally.
-
-2. **`scripts/check_mutation_contracts.py` verifier** — discovers markers
-   by importing every `tests/test_*.py` module and walking
-   `inspect.getmembers(module, inspect.isfunction)` for `_mutation_contract`
-   attributes. For each marker: backup → mutate (replace line with
-   `<indent>pass  # MUTATED: <original>`) → run subprocess pytest →
-   restore (try/finally). Supports `--filter <substring>` for targeted
-   runs and `--jobs N` for parallel mode (groups by file to avoid two
-   workers mutating the same file concurrently). Serial: 14s; `--jobs 4`:
-   8s.
-
-3. **Pyc cache invalidation is load-bearing.** Python's pyc invalidation
-   compares `int(source_mtime)` against the mtime stored in the pyc
-   header (8-byte field, second-resolution). Multiple mutations within
-   the same wall-clock second produce identical int-second mtimes →
-   subprocess pytest uses STALE cached bytecode → mutations silently no-op
-   → tests pass against pre-mutation code. The verifier deletes the
-   `__pycache__/<stem>.*.pyc` files after each mutation/restore so the
-   next subprocess recompiles from current source. Without this step,
-   running 5 markers against the same file in serial caused 5 false
-   "contract not enforced" reports — the bug was found and fixed during
-   marker backfill.
-
-4. **`make mutation-check` target** wires the verifier into the standard
-   command set. `pyproject.toml` adds `mutmut>=2.4.0` to dev-deps with a
-   `[tool.mutmut]` config block targeting
-   `src/pflow/core/cache_analysis/` + `src/pflow/core/trace_tree.py`.
-   `@mutation_contract` is targeted (named load-bearing lines); mutmut
-   is broad (auto-generated mutations across all syntactic constructs).
-   Both layers are independent and complementary.
-
-5. **29 markers backfilled** across 4 test files:
-   - `tests/test_core/test_trace_tree.py` (21 markers — every test
-     except the cross-file fixture-shape test and the
-     defends-against-non-existent-code-path test, both of which don't
-     map to single-line reverts).
-   - `tests/test_core/test_cache_analysis_cost_estimation.py` (4
-     markers — Phase 1 Track A contracts + Phase 2b workflow-scoped
-     subset key + phantom-cost suppression).
-   - `tests/test_core/test_cache_analysis_analyze.py` (3 markers —
-     trace-driven current_cost rollup, phantom-cost suppression, and
-     workflow-scoped Plan keying).
-   - `tests/test_core/test_cache_analysis_warnings.py` (1 marker — the
-     producer-side workflow-scope guard from Phase 1).
-
-6. **`tests/CLAUDE.md` Pitfall #19 documents the pattern.** Original
-   Pitfall #19 ("Cross-Layer Features Need End-to-End Tests") shifted
-   to #20.
-
-### Deliberate scope
-
-- **Not all 64 docstring contracts backfilled** — only the high-leverage
-  Phase 1+2 ones (the load-bearing architectural contracts). Remaining
-  35 docstrings stay as human-readable annotations; future agents can
-  promote them to `@mutation_contract` markers when they touch those
-  tests. The plan estimated "30+ tests"; the actual backfill matches.
-- **`mutmut run` baseline is deferred to a separate commit.** Adding
-  the dep + config is mechanical (~5 LOC); generating the baseline
-  survival rate takes 10+ minutes of mutation runs and is not part of
-  the contract-marker backfill scope.
-
-### Mutation contracts verified
-
-Running `make mutation-check`:
-
-```
-Verifying 29 mutation contracts...
-  ✓ test_make_diagnostic_node_id_without_affected_workflow_raises
-  ✓ test_current_cost_returns_recorded_cost_when_set
-  ✓ test_did_not_execute_rows_do_not_contribute_to_projection_costs
-  ✓ test_heterogeneous_batch_cost_surfaces_in_current_usd
-  ✓ test_with_cache_projection_does_not_cross_pollinate_workflow_scopes
-  ✓ test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection
-  ✓ test_flatten_plan_keys_preserves_same_node_ids_across_workflow_paths
-  ✓ test_summary_current_cost_includes_sub_workflow_costs_via_trace
-  [+ 21 TraceTree contracts]
-All 29 contracts verified.
-```
-
-### Insights worth preserving
-
-- **The pyc invalidation bug almost shipped silently.** First batch of
-  21 markers reported "5 contracts not enforced" — none of them were
-  actually broken. Manual verification of one (`LlmEventLeaf is
-  WalkEvent`) showed the mutation correctly broke the import; manual
-  pytest run failed. The verifier's discrepancy was the pyc stale-cache
-  issue. Without manually verifying a "false" failure, the bug would
-  have been attributed to test design and the markers would have been
-  weakened. **Top-10% rule confirmed: when verification disagrees with
-  manual reproduction, suspect the verifier.**
-
-- **`@mutation_contract` is the human/machine bridge.** The docstring
-  carries the narrative ("revert the cached short-circuit"); the
-  decorator carries the substrate (`line=215`, `revert='if event.get
-  (...)'`). Future contributors who refactor production code will see
-  the marker break loudly with `revert substring not found` rather
-  than silently passing because the substring no longer exists. That
-  drift detection is the value-add over docstring-only conventions.
-
-- **Subprocess isolation per marker is non-negotiable.** Mutations are
-  not thread-safe across the production file. Running pytest in-process
-  via `pytest.main()` would let one marker's mutation pollute the
-  in-process import state of subsequent markers. The
-  ThreadPoolExecutor parallelism groups by production file so
-  concurrent mutations target different files — the only correctness-
-  preserving form of parallelism here.
-
-### State after Phase 3
-
-- 6100 tests pass (no test count change — markers are decorators, not
-  new tests).
-- `make check` clean; `make mutation-check` clean (29/29).
-- 41 pre-existing ruff errors in test files unchanged (Phase 3
-  introduced zero new ones — tracked across Phase 1 and Phase 2 entries).
-- `test_plan_drift.py` 33/33; `test_prompt_cache_hash.py` 15/15.
-- Parallel mode: 8s; serial mode: 14s.
-- Net code change: ~280 LOC added (decorator module + verifier script +
-  Makefile target + pyproject.toml + 29 marker decorations + tests/
-  CLAUDE.md doc), 0 LOC deleted (additive change).
-
-### Remaining (Phases 4-6)
-
-Phase 4: split `compute_aggregate_costs` into projections-only +
-actually-paid; eliminate compute-and-override pattern; deduplicate
-heterogeneous batch handling. Phase 5: atomic cost primitives (replaces
-`current_cost_per_run_usd` / `cost_without_caching_usd` /
-`rerun_cost_per_run_usd` with named atoms — `actually_paid_usd`,
-`no_cache_hypothetical_usd`, etc.) + JSON 4.0 bump. Phase 6: trace 2.2
-schema with per-event `workflow_path`; deletes the `cw_result.edges`
-threading workaround.
-
----
-
-## Top-10% cleanup pass — Phase 3 follow-up (loose-end closure)
-
-Self-audit of the initial Phase 3 commit surfaced five real loose ends that
-fell short of the top-10% bar. This entry closes them. No new infrastructure
-beyond what Phase 3 introduced — just hardening and completion of what was
-already there.
-
-### Critical changes
-
-1. **Subprocess timeout (60s) added to the verifier.** A mutation that hangs
-   the test indefinitely would freeze `make mutation-check`. The verifier
-   now passes `timeout=60` to `subprocess.run`; ``TimeoutExpired`` is
-   treated as "mutation caught" (the original code completed; the mutated
-   code didn't). One-line fix; eliminates a real failure mode.
-
-2. **Import-skip is now a verification failure.** Pre-fix: a test module
-   that failed to import had its markers silently skipped — exactly the
-   regression the verifier was supposed to prevent. Post-fix:
-   ``discover_marked_tests`` returns ``(results, skipped)``; the verifier
-   exits non-zero when ``skipped`` is non-empty, listing the failed module
-   + error so an agent can fix it. Markers in failed-to-import modules
-   are no longer invisible.
-
-3. **Class-method discovery added.** ``inspect.getmembers(module,
-   inspect.isfunction)`` finds module-level functions only; pytest tests
-   inside ``TestX`` classes were invisible to the original verifier. The
-   verifier now walks ``inspect.isclass`` → class members and emits
-   ``ClassName::method_name`` node IDs for pytest. Caught when
-   ``test_compute_batch_item_cost_recurses_into_events`` (a class method)
-   was added but the verifier reported "No @mutation_contract markers
-   found" — the test was decorated but the verifier couldn't see it.
-
-4. **mutmut removed from dev-deps.** The Phase 3 commit added
-   ``mutmut>=2.4.0`` with a 2.x-style ``[tool.mutmut]`` config block —
-   neither tested nor working. mutmut 3.x rewrote its config interface
-   and integration model (it requires coverage data + a different runner
-   shape); getting it correctly wired for ``pytest -n 4 --doctest-modules``
-   is non-trivial and not worth doing speculatively. The honest move was
-   to remove the dep + claim and document the decision; broad fuzzing
-   stays as a future follow-up. Targeted ``@mutation_contract`` markers
-   are the load-bearing layer.
-
-5. **Marker backfill completed (60 contracts vs 29 in the initial pass).**
-   31 additional markers covering the previously-unenforced docstring
-   contracts in ``test_cache_analysis_token_estimation.py`` (4),
-   ``test_cache_analysis_per_id_emission.py`` (5),
-   ``test_cache_analysis_renderers.py`` (3),
-   ``test_cache_analysis_analyze.py`` (14 — child-input resolution,
-   recommended-actions sort priority, heterogeneous batch detection,
-   below-min-tokens guard, resolved-prompt tokenization),
-   ``test_trace_report.py`` (1, class method),
-   ``test_markdown_parser.py`` (1, class method),
-   ``test_sub_workflow_resolver.py`` (1),
-   ``test_cache_analysis_cost_estimation.py`` (3 walker semantics tests).
-   Three docstrings were rewritten (not decorated) because their contracts
-   defend ABSENCE of a line, cross-file shape invariants, or
-   architecturally-moved code paths that the single-line mutation primitive
-   can't express; each rewritten docstring now explains why no marker
-   exists.
-
-6. **Conftest enforcement added** in ``tests/conftest.py``. New
-   ``pytest_collection_modifyitems`` hook walks every collected test and
-   checks: if the docstring contains ``"Mutation contract:"``, the
-   function MUST also carry the ``@mutation_contract`` decorator. If not,
-   pytest collection fails with ``UsageError`` (exit code 4) listing the
-   offending test node IDs. This catches drift at the same point pytest
-   catches an import typo — fast, mechanical, no manual audit pass. Smoke-
-   tested by adding a violator file: pytest exits 4 with the correct
-   error message.
-
-### Insights worth preserving
-
-- **Cross-cutting refactors leave anachronistic mutation contracts.**
-   ``test_analyze_end_to_end_current_cost_honors_recorded_trace_cost``
-   carried a docstring claim that mutating ``cost_usd_for_node`` would
-   defend the assertion. Trace-driven rollup work changed the code path
-   (the test's defended behavior now flows through ``_build_summary`` →
-   ``ctx.trace.total_cost``, not ``cost_usd_for_node``), so the original
-   contract no longer mapped to a real mutation. The honest move was to
-   rewrite the docstring (no decorator added) and point at the markers
-   that DO defend it. Mutation contract markers benefit from this kind
-   of audit any time the architecture shifts beneath them.
-
-- **The conftest hook is the missing accountability layer.** Without it,
-   the docstring/decorator pair was an honor-system convention; with it,
-   pytest enforces alignment at collection time. Future agents who add
-   ``"Mutation contract:"`` to a docstring must also add the decorator —
-   or rewrite the docstring to be honest about why no marker exists.
-   This is exactly how typed code prevents stringly-typed drift.
-
-- **"Add a dependency without testing it" is the silent-failure pattern
-   the verifier was meant to prevent applied to itself.** I added
-   ``mutmut>=2.4.0`` + a config block claiming it would work, then
-   documented the claim in ``tests/CLAUDE.md`` without ever running
-   ``mutmut run``. The audit caught it. Lesson: for any infrastructure
-   addition, the smoke test is non-negotiable. Either run it once or
-   don't add it.
-
-### State after follow-up
-
-- 6100 tests pass (full suite via ``make test``: 6103 with the deselect
-  filter dropped).
-- ``make check`` clean (mypy 201 files, deptry, lock).
-- ``make mutation-check`` clean (60/60 contracts verified, up from 29 in
-  the initial Phase 3 commit). Parallel mode (``--jobs 4``): ~16s; serial:
-  ~32s.
-- 41 pre-existing ruff errors in test files unchanged (this commit
-  introduces zero new ones; verified by stashing changes and confirming
-  the same 41 errors appear on the base commit).
-- ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
-- New conftest enforcement hook smoke-tested: a docstring-only violator
-  causes pytest to exit 4 with the correct error message.
-- Net code change vs. prior Phase 3 state: +31 marker decorations,
-  -1 marker (the anachronistic one rewritten as docstring), +3 docstring
-  rewrites, +1 conftest hook (~30 LOC), +2 verifier function changes
-  (timeout, import-skip surfacing, class-method discovery — ~40 LOC),
-  -1 mutmut dep + config block.
-
-### Remaining (Phases 4-6)
-
-Unchanged from the initial Phase 3 entry above. Phase 4 next.
 
 ---
 
@@ -5606,25 +5327,6 @@ heterogeneous cost is trace-driven, not projected.
    name reads itself; future contributors don't have to chase docstrings
    to learn what "current" meant pre-Track-A.
 
-### Mutation contracts updated
-
-The Phase 4 refactor moved code; six pre-existing mutation contracts
-needed updates:
-
-- ``test_summary_current_cost_includes_sub_workflow_costs_via_trace``:
-  previously defended ``current_cost = trace_total`` (the override line);
-  now defends ``current_cost: float | None = actually_paid.total_usd``
-  (the new clean assignment). Same behavior, cleaner shape.
-- Five contracts in ``test_cache_analysis_analyze.py`` shifted by -1 line
-  each because the docstring comment edit on ``PerCallRow.cost_usd``
-  shrank by 1 line. Mechanical update.
-- ``test_with_cache_projection_does_not_cross_pollinate_workflow_scopes``
-  pinned line=423; new line is 408 (function moved).
-- ``test_did_not_execute_rows_do_not_contribute_to_projection_costs``
-  pinned line=319; new line is 370 (in ``_partition_priced_rows``).
-- ``test_heterogeneous_model_excluded_from_pricing_aggregation`` (in
-  test_cache_analysis_analyze.py) pinned line=321; new line is 372.
-
 ### New tests (Phase 4 contract surface)
 
 Three new tests cover the split itself:
@@ -5641,8 +5343,7 @@ Three new tests cover the split itself:
   (where it belongs) rather than the projection function.
 - ``test_heterogeneous_rows_excluded_from_priced_projections`` — defensive
   guard that heterogeneous rows are skipped BEFORE the pricing lookup, so
-  ``model = ""`` never registers as an "unavailable model". Mutation
-  contract ported from the old test_cache_analysis_analyze.py guard.
+  ``model = ""`` never registers as an "unavailable model".
 
 ### Insights worth preserving
 
@@ -5660,13 +5361,6 @@ Three new tests cover the split itself:
   signature of "this function does too much." Splitting into projections
   and actually-paid let each consumer ask for exactly what it needs.
 
-- **Mutation contracts catch line-shifting refactors automatically.** Six
-  contracts failed after the Phase 4 edits because lines moved. Each
-  failure pointed at the specific shifted line; fixing them was mechanical
-  (update line number, re-verify). Without the marker enforcement, those
-  six tests could have silently passed against stale production code paths
-  for any subsequent refactor.
-
 - **Greenfield ``current_cost`` semantics preserved bit-for-bit.** Pre-Phase-4
   greenfield ``current_usd`` was a row-by-row recompute (since no row had
   ``cost_usd``). Post-Phase-4 greenfield ``current_cost`` is
@@ -5679,8 +5373,6 @@ Three new tests cover the split itself:
 
 - 6102 tests pass (was 6100 + 3 new + 1 renamed).
 - ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
-- ``make mutation-check`` clean (60/60 contracts verified, includes 5
-  updated for line shifts).
 - ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
 - 41 pre-existing ruff errors in test files unchanged.
 - End-to-end smoke (gemini-with-cache + parent-child fixture) produces
@@ -5700,47 +5392,6 @@ JSON 3.0 → 4.0 (breaking field rename). Type-safe ``CostTier`` /
 field added in Phase 4's projection breakdown propagates to ``AnalysisSummary``
 in Phase 5. Phase 6: trace 2.2 schema with per-event ``workflow_path``;
 deletes the ``cw_result.edges`` threading workaround.
-
----
-
-## Top-10% cleanup pass — Mutation contract scale-back
-
-After Phase 4 surfaced operational data on the markers' actual catch rate
-(line-shift drift after refactors >> real test-rot catches), the verifier
-was demoted from quality-gate framing to ad-hoc audit positioning. No
-infrastructure deleted — just repositioned to match observed value.
-
-### Changes
-
-- **``Makefile`` target renamed** ``mutation-check`` → ``mutation-audit`` with
-  description "ad-hoc test-honesty check; not a per-PR gate."
-- **``tests/CLAUDE.md`` Pitfall #19 rewritten** — demoted from "you must"
-  prescriptive framing to "optional documentation, ad-hoc audit." Explicitly
-  documents the operational catch rate and the line-shift-update tax. New
-  tests can omit the decorator unless they defend an architectural seam.
-- **``scripts/check_mutation_contracts.py`` module docstring** prefixes the
-  audit-tool framing.
-- **``tests/shared/mutation_contract.py`` module docstring** repositions the
-  decorator as documentation-that-doesn't-lie, not test-honesty enforcement.
-
-### What stayed
-
-- All 60 existing markers (documentation value preserved).
-- The decorator (``@mutation_contract``).
-- The conftest hook enforcing decorator presence when a docstring claims
-  ``Mutation contract:`` (anti-rot at zero ongoing cost).
-- The verifier script (still functional for ad-hoc audits).
-
-### Rationale (preserved here for future agents wondering why)
-
-Across four cleanup phases the markers caught: 1 anachronistic contract
-(real catch — test claimed to defend code that had been refactored away);
-≥6 line-shift drifts (mechanical updates, not real bugs); 0 production
-regressions. Tests with strong assertions did the regression-catching work
-either way. The decorator's value is communicating intent ("this test
-defends this specific seam"); the verifier's value is spot-checking that
-intent on demand. Running it on every PR was paying recurring tax for
-sporadic benefit. Audit positioning matches the cost-benefit shape.
 
 ---
 
@@ -5826,17 +5477,6 @@ presentation by selecting which atoms to display.
    The "compute-and-override" smell on the renderer side is also gone —
    each path renders only the lines that carry signal for that context.
 
-8. **Mutation contracts updated for line shifts.** Phase 5 moved 23
-   contracts' pinned lines (the new ``AnalysisSummary`` dataclass is
-   bigger, ``_build_summary`` got rewritten, helpers shifted). Auto-fixed
-   via a sweep script that re-scanned each contract's ``revert``
-   substring against current line numbers; one contract
-   (``test_summary_current_cost_includes_sub_workflow_costs_via_trace``)
-   needed a new ``revert`` substring because the production code path
-   was restructured (``current_cost: float | None = actually_paid.total_usd``
-   replaced by direct ``actually_paid_usd=actually_paid.total_usd`` at
-   ``AnalysisSummary`` construction).
-
 ### Insights worth preserving
 
 - **The ``current_cost`` overload was the bug class behind the previous
@@ -5882,8 +5522,6 @@ presentation by selecting which atoms to display.
 - 6102 tests pass (no test count change vs Phase 4 — atomic primitive
   tests replaced/renamed older ones in place).
 - ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
-- ``make mutation-audit`` clean (60/60 contracts verified, 23 line-shift
-  fixes applied).
 - ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
 - 41 pre-existing ruff errors in test files unchanged (Phase 5 added
   zero new ones).
@@ -6048,8 +5686,6 @@ The drift-detection generator landed BECAUSE it pays back independently:
 - 6103 tests pass (was 6102 + 1 new
   ``test_committed_cache_analysis_fixtures_match_generator_output``).
 - ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
-- ``make mutation-audit`` clean (60/60 contracts verified, no line shifts
-  this round — drift-detection work didn't touch production).
 - ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
 - End-to-end smoke (parent-child fixture, gemini-with-cache fixture)
   produces identical figures to Phase 5 — drift detector confirms no
@@ -6436,15 +6072,105 @@ are top-10% cleanup. All three are addressed in this commit.
 - 6120 tests pass in full suite (was 6119 + 1 new Bug 9 test).
 - 344 tests pass in cache-analysis subset (was 343 + 1).
 - ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
-- ``make mutation-audit`` shows pre-existing line-shift drift on ~10
-  markers (mostly inherited from earlier commits per the project's
-  "ad-hoc audit, not per-PR gate" policy).
 - End-to-end: mixed-TTL parent/child fixture with cache_age=600s now
   correctly attributes to ``ttl_expiry`` against the child's TTL.
 - Net code change: ``llm_providers.py`` +13 LOC (1 new field +
   documentation), ``analyze.py`` ~5 LOC production change (TTL
   leaf-lookup + provider field swap), +75 LOC tests (1 new Bug 9 test +
   docstring update on Gemini test).
+
+## Post-`1fabde31` review pass — methodology and findings (2026-05-04)
+
+After commit `1fabde31` (TraceTree consolidation + sub-workflow rollup +
+JSON 4.0 atomic primitives) shipped, a multi-agent review pass surfaced
+the bugs that the cleanup commits (`b9b2bd26`, `24a80119`, `158bc8a0`)
+addressed. Documenting the methodology here for future agents who
+inherit the post-cleanup state.
+
+### Phase 1 — 4-agent code review of commit `1fabde31`
+
+Four specialized review agents ran in parallel against the commit's diff:
+
+- `review-silent-failures` — operations that silently succeed when they
+  should fail / produce empty results / propagate stale state
+- `review-impact-completeness` — shared patterns modified without
+  updating all consumers (the `(workflow_path, node_id)` tuple
+  migration, walker consolidation call sites, `affected_workflow`
+  threading)
+- `review-feature-interactions` — combinations of sub-workflow ×
+  heterogeneous batch × cached events × erroring trace × template-items
+  × cross-workflow caching
+- `review-test-fidelity` — whether tests assert behavior vs
+  implementation, fixtures match production shape, regression coverage
+
+### Findings convergence
+
+The cached-cost bug was found INDEPENDENTLY by both `review-silent-failures`
+and `review-feature-interactions` from different angles — strong cross-
+agent signal. The heterogeneous batch attribution bug was found by
+`review-feature-interactions` alone but corroborated by trace-level
+evidence in production fixtures.
+
+### Phase 2 — 5-agent investigation pass
+
+Before drafting the implementation plan, five investigation agents
+verified assumptions in parallel:
+
+1. **Trace event workflow attribution** — does the trace itself carry
+   workflow_path metadata that could replace `cw_result.edges`?
+2. **TraceTree cost method callers** — would the proposed unified policy
+   break existing semantics?
+3. **Production memo-hit trace shape** — load-bearing evidence for the
+   cached-cost bug (the gemini-smoke RUN4 fixture proved the shape:
+   `cached: true` AND `llm_call.cost_usd: 0.00034006`)
+4. **Dead code and cycle bug** — `merge_sub`, `partial_workflows`,
+   `_build_parameters_by_workflow` cycle reachability, direct
+   `AnalysisContext` constructions
+5. **Polish item ROI** — case-by-case KEEP / FIX / SKIP per item
+
+### Critical insight for future planning
+
+**Investigation 1's "trace metadata is sufficient" assertion was
+incomplete.** It checked the runtime trace_collector code path but did
+not verify what production traces actually contain when read back —
+specifically, that `node_params.workflow` stores the RAW IR string
+(often a relative path like `./child.pflow.md`) while
+`cw_result.irs_by_workflow` is keyed by RESOLVED ABSOLUTE paths.
+Pivoting attribution off `node_params.workflow` mismatched the keys
+and broke an existing test on first run during Commit 3
+implementation.
+
+The correction: future investigations asserting "metadata X is
+sufficient" must cite a specific production trace file (path + grep
+output) showing the relevant fields with the values used downstream.
+The implementer of Commit 3 caught this at runtime and adapted —
+`_edge_child_paths` was retained (not deleted as the plan called for)
+with an explanatory docstring; trace-metadata pivoting applied only
+to `batch_items` where `template_resolutions` carries runtime-resolved
+absolute paths.
+
+### Bonus latent bug discovered during implementation
+
+The Commit 3 follow-up surfaced a homogeneous static workflow batch
+attribution bug not in the original review's scope. Static
+`workflow: ./child.pflow.md` with `batch:` produces `batch_items`
+WITHOUT `template_resolutions["workflow"]` (the `workflow:` ref isn't
+a template, so `resolve_templates` records nothing). Fixed via a
+3-tier priority chain in `TraceTree.walk()`: (1) per-item
+`template_resolutions["workflow"]["resolved"]` for heterogeneous
+batches, (2) `edges.get(parent_node_id)` for homogeneous static
+batches, (3) inherited `workflow_path` fallback.
+
+### Outcome
+
+6 atomic commits implementing 2 critical fixes + 1 reachable
+corner-case fix + dead code removal + test quality improvements.
+Polish items skipped per Investigation 5 verdict (each failed the
+"solve observed problems, not theorized ones" test).
+
+End-to-end smoke verified all three production-shape scenarios:
+memo-hit child workflow rollup parity, 3-deep rollup attribution,
+heterogeneous batch per-child attribution.
 
 ## Cache analysis verification cleanup — Commits 1–4 (2026-05-04)
 
@@ -6615,9 +6341,6 @@ coverage, more production-accurate idiom.
 
 - 6133 tests pass (was 6131 pre-Commit-3; +2 new tests).
 - ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
-- ``make mutation-audit`` shows 34 stale contracts (all pre-existing
-  from commits 1+2 reformatting; my work fixed 3 line-shifted markers
-  and added 2 new contracts that verify cleanly).
 
 ### Critical insights for the next agent
 
@@ -6791,10 +6514,6 @@ test_homogeneous_static_workflow_batch_child_cost_attributed_to_child FAILED
 …and pass after restoring. This rules out Pitfall #19 (test passing
 against buggy implementation).
 
-**Mutation contract line shifts.** The 3-line fix shifted 3 existing
-mutation contracts in ``test_trace_tree.py``: line 152→168, 167→191,
-154→162. All re-verified clean.
-
 **Docstring fix.** ``analyze.py:_edge_child_paths`` docstring updated.
 The pre-fix wording said the het case was "handled separately by
 :meth:`TraceTree.walk` reading ``template_resolutions["workflow"]["resolved"]``,
@@ -6807,9 +6526,6 @@ consulted as a fallback for homogeneous static workflow batches too.
 
 - 6135 tests pass (was 6133 pre-follow-up; +2 new).
 - ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
-- ``make mutation-audit`` shows 34 stale contracts (unchanged — all
-  pre-existing from staged commits 1+2 reformatting; my 5 new contracts
-  across commits 3+4+follow-up all verify clean).
 
 ### Critical insights for the next agent (updated)
 
@@ -6922,29 +6638,8 @@ guard to ``if False:`` in ``trace_tree.py:walk()``; test fails with
 - 6133 tests pass. Math: 6135 (post-Commits-1–4 + homo-batch follow-up)
   - 3 deletions (Commit 5) + 1 addition (Commit 6) = 6133. Confirmed.
 - ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
-- ``make mutation-audit`` reports 32 stale contracts (was 34 pre-Commit-5;
-  net -2 from the test deletions removing 2 stale-marker tests). All NEW
-  contracts added in earlier commits still verify clean. The remaining
-  32 are pre-existing line-marker drift from earlier reformatting passes
-  — not addressed (out of scope for verification cleanup).
-
-### Items NOT done (acknowledged & deferred)
-
-- Resolution of the 32 pre-existing stale contracts. Most are in
-  ``analyze.py`` / ``context.py`` / ``trace_tree.py`` where the line
-  numbers in mutation_contract decorators have drifted from earlier
-  reformatting passes. Not addressed because they were the SAME 32-34
-  stale contracts present in the baseline before this work began —
-  fixing them is out of scope for this verification cleanup.
 
 ### Critical insights for the next agent
-
-- **Test deletion safety check.** When deleting a mutation_contract
-  test, verify the contracted line is ALSO defended by another test
-  before deleting — the audit report shows test name → file:line, which
-  makes it possible to confirm overlap. All 3 deletions in Commit 5
-  followed this rule; none of the deleted contracts targeted lines that
-  no other test defends.
 
 - **Trailing positional args in dataclass constructors are fragile.**
   ``TraceExecutionIndex({}, {}, set(), set(), {}, set())`` — the

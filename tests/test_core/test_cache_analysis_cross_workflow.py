@@ -21,7 +21,6 @@ from pflow.core.cache_analysis.cross_workflow import (
     walk_cross_workflow,
 )
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
-from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Helpers — test resolvers
@@ -229,12 +228,6 @@ def test_walker_cycle_appends_skip_note() -> None:
     assert any("cycle" in n and "skipped" in n for n in notes)
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/cross_workflow.py",
-    line=177,
-    revert="seen.add(root_workflow_path)",
-    expected_failure="root not in seen → cycle check misses A→B→A back-edge → back-edge enters edges",
-)
 def test_walk_cross_workflow_does_not_emit_back_edge_to_root() -> None:
     """Regression for cycle bug: A → B → A. The back-edge B → A must NOT
     appear in ``cw_result.edges`` because A is the root.

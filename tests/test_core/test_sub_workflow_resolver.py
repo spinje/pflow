@@ -13,7 +13,6 @@ import pytest
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from tests.shared.markdown_utils import write_workflow_file
-from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -296,12 +295,6 @@ Calls the LLM with an external prompt file.
     )
 
 
-@mutation_contract(
-    file="src/pflow/core/workflow/sub_workflow_resolver.py",
-    line=163,
-    revert="ir = _resolve_file_refs_at_boundary(result.ir, resolved)",
-    expected_failure="boundary file resolution skipped — child prompt stays as the file-path string",
-)
 def test_resolve_sub_workflow_cross_workflow_walker_sees_resolved_prompts(tmp_path: Path) -> None:
     """End-to-end gate: cross-workflow walker via the primitive sees inlined prompts.
 
@@ -312,10 +305,6 @@ def test_resolve_sub_workflow_cross_workflow_walker_sees_resolved_prompts(tmp_pa
     findings to file-ref children silently dropped to zero on every
     real-world workflow that follows the documented external-prompt-file
     pattern.
-
-    Mutation contract: revert the boundary call in ``_resolve_from_file``;
-    this test fails because the child IR's prompt stays as
-    ``"./child.prompt.md"`` (24 chars) instead of the inlined content.
     """
     from pflow.core.cache_analysis.analyze import _count_llm_nodes_referencing_path
     from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow

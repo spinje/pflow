@@ -31,7 +31,6 @@ from pflow.core.diagnostic import (
     Severity,
     deduplicate_diagnostics,
 )
-from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Catalog integrity
@@ -236,22 +235,11 @@ def test_make_diagnostic_unknown_id_raises() -> None:
         make_diagnostic("cache.does-not-exist", node_id="X", affected_workflow="x.pflow.md")
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/warning_catalog.py",
-    line=789,
-    revert="_ensure_workflow_scope(warning_id, node_id, context_kwargs)",
-    expected_failure="guard skipped — diagnostic constructed silently without affected_workflow",
-)
 def test_make_diagnostic_node_id_without_affected_workflow_raises() -> None:
     """Workflow-scope contract: a ``cache.*`` diagnostic carrying a node_id MUST
     also carry ``affected_workflow``. Same node id can appear in parent and
     child workflows; without the workflow tag the renderer would key warnings
     against the wrong row.
-
-    Mutation contract: revert ``_ensure_workflow_scope`` in
-    ``warning_catalog.py`` (or skip the call from ``make_diagnostic``) → this
-    test fails because the diagnostic is constructed silently with no
-    workflow scope, and the renderer falls back to the wrong row.
     """
     with pytest.raises(KeyError, match="affected_workflow"):
         make_diagnostic(

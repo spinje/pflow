@@ -17,7 +17,6 @@ import pytest
 
 from pflow.core.cache_analysis.analyze import analyze
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
-from tests.shared.mutation_contract import mutation_contract
 
 
 def _word_count(_model: str | None, text: str | None, **_kwargs: Any) -> tuple[int, str]:
@@ -230,12 +229,6 @@ def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest
     assert diag.context["child_prose"] == "Child prose\n"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=2245,
-    revert="destinations=destinations,",
-    expected_failure="destinations kwarg dropped — diagnostic context lacks destinations key",
-)
 def test_cross_workflow_value_flow_collapses_per_value_with_destinations(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stage B.1 (Task 159) — by-value collapse contract.
 
@@ -245,10 +238,6 @@ def test_cross_workflow_value_flow_collapses_per_value_with_destinations(monkeyp
     ``node_id=None`` (workflow-level action) and a ``destinations`` list
     carrying per-child detail. Aggregation key is the root segment of
     parent_value_expr so sub-paths collapse into one finding.
-
-    Mutation contract: revert the GROUP-BY step in
-    ``analyze.py:_emit_value_flow_groups`` and this test fails because
-    ``destinations`` will not be present in context.
     """
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     # Parent has an LLM node referencing ${creative.direction} AND a child
@@ -415,21 +404,15 @@ def test_value_flow_filtered_groups_emit_transparency_note(monkeypatch: pytest.M
 # ---------------------------------------------------------------------------
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=2245,
-    revert="destinations=destinations,",
-    expected_failure="GROUP-BY collapse breaks — assertion on destinations list fails",
-)
 def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One value flowing to N children → ONE collapsed Diagnostic with
     destinations=[N entries].
 
-    Mutation contract: revert the GROUP-BY step in
-    ``_emit_value_flow_groups`` and this test fails because the analyzer
-    emits N per-edge Diagnostics (matching the pre-Stage-B.1 contract).
+    Defends: the GROUP-BY step in ``_emit_value_flow_groups`` collapses
+    per-edge Diagnostics into one workflow-level finding; reverting it
+    re-emits N per-edge Diagnostics.
     """
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     # Names match across the boundary (parent_value_expr.last_segment == child_input_name)
@@ -505,22 +488,12 @@ def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
     assert destinations[1]["child_workflow"] == "/abs/review-emotional.pflow.md"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=2196,
-    revert="root = _template_root_segment(candidate.parent_value_expr)",
-    expected_failure="GROUP-BY root undefined in _emit_value_flow_groups — NameError",
-)
 def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """Different sub-paths of the same root collapse to ONE group.
 
     Boundaries pass ``${concept.title}`` and ``${concept.core_idea}`` to
     different children. Aggregation key is the root segment ("concept"), so
     both edges land in the same group → 1 Diagnostic with destinations=[2].
-
-    Mutation contract: change ``_template_root_segment`` to identity (or
-    bypass it in the grouping key) and this test fails because each
-    sub-path gets its own group → 2 Diagnostics.
     """
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     # Use child_input_name == last_segment(parent_value_expr) to avoid the
@@ -599,18 +572,12 @@ def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch)
     assert diag.context["destination_count"] == 2
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=2095,
-    revert="if edge.parent_value_expr in parent_declared or edge.child_input_name in child_declared:",
-    expected_failure="parent-declared suppression dropped — Diagnostic fires when parent already caches",
-)
 def test_value_flow_brownfield_suppression_when_parent_declares(monkeypatch: pytest.MonkeyPatch) -> None:
     """Parent workflow declares the value's root in ## Cache → no Diagnostic.
 
-    Mutation contract: drop the ``parent_value_expr in parent_declared``
-    suppression check in ``_value_flow_candidate`` and this test fails
-    (Diagnostic emits even though caching is already in place).
+    Defends: ``_value_flow_candidate`` must suppress the diagnostic when
+    the parent already declares the value's root; otherwise a finding
+    fires even though caching is already in place.
     """
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
@@ -666,12 +633,6 @@ def test_value_flow_brownfield_suppression_when_parent_declares(monkeypatch: pyt
     assert boundary_findings == []
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/warning_catalog.py",
-    line=182,
-    revert='breakdown = ", ".join(f"{name}: {count}" for name, count in zip(basenames, counts, strict=True))',
-    expected_failure="non-uniform breakdown undefined — NameError or wrong text in non-uniform case",
-)
 def test_value_flow_distribution_clause_uniform_vs_nonuniform(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -679,9 +640,6 @@ def test_value_flow_distribution_clause_uniform_vs_nonuniform(
     template renders distribution-aware:
     - Uniform: "Used by N LLM nodes per destination (csv)."
     - Non-uniform: "Used by total LLM nodes (per-dest breakdown)."
-
-    Mutation contract: hardcode the uniform branch in
-    ``_compute_distribution_clause`` and the non-uniform assertion fails.
     """
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     # Parent passes ${shared} to TWO children; one child has 1 LLM consumer,
@@ -1613,9 +1571,9 @@ def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Pat
     notes entry, and falls back to observable-only attribution. The
     discrepancy is still emitted via the chunk_skipped observable path.
 
-    Mutation-test: narrowing the except clause back to just CompilationError
-    won't cover the ValueError this fixture triggers — analyze() would
-    crash entirely and this test would fail.
+    Defends: the except clause must be broad enough to cover ValueError
+    (and other compile-time exceptions); narrowing back to just
+    CompilationError lets analyze() crash entirely on this fixture.
     """
     trace_path = _write_trace(
         tmp_path,
@@ -1806,8 +1764,8 @@ def test_iter_llm_events_recurses_into_batch_items() -> None:
     yielded_node_ids = [y[0] for y in yielded]
     # Should include BOTH the inner sub-workflow LLM and the flat-batch LLM.
     assert "inner-llm" in yielded_node_ids
-    # Mutation-test: removing ``yield from _iter_llm_events(item.get("events", []))``
-    # makes ``inner-llm`` disappear from the yields.
+    # Defends: ``yield from _iter_llm_events(item.get("events", []))`` must
+    # recurse into batch-item events; without it, ``inner-llm`` disappears.
 
 
 # ---------------------------------------------------------------------------
@@ -1948,10 +1906,10 @@ def test_discrepancy_key_mismatch_via_real_planner_consumption(
     ``build_plan`` predicts cache_key from current params, the analyzer
     consumes both and emits ``key_mismatch`` when they diverge.
 
-    Mutation-test: dropping ``cache_key=planned.cache_key`` from any
-    PlanEntry constructor in plan.py makes predicted_keys empty, the
-    analyzer falls back to observable-only attribution, and this test
-    fails (no key_mismatch diagnostic; root_cause is ``unknown`` instead).
+    Defends: every PlanEntry constructor in plan.py must include
+    ``cache_key=planned.cache_key``; dropping it from any path makes
+    predicted_keys empty, the analyzer falls back to observable-only
+    attribution, and ``key_mismatch`` collapses to ``unknown`` root_cause.
 
     No monkeypatch of ``_predict_cache_keys`` — the whole point is the
     planner-consumption path is real.
