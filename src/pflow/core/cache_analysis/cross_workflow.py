@@ -163,9 +163,18 @@ def walk_cross_workflow(
     a branch — at ``max_depth`` or on a cycle. The analyzer surfaces these
     notes through ``CacheAnalysis.notes`` so agents see "deeper boundaries not
     analyzed" / "cycle skipped" rather than silently truncated results.
+
+    Cycle handling: the root workflow path is seeded into ``seen`` from the
+    outset so cycles back to the root (A → B → A) are detected at the
+    cycle-check in :func:`_process_one_call` and the back-edge is suppressed.
+    Without this seed the back-edge enters ``cw_result.edges`` and downstream
+    consumers like :func:`pflow.core.cache_analysis.analyze._build_parameters_by_workflow`
+    mutate the root parameter dict.
     """
     resolver = resolve_child or resolve_sub_workflow
     seen = set(seen_paths) if seen_paths else set()
+    if root_workflow_path:
+        seen.add(root_workflow_path)
     edges: list[CrossWorkflowEdge] = []
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]] = {}
     irs_by_workflow: dict[str, dict[str, Any]] = {}

@@ -260,7 +260,6 @@ class TraceExecutionIndex:
     executed_keys: set[tuple[str | None, str]]
     workflows_with_trace: set[str | None]
     current_cost_by_workflow: dict[str | None, float | None]
-    partial_workflows: set[str | None]
 
 
 @dataclass(frozen=True)
@@ -705,7 +704,34 @@ def _extract_cache_ttl(cache_block: Any) -> str | None:
 
 
 def _edge_child_paths(cw_result: Any) -> dict[str, str]:
-    """Map parent workflow node id to child workflow path for trace threading."""
+    """Map parent workflow node id to child workflow path for trace threading.
+
+    Used by the trace walker to attribute sub_workflow_events AND homogeneous
+    static workflow batches to the resolved absolute child workflow path.
+    The walker's ``cw_result.edges`` carry the runtime-resolved absolute
+    path on each edge; this helper folds them into the
+    ``parent_node_id → resolved_path`` shape that :meth:`TraceTree.walk`
+    consumes via its ``edges=`` kwarg.
+
+    **Why this still exists** (the cleanup plan called for deletion). Production
+    traces store ``node_params["workflow"]`` as the RAW IR string the user
+    wrote — often a relative path like ``./child.pflow.md``. The analyzer's
+    ``cw_result.irs_by_workflow`` is keyed by the RESOLVED ABSOLUTE path
+    produced by ``resolve_sub_workflow``. Pivoting attribution off
+    ``node_params.workflow`` alone would mismatch the keys. This helper
+    bridges raw → resolved by going through the walker's edges, which carry
+    the resolved path.
+
+    For HETEROGENEOUS workflow batches (one parent_node_id spawning child
+    workflows of different paths via ``workflow: ${item.workflow}``), this
+    map collapses the N edges into one (last-edge-wins) — that case is
+    handled at higher precedence in :meth:`TraceTree.walk` by reading
+    ``template_resolutions["workflow"]["resolved"]`` on each batch_item,
+    so per-item attribution is correct even when this map is lossy. The
+    edge-map fallback is consulted only for HOMOGENEOUS static workflow
+    batches (single child workflow, no template), which have no per-item
+    resolution metadata to override the parent-level edge.
+    """
     paths: dict[str, str] = {}
     for edge in getattr(cw_result, "edges", ()) or ():
         parent_node_id = getattr(edge, "parent_node_id", None)
@@ -720,20 +746,26 @@ def _build_trace_execution_index(
     root_workflow_path: str,
     edge_child_paths: dict[str, str],
 ) -> TraceExecutionIndex:
-    """Index trace execution and LLM costs by ``(workflow_path, node_id)``."""
+    """Index trace execution and LLM costs by ``(workflow_path, node_id)``.
+
+    ``edge_child_paths`` provides the parent_node_id → resolved-absolute
+    child workflow path mapping for sub_workflow_events. Heterogeneous
+    workflow batches use per-item ``template_resolutions`` instead — this
+    map's collision behaviour for those parents is intentionally bypassed
+    inside :meth:`TraceTree.walk`.
+    """
     if trace_data is None:
-        return TraceExecutionIndex({}, {}, set(), set(), {}, set())
+        return TraceExecutionIndex({}, {}, set(), set(), {})
     from pflow.core.trace_tree import TraceTree
 
     try:
         tree = TraceTree.from_dict(trace_data)
     except ValueError:
-        return TraceExecutionIndex({}, {}, set(), set(), {}, set())
+        return TraceExecutionIndex({}, {}, set(), set(), {})
 
     totals: dict[tuple[str | None, str], float] = {}
     workflow_totals: dict[str | None, float] = {}
     workflow_found: set[str | None] = set()
-    workflow_partial: set[str | None] = set()
     found: set[tuple[str | None, str]] = set()
     partial: set[tuple[str | None, str]] = set()
     llm_calls_by_key: dict[tuple[str | None, str], dict[str, Any]] = {}
@@ -749,6 +781,14 @@ def _build_trace_execution_index(
         call = leaf.llm_call
         if call is None:
             continue
+        if leaf.is_cached:
+            # Cached events: this run paid $0 (cache hit). Excluding them
+            # mirrors compute_actually_paid which uses
+            # total_cost(include_cached=False). Without this filter the
+            # rollup's per-workflow actually_paid_usd would inflate by the
+            # original (historical) cost on memo-hit events that retain
+            # ``llm_call.cost_usd > 0``.
+            continue
         node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
         key = (leaf.workflow_path or root_workflow_path, node_id)
         workflow_key = leaf.workflow_path or root_workflow_path
@@ -760,7 +800,6 @@ def _build_trace_execution_index(
         cost = call.get("cost_usd")
         if cost is None:
             partial.add(key)
-            workflow_partial.add(workflow_key)
             totals.setdefault(key, 0.0)
             workflow_totals.setdefault(workflow_key, 0.0)
         else:
@@ -776,7 +815,6 @@ def _build_trace_execution_index(
         executed_keys=executed_keys,
         workflows_with_trace=workflows_with_trace,
         current_cost_by_workflow=cost_by_workflow,
-        partial_workflows=workflow_partial,
     )
 
 

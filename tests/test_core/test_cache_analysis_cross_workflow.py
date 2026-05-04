@@ -21,6 +21,7 @@ from pflow.core.cache_analysis.cross_workflow import (
     walk_cross_workflow,
 )
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Helpers — test resolvers
@@ -145,11 +146,14 @@ def test_walker_handles_cycle_at_info_level(caplog: pytest.LogCaptureFixture) ->
         "./b.pflow.md": (b_ir, Path("/abs/b.pflow.md")),
         "./a.pflow.md": (a_ir, Path("/abs/a.pflow.md")),
     })
+    # Production-accurate idiom: pass ``root_workflow_path`` so the walker
+    # auto-seeds it into ``seen``. The legacy ``seen_paths={...}`` kwarg
+    # still works (set union) but is test-only scaffolding.
     result = walk_cross_workflow(
         a_ir,
         base_path=Path("/abs"),
         resolve_child=resolver,
-        seen_paths={"/abs/a.pflow.md"},  # simulate root is "/abs/a.pflow.md"
+        root_workflow_path="/abs/a.pflow.md",
     )
     # 1 edge from a → b. Cycle prevents descending b's edge to a.
     assert len(result.edges) == 1
@@ -219,10 +223,50 @@ def test_walker_cycle_appends_skip_note() -> None:
         a_ir,
         base_path=Path("/abs"),
         resolve_child=resolver,
-        seen_paths={"/abs/a.pflow.md"},
+        root_workflow_path="/abs/a.pflow.md",
         notes=notes,
     )
     assert any("cycle" in n and "skipped" in n for n in notes)
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/cross_workflow.py",
+    line=177,
+    revert="seen.add(root_workflow_path)",
+    expected_failure="root not in seen → cycle check misses A→B→A back-edge → back-edge enters edges",
+)
+def test_walk_cross_workflow_does_not_emit_back_edge_to_root() -> None:
+    """Regression for cycle bug: A → B → A. The back-edge B → A must NOT
+    appear in ``cw_result.edges`` because A is the root.
+
+    Pre-fix the walker initialized ``seen`` empty, so when the recursion
+    reached B and tried to resolve B → A, the cycle check at
+    :func:`_process_one_call` had no prior knowledge of A and accepted
+    the back-edge. That edge then mutated root parameters via
+    :func:`pflow.core.cache_analysis.analyze._build_parameters_by_workflow`.
+
+    Post-fix the walker seeds ``seen`` with ``root_workflow_path`` so the
+    back-edge is suppressed at the cycle check. This test drives the
+    PRODUCTION call shape (no ``seen_paths`` kwarg — relies on the
+    automatic root seeding).
+    """
+    a_ir = {"nodes": [_workflow_node("calls_b", "./b.pflow.md", {"x": "${y}"})]}
+    b_ir = {"nodes": [_workflow_node("calls_a", "./a.pflow.md", {"y": "${z}"})]}
+    resolver = _StubResolver({
+        "./b.pflow.md": (b_ir, Path("/abs/b.pflow.md")),
+        "./a.pflow.md": (a_ir, Path("/abs/a.pflow.md")),
+    })
+    result = walk_cross_workflow(
+        a_ir,
+        base_path=Path("/abs"),
+        resolve_child=resolver,
+        root_workflow_path="/abs/a.pflow.md",
+    )
+    edges_to_root = [e for e in result.edges if e.child_workflow == "/abs/a.pflow.md"]
+    assert edges_to_root == [], f"back-edge to root suppressed; got {edges_to_root}"
+    # The forward edge A → B is still emitted.
+    edges_to_b = [e for e in result.edges if e.child_workflow == "/abs/b.pflow.md"]
+    assert len(edges_to_b) == 1
 
 
 # ---------------------------------------------------------------------------

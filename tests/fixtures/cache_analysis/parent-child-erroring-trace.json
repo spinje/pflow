@@ -40,6 +40,9 @@
       "duration_ms": 1.0,
       "success": false,
       "timestamp": "2026-05-02T00:00:00",
+      "node_params": {
+        "workflow": "tests/fixtures/cache_analysis/child.pflow.md"
+      },
       "error": "child failed after first LLM",
       "sub_workflow_events": [
         {

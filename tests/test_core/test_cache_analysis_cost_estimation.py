@@ -528,8 +528,8 @@ def test_heterogeneous_rows_excluded_from_priced_projections() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=215,
-    revert='if event.get("cached") and event.get("llm_call") is None and not (event.get("batch_items") or []):',
+    line=232,
+    revert='if event.get("cached") and not include_cached:',
     expected_failure="cached short-circuit dropped — degrades to (None, 'unavailable') and recompute fabricates",
 )
 def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None:
@@ -565,8 +565,8 @@ def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=217,
-    revert="return self._sum_leaves(self.iter_llm_leaves((event,), descend_sub_workflows=False))",
+    line=234,
+    revert="leaves = self.iter_llm_leaves((event,), descend_sub_workflows=False)",
     expected_failure="cost_for_node descends into sub_workflow_events — parent inflated by child LLM cost",
 )
 def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:

@@ -6445,3 +6445,510 @@ are top-10% cleanup. All three are addressed in this commit.
   documentation), ``analyze.py`` ~5 LOC production change (TTL
   leaf-lookup + provider field swap), +75 LOC tests (1 new Bug 9 test +
   docstring update on Gemini test).
+
+## Cache analysis verification cleanup — Commits 1–4 (2026-05-04)
+
+Post-`1fabde31` cleanup pass following the 4-agent + 5-agent review
+that surfaced two critical bugs in production, one reachable corner-case
+bug, dead code, and test-quality items. The plan defined 6 atomic
+commits; commits 1–4 are landed (working tree, not yet committed),
+commits 5–6 are pending.
+
+### Commit 1 — Test infrastructure (landed by user prior to this session)
+
+Pure test infrastructure with zero production behavior change.
+
+- New ``TraceFixtureBuilder.cached_llm_event_with_call`` produces the
+  production memo-hit shape (``cached: true`` AND populated ``llm_call``
+  with original ``cost_usd``, ``cache_source``, ``cache_key``,
+  ``cache_age_sec``). Pre-existing ``cached_llm_event`` only modeled
+  cached non-LLM nodes — Pitfall #19 root cause for why no test caught
+  Bug #1 (cached LLM cost inflating rollup).
+- New ``TraceFixtureBuilder.heterogeneous_workflow_batch_event`` produces
+  the het-batch shape with per-item ``template_resolutions["workflow"]``.
+- ``TraceFixtureBuilder.workflow_event`` now requires ``workflow_path``
+  kwarg and writes it to ``node_params.workflow`` matching production
+  trace shape.
+- New fixtures: ``parent-child-memo-hit-trace.json`` (drives Bug #1
+  regression), ``parent-child-grandchild-trace.json`` + ``parent-3deep``
+  / ``child-3deep`` / ``grandchild`` ``.pflow.md`` files (3-deep
+  end-to-end coverage for Commit 6).
+- Existing ``parent-child-trace.json`` and
+  ``parent-child-erroring-trace.json`` regenerated with
+  ``node_params.workflow``.
+- ``TestTraceFixtureBuilderShapeParity`` test class drives real
+  ``WorkflowTraceCollector`` and asserts builder output keys match the
+  producer's keys for 4 event shapes (regular LLM, cached LLM with
+  call, batch, workflow) — load-bearing defense against Pitfall #19.
+
+### Commit 2 — Cached-leaf cost correctness (Critical bug #1)
+
+Production bug: memo-hit LLM events with ``cached: true`` AND
+``llm_call.cost_usd > 0`` were being summed into the rollup's
+``current_cost_by_workflow``, inflating ``actually_paid_usd``.
+Verified against ``RUN4-memo-hit-trace.json`` (Gemini production shape:
+``cost_usd: 0.00034006`` on a cached blob). The root summary's
+``actually_paid_usd`` (computed via ``compute_actually_paid`` →
+``total_cost(include_cached=False)``) was correct; the rollup diverged.
+
+**Fix sites:**
+
+- ``analyze.py:_build_trace_execution_index`` — added
+  ``if leaf.is_cached: continue`` filter inside the LLM-leaf loop.
+  Mirrors ``compute_actually_paid``'s policy.
+- ``trace_tree.py:cost_for_event`` / ``cost_for_node`` /
+  ``cost_for_batch_item`` — replaced the brittle shape-sniff
+  ``event.get("cached") and event.get("llm_call") is None and not
+  (event.get("batch_items") or [])`` with an unconditional cached
+  short-circuit ``if event.get("cached") and not include_cached`` plus
+  a new ``include_cached: bool = False`` kwarg. Cached descendants in
+  ``batch_items`` / ``sub_workflow_events`` are filtered out of the
+  leaf sum unless explicitly opted in.
+- ``context.py:cost_usd_for_node`` — docstring corrected. Pre-fix
+  claim "Cached events contribute 0.0 explicitly" was FALSE for
+  memo-hit LLM events with populated ``llm_call``; post-fix it's true.
+
+**Tests added:**
+
+- ``test_cost_for_node_returns_zero_for_memo_hit_with_populated_llm_call``
+  — mutation contract on the cached short-circuit.
+- ``test_cost_for_node_with_include_cached_returns_original_cost`` —
+  diagnostic opt-in for historical cost.
+- ``test_cost_for_event_filters_cached_descendants`` — sub-workflow
+  with cached + priced child returns priced cost only.
+- ``test_build_trace_execution_index_excludes_cached_llm_cost`` —
+  mutation contract driving the memo-hit fixture end-to-end.
+- ``test_actually_paid_and_trace_index_agree_on_memo_hit_child`` —
+  parity invariant: summary and rollup agree on cached semantics.
+
+### Commit 3 — Heterogeneous batch attribution (Critical bug #2)
+
+Production bug: het-batch sub-workflows
+(``workflow: ${item.workflow}`` over ``items: [{workflow: a},
+{workflow: b}]``) collapsed N edges into 1 via ``_edge_child_paths``'s
+``parent_node_id → child_workflow`` mapping (last wins). Per-child
+rollup attribution lied even though root-level total stayed correct.
+
+**Plan deviation flagged for record.** The plan called for deleting
+``_edge_child_paths`` entirely and pivoting all attribution to trace
+metadata, asserting "trace metadata covers all 4 production cases per
+Investigation 1." Empirical check (production trace
+``~/.pflow/debug/workflow-trace-valid-parent-*.json``) showed
+``node_params.workflow`` stores the RAW IR string the user wrote —
+often a relative path like ``./valid-child.pflow.md``. The analyzer's
+``cw_result.irs_by_workflow`` is keyed by the RESOLVED ABSOLUTE path.
+Pivoting attribution off ``node_params.workflow`` alone mismatched
+the keys, breaking the existing ``parent-child-erroring-trace`` test
+on first run. **Investigation 1 was incomplete**; future planning
+should not assume trace metadata is sufficient for sub-workflow
+attribution.
+
+**Adapted fix:**
+
+- ``trace_tree.py`` — added ``_resolved_child_workflow_from_event``
+  helper that reads ONLY ``template_resolutions["workflow"]["resolved"]``
+  (always an absolute path produced by runtime
+  ``resolve_sub_workflow``). Deliberately does NOT fall back to
+  ``node_params.workflow`` (raw, often relative).
+- ``trace_tree.py:walk()`` — for ``batch_items``, prefer the
+  per-item ``_resolved_child_workflow_from_event(item)`` lookup; this
+  is the actual het-batch fix because ``template_resolutions`` always
+  carries the runtime-resolved per-item child path.
+- ``trace_tree.py:walk()`` — for ``sub_workflow_events``, kept the
+  existing ``edges.get(event_node_id)`` lookup. ``_edge_child_paths``
+  is still needed for static (non-template) sub-workflow refs whose
+  ``node_params.workflow`` is the raw IR string.
+- ``analyze.py:_edge_child_paths`` — KEPT (not deleted per plan D2)
+  with an explanatory docstring: "Why this still exists" pointing at
+  the relative-vs-absolute mismatch and the het-batch carve-out.
+
+**Tests added:**
+
+- ``test_walk_uses_event_template_resolutions_for_heterogeneous_batch``
+  — mutation contract on the per-item fallback line. Het batch with
+  two items resolving to ``/abs/a.pflow.md`` and ``/abs/b.pflow.md``;
+  asserts each item attributed to its own child.
+- ``test_resolved_child_workflow_from_event_prefers_template_resolutions``
+  — helper unit test: ``template_resolutions`` wins; ``node_params``
+  is NOT a fallback (would re-introduce the relative-vs-absolute
+  mismatch).
+- ``test_walk_attributes_heterogeneous_batch_costs_per_item`` —
+  end-to-end attribution + total cost honesty.
+
+### Commit 4 — Cycle bug at ``walk_cross_workflow``
+
+Production bug (reachable corner case): A → B → A produced both A→B
+AND B→A edges in ``cw_result.edges`` because the cycle check at
+``cross_workflow.py:_process_one_call`` only saw ``seen={B}`` when
+processing B's calls. ``_build_parameters_by_workflow`` then iterated
+the back-edge and called ``params_by_workflow.setdefault(A, {})``
+which returned the EXISTING root params dict, then mutated it by
+adding the back-edge's ``child_input_name``. Walker's own test
+contract (existing tests pre-seeded ``seen_paths={root_path}``)
+already proved this is the desired semantic — production diverged.
+
+**Fix:** ``cross_workflow.py:walk_cross_workflow`` now seeds
+``root_workflow_path`` into ``seen`` from the outset:
+
+```python
+seen = set(seen_paths) if seen_paths else set()
+if root_workflow_path:
+    seen.add(root_workflow_path)
+```
+
+**Tests added:**
+
+- ``test_walk_cross_workflow_does_not_emit_back_edge_to_root`` —
+  mutation contract on the ``seen.add(root_workflow_path)`` line.
+  Drives the production call shape (no manual ``seen_paths`` kwarg).
+- ``test_build_parameters_by_workflow_does_not_mutate_root_on_cycle``
+  — analyzer-level regression: root params dict stays byte-identical
+  to its input after analysis of an A → B → A IR.
+
+**Existing cycle tests** at
+``test_walker_handles_cycle_at_info_level`` and
+``test_walker_cycle_appends_skip_note`` refactored from
+``seen_paths={path}`` to ``root_workflow_path=path`` — same
+coverage, more production-accurate idiom.
+
+### Verification
+
+- 6133 tests pass (was 6131 pre-Commit-3; +2 new tests).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- ``make mutation-audit`` shows 34 stale contracts (all pre-existing
+  from commits 1+2 reformatting; my work fixed 3 line-shifted markers
+  and added 2 new contracts that verify cleanly).
+
+### Critical insights for the next agent
+
+- **Don't trust plan assertions about "trace metadata is sufficient"
+  without verifying against a real production trace.** Investigation 1
+  for this plan checked the runtime trace_collector code path but did
+  not verify what production traces actually contain. The result was a
+  plan that called for deleting ``_edge_child_paths`` based on a false
+  premise. Future planning that asserts trace metadata coverage MUST
+  cite a specific production trace file (path + grep output) showing
+  the relevant fields.
+
+- **Two attribution sources, one fallback chain.** ``walk()`` now has
+  two sources of truth for child workflow path:
+  - ``template_resolutions["workflow"]["resolved"]`` (per-item,
+    runtime-resolved absolute) — used for batch_items.
+  - ``edges.get(parent_node_id)`` (per-parent, analyzer-resolved
+    absolute) — used for sub_workflow_events.
+  Both eventually fall back to inherited ``workflow_path``. The
+  layering is correct but adds reasoning surface — keep this in mind
+  when extending the walker.
+
+- **Known latent bug (NOT fixed in this pass): homogeneous workflow
+  batches.** A static ``workflow: ./child.pflow.md`` with
+  ``batch: [...items...]`` produces batch_items WITHOUT
+  ``template_resolutions["workflow"]`` (no template, so no resolution
+  data). ``_resolved_child_workflow_from_event`` returns None, falls
+  back to inherited ``workflow_path`` (parent), so child LLM cost gets
+  attributed to parent. Pre-existing — not introduced by this pass.
+  Fix is small (~2 lines: add ``edges.get(event_node_id)`` as second
+  fallback for batch_items) but needs (a) production trace
+  verification of the homogeneous batch shape, (b) a real fixture, (c)
+  audit of ``did_not_execute_in_trace`` and rollup enumeration for
+  shifted attribution. Defer to its own task to avoid Pitfall #19.
+
+### State after Commits 1–4 (working tree, not yet committed)
+
+- Production code change: ``trace_tree.py`` ~+50 LOC (helper +
+  walker batch_items branch + cost methods refactor),
+  ``analyze.py`` ~+30 LOC (``_edge_child_paths`` docstring +
+  cached-leaf filter), ``cross_workflow.py`` ~+10 LOC (root-seed +
+  docstring), ``context.py`` ~+5 LOC (docstring).
+- Test change: +~700 LOC across 6 test files; 0 deletions.
+- Net mutation contracts: +2 new (1 het-batch, 1 cycle), -3 stale
+  line-shifts fixed, -34 pre-existing stale (not addressed).
+
+### Pending (per user instruction "do 3+4 then let me review")
+
+- **Commit 5** — Dead code (``_LLMSummaryAccumulator.merge_sub``,
+  ``TraceExecutionIndex.partial_workflows``), test bloat (3 redundant
+  tests in ``test_trace_tree.py``), shim docstring fix in
+  ``workflow_trace.py``.
+- **Commit 6** — 3-deep end-to-end rollup regression test in
+  ``test_analyze_cache.py`` driving the
+  ``parent-child-grandchild-trace.json`` fixture (already created in
+  Commit 1).
+
+### Follow-up — homogeneous workflow batch attribution (latent bug fix, 2026-05-04)
+
+After Commits 1–4 landed I flagged a known latent bug in the "Critical
+insights" section above. User asked for a deep investigation before
+deciding whether to fix in-branch or file a GH issue. A thorough
+``pflow-codebase-searcher`` pass produced definitive evidence (file:line
+citations, real production trace inspection of 67k+ traces in
+``~/.pflow/debug/``, synthetic walker verification). Fix was scoped as a
+single-commit follow-up to the cleanup pass.
+
+**The bug.** A static homogeneous workflow batch:
+
+```yaml
+- type: workflow
+- workflow: ./child.pflow.md      # static literal, NOT a template
+- batch:
+    items: [...]
+    inputs: {input: ${item}}
+```
+
+…produces ``batch_items[i]`` events that carry
+``template_resolutions["inputs"]`` but DO NOT carry
+``template_resolutions["workflow"]`` — because the ``workflow:`` ref is a
+static literal, not a template, so ``resolve_templates`` never records a
+resolution for it. The ``_resolved_child_workflow_from_event`` helper
+(reading ``template_resolutions["workflow"]["resolved"]``) returns None,
+the walker fell through to inherited ``workflow_path`` (parent), and
+child LLM cost was misattributed to parent.
+
+**Production evidence.** Verified shape against
+``~/.pflow/debug/workflow-trace-batch-parent-20260421-142904.json``,
+``workflow-trace-lyrics-generator-20260423-145051.json``,
+``workflow-trace-batch-parallel-20-20260331-172736.json``, and ~100+
+others. None of the production traces in ``~/.pflow/debug/`` happen to
+have an LLM child of a homogeneous workflow batch (children are mostly
+``ShellNode`` / ``PythonCodeNode``), but the recording code path is
+identical regardless of child node type — verified via the same code
+trace at ``batch_executor.py:706-708`` and
+``template_resolution.py:438-442``.
+
+**Cascading symptoms (verified via investigation):**
+
+- Headline ``actually_paid_usd`` (``compute_actually_paid`` →
+  ``total_cost(include_cached=False)``): CORRECT — sum-of-leaves doesn't
+  care about per-leaf attribution.
+- Per-child ``SubWorkflowRollupEntry.actually_paid_usd``: was None for
+  the child workflow (looked up via
+  ``trace_index.current_cost_by_workflow.get(child_path)`` which had no
+  entry for child path — all leaves were attributed to root).
+- ``did_not_execute_in_trace`` for child LLM rows: flipped True
+  (analyzer thought child LLM didn't run despite execution having
+  happened).
+- ``compute_projections`` for child rows: fell back to estimator/heuristic
+  tier instead of trace tier, since per-call rows couldn't find their
+  trace cost via ``trace_index.costs_by_key[(child_path, node_id)]``.
+- Cross-workflow discrepancy diagnostics: spurious for homogeneous static
+  batches because the analyzer thought zero child invocations executed.
+
+**The fix (3 lines in ``trace_tree.py:walk()`` batch_items branch).**
+Insert ``edges.get(event_node_id)`` as a 2nd-priority fallback between
+the per-item ``template_resolutions["workflow"]["resolved"]`` lookup
+(unchanged, het-batch fix) and the inherited ``workflow_path`` final
+fallback:
+
+```python
+item_workflow_path = (
+    _resolved_child_workflow_from_event(item)             # priority 1: het batch
+    or (edges.get(event_node_id) if edges is not None else None)  # priority 2: homo batch
+    or workflow_path                                      # priority 3: final fallback
+)
+```
+
+Precedence is safe: heterogeneous case (priority 1 wins) is unchanged;
+homogeneous case (priority 2 wins because per-item template_resolutions
+is absent); non-workflow batches (no edge entry) fall through to
+inherited as before.
+
+**Why this is precedence-safe for heterogeneous batches.** The het case's
+``edges`` map collides on ``parent_node_id`` (last-edge-wins) — that was
+the original bug Commit 3 fixed. Priority-1 lookup now wins, so the
+collisional ``edges`` entry is never consulted for het batches.
+
+**Why the fix was retained inside ``walk()`` rather than at the analyzer
+layer.** The walker is the single primitive trace consumers depend on
+(``compute_actually_paid``, ``_build_trace_execution_index``, trace
+report, smart_trace, etc.). Bolting attribution policy onto each
+consumer would re-introduce the duplication that Task 159's TraceTree
+consolidation explicitly removed.
+
+**Tests added:**
+
+- ``test_walk_uses_edges_for_homogeneous_static_workflow_batch``
+  (mutation contract, ``trace_tree.py:163``) — drives the walker
+  directly with a synthetic homogeneous batch trace; verifies child
+  cost rolls up to ``/abs/child.pflow.md`` instead of root.
+- ``test_homogeneous_static_workflow_batch_child_cost_attributed_to_child``
+  — full end-to-end through ``analyze()`` with on-disk parent + child
+  ``.pflow.md`` and a synthetic trace; verifies
+  ``SubWorkflowRollupEntry.actually_paid_usd`` for the child equals the
+  sum of child LLM costs.
+- New ``TraceFixtureBuilder.homogeneous_workflow_batch_event``
+  helper that mirrors production shape (``node_params.workflow`` =
+  raw literal; ``template_resolutions["inputs"]`` only; no
+  ``template_resolutions["workflow"]``).
+
+**Mutation safety verified.** Both new tests fail when the fix is
+reverted (proven by reverting the patch in-place and re-running):
+
+```
+test_walk_uses_edges_for_homogeneous_static_workflow_batch FAILED
+test_homogeneous_static_workflow_batch_child_cost_attributed_to_child FAILED
+```
+
+…and pass after restoring. This rules out Pitfall #19 (test passing
+against buggy implementation).
+
+**Mutation contract line shifts.** The 3-line fix shifted 3 existing
+mutation contracts in ``test_trace_tree.py``: line 152→168, 167→191,
+154→162. All re-verified clean.
+
+**Docstring fix.** ``analyze.py:_edge_child_paths`` docstring updated.
+The pre-fix wording said the het case was "handled separately by
+:meth:`TraceTree.walk` reading ``template_resolutions["workflow"]["resolved"]``,
+so per-item attribution is correct even when this map is lossy" —
+which left the impression that ``edges`` was only used for
+sub_workflow_events. Post-fix wording clarifies that ``edges`` is now
+consulted as a fallback for homogeneous static workflow batches too.
+
+### Verification (cumulative across Commits 1–4 + this follow-up)
+
+- 6135 tests pass (was 6133 pre-follow-up; +2 new).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- ``make mutation-audit`` shows 34 stale contracts (unchanged — all
+  pre-existing from staged commits 1+2 reformatting; my 5 new contracts
+  across commits 3+4+follow-up all verify clean).
+
+### Critical insights for the next agent (updated)
+
+- **Trace-walker attribution has THREE priority levels for batch_items
+  now**, not two:
+  1. ``template_resolutions["workflow"]["resolved"]`` (heterogeneous).
+  2. ``edges.get(event_node_id)`` (homogeneous static).
+  3. Inherited ``workflow_path`` (non-workflow batches, fallback).
+  Future contributors who add a 4th tier should keep this priority
+  comment (``trace_tree.py:150-160``) up to date — the comment block
+  is the single place where the precedence is documented.
+
+- **The investigation pattern that found this bug should be repeated for
+  the OTHER batch shapes**:
+  - Heterogeneous workflow batch with mixed inputs templates: covered
+    by Commit 3's fix.
+  - Homogeneous static workflow batch: covered by this follow-up.
+  - Heterogeneous workflow batch where ``inputs`` is non-templated: not
+    explicitly tested. Likely fine because it's heterogeneous (priority-1
+    template_resolutions for ``workflow`` still wins) but no test pins
+    this.
+  - LLM batch (not workflow batch): no per-item attribution needed
+    (single LLM call per item, all attributed to the LLM node's owner).
+    Confirmed by ``test_walk_assigns_owner_node_id_for_batch_items_to_parent``.
+
+### State after follow-up (working tree, not yet committed)
+
+- Production code change since pre-Commit-3 baseline: ``trace_tree.py``
+  ~+60 LOC (helper + walker batch_items 3-tier attribution + cost
+  methods refactor + comments), ``analyze.py`` ~+35 LOC
+  (``_edge_child_paths`` docstring updates + cached-leaf filter),
+  ``cross_workflow.py`` ~+10 LOC (root-seed + docstring),
+  ``context.py`` ~+5 LOC (docstring).
+- Test change: +~900 LOC across 7 test files; 0 deletions.
+- Net mutation contracts: +3 new (1 het-batch, 1 cycle, 1 homo-batch),
+  -3 stale line-shifts fixed, -34 pre-existing stale (not addressed).
+
+## Cache analysis verification cleanup — Commits 5–6 (2026-05-04)
+
+Follow-on session implementing the final two commits of the cleanup plan.
+
+### Commit 5 — Dead code + test bloat + shim docstring
+
+**Source-side deletions:**
+
+- ``runtime/workflow_trace.py:_LLMSummaryAccumulator.merge_sub`` —
+  deleted (13 LOC). Pre-``1fabde31`` callers were the manual recursion
+  in ``_collect_llm_summary``; that path now uses
+  ``iter_llm_leaves(descend_cached_subtrees=False)`` which descends into
+  sub-workflows internally, so the merge accumulator was orphaned.
+  Verified zero callers via ``grep -rn merge_sub src/ tests/``.
+- ``cache_analysis/analyze.py:TraceExecutionIndex.partial_workflows`` —
+  deleted. Field was constructed at line 821 (``workflow_partial`` set
+  accumulator) and never read anywhere in ``src/`` or ``tests/``.
+  Removed the field declaration (line 263), the local accumulator, the
+  ``workflow_partial.add(workflow_key)`` call inside the cost loop, the
+  ``partial_workflows=workflow_partial`` constructor kwarg, and updated
+  the two ``return TraceExecutionIndex({}, {}, set(), set(), {}, set())``
+  early-return shapes to drop the trailing ``set()``.
+
+**Shim docstring fixes** (``runtime/workflow_trace.py``):
+
+- ``_collect_llm_calls_from_events`` — replaced empty one-liner with
+  the actual policy (skips cached at every tier — top-level, batch_items,
+  sub_workflow_events). Pre-1fabde31 the hand-rolled walker only
+  filtered top-level cached events; the new behavior is correct because
+  cached items contributed $0 this run regardless of nesting.
+- ``_collect_llm_summary`` — same correction applied.
+
+**Test bloat removal** (``tests/test_core/test_trace_tree.py``):
+
+- ``test_iter_llm_leaves_skips_cached_subtree_when_requested`` (was
+  line 76) — deleted. Subsumed by
+  ``test_walk_skips_cached_subtree_when_kwarg_false`` at line 477,
+  which targets the same line 133 with the same revert string AND has
+  tighter assertions (asserts the ENTIRE walk is empty, not just the
+  filtered LLM leaves).
+- ``test_iter_llm_leaves_threads_workflow_path_via_edges`` (was
+  line 98) — deleted. Subsumed by
+  ``test_walk_event_carries_workflow_path_via_edges`` at line 796,
+  which targets the same code path with current-accurate line marker
+  (191) and richer assertions (verifies BOTH parent and child
+  workflow_path).
+- ``test_total_cost_descends_sub_workflows`` (was line 686) — deleted.
+  Subsumed by ``test_total_cost_descends_sub_workflows_three_deep``
+  at line 144, which targets the same line 279 with the same revert
+  string. 3-deep recursion implies 1-level works.
+
+Net: -3 tests, ~-80 test LOC, -25 production LOC.
+
+### Commit 6 — 3-deep end-to-end rollup regression test
+
+Added ``test_analyze_cache_rolls_up_three_deep_sub_workflow_costs`` in
+``tests/test_cli/test_analyze_cache.py``. Drives the
+``parent-child-grandchild-trace.json`` fixture (created in Commit 1) end-to-end
+through the CLI in JSON mode. Asserts:
+
+- ``summary.actually_paid_usd == 0.15`` (sum of 0.05 + 0.07 + 0.03)
+- Both child + grandchild workflow paths appear in
+  ``sub_workflow_rollup.per_workflow``.
+- Per-child entries report PER-WORKFLOW scope, not cumulative
+  (child entry == 0.07, grandchild entry == 0.03).
+
+**Mutation safety verified.** Reverted the ``if descend_sub_workflows:``
+guard to ``if False:`` in ``trace_tree.py:walk()``; test fails with
+``assert 0.05 == 0.15``. Restored; test passes.
+
+### State after Commits 5–6
+
+- 6133 tests pass. Math: 6135 (post-Commits-1–4 + homo-batch follow-up)
+  - 3 deletions (Commit 5) + 1 addition (Commit 6) = 6133. Confirmed.
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- ``make mutation-audit`` reports 32 stale contracts (was 34 pre-Commit-5;
+  net -2 from the test deletions removing 2 stale-marker tests). All NEW
+  contracts added in earlier commits still verify clean. The remaining
+  32 are pre-existing line-marker drift from earlier reformatting passes
+  — not addressed (out of scope for verification cleanup).
+
+### Items NOT done (acknowledged & deferred)
+
+- Resolution of the 32 pre-existing stale contracts. Most are in
+  ``analyze.py`` / ``context.py`` / ``trace_tree.py`` where the line
+  numbers in mutation_contract decorators have drifted from earlier
+  reformatting passes. Not addressed because they were the SAME 32-34
+  stale contracts present in the baseline before this work began —
+  fixing them is out of scope for this verification cleanup.
+
+### Critical insights for the next agent
+
+- **Test deletion safety check.** When deleting a mutation_contract
+  test, verify the contracted line is ALSO defended by another test
+  before deleting — the audit report shows test name → file:line, which
+  makes it possible to confirm overlap. All 3 deletions in Commit 5
+  followed this rule; none of the deleted contracts targeted lines that
+  no other test defends.
+
+- **Trailing positional args in dataclass constructors are fragile.**
+  ``TraceExecutionIndex({}, {}, set(), set(), {}, set())`` — the
+  trailing ``set()`` was the deleted ``partial_workflows`` field. The
+  removal is mechanically obvious in source, but using positional args
+  in a dataclass with 6 fields is the trap. Future refactors of this
+  shape should prefer keyword args for clarity.

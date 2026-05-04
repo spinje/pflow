@@ -147,11 +147,27 @@ class TraceTree:
                     continue
                 if item.get("cached") and not descend_cached_subtrees:
                     continue
+                # Per-item attribution priority for batch_items:
+                # 1. ``template_resolutions["workflow"]["resolved"]`` — present
+                #    only for HETEROGENEOUS batches (``workflow: ${item.workflow}``).
+                #    Carries the runtime-resolved per-item child path.
+                # 2. ``edges.get(event_node_id)`` — analyzer-resolved absolute
+                #    child path for HOMOGENEOUS workflow batches (static
+                #    ``workflow: ./child.pflow.md`` over ``items: [...]``).
+                #    These items have no ``template_resolutions["workflow"]``
+                #    because the workflow ref is static, not templated.
+                # 3. Inherited ``workflow_path`` — final fallback for
+                #    non-workflow batches and unattributed cases.
+                item_workflow_path = (
+                    _resolved_child_workflow_from_event(item)
+                    or (edges.get(event_node_id) if edges is not None else None)
+                    or workflow_path
+                )
                 yield WalkEvent(
                     event=item,
                     owner_node_id=event_node_id,
                     tier="batch_item",
-                    workflow_path=workflow_path,
+                    workflow_path=item_workflow_path,
                 )
                 yield from self.walk(
                     _mapping_events(item.get("events")),
@@ -159,11 +175,19 @@ class TraceTree:
                     descend_cached_subtrees=descend_cached_subtrees,
                     edges=edges,
                     owner_node_id=event_node_id,
-                    workflow_path=workflow_path,
+                    workflow_path=item_workflow_path,
                     _tier="sub_workflow_descendant",
                 )
 
             if descend_sub_workflows:
+                # Sub-workflow attribution: ``edges`` (parent_node_id →
+                # resolved-absolute child path, derived from the analyzer's
+                # cross-workflow walker) is the canonical source. Falls back
+                # to inherited ``workflow_path`` when ``edges`` has nothing.
+                # Trace metadata's ``node_params.workflow`` is intentionally
+                # NOT used here — it stores the raw IR string (often relative,
+                # e.g. ``./child.pflow.md``) which would not match the
+                # analyzer's resolved-absolute keys.
                 child_workflow_path = edges.get(event_node_id) if edges is not None else workflow_path
                 yield from self.walk(
                     _mapping_events(raw_event.get("sub_workflow_events")),
@@ -201,22 +225,38 @@ class TraceTree:
             if we.has_llm_call
         )
 
-    def cost_for_event(self, event: Mapping[str, Any]) -> tuple[float | None, str]:
-        """Return recorded cost for one event subtree, including child workflows."""
-        if event.get("cached") and event.get("llm_call") is None and not (event.get("batch_items") or []):
-            return 0.0, "trace"
-        return self._sum_leaves(self.iter_llm_leaves((event,)))
+    def cost_for_event(self, event: Mapping[str, Any], *, include_cached: bool = False) -> tuple[float | None, str]:
+        """Return recorded cost for one event subtree, including child workflows.
 
-    def cost_for_node(self, node_id: str) -> tuple[float | None, str]:
-        """Return recorded cost for one top-level node, excluding sub-workflows."""
+        Cached policy: when the EVENT itself is cached, return ``(0.0, "trace")``
+        unconditionally — this run paid $0 regardless of any historical
+        ``llm_call.cost_usd`` retained on the cached blob. Cached descendants
+        in batch_items or sub_workflow_events are similarly excluded from the
+        leaf sum unless ``include_cached=True``.
+        """
+        if event.get("cached") and not include_cached:
+            return 0.0, "trace"
+        leaves = self.iter_llm_leaves((event,))
+        if include_cached:
+            return self._sum_leaves(leaves)
+        return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)
+
+    def cost_for_node(self, node_id: str, *, include_cached: bool = False) -> tuple[float | None, str]:
+        """Return recorded cost for one top-level node, excluding sub-workflows.
+
+        Cached policy: see :meth:`cost_for_event`.
+        """
         event = self.event_for(node_id)
         if event is None:
             return None, "unavailable"
-        if event.get("cached") and event.get("llm_call") is None and not (event.get("batch_items") or []):
+        if event.get("cached") and not include_cached:
             return 0.0, "trace"
-        return self._sum_leaves(self.iter_llm_leaves((event,), descend_sub_workflows=False))
+        leaves = self.iter_llm_leaves((event,), descend_sub_workflows=False)
+        if include_cached:
+            return self._sum_leaves(leaves)
+        return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)
 
-    def cost_for_batch_item(self, item: Mapping[str, Any]) -> tuple[float | None, str]:
+    def cost_for_batch_item(self, item: Mapping[str, Any], *, include_cached: bool = False) -> tuple[float | None, str]:
         """Return recorded cost for one batch item dict.
 
         Batch items differ in shape from real events: they lack ``node_id``
@@ -225,8 +265,10 @@ class TraceTree:
         batch-item summary table pass batch items here directly so the
         shape difference is handled in one place rather than via
         shape-sniffing at every call site.
+
+        Cached policy: see :meth:`cost_for_event`.
         """
-        if item.get("cached") and item.get("llm_call") is None and not (item.get("batch_items") or []):
+        if item.get("cached") and not include_cached:
             return 0.0, "trace"
 
         leaves: list[WalkEvent] = []
@@ -240,7 +282,9 @@ class TraceTree:
             )
         for sub_event in _mapping_events(item.get("events")):
             leaves.extend(we for we in self.walk((sub_event,), _tier="sub_workflow_descendant") if we.has_llm_call)
-        return self._sum_leaves(leaves)
+        if include_cached:
+            return self._sum_leaves(leaves)
+        return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)
 
     def total_cost(
         self,
@@ -284,6 +328,32 @@ def _mapping_events(value: Any) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, list):
         return ()
     return tuple(item for item in value if isinstance(item, Mapping))
+
+
+def _resolved_child_workflow_from_event(event: Mapping[str, Any]) -> str | None:
+    """Extract the runtime-resolved child workflow path from an event.
+
+    Source: ``template_resolutions["workflow"]["resolved"]`` — present per
+    batch_item when the parent workflow-type node's ``workflow:`` references
+    a template (``${item.workflow}`` in heterogeneous batches). The runtime
+    captures the resolved value (always an absolute path produced by
+    ``resolve_sub_workflow``) per item.
+
+    Returns ``None`` for events without this metadata. Note: deliberately
+    does NOT fall back to ``node_params["workflow"]`` — that field stores
+    the RAW IR string (often relative, e.g. ``./child.pflow.md``) which
+    would not match the analyzer's resolved-absolute path keys. The
+    ``edges`` fallback in :meth:`TraceTree.walk` provides resolved-absolute
+    attribution for static (non-template) sub-workflow refs.
+    """
+    resolutions = event.get("template_resolutions")
+    if isinstance(resolutions, Mapping):
+        wf = resolutions.get("workflow")
+        if isinstance(wf, Mapping):
+            resolved = wf.get("resolved")
+            if isinstance(resolved, str) and resolved:
+                return resolved
+    return None
 
 
 __all__ = ["LlmEventLeaf", "TraceTree", "WalkEvent"]

@@ -168,6 +168,54 @@ def test_analyze_cache_rolls_up_sub_workflow_costs_via_subprocess() -> None:
     assert child_rollup["actually_paid_usd"] == pytest.approx(0.10)
 
 
+def test_analyze_cache_rolls_up_three_deep_sub_workflow_costs() -> None:
+    """3-level workflow tree (parent -> child -> grandchild) — each level has
+    one priced LLM call. Verifies that the rollup correctly attributes costs
+    across all three levels.
+
+    Original bug context: lyrics-generator song-creator workflow had 41 LLM
+    nodes across 3+ depth levels and underreported by ~$0.35 pre-Phase-1
+    rollup work. Existing end-to-end coverage tops out at depth 1; this test
+    pins the deeper case so a future regression of the per-workflow
+    attribution logic surfaces here instead of through a real workflow.
+    """
+    workflow_path = Path("tests/fixtures/cache_analysis/parent-3deep.pflow.md")
+    trace_path = Path("tests/fixtures/cache_analysis/parent-child-grandchild-trace.json")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "analyze-cache",
+            str(workflow_path),
+            "--from-trace",
+            str(trace_path),
+            "--format=json",
+            "topic=cache analysis",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+
+    # summary.actually_paid_usd sums all three priced LLMs: 0.05 + 0.07 + 0.03.
+    assert payload["summary"]["actually_paid_usd"] == pytest.approx(0.15)
+
+    rollup = payload["summary"]["sub_workflow_rollup"]
+    paths_in_rollup = {entry["workflow_path"] for entry in rollup["per_workflow"]}
+    assert any(p.endswith("/child-3deep.pflow.md") for p in paths_in_rollup)
+    assert any(p.endswith("/grandchild.pflow.md") for p in paths_in_rollup)
+
+    child_entry = next(e for e in rollup["per_workflow"] if e["workflow_path"].endswith("/child-3deep.pflow.md"))
+    grandchild_entry = next(e for e in rollup["per_workflow"] if e["workflow_path"].endswith("/grandchild.pflow.md"))
+    # Per-child actually_paid: child's own draft paid 0.07; grandchild's own
+    # draft paid 0.03. Child's entry MUST NOT include grandchild's spend
+    # (rollup is per-workflow scoped, not cumulative). Pre-rollup-fix this
+    # number under-reported / over-reported depending on attribution bug.
+    assert child_entry["actually_paid_usd"] == pytest.approx(0.07)
+    assert grandchild_entry["actually_paid_usd"] == pytest.approx(0.03)
+
+
 def test_analyze_cache_does_not_cross_pollinate_subset_groups() -> None:
     """Parent and child both use node id ``draft``; JSON keeps scoped rows separate."""
     workflow_path = Path("tests/fixtures/cache_analysis/parent.pflow.md")

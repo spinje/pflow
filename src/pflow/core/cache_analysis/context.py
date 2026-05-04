@@ -119,8 +119,9 @@ class AnalysisContext:
         Returns ``(cost, source)``:
 
         - ``(float, "trace")``: priced; sum of llm_call + batch_items[*].llm_call
-          costs. Cached events contribute 0.0 explicitly (this run paid 0
-          for that item — NOT excluded as "unavailable").
+          costs. Cached events return ``(0.0, "trace")`` — this run paid $0
+          regardless of any historical ``llm_call.cost_usd`` retained on the
+          cached blob (NOT excluded as "unavailable").
         - ``(float, "trace_partial")``: at least one leaf had ``cost_usd=None``
           (unpriced model). The float is the priced subset; caller upgrades
           to recompute for unpriced leaves OR surfaces partial.

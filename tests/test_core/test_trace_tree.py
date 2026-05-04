@@ -14,7 +14,7 @@ from tests.shared.mutation_contract import mutation_contract
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=277,
+    line=303,
     revert='return None, "unavailable"',
     expected_failure="empty trace returns (0.0, 'trace') instead of (None, 'unavailable')",
 )
@@ -69,54 +69,8 @@ def test_iter_llm_leaves_yields_batch_item_and_nested_events() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=133,
-    revert='if raw_event.get("cached") and not descend_cached_subtrees',
-    expected_failure="cached parent yielded; child leaks through",
-)
-def test_iter_llm_leaves_skips_cached_subtree_when_requested() -> None:
-    """Mutation contract: skip only cached leaves -> uncached child leaks through."""
-    tree = TraceTree(
-        events=(
-            {
-                "node_id": "cached-parent",
-                "cached": True,
-                "sub_workflow_events": [{"node_id": "inner-llm", "llm_call": {"cost_usd": 0.20}}],
-            },
-        ),
-        format_version="2.1",
-    )
-
-    assert list(tree.iter_llm_leaves(descend_cached_subtrees=False)) == []
-
-
-@mutation_contract(
-    file="src/pflow/core/trace_tree.py",
-    line=167,
-    revert="child_workflow_path = edges.get",
-    expected_failure="edge threading dropped — leaf.workflow_path is None",
-)
-def test_iter_llm_leaves_threads_workflow_path_via_edges() -> None:
-    """Mutation contract: drop edge threading -> workflow_path is None."""
-    tree = TraceTree(
-        events=(
-            {
-                "node_id": "call-child",
-                "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.10}}],
-            },
-        ),
-        format_version="2.1",
-    )
-
-    [leaf] = list(tree.iter_llm_leaves(edges={"call-child": "child.pflow.md"}, workflow_path="parent.pflow.md"))
-
-    assert leaf.workflow_path == "child.pflow.md"
-    assert leaf.event_node_id == "child-llm"
-
-
-@mutation_contract(
-    file="src/pflow/core/trace_tree.py",
-    line=217,
-    revert="return self._sum_leaves(self.iter_llm_leaves((event,), descend_sub_workflows=False))",
+    line=234,
+    revert="leaves = self.iter_llm_leaves((event,), descend_sub_workflows=False)",
     expected_failure="cost_for_node descends into sub_workflow_events — sums child cost into parent",
 )
 def test_cost_for_node_does_not_descend_into_sub_workflow_events() -> None:
@@ -137,7 +91,7 @@ def test_cost_for_node_does_not_descend_into_sub_workflow_events() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=253,
+    line=279,
     revert="leaves = self.iter_llm_leaves(",
     expected_failure="leaves undefined — NameError on next line",
 )
@@ -163,44 +117,175 @@ def test_total_cost_descends_sub_workflows_three_deep() -> None:
     assert tree.total_cost() == (pytest.approx(0.30), "trace")
 
 
-def test_trace_fixture_builder_matches_workflow_trace_collector_shape() -> None:
-    """Defends fixture fidelity across two files: cache-analysis tests using
-    synthetic traces fail if the ``TraceFixtureBuilder`` drifts from
-    ``WorkflowTraceCollector``'s event shape.
+class TestTraceFixtureBuilderShapeParity:
+    """Each test drives a real ``WorkflowTraceCollector`` and asserts the
+    produced event's key set matches what ``TraceFixtureBuilder`` produces.
+
+    Defends fixture fidelity: cache-analysis tests using synthetic traces
+    fail if the builder drifts from the producer's event shape.
 
     No ``@mutation_contract`` marker — the contract is a cross-file shape
-    invariant, not a single line. The single-line mutation primitive can't
-    express "key set X should equal key set Y."
+    invariant, not a single line.
     """
-    from pflow.runtime.workflow_trace import WorkflowTraceCollector
-    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
-    collector = WorkflowTraceCollector("fixture", workflow_path="parent.pflow.md")
-    collector.llm_prompts["draft"] = "prompt"
-    collector.record_node_execution(
-        "draft",
-        "LLMNode",
-        1.0,
-        True,
-        node_output={
-            "response": "ok",
-            "llm_usage": {
+    def test_regular_llm_event_shape_matches(self) -> None:
+        """LLM event keys + llm_call subfields must match builder.llm_event."""
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+        from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+        collector = WorkflowTraceCollector("fixture", workflow_path="parent.pflow.md")
+        collector.llm_prompts["draft"] = "prompt"
+        collector.record_node_execution(
+            "draft",
+            "LLMNode",
+            1.0,
+            True,
+            node_output={
+                "response": "ok",
+                "llm_usage": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "input_tokens": 1000,
+                    "output_tokens": 100,
+                    "total_tokens": 1100,
+                    "cost_usd": 0.01,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        )
+
+        builder = TraceFixtureBuilder()
+        built = builder.llm_event("draft", cost_usd=0.01)
+
+        assert set(collector.events[0]) == set(built)
+        assert set(collector.events[0]["llm_call"]) == set(built["llm_call"])
+
+    def test_cached_llm_event_with_call_shape_matches(self) -> None:
+        """Memo-hit LLM event keys + llm_call subfields must match
+        builder.cached_llm_event_with_call.
+
+        Drives WorkflowTraceCollector through the full memo-hit shape:
+        ``cached=True`` + ``node_output.llm_usage`` carrying cache_source /
+        cache_key / cache_age_sec (matching what ``apply_memo_hit`` +
+        ``_augment_llm_usage_with_cache_metadata`` produce at runtime).
+        """
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+        from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+        collector = WorkflowTraceCollector("fixture", workflow_path="parent.pflow.md")
+        collector.llm_prompts["draft"] = "prompt"
+        cached_llm_usage = {
+            "model": "anthropic/claude-sonnet-4-5",
+            "input_tokens": 1000,
+            "output_tokens": 100,
+            "total_tokens": 1100,
+            "cost_usd": 0.01,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 950,
+            "cache_key": "fixture-cache-key",
+            "cache_source": "memo",
+            "cache_age_sec": 30.0,
+        }
+        collector.record_node_execution(
+            "draft",
+            "LLMNode",
+            0.0,
+            True,
+            node_params={"model": "anthropic/claude-sonnet-4-5"},
+            node_output={
+                "response": "ok",
+                "llm_usage": cached_llm_usage,
+            },
+            cached=True,
+        )
+
+        builder = TraceFixtureBuilder()
+        built = builder.cached_llm_event_with_call("draft", cost_usd=0.01)
+
+        assert set(collector.events[0]) == set(built)
+        assert set(collector.events[0]["llm_call"]) == set(built["llm_call"])
+
+    def test_workflow_event_shape_matches(self) -> None:
+        """Workflow event keys must include node_params with a workflow path,
+        matching builder.workflow_event(workflow_path=...).
+        """
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+        from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+        collector = WorkflowTraceCollector("fixture", workflow_path="parent.pflow.md")
+        child_event = {
+            "node_id": "child-llm",
+            "node_type": "LLMNode",
+            "duration_ms": 1.0,
+            "success": True,
+            "timestamp": "2026-05-02T00:00:00",
+            "node_output": {"response": "ok"},
+            "llm_call": {
                 "model": "anthropic/claude-sonnet-4-5",
-                "input_tokens": 1000,
-                "output_tokens": 100,
-                "total_tokens": 1100,
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "total_tokens": 110,
                 "cost_usd": 0.01,
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 0,
             },
-        },
-    )
+            "llm_prompt": "prompt",
+            "llm_response": "ok",
+        }
+        collector.record_node_execution(
+            "call-child",
+            "WorkflowExecutor",
+            1.0,
+            True,
+            node_params={"workflow": "child.pflow.md"},
+            sub_workflow_events=[child_event],
+        )
 
-    builder = TraceFixtureBuilder()
-    built = builder.llm_event("draft", cost_usd=0.01)
+        builder = TraceFixtureBuilder()
+        built = builder.workflow_event(
+            "call-child",
+            [child_event],
+            workflow_path="child.pflow.md",
+        )
 
-    assert set(collector.events[0]) == set(built)
-    assert set(collector.events[0]["llm_call"]) == set(built["llm_call"])
+        assert set(collector.events[0]) == set(built)
+        assert collector.events[0]["node_params"]["workflow"] == "child.pflow.md"
+
+    def test_batch_event_shape_matches(self) -> None:
+        """Batch event keys must match builder.batch_event."""
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+        from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+        collector = WorkflowTraceCollector("fixture", workflow_path="parent.pflow.md")
+        items = [
+            {
+                "index": 0,
+                "success": True,
+                "duration_ms": 1.0,
+                "node_output": {"response": "ok"},
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "input_tokens": 100,
+                    "output_tokens": 10,
+                    "total_tokens": 110,
+                    "cost_usd": 0.005,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        ]
+        collector.record_node_execution(
+            "fanout",
+            "LLMNode",
+            1.0,
+            True,
+            batch_items=items,
+        )
+
+        builder = TraceFixtureBuilder()
+        built = builder.batch_event("fanout", items)
+
+        assert set(collector.events[0]) == set(built)
 
 
 def test_committed_cache_analysis_fixtures_match_generator_output() -> None:
@@ -210,9 +295,9 @@ def test_committed_cache_analysis_fixtures_match_generator_output() -> None:
 
     - ``WorkflowTraceCollector`` adds field → ``TraceFixtureBuilder`` shape test fails
     - ``TraceFixtureBuilder`` updated → generator output changes → THIS test fails
-    - Net: the committed ``parent-child-trace.json`` and
-      ``parent-child-erroring-trace.json`` are transitively pinned to production
-      shape. Hand-edits that diverge from generator output fail loudly.
+    - Net: the committed cache-analysis trace fixtures are transitively pinned
+      to production shape. Hand-edits that diverge from generator output fail
+      loudly.
 
     Re-run ``python -m tests.fixtures.cache_analysis._generate`` to regenerate
     after intentional shape changes; commit the diff.
@@ -226,6 +311,8 @@ def test_committed_cache_analysis_fixtures_match_generator_output() -> None:
     from tests.fixtures.cache_analysis._generate import (
         FIXTURE_DIR,
         build_parent_child_erroring_trace,
+        build_parent_child_grandchild_trace,
+        build_parent_child_memo_hit_trace,
         build_parent_child_trace,
     )
 
@@ -233,6 +320,8 @@ def test_committed_cache_analysis_fixtures_match_generator_output() -> None:
     cases = (
         ("parent-child-trace.json", build_parent_child_trace()),
         ("parent-child-erroring-trace.json", build_parent_child_erroring_trace()),
+        ("parent-child-memo-hit-trace.json", build_parent_child_memo_hit_trace()),
+        ("parent-child-grandchild-trace.json", build_parent_child_grandchild_trace()),
     )
     for filename, generated in cases:
         committed = json.loads((fixture_dir / filename).read_text())
@@ -301,7 +390,7 @@ def test_walk_does_not_recurse_into_top_level_event_events_field() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=152,
+    line=168,
     revert="owner_node_id=event_node_id,",
     expected_failure="batch_item owner_node_id kwarg missing — yields TypeError or attribution drifts",
 )
@@ -437,7 +526,7 @@ def test_event_for_requires_llm_call_skips_events_without_llm_call() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=280,
+    line=306,
     revert='return total, "trace"',
     expected_failure="trace tier label dropped — falls through to (None, 'unavailable') or NameError",
 )
@@ -458,7 +547,7 @@ def test_cost_for_node_priced_event_returns_trace_tier() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=278,
+    line=304,
     revert="if has_unpriced:",
     expected_failure="trace_partial branch never taken — unpriced reports 'trace' (over-confident)",
 )
@@ -513,7 +602,7 @@ def test_cost_for_node_partial_batch_some_cached() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=214,
+    line=231,
     revert='return None, "unavailable"',
     expected_failure="missing-node early return dropped — fall-through hits AttributeError on None",
 )
@@ -537,7 +626,7 @@ def test_cost_for_node_returns_unavailable_for_missing_node() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=242,
+    line=266,
     revert="leaves.extend(we for we in self.walk(",
     expected_failure="batch-item events recursion dropped — nested LLM cost missing",
 )
@@ -564,7 +653,7 @@ def test_cost_for_batch_item_recurses_into_events() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=230,
+    line=254,
     revert='return 0.0, "trace"',
     expected_failure="cached short-circuit dropped — falls through to (None, 'unavailable')",
 )
@@ -590,38 +679,7 @@ def test_cost_for_batch_item_cached_no_llm_call_returns_zero_trace() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=253,
-    revert="leaves = self.iter_llm_leaves(",
-    expected_failure="leaves binding dropped — NameError on next line",
-)
-def test_total_cost_descends_sub_workflows() -> None:
-    """Mutation contract: change default to ``descend_sub_workflows=False``
-    -> child cost missing from total -> assertion fails (total == 0.05).
-
-    Single-level sub-workflow case (the simpler counterpart to the
-    3-deep test). Trace-driven current_cost for a parent + one child must
-    sum both. Without this, parent-scope cost under-reports actual spend.
-    """
-    tree = TraceTree(
-        events=(
-            {
-                "node_id": "root-llm",
-                "llm_call": {"cost_usd": 0.05},
-            },
-            {
-                "node_id": "call-child",
-                "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.10}}],
-            },
-        ),
-        format_version="2.1",
-    )
-
-    assert tree.total_cost() == (pytest.approx(0.15), "trace")
-
-
-@mutation_contract(
-    file="src/pflow/core/trace_tree.py",
-    line=259,
+    line=285,
     revert="return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)",
     expected_failure="default branch (exclude cached) returns None — assertion fails",
 )
@@ -654,7 +712,7 @@ def test_total_cost_includes_cached_when_kwarg_true() -> None:
 
 @mutation_contract(
     file="src/pflow/core/trace_tree.py",
-    line=167,
+    line=191,
     revert="child_workflow_path = edges.get",
     expected_failure="edge threading dropped — child_workflow_path NameError on next line",
 )
@@ -701,3 +759,203 @@ def test_walk_event_is_dataclass_alias_of_llm_event_leaf() -> None:
     from pflow.core.trace_tree import LlmEventLeaf
 
     assert LlmEventLeaf is WalkEvent
+
+
+# ---------------------------------------------------------------------------
+# Cached-leaf cost policy (memo-hit shape with populated llm_call)
+# ---------------------------------------------------------------------------
+
+
+@mutation_contract(
+    file="src/pflow/core/trace_tree.py",
+    line=232,
+    revert='if event.get("cached") and not include_cached:',
+    expected_failure="cached short-circuit dropped — cached LLM with populated llm_call returns historical cost",
+)
+def test_cost_for_node_returns_zero_for_memo_hit_with_populated_llm_call() -> None:
+    """Mutation contract: revert the explicit cached short-circuit at
+    cost_for_node -> a memo-hit LLM event with populated llm_call returns
+    its historical (cost_usd, "trace") instead of (0.0, "trace") -> rollup
+    inflates per-call cost.
+
+    Production memo-hit shape (apply_memo_hit + _augment_llm_usage_with_cache_metadata):
+    ``cached: True`` AND ``llm_call`` populated with the original ``cost_usd``.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    trace = builder.trace(
+        workflow_path="parent.pflow.md",
+        nodes=[builder.cached_llm_event_with_call("draft", cost_usd=0.05)],
+    )
+    tree = TraceTree.from_dict(trace)
+    cost, source = tree.cost_for_node("draft")
+    assert cost == 0.0
+    assert source == "trace"
+
+
+def test_cost_for_node_with_include_cached_returns_original_cost() -> None:
+    """Diagnostic opt-in: ``include_cached=True`` surfaces the historical
+    cost on cached events (debugging / full-cost-audit scenarios).
+
+    No ``@mutation_contract`` marker — the contract is a kwarg-toggle
+    behavior split across two return branches; reverting either alone
+    doesn't break this assertion in isolation. Defended by the
+    excluded-default test above.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    trace = builder.trace(
+        workflow_path="parent.pflow.md",
+        nodes=[builder.cached_llm_event_with_call("draft", cost_usd=0.05)],
+    )
+    tree = TraceTree.from_dict(trace)
+    cost, source = tree.cost_for_node("draft", include_cached=True)
+    assert cost == pytest.approx(0.05)
+    assert source == "trace"
+
+
+def test_cost_for_event_filters_cached_descendants() -> None:
+    """Sub-workflow with one cached + one priced child LLM:
+    ``cost_for_event`` returns ONLY the priced child's cost — the cached
+    descendant is filtered out (this run paid $0 for the cached one).
+
+    No ``@mutation_contract`` marker — the cached descendant filter lives
+    inside the leaf-summing genexp, so the targeted line is partially
+    redundant with the top-level cached short-circuit; assertions span
+    both behaviors.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    parent_event = builder.workflow_event(
+        "call-child",
+        sub_workflow_events=[
+            builder.cached_llm_event_with_call("c-cached", cost_usd=0.10),
+            builder.llm_event("c-priced", cost_usd=0.04),
+        ],
+        workflow_path="child.pflow.md",
+    )
+    tree = TraceTree.from_dict(builder.trace(workflow_path="parent.pflow.md", nodes=[parent_event]))
+    cost, source = tree.cost_for_event(parent_event)
+    assert cost == pytest.approx(0.04)  # Pre-fix: 0.14 (cached + priced).
+    assert source == "trace"
+
+
+@mutation_contract(
+    file="src/pflow/core/trace_tree.py",
+    line=162,
+    revert="_resolved_child_workflow_from_event(item)",
+    expected_failure="batch items lose per-item attribution; both items attributed to inherited workflow_path",
+)
+def test_walk_uses_event_template_resolutions_for_heterogeneous_batch() -> None:
+    """Heterogeneous workflow batch: each item runs a different child workflow.
+
+    Pre-fix all items were attributed to the inherited workflow_path (or
+    the last-edge-wins entry from ``_edge_child_paths``). Post-fix each
+    item's ``template_resolutions["workflow"]["resolved"]`` becomes its
+    leaf workflow_path, so per-item cost rolls up to the correct child.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    parent = builder.heterogeneous_workflow_batch_event(
+        "fan-out",
+        items=[
+            ("/abs/a.pflow.md", [builder.llm_event("draft", cost_usd=0.05)]),
+            ("/abs/b.pflow.md", [builder.llm_event("draft", cost_usd=0.07)]),
+        ],
+    )
+    tree = TraceTree.from_dict(builder.trace(workflow_path="parent.pflow.md", nodes=[parent]))
+
+    by_workflow: dict[str | None, list[float]] = {}
+    for leaf in tree.iter_llm_leaves():
+        cost = leaf.llm_call["cost_usd"] if leaf.llm_call else None
+        if cost is not None:
+            by_workflow.setdefault(leaf.workflow_path, []).append(float(cost))
+
+    assert by_workflow == {
+        "/abs/a.pflow.md": [pytest.approx(0.05)],
+        "/abs/b.pflow.md": [pytest.approx(0.07)],
+    }
+
+
+def test_resolved_child_workflow_from_event_prefers_template_resolutions() -> None:
+    """Helper contract: ``template_resolutions["workflow"]["resolved"]`` wins
+    over absent / non-mapping entries; ``node_params.workflow`` is NOT a
+    fallback (would re-introduce relative-vs-absolute key mismatches).
+    """
+    from pflow.core.trace_tree import _resolved_child_workflow_from_event
+
+    # Template resolutions present (heterogeneous batch shape) -> resolved wins.
+    item = {
+        "template_resolutions": {
+            "workflow": {"template": "${item.workflow}", "resolved": "/abs/x.pflow.md"},
+        },
+        "node_params": {"workflow": "./relative.pflow.md"},
+    }
+    assert _resolved_child_workflow_from_event(item) == "/abs/x.pflow.md"
+
+    # Template resolutions absent -> None (do NOT fall back to node_params.workflow).
+    static = {"node_params": {"workflow": "./relative.pflow.md"}}
+    assert _resolved_child_workflow_from_event(static) is None
+
+    # Garbage shapes -> None.
+    assert _resolved_child_workflow_from_event({}) is None
+    assert _resolved_child_workflow_from_event({"template_resolutions": "not-a-mapping"}) is None
+    assert _resolved_child_workflow_from_event({"template_resolutions": {"workflow": {"resolved": ""}}}) is None
+
+
+@mutation_contract(
+    file="src/pflow/core/trace_tree.py",
+    line=163,
+    revert="edges.get(event_node_id) if edges is not None else None",
+    expected_failure="homogeneous static workflow batch loses child attribution; falls back to inherited parent path",
+)
+def test_walk_uses_edges_for_homogeneous_static_workflow_batch() -> None:
+    """Homogeneous static workflow batch (single ``workflow: ./child.pflow.md``
+    with N items) does NOT carry ``template_resolutions["workflow"]`` per
+    item — verified against production traces. The walker must consult
+    ``edges`` (the analyzer's parent_node_id → resolved child path map)
+    as a second fallback so child LLM cost gets attributed to the child
+    workflow, not the parent.
+
+    Pre-fix: ``_resolved_child_workflow_from_event`` returns None (no
+    per-item resolution metadata), falls through to inherited
+    ``workflow_path`` (parent), so child events were misattributed to
+    parent. ``did_not_execute_in_trace`` flipped True for child rows
+    despite execution having happened.
+
+    Heterogeneous case (priority 1) is unaffected — its
+    ``template_resolutions["workflow"]`` lookup wins before the edges
+    fallback is consulted.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    parent = builder.homogeneous_workflow_batch_event(
+        "fanout",
+        workflow_path="./child.pflow.md",  # static literal, as user wrote it
+        items=[
+            ("alpha", [builder.llm_event("c-llm", cost_usd=0.001)]),
+            ("beta", [builder.llm_event("c-llm", cost_usd=0.002)]),
+        ],
+    )
+    tree = TraceTree.from_dict(builder.trace(workflow_path="/abs/parent.pflow.md", nodes=[parent]))
+
+    # Production-shape ``edges`` map: parent_node_id → resolved absolute child path.
+    edges = {"fanout": "/abs/child.pflow.md"}
+
+    by_workflow: dict[str | None, float] = {}
+    for leaf in tree.iter_llm_leaves(edges=edges, workflow_path="/abs/parent.pflow.md"):
+        if leaf.llm_call is None:
+            continue
+        cost = leaf.llm_call.get("cost_usd")
+        if cost is None:
+            continue
+        by_workflow[leaf.workflow_path] = by_workflow.get(leaf.workflow_path, 0.0) + float(cost)
+
+    # Pre-fix: by_workflow == {"/abs/parent.pflow.md": 0.003}
+    # Post-fix: child cost rolls up to the child workflow.
+    assert by_workflow == {"/abs/child.pflow.md": pytest.approx(0.003)}

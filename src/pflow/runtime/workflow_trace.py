@@ -72,20 +72,6 @@ class _LLMSummaryAccumulator:
         if model:
             self.models.add(model)
 
-    def merge_sub(self, sub: dict[str, Any]) -> None:
-        self.total_calls += sub.get("total_calls", 0)
-        self.total_tokens += sub.get("total_tokens", 0)
-        self.total_input_tokens += sub.get("total_input_tokens", 0)
-        self.total_output_tokens += sub.get("total_output_tokens", 0)
-        # Child contributes its priced cost (whether reported as total_cost_usd
-        # or partial_cost_usd) and any unavailable models.
-        if sub.get("total_cost_usd") is not None:
-            self.priced_cost += sub["total_cost_usd"]
-        elif sub.get("partial_cost_usd") is not None:
-            self.priced_cost += sub["partial_cost_usd"]
-        self.unavailable_models.update(sub.get("unavailable_models", []))
-        self.models.update(sub.get("models_used", []))
-
     def as_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "total_calls": self.total_calls,
@@ -291,7 +277,16 @@ class WorkflowTraceCollector:
         return self._collect_llm_calls_from_events(self.events)
 
     def _collect_llm_calls_from_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Recursively collect llm_call dicts from tree-structured events."""
+        """Recursively collect llm_call dicts from tree-structured events.
+
+        Skips cached events at every tier (top-level, batch_items,
+        sub_workflow_events) via
+        ``TraceTree.iter_llm_leaves(descend_cached_subtrees=False)``. This is
+        more aggressive than the pre-1fabde31 hand-rolled walker, which only
+        filtered top-level cached events. The new behavior is correct for
+        cost-summary purposes: cached items contributed $0 this run regardless
+        of nesting tier.
+        """
         from pflow.core.trace_tree import TraceTree
 
         tree = TraceTree(events=tuple(events), format_version=TRACE_FORMAT_VERSION)
@@ -446,7 +441,15 @@ class WorkflowTraceCollector:
         return warning.get("source") not in {"parser", "validator"}
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
-        """Recursively collect LLM call data from tree-structured events."""
+        """Recursively collect LLM call data from tree-structured events.
+
+        Cached events are filtered at every tier via
+        ``TraceTree.iter_llm_leaves(descend_cached_subtrees=False)`` — top-level
+        cached events AND cached batch_items / sub_workflow_events are excluded
+        from the summary. Pre-1fabde31 the hand-rolled walker only filtered
+        top-level cached events; the new behavior is correct because cached
+        items paid $0 this run regardless of nesting tier.
+        """
         from pflow.core.trace_tree import TraceTree
 
         agg = _LLMSummaryAccumulator()

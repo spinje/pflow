@@ -45,20 +45,39 @@
         {
           "node_id": "draft",
           "node_type": "LLMNode",
-          "duration_ms": 1.0,
+          "duration_ms": 0.0,
           "success": true,
           "timestamp": "2026-05-02T00:00:00",
+          "cached": true,
+          "node_params": {
+            "model": "anthropic/claude-sonnet-4-5"
+          },
           "node_output": {
-            "response": "ok"
+            "response": "ok",
+            "llm_usage": {
+              "model": "anthropic/claude-sonnet-4-5",
+              "input_tokens": 1000,
+              "output_tokens": 100,
+              "total_tokens": 1100,
+              "cost_usd": 0.07,
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 950,
+              "cache_key": "fixture-cache-key",
+              "cache_source": "memo",
+              "cache_age_sec": 30.0
+            }
           },
           "llm_call": {
             "model": "anthropic/claude-sonnet-4-5",
-            "input_tokens": 900,
-            "output_tokens": 90,
-            "total_tokens": 990,
+            "input_tokens": 1000,
+            "output_tokens": 100,
+            "total_tokens": 1100,
             "cost_usd": 0.07,
-            "cache_creation_input_tokens": 300,
-            "cache_read_input_tokens": 0
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 950,
+            "cache_key": "fixture-cache-key",
+            "cache_source": "memo",
+            "cache_age_sec": 30.0
           },
           "llm_prompt": "prompt",
           "llm_response": "ok"
@@ -66,20 +85,39 @@
         {
           "node_id": "review",
           "node_type": "LLMNode",
-          "duration_ms": 1.0,
+          "duration_ms": 0.0,
           "success": true,
           "timestamp": "2026-05-02T00:00:00",
+          "cached": true,
+          "node_params": {
+            "model": "anthropic/claude-sonnet-4-5"
+          },
           "node_output": {
-            "response": "ok"
+            "response": "ok",
+            "llm_usage": {
+              "model": "anthropic/claude-sonnet-4-5",
+              "input_tokens": 1000,
+              "output_tokens": 100,
+              "total_tokens": 1100,
+              "cost_usd": 0.03,
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 950,
+              "cache_key": "fixture-cache-key",
+              "cache_source": "memo",
+              "cache_age_sec": 30.0
+            }
           },
           "llm_call": {
             "model": "anthropic/claude-sonnet-4-5",
-            "input_tokens": 800,
-            "output_tokens": 80,
-            "total_tokens": 880,
+            "input_tokens": 1000,
+            "output_tokens": 100,
+            "total_tokens": 1100,
             "cost_usd": 0.03,
             "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 300
+            "cache_read_input_tokens": 950,
+            "cache_key": "fixture-cache-key",
+            "cache_source": "memo",
+            "cache_age_sec": 30.0
           },
           "llm_prompt": "prompt",
           "llm_response": "ok"

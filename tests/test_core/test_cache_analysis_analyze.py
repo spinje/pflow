@@ -2303,3 +2303,311 @@ def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
     # Cost data source on the row reflects trace tier.
     assert analysis.per_call[0].cost_data_source == "trace"
     assert analysis.per_call[0].cost_usd is not None
+
+
+# ---------------------------------------------------------------------------
+# Cached-leaf cost correctness (Critical bug #1, Commit 2 of cleanup plan)
+# ---------------------------------------------------------------------------
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=755,
+    revert="if leaf.is_cached:",
+    expected_failure="cached LLM cost inflates current_cost_by_workflow — child rollup actually_paid_usd reports historical cost",
+)
+def test_build_trace_execution_index_excludes_cached_llm_cost() -> None:
+    """Mutation contract: drop the ``if leaf.is_cached: continue`` filter at
+    analyze.py:_build_trace_execution_index → cached LLM cost inflates
+    current_cost_by_workflow → rollup's actually_paid_usd reports historical
+    cost despite the run paying $0.
+
+    Drives the ``parent-child-memo-hit-trace.json`` committed fixture
+    end-to-end via analyze().
+    """
+    from pflow.execution.workflow_resolver import resolve_workflow
+
+    fixture_dir = Path("tests/fixtures/cache_analysis")
+    parent_path = fixture_dir / "parent.pflow.md"
+    trace_path = fixture_dir / "parent-child-memo-hit-trace.json"
+    resolved = resolve_workflow(str(parent_path))
+
+    result = analyze(
+        resolved.ir,
+        parameters={"topic": "cache analysis"},
+        workflow_path=resolved.file_path,
+        base_path=parent_path.parent,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    # Parent's draft paid $0.05 fresh; child's two cached LLMs paid $0.
+    # Rollup MUST reflect that — pre-fix, child's actually_paid would be 0.10.
+    assert result.summary.actually_paid_usd == pytest.approx(0.05)
+    assert result.summary.sub_workflow_rollup is not None
+    child_entry = result.summary.sub_workflow_rollup.per_workflow[0]
+    assert child_entry.actually_paid_usd in (None, 0.0)
+
+
+def test_actually_paid_and_trace_index_agree_on_memo_hit_child() -> None:
+    """Parity invariant: ``summary.actually_paid_usd`` and the rollup's
+    per-child ``actually_paid_usd`` MUST agree on cached-event semantics.
+
+    Pre-fix the two diverged: ``compute_actually_paid`` (used for the
+    summary) excludes cached via ``total_cost(include_cached=False)``,
+    while ``_build_trace_execution_index`` (used for the rollup) summed
+    cached cost into ``current_cost_by_workflow``. Two figures with the
+    same name in the same JSON disagreed.
+    """
+    from pflow.execution.workflow_resolver import resolve_workflow
+
+    fixture_dir = Path("tests/fixtures/cache_analysis")
+    parent_path = fixture_dir / "parent.pflow.md"
+    trace_path = fixture_dir / "parent-child-memo-hit-trace.json"
+    resolved = resolve_workflow(str(parent_path))
+
+    result = analyze(
+        resolved.ir,
+        parameters={"topic": "cache analysis"},
+        workflow_path=resolved.file_path,
+        base_path=parent_path.parent,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    summary_total = result.summary.actually_paid_usd or 0.0
+    rollup_total = sum(
+        (entry.actually_paid_usd or 0.0)
+        for entry in (
+            result.summary.sub_workflow_rollup.per_workflow if result.summary.sub_workflow_rollup is not None else ()
+        )
+    )
+    # Both must EXCLUDE cached cost. Parent paid 0.05, children paid 0.
+    # Sum of root + children = 0.05.
+    assert summary_total + rollup_total == pytest.approx(0.05)
+
+
+# ---------------------------------------------------------------------------
+# Heterogeneous batch attribution (Critical bug #2, Commit 3 of cleanup plan)
+# ---------------------------------------------------------------------------
+
+
+def test_walk_attributes_heterogeneous_batch_costs_per_item() -> None:
+    """Mutation contract surrogate: drives ``TraceTree.walk`` directly with
+    a heterogeneous workflow batch trace.
+
+    Pre-fix (``_edge_child_paths``-only attribution) collapsed N edges
+    sharing one ``parent_node_id`` into one entry — both items were
+    attributed to the last child workflow path. Post-fix each batch_item's
+    ``template_resolutions["workflow"]["resolved"]`` becomes its own
+    workflow_path so per-item costs roll up to the correct child.
+
+    The end-to-end ``analyze()`` flow does not currently surface
+    heterogeneous batches in the rollup (the cross-workflow walker
+    enumerates static items but the rollup keys on ``cw_result.edges``);
+    this test pins the trace-walker invariant the future end-to-end
+    coverage will sit on top of.
+    """
+    from pflow.core.trace_tree import TraceTree
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    parent = builder.heterogeneous_workflow_batch_event(
+        "fan-out",
+        items=[
+            ("/abs/a.pflow.md", [builder.llm_event("draft", cost_usd=0.05)]),
+            ("/abs/b.pflow.md", [builder.llm_event("draft", cost_usd=0.07)]),
+        ],
+    )
+    tree = TraceTree.from_dict(builder.trace(workflow_path="parent.pflow.md", nodes=[parent]))
+
+    # iter_llm_leaves attributes per-item: each draft sits under its own child.
+    by_workflow: dict[str | None, float] = {}
+    for leaf in tree.iter_llm_leaves():
+        if leaf.llm_call is None:
+            continue
+        cost = leaf.llm_call.get("cost_usd")
+        if cost is None:
+            continue
+        by_workflow[leaf.workflow_path] = by_workflow.get(leaf.workflow_path, 0.0) + float(cost)
+
+    assert by_workflow == {
+        "/abs/a.pflow.md": pytest.approx(0.05),
+        "/abs/b.pflow.md": pytest.approx(0.07),
+    }
+    # And the totals are honest at the root.
+    total, source = tree.total_cost()
+    assert total == pytest.approx(0.12)
+    assert source == "trace"
+
+
+# ---------------------------------------------------------------------------
+# Cycle bug regression (Commit 4 of cleanup plan)
+# ---------------------------------------------------------------------------
+
+
+def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:
+    """Regression for the A → B → A cycle bug.
+
+    Pre-fix: ``walk_cross_workflow`` did not seed ``root_workflow_path`` into
+    ``seen``, so the back-edge B → A entered ``cw_result.edges``. Then
+    ``_build_parameters_by_workflow`` iterated that back-edge and called
+    ``params_by_workflow.setdefault(A, {})`` which returned the EXISTING
+    root params dict, then mutated it by adding the child input name.
+
+    Post-fix: the walker seeds root into ``seen``, the back-edge is
+    suppressed, and the root params dict stays byte-identical to its
+    input.
+    """
+    from pflow.core.cache_analysis.analyze import _build_parameters_by_workflow
+    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+    a_path = "/abs/a.pflow.md"
+    b_path = "/abs/b.pflow.md"
+
+    a_ir = {
+        "nodes": [
+            {
+                "id": "calls_b",
+                "type": "workflow",
+                "params": {"workflow": "./b.pflow.md", "inputs": {"x": "${y}"}},
+                "_source_line": 1,
+            }
+        ],
+    }
+    b_ir = {
+        "nodes": [
+            {
+                "id": "calls_a",
+                "type": "workflow",
+                "params": {"workflow": "./a.pflow.md", "inputs": {"y": "${z}"}},
+                "_source_line": 1,
+            }
+        ],
+    }
+
+    table = {
+        "./b.pflow.md": (b_ir, Path(b_path)),
+        "./a.pflow.md": (a_ir, Path(a_path)),
+    }
+
+    def resolver(params: dict[str, Any], _base: Path | None) -> SubWorkflowResult | None:
+        ref = params.get("workflow")
+        if not isinstance(ref, str):
+            return None
+        ir, path = table[ref]
+        return SubWorkflowResult(ir=ir, path=path, warnings=())
+
+    cw_result = walk_cross_workflow(
+        a_ir,
+        base_path=Path("/abs"),
+        resolve_child=resolver,
+        root_workflow_path=a_path,
+    )
+
+    root_parameters = {"input1": "value1"}
+    params_snapshot = dict(root_parameters)
+
+    params_by_workflow = _build_parameters_by_workflow(
+        cw_result,
+        root_parameters,
+        a_path,
+        memo_cache=None,
+        trace_data=None,
+        base_path=Path("/abs"),
+    )
+
+    # Root params dict is byte-identical to input.
+    assert params_by_workflow[a_path] == params_snapshot
+    # No back-edge means root has no spurious added inputs.
+    assert "y" not in params_by_workflow[a_path]
+    assert "x" not in params_by_workflow[a_path]
+
+
+# ---------------------------------------------------------------------------
+# Homogeneous static workflow batch attribution (latent bug fix)
+# ---------------------------------------------------------------------------
+
+
+def test_homogeneous_static_workflow_batch_child_cost_attributed_to_child(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: homogeneous static workflow batch with LLM child.
+
+    A parent workflow has a ``type: workflow`` node with static
+    ``workflow: ./child.pflow.md`` and ``batch:`` items. Each batch item
+    runs the same child workflow, which contains an LLM call.
+
+    Pre-fix: ``trace_tree.walk`` for batch_items only consulted
+    ``template_resolutions["workflow"]`` (absent for static workflow
+    refs), so child LLM cost was attributed to the PARENT workflow path.
+    The rollup's per-child ``actually_paid_usd`` was None despite the
+    child having paid real money this run.
+
+    Post-fix: ``walk`` consults ``edges.get(event_node_id)`` as a 2nd
+    fallback. Child LLM cost rolls up to the child workflow.
+
+    Verified via real-shape ``TraceFixtureBuilder.homogeneous_workflow_batch_event``
+    which mirrors the production trace shape (no
+    ``template_resolutions["workflow"]`` per item; only ``inputs``).
+    """
+    import json
+
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    # Build a parent + child workflow on disk.
+    child_path = tmp_path / "child.pflow.md"
+    child_path.write_text(
+        "# Child\n\nChild workflow.\n\n## Inputs\n\n### input\n"
+        "The input.\n- type: string\n\n## Steps\n\n### c-llm\n\n"
+        "Child LLM.\n\n- type: llm\n- model: anthropic/claude-sonnet-4-5\n\n"
+        "```prompt\nProcess ${input}\n```\n",
+        encoding="utf-8",
+    )
+    parent_path = tmp_path / "parent.pflow.md"
+    parent_path.write_text(
+        "# Parent\n\nParent with homogeneous workflow batch.\n\n## Steps\n\n"
+        "### fanout\n\nFan out to child.\n\n- type: workflow\n"
+        "- workflow: ./child.pflow.md\n- batch:\n    items: [alpha, beta]\n"
+        "- inputs:\n    input: ${item}\n",
+        encoding="utf-8",
+    )
+
+    # Construct a trace matching the production homogeneous-batch shape.
+    builder = TraceFixtureBuilder()
+    parent_event = builder.homogeneous_workflow_batch_event(
+        "fanout",
+        workflow_path="./child.pflow.md",  # raw IR string, not resolved
+        items=[
+            ("alpha", [builder.llm_event("c-llm", cost_usd=0.01)]),
+            ("beta", [builder.llm_event("c-llm", cost_usd=0.02)]),
+        ],
+    )
+    trace = builder.trace(workflow_path=str(parent_path), nodes=[parent_event])
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+
+    resolved = resolve_workflow(str(parent_path))
+    result = analyze(
+        resolved.ir,
+        workflow_path=resolved.file_path,
+        base_path=parent_path.parent,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    # Headline total — sum of all child LLM costs.
+    assert result.summary.actually_paid_usd == pytest.approx(0.03)
+
+    # Rollup contains the child workflow.
+    assert result.summary.sub_workflow_rollup is not None
+    rollup = result.summary.sub_workflow_rollup
+    assert len(rollup.per_workflow) == 1
+    child_entry = rollup.per_workflow[0]
+    assert child_entry.workflow_path.endswith("child.pflow.md")
+    assert child_entry.called_by_node_id == "fanout"
+
+    # Pre-fix: child_entry.actually_paid_usd was None (or 0.0).
+    # Post-fix: child cost rolls up correctly.
+    assert child_entry.actually_paid_usd == pytest.approx(0.03)
