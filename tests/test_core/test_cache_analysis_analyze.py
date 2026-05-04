@@ -520,8 +520,12 @@ def test_total_input_tokens_anthropic_trace_sums_cache_portions() -> None:
 
 
 def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
-    """Gemini-style trace event: ``input_tokens`` already includes cached
-    content (``cache_creation_input_tokens == 0``). Don't double-count.
+    """Gemini provider: ``input_tokens`` already includes cached content;
+    don't double-count. Provider discrimination is by
+    ``ProviderInfo.splits_cache_from_input_tokens`` (False for Gemini), not
+    by the value of ``cache_creation_input_tokens`` — cache-write vs
+    cache-read events have different cache-creation values within the same
+    provider.
     """
     from pflow.core.cache_analysis.analyze import _estimate_row_tokens
 
@@ -542,6 +546,35 @@ def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
     )
     assert source == "trace"
     assert input_tokens == 2000
+
+
+def test_total_input_tokens_anthropic_cache_read_event_sums_cache_portions() -> None:
+    """Bug 7 regression: Anthropic rerun-within-TTL events report
+    ``cache_creation_input_tokens == 0`` and ``cache_read_input_tokens > 0``.
+    The previous heuristic ``cache_creation > 0`` misclassified these as
+    Gemini-style and truncated ``input_tokens`` to the non-cache portion.
+    Detection by model-name prefix fixes this — Anthropic always splits
+    cache from ``input_tokens``, regardless of which side fired."""
+    from pflow.core.cache_analysis.analyze import _estimate_row_tokens
+
+    trace_llm_call = {
+        "model": "anthropic/claude-sonnet-4-5",
+        "input_tokens": 50,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 1500,
+        "output_tokens": 10,
+    }
+    input_tokens, source, _output, _output_source = _estimate_row_tokens(
+        model="anthropic/claude-sonnet-4-5",
+        resolved_prompt="ignored",
+        memo_cache=None,
+        node_id="x",
+        workflow_path=None,
+        has_unresolved=False,
+        trace_llm_call=trace_llm_call,
+    )
+    assert source == "trace"
+    assert input_tokens == 1550
 
 
 def test_analyze_summary_counts_warnings_and_info() -> None:

@@ -1061,6 +1061,157 @@ def test_discrepancy_silent_when_trace_is_2_0(tmp_path: Path) -> None:
     assert "cache.discrepancy" not in {d.id for d in result.warnings}
 
 
+def test_discrepancy_ttl_attribution_uses_leaf_workflows_ttl_not_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 9 regression: ``_attribute_root_cause`` reads TTL from the LEAF
+    event's workflow IR, not the analyzed root. Mixed parent/child TTLs
+    (parent declares ``ttl: 1h``, child declares ``ttl: 5m``) would
+    otherwise miss the child's actual ttl_expiry: a 600s cache_age in the
+    child looks fresh against parent's 1h window but is expired against
+    child's 5m. The analyzer would attribute it to ``unknown`` instead of
+    ``ttl_expiry``, giving agents the wrong remediation hint.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "cache": {
+            "ttl": "1h",  # Parent declares hour-long cache.
+            "items": [{"name": "topic", "var": "topic", "prose_before": "Topic:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"topic": "${topic}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "cache": {
+            "ttl": "5m",  # Child declares the default 5-minute cache.
+            "items": [{"name": "topic", "var": "topic", "prose_before": "Topic:\n"}],
+        },
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["topic"],
+                "params": {"prompt": "Review for ${topic}"},
+            }
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "call-child",
+                "sub_workflow_events": [
+                    {
+                        "node_id": "review",
+                        "llm_call": {
+                            "model": "anthropic/claude-sonnet-4-5",
+                            "cache_creation_input_tokens": 100,
+                            "cache_read_input_tokens": 0,
+                            "cache_age_sec": 600,  # 10m: expired against child 5m, fresh against parent 1h
+                            "cache_chunks_skipped": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    )
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "ttl_expiry", (
+        f"Bug 9: expected ttl_expiry against child's 5m TTL; got {diag.context['root_cause']!r}. "
+        "Pre-fix the analyzer used the parent's 1h TTL and the 600s cache age looked fresh."
+    )
+
+
+def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affected_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 6 regression: ``cache.discrepancy`` for a sub-workflow LLM node
+    must record the CHILD workflow's path in ``context.affected_workflow``,
+    not the analyzed root. Otherwise renderer scope-suppression at
+    ``view_helpers.py`` treats the finding as root-scoped and drops the
+    ``in <basename>`` suffix that Bug 1's fix adds for cross-workflow per-
+    node findings — agents see ``review`` instead of ``review in
+    child.pflow.md`` and can't tell which file's ``## Cache`` block to edit.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"topic": "${topic}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["topic"],
+                "params": {"prompt": "Review for ${topic}"},
+            }
+        ],
+        "cache": {"items": [{"name": "topic", "var": "topic", "prose_before": "Topic:\n"}]},
+        "inputs": {"topic": {"type": "string"}},
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "call-child",
+                "sub_workflow_events": [
+                    {
+                        "node_id": "review",
+                        "llm_call": {
+                            "model": "anthropic/claude-sonnet-4-5",
+                            "cache_creation_input_tokens": 100,
+                            "cache_read_input_tokens": 0,
+                            "cache_age_sec": 301,
+                            "cache_chunks_skipped": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    )
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
+    assert diag.node_id == "review"
+    assert diag.context is not None
+    assert diag.context["affected_workflow"] == str(child_path), (
+        f"Bug 6: expected affected_workflow == child path {str(child_path)!r}, "
+        f"got {diag.context['affected_workflow']!r} (would be the analyzed root pre-fix)"
+    )
+    assert diag.context["workflow_path_short"] == "child"
+
+
 def test_discrepancy_recurses_into_sub_workflow_events(tmp_path: Path) -> None:
     trace_path = _write_trace(
         tmp_path,

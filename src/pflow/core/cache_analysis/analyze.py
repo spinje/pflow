@@ -1137,17 +1137,25 @@ def _estimate_row_tokens(
     were referenced by name (``prompt_cache: [name]``) but not inlined in
     the prompt body. See Bug 4 in the verification report.
 
-    Trace-tier accounting is provider-aware: Anthropic reports
-    ``input_tokens`` excluding cache portions (``cache_creation_input_tokens``
-    + ``cache_read_input_tokens`` are the cache contribution). Gemini /
-    OpenAI fold cache into ``input_tokens`` already. Detection via
-    ``cache_creation > 0`` is the in-scope pragmatic discriminator (long-term
-    fix: normalize ``billed_input_tokens`` at ``llm_client._normalize``).
+    Trace-tier accounting is provider-aware: providers that report
+    ``input_tokens`` excluding the cache portion (with cache contribution in
+    ``cache_creation_input_tokens`` + ``cache_read_input_tokens``) need both
+    summed for total billed tokens. Either cache field can be zero on the
+    same call — first-write events have ``cache_creation > 0, cache_read == 0``;
+    rerun-within-TTL has ``cache_creation == 0, cache_read > 0``. Providers
+    that fold cache into ``input_tokens`` already need no sum. The
+    discriminator lives on ``ProviderInfo.splits_cache_from_input_tokens``
+    (data-driven, not value-based) — value-based heuristics (e.g.
+    ``cache_creation > 0``) silently misclassify split-style cache-read
+    events as fold-style and truncate ``input_tokens`` on the most common
+    cached scenario. Long-term fix: normalize ``billed_input_tokens`` at
+    ``llm_client._normalize``.
     """
     if trace_llm_call is not None and isinstance(trace_llm_call.get("input_tokens"), int):
         input_tokens = int(trace_llm_call["input_tokens"])
-        cache_creation = int(trace_llm_call.get("cache_creation_input_tokens") or 0)
-        if cache_creation > 0:
+        provider = detect_provider(trace_llm_call.get("model") or model)
+        if provider is not None and provider.splits_cache_from_input_tokens:
+            cache_creation = int(trace_llm_call.get("cache_creation_input_tokens") or 0)
             cache_read = int(trace_llm_call.get("cache_read_input_tokens") or 0)
             input_tokens = input_tokens + cache_creation + cache_read
         source = "trace"
@@ -2741,15 +2749,20 @@ def _emit_discrepancy_diagnostics(
         if predicted_key is not None and abs(predicted_pct - actual_pct) < 5:
             continue
 
+        # Bug 9 fix: TTL must come from the leaf event's workflow file —
+        # mixed parent/child TTLs (parent ``ttl: 1h``, child ``ttl: 5m``)
+        # would otherwise attribute child cache-age=600s as fresh against
+        # the parent's hour-long window, missing the child's actual expiry.
+        leaf_ir = (cw_result.irs_by_workflow.get(leaf_workflow_path) if leaf_workflow_path else None) or workflow_ir
         root_cause, summary, extra = _attribute_root_cause(
             cache_age_sec=cache_age_sec,
             chunks_skipped=chunks_skipped,
             predicted_key=predicted_key,
             actual_key=actual_key,
-            ttl=_extract_cache_ttl(workflow_ir.get("cache")),
+            ttl=_extract_cache_ttl(leaf_ir.get("cache")),
             provider=detect_provider(llm_call.get("model")),
             node_id=node_id,
-            workflow_path=workflow_path,
+            leaf_workflow_path=leaf_workflow_path or workflow_path,
             predicted_pct=predicted_pct,
             actual_pct=actual_pct,
         )
@@ -2842,10 +2855,19 @@ def _attribute_root_cause(
     ttl: str | None,
     provider: Any,
     node_id: str,
-    workflow_path: str | None,
+    leaf_workflow_path: str | None,
     predicted_pct: int,
     actual_pct: int,
 ) -> tuple[str, str, dict[str, Any]]:
+    """Classify discrepancy root cause for one trace event.
+
+    ``leaf_workflow_path`` is the workflow file the leaf event belongs to —
+    parent for top-level events, child path for sub-workflow descendants.
+    The ``affected_workflow`` field is set from this so agents see the
+    workflow whose ``## Cache`` block actually needs editing, not the
+    analyzed root. Renderer scope-suppression at ``view_helpers.py`` then
+    composes correctly with Bug 1's per-node scope rendering.
+    """
     if chunks_skipped:
         skipped = str(chunks_skipped[0])
         return (
@@ -2871,13 +2893,13 @@ def _attribute_root_cause(
             return (
                 "ttl_expiry",
                 f"Cache entry was {age:.0f}s old (>= 5m TTL); upstream write expired",
-                {"affected_workflow": workflow_path or "<root>"},
+                {"affected_workflow": leaf_workflow_path or "<root>"},
             )
         if effective_ttl == "1h" and age >= 3600:
             return (
                 "ttl_expiry",
                 f"Cache entry was {age:.0f}s old (>= 1h TTL)",
-                {"affected_workflow": workflow_path or "<root>"},
+                {"affected_workflow": leaf_workflow_path or "<root>"},
             )
 
     if predicted_key is not None and predicted_key != actual_key:

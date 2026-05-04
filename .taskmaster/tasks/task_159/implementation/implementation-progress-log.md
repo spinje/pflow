@@ -6268,3 +6268,180 @@ are implemented on top of the staged Phase A + B work.
   ``.venv`` where possible; pre-commit itself could not initialize because
   the sandbox has no network and the remote hook environment was not cached
   under ``HOME=/private/tmp/pflow-test-home``.
+
+## Verification-found bugs Phase E — follow-ups from b9b2bd26 verification (2026-05-04)
+
+Post-merge verification of commit ``b9b2bd26`` surfaced two follow-up bugs in
+the fix itself. Both are surface-level glitches in otherwise-correct fixes —
+no architectural rework needed.
+
+### What shipped
+
+1. **Bug 7 — Anthropic cache-read provider detection**
+   (``analyze.py:_estimate_row_tokens``). The Bug 4 fix used a value-based
+   heuristic ``if cache_creation > 0`` to detect Anthropic-style traces. On
+   rerun-within-TTL events (the **most common cached scenario** after the
+   first call), Anthropic reports ``cache_creation_input_tokens=0`` and
+   ``cache_read_input_tokens > 0`` — the heuristic misclassified these as
+   Gemini-style and skipped the cache-portion sum. Result: ``input_tokens``
+   artificially shrunk to the non-cache portion, then the clamp truncated
+   ``cacheable`` further. The cached path most agents care about reported
+   misleading numbers.
+
+   **Fix:** detect provider via model-name prefix using ``detect_provider``
+   (already imported, canonical metadata in ``core/llm_providers.py``).
+   Anthropic always splits cache from ``input_tokens``; Gemini/OpenAI fold
+   it in. The discriminator is the provider, not the cache-creation value.
+
+2. **Bug 6 — ``_attribute_root_cause`` records root, not leaf, workflow path**
+   (``analyze.py:_attribute_root_cause``). Cross-workflow ``cache.discrepancy``
+   findings were carrying ``affected_workflow=<analyzed root>`` instead of
+   the leaf event's workflow. ``setdefault`` at the call site couldn't override
+   because ``_attribute_root_cause`` itself populated the field with the wrong
+   value. Visible regression on Bug 1's fix: renderer scope-suppression dropped
+   the ``in <basename>`` suffix because the ``scope_workflow`` matched the
+   analyzed root — agents saw ``review`` instead of ``review in child.pflow.md``
+   for sub-workflow discrepancies.
+
+   **Fix:** rename the parameter to ``leaf_workflow_path`` for clarity, thread
+   ``leaf_workflow_path or workflow_path`` from the call site so the field
+   describes the workflow whose ``## Cache`` block actually needs editing.
+
+### Tests added
+
+- ``test_total_input_tokens_anthropic_cache_read_event_sums_cache_portions`` —
+  Bug 7 reproducer: ``cache_creation=0, cache_read=1500`` → expect
+  ``input_tokens_estimated=1550``. Pre-fix returned 50.
+- ``test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affected_workflow`` —
+  Bug 6 reproducer: monkeypatched cross-workflow walker, synthesized trace
+  with TTL-expiry on a child LLM node, asserts
+  ``diag.context["affected_workflow"]`` equals the child path (not the
+  analyzed root) and ``workflow_path_short`` renders correctly.
+
+### Critical insights for the next agent
+
+- **``cw_result.edges`` is not populated for input-less sub-workflow calls.**
+  ``cross_workflow.py:_process_one_call`` line 322-335 only emits edges when
+  ``params.inputs`` is a non-empty dict. The Bug 6 test caught this when its
+  initial setup passed ``inputs: {}`` — edges came back empty, leaf workflow
+  path threading silently fell back to the root. Real workflows always pass
+  inputs (otherwise the child has no usable parameters), so this rarely
+  bites — but it is a structural quirk worth knowing. Filed implicitly:
+  edges represent input-flow, not parent→child relationships. Future work
+  could decouple them.
+
+- **Provider detection by value is a footgun.** The original Bug 4 fix
+  detected Anthropic-style traces by checking ``cache_creation > 0``.
+  Cache-read events have ``cache_creation=0`` regardless of provider, so
+  the heuristic silently misclassified the most common cached path. Always
+  use ``detect_provider(model)`` from ``core/llm_providers.py`` — that's
+  what it's for, and it gets cache-creation/cache-read symmetry right by
+  construction.
+
+- **Renderer scope-suppression depends on producer-side correctness.**
+  Bug 1's renderer suppresses ``in <basename>`` when ``scope_workflow``
+  equals the analyzed root. That suppression is RIGHT — we don't want
+  ``draft in parent.pflow.md`` cluttering single-workflow output. The
+  invariant only holds if producers (warning emitters) record the LEAF
+  workflow as ``affected_workflow``, not the analyzed root. Bug 6 was a
+  producer-side miss, not a renderer-side miss.
+
+### State after Phase E
+
+- 343 tests pass in cache-analysis subset (was 261 + 2 new).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- End-to-end Bug 6 reproducer verified: cross-workflow discrepancy on
+  child node renders ``review in child2.pflow.md`` (was just ``review``).
+- End-to-end Bug 7 reproducer verified: Anthropic cache-read trace
+  produces ``input=1550`` for the ``review`` row (was ``input=50``);
+  cacheable correctly equals 1500 (was 50).
+- Net code change: ``analyze.py`` ~10 LOC production change (Bug 7
+  predicate replacement + Bug 6 parameter rename + threading); +60 LOC
+  tests (2 new tests).
+
+## Verification-found bugs Phase E follow-up — self-audit fixes (2026-05-04)
+
+Self-audit of Phase E surfaced three more loose ends. Bug 9 (analogous to
+Bug 6 but for TTL extraction) is the only correctness issue; the other two
+are top-10% cleanup. All three are addressed in this commit.
+
+### What shipped
+
+1. **Bug 9 — TTL extraction reads root IR for sub-workflow leaves**
+   (``analyze.py:_emit_discrepancy_diagnostics``). Same conceptual shape as
+   Bug 6: ``ttl=_extract_cache_ttl(workflow_ir.get("cache"))`` used the
+   ROOT analyzed IR for every leaf, including sub-workflow descendants.
+   When parent and child declare different TTLs (parent ``ttl: 1h``, child
+   ``ttl: 5m``), a child cache_age=600s would be checked against the
+   parent's hour-long window and look fresh — no ``ttl_expiry`` attribution
+   despite the actual expiry against child's 5m. Agents got the wrong
+   remediation hint.
+
+   **Fix:** look up the leaf workflow's IR from
+   ``cw_result.irs_by_workflow[leaf_workflow_path]`` (with root fallback
+   for top-level events) and pass its cache block to ``_extract_cache_ttl``.
+   Mirrors Bug 6's leaf-vs-root principle: the workflow whose ``## Cache``
+   block governs the cache is the leaf's, not the analyzed root's.
+
+2. **Provider detection cleanup — data-driven, not predicate-driven**
+   (``core/llm_providers.py`` + ``analyze.py:_estimate_row_tokens``). The
+   Bug 7 fix used ``provider.name == "anthropic"`` as a hardcoded check.
+   Future providers that adopt Anthropic-style split-cache reporting (or
+   pflow adding more providers) would each require a code edit.
+
+   **Fix:** added ``ProviderInfo.splits_cache_from_input_tokens: bool =
+   False`` field, set ``True`` for Anthropic. The check at the analyzer
+   site reads ``provider.splits_cache_from_input_tokens`` directly.
+   Top-10% rule: provider behavior tables are data, not predicates.
+
+3. **Stale Gemini test docstring** (cosmetic). The
+   ``test_total_input_tokens_gemini_trace_does_not_double_count`` docstring
+   said the discriminator was ``cache_creation_input_tokens == 0``.
+   Post-Bug-7 the discriminator is the provider's
+   ``splits_cache_from_input_tokens`` flag — cache-write vs cache-read
+   events have different cache-creation values within the same provider.
+   Docstring rewritten to reflect the actual contract.
+
+### Tests added
+
+- ``test_discrepancy_ttl_attribution_uses_leaf_workflows_ttl_not_root`` —
+  Bug 9 reproducer: parent ``ttl: 1h``, child ``ttl: 5m``, child trace
+  cache_age=600s. Pre-fix produced ``root_cause="unknown"`` (parent's 1h
+  said fresh); post-fix produces ``root_cause="ttl_expiry"`` against
+  child's 5m TTL.
+
+### Critical insights for the next agent
+
+- **Leaf vs root context is a recurring pattern in sub-workflow analysis.**
+  Three sites in ``_emit_discrepancy_diagnostics`` need leaf-scoped lookup:
+  predicted_keys (already correct via tuple keying), ``affected_workflow``
+  (Phase E Bug 6 fix), and now TTL (Bug 9 fix). When a future feature
+  pulls workflow-level config for sub-workflow events, default to leaf
+  scope and only fall back to root for top-level events. The pattern:
+
+  ```python
+  leaf_ir = cw_result.irs_by_workflow.get(leaf_workflow_path) or workflow_ir
+  ```
+
+- **Provider behavior is data, not code.** ``ProviderInfo`` already had
+  per-provider env vars and prefix metadata. Cache-token accounting is
+  the same kind of static fact — adding it as a field rather than a
+  conditional in the analyzer keeps every cross-provider concern in one
+  place. Future cache normalization at ``llm_client._normalize`` (the
+  filed v1.x follow-up for emitting ``billed_input_tokens`` directly)
+  will read this same field.
+
+### State after Phase E follow-up
+
+- 6120 tests pass in full suite (was 6119 + 1 new Bug 9 test).
+- 344 tests pass in cache-analysis subset (was 343 + 1).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- ``make mutation-audit`` shows pre-existing line-shift drift on ~10
+  markers (mostly inherited from earlier commits per the project's
+  "ad-hoc audit, not per-PR gate" policy).
+- End-to-end: mixed-TTL parent/child fixture with cache_age=600s now
+  correctly attributes to ``ttl_expiry`` against the child's TTL.
+- Net code change: ``llm_providers.py`` +13 LOC (1 new field +
+  documentation), ``analyze.py`` ~5 LOC production change (TTL
+  leaf-lookup + provider field swap), +75 LOC tests (1 new Bug 9 test +
+  docstring update on Gemini test).
