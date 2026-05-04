@@ -158,6 +158,24 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
+        "cache.prompt-body-duplicates-cache": (
+            "write-lyrics",
+            {
+                "overlapping_pairs": [{"chunk_name": "concept", "body_ref": "concept"}],
+                "overlap_lines": "  - cached `${concept}` AND inline `${concept}`",
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
+        "cache.prompt-body-shadows-cache": (
+            "write-lyrics",
+            {
+                "shadowing_pairs": [
+                    {"chunk_name": "concept", "body_ref": "concept.title", "direction": "cache_contains_body"}
+                ],
+                "overlap_lines": "  - cached `${concept}` overlaps inline `${concept.title}` (cache_contains_body)",
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
     }
     return samples[warning_id]
 
@@ -286,7 +304,9 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
 
     Producers covered:
     - ``validate_data_flow`` → ``cache.order-mismatch``,
-      ``cache.unused-chunk``, ``cache.invalid-on-non-llm``
+      ``cache.unused-chunk``, ``cache.invalid-on-non-llm``,
+      ``cache.prompt-body-duplicates-cache``,
+      ``cache.prompt-body-shadows-cache``
     - ``analyze`` → ``cache.below-min-tokens``, ``cache.prewarm-no-prefix``
     - ``summarize_from_analysis`` → ``cache.opportunities-available``
     """
@@ -686,6 +706,58 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.opaque-prompt: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.opaque-prompt")
+
+    # cache.prompt-body-duplicates-cache: a chunk listed in prompt_cache: AND
+    # referenced verbatim inside the prompt body. Validator-emitted via the
+    # save-time data_flow path.
+    duplicates_ir: dict[str, Any] = {
+        "inputs": {"concept": {"type": "string"}},
+        "cache": {
+            "items": [{"name": "concept", "var": "concept", "prose_before": "C:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "write-lyrics",
+                "type": "llm",
+                "prompt_cache": ["concept"],
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Use the concept ${concept} to write a song.",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    diags = validate_data_flow(duplicates_ir, check_inputs=False, workflow_path="x.pflow.md")
+    found = [d for d in diags if d.id == "cache.prompt-body-duplicates-cache"]
+    assert found, f"validate_data_flow did not emit cache.prompt-body-duplicates-cache: ids={[d.id for d in diags]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.prompt-body-duplicates-cache")
+
+    # cache.prompt-body-shadows-cache: cache parent + body sub-path → WARNING.
+    shadows_ir: dict[str, Any] = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [{"name": "concept", "var": "concept", "prose_before": "C:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "write-lyrics",
+                "type": "llm",
+                "prompt_cache": ["concept"],
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Use ${concept.title} to write a song.",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    diags = validate_data_flow(shadows_ir, check_inputs=False, workflow_path="x.pflow.md")
+    found = [d for d in diags if d.id == "cache.prompt-body-shadows-cache"]
+    assert found, f"validate_data_flow did not emit cache.prompt-body-shadows-cache: ids={[d.id for d in diags]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.prompt-body-shadows-cache")
 
     # --- summarize-emitted id (summarize.py) -----------------------------
     # cache.opportunities-available: the dry-run nudge fires when actionable

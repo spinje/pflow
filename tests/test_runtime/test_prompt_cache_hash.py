@@ -159,7 +159,7 @@ Generate a one-liner about the concept.
 - model: anthropic/claude-3.5-haiku
 
 ```prompt
-Tell me about ${concept}.
+Tell me a one-liner story.
 ```
 """
 

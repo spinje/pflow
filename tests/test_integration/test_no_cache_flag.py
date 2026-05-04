@@ -47,7 +47,7 @@ Summarize the topic.
 - prompt_cache: [topic]
 
 ```prompt
-Summarize ${topic}.
+Provide a concise summary.
 ```
 """
 

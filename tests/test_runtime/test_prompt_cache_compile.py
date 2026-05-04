@@ -44,7 +44,11 @@ def _llm_ir(
     node: dict[str, Any] = {
         "id": "llm1",
         "type": "llm",
-        "params": {"model": "anthropic/claude-3.5-haiku", "prompt": "Tell me about ${concept}"},
+        # Prompt body intentionally does NOT reference ${concept} — these compile
+        # tests cover prompt_cache_items / cache_block lifting; inlining the same
+        # ref would trigger cache.prompt-body-duplicates-cache from data_flow's
+        # overlap check (Task 159 follow-up) and conflate two checks.
+        "params": {"model": "anthropic/claude-3.5-haiku", "prompt": "Tell me a one-liner story."},
     }
     if extra_node_fields:
         node.update(extra_node_fields)

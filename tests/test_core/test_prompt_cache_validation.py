@@ -598,3 +598,393 @@ def test_v6_subworkflow_invalid_on_non_llm_via_real_validator(tmp_path) -> None:
     # The offending node's identity is preserved across propagation.
     assert diag.node_id == "bad-step"
     assert diag.context["invalid_fields"] == ["prompt_cache", "prewarm"]
+
+
+# ------------------------------------------------------------------------------
+# Task 159 follow-up — prompt-body / prompt_cache overlap detection
+# ------------------------------------------------------------------------------
+
+
+def _llm_node_with_prompt(node_id: str, prompt: str, **extras: object) -> dict:
+    """Helper: LLM node with a custom prompt body (overlap tests need to
+    control the prompt template — the default _llm_node uses 'do thing'
+    which has no template refs)."""
+    node = {
+        "id": node_id,
+        "type": "llm",
+        "params": {"prompt": prompt, "model": "anthropic/claude-sonnet-4-5"},
+    }
+    node.update(extras)  # type: ignore[arg-type]
+    return node
+
+
+def test_full_path_overlap_emits_consolidated_duplicates_error() -> None:
+    """``prompt_cache: [concept]`` + ``${concept}`` in body -> 1x ERROR with
+    consolidated overlapping_pairs list."""
+    ir = _ir(
+        nodes=[_llm_node_with_prompt("write", "Use ${concept} to write.", prompt_cache=["concept"])],
+        inputs={"concept": {"type": "string"}},
+        cache={"items": [{"name": "concept", "var": "concept", "prose_before": ""}]},
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    dups = [d for d in diagnostics if d.id == "cache.prompt-body-duplicates-cache"]
+    assert len(dups) == 1
+    diag = dups[0]
+    assert diag.severity == Severity.ERROR
+    assert diag.source == "validator"
+    assert diag.node_id == "write"
+    assert diag.context["category"] == CACHE_FAILURE_CATEGORY
+    assert diag.context["overlapping_pairs"] == [{"chunk_name": "concept", "body_ref": "concept"}]
+    assert diag.context["affected_workflow"] == "t.pflow.md"
+
+
+def test_subpath_overlap_cached_parent_warns() -> None:
+    """Cache ``[concept]`` + body ``${concept.title}`` → WARNING with direction='cache_contains_body'."""
+    ir = _ir(
+        nodes=[_llm_node_with_prompt("write", "Title: ${concept.title}.", prompt_cache=["concept"])],
+        inputs={"concept": {"type": "string"}},
+        cache={"items": [{"name": "concept", "var": "concept", "prose_before": ""}]},
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    shadows = [d for d in diagnostics if d.id == "cache.prompt-body-shadows-cache"]
+    assert len(shadows) == 1
+    diag = shadows[0]
+    assert diag.severity == Severity.WARNING
+    assert diag.context["shadowing_pairs"] == [
+        {"chunk_name": "concept", "body_ref": "concept.title", "direction": "cache_contains_body"}
+    ]
+
+
+def test_subpath_overlap_cached_child_warns() -> None:
+    """Cache ``[concept.title]`` + body ``${concept}`` → WARNING with direction='body_contains_cache'."""
+    ir = _ir(
+        nodes=[_llm_node_with_prompt("write", "Concept: ${concept}.", prompt_cache=["concept.title"])],
+        inputs={"concept": {"type": "string"}},
+        cache={"items": [{"name": "concept.title", "var": "concept.title", "prose_before": ""}]},
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    shadows = [d for d in diagnostics if d.id == "cache.prompt-body-shadows-cache"]
+    assert len(shadows) == 1
+    pairs = shadows[0].context["shadowing_pairs"]
+    assert pairs == [{"chunk_name": "concept.title", "body_ref": "concept", "direction": "body_contains_cache"}]
+
+
+def test_no_overlap_silent() -> None:
+    """Cache ``[concept]`` + body ``${other_input}`` → no overlap diagnostic."""
+    ir = _ir(
+        nodes=[_llm_node_with_prompt("write", "Use ${other}.", prompt_cache=["concept"])],
+        inputs={"concept": {"type": "string"}, "other": {"type": "string"}},
+        cache={"items": [{"name": "concept", "var": "concept", "prose_before": ""}]},
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    overlap_ids = {"cache.prompt-body-duplicates-cache", "cache.prompt-body-shadows-cache"}
+    assert not [d for d in diagnostics if d.id in overlap_ids]
+
+
+def test_batch_scoped_body_ref_ignored() -> None:
+    """``${item.concept}`` on a batch node → no overlap diagnostic (batch refs
+    are filtered before path comparison)."""
+    ir = _ir(
+        nodes=[
+            {
+                "id": "batch-write",
+                "type": "llm",
+                "params": {
+                    "prompt": "Per item: ${item.concept}.",
+                    "model": "anthropic/claude-sonnet-4-5",
+                },
+                "prompt_cache": ["concept"],
+                "batch": {"items": "${items}", "as": "item"},
+            }
+        ],
+        inputs={"concept": {"type": "string"}, "items": {"type": "array"}},
+        cache={"items": [{"name": "concept", "var": "concept", "prose_before": ""}]},
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    overlap_ids = {"cache.prompt-body-duplicates-cache", "cache.prompt-body-shadows-cache"}
+    assert not [d for d in diagnostics if d.id in overlap_ids]
+
+
+def test_multiple_chunks_one_node_consolidates_to_single_diagnostic() -> None:
+    """``prompt_cache: [a, b]`` + body has BOTH ``${a}`` and ``${b}`` → ONE
+    ERROR diagnostic with overlapping_pairs listing BOTH pairs.
+
+    Regression-pin for the ``Diagnostic.__hash__`` collapse problem: emitting
+    two separate diagnostics with the same (severity, source, node_id, id)
+    tuple would silently dedup into one and lose the second pair's detail.
+    """
+    ir = _ir(
+        nodes=[
+            _llm_node_with_prompt(
+                "write",
+                "Mix ${a} and ${b} together.",
+                prompt_cache=["a", "b"],
+            )
+        ],
+        inputs={"a": {"type": "string"}, "b": {"type": "string"}},
+        cache={
+            "items": [
+                {"name": "a", "var": "a", "prose_before": ""},
+                {"name": "b", "var": "b", "prose_before": ""},
+            ]
+        },
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    dups = [d for d in diagnostics if d.id == "cache.prompt-body-duplicates-cache"]
+    assert len(dups) == 1
+    pairs = dups[0].context["overlapping_pairs"]
+    pair_set = {(p["chunk_name"], p["body_ref"]) for p in pairs}
+    assert pair_set == {("a", "a"), ("b", "b")}
+
+
+def test_undeclared_chunk_suppresses_overlap() -> None:
+    """``prompt_cache: [missing]`` (not in ## Cache items) → only the existing
+    ``cache.undeclared-chunk`` ERROR fires; overlap check is suppressed because
+    suppressing here keeps the actionable error from being buried."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_prompt("write", "Use ${concept}.", prompt_cache=["missing"]),
+        ],
+        inputs={"concept": {"type": "string"}},
+        cache={"items": [{"name": "concept", "var": "concept", "prose_before": ""}]},
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    overlap_ids = {"cache.prompt-body-duplicates-cache", "cache.prompt-body-shadows-cache"}
+    assert not [d for d in diagnostics if d.id in overlap_ids]
+
+
+def test_overlap_combines_with_unused_chunk() -> None:
+    """Overlap on chunk ``a`` + chunk ``b`` declared but unused → 1 ERROR + 1
+    unused-WARNING; the two findings are orthogonal."""
+    ir = _ir(
+        nodes=[_llm_node_with_prompt("write", "Use ${a}.", prompt_cache=["a"])],
+        inputs={"a": {"type": "string"}, "b": {"type": "string"}},
+        cache={
+            "items": [
+                {"name": "a", "var": "a", "prose_before": ""},
+                {"name": "b", "var": "b", "prose_before": ""},
+            ]
+        },
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert len([d for d in diagnostics if d.id == "cache.prompt-body-duplicates-cache"]) == 1
+    assert len([d for d in diagnostics if d.id == "cache.unused-chunk"]) == 1
+
+
+def test_overlap_does_not_fire_when_order_mismatch_present() -> None:
+    """Order-mismatch suppression precedence (V5): when prompt_cache order
+    diverges from ## Cache, the overlap check still runs (all_resolved=True),
+    so both diagnostics fire — agents fix order AND duplication in one pass."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_prompt(
+                "write",
+                "${a} ${b}",
+                prompt_cache=["b", "a"],  # wrong order
+            )
+        ],
+        inputs={"a": {"type": "string"}, "b": {"type": "string"}},
+        cache={
+            "items": [
+                {"name": "a", "var": "a", "prose_before": ""},
+                {"name": "b", "var": "b", "prose_before": ""},
+            ]
+        },
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert [d for d in diagnostics if d.id == "cache.order-mismatch"]
+    assert [d for d in diagnostics if d.id == "cache.prompt-body-duplicates-cache"]
+
+
+def test_three_way_coalesce_each_operand_checked() -> None:
+    """``${a ?? b ?? c}`` with cache ``[a, c]`` → ERROR with overlapping pairs
+    for each operand that resolves to a cached chunk."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_prompt(
+                "write",
+                "Pick: ${concept ?? primary_brief ?? fallback_brief}.",
+                prompt_cache=["concept", "fallback_brief"],
+            )
+        ],
+        inputs={
+            "concept": {"type": "string"},
+            "primary_brief": {"type": "string"},
+            "fallback_brief": {"type": "string"},
+        },
+        cache={
+            "items": [
+                {"name": "concept", "var": "concept", "prose_before": ""},
+                {"name": "fallback_brief", "var": "fallback_brief", "prose_before": ""},
+            ]
+        },
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    dups = [d for d in diagnostics if d.id == "cache.prompt-body-duplicates-cache"]
+    assert len(dups) == 1
+    pairs = dups[0].context["overlapping_pairs"]
+    pair_set = {(p["chunk_name"], p["body_ref"]) for p in pairs}
+    assert pair_set == {("concept", "concept"), ("fallback_brief", "fallback_brief")}
+
+
+def test_external_prompt_file_resolved_at_save_then_overlap_detected(tmp_path) -> None:
+    """Pattern 2 integration test: write a real prompt file with ``${concept}``,
+    point ``params.prompt`` at the file, drive through save_workflow_with_options
+    → ERROR fires because the save path now resolves file references before
+    validation.
+
+    Regression-pin for the save-path file-resolution wiring (the ACTUAL gap
+    that motivated this work — CLI / --validate-only / MCP execute paths
+    already resolve at the IR-load boundary).
+    """
+    from pflow.core.exceptions import WorkflowValidationError
+    from pflow.core.workflow.save_service import save_workflow_with_options
+
+    prompt_file = tmp_path / "creative-direction.prompt.md"
+    prompt_file.write_text("Use the concept ${concept} to draft a song.")
+
+    workflow_file = tmp_path / "song-creator.pflow.md"
+    workflow_file.write_text(
+        "# Song Creator\n\n"
+        "Demonstrates external prompt + cache overlap.\n\n"
+        "## Inputs\n\n### concept\n\nThe concept.\n\n- type: string\n- required: true\n\n"
+        "## Cache\n\n"
+        "```cache\nThe concept:\n${concept}\n```\n\n"
+        "## Steps\n\n"
+        "### draft\n\nDraft via external prompt with overlap.\n\n"
+        "- type: llm\n"
+        "- prompt: ./creative-direction.prompt.md\n"
+        "- prompt_cache: [concept]\n"
+        "- model: anthropic/claude-sonnet-4-5\n"
+    )
+
+    with pytest.raises(WorkflowValidationError) as excinfo:
+        save_workflow_with_options(
+            "song-creator-overlap-test",
+            workflow_file.read_text(),
+            source_path=workflow_file,
+        )
+    diagnostic_ids = {d.id for d in (excinfo.value.validation_errors or [])}
+    assert "cache.prompt-body-duplicates-cache" in diagnostic_ids, (
+        f"Expected save-path file-resolution to expose overlap; got ids={diagnostic_ids}"
+    )
+
+
+def test_cli_save_subprocess_with_overlap_exits_nonzero(tmp_path, uv_exe, prepared_subprocess_env) -> None:
+    """Pattern 4 subprocess regression test for the save-path file-resolution wiring.
+
+    Drives the real ``pflow save`` CLI command against a workflow that uses an
+    EXTERNAL prompt file containing ``${concept}`` plus a node-level
+    ``prompt_cache: [concept]``. Without the save-path file resolution wired in
+    (``save_service._resolve_for_validation``), the validator sees
+    ``params.prompt = './...md'`` and the overlap check finds nothing — save
+    succeeds and the bug ships. With the wiring, save exits non-zero and stderr
+    carries the catalog-id ``cache.prompt-body-duplicates-cache``.
+
+    The Pattern 2 test above (``test_external_prompt_file_resolved_at_save_...``)
+    exercises the API but bypasses the CLI surface; this test is the regression
+    pin for that surface specifically.
+    """
+    import subprocess
+
+    prompt_file = tmp_path / "creative-direction.prompt.md"
+    prompt_file.write_text("Use the concept ${concept} to draft a song.")
+
+    workflow_file = tmp_path / "song-creator.pflow.md"
+    workflow_file.write_text(
+        "# Song Creator\n\n"
+        "Demonstrates external prompt + cache overlap.\n\n"
+        "## Inputs\n\n### concept\n\nThe concept.\n\n- type: string\n- required: true\n\n"
+        "## Cache\n\n"
+        "```cache\nThe concept:\n${concept}\n```\n\n"
+        "## Steps\n\n"
+        "### draft\n\nDraft via external prompt with overlap.\n\n"
+        "- type: llm\n"
+        "- prompt: ./creative-direction.prompt.md\n"
+        "- prompt_cache: [concept]\n"
+        "- model: anthropic/claude-sonnet-4-5\n"
+    )
+
+    completed = subprocess.run(  # noqa: S603 — fixture-controlled args, mirrors the established subprocess CLI test pattern
+        [
+            uv_exe,
+            "run",
+            "pflow",
+            "save",
+            str(workflow_file),
+            "--name",
+            "song-creator-cli-overlap-test",
+            "--force",
+        ],
+        capture_output=True,
+        text=True,
+        env=prepared_subprocess_env,
+        timeout=60,
+    )
+    assert completed.returncode != 0, (
+        f"Expected non-zero exit when save detects prompt-body / cache overlap. "
+        f"stdout: {completed.stdout!r}\nstderr: {completed.stderr!r}"
+    )
+    combined = completed.stdout + completed.stderr
+    assert "cache.prompt-body-duplicates-cache" in combined, (
+        f"Expected the catalog id 'cache.prompt-body-duplicates-cache' in CLI output; got:\n"
+        f"stdout: {completed.stdout!r}\nstderr: {completed.stderr!r}"
+    )
+
+
+def test_byte_identical_to_make_diagnostic_output() -> None:
+    """The validator's emission for the new IDs MUST match what
+    ``make_diagnostic`` would produce on the catalog. Severity, source,
+    category, and the path follow from the catalog spec — drift would be a
+    silent regression on agent-facing prose.
+
+    Single test; both IDs covered via a parametrized loop inside.
+    """
+    from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
+
+    overlap_ids = ("cache.prompt-body-duplicates-cache", "cache.prompt-body-shadows-cache")
+    for warning_id in overlap_ids:
+        spec = CACHE_WARNING_CATALOG[warning_id]
+        # Drive a producer that emits the right kind of overlap.
+        if warning_id == "cache.prompt-body-duplicates-cache":
+            ir = _ir(
+                nodes=[_llm_node_with_prompt("n", "Use ${x}.", prompt_cache=["x"])],
+                inputs={"x": {"type": "string"}},
+                cache={"items": [{"name": "x", "var": "x", "prose_before": ""}]},
+            )
+        else:
+            ir = _ir(
+                nodes=[_llm_node_with_prompt("n", "Field: ${x.field}.", prompt_cache=["x"])],
+                inputs={"x": {"type": "string"}},
+                cache={"items": [{"name": "x", "var": "x", "prose_before": ""}]},
+            )
+        diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+        diag = next(d for d in diagnostics if d.id == warning_id)
+
+        assert diag.severity == spec.severity, warning_id
+        assert diag.source == spec.source, warning_id
+        assert diag.context["category"] == spec.category, warning_id
+        # Path uses the catalog template format
+        assert diag.context["path"] == spec.path_template.format(node_id="n"), warning_id
+        # Required keys present in context
+        required_keys = {k for k, _ in spec.required_context_keys if k != "node_id"}
+        assert required_keys <= set(diag.context.keys()), (warning_id, diag.context.keys(), required_keys)
+
+
+def test_overlap_does_not_fire_when_prompt_empty() -> None:
+    """No prompt body → nothing to overlap → no diagnostic."""
+    ir = _ir(
+        nodes=[
+            {
+                "id": "n",
+                "type": "llm",
+                "params": {"prompt": "", "model": "anthropic/claude-sonnet-4-5"},
+                "prompt_cache": ["concept"],
+            }
+        ],
+        inputs={"concept": {"type": "string"}},
+        cache={"items": [{"name": "concept", "var": "concept", "prose_before": ""}]},
+    )
+    diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
+    overlap_ids = {"cache.prompt-body-duplicates-cache", "cache.prompt-body-shadows-cache"}
+    assert not [d for d in diagnostics if d.id in overlap_ids]

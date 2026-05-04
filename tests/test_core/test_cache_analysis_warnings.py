@@ -43,13 +43,21 @@ def test_catalog_count_constant_is_auto_derived() -> None:
     assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT
 
 
-def test_catalog_has_fourteen_entries_v1() -> None:
-    """v1 ships with 14 cache.* IDs (10 from spec DD#29 + cache.discrepancy from
-    Round 2 + cache.invalid-on-non-llm and cache.prewarm-no-prefix from Round 3
-    + cache.consolidate-to-root-recommended from CP3 + cache.opaque-prompt
-    from Stage-1.5 / lyrics-generator verification). The catalog is closed
-    per DD#29; expanding requires design review."""
-    assert len(CACHE_WARNING_CATALOG) == 14
+def test_catalog_has_sixteen_entries_v1() -> None:
+    """v1 currently ships with 16 cache.* IDs:
+
+    - 10 from spec DD#29
+    - ``cache.discrepancy`` (Round 2)
+    - ``cache.invalid-on-non-llm`` and ``cache.prewarm-no-prefix`` (Round 3)
+    - ``cache.consolidate-to-root-recommended`` (CP3)
+    - ``cache.opaque-prompt`` (Stage-1.5 / lyrics-generator verification)
+    - ``cache.prompt-body-duplicates-cache`` and
+      ``cache.prompt-body-shadows-cache`` (Task 159 follow-up:
+      detect prompt-body / prompt_cache overlap)
+
+    The catalog is closed per DD#29; expanding requires design review.
+    """
+    assert len(CACHE_WARNING_CATALOG) == 16
 
 
 def test_all_entries_are_cache_namespaced() -> None:
@@ -83,6 +91,11 @@ def test_source_split_validator_vs_cache_analyzer() -> None:
         "cache.order-mismatch",
         "cache.unused-chunk",
         "cache.invalid-on-non-llm",
+        # Task 159 follow-up: prompt-body / prompt_cache overlap detection
+        # routes through ``data_flow.py`` (validator) when prompt_cache is
+        # declared and overlaps the prompt body.
+        "cache.prompt-body-duplicates-cache",
+        "cache.prompt-body-shadows-cache",
     }
     for warning_id, spec in CACHE_WARNING_CATALOG.items():
         if warning_id in validator_ids:
@@ -513,6 +526,20 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "affected_workflow": "x.pflow.md",
             "var_ref": "item.prompt",
             "upstream_node_id": "prepare-items",
+        },
+        "cache.prompt-body-duplicates-cache": {
+            "node_id": "write-lyrics",
+            "affected_workflow": "x.pflow.md",
+            "overlapping_pairs": [{"chunk_name": "concept", "body_ref": "concept"}],
+            "overlap_lines": "  - cached `${concept}` AND inline `${concept}`",
+        },
+        "cache.prompt-body-shadows-cache": {
+            "node_id": "write-lyrics",
+            "affected_workflow": "x.pflow.md",
+            "shadowing_pairs": [
+                {"chunk_name": "concept", "body_ref": "concept.title", "direction": "cache_contains_body"}
+            ],
+            "overlap_lines": "  - cached `${concept}` overlaps inline `${concept.title}` (cache_contains_body)",
         },
     }
     return samples[warning_id]

@@ -606,6 +606,12 @@ def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
             for node_id, assignment in block.per_node_assignments.items():
                 chunks.append(f"  ### {node_id}")
                 chunks.append(f"  - prompt_cache: [{', '.join(assignment)}]")
+                cleanup_refs = block.prompt_body_cleanup.get(node_id) or []
+                if cleanup_refs:
+                    refs_csv = ", ".join(f"${{{ref}}}" for ref in cleanup_refs)
+                    chunks.append(
+                        f"  - also remove from prompt body: {refs_csv}    # cached values shouldn't appear inline"
+                    )
                 chunks.append("")
     # Drop trailing blank line.
     while chunks and chunks[-1] == "":

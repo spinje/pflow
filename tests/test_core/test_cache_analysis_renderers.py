@@ -1676,3 +1676,166 @@ def test_json_emits_root_and_sub_workflow_llm_node_counts() -> None:
     # Text renderer reads from the same fields — single source of truth.
     text = render_text(analysis, all_rows=True)
     assert "(1 in parent-3deep.pflow.md, 2 in 2 sub-workflows: child-3deep, grandchild)" in text
+
+
+# ----------------------------------------------------------------------
+# Task 159 follow-up — prompt-body cleanup hint surfacing
+# ----------------------------------------------------------------------
+
+
+def test_suggested_block_carries_prompt_body_cleanup_for_greenfield() -> None:
+    """End-to-end: drive ``analyze()`` against a greenfield workflow whose
+    LLM nodes share a template ref. The analyzer should suggest declaring the
+    ref in ## Cache AND surface that the same ref still appears in each
+    node's prompt body (so agents pasting the suggestion know to also
+    remove the inline reference)."""
+    from pflow.core.cache_analysis.analyze import analyze
+
+    workflow_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "node-a",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "About ${concept}: ..."},
+            },
+            {
+                "id": "node-b",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "More on ${concept}: ..."},
+            },
+        ],
+    }
+    result = analyze(workflow_ir, parameters={"concept": "x"}, workflow_path="/abs/x.pflow.md")
+
+    assert result.suggested_blocks, "Analyzer should detect shared context"
+    block = result.suggested_blocks[0]
+    # Both nodes are getting prompt_cache: [concept], and both still have
+    # ${concept} inline — cleanup hint should fire for both.
+    assert block.prompt_body_cleanup == {
+        "node-a": ["concept"],
+        "node-b": ["concept"],
+    }
+
+
+def test_suggested_block_skips_prompt_body_cleanup_when_cache_already_declared() -> None:
+    """When the workflow already has a ``## Cache`` block,
+    ``_populate_suggested_blocks`` short-circuits — no SuggestedBlock at all,
+    so prompt_body_cleanup never gets populated. Pins the documented scope
+    boundary (Phase 2 covers greenfield only; brownfield is covered by the
+    Phase 1 validator ERROR at validate time)."""
+    from pflow.core.cache_analysis.analyze import analyze
+
+    workflow_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "cache": {
+            "items": [{"name": "concept", "var": "concept", "prose_before": "Concept:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "node-a",
+                "type": "llm",
+                "prompt_cache": ["concept"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "About ${concept}: ..."},
+            },
+            {
+                "id": "node-b",
+                "type": "llm",
+                "prompt_cache": ["concept"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "More on ${concept}: ..."},
+            },
+        ],
+    }
+    result = analyze(workflow_ir, parameters={"concept": "x"}, workflow_path="/abs/x.pflow.md")
+
+    # Brownfield short-circuits suggested_blocks; the validator's ERROR is
+    # what catches the bug in this case (covered by Phase 1 tests).
+    assert not result.suggested_blocks
+
+
+def test_render_text_emits_also_remove_from_prompt_body_line() -> None:
+    """Renderer surfaces the cleanup hint inline under each
+    ``- prompt_cache: [...]`` line."""
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept",
+                var="${concept}",
+                size_tokens_est=500,
+                prose_placeholder="The concept:",
+            ),
+        ),
+        per_node_assignments={"write": ["concept"]},
+        estimated_savings_usd=None,
+        prompt_body_cleanup={"write": ["concept"]},
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+    text = render_text(analysis)
+
+    assert "- prompt_cache: [concept]" in text
+    assert "also remove from prompt body: ${concept}" in text
+
+
+def test_render_text_omits_cleanup_line_when_no_overlaps() -> None:
+    """When prompt_body_cleanup is empty for a node, the renderer does NOT
+    emit the cleanup line — keeps the suggested block clean for greenfield
+    workflows that don't need cleanup."""
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept",
+                var="${concept}",
+                size_tokens_est=500,
+                prose_placeholder="The concept:",
+            ),
+        ),
+        per_node_assignments={"write": ["concept"]},
+        estimated_savings_usd=None,
+        prompt_body_cleanup={},
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+    text = render_text(analysis)
+
+    assert "- prompt_cache: [concept]" in text
+    assert "also remove from prompt body" not in text
+
+
+def test_render_json_includes_prompt_body_cleanup_key() -> None:
+    """JSON shape carries ``prompt_body_cleanup`` per suggested block (MCP
+    consumers read the same shape; agents acting on suggested_blocks[] see
+    the cleanup hint without round-tripping through the text renderer)."""
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept",
+                var="${concept}",
+                size_tokens_est=500,
+                prose_placeholder="The concept:",
+            ),
+        ),
+        per_node_assignments={"write": ["concept"]},
+        estimated_savings_usd=None,
+        prompt_body_cleanup={"write": ["concept"]},
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+    payload = render_json(analysis)
+
+    assert "suggested_blocks" in payload
+    block_dict = payload["suggested_blocks"][0]
+    assert "prompt_body_cleanup" in block_dict
+    assert block_dict["prompt_body_cleanup"] == {"write": ["concept"]}

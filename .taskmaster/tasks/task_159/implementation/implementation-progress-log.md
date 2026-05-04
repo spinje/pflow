@@ -6794,3 +6794,209 @@ Text rendering byte-identical (renderer reads same data via different path).
   (commit `6640255b1`); fix is mechanical (`_` prefix unused vars) but
   out of scope for this commit.
 
+## Detect prompt-body / prompt_cache overlap (2026-05-04)
+
+Three-phase implementation closing the duplicate-bytes pattern uncovered by
+Stage 2.1 verification: when an LLM node declares `prompt_cache: [X]` AND
+the prompt body references `${X}`, pflow sends the value twice (cached at
+0.1× rate via system blocks AND inline at 1.0× rate in the body — net cache
+benefit ~zero). Until this commit, nothing told the workflow author they'd
+nullified their own caching.
+
+### What shipped
+
+**Phase 0 — shared overlap module** (`src/pflow/core/cache_overlap.py`, NEW)
+
+- `compute_overlaps()` + `Overlap` dataclass with three kinds: `duplicate`,
+  `cache_contains_body`, `body_contains_cache`.
+- `_canonicalize_path()`: splits paths on `.` AND before each `[`, dropping
+  empties. `"items[0].field"` → `("items", "[0]", "field")`. Pinned by
+  parametrized table tests.
+- `_is_strict_prefix()`, `_batch_aliases()`, `_is_batch_scoped_ref()`
+  (the latter duplicated from `analyze.py:1946-1954` per plan; cycle
+  constraint forbids analyzer→cache_overlap→analyzer).
+- 28 unit tests in `tests/test_core/test_cache_overlap.py`.
+
+**Phase 1 — validator + save-path wiring**
+
+- `data_flow.py`: threaded optional `workflow_path: str | None = None`
+  through `validate_data_flow()`. New `_emit_prompt_body_overlap_diagnostics()`
+  helper calls `compute_overlaps()` and routes ERROR/WARNING through
+  `make_diagnostic()` (catalog-as-SSoT, dodges raw-Diagnostic drift).
+  Consolidated-per-node shape mirrors `cache.invalid-on-non-llm` —
+  `Diagnostic.__hash__` would otherwise collapse two diagnostics with the
+  same (severity, source, node_id, id) tuple and lose per-pair detail.
+- `validator.py::_validate_data_flow`: passes `workflow_file` through.
+- `save_service.py`: new `_resolve_for_validation()` deep-copies the IR,
+  runs `resolve_file_references()` on the copy, hands the resolved IR to
+  the validator. The original IR keeps literal file path strings so
+  `_discover_and_bundle_deps()` still bundles them. **Critical fix vs the
+  original plan** — see "Deviation 1" below.
+- `warning_catalog.py`: 2 new `CacheWarningSpec` entries —
+  `cache.prompt-body-duplicates-cache` (ERROR, `validator`) and
+  `cache.prompt-body-shadows-cache` (WARNING, `validator`). Both use the
+  consolidated `overlap_lines` context key for the rendered per-pair list.
+  Priority entries: ERROR=5, WARNING=10.
+- 17 new validator tests in `test_prompt_cache_validation.py` including
+  the **CRITICAL** Pattern 4 subprocess test that drives `pflow save` via
+  `subprocess.run` and asserts non-zero exit + catalog id in stderr —
+  regression-pin for the save-path file-resolution wiring.
+
+**Phase 2 — analyzer surfaces `prompt_body_cleanup` for greenfield**
+
+- `analyze.py::SuggestedBlock` gained `prompt_body_cleanup: dict[str, list[str]]`
+  field (default empty). Populated by new `_compute_prompt_body_cleanup()`
+  helper invoking the shared `compute_overlaps()` for each assigned node.
+- `render_text.py`: appends "also remove from prompt body: ${...}" line
+  under each per-node `prompt_cache:` line when the cleanup dict has refs.
+- `render_json.py`: `prompt_body_cleanup` key in per-block JSON output;
+  flows through MCP `analyze_cache` automatically.
+- 4 new renderer tests in `test_cache_analysis_renderers.py` including the
+  documented-scope-boundary pin (greenfield-only; brownfield short-circuits).
+
+### Files modified
+
+**Production** (8 files):
+- `src/pflow/core/cache_overlap.py` (NEW)
+- `src/pflow/core/workflow/data_flow.py` — workflow_path threading + new
+  helper + overlap call site after the order-match block (only when
+  `all_resolved` is True so we don't compound `cache.undeclared-chunk`)
+- `src/pflow/core/workflow/validator.py` — pass workflow_file through
+- `src/pflow/core/workflow/save_service.py` — `_resolve_for_validation()`
+  helper + uses validation_ir for downstream calls
+- `src/pflow/core/cache_analysis/warning_catalog.py` — 2 catalog entries
+  + priorities + docstring update
+- `src/pflow/core/cache_analysis/analyze.py` — `SuggestedBlock` field +
+  `_compute_prompt_body_cleanup` helper
+- `src/pflow/core/cache_analysis/render_text.py` — cleanup-hint line
+- `src/pflow/core/cache_analysis/render_json.py` — JSON key
+- `src/pflow/mcp_server/tools/execution_tools.py` — docstring updated to
+  16-entry catalog list
+
+**Tests** (8 files):
+- `tests/test_core/test_cache_overlap.py` (NEW) — 28 unit tests
+- `tests/test_core/test_prompt_cache_validation.py` — 17 new tests incl.
+  Pattern 4 subprocess
+- `tests/test_core/test_cache_analysis_renderers.py` — 4 renderer tests
+- `tests/test_core/test_cache_analysis_warnings.py` — count constant
+  (16 entries) + source-split inclusion + sample kwargs for new IDs
+- `tests/test_core/test_cache_analysis_per_id_coverage.py` — kwargs
+  samples + producer-driven coverage for both new IDs
+- `tests/test_runtime/test_prompt_cache_compile.py` — fixture prompt body
+  changed to non-overlapping (was unrelated dupe pattern; now it would
+  trip the new check)
+- `tests/test_runtime/test_prompt_cache_hash.py` — same fixture fix
+- `tests/test_execution/test_plan_drift.py`, `test_plan_cache_nudge.py`,
+  `tests/test_integration/test_no_cache_flag.py` — same fixture fix
+
+### Deviation 1 — file resolution must NOT mutate the original IR (CRITICAL)
+
+The plan said: *"in `save_service.py:_validate_and_normalize_ir()`, before
+the existing `WorkflowValidator.validate()` call, invoke
+`resolve_file_references(workflow_ir, source_path.parent)`"*.
+
+Implemented as written initially → 2 `test_workflow_bundling.py` tests
+broke. Root cause: `resolve_file_references()` mutates IR in place,
+replacing `params.prompt = "./agent.md"` with the file's content. By the
+time `_discover_and_bundle_deps()` runs (downstream of validation), it
+calls `is_file_reference()` on the now-content string and returns False —
+no deps discovered, no files bundled, broken saved workflow.
+
+The plan's claim *"`resolve_file_references` mutates IR in-place; downstream
+save persists the original markdown source, not the IR, so mutation is
+safe (verify in implementation)"* is half-right: the markdown source IS
+preserved. But `_discover_and_bundle_deps` reads the IR, not the markdown,
+to find paths to bundle.
+
+**Fix**: extracted `_resolve_for_validation()` that deep-copies the IR
+and runs file resolution on the copy. The validator gets resolved content
+(catches overlap); the input IR keeps file paths (bundling still works).
+
+This is the most important learning for any future "thread file resolution
+into a new validation phase" work — always check what downstream layers
+read from the post-resolution IR vs the original source.
+
+### Deviation 2 — `make_diagnostic` requires `affected_workflow` for
+node-scoped diagnostics
+
+The plan acknowledged using `make_diagnostic()` over raw `Diagnostic(...)`
+to avoid catalog/emitter byte-equivalence drift, but didn't account for
+`_ensure_workflow_scope` requiring a non-empty `affected_workflow` whenever
+`node_id` is set.
+
+To make this work without breaking synthetic-IR tests, threaded
+`workflow_path` through `validate_data_flow()` AND added a `<unknown>`
+fallback in `_emit_prompt_body_overlap_diagnostics`. The fallback is
+load-bearing for the compile path (see Known Gap below).
+
+### Deviation 3 — fixture overlap pattern was already encoded in 5 test
+files
+
+5 pre-existing tests had `prompt: "Tell me about ${concept}"` AND
+`prompt_cache: [concept]`. They tested OTHER properties (cache hashing,
+nudge emission) but encoded the exact bug pattern this work catches.
+Fixed each by changing the prompt body to a static string ("Tell me a
+one-liner story.") — preserves the test's actual intent without tripping
+the new check. Added in-line comments documenting why.
+
+### Critical insights
+
+1. **"Mutate in place" claims need downstream-impact analysis.** A function
+   that mutates can be safe in isolation but break when its outputs feed
+   layers that read different fields than the mutation touched.
+   `resolve_file_references` mutates `params.prompt`; `_discover_and_bundle_deps`
+   reads `params.prompt` — same field, opposite intent. The code review
+   pre-merge agents flagged "save-path-only" but didn't catch the
+   bundling collision; only the bundling test caught it.
+
+2. **`Diagnostic.__hash__`'s `(severity, source, node_id, id)` tuple is
+   load-bearing for consolidated-per-node diagnostics.** Two findings
+   on the same node with the same id collapse into one. The fix is
+   ALWAYS to emit one diagnostic per node listing all pairs, NEVER to
+   emit one diagnostic per pair. Pinned by `test_multiple_chunks_one_node_consolidates_to_single_diagnostic`.
+
+3. **Catalog-as-SSoT (`make_diagnostic`) is worth the upfront friction.**
+   The original plan reached for raw `Diagnostic(...)` "to mirror the
+   shipped emitters" — but those emitters were the ones drifting from
+   the catalog (e.g., `cache.unused-chunk` shipped without `source_line`
+   despite the catalog requiring it). Routing through `make_diagnostic`
+   eliminates that drift surface entirely.
+
+4. **Catalog-list docstrings drift silently.** The MCP `analyze_cache`
+   tool docstring listed "14 entries in v1" with an explicit ID list.
+   Adding two IDs to the catalog without updating the docstring would
+   ship — `test_docstring_lists_every_catalog_id` fired and pinned the
+   sync. Worth keeping that test pattern as-is; an `EXPECTED_CATALOG_COUNT`
+   in the docstring would silently rot without it.
+
+5. **Pattern 4 subprocess tests catch what unit tests miss.** The Pattern
+   2 (`save_workflow_with_options()`) test exercises the API and asserts
+   the diagnostic fires — but only the Pattern 4 subprocess test caught
+   that the CLI's `pflow save` actually surfaces the diagnostic to stderr
+   with the catalog id intact. Plan flagged this as CRITICAL; that label
+   was earned.
+
+### Known gap (filed as follow-up)
+
+**Compile path doesn't thread `workflow_path`** → its overlap diagnostics
+carry `affected_workflow="<unknown>"` while validator-path diagnostics
+carry the real path. Same workflow, two JSON shapes depending on which
+entry ran. `Diagnostic.__hash__` ignores context so no double-emit; in
+normal flows the validator runs first and short-circuits, so end users
+rarely see the placeholder. Library/programmatic callers that go straight
+to the compiler do see it.
+
+**Filed**: GH issue [#367](https://github.com/spinje/pflow/issues/367) —
+Thread `workflow_path` through `_prepare_compilation()` →
+`_validate_data_flow_at_compile_time()` and drop the `<unknown>` fallback.
+
+### State after this commit
+
+- 6184 → 6185 tests pass (1 new subprocess test added on top of the 49
+  unit tests written for the three phases; the pre-existing 6184
+  baseline reflects all production-side test additions absorbed earlier
+  in the run).
+- All affected surfaces clean: `make check` green (ruff + ruff-format +
+  mypy + deptry).
+- Catalog grew from 14 → 16 entries; `EXPECTED_CATALOG_COUNT = len(...)`
+  auto-derives, only the human-prose count constants needed updating.

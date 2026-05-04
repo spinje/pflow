@@ -25,7 +25,7 @@ import json
 import logging
 import re
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -210,6 +210,12 @@ class SuggestedBlock:
     chunks: tuple[SuggestedBlockChunk, ...]
     per_node_assignments: dict[str, list[str]]
     estimated_savings_usd: float | None
+    # Task 159 follow-up: prompt-body refs to remove per node so the cached
+    # chunks aren't sent inline at 1.0x rate alongside the cached 0.1x rate.
+    # Keyed by node_id; values are sorted, deduplicated lists of body refs.
+    # Empty dict for blocks with no overlapping refs (greenfield workflows
+    # where the suggested ## Cache wouldn't conflict with existing prompts).
+    prompt_body_cleanup: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1746,6 +1752,7 @@ def _populate_suggested_blocks(
         chunks=tuple(chunks),
         per_node_assignments={node_id: assignments[node_id] for node_id in sorted(assignments)},
         estimated_savings_usd=total_savings,
+        prompt_body_cleanup=_compute_prompt_body_cleanup(workflow_ir, chunks, assignments),
     )
     warning = make_diagnostic(
         "cache.shared-context-undeclared",
@@ -1948,6 +1955,44 @@ def _batch_aliases(node: dict[str, Any]) -> set[str]:
     if not isinstance(batch, dict):
         return set()
     return {str(batch.get("as", "item"))}
+
+
+def _compute_prompt_body_cleanup(
+    workflow_ir: dict[str, Any],
+    chunks: list[SuggestedBlockChunk],
+    assignments: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Per-node prompt-body cleanup hint for greenfield SuggestedBlock.
+
+    For each node being assigned cached chunks, lists the inline ``${...}``
+    references that would overlap and need to be removed from the prompt
+    body so agents following the analyzer's recommendation don't silently
+    keep the inline refs and cancel out the cache savings.
+
+    Returns ``{node_id: sorted unique body refs}``. Nodes without overlap
+    don't appear in the dict.
+    """
+    from pflow.core.cache_overlap import compute_overlaps
+
+    nodes_by_id_local = {n["id"]: n for n in workflow_ir.get("nodes", []) if isinstance(n, dict) and n.get("id")}
+    chunk_name_set = {chunk.name for chunk in chunks}
+    cleanup: dict[str, list[str]] = {}
+    for node_id, assigned_chunk_names in assignments.items():
+        node = nodes_by_id_local.get(node_id)
+        if node is None:
+            continue
+        prompt_text = node.get("params", {}).get("prompt", "") or ""
+        if not isinstance(prompt_text, str):
+            continue
+        overlaps = compute_overlaps(
+            prompt_text=prompt_text,
+            prompt_cache=assigned_chunk_names,
+            cache_item_names=chunk_name_set,
+            batch_aliases=_batch_aliases(node),
+        )
+        if overlaps:
+            cleanup[node_id] = sorted({o.body_ref for o in overlaps})
+    return cleanup
 
 
 def _is_batch_scoped_ref(ref: str, aliases: set[str]) -> bool:

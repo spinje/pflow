@@ -285,6 +285,7 @@ def _validate_template_reference(
 def validate_data_flow(
     workflow_ir: dict[str, Any],
     check_inputs: bool = True,
+    workflow_path: Optional[str] = None,
 ) -> list[Diagnostic]:
     """Validate that data flows correctly between nodes.
 
@@ -304,6 +305,12 @@ def validate_data_flow(
     Args:
         workflow_ir: The workflow IR to validate
         check_inputs: Whether to validate undefined input references
+        workflow_path: Path to the workflow file being validated. Threaded into
+            cache.* diagnostics that route through ``make_diagnostic`` (which
+            requires ``affected_workflow`` for workflow-scope correctness when
+            same-id nodes appear in multiple workflows). When ``None`` the new
+            cache.prompt-body-* checks fall back to a stable placeholder string
+            so synthetic-IR tests still get coverage.
 
     Returns:
         List of validation diagnostics (empty if valid)
@@ -381,15 +388,17 @@ def validate_data_flow(
         )
 
     # Cache-block validation (Task 159): ## Cache references, prompt_cache: order,
-    # invalid-on-non-llm, unused chunks, batch-scoped rejection. Runs at the SAME
-    # tier as the per-node template validation so both validation entry points
-    # (WorkflowValidator + compile_validation) pick it up via the shared call site.
+    # invalid-on-non-llm, unused chunks, batch-scoped rejection, prompt-body
+    # overlap with cached chunks. Runs at the SAME tier as the per-node template
+    # validation so both validation entry points (WorkflowValidator +
+    # compile_validation) pick it up via the shared call site.
     _validate_cache_block(
         workflow_ir,
         nodes_by_id,
         declared_inputs,
         batch_item_aliases,
         diagnostics,
+        workflow_path=workflow_path,
     )
 
     return diagnostics
@@ -516,6 +525,8 @@ def _validate_cache_block(  # noqa: C901
     declared_inputs: set[str],
     batch_item_aliases: set[str],
     diagnostics: list[Diagnostic],
+    *,
+    workflow_path: Optional[str] = None,
 ) -> None:
     """Validate cache-related declarations: per-node ``prompt_cache:`` and ``prewarm:``,
     plus the workflow-level ``## Cache`` block's chunk references.
@@ -667,6 +678,23 @@ def _validate_cache_block(  # noqa: C901
             if indices != sorted(indices):
                 expected_order = [c for c in cache_item_names if c in prompt_cache]
                 diagnostics.append(_make_order_mismatch_diagnostic(node_id, expected_order, prompt_cache))
+
+        # Prompt-body overlap check (Task 159 follow-up): when a chunk is
+        # both declared cached AND referenced inline in the prompt body,
+        # the body sends the value at 1.0x rate every call — nullifying
+        # the cache savings. ERROR for full-path duplicates; WARNING for
+        # sub-path overlap (cache parent + body child, or vice versa).
+        # Only fires when all chunks resolve so we don't compound a more
+        # actionable cache.undeclared-chunk error.
+        if all_resolved:
+            _emit_prompt_body_overlap_diagnostics(
+                node=node,
+                node_id=node_id,
+                prompt_cache=prompt_cache,
+                cache_item_names=set(cache_item_names),
+                workflow_path=workflow_path,
+                diagnostics=diagnostics,
+            )
 
     # STEP 3b: top-level chunk-var resolution + batch-scoped rejection +
     # unused-chunk warning. Only runs if the cache block is well-formed.
@@ -889,6 +917,88 @@ def _make_batch_scoped_rejection_diagnostic(chunk_name: str, var_expr: str, chun
         ],
         context=context,
     )
+
+
+def _emit_prompt_body_overlap_diagnostics(
+    *,
+    node: dict[str, Any],
+    node_id: str,
+    prompt_cache: list[str],
+    cache_item_names: set[str],
+    workflow_path: Optional[str],
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Detect prompt-body / prompt_cache overlap and emit consolidated diagnostics.
+
+    Calls into the shared :func:`pflow.core.cache_overlap.compute_overlaps`
+    so the validator's enforcement matches the analyzer's recommendation
+    byte-for-byte. Emits AT MOST one ERROR diagnostic (full-path duplicates)
+    and one WARNING diagnostic (sub-path overlap) per node — the
+    consolidated-per-node shape mirrors ``cache.invalid-on-non-llm`` and
+    works around ``Diagnostic.__hash__`` collapsing same-id diagnostics
+    on the same node into a single entry that loses per-pair detail.
+    """
+    # Lazy import: cache_overlap → template_resolver is the same dependency
+    # already loaded at module top, but the lazy form keeps this module's
+    # import surface unchanged for callers that don't exercise the cache
+    # validation path.
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.cache_overlap import _batch_aliases, compute_overlaps
+
+    prompt_text = node.get("params", {}).get("prompt", "")
+    if not isinstance(prompt_text, str) or not prompt_text:
+        return
+
+    overlaps = compute_overlaps(
+        prompt_text=prompt_text,
+        prompt_cache=prompt_cache,
+        cache_item_names=cache_item_names,
+        batch_aliases=_batch_aliases(node),
+    )
+    if not overlaps:
+        return
+
+    duplicates = [o for o in overlaps if o.kind == "duplicate"]
+    shadows = [o for o in overlaps if o.kind != "duplicate"]
+
+    # ``make_diagnostic`` requires a non-empty ``affected_workflow`` whenever
+    # ``node_id`` is set so the renderer can scope per-row warnings when the
+    # same node id appears in parent and child workflows. When this validator
+    # entry doesn't know the path (synthetic-IR tests, compiler path that
+    # didn't thread it), fall back to a stable placeholder so the diagnostic
+    # still fires — the failure mode that matters most is the agent missing
+    # the duplicate-bytes pattern, not the workflow-scope label.
+    affected_workflow = workflow_path or "<unknown>"
+
+    if duplicates:
+        overlap_lines = "\n".join(
+            f"  - cached `${{{o.chunk_name}}}` AND inline `${{{o.body_ref}}}`" for o in duplicates
+        )
+        diagnostics.append(
+            make_diagnostic(
+                "cache.prompt-body-duplicates-cache",
+                node_id=node_id,
+                overlapping_pairs=[{"chunk_name": o.chunk_name, "body_ref": o.body_ref} for o in duplicates],
+                affected_workflow=affected_workflow,
+                overlap_lines=overlap_lines,
+            )
+        )
+
+    if shadows:
+        overlap_lines = "\n".join(
+            f"  - cached `${{{o.chunk_name}}}` overlaps inline `${{{o.body_ref}}}` ({o.kind})" for o in shadows
+        )
+        diagnostics.append(
+            make_diagnostic(
+                "cache.prompt-body-shadows-cache",
+                node_id=node_id,
+                shadowing_pairs=[
+                    {"chunk_name": o.chunk_name, "body_ref": o.body_ref, "direction": o.kind} for o in shadows
+                ],
+                affected_workflow=affected_workflow,
+                overlap_lines=overlap_lines,
+            )
+        )
 
 
 def _make_unused_chunk_diagnostic(chunk_name: str) -> Diagnostic:

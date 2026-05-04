@@ -405,7 +405,7 @@ async def analyze_cache(
     ``warnings`` filtered by ``node_id``.
 
     **Closed catalog of cache.* warning IDs** that may appear in
-    ``warnings[].id`` (14 entries in v1):
+    ``warnings[].id`` (16 entries in v1):
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared
@@ -420,6 +420,8 @@ async def analyze_cache(
       - cache.prewarm-no-prefix
       - cache.consolidate-to-root-recommended
       - cache.opaque-prompt
+      - cache.prompt-body-duplicates-cache
+      - cache.prompt-body-shadows-cache
 
     **Cost-degradation tri-state** (per the F2 contract): when some node
     models lack pricing data, ``summary.partial_cost_usd`` becomes ``true``,

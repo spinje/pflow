@@ -312,6 +312,10 @@ def _block_to_dict(block: SuggestedBlock) -> dict[str, Any]:
         ],
         "per_node_assignments": dict(block.per_node_assignments),
         "estimated_savings_usd": block.estimated_savings_usd,
+        # Task 159 follow-up: per-node prompt-body refs to remove so the
+        # analyzer's prompt_cache: recommendation isn't silently cancelled
+        # by inline duplication. Empty dict when no overlaps exist.
+        "prompt_body_cleanup": dict(block.prompt_body_cleanup),
     }
 
 

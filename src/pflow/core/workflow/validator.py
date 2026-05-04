@@ -119,7 +119,7 @@ class WorkflowValidator:
         diagnostics.extend(WorkflowValidator._validate_stdout_outputs(workflow_ir))
 
         # 4. Data flow validation (ALWAYS run)
-        diagnostics.extend(WorkflowValidator._validate_data_flow(workflow_ir))
+        diagnostics.extend(WorkflowValidator._validate_data_flow(workflow_ir, workflow_file=workflow_file))
 
         # 5. Template validation (if params provided)
         if extracted_params is not None:
@@ -260,17 +260,22 @@ class WorkflowValidator:
         return []
 
     @staticmethod
-    def _validate_data_flow(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    def _validate_data_flow(workflow_ir: dict[str, Any], workflow_file: Optional[Path] = None) -> list[Diagnostic]:
         """Validate execution order and data dependencies.
 
         Assumes ``workflow_ir`` has passed structural validation (step 1 short-circuits
         on schema errors). Producer bugs surface as raw exceptions to the outer
         exception boundary — CLI (``cli/commands/run.py``) and MCP (``PflowMCP``)
         both convert them to structured Diagnostics via ``exception_to_diagnostics``.
+
+        Threads ``workflow_file`` through as a string so cache.* diagnostics that
+        route through ``make_diagnostic`` carry ``affected_workflow`` for
+        workflow-scope correctness when the same node id appears in parent and
+        child workflows.
         """
         from pflow.core.workflow.data_flow import validate_data_flow
 
-        return validate_data_flow(workflow_ir)
+        return validate_data_flow(workflow_ir, workflow_path=str(workflow_file) if workflow_file else None)
 
     @staticmethod
     def _validate_templates(

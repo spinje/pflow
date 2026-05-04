@@ -5,7 +5,10 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-14 entries in v1: 9 from spec § "Stable Warning ID Catalog" + ``cache.discrepancy``
+14 entries in v1 plus ``cache.prompt-body-duplicates-cache`` and
+``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
+prompt_cache overlap that silently nullifies declared caching). The base 14
+covers the 9 from spec § "Stable Warning ID Catalog" + ``cache.discrepancy``
 (Round 2, dispatch over ``root_cause`` enum), ``cache.invalid-on-non-llm``
 (Round 3, validator-reach gap closure for non-LLM nodes),
 ``cache.prewarm-no-prefix`` (Round 3, prewarm-without-static-prefix advisory),
@@ -531,6 +534,63 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="nodes[id={node_id}].prompt",
         headline_template=("Prompt opaque to static analysis on {node_id} — refactor inline for cache detection"),
     ),
+    # Validator-tier: prompt body duplicates a cached chunk path-for-path.
+    # Net effect of the duplication: cache stores the value at 0.1x rate but
+    # the prompt body still sends it at 1.0x every call — savings ~zero. The
+    # rendered message lists each ``(chunk → body_ref)`` pair on its own line
+    # so multi-overlap nodes show every duplicate at a glance. Consolidated-
+    # per-node shape mirrors ``cache.invalid-on-non-llm`` (data_flow.py:702):
+    # each node emits ONE diagnostic listing ALL duplicates, not N of them
+    # (``Diagnostic.__hash__`` would otherwise collapse repeats and lose
+    # detail).
+    "cache.prompt-body-duplicates-cache": CacheWarningSpec(
+        severity=Severity.ERROR,
+        source="validator",
+        category=CACHE_FAILURE_CATEGORY,
+        message_template=(
+            "Node '{node_id}' duplicates cached chunks in the prompt body — the cache "
+            "stores these values at 0.1× rate but the body sends them inline at 1.0× "
+            "every call:\n{overlap_lines}"
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("overlapping_pairs", list),
+            ("affected_workflow", str),
+            ("overlap_lines", str),
+        ),
+        suggestions_template=(
+            "Remove the listed `${{...}}` references from the prompt body — the cached "
+            "chunks already supply these values via the system prompt.",
+        ),
+        path_template="nodes[id={node_id}].params.prompt",
+        headline_template="Prompt body duplicates cached chunks on {node_id}",
+    ),
+    # Validator-tier: prompt body and cache chunk overlap on a sub-path
+    # (either direction). Warning rather than error: there are legitimate
+    # patterns (e.g. cache the parent dict, use selected sub-paths inline)
+    # but the typical case is mistaken duplication. Consolidated per node
+    # for the same reason as the duplicates ID.
+    "cache.prompt-body-shadows-cache": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="validator",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=(
+            "Node '{node_id}' has overlapping cached chunks and prompt-body refs (sub-path overlap):\n{overlap_lines}"
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("shadowing_pairs", list),
+            ("affected_workflow", str),
+            ("overlap_lines", str),
+        ),
+        suggestions_template=(
+            "Either narrow the cached chunks to only the sub-paths the body uses, OR "
+            "remove the listed `${{...}}` references from the prompt body. Sub-path "
+            "overlap can quietly inflate input tokens without firing the cache reliably.",
+        ),
+        path_template="nodes[id={node_id}].params.prompt",
+        headline_template="Prompt body shadows cached chunks on {node_id}",
+    ),
 }
 
 
@@ -574,6 +634,10 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     # priority here is belt-and-suspenders for ordering ERRORs among themselves).
     "cache.order-mismatch": 5,
     "cache.invalid-on-non-llm": 5,
+    "cache.prompt-body-duplicates-cache": 5,
+    # Sub-path shadow is WARNING but more actionable than cache.unused-chunk —
+    # it silently nullifies a cache decision the user explicitly made.
+    "cache.prompt-body-shadows-cache": 10,
     # Tier 5 — informational warnings that surface latent issues.
     "cache.unused-chunk": 30,
     "cache.below-min-tokens": 30,

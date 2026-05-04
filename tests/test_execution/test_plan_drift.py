@@ -2114,7 +2114,12 @@ def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_c
             {
                 "id": "gen",
                 "type": "llm",
-                "params": {"model": "gpt-4o-mini", "prompt": "Tell me about ${concept}"},
+                # Prompt body intentionally does NOT reference ${concept} — this
+                # plan-vs-engine drift test cares about cache content flowing into
+                # the hash, not about prompt body content. Inlining ${concept}
+                # would trigger cache.prompt-body-duplicates-cache (Task 159
+                # follow-up overlap check) and conflate two checks.
+                "params": {"model": "gpt-4o-mini", "prompt": "Tell me a one-liner story."},
                 "prompt_cache": ["concept"],
             }
         ],
