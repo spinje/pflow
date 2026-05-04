@@ -638,10 +638,25 @@ CACHE_OPPORTUNITIES_NUDGE_ID: Final[str] = "cache.opportunities-available"
 
 
 def _format_savings(savings_usd: Any) -> str:
-    """Format ``savings_usd`` for inline message rendering. ``None`` → 'unavailable'."""
+    """Format ``savings_usd`` for inline message rendering with adaptive
+    sub-cent precision. Mirrors ``render_text._format_savings_usd``.
+
+    - ``None`` → ``"savings unavailable"``.
+    - ``< $0.0001`` → ``"savings unavailable"`` (below display precision).
+    - ``$0.0001 ≤ value < $0.01`` → ``"-$0.0012"`` (4 decimals).
+    - ``≥ $0.01`` → ``"-$0.42"`` (2 decimals).
+    """
     if savings_usd is None:
         return "savings unavailable"
-    return f"-${float(savings_usd):.2f}"
+    try:
+        amount = float(savings_usd)
+    except (TypeError, ValueError):
+        return "savings unavailable"
+    if amount < 0.0001:
+        return "savings unavailable"
+    if amount < 0.01:
+        return f"-${amount:.4f}"
+    return f"-${amount:.2f}"
 
 
 def _format_chunks_short(chunks: Any, *, max_inline: int = 2) -> str:
@@ -663,11 +678,14 @@ def _format_chunks_short(chunks: Any, *, max_inline: int = 2) -> str:
 def _format_savings_clause(savings_usd: Any) -> str:
     """Render the parenthetical ``" (saves $X.XX/run)"`` clause, or empty string.
 
-    Used by message templates that want to APPEND a savings hint inline. When
-    ``savings_usd`` is ``None`` or sub-cent, returns empty string — the
-    template's surrounding wording stays grammatical (no orphan
-    ``"saves savings unavailable/run"`` artifact). Mirrors the tri-state
-    contract: None → silent, sub-cent → silent, real value → rendered.
+    Used by message templates that want to APPEND a savings hint inline.
+    Adaptive sub-cent precision matches ``_format_savings`` /
+    ``render_text._format_savings_usd``:
+
+    - ``None`` → ``""`` (silent — keeps surrounding wording grammatical).
+    - ``< $0.0001`` → ``""`` (silent — below display precision).
+    - ``$0.0001 ≤ value < $0.01`` → ``" (saves $0.0012/run)"`` (4 decimals).
+    - ``≥ $0.01`` → ``" (saves $0.42/run)"`` (2 decimals).
     """
     if savings_usd is None:
         return ""
@@ -675,8 +693,10 @@ def _format_savings_clause(savings_usd: Any) -> str:
         amount = float(savings_usd)
     except (TypeError, ValueError):
         return ""
-    if amount < 0.005:
+    if amount < 0.0001:
         return ""
+    if amount < 0.01:
+        return f" (saves ${amount:.4f}/run)"
     return f" (saves ${amount:.2f}/run)"
 
 
@@ -982,21 +1002,25 @@ def format_dry_run_nudge(
 ) -> str:
     """Format the spec-locked dry-run nudge text per § "—dry-run Cache Nudge".
 
-    Tri-state savings contract:
-    - ``None`` (no estimate available) → drop the dollar figure entirely.
-    - ``< $0.005`` (rounds-to-zero) → drop the dollar figure entirely. Sub-cent
-      values render as ``-$0.00/run`` with ``f"{x:.2f}"``, which falsely
-      implies "we computed it, it's zero" when the actual data is too sparse.
-      Top-10% codebases (mypy/ruff/rustc) consistently distinguish "rounds to
-      zero" from "unavailable" — both are user-facing "we don't know".
-    - ``≥ $0.005`` → render the dollar figure (and percentage when known).
+    Tri-state savings contract with adaptive sub-cent precision (mirrors
+    ``render_text._format_savings_usd`` /
+    ``warning_catalog._format_savings``):
+
+    - ``None`` → drop the dollar figure entirely (genuinely unknown).
+    - ``< $0.0001`` → drop the dollar figure entirely (below display
+      precision; rendering ``-$0.0000/run`` would imply "we computed it,
+      it's zero" when it's too small to surface).
+    - ``$0.0001 ≤ value < $0.01`` → render with 4 decimals
+      (``-$0.0012/run`` — Gemini-shaped sub-cent visibility).
+    - ``≥ $0.01`` → render with 2 decimals (``-$0.42/run``).
     """
     word = "opportunity" if opportunity_count == 1 else "opportunities"
-    if savings_usd is None or savings_usd < 0.005:
+    if savings_usd is None or savings_usd < 0.0001:
         return f"Cache: {opportunity_count} design {word} available."
+    amount_str = f"-${savings_usd:.4f}/run" if savings_usd < 0.01 else f"-${savings_usd:.2f}/run"
     if savings_pct is None:
-        return f"Cache: {opportunity_count} design {word} available (estimated -${savings_usd:.2f}/run)."
-    return f"Cache: {opportunity_count} design {word} available (estimated -${savings_usd:.2f}/run, -{savings_pct}%)."
+        return f"Cache: {opportunity_count} design {word} available (estimated {amount_str})."
+    return f"Cache: {opportunity_count} design {word} available (estimated {amount_str}, -{savings_pct}%)."
 
 
 # ---------------------------------------------------------------------------

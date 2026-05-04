@@ -2491,3 +2491,76 @@ def test_homogeneous_static_workflow_batch_child_cost_attributed_to_child(
     # Pre-fix: child_entry.actually_paid_usd was None (or 0.0).
     # Post-fix: child cost rolls up correctly.
     assert child_entry.actually_paid_usd == pytest.approx(0.03)
+
+
+# ---------------------------------------------------------------------------
+# Memo-hit trace token recovery — Issue A
+# ---------------------------------------------------------------------------
+
+
+def test_memo_hit_trace_recovers_input_and_output_tokens_via_index(
+    tmp_path: Path,
+) -> None:
+    """``_build_trace_execution_index`` populates ``llm_calls_by_key`` for
+    cached events so memo-hit traces produce real token estimates instead
+    of falling through to estimator-partial.
+
+    The cached event's ``llm_call`` dict carries historical
+    ``input_tokens`` / ``output_tokens`` preserved from the original run.
+    Pre-fix the ``if leaf.is_cached: continue`` filter skipped index
+    population, so ``_estimate_row_tokens`` saw ``trace_llm_call=None``
+    and fell back to estimator-partial (input from prompt resolution,
+    output ``None``). Cost summation must remain $0 for cached events
+    (Bug 1 invariant).
+    """
+    import json
+
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    workflow_path = tmp_path / "smoke.pflow.md"
+    workflow_path.write_text(
+        "# Smoke\n\nMemo-hit smoke.\n\n## Steps\n\n### draft\n\n"
+        "Draft text.\n\n- type: llm\n- model: anthropic/claude-sonnet-4-5\n\n"
+        "```prompt\nHello\n```\n",
+        encoding="utf-8",
+    )
+
+    builder = TraceFixtureBuilder()
+    # cache_read_input_tokens=0 keeps the fixture simple — Anthropic's
+    # ``splits_cache_from_input_tokens=True`` policy would otherwise sum
+    # cache portions into the row's ``input_tokens_estimated`` (verified
+    # in ``test_total_input_tokens_anthropic_trace_sums_cache_portions``)
+    # and conflate this regression test with that orthogonal contract.
+    cached_event = builder.cached_llm_event_with_call(
+        "draft",
+        cost_usd=0.00034006,
+        input_tokens=4714,
+        output_tokens=76,
+        cache_read_input_tokens=0,
+    )
+    trace = builder.trace(workflow_path=str(workflow_path), nodes=[cached_event])
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+
+    resolved = resolve_workflow(str(workflow_path))
+    result = analyze(
+        resolved.ir,
+        workflow_path=resolved.file_path,
+        base_path=workflow_path.parent,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    assert len(result.per_call) == 1
+    row = result.per_call[0]
+    # Pre-fix: estimator-partial fallback produced bogus tokens or None
+    # output. Post-fix: tier-1 reads the cached ``llm_call`` directly.
+    assert row.input_tokens_estimated == 4714
+    assert row.output_tokens_estimated == 76
+    assert row.data_source == "trace"
+    assert row.output_data_source == "trace"
+    # Bug 1 invariant: cached events must NOT inflate cost. The cost
+    # summation path skips them via the unchanged ``if leaf.is_cached:
+    # continue`` after index population.
+    assert row.cost_usd == 0.0
+    assert row.cost_data_source == "trace"

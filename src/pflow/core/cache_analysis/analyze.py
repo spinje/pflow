@@ -330,6 +330,15 @@ class AnalysisSummary:
     # cause is "varies per item."
     heterogeneous_model_node_count: int = 0
     heterogeneous_model_node_paths: tuple[str, ...] = ()
+    # Phase 6 (4.x minor-additive): root vs sub-workflow LLM node count
+    # split. The text renderer has computed this on-the-fly since Phase 5
+    # sub-workflow rollup landed; promoting it into the data model gives
+    # JSON consumers (MCP, structured tools) parity with text.
+    # ``root_llm_node_count`` == ``total_llm_calls_estimated`` for
+    # single-workflow analyses; ``sub_workflow_llm_node_count`` == 0 in
+    # that case.
+    root_llm_node_count: int = 0
+    sub_workflow_llm_node_count: int = 0
     sub_workflow_rollup: SubWorkflowRollup | None = None
 
 
@@ -781,18 +790,22 @@ def _build_trace_execution_index(
         call = leaf.llm_call
         if call is None:
             continue
-        if leaf.is_cached:
-            # Cached events: this run paid $0 (cache hit). Excluding them
-            # mirrors compute_actually_paid which uses
-            # total_cost(include_cached=False). Without this filter the
-            # rollup's per-workflow actually_paid_usd would inflate by the
-            # original (historical) cost on memo-hit events that retain
-            # ``llm_call.cost_usd > 0``.
-            continue
         node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
         key = (leaf.workflow_path or root_workflow_path, node_id)
         workflow_key = leaf.workflow_path or root_workflow_path
+        # Always populate the call index — cached events carry historical
+        # ``input_tokens`` / ``output_tokens`` preserved from the original
+        # run, which downstream tier-1 token readers (``_estimate_row_tokens``)
+        # need to project costs for memo-hit-only traces. Cost summation is
+        # gated separately below.
         llm_calls_by_key.setdefault(key, dict(call))
+        if leaf.is_cached:
+            # Cached events: this run paid $0 (cache hit). Skip the cost
+            # summation only — the index population above gives token
+            # readers access to the historical llm_call data without
+            # inflating cost. Mirrors compute_actually_paid's
+            # total_cost(include_cached=False).
+            continue
         if "cost_usd" not in call:
             continue
         found.add(key)
@@ -3051,6 +3064,16 @@ def _build_summary(
     from .cost_estimation import CostTier, compute_actually_paid, compute_projections
 
     total_calls = len(rows)
+    # Phase 6 split: count root rows vs sub-workflow rows. Mirrors the
+    # text renderer's previous inline ``sum(...)`` comprehensions in
+    # ``_format_sub_workflow_breakdown_line`` so JSON consumers see the
+    # same numbers without recomputing. ``ctx.workflow_path is None``
+    # covers the inline-IR case where the analyzed workflow has no
+    # resolved path — matches the existing ``or`` pattern in
+    # ``render_text._format_sub_workflow_breakdown_line``.
+    root_workflow_path = ctx.workflow_path if ctx is not None else None
+    root_count = sum(1 for row in rows if root_workflow_path is None or row.workflow_path == root_workflow_path)
+    sub_workflow_count = total_calls - root_count
     total_input = sum(r.input_tokens_estimated for r in rows)
     # ``cacheable_tokens_estimated`` may be ``None`` for greenfield rows
     # without memo (Option C — projection unmeasurable). Sum only the known
@@ -3129,6 +3152,8 @@ def _build_summary(
         aggregate_savings_rerun_usd=projections.savings_rerun_usd,
         heterogeneous_model_node_count=len(heterogeneous_paths),
         heterogeneous_model_node_paths=heterogeneous_paths,
+        root_llm_node_count=root_count,
+        sub_workflow_llm_node_count=sub_workflow_count,
     )
 
 

@@ -569,30 +569,64 @@ def test_format_dry_run_nudge_drops_figure_when_only_pct_unavailable() -> None:
     assert text == "Cache: 2 design opportunities available (estimated -$0.50/run)."
 
 
-def test_format_dry_run_nudge_drops_sub_cent_savings_as_unavailable() -> None:
-    """Bug D — sub-cent values (``< $0.005``) round to ``$0.00`` under
-    ``f"{x:.2f}"``, falsely implying "we computed it, it's zero" when the
-    actual data is too sparse. Tri-state contract treats sub-cent the same as
-    None: drop the figure rather than emit ``-$0.00/run``.
+def test_format_dry_run_nudge_renders_sub_cent_with_4_decimal_precision() -> None:
+    """Sub-cent UX gap fix — sub-cent values render with 4-decimal precision
+    instead of dropping to ``"available."`` placeholder.
 
-    Mutation test: revert the sub-cent gate in ``format_dry_run_nudge`` to only
-    check ``savings_usd is None``; this test must fail.
+    Pre-fix the ``< $0.005`` cutoff hid every Gemini-shaped sub-cent
+    recommendation. Post-fix the cutoff is ``< $0.0001`` (truly negligible);
+    values in the $0.0001-$0.01 range render with 4 decimals so agents see
+    real magnitudes in text mode (matching the JSON contract).
+
+    The Bug D regression invariant — "no -$0.00/run anywhere" — is still
+    enforced: ``f"{x:.4f}"`` keeps real digits visible, never produces
+    ``-$0.0000/run`` for the values in this range.
+
+    Mutation test: revert the 4-decimal branch in ``format_dry_run_nudge``
+    to always use 2 decimals; ``-$0.00/run`` reappears for $0.001 → this
+    test must fail.
     """
-    text = format_dry_run_nudge(opportunity_count=1, savings_usd=0.001, savings_pct=None)
-    assert text == "Cache: 1 design opportunity available."
-    assert "-$0.00" not in text
+    # Sub-cent values render with 4-decimal precision.
+    text = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0012, savings_pct=None)
+    assert text == "Cache: 1 design opportunity available (estimated -$0.0012/run)."
+    assert "-$0.00/run" not in text  # Bug D regression — never the placeholder.
 
-    text2 = format_dry_run_nudge(opportunity_count=3, savings_usd=0.0, savings_pct=0)
-    assert text2 == "Cache: 3 design opportunities available."
-    assert "-$0.00" not in text2
+    # With percentage too.
+    text2 = format_dry_run_nudge(opportunity_count=4, savings_usd=0.005, savings_pct=12)
+    assert text2 == "Cache: 4 design opportunities available (estimated -$0.0050/run, -12%)."
+
+    # Below display ($0.00005) — drops the figure (truly negligible).
+    text3 = format_dry_run_nudge(opportunity_count=2, savings_usd=0.00005, savings_pct=None)
+    assert text3 == "Cache: 2 design opportunities available."
+
+    # Zero / None — drops the figure (genuinely unavailable).
+    text4 = format_dry_run_nudge(opportunity_count=3, savings_usd=0.0, savings_pct=0)
+    assert text4 == "Cache: 3 design opportunities available."
+    assert "-$0.00" not in text4
+
+    text5 = format_dry_run_nudge(opportunity_count=1, savings_usd=None, savings_pct=None)
+    assert text5 == "Cache: 1 design opportunity available."
 
 
 def test_format_dry_run_nudge_renders_at_one_cent_threshold() -> None:
-    """Boundary check: ``$0.005`` renders, ``$0.0049`` does not."""
-    rendered = format_dry_run_nudge(opportunity_count=1, savings_usd=0.005, savings_pct=None)
-    assert "(estimated -$0.01/run)" in rendered  # rounds up to one cent
-    suppressed = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0049, savings_pct=None)
-    assert suppressed == "Cache: 1 design opportunity available."
+    """Boundary check: precision swap at the cent boundary.
+
+    - ``$0.01`` and above use 2-decimal precision (e.g., ``-$0.01/run``).
+    - ``$0.0001`` through ``$0.0099`` use 4-decimal precision (sub-cent).
+    - Below ``$0.0001`` drops the figure entirely (truly negligible).
+    """
+    # At the cent boundary — 2-decimal rendering kicks in.
+    at_cent = format_dry_run_nudge(opportunity_count=1, savings_usd=0.01, savings_pct=None)
+    assert "(estimated -$0.01/run)" in at_cent
+    # Just below the cent boundary — 4-decimal precision.
+    just_below = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0099, savings_pct=None)
+    assert "(estimated -$0.0099/run)" in just_below
+    # At the display floor — 4-decimal precision.
+    at_floor = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0001, savings_pct=None)
+    assert "(estimated -$0.0001/run)" in at_floor
+    # Below the floor — figure dropped.
+    below_floor = format_dry_run_nudge(opportunity_count=1, savings_usd=0.00009, savings_pct=None)
+    assert below_floor == "Cache: 1 design opportunity available."
 
 
 def test_compute_distribution_clause_pluralizes_node_noun_correctly() -> None:

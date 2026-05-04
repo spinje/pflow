@@ -247,6 +247,11 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         # agents can see WHICH nodes vary without scanning ``per_call[]``.
         "heterogeneous_model_node_count": s.heterogeneous_model_node_count,
         "heterogeneous_model_node_paths": list(s.heterogeneous_model_node_paths),
+        # Phase 6 (4.x minor-additive): root vs sub-workflow LLM node
+        # count split — text renderer reads from these fields too, so
+        # JSON and text are byte-equivalent for the breakdown line.
+        "root_llm_node_count": s.root_llm_node_count,
+        "sub_workflow_llm_node_count": s.sub_workflow_llm_node_count,
         "sub_workflow_rollup": _sub_workflow_rollup_to_dict(s.sub_workflow_rollup),
     }
 

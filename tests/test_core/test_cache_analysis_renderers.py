@@ -40,6 +40,7 @@ def _make_analysis(
     rerun: float | None = None,
     partial: bool = False,
     unavailable: tuple[str, ...] = (),
+    workflow_path: str = "/abs/x.pflow.md",
 ) -> CacheAnalysis:
     """Construct a renderable analysis with atomic cost primitives.
 
@@ -61,8 +62,14 @@ def _make_analysis(
     """
     rows = rows or []
     warnings = warnings or []
+    # Mirror analyze._build_summary's split: rows whose workflow_path matches
+    # the analysis path are root rows; everything else is sub-workflow.
+    # Rows with workflow_path=None count as root (matches the analyzer's
+    # ``or root_workflow_path`` pattern for inline-IR cases).
+    root_count = sum(1 for r in rows if r.workflow_path is None or r.workflow_path == workflow_path)
+    sub_count = len(rows) - root_count
     return CacheAnalysis(
-        workflow_path="/abs/x.pflow.md",
+        workflow_path=workflow_path,
         analyzed_at="2026-04-29T12:00:00Z",
         estimate_confidence="low_no_data",
         estimate_confidence_coverage={
@@ -91,6 +98,8 @@ def _make_analysis(
             models_in_use=tuple(sorted({r.model for r in rows if r.model})),
             partial_cost_usd=partial,
             unavailable_models=unavailable,
+            root_llm_node_count=root_count,
+            sub_workflow_llm_node_count=sub_count,
         ),
         suggested_blocks=(),
         per_call=tuple(rows),
@@ -731,13 +740,20 @@ def test_text_recommended_actions_unscoped_finding_omits_scope_line() -> None:
     )
 
 
-def test_text_recommended_actions_drop_sub_cent_savings() -> None:
-    """Bug D — sub-cent estimated_savings_usd must render as 'savings unavailable',
-    not '-$0.00/run'. Tri-state contract: rounds-to-zero == unavailable.
+def test_text_recommended_actions_render_savings_with_adaptive_precision() -> None:
+    """Sub-cent UX gap fix — savings tri-state with adaptive precision.
 
-    Stage-1 final UX pass: the ``[cache.X]`` bracket prefix is gone from rank
-    lines. The savings tri-state contract (None / sub-cent → 'savings
-    unavailable'; real value → '-$X.XX/run') is unchanged.
+    Pre-fix sub-cent values (< $0.005) collapsed to "savings unavailable",
+    which on Gemini-shaped workflows hid every real recommendation behind
+    the placeholder. Post-fix uses 4-decimal precision for sub-cent so
+    agents see the actual magnitude in text mode (matches JSON contract).
+
+    The Bug D regression invariant — "no -$0.00/run anywhere" — is still
+    enforced (the < $0.0001 cutoff drops the figure for truly negligible
+    values; 4-decimal rendering covers the $0.0001-$0.01 range).
+
+    Stage-1 final UX pass: the ``[cache.X]`` bracket prefix is gone from
+    rank lines.
 
     Stage 0: warnings are built via ``make_diagnostic``; ``recommended_actions``
     is renderer-derived via ``view_helpers.build_recommended_actions``.
@@ -745,15 +761,15 @@ def test_text_recommended_actions_drop_sub_cent_savings() -> None:
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
-        # Sub-cent savings (0.001) — must render as "savings unavailable".
+        # Sub-cent savings (0.0012) — renders with 4-decimal precision.
         make_diagnostic(
             "cache.shared-context-undeclared",
             node_count=2,
             shared_chunks=["concept"],
             affected_workflow="/abs/wf.pflow.md",
-            savings_usd=0.001,
+            savings_usd=0.0012,
         ),
-        # None savings — must render as "savings unavailable".
+        # None savings — renders as "savings unavailable" (genuinely unknown).
         make_diagnostic(
             "cache.dynamic-before-static",
             node_id="x",
@@ -765,7 +781,16 @@ def test_text_recommended_actions_drop_sub_cent_savings() -> None:
             projected_ratio_pct=85,
             savings_usd=None,
         ),
-        # Above-threshold ($0.42) — renders the dollar figure.
+        # Below-display ($0.00005) — renders as "savings unavailable".
+        make_diagnostic(
+            "cache.padding-advisory",
+            node_id="z",
+            affected_workflow="/abs/wf.pflow.md",
+            current_subset=["concept"],
+            suggested_subset=["concept", "concept_brief"],
+            savings_usd=0.00005,
+        ),
+        # Above-threshold ($0.42) — renders with 2-decimal precision.
         make_diagnostic(
             "cache.batch-prewarm-recommended",
             node_id="y",
@@ -777,16 +802,20 @@ def test_text_recommended_actions_drop_sub_cent_savings() -> None:
         ),
     ]
     text = render_text(_make_analysis(warnings=warnings))
-    # Sub-cent (0.001) and None both render as "savings unavailable".
-    # Two findings render with this label — both rank lines must carry it.
+
+    # Sub-cent ($0.0012) renders with 4-decimal precision.
+    assert "-$0.0012/run" in text, f"expected sub-cent savings to render as '-$0.0012/run'; text:\n{text}"
+    # None and below-display ($0.00005) both render as "savings unavailable".
     savings_unavailable_count = text.count("savings unavailable")
     assert savings_unavailable_count >= 2, (
-        f"expected ≥2 'savings unavailable' rank lines (sub-cent + None); got {savings_unavailable_count}"
+        f"expected ≥2 'savings unavailable' (None + below-display); got {savings_unavailable_count}"
     )
-    # Above-threshold value still renders the dollar figure on its rank line.
+    # Above-threshold value renders the dollar figure on its rank line.
     assert "-$0.42/run" in text
-    # Critical: NO "$0.00" anywhere.
-    assert "$0.00" not in text
+    # Bug D regression: NO "-$0.00/run" placeholder anywhere. (Note: a broad
+    # "$0.00" check would false-trigger on "$0.0012" — match the precise
+    # placeholder string instead.)
+    assert "-$0.00/run" not in text
     # Stage-1 UX pass: the ``[cache.X]`` bracket prefix is gone from rank lines.
     assert "[cache.shared-context-undeclared]" not in text
     assert "[cache.dynamic-before-static]" not in text
@@ -1494,7 +1523,7 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
         PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"}),
         PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/child.pflow.md"}),
     ]
-    base = _make_analysis(rows=rows)
+    base = _make_analysis(rows=rows, workflow_path="/abs/parent.pflow.md")
     rollup = SubWorkflowRollup(
         workflows_included=("/abs/child.pflow.md",),
         max_depth_walked=1,
@@ -1513,7 +1542,6 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
     )
     analysis = CacheAnalysis(**{
         **base.__dict__,
-        "workflow_path": "/abs/parent.pflow.md",
         "summary": AnalysisSummary(**{**base.summary.__dict__, "sub_workflow_rollup": rollup}),
     })
 
@@ -1603,3 +1631,48 @@ def test_discrepancy_message_includes_workflow_scope() -> None:
         actual_cache_key="b",
     )
     assert "draft in child" in diag.message
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 (4.x minor-additive): root vs sub-workflow LLM node count split
+# in JSON. Single source of truth — text and JSON renderers both read from
+# ``summary.root_llm_node_count`` / ``summary.sub_workflow_llm_node_count``.
+# ---------------------------------------------------------------------------
+
+
+def test_json_emits_root_and_sub_workflow_llm_node_counts() -> None:
+    """JSON consumers see the same root/sub-workflow count split that text
+    renders — text was computing this on-the-fly from ``analysis.per_call``,
+    silently dropping the breakdown when serializing.
+
+    End-to-end via ``analyze()`` on the committed 3-deep fixture so the
+    test exercises ``_build_summary``'s real assignment, not a hand-built
+    ``AnalysisSummary``. Mutation contract: drop the field assignment in
+    ``_build_summary`` and both JSON and text fall back to defaults
+    (``root_llm_node_count == 0``) — this test fails on the JSON side.
+    """
+    from pathlib import Path
+
+    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.execution.workflow_resolver import resolve_workflow
+
+    fixture_dir = Path("tests/fixtures/cache_analysis")
+    parent_path = fixture_dir / "parent-3deep.pflow.md"
+    trace_path = fixture_dir / "parent-child-grandchild-trace.json"
+    resolved = resolve_workflow(str(parent_path))
+    analysis = analyze(
+        resolved.ir,
+        parameters={"topic": "hello"},
+        workflow_path=resolved.file_path,
+        base_path=parent_path.parent,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    payload = render_json(analysis)
+    assert payload["summary"]["root_llm_node_count"] == 1
+    assert payload["summary"]["sub_workflow_llm_node_count"] == 2
+
+    # Text renderer reads from the same fields — single source of truth.
+    text = render_text(analysis, all_rows=True)
+    assert "(1 in parent-3deep.pflow.md, 2 in 2 sub-workflows: child-3deep, grandchild)" in text

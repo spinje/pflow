@@ -6647,3 +6647,150 @@ guard to ``if False:`` in ``trace_tree.py:walk()``; test fails with
   removal is mechanically obvious in source, but using positional args
   in a dataclass with 6 fields is the trap. Future refactors of this
   shape should prefer keyword args for clarity.
+
+## Stage 2 verification follow-ups: sub-cent UX + memo-hit token recovery + JSON count parity (2026-05-04)
+
+End-to-end Stage 2 verification (Gemini smoke + 3-deep rollup smoke) surfaced
+three latent bugs that the post-`1fabde31` cleanup didn't catch. All three
+fall into the "the data is computed correctly somewhere — but the rendered
+or aggregated surface lies about it" class. Shipped together because they
+share the failure mode.
+
+### Bug #10 — Sub-cent savings render as "savings unavailable"
+
+**Symptom**: Gemini-shaped recommendations with `estimated_savings_usd: 0.0012`
+in JSON rendered as `"savings unavailable"` in text mode at every site:
+recommended-action rank lines, inline message clauses, dry-run nudge. JSON
+contract was honest; text contract hid every real recommendation behind a
+placeholder.
+
+**Root cause**: 4 sites used `< $0.005 → "savings unavailable"` (intended as
+the Bug D fix for `-$0.00/run` placeholder). The cutoff conflated "too small
+to display with 2 decimals" with "too small to compute". Gemini's typical
+savings ($0.0001-$0.005 range) all collapsed to the placeholder.
+
+**Fix**: extended `_format_dollar_amount`'s adaptive precision tiers to all
+4 savings-rendering sites:
+
+- `< $0.0001` → "savings unavailable" (truly negligible; below display floor)
+- `$0.0001 ≤ value < $0.01` → 4-decimal precision (`-$0.0012/run`)
+- `≥ $0.01` → 2-decimal precision (`-$0.42/run`)
+
+Sites: `render_text._format_savings_usd`, `warning_catalog._format_savings`,
+`warning_catalog._format_savings_clause`, `warning_catalog.format_dry_run_nudge`.
+
+**Bug D regression invariant preserved**: no `-$0.00/run` placeholder
+anywhere. Test rewritten with precision-tier locking instead of unavailable-
+collapse locking.
+
+### Bug #11 — Memo-hit traces lose `output_tokens` for projection (Issue A)
+
+**Symptom**: `pflow analyze-cache --from-trace <memo-hit-trace>` reported
+`output_tokens_estimated: null`, `output_data_source: "unavailable"`,
+`input_tokens_estimated: 4325` (estimator-partial fallback) for memo-hit
+LLM rows. Cascade: `Cost without caching: unavailable` in rendered output
+even though the trace event preserved full `llm_call.usage` from the
+original run.
+
+**Root cause** (`analyze.py:_build_trace_execution_index`): the `if
+leaf.is_cached: continue` filter introduced by the post-`1fabde31` Bug 1
+fix was positioned BEFORE `llm_calls_by_key.setdefault(...)`. The filter's
+intent — exclude cached events from cost summation — was correct, but it
+ALSO bypassed index population, so downstream `_estimate_row_tokens` found
+`trace_llm_call=None` for cached keys and fell through to estimator/heuristic.
+
+**Fix**: split the cost-skip from the index-skip. `llm_calls_by_key` now
+populates for cached events (carries historical `input_tokens` /
+`output_tokens` / `model`); cost summation still skips them. Bug 1 invariant
+preserved — `cost_usd: 0.0` for memo hits, `costs_by_key` excludes them
+because `found.add(key)` happens AFTER the cached-skip.
+
+End-to-end on `RUN4-memo-hit-trace.json`: `input_tokens_estimated: 4714`
+(was 4325), `output_tokens_estimated: 76` (was null), `cost_usd: 0.0`,
+all sources `"trace"`. Rendered text now shows `Cost without caching:
+~$0.0032` (was `unavailable`).
+
+### Bug #12 — `root_llm_node_count` / `sub_workflow_llm_node_count` JSON parity (Issue B)
+
+**Symptom**: text output for multi-level workflows correctly shows
+`"3 LLM nodes using anthropic/claude-sonnet-4-5"` and
+`"(1 in parent-3deep.pflow.md, 2 in 2 sub-workflows: child-3deep, grandchild)"`.
+JSON output emitted no such fields — the breakdown was computed on-the-fly
+in the renderer and lost when serializing.
+
+**Root cause**: `AnalysisSummary` had no fields for these counts. The text
+renderer's `_format_sub_workflow_breakdown_line` (`render_text.py:136`)
+computed them inline from `analysis.per_call`. JSON consumers never saw
+them — silent contract drift between text and JSON surfaces.
+
+**Fix**:
+- `AnalysisSummary` adds `root_llm_node_count: int = 0` and
+  `sub_workflow_llm_node_count: int = 0` (4.x minor-additive — no version bump).
+- `_build_summary` populates them by filtering rows on `ctx.workflow_path`.
+- `_summary_to_dict` emits both fields.
+- `_format_sub_workflow_breakdown_line` refactored to read from the summary
+  fields — single source of truth, no inline `sum(...)` recomputation.
+
+End-to-end on `parent-child-grandchild-trace.json`:
+`{"root_llm_node_count": 1, "sub_workflow_llm_node_count": 2}` ✓.
+Text rendering byte-identical (renderer reads same data via different path).
+
+### Files modified
+
+**Production** (4 files):
+- `src/pflow/core/cache_analysis/analyze.py` — `AnalysisSummary` fields + `_build_summary` population + `_build_trace_execution_index` reorder
+- `src/pflow/core/cache_analysis/render_text.py` — 1 site adaptive precision + `_format_sub_workflow_breakdown_line` reads from summary
+- `src/pflow/core/cache_analysis/render_json.py` — emit 2 new summary fields
+- `src/pflow/core/cache_analysis/warning_catalog.py` — 3 sites adaptive precision
+
+**Tests** (3 files):
+- `tests/test_core/test_cache_analysis_renderers.py` — sub-cent test rewritten; new test asserts JSON has count fields
+- `tests/test_core/test_cache_analysis_warnings.py` — `format_dry_run_nudge` precision-tier tests
+- `tests/test_core/test_cache_analysis_analyze.py` — new test asserts memo-hit traces recover input/output tokens via `analyze()` end-to-end
+
+### Verification
+
+- 399 cache-analysis tests pass; ruff/mypy/format clean on changed files.
+- Two pre-existing ruff `RUF059` errors in `test_cache_analysis_token_estimation.py`
+  (commit `6640255b1`, unrelated to this work). Filed as separate cleanup.
+- End-to-end Bug #11 reproducer (RUN4 memo-hit): output_tokens 76 ✓, input
+  4714 ✓, cost_usd 0.0 ✓, all sources "trace" ✓.
+- End-to-end Bug #12 reproducer (3-deep): root=1, sub=2 ✓; text breakdown
+  unchanged ✓.
+- End-to-end Bug #10 reproducer (Gemini smoke greenfield): rank line shows
+  `-$0.0012/run` (was "savings unavailable"), inline shows `(saves $0.0012/run)`
+  (was empty).
+
+### Critical insights
+
+1. **Bug 1 fix had two intents bundled together.** Excluding cached events
+   from cost summation (correct) AND bypassing index population (incorrect).
+   Splitting the filter into two precise gates eliminates the asymmetry —
+   cost stays 0.0/trace, tokens read from preserved historical data.
+   Rule: when a `continue` filter sits before multiple downstream effects,
+   verify EACH effect should be skipped, not just the one that triggered
+   the filter.
+
+2. **Tri-state contracts need adaptive precision, not single cutoffs.** The
+   original Bug D fix used `< $0.005 → unavailable` to avoid `$0.00`
+   placeholders. On Anthropic-shaped costs ($0.42/run typical) this works
+   fine. On Gemini-shaped costs ($0.0012/run typical) it hides every real
+   value behind a placeholder. The fix mirrors `_format_dollar_amount`'s
+   tiered approach already established for absolute cost rendering — same
+   precision policy across the savings-rendering sites.
+
+3. **Text-only computation is a JSON contract leak.** `_format_sub_workflow_breakdown_line`
+   computed root/sub counts inline from per_call rows. JSON consumers never
+   saw the data. Pattern: when text rendering composes data from raw rows
+   that the data model doesn't carry, hoist the computation into the data
+   model so JSON consumers see the same picture. Single source of truth.
+
+### State after this commit
+
+- 6135 → 6138 tests pass (3 new tests added; no other test count changes
+  expected in this scope).
+- Cache-analysis surface clean: 399/399 tests, ruff/mypy/format green.
+- Pre-existing 2 ruff errors in token_estimation tests carried forward
+  (commit `6640255b1`); fix is mechanical (`_` prefix unused vars) but
+  out of scope for this commit.
+

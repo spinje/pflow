@@ -137,13 +137,13 @@ def _format_sub_workflow_breakdown_line(analysis: CacheAnalysis) -> str | None:
     rollup = analysis.summary.sub_workflow_rollup
     if rollup is None:
         return None
-    root_count = sum(1 for row in analysis.per_call if row.workflow_path == analysis.workflow_path)
-    child_count = sum(1 for row in analysis.per_call if row.workflow_path != analysis.workflow_path)
+    s = analysis.summary
     child_names = [_workflow_short_name(entry.workflow_path) for entry in rollup.per_workflow]
     workflow_word = "sub-workflow" if len(child_names) == 1 else "sub-workflows"
     return (
-        f"({root_count} in {_workflow_filename(analysis.workflow_path)}, "
-        f"{child_count} in {len(child_names)} {workflow_word}: {', '.join(child_names)})"
+        f"({s.root_llm_node_count} in {_workflow_filename(analysis.workflow_path)}, "
+        f"{s.sub_workflow_llm_node_count} in {len(child_names)} {workflow_word}: "
+        f"{', '.join(child_names)})"
     )
 
 
@@ -546,15 +546,29 @@ def _short_workflow_label(path: str) -> str:
 
 
 def _format_savings_usd(value: float | None) -> str:
-    """Tri-state savings rendering — mirrors ``warning_catalog.format_dry_run_nudge``.
+    """Tri-state savings rendering with adaptive sub-cent precision.
 
-    ``None`` (no estimate) and sub-cent (``< $0.005``, rounds-to-zero) both
-    render as ``"savings unavailable"``. Emitting ``-$0.00/run`` would imply
-    "we computed it, it's zero" when the actual data is too sparse — same
-    tri-state contract violation top-10% codebases avoid (Bug D).
+    Mirrors ``_format_dollar_amount``'s precision tiers so Gemini-shaped
+    sub-cent savings render honestly instead of collapsing to
+    ``"savings unavailable"``:
+
+    - ``None`` → ``"savings unavailable"`` (genuinely unknown).
+    - ``< $0.0001`` → ``"savings unavailable"`` (below display precision —
+      effectively zero). NOT rendered as ``-$0.0000/run`` which would
+      imply "we computed it, it's zero" — same Bug D tri-state contract.
+    - ``$0.0001 ≤ value < $0.01`` → ``"-$0.0012/run"`` (4 decimals).
+    - ``≥ $0.01`` → ``"-$0.42/run"`` (2 decimals, common case).
+
+    Pre-fix the cutoff was ``< $0.005 → "savings unavailable"``, which
+    conflated "too small to display precisely with 2 decimals" with
+    "too small to compute". Agents on Gemini-shaped workflows saw
+    "savings unavailable" for every real recommendation despite the
+    JSON carrying real ``estimated_savings_usd`` numbers.
     """
-    if value is None or value < 0.005:
+    if value is None or value < 0.0001:
         return "savings unavailable"
+    if value < 0.01:
+        return f"-${value:.4f}/run"
     return f"-${value:.2f}/run"
 
 
