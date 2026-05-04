@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,7 +14,6 @@ from pflow.core.cache_analysis.analyze import (
     PerCallRow,
     _aggregate_confidence,
     _build_summary,
-    _flatten_plan_keys,
     _maybe_append_gemini_note,
     analyze,
 )
@@ -405,36 +403,6 @@ def test_child_workflow_unresolved_input_remains_unavailable(
     assert row.data_source == "estimator-partial"
 
 
-@mutation_contract(
-    file="src/pflow/core/cache_analysis/analyze.py",
-    line=2425,
-    revert="key = (current_workflow_path, node_id)",
-    expected_failure="bare-node_id key — child overwrites parent on same id; collision detection drops both",
-)
-def test_flatten_plan_keys_preserves_same_node_ids_across_workflow_paths() -> None:
-    """Mutation contract: key by bare node_id -> child draft overwrites parent draft."""
-    plan = SimpleNamespace(
-        workflow_path="parent.pflow.md",
-        entries=[
-            SimpleNamespace(node_id="draft", cache_key="parent-key", sub_plan=None),
-            SimpleNamespace(
-                node_id="call-child",
-                cache_key=None,
-                sub_plan=SimpleNamespace(
-                    workflow_path="child.pflow.md",
-                    entries=[SimpleNamespace(node_id="draft", cache_key="child-key", sub_plan=None)],
-                ),
-            ),
-        ],
-    )
-
-    keys, notes = _flatten_plan_keys(plan)
-
-    assert notes == []
-    assert keys[("parent.pflow.md", "draft")] == "parent-key"
-    assert keys[("child.pflow.md", "draft")] == "child-key"
-
-
 def test_analyze_skips_non_llm_nodes_in_per_call() -> None:
     workflow_ir = {
         "nodes": [
@@ -451,14 +419,16 @@ def test_analyze_skips_non_llm_nodes_in_per_call() -> None:
 
 
 def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
-    """Bug C regression — ``cacheable_tokens_estimated`` and
-    ``input_tokens_estimated`` come from independent estimators (75%-of-char
-    heuristic vs ``litellm.token_counter``). For repetitive text the
-    char-heuristic can exceed token_counter; without clamping this rendered
-    as ``ratio=103%`` in production, mathematically nonsense.
+    """Cacheable tokens never exceed total input tokens.
 
-    Mutation test: drop the ``cacheable_tokens = min(cacheable_tokens, input_tokens)``
-    line in ``_build_per_call_row``; this test fails (ratio > 100% surfaces).
+    The invariant is now structural: ``input_tokens_estimated`` equals total
+    LLM-billed input tokens (prompt body + cache content), so cacheable
+    (which is the cache-content subset) cannot exceed it by construction.
+    The defense-in-depth ``min(cacheable, input)`` clamp at the call site
+    is preserved as a guard against future drift, but this test exercises
+    the structural invariant — a workflow that previously produced
+    ``ratio=103%`` from independent-estimator drift now stays well-formed
+    because cache content is added back into ``input_tokens``.
     """
     # Repetitive text where ``len(text)//4 * 0.75`` exceeds litellm.token_counter's
     # estimate. The exact balance depends on the tokenizer; we assert the
@@ -484,6 +454,94 @@ def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
             f"cacheable={row.cacheable_tokens_estimated} > input={row.input_tokens_estimated} "
             "violates the 'cache cannot exceed total' invariant"
         )
+
+
+def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block() -> None:
+    """Bug 4 reproducer — declared chunks referenced by name only in
+    ``prompt_cache:`` (not inlined in the prompt body) must contribute their
+    resolved token count to ``input_tokens_estimated``. Without this the
+    ``min(cacheable, input)`` clamp truncated correct cacheable values to
+    the prompt-body-only size and ``cache.below-min-tokens`` falsely fired.
+    """
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "P:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft a summary."},
+            }
+        ],
+    }
+    big_context = "X" * 19117  # well above any provider min (>1024 tokens once tokenized)
+    result = analyze(
+        workflow_ir,
+        parameters={"context": big_context},
+        workflow_path="x",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    row = next(r for r in result.per_call if r.node_path == "draft")
+    assert row.cacheable_tokens_estimated is not None
+    assert row.cacheable_tokens_estimated > 1024, (
+        f"declared chunk should resolve well above provider minimum, got {row.cacheable_tokens_estimated}"
+    )
+    # input_tokens must include cache content; otherwise the clamp truncates cacheable.
+    assert row.input_tokens_estimated >= row.cacheable_tokens_estimated
+    assert "cache.below-min-tokens" not in {d.id for d in result.warnings}
+
+
+def test_total_input_tokens_anthropic_trace_sums_cache_portions() -> None:
+    """Anthropic-style trace event: ``input_tokens`` excludes cache portions;
+    the analyzer must sum them back into ``input_tokens_estimated``.
+    """
+    from pflow.core.cache_analysis.analyze import _estimate_row_tokens
+
+    trace_llm_call = {
+        "input_tokens": 500,
+        "cache_creation_input_tokens": 1500,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 50,
+    }
+    input_tokens, source, _output, _output_source = _estimate_row_tokens(
+        model="anthropic/claude-sonnet-4-5",
+        resolved_prompt="ignored",
+        memo_cache=None,
+        node_id="x",
+        workflow_path=None,
+        has_unresolved=False,
+        trace_llm_call=trace_llm_call,
+    )
+    assert source == "trace"
+    assert input_tokens == 2000
+
+
+def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
+    """Gemini-style trace event: ``input_tokens`` already includes cached
+    content (``cache_creation_input_tokens == 0``). Don't double-count.
+    """
+    from pflow.core.cache_analysis.analyze import _estimate_row_tokens
+
+    trace_llm_call = {
+        "input_tokens": 2000,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 1500,
+        "output_tokens": 50,
+    }
+    input_tokens, source, _output, _output_source = _estimate_row_tokens(
+        model="gemini/gemini-1.5-flash",
+        resolved_prompt="ignored",
+        memo_cache=None,
+        node_id="x",
+        workflow_path=None,
+        has_unresolved=False,
+        trace_llm_call=trace_llm_call,
+    )
+    assert source == "trace"
+    assert input_tokens == 2000
 
 
 def test_analyze_summary_counts_warnings_and_info() -> None:

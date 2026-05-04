@@ -6065,3 +6065,206 @@ revisited if/when (a) #360 dynamic-batch undercounting work needs
 per-event ``workflow_path`` as substrate, or (b) someone files an issue
 about template-items attribution.
 
+---
+
+## Verification-found bugs Phase A + B (2026-05-04)
+
+End-to-end verification of commit ``1fabde31`` found 5 bugs the test suite
+missed. Phases A (Bug 4: cacheable_tokens clamp) and B (Bug 5: sub-workflow
+discrepancy detection) shipped together. Phases C + D (bugs 1, 2, 3 — UX
++ contract hardening) deferred to a separate commit per the plan's atomic-
+commit cadence.
+
+### What shipped
+
+1. **Bug 4 — cacheable_tokens clamp** (``analyze.py:_estimate_row_tokens``).
+   The ``min(cacheable, input_tokens)`` clamp was truncating correct
+   cacheable estimates (~2391 tokens) down to the prompt-body-only size
+   (~4 tokens) when ``## Cache`` chunks were referenced by name in
+   ``prompt_cache:`` but not inlined in the prompt body. False
+   ``cache.below-min-tokens`` warnings advised agents to remove correct
+   ``prompt_cache:`` declarations.
+
+   **Fix:** make the clamp's invariant structurally true — ``input_tokens``
+   now equals total LLM-billed tokens (prompt body + cache content). The
+   clamp becomes a no-op (kept as defense-in-depth). Greenfield path
+   tokenizes each declared chunk via existing ``_estimate_ref_tokens``
+   helper. Trace path detects Anthropic-style reporting via
+   ``cache_creation > 0`` and sums ``cache_creation + cache_read`` into
+   ``input_tokens`` (Gemini/OpenAI fold cache in already, so no double-
+   count). Long-term fix: normalize ``billed_input_tokens`` at
+   ``llm_client._normalize`` — filed as v1.x follow-up.
+
+2. **Bug 5 — sub-workflow discrepancy attribution** (``analyze.py:
+   _predict_cache_keys``). ``cache.discrepancy`` silently skipped LLM nodes
+   inside sub-workflows because ``_predict_cache_keys`` consumed
+   ``execution/plan.py``'s ``build_plan`` output, and ``build_plan``'s
+   ``_force_downstream=True`` mode legitimately can't compute cache_keys
+   (parent's upstream state is dirty). The analyzer inherited that
+   limitation even when it had all the data it needed.
+
+   **Fix:** decouple analyzer prediction from ``build_plan``. Walk
+   ``cw_result.irs_by_workflow`` directly, compile each workflow once, and
+   call ``plan_node`` per LLM node against a per-workflow scaffold. This
+   is the architectural direction ``cache_render.py`` already documented
+   ("third site" comment); the implementation now follows through.
+
+### Critical insights for the next agent
+
+- **The ``compile_workflow + create_planner_shared`` hoist is load-bearing
+  for performance.** Initial implementation called ``compile_workflow``
+  per LLM node, which is N× worse than the original (which compiled once
+  per workflow). The ``_PredictScaffold`` dataclass + ``_build_predict_scaffold``
+  + ``_predict_node_with_scaffold`` factor keeps the byte-identity
+  contract while compiling once per workflow. Future contributors adding
+  a new analyzer prediction primitive should reuse the scaffold pattern,
+  not re-implement compile-per-node.
+
+- **The predicate is ``_is_llm_node``, NOT ``_is_llm_with_prompt_cache``.**
+  In production, only LLM-with-prompt-cache nodes generate cache events
+  (so the discrepancy gate filters them anyway), but synthesized-trace
+  tests exercise non-prompt-cache LLM nodes with fake cache_creation
+  tokens to test the consumption path. The original ``build_plan``-based
+  code predicted for ALL nodes; narrowing to LLM-with-prompt-cache
+  silently broke tests. Documented at the predicate.
+
+- **Bug 4 chose to fix ``input_tokens`` semantics, NOT remove the clamp.**
+  Removing the clamp re-opens the original Bug C symptom (cacheable >
+  input from tokenizer-vs-heuristic mismatch). Fixing the semantic
+  premise eliminates Bug 4 AND makes Bug C structurally impossible. Top-
+  10% rule: when a data field's name doesn't match its computed value,
+  the fix is to make the value match the name, never to weaken the
+  invariant downstream.
+
+- **Test pollution via ``monkeypatch.setattr("pflow.runtime.compile_workflow",
+  ...)``** is a real gotcha. ``workflow_executor.py`` does
+  ``from pflow.runtime import CompilationError, compile_workflow`` at
+  module load. If the patch is active during workflow_executor's first
+  import, the module's cached binding stays patched FOREVER (monkeypatch
+  reverts ``pflow.runtime.compile_workflow`` but not the cached binding
+  in workflow_executor's namespace). Symptom: a different test's
+  ``runner.run(...)`` call later fires the patched ``_boom`` from inside
+  WorkflowExecutor's exec path. **Fix used here:** patch
+  ``_build_predict_scaffold`` directly on the analyzer module instead
+  of patching the runtime re-export. Future tests that need to inject
+  errors at the compile boundary should follow the same pattern (patch
+  the consumer's local symbol, not the producer's re-export).
+
+- **Per-workflow input check is now per-workflow, not just root.** Legacy
+  ``_predict_cache_keys`` only checked ``if not parameters and
+  workflow_ir["inputs"]`` for the root workflow. Child workflows
+  silently degraded to defaults, producing predictions that diverged
+  from trace's run-time values (false ``key_mismatch`` floods). New
+  per-workflow loop checks each workflow's own inputs against its own
+  resolved parameters.
+
+### Deviations from the plan
+
+- Plan said "drop ``compile_workflow + build_plan`` from the analyzer
+  hot path" via direct use of ``cache_render`` helpers + ``compute_node_cache_key``.
+  Implementation kept ``compile_workflow + plan_node`` (per workflow,
+  not per node) because byte-identity with runtime is load-bearing
+  (test ``test_predict_cache_keys_byte_identical_to_runtime`` defends
+  this) and replicating ``compute_node_config`` outside ``plan_node``
+  would risk drift. ``build_plan`` is dropped (the source of the bug);
+  ``compile_workflow`` is kept because it's the canonical site for
+  ``NodeConfig`` instantiation. Net: the plan's spirit ("decouple from
+  the planner's BFS-downstream limitations") is preserved; the literal
+  helper list is not.
+
+- ``_flatten_plan_keys`` deleted entirely along with its mutation-contract
+  test (``test_flatten_plan_keys_preserves_same_node_ids_across_workflow_paths``).
+  No production code referenced it after the rewrite. Per CLAUDE.md
+  "If you are certain that something is unused, you can delete it
+  completely."
+
+- Phase D (Bugs 2 + 3) and Phase C (Bug 1) NOT shipped in this commit.
+  Plan called for atomic per-phase commits; A + B were grouped because
+  both are correctness fixes and B's tests validate A's behavior (the
+  byte-identity test runs through a workflow that exercises both fixes).
+
+### State after Phase A + B
+
+- 6112 tests pass (was 6103 + 9 new: 3 for Bug 4, 4 for Bug 5 via
+  ``_predict_cache_keys`` / ``_predict_node_cache_key`` /
+  ``_predict_cache_keys_byte_identical_to_runtime`` /
+  ``_analyze_cache_emits_discrepancy_for_sub_workflow_node_via_subprocess``,
+  plus 2 sanity assertions hoisted from existing tests).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- End-to-end Phase A reproducer verified: workflow with declared
+  ``## Cache`` + ``prompt_cache: [context]`` + 19117-char context input
+  produces ``input=2395, cacheable=2391, ratio=100%`` (was
+  ``cacheable=4`` pre-fix). Zero ``cache.below-min-tokens`` warnings
+  (was 1 pre-fix).
+- Net code change: ``analyze.py`` +~150 LOC (``_predict_cache_keys`` +
+  ``_predict_one_workflow`` + ``_PredictScaffold`` + ``_build_predict_scaffold``
+  + ``_predict_node_with_scaffold`` + ``_predict_node_cache_key`` +
+  ``_enumerate_compiled_bare_nodes`` + ``_tokenize_declared_cache_chunks``;
+  ``_estimate_row_tokens`` +~30 LOC for cache content tokenization);
+  -~120 LOC (``_predict_cache_keys`` legacy body + ``_flatten_plan_keys``
+  + dedicated test). Tests +~330 LOC (4 new Bug 5 tests, 3 new Bug 4
+  tests, refactored 1 existing schema-validation test).
+
+### Remaining
+
+Phase C (Bug 1: ``recommended_actions`` doesn't disambiguate same-node-id
+across multi-workflow analyses) and Phase D (Bug 2: ``_ensure_workflow_scope``
+accepts ``affected_workflow=None``; Bug 3: stale ``current_cost`` in
+``cross_workflow.py:260`` — should be ``actually_paid_usd``). Plan
+sections C + D in the verification fix doc.
+
+## Verification-found bugs Phase C + D (2026-05-04)
+
+Phases C and D from
+``.taskmaster/tasks/task_159/implementation/fix-plans/verification-bugs-fix-plan.md``
+are implemented on top of the staged Phase A + B work.
+
+### What shipped
+
+1. **Bug 1 — recommended-actions workflow scope for per-node findings.**
+   ``view_helpers.build_recommended_actions`` now always projects
+   ``context.affected_workflow`` into ``RecommendedAction.scope_workflow``
+   when it is a non-empty string. This means JSON consumers can dispatch on
+   ``(node_id, scope_workflow)`` for same-id nodes in parent/child workflows.
+   ``render_text._render_recommended_actions`` renders per-node scope as
+   ``<node_id> in <basename>`` when the finding belongs to a different
+   workflow from the analyzed root, and keeps the old compact ``<node_id>``
+   line for single-workflow/root findings. The ``RecommendedAction`` and JSON
+   comments were updated to remove the stale "at most one is set" contract.
+
+2. **Bug 2 — ``affected_workflow=None`` contract hardening.**
+   ``warning_catalog._ensure_workflow_scope`` now validates the value, not
+   only key presence: node-scoped cache diagnostics require a non-empty string
+   ``affected_workflow``. ``None`` now raises ``KeyError`` the same way a
+   missing key does.
+
+3. **Bug 3 — stale cost-field note text.**
+   ``cross_workflow._maybe_note_template_items_gap`` now says
+   ``actually_paid_usd is trace-driven`` instead of the removed
+   ``current_cost`` field name. Manual CLI verification also found the same
+   note recommended a nonexistent ``analyze-cache --inputs`` flag. That
+   adjacent stale remediation was fixed to say "Pass the resolved list as a
+   CLI parameter" because ``pflow analyze-cache --help`` shows workflow inputs
+   are passed as positional ``key=value`` params.
+
+### Tests added
+
+- ``test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_multi_workflow_analysis``
+- ``test_text_recommended_actions_single_workflow_omits_scope_suffix``
+- ``test_json_recommended_actions_per_node_finding_carries_scope_workflow``
+- ``test_make_diagnostic_node_id_with_affected_workflow_none_raises``
+- ``test_template_items_gap_note_uses_real_analyze_cache_cli_param_wording``
+
+### Deviations from the plan
+
+- No production deviation. Tests use direct catalog diagnostics rather than
+  full workflow fixtures because the defect lives in the recommendation-view
+  projection and renderer, not in analyzer discovery. This keeps the
+  regression pinned to the actual integration point with less incidental
+  workflow setup.
+- ``make check`` was not run verbatim in this sandbox because it shells
+  through ``uv``. The repository-local ``pflow-sandbox-testing`` skill says
+  ``uv`` can panic before Python starts here. Equivalent checks were run via
+  ``.venv`` where possible; pre-commit itself could not initialize because
+  the sandbox has no network and the remote hook environment was not cached
+  under ``HOME=/private/tmp/pflow-test-home``.

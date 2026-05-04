@@ -577,6 +577,88 @@ def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findi
     assert "[cache.shared-context-undeclared]" not in text
 
 
+def test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_multi_workflow_analysis() -> None:
+    """Same-id per-node findings render as ``<node> in <workflow>`` when the
+    warning context identifies different workflow files.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warnings = [
+        make_diagnostic(
+            "cache.below-min-tokens",
+            node_id="draft",
+            affected_workflow="/abs/workflows/parent.pflow.md",
+            model="claude-sonnet-4-5",
+            cacheable_tokens=512,
+            min_tokens=1024,
+        ),
+        make_diagnostic(
+            "cache.below-min-tokens",
+            node_id="draft",
+            affected_workflow="/abs/workflows/child.pflow.md",
+            model="claude-sonnet-4-5",
+            cacheable_tokens=512,
+            min_tokens=1024,
+        ),
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
+    assert "draft in parent.pflow.md" in text
+    assert "draft in child.pflow.md" in text
+
+
+def test_text_recommended_actions_single_workflow_omits_scope_suffix() -> None:
+    """Root-workflow findings keep the old compact ``<node>`` scope line."""
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warnings = [
+        make_diagnostic(
+            "cache.below-min-tokens",
+            node_id="rewrite",
+            affected_workflow="/abs/x.pflow.md",
+            model="claude-sonnet-4-5",
+            cacheable_tokens=512,
+            min_tokens=1024,
+        ),
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
+    assert "     rewrite\n" in f"{text}\n"
+    assert "rewrite in " not in text
+
+
+def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> None:
+    """JSON keeps both the symbol and its workflow location for consumers that
+    dispatch on same-id nodes across parent/child workflows.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warnings = [
+        make_diagnostic(
+            "cache.below-min-tokens",
+            node_id="draft",
+            affected_workflow="/abs/workflows/parent.pflow.md",
+            model="claude-sonnet-4-5",
+            cacheable_tokens=512,
+            min_tokens=1024,
+        ),
+        make_diagnostic(
+            "cache.below-min-tokens",
+            node_id="draft",
+            affected_workflow="/abs/workflows/child.pflow.md",
+            model="claude-sonnet-4-5",
+            cacheable_tokens=512,
+            min_tokens=1024,
+        ),
+    ]
+    result = render_json(_make_analysis(warnings=warnings))
+    action_scopes = {
+        (action["node_id"], action["scope_workflow"])
+        for action in result["recommended_actions"]
+        if action["warning_id"] == "cache.below-min-tokens"
+    }
+    assert ("draft", "/abs/workflows/parent.pflow.md") in action_scopes
+    assert ("draft", "/abs/workflows/child.pflow.md") in action_scopes
+
+
 def test_text_recommended_actions_inline_label_passes_through() -> None:
     """Non-path scope identifiers (``<inline>``, ``ir-hash:abc123``) pass through
     unchanged — they're not filesystem paths, so basename extraction shouldn't

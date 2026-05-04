@@ -489,7 +489,10 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
         savings = _format_savings_usd(action.estimated_savings_usd)
         lines.append(f"  {action.rank}. {title}{_pad_savings(title, savings)}{savings}")
         if action.node_id:
-            lines.append(f"     {action.node_id}")
+            scope_suffix = ""
+            if action.scope_workflow and action.scope_workflow != analysis.workflow_path:
+                scope_suffix = f" in {_short_workflow_label(action.scope_workflow)}"
+            lines.append(f"     {action.node_id}{scope_suffix}")
         elif action.scope_workflow:
             # Workflow-level finding (e.g. shared-context spanning N nodes in one
             # file). Without this line the scope would be absent and findings

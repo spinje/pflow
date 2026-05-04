@@ -159,10 +159,12 @@ class PerCallRow:
 class RecommendedAction:
     """One pre-sorted dispatch row for the recommended-actions section.
 
-    Scope fields (``node_id``, ``scope_workflow``) — at most one is set:
+    Scope fields (``node_id``, ``scope_workflow``):
 
-    - **Per-node**: ``node_id`` set, ``scope_workflow=None``. The finding is
-      attributable to a specific node in the workflow IR.
+    - **Per-node**: ``node_id`` set. ``scope_workflow`` may also be set when
+      the workflow location is known; same-id nodes can appear in parent and
+      child workflows, so consumers should dispatch on ``(node_id,
+      scope_workflow)`` when both are populated.
     - **Workflow-level**: ``node_id=None``, ``scope_workflow=<path>``. The
       finding spans multiple nodes in one workflow file (e.g., shared-context
       detection that finds N nodes referencing the same value).
@@ -1027,6 +1029,9 @@ def _build_per_call_row(
     # prompts produce realistic token counts when the agent passes
     # ``--inputs`` covering the referenced variables.
     resolved_prompt, has_unresolved = _resolve_prompt_for_tokenization(prompt, ctx, node)
+    declared_subset = node.get("prompt_cache") or None
+    if declared_subset is not None and not isinstance(declared_subset, list):
+        declared_subset = None
     input_tokens, source, output_tokens, output_source = _estimate_row_tokens(
         model=model,
         resolved_prompt=resolved_prompt,
@@ -1035,10 +1040,9 @@ def _build_per_call_row(
         workflow_path=workflow_path,
         has_unresolved=has_unresolved,
         trace_llm_call=trace_llm_call,
+        declared_subset=declared_subset,
+        ctx=ctx,
     )
-    declared_subset = node.get("prompt_cache") or None
-    if declared_subset is not None and not isinstance(declared_subset, list):
-        declared_subset = None
 
     # Tiered cacheable estimation (mirrors ``estimate_tokens`` /
     # ``estimate_output_tokens``). Trace beats memo beats heuristic; honest
@@ -1122,10 +1126,31 @@ def _estimate_row_tokens(
     workflow_path: str | None,
     has_unresolved: bool,
     trace_llm_call: dict[str, Any] | None,
+    declared_subset: list[str] | None = None,
+    ctx: AnalysisContext | None = None,
 ) -> tuple[int, str, int | None, str]:
-    """Estimate input/output tokens for one workflow-scoped row."""
+    """Estimate input/output tokens for one workflow-scoped row.
+
+    ``input_tokens`` is the LLM-billed total — prompt body PLUS cache content.
+    Without that semantic, the cacheable-vs-input clamp at the call site
+    would truncate correct cacheable estimates whenever ``## Cache`` chunks
+    were referenced by name (``prompt_cache: [name]``) but not inlined in
+    the prompt body. See Bug 4 in the verification report.
+
+    Trace-tier accounting is provider-aware: Anthropic reports
+    ``input_tokens`` excluding cache portions (``cache_creation_input_tokens``
+    + ``cache_read_input_tokens`` are the cache contribution). Gemini /
+    OpenAI fold cache into ``input_tokens`` already. Detection via
+    ``cache_creation > 0`` is the in-scope pragmatic discriminator (long-term
+    fix: normalize ``billed_input_tokens`` at ``llm_client._normalize``).
+    """
     if trace_llm_call is not None and isinstance(trace_llm_call.get("input_tokens"), int):
-        input_tokens, source = int(trace_llm_call["input_tokens"]), "trace"
+        input_tokens = int(trace_llm_call["input_tokens"])
+        cache_creation = int(trace_llm_call.get("cache_creation_input_tokens") or 0)
+        if cache_creation > 0:
+            cache_read = int(trace_llm_call.get("cache_read_input_tokens") or 0)
+            input_tokens = input_tokens + cache_creation + cache_read
+        source = "trace"
     else:
         input_tokens, source = estimate_tokens(
             model,
@@ -1136,6 +1161,15 @@ def _estimate_row_tokens(
             workflow_path=workflow_path,
             has_unresolved_refs=has_unresolved,
         )
+        if declared_subset and ctx is not None and model:
+            input_tokens += _tokenize_declared_cache_chunks(
+                declared_subset=declared_subset,
+                workflow_ir=ctx.workflow_ir,
+                model=model,
+                memo_cache=memo_cache,
+                workflow_path=workflow_path,
+                ctx=ctx,
+            )
     if trace_llm_call is not None and isinstance(trace_llm_call.get("output_tokens"), int):
         output_tokens: int | None = int(trace_llm_call["output_tokens"])
         output_source = "trace"
@@ -1147,6 +1181,54 @@ def _estimate_row_tokens(
             workflow_path=workflow_path,
         )
     return input_tokens, source, output_tokens, output_source
+
+
+def _tokenize_declared_cache_chunks(
+    *,
+    declared_subset: list[str],
+    workflow_ir: Mapping[str, Any],
+    model: str,
+    memo_cache: Any,
+    workflow_path: str | None,
+    ctx: AnalysisContext,
+) -> int:
+    """Tokenize the resolved values of declared cache chunks.
+
+    Returns the total token count for chunks that resolved against parameters
+    or memo. Unresolvable chunks contribute 0 (matching the partial-resolution
+    semantics callers already accept for the prompt body itself).
+    """
+    if not isinstance(workflow_ir, Mapping):
+        return 0
+    cache_block = workflow_ir.get("cache")
+    if not isinstance(cache_block, dict):
+        return 0
+    items = cache_block.get("items") or []
+    if not isinstance(items, list):
+        return 0
+    chunks_by_name: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        var_expr = item.get("var") or name
+        if isinstance(name, str) and isinstance(var_expr, str) and var_expr:
+            chunks_by_name[name] = var_expr
+    total = 0
+    for chunk_name in declared_subset:
+        var_expr = chunks_by_name.get(str(chunk_name))
+        if not var_expr:
+            continue
+        tokens = _estimate_ref_tokens(
+            var_expr,
+            model=model,
+            memo_cache=memo_cache,
+            workflow_path=workflow_path,
+            ctx=ctx,
+        )
+        if tokens is not None:
+            total += tokens
+    return total
 
 
 def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: dict[str, Any]) -> tuple[str, bool]:
@@ -2325,59 +2407,152 @@ def _iter_llm_events(events: list[dict[str, Any]]) -> Iterator[tuple[str, dict[s
 
 
 def _predict_cache_keys(
-    workflow_ir: dict[str, Any],
-    parameters: dict[str, Any],
-    memo_cache: Any,
-    workflow_path: str | None,
+    cw_result: Any,
+    ctx: AnalysisContext,
 ) -> tuple[dict[tuple[str | None, str], str], list[str]]:
-    """Consume planner-produced cache keys rather than re-deriving them.
+    """Predict the runtime cache_key for every LLM node, scoped per workflow.
 
-    Returns ``(predicted_keys, notes)`` where ``predicted_keys`` is empty when
-    we can't trust the prediction (no memo cache, partial inputs, compilation
-    failure). Each empty-result branch appends a note explaining why so the
-    agent reading the analyzer output understands what's missing.
+    Walks every workflow's IR independently (root + descendants from
+    ``cw_result.irs_by_workflow``) and computes the byte-identical
+    cache_key the runtime would compute via ``plan_node`` — the same
+    canonical site the engine and the dry-run planner consume. This
+    bypasses ``build_plan``'s BFS-downstream mode (which sets
+    ``cache_key=None`` for child nodes whose parent took the downstream
+    path), the source of Bug 5 in the verification report.
+
+    ``compile_workflow`` + ``create_planner_shared`` are hoisted to the
+    per-workflow loop — N LLM nodes in one workflow incur ONE compile, not
+    N. ``plan_node`` is then invoked per LLM node against the shared
+    compiled+shared scaffold.
+
+    Per-node skip reasons replace the catch-all silent-skip count that the
+    legacy implementation produced — agents see exactly which node's
+    prediction failed and why.
+
+    Returns ``(predicted_keys, notes)`` where ``predicted_keys`` keys
+    ``(workflow_path, node_id) -> cache_key``. The contract matches the
+    legacy implementation; only the production path changes.
     """
     notes: list[str] = []
-    if memo_cache is None:
+    if ctx.memo_cache is None:
         notes.append(
             "Discrepancy detection: predicted-key matching unavailable (workflow has no run history). "
             "Observable-field attributions (TTL expiry, chunk skipped) still apply."
         )
         return {}, notes
 
-    # When the workflow declares inputs but the caller passed none, predicted
-    # keys would be derived from defaults — diverging from the trace's run-time
-    # values and flooding the report with false ``key_mismatch`` attributions.
-    # Trace 2.1.0 doesn't carry an input fingerprint, so we can't compare; the
-    # honest fallback is observable-only attribution.
-    if not parameters and isinstance(workflow_ir.get("inputs"), dict) and workflow_ir["inputs"]:
+    irs_by_workflow = getattr(cw_result, "irs_by_workflow", None) or {}
+    if not irs_by_workflow:
+        # Defensive fallback: no cross-workflow walker output. Use the root
+        # IR alone (analyzer never calls _predict_cache_keys without the root).
+        irs_by_workflow = {ctx.workflow_path: dict(ctx.workflow_ir)}
+
+    predicted_keys: dict[tuple[str | None, str], str] = {}
+    for workflow_path, ir in irs_by_workflow.items():
+        _predict_one_workflow(
+            workflow_path=workflow_path,
+            ir=ir,
+            ctx=ctx,
+            predicted_keys=predicted_keys,
+            notes=notes,
+        )
+    return predicted_keys, notes
+
+
+def _predict_one_workflow(
+    *,
+    workflow_path: str | None,
+    ir: Mapping[str, Any],
+    ctx: AnalysisContext,
+    predicted_keys: dict[tuple[str | None, str], str],
+    notes: list[str],
+) -> None:
+    """Compute predictions for every LLM node in one workflow IR.
+
+    Mutates ``predicted_keys`` and ``notes`` in place. Extracted from
+    ``_predict_cache_keys`` to keep that function under the cyclomatic-complexity
+    budget; the per-workflow body has its own classification branches
+    (input-gate, no-LLM-shortcut, scaffold build, per-node loop) that
+    naturally cluster together.
+    """
+    params = ctx.parameters_for_workflow(workflow_path)
+    # Per-workflow input check: if THIS workflow declares inputs but no
+    # parameters resolved for it, derived keys would diverge from the
+    # trace's run-time values. Honest fallback is observable-only
+    # attribution. (The legacy implementation only checked the root
+    # workflow; child workflows silently degraded to defaults.)
+    if not params and isinstance(ir.get("inputs"), dict) and ir["inputs"]:
         notes.append(
-            "Discrepancy detection: predicted-key matching skipped — workflow declares inputs that "
-            "weren't supplied. Pass `key=value` pairs matching the trace's run for full detection. "
-            "Observable-field attributions (TTL expiry, chunk skipped) still apply."
+            f"Discrepancy detection: predicted-key matching skipped for "
+            f"{workflow_path or '<root>'} — workflow declares inputs that weren't "
+            "supplied or resolvable. Observable-field attributions still apply."
         )
-        return {}, notes
+        return
+    if not any(_is_llm_node(node) for node in ir.get("nodes", [])):
+        return
+    scaffold, scaffold_error = _build_predict_scaffold(ir, params, ctx.memo_cache, workflow_path)
+    if scaffold is None:
+        if scaffold_error:
+            notes.append(scaffold_error)
+        return
+    for node in ir.get("nodes", []):
+        if not _is_llm_node(node):
+            continue
+        cache_key, skip_reason = _predict_node_with_scaffold(node, scaffold, workflow_path)
+        if cache_key is not None:
+            predicted_keys[(workflow_path, str(node["id"]))] = cache_key
+        elif skip_reason:
+            notes.append(skip_reason)
 
+
+def _is_llm_node(node: Any) -> bool:
+    """Return True for any LLM-typed IR node (regardless of ``prompt_cache:``).
+
+    Discrepancy detection runs on every ``llm_call`` trace leaf — even nodes
+    without a declared subset can have a memo ``cache_key`` to compare. The
+    runtime cache_key is computed for ALL LLM nodes; restricting prediction
+    to ``prompt_cache:``-declared nodes would silently miss memo divergence
+    (and break tests that synthesize cache events for non-prompt_cache LLM
+    nodes to exercise the consumption path).
+    """
+    return isinstance(node, dict) and node.get("type") == "llm"
+
+
+@dataclass(frozen=True)
+class _PredictScaffold:
+    """Per-workflow scaffold reused across all LLM nodes in one workflow."""
+
+    compiled: Any
+    shared: dict[str, Any]
+    bare_nodes_by_id: dict[str, Any]
+
+
+def _build_predict_scaffold(
+    workflow_ir: Mapping[str, Any],
+    params: Mapping[str, Any],
+    memo_cache: Any,
+    workflow_path: str | None,
+) -> tuple[_PredictScaffold | None, str | None]:
+    """Compile + planner-shared once per workflow.
+
+    Returns ``(scaffold, error_note)``. On failure the scaffold is None and
+    ``error_note`` describes why (one note per workflow, not per node). Lazy
+    imports keep the analyzer package import-cheap (mirrors
+    ``token_estimation.py``'s LiteLLM lazy-import).
+    """
+    from pflow.core.exceptions import (
+        CompilationError,
+        MarkdownParseError,
+        SchemaValidationError,
+        WorkflowValidationError,
+    )
+    from pflow.execution.plan import create_planner_shared
+    from pflow.registry import Registry
+    from pflow.runtime import compile_workflow
+
+    workflow_label = workflow_path or "<root>"
     try:
-        from pflow.core.exceptions import (
-            CompilationError,
-            MarkdownParseError,
-            SchemaValidationError,
-            WorkflowValidationError,
-        )
-        from pflow.execution.plan import build_plan
-        from pflow.registry import Registry
-        from pflow.runtime import compile_workflow
-
-        registry = Registry()
-        compiled = compile_workflow(workflow_ir, registry, parameters or {})
-        plan = build_plan(
-            compiled,
-            parameters or {},
-            memo_cache,
-            registry,
-            _parent_workflow_file=workflow_path,
-        )
+        compiled = compile_workflow(dict(workflow_ir), Registry(), dict(params))
     except (
         CompilationError,
         MarkdownParseError,
@@ -2386,67 +2561,113 @@ def _predict_cache_keys(
         FileNotFoundError,
         ValueError,
     ) as exc:
-        notes.append(
-            f"Discrepancy detection: predicted-key matching unavailable ({type(exc).__name__}). "
-            "Provide required inputs via `pflow analyze-cache <workflow> key=value` for full detection. "
-            "Observable-field attributions (TTL expiry, chunk skipped) still apply."
+        return None, (
+            f"Discrepancy detection: predicted-key matching for {workflow_label} "
+            f"unavailable ({type(exc).__name__}); compile failed. Observable-field "
+            "attributions still apply."
         )
-        return {}, notes
-    keys, plan_notes = _flatten_plan_keys(plan)
-    notes.extend(plan_notes)
-    return keys, notes
+    shared = create_planner_shared(compiled, dict(params), memo_cache, workflow_path)
+    bare_nodes_by_id = _enumerate_compiled_bare_nodes(compiled)
+    return _PredictScaffold(compiled=compiled, shared=shared, bare_nodes_by_id=bare_nodes_by_id), None
 
 
-def _flatten_plan_keys(plan: Any) -> tuple[dict[tuple[str | None, str], str], list[str]]:
-    """Flatten parent and nested sub-plans to ``(workflow_path, node_id) -> cache_key``.
+def _predict_node_with_scaffold(
+    node: dict[str, Any],
+    scaffold: _PredictScaffold,
+    workflow_path: str | None,
+) -> tuple[str | None, str | None]:
+    """Compute the cache_key for one node against a pre-built scaffold.
 
-    Detects **heterogeneous batch sub-workflow collision**: per-item child
-    plans share ``node_id`` but compute different ``cache_key`` per item.
-    Drops colliding nodes (observable-only fallback) rather than picking an
-    arbitrary winner that would falsely flag ``key_mismatch`` for the other
-    items, and emits a notes entry explaining the coverage gap.
-
-    BFS-downstream coverage gaps are reported separately by
-    ``_emit_discrepancy_diagnostics`` based on actual silent-skip count
-    against trace events — counting plan structure here would emit false
-    notes for non-cache workflows whose downstream entries have
-    ``cache_key=None`` for orthogonal reasons.
+    Returns ``(cache_key, skip_reason)`` — same shape as ``_predict_node_cache_key``
+    but doesn't recompile the workflow. Suitable for the per-workflow loop in
+    ``_predict_cache_keys``; tests that want a self-contained per-node call
+    use ``_predict_node_cache_key`` instead (it builds its own scaffold).
     """
-    keys: dict[tuple[str | None, str], str] = {}
-    collisions: set[tuple[str | None, str]] = set()
+    from pflow.runtime.engine.plan_node import plan_node
 
-    def _walk(p: Any, workflow_path: str | None = None) -> None:
-        current_workflow_path = getattr(p, "workflow_path", None) or workflow_path
-        for entry in getattr(p, "entries", []) or []:
-            node_id = str(entry.node_id)
-            cache_key = getattr(entry, "cache_key", None)
-            if cache_key is not None:
-                key_str = str(cache_key)
-                key = (current_workflow_path, node_id)
-                existing = keys.get(key)
-                if existing is not None and existing != key_str:
-                    collisions.add(key)
-                else:
-                    keys[key] = key_str
-            sub_plan = getattr(entry, "sub_plan", None)
-            if sub_plan is not None:
-                _walk(sub_plan, getattr(sub_plan, "workflow_path", current_workflow_path))
-
-    _walk(plan)
-
-    # Drop colliding nodes — keeping any one item's key would silently
-    # misattribute the others as ``key_mismatch``.
-    for key in collisions:
-        keys.pop(key, None)
-
-    notes: list[str] = []
-    if collisions:
-        notes.append(
-            f"Discrepancy detection: predicted-key matching skipped for {len(collisions)} "
-            "heterogeneous batch sub-workflow node(s); per-item upstream values diverge. "
-            "Observable-field attributions still apply."
+    node_id = str(node.get("id", "?"))
+    workflow_label = workflow_path or "<root>"
+    config = scaffold.compiled.node_configs.get(node_id)
+    if config is None:
+        return None, (
+            f"Discrepancy detection: node {workflow_label}.{node_id} not found in "
+            "compiled workflow (parser-injected metadata mismatch). Observable-field "
+            "attributions still apply."
         )
-    return keys, notes
+    bare_node = scaffold.bare_nodes_by_id.get(node_id)
+    if bare_node is None:
+        return None, (
+            f"Discrepancy detection: node {workflow_label}.{node_id} not reachable from "
+            "start_node (graph-walk gap). Observable-field attributions still apply."
+        )
+    try:
+        plan = plan_node(bare_node, config, scaffold.shared)
+    except Exception as exc:
+        logger.debug("plan_node raised for %s.%s", workflow_label, node_id, exc_info=True)
+        return None, (
+            f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
+            f"raised {type(exc).__name__}; skipping. Observable-field attributions still apply."
+        )
+
+    if plan.cache_key is not None:
+        return plan.cache_key, None
+    if plan.template_exception is not None:
+        return None, (
+            f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
+            "skipped — template resolution failed at analyzer-time (unresolvable upstream "
+            "ref). Observable-field attributions still apply."
+        )
+    if plan.status == "cache_disabled":
+        return None, (
+            f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
+            "skipped — node has cache disabled. Observable-field attributions still apply."
+        )
+    return None, (
+        f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
+        f"skipped — plan_node returned no cache_key (status={plan.status}). "
+        "Observable-field attributions still apply."
+    )
+
+
+def _predict_node_cache_key(
+    *,
+    node: dict[str, Any],
+    workflow_ir: Mapping[str, Any],
+    params: Mapping[str, Any],
+    memo_cache: Any,
+    workflow_path: str | None,
+) -> tuple[str | None, str | None]:
+    """Self-contained per-node prediction — builds its own scaffold.
+
+    Production callers should use ``_predict_cache_keys`` (which hoists the
+    compile + shared per workflow). This helper is kept for direct test
+    callers that want a single-node prediction without setting up a
+    ``cw_result`` / ``AnalysisContext``.
+    """
+    scaffold, error_note = _build_predict_scaffold(workflow_ir, params, memo_cache, workflow_path)
+    if scaffold is None:
+        return None, error_note
+    return _predict_node_with_scaffold(node, scaffold, workflow_path)
+
+
+def _enumerate_compiled_bare_nodes(compiled: Any) -> dict[str, Any]:
+    """BFS from ``compiled.start_node`` collecting node_id → bare-node."""
+    bare_nodes_by_id: dict[str, Any] = {}
+    start = getattr(compiled, "start_node", None)
+    if start is None:
+        return bare_nodes_by_id
+    queue: list[Any] = [start]
+    while queue:
+        bare = queue.pop(0)
+        bare_id = getattr(bare, "node_id", None)
+        if not isinstance(bare_id, str) or bare_id in bare_nodes_by_id:
+            continue
+        bare_nodes_by_id[bare_id] = bare
+        successors = getattr(bare, "successors", None) or {}
+        for succ in successors.values():
+            if succ is not None:
+                queue.append(succ)
+    return bare_nodes_by_id
 
 
 def _emit_discrepancy_diagnostics(
@@ -2459,8 +2680,6 @@ def _emit_discrepancy_diagnostics(
     trace_data = ctx.trace_data
     if trace_data is None:
         return []
-    parameters = dict(ctx.parameters)
-    memo_cache = ctx.memo_cache
     workflow_path = ctx.workflow_path
     # Trace consumer rule (runtime/CLAUDE.md): gate on the major version and
     # exclude 2.0.0 explicitly. 2.0.0 traces lack cache_key/cache_age_sec; a
@@ -2471,7 +2690,7 @@ def _emit_discrepancy_diagnostics(
     if not fv.startswith("2.") or fv.startswith("2.0"):
         return []
 
-    predicted_keys, predict_notes = _predict_cache_keys(workflow_ir, parameters, memo_cache, workflow_path)
+    predicted_keys, predict_notes = _predict_cache_keys(cw_result, ctx)
     notes.extend(predict_notes)
 
     diagnostics: list[Diagnostic] = []
@@ -2511,10 +2730,12 @@ def _emit_discrepancy_diagnostics(
         predicted_label = _compute_predicted_label(predicted_key, actual_key)
 
         if predicted_key is None and not (chunks_skipped or (cache_age_sec is not None and float(cache_age_sec) > 300)):
-            # Cache engaged but we have no predicted_key (BFS-downstream,
-            # heterogeneous batch collision, partial inputs, compile failure)
-            # AND no observable signal — count silently-skipped events so we
-            # can emit a single coverage note instead of misleading silence.
+            # Cache engaged but we have no predicted_key AND no observable
+            # signal. Per-node skip notes from ``_predict_cache_keys`` already
+            # explain WHY prediction was unavailable for nodes in the analyzed
+            # IR; this counter covers events whose nodes aren't in the IR
+            # (typically batch sub-workflow per-item children with runtime-only
+            # ``${item.X}`` context — the node identity exists only at runtime).
             silent_skip_no_predicted_key += 1
             continue
         if predicted_key is not None and abs(predicted_pct - actual_pct) < 5:
@@ -2554,8 +2775,11 @@ def _emit_discrepancy_diagnostics(
     if silent_skip_no_predicted_key > 0:
         notes.append(
             f"Discrepancy detection: skipped attribution for {silent_skip_no_predicted_key} "
-            "trace event(s) with no predicted cache_key and no observable signal "
-            "(BFS-downstream, heterogeneous batch, or partial inputs)."
+            "trace event(s) with no predicted cache_key and no observable signal. "
+            "Per-node skip reasons (above, when present) explain why prediction was "
+            "unavailable for the affected nodes; this count covers events whose nodes "
+            "were not in the analyzed IR (typically batch sub-workflow per-item children "
+            "with runtime-only context)."
         )
     return _aggregate_and_cap_discrepancies(diagnostics, max_total=20, notes=notes)
 
@@ -2568,7 +2792,7 @@ def _predicted_key_for_event(
 ) -> str | None:
     """Return predicted key for a (workflow_path, node_id) pair.
 
-    Producers (``_flatten_plan_keys``) emit tuple keys exclusively. The lookup
+    ``_predict_cache_keys`` emits tuple keys exclusively. The lookup
     here is direct — no fallback, no implicit re-keying. If the key is missing
     we have no prediction for that event.
     """

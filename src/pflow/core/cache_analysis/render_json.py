@@ -284,10 +284,10 @@ def _action_to_dict(action: RecommendedAction) -> dict[str, Any]:
         "warning_id": action.warning_id,
         "node_id": action.node_id,
         "estimated_savings_usd": action.estimated_savings_usd,
-        # ``scope_workflow`` is set when the finding spans multiple nodes in one
-        # workflow file (workflow-level scope) rather than being attributable to
-        # one specific node. JSON consumers dispatch on (node_id, scope_workflow):
-        # at most one is non-null.
+        # ``scope_workflow`` is set whenever the finding carries a workflow
+        # location, including per-node diagnostics. Same-id nodes can appear in
+        # parent and child workflows, so consumers dispatch on
+        # ``(node_id, scope_workflow)`` when both are populated.
         "scope_workflow": action.scope_workflow,
     }
 

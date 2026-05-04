@@ -329,6 +329,31 @@ def test_inputs_with_non_template_values_still_yield_edge() -> None:
         assert edges[0].child_input_name == "x"
 
 
+def test_template_items_gap_note_uses_real_analyze_cache_cli_param_wording() -> None:
+    """Runtime batch enumeration note must not suggest a nonexistent
+    ``analyze-cache --inputs`` flag; workflow inputs are positional
+    ``key=value`` params on the CLI.
+    """
+    child_ir = {"inputs": {"x": {"type": "string"}}, "nodes": []}
+    root_ir = {"nodes": [_batch_workflow_node("children", "./child.pflow.md", {"x": "${item.x}"})]}
+    resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/child.pflow.md"))})
+    notes: list[str] = []
+    walk_cross_workflow(
+        root_ir,
+        base_path=Path("/abs"),
+        resolve_child=resolver,
+        root_workflow_path="/abs/parent.pflow.md",
+        notes=notes,
+    )
+
+    assert notes
+    note = notes[0]
+    assert "actually_paid_usd is trace-driven" in note
+    assert "CLI parameter" in note
+    assert "--inputs" not in note
+    assert "current_cost" not in note
+
+
 # ---------------------------------------------------------------------------
 # CrossWorkflowEdge — batch-alias detection (#362 evidence-basis suppression)
 # ---------------------------------------------------------------------------

@@ -950,7 +950,10 @@ def _ensure_workflow_scope(warning_id: str, node_id: str | None, context_kwargs:
     tests must do the same. Top-10% codebases enforce workflow-scope at the
     producer boundary, not in renderer fallbacks.
     """
-    if node_id is None or "affected_workflow" in context_kwargs:
+    if node_id is None:
+        return
+    affected = context_kwargs.get("affected_workflow")
+    if isinstance(affected, str) and affected:
         return
     raise KeyError(
         f"make_diagnostic({warning_id!r}, node_id={node_id!r}) is missing required key 'affected_workflow'. "

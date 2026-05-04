@@ -263,6 +263,19 @@ def test_make_diagnostic_node_id_without_affected_workflow_raises() -> None:
         )
 
 
+def test_make_diagnostic_node_id_with_affected_workflow_none_raises() -> None:
+    """The workflow-scope guard validates value shape, not just key presence."""
+    with pytest.raises(KeyError, match="affected_workflow"):
+        make_diagnostic(
+            "cache.below-min-tokens",
+            node_id="rewrite",
+            affected_workflow=None,
+            model="claude-sonnet-4-5",
+            cacheable_tokens=512,
+            min_tokens=1024,
+        )
+
+
 def test_make_diagnostic_workflow_level_finding_does_not_require_affected_workflow() -> None:
     """The workflow-scope guard fires only when ``node_id`` is set. Workflow-level
     findings (``node_id=None``) are scoped by their own context (e.g.

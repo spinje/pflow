@@ -110,16 +110,14 @@ def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAct
         savings = ctx.get("savings_usd")
         if not isinstance(savings, (int, float)):
             savings = None
-        # Workflow-level scope: when the warning has no per-node ``node_id`` but
-        # ``context.affected_workflow`` is set, surface that as ``scope_workflow``
-        # so the renderer can label it "Workflow: <path>" instead of leaving the
-        # scope line absent (which makes workflow-level findings indistinguishable
-        # from per-node findings — the GH #2 surface).
+        # Workflow scope: when ``context.affected_workflow`` is set, surface it
+        # for both workflow-level and per-node findings. Per-node diagnostics
+        # need the location too because same node ids can appear in parent and
+        # child workflows.
         scope_workflow: str | None = None
-        if d.node_id is None:
-            affected = ctx.get("affected_workflow")
-            if isinstance(affected, str) and affected:
-                scope_workflow = affected
+        affected = ctx.get("affected_workflow")
+        if isinstance(affected, str) and affected:
+            scope_workflow = affected
         # Catalog-as-SSoT: looks up headline_template by diag.id and formats
         # against context. Works whether the diag came from make_diagnostic OR
         # was built directly via Diagnostic(...) (validator emitters in

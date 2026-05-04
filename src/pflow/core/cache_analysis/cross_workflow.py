@@ -257,8 +257,9 @@ def _maybe_note_template_items_gap(node: dict[str, Any], parent_label: str, note
     node_id = str(node.get("id", "?"))
     message = (
         f"Workflow batch {node_id} in {parent_label} uses items: {items}; sub-workflow rows for these runtime "
-        "items are not in the per-call table. current_cost is trace-driven and reflects actual execution. "
-        "Provide --inputs with the resolved list, or use inline static batch items, to enable static child enumeration."
+        "items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. "
+        "Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child "
+        "enumeration."
     )
     if message not in notes:
         notes.append(message)
