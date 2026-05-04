@@ -9,6 +9,42 @@ import pytest
 from tests.shared.llm_mock import create_mock_llm_client
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Enforce: every test whose docstring contains ``Mutation contract:`` must
+    also carry the ``@mutation_contract`` decorator.
+
+    The docstring is human-readable narrative. The decorator is the
+    machine-verifiable layer (``scripts/check_mutation_contracts.py``). Drift
+    between them defeats the whole point: a docstring claim that no script
+    can verify is a promise the codebase doesn't keep.
+
+    Surfacing this as a collection error (rather than a runtime warning)
+    catches drift at the same point pytest catches an `import` typo —
+    fast, mechanical, no manual audit pass.
+    """
+    offenders: list[str] = []
+    for item in items:
+        if not isinstance(item, pytest.Function):
+            continue
+        func = getattr(item, "function", None)
+        if func is None:
+            continue
+        doc = func.__doc__ or ""
+        if "Mutation contract:" not in doc:
+            continue
+        if getattr(func, "_mutation_contract", None) is None:
+            offenders.append(item.nodeid)
+    if offenders:
+        bullets = "\n".join(f"  - {n}" for n in offenders)
+        raise pytest.UsageError(
+            f"\n{len(offenders)} test(s) carry a 'Mutation contract:' docstring without "
+            f"the @mutation_contract decorator. Either add the decorator (machine-verifiable "
+            f"via 'make mutation-check') or rewrite the docstring to drop the contract claim:\n"
+            f"{bullets}\n"
+            f"See tests/CLAUDE.md Pitfall #19."
+        )
+
+
 @pytest.fixture(autouse=True, scope="function")
 def mock_llm_client(monkeypatch, request):
     """Auto-applied fixture that mocks the pflow LiteLLM adapter.

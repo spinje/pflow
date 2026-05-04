@@ -291,6 +291,7 @@ def _build_plan_with_shared(
             entries=entries,
             summary=_summarize(entries, cost_basis="upper_bound" if branched else "exact"),
             diagnostics=diagnostics,
+            workflow_path=workflow_path,
         )
         return plan, shared
 
@@ -349,6 +350,7 @@ def _build_plan_with_shared(
         entries=state.entries,
         summary=_summarize(state.entries, cost_basis=state.cost_basis),
         diagnostics=state.diagnostics,
+        workflow_path=workflow_path,
     )
     return plan, shared
 
@@ -369,21 +371,19 @@ def _advance(
     transitions are acted on — the main loop in `build_plan` never branches
     on `Transition` itself.
     """
-    match decision.kind:
-        case Transition.STOP:
-            return None
-        case Transition.ROUTING_ERROR:
-            routing_entry, routing_diag = _routing_error_entry(node_id, config, decision.action, curr.successors)
-            state.entries.append(routing_entry)
-            state.diagnostics.append(routing_diag)
-            return None
-        case Transition.BOUNDARY:
-            _apply_boundary(curr, compiled, cache, node_id, state)
-            return None
-        case Transition.FOLLOW:
-            return _apply_follow(curr, node_id, decision.action, state)
-        case _:
-            raise AssertionError(f"unhandled walker transition: {decision.kind!r}")
+    if decision.kind == Transition.STOP:
+        return None
+    if decision.kind == Transition.ROUTING_ERROR:
+        routing_entry, routing_diag = _routing_error_entry(node_id, config, decision.action, curr.successors)
+        state.entries.append(routing_entry)
+        state.diagnostics.append(routing_diag)
+        return None
+    if decision.kind == Transition.BOUNDARY:
+        _apply_boundary(curr, compiled, cache, node_id, state)
+        return None
+    if decision.kind == Transition.FOLLOW:
+        return _apply_follow(curr, node_id, decision.action, state)
+    raise AssertionError(f"unhandled walker transition: {decision.kind!r}")
 
 
 def _apply_boundary(
@@ -1264,6 +1264,7 @@ def _attach_sub_workflow_warnings(plan: Plan, warnings: list[Diagnostic] | tuple
         entries=plan.entries,
         summary=plan.summary,
         diagnostics=[*plan.diagnostics, *warnings],
+        workflow_path=plan.workflow_path,
     )
 
 
@@ -1786,6 +1787,7 @@ def _aggregate_batch_child_plans(
         entries=synthetic_entries,
         summary=summary,
         diagnostics=all_diagnostics,
+        workflow_path=child_plans[0].workflow_path,
     )
 
 

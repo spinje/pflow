@@ -2,9 +2,9 @@
 
 Format-version policy locked at this module:
 
-- Current version is :data:`JSON_FORMAT_VERSION` (current literal ``"2.0"``).
+- Current version is :data:`JSON_FORMAT_VERSION` (current literal ``"4.0"``).
 - Consumer rule: ``format_version.startswith(JSON_FORMAT_VERSION_MAJOR + ".")``.
-  Minor bumps (``2.0`` → ``2.1``) are additive; major bumps (``3.x``) are
+  Minor bumps (``4.0`` → ``4.1``) are additive; major bumps (``5.x``) are
   breaking. Mirrors the trace ``2.x`` policy at ``trace_report.py:463``.
   This is NOT the trace ``2.x`` namespace — analyze-cache JSON output and
   trace JSON files share the major-version vocabulary but are independent
@@ -28,7 +28,7 @@ from pflow.core.diagnostic import Diagnostic
 
 from .analyze import CacheAnalysis, PerCallRow, RecommendedAction, SuggestedBlock
 
-JSON_FORMAT_VERSION: Final[str] = "2.1"
+JSON_FORMAT_VERSION: Final[str] = "4.0"
 """Current JSON output format version. Bump minor on additive changes.
 
 Version history:
@@ -115,10 +115,65 @@ Version history:
     ``${...}`` refs left unsubstituted) now reports ``"estimator-partial"``
     instead of ``"estimator"`` — high-confidence projection requires full
     resolution.
+- ``3.0`` — breaking rename: ``summary.optimized_cost_per_run_usd`` is now
+  ``summary.cost_without_caching_usd``. The value was always the no-cache
+  hypothetical, not an optimization target. ``per_call[].workflow_path`` is
+  added so consumers can distinguish same-id LLM nodes across sub-workflows.
+- ``4.0`` — breaking field rename: ``summary``'s three overloaded cost
+  fields are replaced with five atomic primitives. Each carries one
+  meaning so agents reading any single field know what it represents
+  independent of greenfield/trace context.
+
+  Removed (raised silent-failure risk because their meaning shifted with
+  context):
+
+  * ``summary.current_cost_per_run_usd`` — previously meant "actually paid
+    when trace exists, no-cache hypothetical otherwise." Two semantics in
+    one field.
+  * ``summary.cost_without_caching_usd`` — previously a HYBRID (no-cache
+    for undeclared rows + with-cache first-run projection for declared
+    rows). The label said "without caching" but the value included
+    cache-write costs for declared rows.
+  * ``summary.rerun_cost_per_run_usd`` — renamed to
+    ``rerun_within_ttl_hypothetical_usd`` for shape symmetry.
+
+  Added:
+
+  * ``summary.actually_paid_usd`` (number | null): trace-driven recorded
+    cost. ``null`` for greenfield (no trace). Includes provider-side
+    implicit caching (Gemini) and any other discount the trace recorded.
+    The honest "what did this run actually cost?" figure.
+  * ``summary.actually_paid_tier`` (string): confidence tier for
+    ``actually_paid_usd``. Values: ``"trace"`` (every leaf priced),
+    ``"trace_partial"`` (some leaves had unpriced model), ``"unavailable"``
+    (no trace data).
+  * ``summary.no_cache_hypothetical_usd`` (number | null): pure no-cache
+    recompute baseline — ``input × full_rate + output × output_rate``
+    over all priced rows. The "what would this cost without ANY caching?"
+    projection.
+  * ``summary.first_run_with_cache_hypothetical_usd`` (number | null):
+    first-run projection that honors declared ``prompt_cache:`` (write
+    rate on cacheable + input rate on non-cacheable + output rate on
+    output for declared rows; no-cache math for undeclared rows). Equals
+    ``no_cache_hypothetical_usd`` exactly when no row declares cache.
+  * ``summary.rerun_within_ttl_hypothetical_usd`` (number | null):
+    projection for every call after the first within TTL (all cacheable
+    at read rate).
+
+  Sub-workflow rollup entries (``summary.sub_workflow_rollup.per_workflow[]``)
+  carry the same four primitives at child-workflow scope. Removed:
+  ``current_cost_usd``, ``cost_without_caching_usd``. Added:
+  ``actually_paid_usd``, ``no_cache_hypothetical_usd``,
+  ``first_run_with_cache_hypothetical_usd``,
+  ``rerun_within_ttl_hypothetical_usd``.
+
+  Consumers that read these fields by name MUST update. Consumers that
+  match ``format_version.startswith("4.")`` continue to work on minor
+  bumps (additive fields, additive warning IDs).
 """
 
-JSON_FORMAT_VERSION_MAJOR: Final[str] = "2"
-"""Major version prefix. Consumer rule: ``format_version.startswith("2.")``."""
+JSON_FORMAT_VERSION_MAJOR: Final[str] = "4"
+"""Major version prefix. Consumer rule: ``format_version.startswith("4.")``."""
 
 
 def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
@@ -157,9 +212,16 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
 def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
     s = analysis.summary
     return {
-        "current_cost_per_run_usd": s.current_cost_per_run_usd,
-        "optimized_cost_per_run_usd": s.optimized_cost_per_run_usd,
-        "rerun_cost_per_run_usd": s.rerun_cost_per_run_usd,
+        # Phase 5 (4.0): atomic cost primitives. Each field carries one
+        # meaning. ``actually_paid_usd`` is ``null`` for greenfield (no
+        # trace); the three hypothetical fields are projections from IR
+        # rows. Replaces 3.x's overloaded ``current_cost_per_run_usd`` /
+        # ``cost_without_caching_usd`` / ``rerun_cost_per_run_usd``.
+        "actually_paid_usd": s.actually_paid_usd,
+        "actually_paid_tier": str(s.actually_paid_tier),
+        "no_cache_hypothetical_usd": s.no_cache_hypothetical_usd,
+        "first_run_with_cache_hypothetical_usd": s.first_run_with_cache_hypothetical_usd,
+        "rerun_within_ttl_hypothetical_usd": s.rerun_within_ttl_hypothetical_usd,
         "savings_pct_first_run": s.savings_pct_first_run,
         "savings_pct_rerun": s.savings_pct_rerun,
         "aggregate_savings_first_run_usd": s.aggregate_savings_first_run_usd,
@@ -174,6 +236,10 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "models_in_use": list(s.models_in_use),
         "partial_cost_usd": s.partial_cost_usd,
         "unavailable_models": list(s.unavailable_models),
+        "unavailable_models_by_workflow": {
+            str(workflow_path): list(models)
+            for workflow_path, models in (s.unavailable_models_by_workflow or {}).items()
+        },
         # Stage C.1 (2.0 minor-additive): heterogeneous batch sub-workflows
         # whose ``model: ${item.model}`` can't be aggregated as one model.
         # Excluded from ``models_in_use`` so the literal template doesn't
@@ -181,6 +247,34 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         # agents can see WHICH nodes vary without scanning ``per_call[]``.
         "heterogeneous_model_node_count": s.heterogeneous_model_node_count,
         "heterogeneous_model_node_paths": list(s.heterogeneous_model_node_paths),
+        "sub_workflow_rollup": _sub_workflow_rollup_to_dict(s.sub_workflow_rollup),
+    }
+
+
+def _sub_workflow_rollup_to_dict(rollup: Any) -> dict[str, Any] | None:
+    if rollup is None:
+        return None
+    return {
+        "workflows_included": list(rollup.workflows_included),
+        "max_depth_walked": rollup.max_depth_walked,
+        "truncated": rollup.truncated,
+        "per_workflow": [
+            {
+                "workflow_path": entry.workflow_path,
+                "called_by_node_id": entry.called_by_node_id,
+                "llm_node_count": entry.llm_node_count,
+                # Phase 5 (4.0): atomic primitives, mirrors AnalysisSummary
+                # at child-workflow scope. ``actually_paid_usd`` is sourced
+                # from the trace execution index for this child's
+                # workflow_path; the hypotheticals come from this child's
+                # IR row projections.
+                "actually_paid_usd": entry.actually_paid_usd,
+                "no_cache_hypothetical_usd": entry.no_cache_hypothetical_usd,
+                "first_run_with_cache_hypothetical_usd": entry.first_run_with_cache_hypothetical_usd,
+                "rerun_within_ttl_hypothetical_usd": entry.rerun_within_ttl_hypothetical_usd,
+            }
+            for entry in rollup.per_workflow
+        ],
     }
 
 
@@ -219,6 +313,7 @@ def _block_to_dict(block: SuggestedBlock) -> dict[str, Any]:
 def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
     return {
         "node_path": row.node_path,
+        "workflow_path": row.workflow_path,
         "model": row.model,
         "is_batch": row.is_batch,
         "batch_size_estimated": row.batch_size_estimated,
@@ -245,6 +340,7 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         # 4-state tier label.
         "cost_usd": row.cost_usd,
         "cost_data_source": row.cost_data_source,
+        "did_not_execute_in_trace": row.did_not_execute_in_trace,
         # Stage 0.3 (Task 159): per-call ``warnings`` array dropped — production
         # never populated it. JSON consumers needing per-row warning markers
         # filter ``warnings[]`` (top-level) by ``node_id``.

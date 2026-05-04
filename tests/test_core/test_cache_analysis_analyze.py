@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -14,10 +15,13 @@ from pflow.core.cache_analysis.analyze import (
     PerCallRow,
     _aggregate_confidence,
     _build_summary,
+    _flatten_plan_keys,
     _maybe_append_gemini_note,
     analyze,
 )
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.execution.workflow_resolver import resolve_workflow
+from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Confidence aggregation — STRICT semantics per DD#34 line 634 verbatim
@@ -91,6 +95,344 @@ def test_analyze_returns_cache_analysis_dataclass() -> None:
     assert result.workflow_path == "/abs/x.pflow.md"
     assert result.estimate_confidence in {"high_from_trace", "medium_from_memo", "low_no_data"}
     assert len(result.per_call) == 1
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=2826,
+    revert="actually_paid_usd=actually_paid.total_usd",
+    expected_failure="actually-paid atom dropped — summary.actually_paid_usd is None (test asserts 0.15)",
+)
+def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation contract: use aggregate row cost for current_cost -> result is 0.05.
+
+    Defends trace-driven current-cost rollup: workflow nodes are not LLM rows,
+    but their ``sub_workflow_events`` still represent real paid calls.
+    """
+    import pflow.core.cache_analysis.cross_workflow as cross_module
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+    child_path = tmp_path / "child.pflow.md"
+    child_ir = {
+        "nodes": [
+            {
+                "id": "child-llm",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "child"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "parent-llm",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "parent"},
+            },
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {}},
+            },
+        ],
+    }
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.1.0",
+            "workflow_path": "parent.pflow.md",
+            "nodes": [
+                {
+                    "node_id": "parent-llm",
+                    "llm_call": {"cost_usd": 0.05, "input_tokens": 100, "output_tokens": 10},
+                },
+                {
+                    "node_id": "call-child",
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "child-llm",
+                            "llm_call": {"cost_usd": 0.10, "input_tokens": 100, "output_tokens": 10},
+                        }
+                    ],
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    assert result.summary.actually_paid_usd == pytest.approx(0.15)
+    assert {(row.workflow_path, row.node_path) for row in result.per_call} == {
+        ("parent.pflow.md", "parent-llm"),
+        (str(child_path), "child-llm"),
+    }
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=1085,
+    revert="if did_not_execute_in_trace:",
+    expected_failure="phantom row still gets recomputed cost — rerun savings inflates beyond ground truth",
+)
+def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() -> None:
+    """Mutation contract: let did-not-execute rows enter cost aggregation -> rerun savings grows.
+
+    Defends phantom-cost suppression for child workflows that error after an
+    earlier LLM: static IR rows remain visible, but unexecuted LLMs do not
+    fabricate recomputed projection dollars.
+    """
+    fixture_dir = Path("tests/fixtures/cache_analysis")
+    parent_path = fixture_dir / "parent.pflow.md"
+    trace_path = fixture_dir / "parent-child-erroring-trace.json"
+    resolved = resolve_workflow(str(parent_path))
+
+    result = analyze(
+        resolved.ir,
+        parameters={"topic": "cache analysis"},
+        workflow_path=resolved.file_path,
+        base_path=parent_path.parent,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    child_path = str((fixture_dir / "child.pflow.md").resolve())
+    by_key = {(row.workflow_path, row.node_path): row for row in result.per_call}
+    assert result.summary.actually_paid_usd == pytest.approx(0.12)
+    assert by_key[(child_path, "review")].did_not_execute_in_trace is True
+    assert by_key[(child_path, "review")].cost_usd is None
+
+    # The executed child row had trace cache evidence, so some rerun savings is
+    # present. The unexecuted review row has a declared cache too; without the
+    # did-not-execute skip it would add a second child-row savings contribution.
+    executed_child = by_key[(child_path, "draft")]
+    unexecuted_child = by_key[(child_path, "review")]
+    assert result.summary.aggregate_savings_rerun_usd is not None
+    assert executed_child.cacheable_tokens_estimated
+    assert unexecuted_child.cacheable_tokens_estimated is not None
+    assert result.summary.aggregate_savings_rerun_usd < 0.003
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=880,
+    revert="child_params[str(child_input_name)] = resolved",
+    expected_failure="child params never populated — cacheable_data_source falls to 'estimator' or 'unavailable'",
+)
+def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation contract: resolve child inputs against root ctx.parameters only -> child row unavailable.
+
+    Defends per-workflow parameter views for parent input -> child input
+    mappings; the child prompt/cache tokenizer must use child parameters, not
+    the root parameter dict.
+    """
+    import pflow.core.cache_analysis.cross_workflow as cross_module
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+    child_path = tmp_path / "child.pflow.md"
+    child_ir = {
+        "inputs": {"brief": {"type": "string"}},
+        "cache": {"items": [{"name": "brief", "var": "brief", "prose_before": "Brief:\n"}]},
+        "nodes": [
+            {
+                "id": "child-llm",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["brief"],
+                "params": {"prompt": "Child ${brief}"},
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    parent_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"brief": "${topic}"}},
+            }
+        ],
+    }
+
+    result = analyze(
+        parent_ir,
+        parameters={"topic": "a detailed child brief " * 50},
+        workflow_path="parent.pflow.md",
+        trace_path=None,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = next(row for row in result.per_call if row.workflow_path == str(child_path))
+    assert row.cacheable_data_source == "parameters"
+    assert row.cacheable_tokens_estimated is not None
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=895,
+    revert="resolved = TemplateResolver.resolve_template(value, shared)",
+    expected_failure="resolved undefined — child input falls to None and child prompt token count stays at literal-template size",
+)
+def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation contract: skip memo-backed child input resolution -> child prompt stays tiny/partial."""
+    import pflow.core.cache_analysis.cross_workflow as cross_module
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+    from pflow.runtime.cache import MemoizationCache
+
+    child_path = tmp_path / "child.pflow.md"
+    child_ir = {
+        "inputs": {"brief": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "child-llm",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Child ${brief}"},
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Parent"},
+            },
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"brief": "${draft.response}"}},
+            },
+        ],
+    }
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        "cache-key",
+        "draft",
+        "parent.pflow.md",
+        "exec",
+        {"response": "memo child brief " * 200},
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        trace_path=None,
+        auto_load_trace=False,
+        memo_cache=cache,
+    )
+
+    row = next(row for row in result.per_call if row.workflow_path == str(child_path))
+    assert row.data_source == "estimator"
+    assert row.input_tokens_estimated > 100
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=899,
+    revert="if isinstance(resolved, str) and TemplateResolver.TEMPLATE_PATTERN.search(resolved):",
+    expected_failure="unresolved-template fall-through accepts ${...} as a value — cacheable becomes a token count for the literal placeholder",
+)
+def test_child_workflow_unresolved_input_remains_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation contract: coerce unresolved child inputs to empty strings -> cacheable becomes 0/estimator."""
+    import pflow.core.cache_analysis.cross_workflow as cross_module
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+    child_path = tmp_path / "child.pflow.md"
+    child_ir = {
+        "inputs": {"brief": {"type": "string"}},
+        "cache": {"items": [{"name": "brief", "var": "brief", "prose_before": "Brief:\n"}]},
+        "nodes": [
+            {
+                "id": "child-llm",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["brief"],
+                "params": {"prompt": "Child ${brief}"},
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"brief": "${missing.output}"}},
+            }
+        ],
+    }
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    row = next(row for row in result.per_call if row.workflow_path == str(child_path))
+    assert row.cacheable_data_source == "estimator"
+    assert row.data_source == "estimator-partial"
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=2425,
+    revert="key = (current_workflow_path, node_id)",
+    expected_failure="bare-node_id key — child overwrites parent on same id; collision detection drops both",
+)
+def test_flatten_plan_keys_preserves_same_node_ids_across_workflow_paths() -> None:
+    """Mutation contract: key by bare node_id -> child draft overwrites parent draft."""
+    plan = SimpleNamespace(
+        workflow_path="parent.pflow.md",
+        entries=[
+            SimpleNamespace(node_id="draft", cache_key="parent-key", sub_plan=None),
+            SimpleNamespace(
+                node_id="call-child",
+                cache_key=None,
+                sub_plan=SimpleNamespace(
+                    workflow_path="child.pflow.md",
+                    entries=[SimpleNamespace(node_id="draft", cache_key="child-key", sub_plan=None)],
+                ),
+            ),
+        ],
+    )
+
+    keys, notes = _flatten_plan_keys(plan)
+
+    assert notes == []
+    assert keys[("parent.pflow.md", "draft")] == "parent-key"
+    assert keys[("child.pflow.md", "draft")] == "child-key"
 
 
 def test_analyze_skips_non_llm_nodes_in_per_call() -> None:
@@ -540,30 +882,30 @@ def _summary_row(
 def test_savings_pct_uses_cohort_consistent_denominator_not_input_only_superset() -> None:
     """CR-1430 C2 regression — drives the buggy mixed-state cohort directly.
 
-    Pre-fix bug: ``cost.savings_first_run_usd`` was input-only over ALL priced
-    rows (superset); ``cost.current_usd`` was full-cost over rows-with-output
-    (subset). When without-output rows contributed materially to savings, the
-    division produced ``savings > current`` → percentages > 100% rendered as
-    nonsensical ``-117%``.
+    Pre-fix bug: ``projections.savings_first_run_usd`` was input-only over
+    ALL priced rows (superset); ``projections.no_cache_hypothetical_usd`` was
+    full-cost over rows-with-output (subset). When without-output rows
+    contributed materially to savings, the division produced
+    ``savings > current`` → percentages > 100% rendered as nonsensical ``-117%``.
 
     Mutation-test thought: revert the fix to
-    ``_safe_pct_or_none(cost.savings_first_run_usd, cost.current_usd)`` and
+    ``_safe_pct_or_none(projections.savings_first_run_usd, current_cost)`` and
     this test fails — the buggy formula yields a value > 100 for this fixture.
-    Post-fix ``(current - optimized) / current`` is bounded by ≤ 100% by
-    construction (assuming optimized ≥ 0).
+    Post-fix ``(current - cost_without_caching) / current`` is bounded by
+    ≤ 100% by construction (assuming with-cache projection ≥ 0).
 
     Fixture: 4 priced rows. Row A has output tokens AND no cache subset (so
-    it dominates ``current_usd`` with full input+output cost but contributes
-    zero to savings). Rows B/C/D have NO output tokens AND large cache
-    subsets — they contribute substantial input-only savings to
-    ``savings_first_run_usd`` but ZERO to ``current_usd``. The fixture's
-    structural assertion (``aggregate_savings > current``) confirms the
-    bug scenario IS exercised before the percentage check fires.
+    it dominates ``no_cache_hypothetical_usd`` with full input+output cost
+    but contributes zero to savings). Rows B/C/D have NO output tokens AND
+    large cache subsets — they contribute substantial input-only savings to
+    ``savings_first_run_usd`` but ZERO to ``no_cache_hypothetical_usd``. The
+    fixture's structural assertion (``aggregate_savings > current``) confirms
+    the bug scenario IS exercised before the percentage check fires.
     """
     # Row A: tiny input (100) + tiny output (50), no cache subset. This is
-    # the only row contributing to ``current_usd`` — and it's small.
+    # the only row contributing to ``no_cache_hypothetical_usd`` — and it's small.
     # Rows B/C/D/E/F: large cache-using rows with NO output. They populate
-    # ``savings_first_run_usd`` (input-only superset) but NOT ``current_usd``.
+    # ``savings_first_run_usd`` (input-only superset) but NOT ``no_cache_hypothetical_usd``.
     # Result: savings >> current → pre-fix pct > 100% → bug.
     rows = [
         _summary_row(
@@ -587,20 +929,23 @@ def test_savings_pct_uses_cohort_consistent_denominator_not_input_only_superset(
     summary = _build_summary(rows, warnings=[], ttl="5m")
 
     # Sanity: fixture must induce the bug scenario before assertions fire.
-    assert summary.current_cost_per_run_usd is not None, "Row A must populate current_usd"
+    # Post-Phase-5: this is post-run greenfield (no trace ctx → actually_paid
+    # is None; no_cache_hypothetical is non-None for Row A which has output
+    # tokens). The savings anchor falls back to no_cache_hypothetical.
+    assert summary.no_cache_hypothetical_usd is not None, "Row A must populate no_cache_hypothetical_usd"
     assert summary.aggregate_savings_first_run_usd is not None, "Rows B/C/D must populate savings"
-    assert summary.aggregate_savings_first_run_usd > summary.current_cost_per_run_usd, (
-        f"Fixture must induce ``savings > current`` to exercise the C2 bug: "
+    assert summary.aggregate_savings_first_run_usd > summary.no_cache_hypothetical_usd, (
+        f"Fixture must induce ``savings > no_cache`` to exercise the C2 bug: "
         f"savings={summary.aggregate_savings_first_run_usd}, "
-        f"current={summary.current_cost_per_run_usd}. Adjust token sizes."
+        f"no_cache={summary.no_cache_hypothetical_usd}. Adjust token sizes."
     )
 
     # Post-fix: percentage is cohort-consistent (rows-with-output only).
-    # Row A has no cache subset → its ``(current - optimized)`` is 0 → pct == 0.
-    # Pre-fix would render ``savings_first_run_usd / current_usd`` which is > 1
-    # → > 100% → bug.
+    # Row A has no cache subset → its (anchor - first_run_with_cache) is 0 → pct == 0.
+    # Pre-fix would render ``savings_first_run_usd / anchor`` over different
+    # rowsets which exceeds 100% — > 100% → bug.
     pct = summary.savings_pct_first_run
-    assert pct is not None, "current_usd is non-None → pct must be computable"
+    assert pct is not None, "savings anchor is non-None → pct must be computable"
     assert pct <= 100, (
         f"savings_pct_first_run = {pct} > 100 — denominator mismatch reopened. "
         f"Numerator and denominator must be over the same rowset (rows-with-output)."
@@ -612,7 +957,7 @@ def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() ->
     """CR-1430 C2 fix preserves the load-bearing greenfield contract: the
     ``aggregate_savings_first_run_usd`` field continues to be input-only and
     superset-of-priced-rows so greenfield workflows still surface a positive
-    absolute savings opportunity even when ``current_usd`` is None.
+    absolute savings opportunity even when ``current_cost_per_run_usd`` is None.
 
     The fix is local to ``savings_pct_first_run`` — the absolute aggregate
     savings figure is unchanged.
@@ -639,8 +984,9 @@ def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() ->
         "edges": [],
     }
     analysis = analyze(workflow_ir, parameters={"topic": "alpha"}, auto_load_trace=False)
-    # Greenfield: no memo cache → no output tokens → current_usd is None.
-    assert analysis.summary.current_cost_per_run_usd is None
+    # Greenfield: no memo cache → no output tokens → no projection atoms.
+    assert analysis.summary.actually_paid_usd is None
+    assert analysis.summary.no_cache_hypothetical_usd is None
     # But the aggregate savings figure IS populated (input-only, output cancels).
     assert analysis.summary.aggregate_savings_first_run_usd is not None
     assert analysis.summary.aggregate_savings_first_run_usd > 0
@@ -672,6 +1018,12 @@ def _make_diag(diag_id: str, severity: Severity, savings_usd: float | None = Non
     )
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/view_helpers.py",
+    line=99,
+    revert='return (-sev_weight, priority, -savings, d.id or "")',
+    expected_failure="sort key undefined — sorted() falls back to non-priority order, alphabetical tie-break wins",
+)
 def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     """When two warnings share severity AND have no savings, detection-class
     priority decides the order. Tier 1 IDs (shared-context-undeclared,
@@ -697,6 +1049,12 @@ def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     assert actions[1].warning_id == "cache.unused-chunk"
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/view_helpers.py",
+    line=105,
+    revert="eligible = [d for d in warnings if not is_cross_workflow_alignment(d)]",
+    expected_failure="filter dropped — rename/prose-mismatch findings appear in recommended actions",
+)
 def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
     """Cross-workflow alignment findings (rename, prose-mismatch) are
     EXCLUDED from Recommended actions — they render in the "Sub-workflow
@@ -936,6 +1294,12 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=1007,
+    revert='model_is_heterogeneous = isinstance(explicit, str) and "${" in explicit',
+    expected_failure="heterogeneous detection NameError — row attribute undefined → TypeError downstream",
+)
 def test_heterogeneous_model_detected_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     """A node with ``model: ${item.model}`` is flagged heterogeneous, not leaked.
 
@@ -983,10 +1347,16 @@ def test_heterogeneous_model_detected_end_to_end(monkeypatch: pytest.MonkeyPatch
     assert result.summary.heterogeneous_model_node_paths == ("score-choruses",)
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/cost_estimation.py",
+    line=390,
+    revert="if row.model_is_heterogeneous:",
+    expected_failure="heterogeneous skip dropped — pricing lookup runs on empty model and projections fabricate",
+)
 def test_heterogeneous_model_excluded_from_pricing_aggregation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Heterogeneous rows don't fabricate cost figures.
 
-    Mutation contract: enabling cost lookup on heterogeneous rows would
+    Mutation contract: enabling pricing lookup on heterogeneous rows would
     produce a non-None ``current_cost_per_run_usd`` even though the model
     is unresolvable. This test asserts the cost figure stays unavailable.
     """
@@ -1008,13 +1378,20 @@ def test_heterogeneous_model_excluded_from_pricing_aggregation(monkeypatch: pyte
 
     # No priced rows → all cost figures are None (matches cost_estimation
     # contract — heterogeneous rows skipped before pricing lookup).
-    assert result.summary.current_cost_per_run_usd is None
-    assert result.summary.optimized_cost_per_run_usd is None
+    assert result.summary.actually_paid_usd is None
+    assert result.summary.no_cache_hypothetical_usd is None
+    assert result.summary.first_run_with_cache_hypothetical_usd is None
     # Heterogeneous models DO NOT enter unavailable_models (they have model="")
     # so the "all 1 models lack pricing" branch doesn't fire.
     assert result.summary.unavailable_models == ()
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/render_text.py",
+    line=371,
+    revert="elif s.heterogeneous_model_node_count == s.total_llm_calls_estimated:",
+    expected_failure="all-heterogeneous branch never fires — wrong-cause 'set settings.default_model' hint surfaces",
+)
 def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest.MonkeyPatch) -> None:
     """All-heterogeneous workflow renders the right cause, not the wrong one.
 
@@ -1045,6 +1422,12 @@ def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest
     assert "workflow has no LLM nodes" not in rendered
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/render_text.py",
+    line=924,
+    revert='return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache) or row.model_is_heterogeneous',
+    expected_failure="heterogeneous-row clause dropped — pure-greenfield het rows hidden, no per-call section",
+)
 def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     """Per-call section shows heterogeneous rows even on pure greenfield.
 
@@ -1079,6 +1462,12 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
     assert "${item.model}" not in rendered
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/render_text.py",
+    line=120,
+    revert="heterogeneous_node_paths=s.heterogeneous_model_node_paths",
+    expected_failure="kwarg dropped from caller — heterogeneous node names absent from scale line",
+)
 def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch) -> None:
     """Header names which nodes have varying models, not just the count.
 
@@ -1122,6 +1511,12 @@ def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch)
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/render_text.py",
+    line=418,
+    revert='return f"unavailable ({unavailable_models[0]} lacks pricing data)"',
+    expected_failure="N==1 branch missing — falls through to plural form 'all 1 models lack pricing'",
+)
 def test_format_cost_names_single_unpriced_model() -> None:
     """When exactly one model lacks pricing, name it directly.
 
@@ -1402,6 +1797,12 @@ def test_heterogeneous_batch_with_declared_cache_uses_estimator_tier(
     )
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=1261,
+    revert='and row.cacheable_data_source != "trace"',
+    expected_failure="trace-evidence guard dropped — below-min-tokens fires even when trace shows cache fired",
+)
 def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -1697,6 +2098,12 @@ def test_declared_partial_memo_falls_through_to_estimator_end_to_end(
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=1029,
+    revert="resolved_prompt, has_unresolved = _resolve_prompt_for_tokenization(prompt, ctx, node)",
+    expected_failure="resolved_prompt undefined — NameError on next call to _estimate_row_tokens",
+)
 def test_analyze_end_to_end_resolves_prompt_template_for_tokenization() -> None:
     """Test 3 — Resolved prompt for tokenization.
 
@@ -1739,9 +2146,14 @@ def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
     a known ``cost_usd``. Verifies that ``summary.current_cost_per_run_usd``
     reflects the recorded cost, NOT the recompute fallback.
 
-    Mutation contract: revert ``cost_usd_for_node`` to always return None
-    -> analyzer falls back to ``tokens x full_rate`` recompute -> assertion
-    on the smaller recorded cost fails.
+    The mutation surface that defends this test moved across the trace-driven
+    rollup and Phase 4 cost-split work — ``_build_summary`` calls
+    ``compute_actually_paid`` which prefers ``ctx.trace.total_cost(...)``
+    (see ``test_summary_current_cost_includes_sub_workflow_costs_via_trace``
+    for the marker) and falls back to ``row.cost_usd`` summation (see
+    ``test_actually_paid_sums_row_cost_usd_when_set``). Both markers defend
+    this test's assertion via the production code path; an explicit marker
+    here would only duplicate them.
     """
     workflow_ir = {
         "ir_version": "0.1.0",
@@ -1794,9 +2206,9 @@ def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
     finally:
         Path(trace_file).unlink(missing_ok=True)
 
-    assert analysis.summary.current_cost_per_run_usd is not None
+    assert analysis.summary.actually_paid_usd is not None
     # Within ±5% of recorded cost (no recompute drift).
-    assert abs(analysis.summary.current_cost_per_run_usd - 0.00210488) / 0.00210488 < 0.05
+    assert abs(analysis.summary.actually_paid_usd - 0.00210488) / 0.00210488 < 0.05
     # Cost data source on the row reflects trace tier.
     assert analysis.per_call[0].cost_data_source == "trace"
     assert analysis.per_call[0].cost_usd is not None

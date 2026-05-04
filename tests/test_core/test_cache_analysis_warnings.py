@@ -31,6 +31,7 @@ from pflow.core.diagnostic import (
     Severity,
     deduplicate_diagnostics,
 )
+from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Catalog integrity
@@ -112,6 +113,7 @@ def test_make_diagnostic_order_mismatch_uses_bare_identifier_format() -> None:
     diag = make_diagnostic(
         "cache.order-mismatch",
         node_id="write-lyrics",
+        affected_workflow="x.pflow.md",
         declared=["concept", "concept_brief"],
         actual=["concept_brief", "concept"],
         declared_str="[concept, concept_brief]",
@@ -131,6 +133,7 @@ def test_make_diagnostic_below_min_tokens() -> None:
     diag = make_diagnostic(
         "cache.below-min-tokens",
         node_id="rewrite",
+        affected_workflow="x.pflow.md",
         model="claude-sonnet-4-5",
         cacheable_tokens=512,
         min_tokens=1024,
@@ -145,6 +148,7 @@ def test_make_diagnostic_padding_advisory_with_savings() -> None:
     diag = make_diagnostic(
         "cache.padding-advisory",
         node_id="review-narrative",
+        affected_workflow="x.pflow.md",
         current_subset=["song-architecture.response"],
         suggested_subset=["concept", "creative-direction.response", "song-architecture.response"],
         savings_usd=0.04,
@@ -160,6 +164,7 @@ def test_make_diagnostic_padding_advisory_with_null_savings() -> None:
     diag = make_diagnostic(
         "cache.padding-advisory",
         node_id="review-narrative",
+        affected_workflow="x.pflow.md",
         current_subset=["a"],
         suggested_subset=["a", "b"],
         savings_usd=None,
@@ -173,6 +178,7 @@ def test_make_diagnostic_invalid_on_non_llm_combined_diagnostic() -> None:
     diag = make_diagnostic(
         "cache.invalid-on-non-llm",
         node_id="heavy-compute",
+        affected_workflow="x.pflow.md",
         node_type="shell",
         invalid_fields=["prompt_cache", "prewarm"],
         invalid_fields_csv="prompt_cache, prewarm",
@@ -192,6 +198,7 @@ def test_make_diagnostic_invalid_on_non_llm_dedup() -> None:
     diag1 = make_diagnostic(
         "cache.invalid-on-non-llm",
         node_id="X",
+        affected_workflow="x.pflow.md",
         node_type="shell",
         invalid_fields=["prompt_cache"],
         invalid_fields_csv="prompt_cache",
@@ -201,6 +208,7 @@ def test_make_diagnostic_invalid_on_non_llm_dedup() -> None:
     diag2 = make_diagnostic(
         "cache.invalid-on-non-llm",
         node_id="X",
+        affected_workflow="x.pflow.md",
         node_type="shell",
         invalid_fields=["prompt_cache"],
         invalid_fields_csv="prompt_cache",
@@ -225,7 +233,52 @@ def test_make_diagnostic_missing_required_context_raises() -> None:
 
 def test_make_diagnostic_unknown_id_raises() -> None:
     with pytest.raises(KeyError):
-        make_diagnostic("cache.does-not-exist", node_id="X")
+        make_diagnostic("cache.does-not-exist", node_id="X", affected_workflow="x.pflow.md")
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/warning_catalog.py",
+    line=789,
+    revert="_ensure_workflow_scope(warning_id, node_id, context_kwargs)",
+    expected_failure="guard skipped — diagnostic constructed silently without affected_workflow",
+)
+def test_make_diagnostic_node_id_without_affected_workflow_raises() -> None:
+    """Workflow-scope contract: a ``cache.*`` diagnostic carrying a node_id MUST
+    also carry ``affected_workflow``. Same node id can appear in parent and
+    child workflows; without the workflow tag the renderer would key warnings
+    against the wrong row.
+
+    Mutation contract: revert ``_ensure_workflow_scope`` in
+    ``warning_catalog.py`` (or skip the call from ``make_diagnostic``) → this
+    test fails because the diagnostic is constructed silently with no
+    workflow scope, and the renderer falls back to the wrong row.
+    """
+    with pytest.raises(KeyError, match="affected_workflow"):
+        make_diagnostic(
+            "cache.below-min-tokens",
+            node_id="rewrite",
+            model="claude-sonnet-4-5",
+            cacheable_tokens=512,
+            min_tokens=1024,
+        )
+
+
+def test_make_diagnostic_workflow_level_finding_does_not_require_affected_workflow() -> None:
+    """The workflow-scope guard fires only when ``node_id`` is set. Workflow-level
+    findings (``node_id=None``) are scoped by their own context (e.g.
+    ``parent_workflow`` for cross-workflow boundaries) and don't go through the
+    per-row warning lookup that the guard defends.
+    """
+    diag = make_diagnostic(
+        "cache.cross-workflow-prose-mismatch",
+        parent_workflow="p.pflow.md",
+        child_workflow="c.pflow.md",
+        chunk_name="concept",
+        parent_prose="P",
+        child_prose="C",
+    )
+    assert diag.node_id is None
+    assert diag.id == "cache.cross-workflow-prose-mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +289,7 @@ def test_make_diagnostic_unknown_id_raises() -> None:
 _BASE_DISCREPANCY_KWARGS = {
     "node_id": "X",
     "trace_path": "songs[1]",
+    "affected_workflow": "x.pflow.md",
     "predicted_pct": 80,
     "predicted_label": "hit",
     "actual_pct": 20,
@@ -251,7 +305,7 @@ _BASE_DISCREPANCY_KWARGS = {
     [
         (
             "ttl_expiry",
-            {"affected_workflow": "x.pflow.md"},
+            {},
             "Consider `- ttl: 1h` on the x.pflow.md ## Cache block.",
             {"suggested_ttl": "1h", "affected_workflow": "x.pflow.md"},
         ),
@@ -294,11 +348,15 @@ def test_cache_discrepancy_dispatch_per_cause(
 
 
 def test_cache_discrepancy_missing_per_cause_required_key_raises() -> None:
-    """ttl_expiry requires affected_workflow; missing → KeyError."""
-    with pytest.raises(KeyError):
+    """``chunk_skipped`` requires ``skipped_chunk`` on the per-cause action payload;
+    missing → KeyError. Uses ``chunk_skipped`` rather than ``ttl_expiry`` so the
+    per-cause check is what fires — ``ttl_expiry``'s required key is
+    ``affected_workflow`` which is also enforced by the workflow-scope contract,
+    making it impossible to test the per-cause check in isolation."""
+    with pytest.raises(KeyError, match="skipped_chunk"):
         make_diagnostic(
             "cache.discrepancy",
-            root_cause="ttl_expiry",
+            root_cause="chunk_skipped",
             **_BASE_DISCREPANCY_KWARGS,
         )
 
@@ -364,6 +422,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
     samples: dict[str, dict] = {
         "cache.order-mismatch": {
             "node_id": "X",
+            "affected_workflow": "x.pflow.md",
             "declared": ["a", "b"],
             "actual": ["b", "a"],
             "declared_str": "[a, b]",
@@ -378,6 +437,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
         },
         "cache.batch-prewarm-recommended": {
             "node_id": "score",
+            "affected_workflow": "x.pflow.md",
             "batch_size": 34,
             "prefix_tokens_estimated": 2100,
             "savings_pct": 89,
@@ -385,6 +445,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
         },
         "cache.dynamic-before-static": {
             "node_id": "score",
+            "affected_workflow": "x.pflow.md",
             "dynamic_ref": "chorus_text",
             "dynamic_line": 3,
             "cacheable_tokens": 1640,
@@ -394,12 +455,14 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
         },
         "cache.padding-advisory": {
             "node_id": "review",
+            "affected_workflow": "x.pflow.md",
             "current_subset": ["a"],
             "suggested_subset": ["a", "b"],
             "savings_usd": 0.04,
         },
         "cache.below-min-tokens": {
             "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
             "model": "claude-sonnet-4-5",
             "cacheable_tokens": 512,
             "min_tokens": 1024,
@@ -422,6 +485,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
         "cache.discrepancy": dict(_BASE_DISCREPANCY_KWARGS, root_cause="key_mismatch"),
         "cache.invalid-on-non-llm": {
             "node_id": "X",
+            "affected_workflow": "x.pflow.md",
             "node_type": "shell",
             "invalid_fields": ["prompt_cache"],
             "invalid_fields_csv": "prompt_cache",
@@ -430,6 +494,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
         },
         "cache.prewarm-no-prefix": {
             "node_id": "score",
+            "affected_workflow": "x.pflow.md",
             "batch_alias": "item",
             "first_dynamic_position": 0,
         },
@@ -444,6 +509,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
         },
         "cache.opaque-prompt": {
             "node_id": "process-items",
+            "affected_workflow": "x.pflow.md",
             "var_ref": "item.prompt",
             "upstream_node_id": "prepare-items",
         },

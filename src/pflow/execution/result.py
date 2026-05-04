@@ -180,3 +180,4 @@ class Plan:
     entries: list[PlanEntry]
     summary: PlanSummary
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    workflow_path: str | None = None

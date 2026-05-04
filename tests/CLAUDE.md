@@ -317,7 +317,47 @@ def test_warns(caplog):
 ### 18. Rewritten Tests That Assert Less Are Regression Signals
 When rewriting tests during a refactor, if the new test asserts LESS than the original, the new implementation likely dropped behavior — the old test wasn't over-specified. Investigate before weakening the assertion.
 
-### 19. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
+### 19. Mutation-Contract Markers — Optional Documentation, Ad-Hoc Audit
+
+`@mutation_contract` is a **lightweight documentation pattern** for tests that defend a specific production line. The decorator carries machine-readable metadata (file, line, revert substring, expected failure) so readers can find what each test claims to defend; the verifier (`make mutation-audit`) re-runs that claim on demand.
+
+```python
+from tests.shared.mutation_contract import mutation_contract
+
+@mutation_contract(
+    file="src/pflow/core/trace_tree.py",
+    line=215,
+    revert='if event.get("cached") and event.get("llm_call") is None',
+    expected_failure="cost_for_node degrades to (None, 'unavailable')",
+)
+def test_cost_for_node_cached_event_returns_zero_trace() -> None:
+    """Mutation contract: drop the cached short-circuit -> ..."""
+    ...
+```
+
+**Positioning** — operational data over four cleanup phases shows the markers' actual catch rate is low (mostly line-shift drift after refactors, occasionally an anachronistic contract whose target code has moved). The markers earn their keep as **documentation that doesn't lie**, not as a per-PR safety net. The verifier is an audit tool, not a quality gate.
+
+- **Optional on new tests.** Write `@mutation_contract` when you want the next reader to know exactly what your test defends. Skip it when the test's assertions and the production code path are obvious.
+- **Run `make mutation-audit` ad-hoc.** Before a release, when reviewing a sketchy refactor, or when test count balloons — not on every PR. The audit catches test rot (assertion no longer maps to claimed line) and stale line-pin drift.
+- **Conftest enforcement is alignment-only.** `tests/conftest.py` fails collection if a docstring claims `Mutation contract:` without a `@mutation_contract` decorator. It does NOT require decoration of new tests — only enforces honesty when a test author chooses to claim a contract.
+
+**Mechanics** (for when you run the audit). For each `@mutation_contract`-decorated test, the verifier:
+1. Backs up the production file.
+2. Replaces the matched line with `<indent>pass  # MUTATED: <original>`.
+3. Runs only that test via subprocess pytest.
+4. Restores the file unconditionally.
+5. Asserts the test **failed** under mutation; passes count as broken contracts.
+
+**Things that bite** (preserved here so re-derivation isn't needed):
+
+- `revert` must be a unique substring appearing verbatim on `line`. Production refactors that rename or move the matched substring fail loudly with `revert substring not found` — that's the drift signal, not a verifier bug.
+- Import-skip is a verification failure. A test module that fails to import hides every marker it contains; the verifier exits non-zero when any module fails to import.
+- Pyc cache invalidation is load-bearing. The verifier deletes `__pycache__/*.pyc` for the mutated file before each subprocess. Python's pyc mtime check is second-resolution; multiple mutations within one second silently use stale bytecode without this step.
+- Subprocess timeout (60s) prevents verifier hangs. A mutation that hangs the test indefinitely is treated as "mutation caught."
+
+**Cost note** — every refactor that touches `line` numbers in marked production files pays a small mechanical-update tax (find new line, update marker). For load-bearing contracts the tax is worth it; for cosmetic asserts it isn't. Bias toward markers on the architectural seams (cache walker policy, projection vs actually-paid split, workflow-scope keying) and skip them on routine assertions.
+
+### 20. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
 Unit tests that mock the boundary you're testing will pass while the real pipeline breaks. When a feature crosses ≥2 layers (e.g. shared store → engine → runner → formatter), write at least one test that runs through `WorkflowRunner().run()` and inspects `result.shared_after` / `result.diagnostics` end-to-end. Failure modes that this catches:
 - Engine archives data correctly but the runner drops `shared_store` on the exception path
 - Diagnostic context is populated correctly but the renderer never consumes it

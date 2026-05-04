@@ -36,6 +36,7 @@ _DISCREPANCY_BASE = {
     "cache_age_sec": None,
     "predicted_cache_key": None,
     "actual_cache_key": None,
+    "affected_workflow": "x.pflow.md",
 }
 
 
@@ -44,7 +45,13 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
     samples: dict[str, tuple[str | None, dict]] = {
         "cache.order-mismatch": (
             "X",
-            {"declared": ["a", "b"], "actual": ["b", "a"], "declared_str": "[a, b]", "actual_str": "[b, a]"},
+            {
+                "declared": ["a", "b"],
+                "actual": ["b", "a"],
+                "declared_str": "[a, b]",
+                "actual_str": "[b, a]",
+                "affected_workflow": "x.pflow.md",
+            },
         ),
         "cache.unused-chunk": (None, {"chunk_name": "topic", "source_line": 12}),
         "cache.shared-context-undeclared": (
@@ -53,7 +60,13 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
         ),
         "cache.batch-prewarm-recommended": (
             "score",
-            {"batch_size": 34, "prefix_tokens_estimated": 2100, "savings_pct": 89, "savings_usd": 0.12},
+            {
+                "batch_size": 34,
+                "prefix_tokens_estimated": 2100,
+                "savings_pct": 89,
+                "savings_usd": 0.12,
+                "affected_workflow": "x.pflow.md",
+            },
         ),
         "cache.dynamic-before-static": (
             "score",
@@ -64,6 +77,7 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_calls": 136,
                 "savings_usd": 0.31,
                 "projected_ratio_pct": 87,
+                "affected_workflow": "x.pflow.md",
             },
         ),
         "cache.padding-advisory": (
@@ -72,11 +86,17 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "current_subset": ["a"],
                 "suggested_subset": ["a", "b"],
                 "savings_usd": 0.04,
+                "affected_workflow": "x.pflow.md",
             },
         ),
         "cache.below-min-tokens": (
             "rewrite",
-            {"model": "claude-sonnet-4-5", "cacheable_tokens": 512, "min_tokens": 1024},
+            {
+                "model": "claude-sonnet-4-5",
+                "cacheable_tokens": 512,
+                "min_tokens": 1024,
+                "affected_workflow": "x.pflow.md",
+            },
         ),
         "cache.cross-workflow-prose-mismatch": (
             None,
@@ -111,11 +131,12 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "invalid_fields_csv": "prompt_cache",
                 "is_or_are": "is",
                 "plural_s": "",
+                "affected_workflow": "x.pflow.md",
             },
         ),
         "cache.prewarm-no-prefix": (
             "score",
-            {"batch_alias": "item", "first_dynamic_position": 0},
+            {"batch_alias": "item", "first_dynamic_position": 0, "affected_workflow": "x.pflow.md"},
         ),
         "cache.consolidate-to-root-recommended": (
             None,
@@ -134,6 +155,7 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
             {
                 "var_ref": "item.prompt",
                 "upstream_node_id": "prepare-items",
+                "affected_workflow": "x.pflow.md",
             },
         ),
     }
@@ -205,18 +227,15 @@ def test_per_id_diagnostic_json_round_trip(warning_id: str) -> None:
 
 def test_json_format_version_consumer_rule_holds() -> None:
     """Consumer rule: ``format_version.startswith(JSON_FORMAT_VERSION_MAJOR + ".")``
-    accepts current ``"2.x"`` AND any future ``"2.x"`` minor bump. Lock both.
+    accepts current ``"4.x"`` AND any future ``"4.x"`` minor bump. Lock both.
 
-    Stage-1 final UX pass (Concern B): version bumped 1.0 → 1.1 because
-    ``per_call[].cacheable_tokens_estimated`` and
-    ``per_call[].cache_ratio_pct`` semantics extended to populate from the
-    suggested-blocks pass in greenfield mode. Field shapes unchanged; the
-    consumer rule (1.x catches both) remains valid.
-
-    Track A bumped 2.0 → 2.1 (additive: ``per_call[].cost_usd``,
-    ``per_call[].cost_data_source``).
+    Phase 5 (Task 159 cleanup) bumped 3.x → 4.0 — breaking field rename:
+    the three overloaded summary cost fields (``current_cost_per_run_usd``,
+    ``cost_without_caching_usd``, ``rerun_cost_per_run_usd``) were replaced
+    with five atomic primitives, each carrying one meaning regardless of
+    greenfield/trace context.
     """
-    assert JSON_FORMAT_VERSION.startswith("2.")
+    assert JSON_FORMAT_VERSION.startswith("4.")
     assert JSON_FORMAT_VERSION.startswith(JSON_FORMAT_VERSION_MAJOR + ".")
 
 

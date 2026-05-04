@@ -18,6 +18,7 @@ from pflow.core.trace_report import (
     _build_output_lookup,
     _build_summary,
     _collect_errors,
+    _compute_batch_item_cost,
     _compute_event_cost,
     _compute_outlier_threshold,
     _detect_anomalies,
@@ -30,6 +31,7 @@ from pflow.core.trace_report import (
     _suggest_template_fixes,
     generate_report,
 )
+from tests.shared.mutation_contract import mutation_contract
 
 # --- Fixtures ---
 
@@ -719,11 +721,23 @@ class TestComputeEventCost:
         # 0.01 + 0.02 + 0.03 = 0.06
         assert result == pytest.approx(0.06)
 
-    def test_compute_event_cost_on_batch_item_directly(self) -> None:
+    @mutation_contract(
+        file="src/pflow/core/trace_report.py",
+        line=199,
+        revert="cost, source = tree.cost_for_batch_item(item)",
+        expected_failure="batch-item entry point bypassed — falls through to (None, 'unavailable')",
+    )
+    def test_compute_batch_item_cost_recurses_into_events(self) -> None:
         """Cost computed on a batch item dict (not parent event).
 
         This is the path used by _build_node_summary's items table.
-        Batch items store child events under "events", not "sub_workflow_events".
+        Batch items store child events under "events", not "sub_workflow_events"
+        — so they get a dedicated entry point that knows the shape difference.
+
+        Mutation contract: revert _compute_batch_item_cost to delegate to
+        TraceTree.cost_for_event (the real-event path) → assertion fails with
+        result == None because cost_for_event short-circuits to "unavailable"
+        for an event without node_id.
         """
         batch_item = {
             "index": 0,
@@ -742,7 +756,7 @@ class TestComputeEventCost:
                 ),
             ],
         }
-        result = _compute_event_cost(batch_item)
+        result = _compute_batch_item_cost(batch_item)
         assert result == pytest.approx(0.39)
 
 

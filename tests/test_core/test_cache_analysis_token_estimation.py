@@ -12,6 +12,7 @@ from pflow.core.cache_analysis.token_estimation import (
     estimate_cacheable_tokens,
     estimate_tokens,
 )
+from tests.shared.mutation_contract import mutation_contract
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -625,6 +626,12 @@ def test_find_llm_event_returns_first_matching_event() -> None:
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/token_estimation.py",
+    line=163,
+    revert="if chunks and model and (ctx is not None or memo_cache is not None):",
+    expected_failure="Tier-2 dispatch skipped — cacheable falls to Tier 3/4 unavailable",
+)
 def test_estimate_cacheable_tokens_uses_parameters_for_workflow_input_ref() -> None:
     """Test 2 — Greenfield Tier-2 parameters fallback.
 
@@ -637,13 +644,9 @@ def test_estimate_cacheable_tokens_uses_parameters_for_workflow_input_ref() -> N
     from pflow.core.cache_analysis.token_estimation import estimate_cacheable_tokens
 
     workflow_ir = {"inputs": {"context": {"type": "string"}}}
-    ctx = AnalysisContext(
+    ctx = AnalysisContext.build(
         workflow_ir=workflow_ir,
         parameters={"context": "X" * 5000},
-        memo_cache=None,
-        trace_data=None,
-        workflow_path=None,
-        base_path=None,
     )
     tokens, source = estimate_cacheable_tokens(
         declared_subset=None,
@@ -660,6 +663,12 @@ def test_estimate_cacheable_tokens_uses_parameters_for_workflow_input_ref() -> N
     assert source == "parameters"
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/context.py",
+    line=174,
+    revert="if value is not None:",
+    expected_failure="parameters-first precedence dropped — memo's stale value wins",
+)
 def test_resolve_ref_value_workflow_input_wins_over_memo() -> None:
     """Test 12 — Workflow-input parameters wins over memo (Track B asymmetry).
 
@@ -679,18 +688,21 @@ def test_resolve_ref_value_workflow_input_wins_over_memo() -> None:
             return None
 
     workflow_ir = {"inputs": {"context": {"type": "string"}}}
-    ctx = AnalysisContext(
+    ctx = AnalysisContext.build(
         workflow_ir=workflow_ir,
         parameters={"context": "NEW question from agent"},
         memo_cache=FakeMemo(),
-        trace_data=None,
-        workflow_path=None,
-        base_path=None,
     )
     value = ctx.resolve_ref_value("context")
     assert value == "NEW question from agent"
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/context.py",
+    line=239,
+    revert="if isinstance(value, (str, list, dict, tuple, set)) and not value:",
+    expected_failure="empty-collection guard dropped — empty string returns as real value, not None",
+)
 def test_resolve_ref_value_returns_none_for_empty_string() -> None:
     """Test 9 — Empty-string parameter (silent-failures defense).
 
@@ -705,13 +717,9 @@ def test_resolve_ref_value_returns_none_for_empty_string() -> None:
     from pflow.core.cache_analysis.context import AnalysisContext
 
     workflow_ir = {"inputs": {"context": {"type": "string"}}}
-    ctx = AnalysisContext(
+    ctx = AnalysisContext.build(
         workflow_ir=workflow_ir,
         parameters={"context": ""},
-        memo_cache=None,
-        trace_data=None,
-        workflow_path=None,
-        base_path=None,
     )
     assert ctx.resolve_ref_value("context") is None
 
@@ -725,6 +733,12 @@ def test_resolve_ref_value_returns_none_for_empty_string() -> None:
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/token_estimation.py",
+    line=114,
+    revert='return token_count, "estimator-partial" if has_unresolved_refs else "estimator"',
+    expected_failure="partial branch dropped — unresolved-refs case still labels 'estimator' (over-confident)",
+)
 def test_estimate_tokens_marks_partial_when_unresolved_refs_present() -> None:
     """Test 10 — Partial-resolution detection (silent-failures defense).
 

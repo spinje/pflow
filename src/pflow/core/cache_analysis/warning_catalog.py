@@ -426,12 +426,13 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         # for JSON consumers that read raw values; the rendered message uses
         # the explicit label.
         message_template=(
-            "{node_id} (path: {trace_path}): predicted {predicted_label}, "
+            "{node_id} in {workflow_path_short} (trace: {trace_path}): predicted {predicted_label}, "
             "actual {actual_pct}% read — root cause: {root_cause_summary}"
         ),
         required_context_keys=(
             ("node_id", str),
             ("trace_path", str),
+            ("workflow_path_short", str),
             ("predicted_pct", int),
             ("predicted_label", str),
             ("actual_pct", int),
@@ -783,7 +784,9 @@ def make_diagnostic(
     if warning_id not in CACHE_WARNING_CATALOG:
         raise KeyError(f"Unknown cache warning ID: {warning_id!r}. Catalog has {len(CACHE_WARNING_CATALOG)} entries.")
     spec = CACHE_WARNING_CATALOG[warning_id]
+    _ensure_discrepancy_workflow_scope(warning_id, context_kwargs)
     _validate_required(spec, context_kwargs, node_id, warning_id)
+    _ensure_workflow_scope(warning_id, node_id, context_kwargs)
 
     # Format-dict merges node_id (helper kwarg) with all context kwargs so
     # message / suggestions / path templates can reference {node_id}.
@@ -916,6 +919,42 @@ def make_diagnostic(
         suggestions=suggestions if suggestions else None,
         context=context,
         see_also=["caching"],
+    )
+
+
+def _ensure_discrepancy_workflow_scope(warning_id: str, context_kwargs: dict[str, Any]) -> None:
+    """Backfill ``workflow_path_short`` for ``cache.discrepancy`` from ``affected_workflow``.
+
+    The workflow-scope contract (``_ensure_workflow_scope``) guarantees
+    ``affected_workflow`` is present whenever ``node_id`` is, and production
+    ``cache.discrepancy`` always carries both. The catalog's
+    ``required_context_keys`` for ``cache.discrepancy`` includes
+    ``workflow_path_short``; this helper derives it from ``affected_workflow``
+    so callers don't have to thread two redundant keys.
+    """
+    if warning_id != "cache.discrepancy" or "workflow_path_short" in context_kwargs:
+        return
+    affected_workflow = context_kwargs.get("affected_workflow")
+    if affected_workflow is None:
+        return
+    context_kwargs["workflow_path_short"] = _basename_for_workflow(str(affected_workflow))
+
+
+def _ensure_workflow_scope(warning_id: str, node_id: str | None, context_kwargs: dict[str, Any]) -> None:
+    """Workflow-scope contract: any cache.* diagnostic carrying a node_id must
+    also carry the workflow_path that node_id is scoped to.
+
+    Same node id can appear in parent and child workflows; without
+    ``affected_workflow`` the renderer would key warnings against the wrong
+    row. Producers in ``analyze.py`` thread ``ctx.workflow_path`` directly;
+    tests must do the same. Top-10% codebases enforce workflow-scope at the
+    producer boundary, not in renderer fallbacks.
+    """
+    if node_id is None or "affected_workflow" in context_kwargs:
+        return
+    raise KeyError(
+        f"make_diagnostic({warning_id!r}, node_id={node_id!r}) is missing required key 'affected_workflow'. "
+        "Pass the workflow_path the node belongs to so the renderer can scope per-row warnings correctly."
     )
 
 

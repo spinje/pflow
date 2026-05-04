@@ -7,6 +7,7 @@ from pflow.core.cache_analysis.analyze import (
     CacheAnalysis,
     CrossWorkflowFindings,
 )
+from pflow.core.cache_analysis.cost_estimation import CostTier
 from pflow.core.cache_analysis.summarize import summarize, summarize_from_analysis
 from pflow.core.diagnostic import Severity
 
@@ -17,10 +18,16 @@ def _analysis_with(
     optimized: float | None = None,
     aggregate_savings: float | None = None,
 ) -> CacheAnalysis:
+    """``current`` populates both ``actually_paid_usd`` and the no-cache
+    anchor so summarize's percentage-anchor logic has the same baseline as
+    pre-Phase-5 (when ``current_cost_per_run_usd`` was a single overloaded
+    field)."""
     summary = AnalysisSummary(
-        current_cost_per_run_usd=current,
-        optimized_cost_per_run_usd=optimized,
-        rerun_cost_per_run_usd=None,
+        actually_paid_usd=current,
+        actually_paid_tier=CostTier.TRACE if current is not None else CostTier.UNAVAILABLE,
+        no_cache_hypothetical_usd=current,
+        first_run_with_cache_hypothetical_usd=optimized,
+        rerun_within_ttl_hypothetical_usd=None,
         savings_pct_first_run=None,
         savings_pct_rerun=None,
         blocking_errors=0,

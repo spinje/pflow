@@ -372,12 +372,30 @@ async def analyze_cache(
     ``cross_workflow``, ``warnings``, ``notes``.
 
     **Version policy**: ``format_version`` follows semver-ish. Minor bumps
-    (``2.0`` → ``2.1``) are additive (new fields, new warning IDs); consumers
-    tolerant via ``format_version.startswith("2.")`` continue to work.
-    Major bumps (``2.x`` → ``3.x``) are breaking; pinned consumers refuse to
-    consume. Mirrors the trace ``2.x`` consumer policy (note: distinct
-    namespace — analyze-cache JSON and trace JSON share major-version
-    vocabulary but are independent schemas).
+    (``4.0`` → ``4.1``) are additive (new fields, new warning IDs); consumers
+    tolerant via ``format_version.startswith("4.")`` continue to work. Major
+    bumps (``4.x`` → ``5.x``) are breaking; pinned consumers refuse to consume.
+
+    **4.0 cost-field shape**: ``summary`` carries five atomic cost
+    primitives, each with ONE meaning (independent of greenfield/trace
+    context):
+
+      - ``actually_paid_usd`` (number | null): trace-driven recorded cost;
+        ``null`` for greenfield. Includes provider-side implicit caching
+        (Gemini) and any other discount the trace recorded.
+      - ``actually_paid_tier`` (string): ``"trace"`` / ``"trace_partial"``
+        / ``"unavailable"``.
+      - ``no_cache_hypothetical_usd`` (number | null): pure no-cache
+        recompute baseline.
+      - ``first_run_with_cache_hypothetical_usd`` (number | null):
+        first-run projection that honors declared ``prompt_cache:``.
+      - ``rerun_within_ttl_hypothetical_usd`` (number | null): all-cacheable-
+        at-read-rate projection.
+
+    Sub-workflow rollup entries carry the same four primitives at child
+    scope. The deprecated 3.x fields (``current_cost_per_run_usd``,
+    ``cost_without_caching_usd``, ``rerun_cost_per_run_usd``) were
+    removed because their meaning shifted with greenfield/trace context.
 
     **Stage 0 (2.0) shape changes**: ``recommended_actions`` is a
     renderer-derived view (cross-workflow alignment IDs filtered into

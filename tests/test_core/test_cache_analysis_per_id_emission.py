@@ -17,6 +17,7 @@ import pytest
 
 from pflow.core.cache_analysis.analyze import analyze
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+from tests.shared.mutation_contract import mutation_contract
 
 
 def _word_count(_model: str | None, text: str | None, **_kwargs: Any) -> tuple[int, str]:
@@ -229,6 +230,12 @@ def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest
     assert diag.context["child_prose"] == "Child prose\n"
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=2245,
+    revert="destinations=destinations,",
+    expected_failure="destinations kwarg dropped — diagnostic context lacks destinations key",
+)
 def test_cross_workflow_value_flow_collapses_per_value_with_destinations(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stage B.1 (Task 159) — by-value collapse contract.
 
@@ -408,6 +415,12 @@ def test_value_flow_filtered_groups_emit_transparency_note(monkeypatch: pytest.M
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=2245,
+    revert="destinations=destinations,",
+    expected_failure="GROUP-BY collapse breaks — assertion on destinations list fails",
+)
 def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -492,6 +505,12 @@ def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
     assert destinations[1]["child_workflow"] == "/abs/review-emotional.pflow.md"
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=2196,
+    revert="root = _template_root_segment(candidate.parent_value_expr)",
+    expected_failure="GROUP-BY root undefined in _emit_value_flow_groups — NameError",
+)
 def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """Different sub-paths of the same root collapse to ONE group.
 
@@ -580,6 +599,12 @@ def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch)
     assert diag.context["destination_count"] == 2
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/analyze.py",
+    line=2095,
+    revert="if edge.parent_value_expr in parent_declared or edge.child_input_name in child_declared:",
+    expected_failure="parent-declared suppression dropped — Diagnostic fires when parent already caches",
+)
 def test_value_flow_brownfield_suppression_when_parent_declares(monkeypatch: pytest.MonkeyPatch) -> None:
     """Parent workflow declares the value's root in ## Cache → no Diagnostic.
 
@@ -641,6 +666,12 @@ def test_value_flow_brownfield_suppression_when_parent_declares(monkeypatch: pyt
     assert boundary_findings == []
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/warning_catalog.py",
+    line=182,
+    revert='breakdown = ", ".join(f"{name}: {count}" for name, count in zip(basenames, counts, strict=True))',
+    expected_failure="non-uniform breakdown undefined — NameError or wrong text in non-uniform case",
+)
 def test_value_flow_distribution_clause_uniform_vs_nonuniform(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -982,7 +1013,7 @@ def test_discrepancy_fires_for_key_mismatch_when_prediction_available(
     monkeypatch.setattr(
         analyze_module,
         "_predict_cache_keys",
-        lambda *_args, **_kwargs: ({"gen": "predicted-key"}, []),
+        lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): "predicted-key"}, []),
     )
     trace_path = _write_trace(
         tmp_path,
@@ -1075,7 +1106,7 @@ def test_discrepancy_silent_when_actual_matches_prediction(
     monkeypatch.setattr(
         analyze_module,
         "_predict_cache_keys",
-        lambda *_args, **_kwargs: ({"gen": "shared-key"}, []),
+        lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): "shared-key"}, []),
     )
     trace_path = _write_trace(
         tmp_path,
@@ -1305,7 +1336,7 @@ def test_discrepancy_predicted_label_distinguishes_match_mismatch_and_miss(
     monkeypatch.setattr(
         analyze_module,
         "_predict_cache_keys",
-        lambda *_args, **_kwargs: ({"gen": "predicted-key"}, []),
+        lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): "predicted-key"}, []),
     )
     trace_path = _write_trace(
         tmp_path,
@@ -1614,6 +1645,7 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
             actual_pct=0,
             root_cause="key_mismatch",
             root_cause_summary="y",
+            affected_workflow="w",
         )
     )
 
@@ -1649,6 +1681,7 @@ def test_aggregator_caps_at_max_total_and_notes_truncation() -> None:
             actual_pct=0,
             root_cause="key_mismatch",
             root_cause_summary="x",
+            affected_workflow="w",
         )
         for i in range(25)
     ]

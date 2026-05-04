@@ -4937,3 +4937,1131 @@ walker consolidation (#364) + sub-workflow cost rollup (#365) to assess.
 label string, so no test updates required.
 
 ---
+
+## TraceTree + sub-workflow rollup plan completion pass (2026-05-02)
+
+Finished the remaining load-bearing pieces from
+`fix-plans/tracetree-and-subworkflow-rollup-plan.md` on top of the staged
+partial implementation.
+
+### What changed
+
+1. **Phantom-cost suppression**
+   - Added workflow-scoped trace execution indexing keyed by
+     `(workflow_path, node_id)`.
+   - Added `PerCallRow.did_not_execute_in_trace`.
+   - Rows that are statically reachable but absent from a workflow that has
+     trace data remain visible, but are excluded from cost/projection
+     aggregation and render with a `not-executed-in-trace` marker.
+
+2. **Per-workflow parameter views**
+   - Child workflow inputs now resolve through the parent workflow's
+     `AnalysisContext`, including current root parameters and memo-backed
+     parent node outputs.
+   - Unresolved child inputs stay unresolved/partial rather than being
+     fabricated as empty values.
+
+3. **Workflow-scoped trace/token/cost attribution**
+   - Trace LLM payloads are indexed separately from trace costs so events
+     without `cost_usd` still provide token/cacheable evidence.
+   - Parent/child nodes with the same bare id now keep separate rows, token
+     lookup, cost lookup, warning markers, and predicted-key entries.
+   - Root-only advisory helpers are explicitly documented as root-editing
+     behavior; child edit recommendations are surfaced through drill-in.
+
+4. **Real sub-workflow rollup costs**
+   - `summary.sub_workflow_rollup.per_workflow[*].current_cost_usd` is now
+     grouped from traced child leaves.
+   - `cost_without_caching_usd` is computed from each child workflow's rows.
+   - Single-workflow analyses still render `sub_workflow_rollup = null`.
+
+5. **Renderer / agent UX**
+   - Text header includes root vs sub-workflow LLM counts.
+   - Per-call rows group by workflow with `(called by <node>)` on child
+     headings.
+   - Text output emits the sub-workflow drill-in section.
+   - Cycle, depth, and template-items notes now state that current cost is
+     trace-driven and explain the projection coverage gap/remediation.
+   - Discrepancy messages include workflow scope.
+   - JSON includes `per_call[].workflow_path`,
+     `per_call[].did_not_execute_in_trace`, complete rollup costs, and
+     `summary.unavailable_models_by_workflow`.
+
+6. **Fixture/test infrastructure**
+   - Added committed cache-analysis fixtures under
+     `tests/fixtures/cache_analysis/`.
+   - Added `tests/shared/trace_fixture_builder.py`.
+   - Added a production-shape key-set test against
+     `WorkflowTraceCollector`.
+   - Added CliRunner integration tests for sub-workflow cost rollup,
+     same-id scoped rows, and grouped text/drill-in output.
+
+### Deliberate deviations / trust boundary
+
+- Cycle and template-items committed fixture files were not added as separate
+  markdown/json fixtures. Their behavior is covered through cross-workflow
+  note text and renderer/unit paths; adding more static files would duplicate
+  existing coverage without changing production behavior.
+- Suggested-block, padding, and consolidate advisories remain root-only by
+  design because they generate edits for the analyzed file's `## Cache` block.
+  The renderer now directs agents to run `pflow analyze-cache` on child files
+  before making child workflow edits.
+- Trace workflow-path attribution still depends on static `cw_result.edges`;
+  dynamic/template-items child paths cannot be fully attributed without a
+  trace schema change. The output now states this gap explicitly.
+
+### Final trust boundary
+
+- **Verified:** current cost remains trace-driven and includes executed
+  sub-workflow costs; projections remain IR-driven; unexecuted traced-child
+  rows do not inflate aggregates; parent/child same-node-id rows and
+  discrepancy keys are workflow-scoped; renderer/JSON/CLI UX paths are tested.
+- **Assumed correct by design:** static workflow-path attribution through
+  `cw_result.edges` for non-dynamic sub-workflow calls.
+- **Known limitation:** runtime-dynamic template-items child workflow paths
+  cannot be statically enumerated; notes explain that current cost remains
+  trace-driven while per-call/projection coverage under-covers those rows.
+
+---
+
+## Top-10% cleanup pass — Phase 1 (cleanup & deletions)
+
+Verification of the prior pass surfaced shortcuts that fell short of the
+top-10% bar: dead code left behind, backward-compat shims the plan said to
+remove still in place, stale "optimized" docstrings, dual `AnalysisContext`
+construction paths. This phase is the cleanup commit before the architecture
+work in Phases 2-6.
+
+### Critical changes
+
+1. **Workflow-scope contract enforced at producer boundary, not in renderer
+   fallback.** New helper `_ensure_workflow_scope(warning_id, node_id,
+   context_kwargs)` in `warning_catalog.py` raises `KeyError` if a `cache.*`
+   diagnostic carrying a `node_id` is missing `affected_workflow`. The
+   renderer fallback `warnings_by_node.get((None, node_path), [])` is gone.
+   Same node id in parent and child workflows now MUST be disambiguated at
+   the producer side; silent dual-keying via `(None, node_path)` is dead.
+
+2. **Bare-`node_id` lookup fallback in `_predicted_key_for_event` removed.**
+   The function now requires `(workflow_path, node_id)` tuple keys and has
+   no fallback. Producer (`_flatten_plan_keys`) emits tuple keys
+   exclusively; tests that monkeypatched with bare-id maps were updated to
+   tuple keys.
+
+3. **`affected_workflow` threaded through every node-scoped producer.**
+   Touched: `_per_node_warnings` (cache.below-min-tokens,
+   cache.prewarm-no-prefix), `_batch_prewarm_recommendations`,
+   `_dynamic_before_static_warnings`, `_opaque_prompt_warnings`. Validator-
+   shipped diagnostics (`cache.invalid-on-non-llm`,
+   `cache.order-mismatch`) flow through `_cache_validator_findings` which
+   now `dataclasses.replace`s each diag to inject `affected_workflow` at
+   the analyze-cache integration point — the validator constructors stay
+   workflow-agnostic. `PaddingCandidate` gained a `workflow_path` field.
+
+4. **Dead code deleted.** `_walk_event_for_cost` (40 LOC, 0 callers),
+   `_accumulate_call_cost`, `_accumulate_child_cost` (24 LOC, 0 callers).
+   These were left orphaned when their logic moved into TraceTree.
+
+5. **`AnalysisContext.__post_init__` removed.** Construction is now
+   single-path through `build()`. Trace JSON → TraceTree compilation
+   happens once at the classmethod, not duplicated in `__post_init__`.
+
+### Deliberate deviation
+
+- **`AnalysisContext` direct construction is not hard-enforced.** The plan
+  asked for `__post_init__` sentinel or class-rename. Verified zero callers
+  use direct construction (production OR tests, all flow through `build()`),
+  so the sentinel would defend against a non-existent caller. Docstring
+  documents the failure mode (passing raw `trace_data` directly to
+  `__init__` produces `ctx.trace=None`) and the future hardening path.
+
+### Mutation contract verified
+
+`test_make_diagnostic_node_id_without_affected_workflow_raises` is the
+guard's defense. Manually verified: comment out the
+`_ensure_workflow_scope(...)` call in `make_diagnostic` → test fails with
+`Failed: DID NOT RAISE <class 'KeyError'>`. Restore → passes.
+
+### Test fidelity fix
+
+`test_cache_discrepancy_missing_per_cause_required_key_raises` previously
+used `ttl_expiry` whose per-cause required key is `affected_workflow` —
+which is now ALSO enforced by the workflow-scope guard. The test still
+raised `KeyError`, but at the wrong check. Switched to `chunk_skipped`
+(per-cause key is `skipped_chunk`) with `match="skipped_chunk"` so the
+test name now matches what's verified.
+
+### Insights worth preserving
+
+- **The plan's "vestigial top-level `event['events']` recursion" claim was
+  wrong.** `trace_report._compute_event_cost` IS called on batch-item dicts
+  (which lack `node_id` and store children under `"events"`, not
+  `"sub_workflow_events"`) — see `_find_notable_items` and `_build_node_summary`
+  callers. Phase 2 needs an explicit `cost_for_batch_item(item)` entry on
+  TraceTree to kill the shape-sniff cleanly.
+
+- **Validator producers are workflow-agnostic by design.**
+  `_make_invalid_on_non_llm_diagnostic` and `_make_order_mismatch_diagnostic`
+  in `core/workflow/data_flow.py` are reused by compile-time and
+  pre-execution validation paths. Adding `workflow_path` parameters to those
+  constructors would have polluted unrelated call sites. The
+  `dataclasses.replace` enrichment at the analyze-cache integration site is
+  the minimal-blast-radius fix.
+
+- **The renderer fallback was the symptom, not the cause.** The real bug
+  was producers forgetting to thread workflow_path. Removing the fallback
+  forced producers to take responsibility. Top-10% rule confirmed: enforce
+  contracts at the producer boundary, not by patching every consumer.
+
+### State after Phase 1
+
+- 6084 tests pass (was 6082 — added `test_make_diagnostic_node_id_without_affected_workflow_raises`
+  and `test_make_diagnostic_workflow_level_finding_does_not_require_affected_workflow`).
+- `make check` clean (ruff, ruff-format, mypy 201 files, deptry).
+- `test_plan_drift.py` 33/33; `test_prompt_cache_hash.py` 15/15 golden baseline.
+- Net code change: ~80 LOC deleted (dead helpers), ~25 LOC added (guard +
+  threading), ~15 producer call sites + ~25 test fixture sites updated.
+
+### Remaining (Phases 2-6)
+
+Phase 2: single TraceTree primitive — consolidate `_iter_trace_event_keys`
+and `_write_node_files` (a third recursive walker the prior pass missed)
+into `TraceTree.walk()`. Add explicit `cost_for_batch_item` entry. ~15
+mutation-contracted tests covering gaps from the prior 8-test surface.
+Phase 3: mutation testing in CI (mutmut + `@mutation_contract` marker
+verifier). Phase 4: split `compute_aggregate_costs` into
+projections-only + actually-paid; eliminate compute-and-override. Phase 5:
+atomic cost primitives + JSON 4.0 (replaces overloaded `current_cost_*`,
+`cost_without_caching_*`, `rerun_cost_*` with named atoms). Phase 6: trace
+2.2 schema with `workflow_path` stamped per event; deletes the
+`cw_result.edges`-threading workaround.
+
+---
+
+## Top-10% cleanup pass — Phase 2 (single TraceTree primitive)
+
+The previous pass left two hand-rolled recursive walkers in production
+(`_iter_trace_event_keys` in analyze.py, `_compute_event_cost`'s
+`if "node_id" not in event` shape sniff in trace_report.py) plus an
+8-test surface where the plan called for ~25. This phase consolidates
+the traversal API, kills the shape sniff with a dedicated entry point,
+and triples the TraceTree mutation-contract test surface.
+
+### Critical changes
+
+1. **`TraceTree.walk()` is now the universal primitive.** Yields every
+   event in the trace tree (top-level, batch_items, batch_items[*].events,
+   sub_workflow_events) as a `WalkEvent` carrying the event itself,
+   `owner_node_id` (closest top-level/batch parent's id), `tier`, and
+   optional `workflow_path` threaded via `edges`. `iter_llm_leaves`
+   becomes a one-line filter: `(we for we in walk(...) if we.has_llm_call)`.
+   Single recursion implementation; cached-subtree skip and workflow_path
+   threading are kwargs.
+
+2. **`WalkEvent` replaces `LlmEventLeaf` as the public type.**
+   `LlmEventLeaf = WalkEvent` aliased for backward compat — runtime
+   shims and analyze-cache shims continue to work unchanged. Renamed
+   because the type is no longer LLM-specific (walk() yields shell, code,
+   etc. events too); `has_llm_call` property distinguishes.
+
+3. **`cost_for_batch_item(item)` is the dedicated batch-item entry.**
+   Batch items have a different shape from real events (lack top-level
+   `node_id`; sub-events stored under `events` not `sub_workflow_events`).
+   Previously the trace_report `_compute_event_cost` function used
+   `if "node_id" not in event` to shape-sniff at the call site; now
+   the shape difference is contained at the TraceTree layer. The
+   trace_report split mirrors: `_compute_event_cost` is for real events,
+   `_compute_batch_item_cost` is for batch items. Four production
+   call sites (`_find_notable_items` ×2, `_build_items_table`,
+   `_append_batch_stats`) updated.
+
+4. **`_iter_trace_event_keys` deleted.** The hand-rolled recursive walker
+   in `analyze.py` that yielded `(workflow_path, node_id)` pairs was a
+   policy duplication. Replaced with a single 4-line loop over
+   `tree.walk()` inside `_build_trace_execution_index`. Same recursion
+   policy (descend sub-workflows, descend cached, edge-threaded
+   workflow_path) — just the shared one.
+
+5. **TraceTree test surface tripled.** From 8 tests → 24 tests. New
+   tests cover the gaps the previous plan called out:
+   - `walk()` yields non-LLM events (defends "filter at walk level"
+     mutation that would break `_iter_executed_keys`).
+   - `walk()` does NOT recurse into top-level `event["events"]` (defends
+     vestigial-branch reintroduction).
+   - `walk()` assigns `owner_node_id` for batch items to the parent
+     (defends drift in attribution to item's own id).
+   - `walk()` skips cached subtrees entirely when `descend_cached_subtrees=False`
+     (defends "skip leaf, recurse into children" partial-skip mutation).
+   - `iter_llm_leaves` skips non-LLM events (filter contract).
+   - `event_for(requires_llm_call=True)` skips non-LLM events with the
+     same node_id — review-plan-C2 multi-event-per-node-id contract.
+   - `cost_for_node` priced/unpriced/partial-batch/missing-node tiers.
+   - `cost_for_batch_item` recurses into `events` and short-circuits
+     for cached items.
+   - `total_cost(include_cached=True)` includes cached priced-zero leaves.
+   - Edge-based workflow_path threading on walk() (preflight for the
+     Phase 6 per-event field).
+   - `LlmEventLeaf is WalkEvent` alias identity.
+
+### Mutation contracts verified manually
+
+Three randomly-chosen contracts manually verified:
+
+- `test_cost_for_node_returns_unavailable_for_missing_node`: revert
+  the `(None, "unavailable")` return to `(0.0, "trace")` in
+  `cost_for_node` → fails with a phantom-zero assertion mismatch.
+- `test_cost_for_batch_item_recurses_into_events`: replace the
+  `events` recursion loop with `for sub_event in []:` →
+  ``cost_for_batch_item`` returns `(None, "unavailable")` instead
+  of `(0.10, "trace")` → both the unit test AND the trace_report
+  test fail.
+- `test_walk_does_not_recurse_into_top_level_event_events_field`:
+  inject a top-level `event["events"]` recursion into walk() →
+  stray inner-llm leaf yielded → `len(walked) == 2` instead of `1`
+  → assertion fails.
+
+The mutation-contract enforcement is still manual at this point;
+Phase 3 wires `mutmut` + a marker-grep CI script so this becomes
+mechanical.
+
+### Insights worth preserving
+
+- **`_write_node_files` was NOT migrated.** It's a recursive walker but
+  its shape doesn't compose with `walk()` — it builds a directory
+  hierarchy keyed by container vs leaf events, and each recursion
+  passes a different `parent_dir` (hierarchical state). Flattening
+  it over `walk()` would lose the directory structure. Per the plan's
+  doc: "For one-level reads (immediate children of a single event)
+  direct dict access is allowed and preferred. The walker primitive is
+  for recursive traversal across the tree shape; flat per-event work
+  doesn't need it." `_write_node_files` is structural-recursion, not
+  traversal-recursion — staying recursive is the right shape.
+
+- **Top-10% rule reconfirmed:** when consolidating walkers, the
+  consolidation MUST yield the universal shape (every event), not
+  just the LLM-only shape. Phase 1's `iter_llm_leaves` was correct
+  for cost summation but couldn't replace `_iter_trace_event_keys`
+  which needed every event for the executed-keys index. The walker
+  has to be the universal primitive; filters compose on top.
+
+- **`cost_for_batch_item` validates the dedicated-entry-point pattern.**
+  Two different shapes (real event vs batch item) calling into the
+  same `cost_for_event` with shape-sniffing was the smell. Two
+  named entry points where each's docstring explains the input shape
+  is the top-10% answer. Same data flow under the hood; the boundary
+  carries the shape contract.
+
+### State after Phase 2
+
+- 6100 tests pass (was 6084 — 16 new TraceTree tests, 1 pre-existing
+  test renamed/refactored to use `_compute_batch_item_cost`).
+- `make check` clean (ruff, ruff-format, mypy 201 files, deptry —
+  pre-existing 41 ruff errors all in unrelated test files; Phase 2
+  introduced zero new ones).
+- `test_plan_drift.py` 33/33; `test_prompt_cache_hash.py` 15/15.
+- Net code change: ~120 LOC added (walk() + WalkEvent + cost_for_batch_item +
+  16 tests), ~60 LOC deleted (`_iter_trace_event_keys`, the `if "node_id"
+  not in event` branch, the `_has_any_cost_data` helper that was only
+  needed for the shape-sniff). Reduced complexity at the call sites.
+
+---
+
+## Top-10% cleanup pass — Phase 3 (mutation testing in CI)
+
+The previous pass left 64 docstring "Mutation contract:" claims unenforced —
+the convention was prose, not machine-verifiable. Phase 3 wires the
+contracts into a CI-runnable verifier: for each marked test, revert the
+named production line, run the test, assert it fails. Restore the file
+unconditionally. The verifier discovers markers automatically, runs them
+in parallel by file group, and reports contract violations as exit-code
+failures.
+
+### Critical changes
+
+1. **`tests/shared/mutation_contract.py` decorator** — frozen dataclass +
+   no-op decorator that attaches `(file, line, revert, expected_failure)`
+   metadata to a test function. Each marker declares a unique substring
+   on a specific line; the verifier comments out that line wholesale and
+   asserts the test fails. The decorator is a no-op at runtime; pytest
+   collects the test normally.
+
+2. **`scripts/check_mutation_contracts.py` verifier** — discovers markers
+   by importing every `tests/test_*.py` module and walking
+   `inspect.getmembers(module, inspect.isfunction)` for `_mutation_contract`
+   attributes. For each marker: backup → mutate (replace line with
+   `<indent>pass  # MUTATED: <original>`) → run subprocess pytest →
+   restore (try/finally). Supports `--filter <substring>` for targeted
+   runs and `--jobs N` for parallel mode (groups by file to avoid two
+   workers mutating the same file concurrently). Serial: 14s; `--jobs 4`:
+   8s.
+
+3. **Pyc cache invalidation is load-bearing.** Python's pyc invalidation
+   compares `int(source_mtime)` against the mtime stored in the pyc
+   header (8-byte field, second-resolution). Multiple mutations within
+   the same wall-clock second produce identical int-second mtimes →
+   subprocess pytest uses STALE cached bytecode → mutations silently no-op
+   → tests pass against pre-mutation code. The verifier deletes the
+   `__pycache__/<stem>.*.pyc` files after each mutation/restore so the
+   next subprocess recompiles from current source. Without this step,
+   running 5 markers against the same file in serial caused 5 false
+   "contract not enforced" reports — the bug was found and fixed during
+   marker backfill.
+
+4. **`make mutation-check` target** wires the verifier into the standard
+   command set. `pyproject.toml` adds `mutmut>=2.4.0` to dev-deps with a
+   `[tool.mutmut]` config block targeting
+   `src/pflow/core/cache_analysis/` + `src/pflow/core/trace_tree.py`.
+   `@mutation_contract` is targeted (named load-bearing lines); mutmut
+   is broad (auto-generated mutations across all syntactic constructs).
+   Both layers are independent and complementary.
+
+5. **29 markers backfilled** across 4 test files:
+   - `tests/test_core/test_trace_tree.py` (21 markers — every test
+     except the cross-file fixture-shape test and the
+     defends-against-non-existent-code-path test, both of which don't
+     map to single-line reverts).
+   - `tests/test_core/test_cache_analysis_cost_estimation.py` (4
+     markers — Phase 1 Track A contracts + Phase 2b workflow-scoped
+     subset key + phantom-cost suppression).
+   - `tests/test_core/test_cache_analysis_analyze.py` (3 markers —
+     trace-driven current_cost rollup, phantom-cost suppression, and
+     workflow-scoped Plan keying).
+   - `tests/test_core/test_cache_analysis_warnings.py` (1 marker — the
+     producer-side workflow-scope guard from Phase 1).
+
+6. **`tests/CLAUDE.md` Pitfall #19 documents the pattern.** Original
+   Pitfall #19 ("Cross-Layer Features Need End-to-End Tests") shifted
+   to #20.
+
+### Deliberate scope
+
+- **Not all 64 docstring contracts backfilled** — only the high-leverage
+  Phase 1+2 ones (the load-bearing architectural contracts). Remaining
+  35 docstrings stay as human-readable annotations; future agents can
+  promote them to `@mutation_contract` markers when they touch those
+  tests. The plan estimated "30+ tests"; the actual backfill matches.
+- **`mutmut run` baseline is deferred to a separate commit.** Adding
+  the dep + config is mechanical (~5 LOC); generating the baseline
+  survival rate takes 10+ minutes of mutation runs and is not part of
+  the contract-marker backfill scope.
+
+### Mutation contracts verified
+
+Running `make mutation-check`:
+
+```
+Verifying 29 mutation contracts...
+  ✓ test_make_diagnostic_node_id_without_affected_workflow_raises
+  ✓ test_current_cost_returns_recorded_cost_when_set
+  ✓ test_did_not_execute_rows_do_not_contribute_to_projection_costs
+  ✓ test_heterogeneous_batch_cost_surfaces_in_current_usd
+  ✓ test_with_cache_projection_does_not_cross_pollinate_workflow_scopes
+  ✓ test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection
+  ✓ test_flatten_plan_keys_preserves_same_node_ids_across_workflow_paths
+  ✓ test_summary_current_cost_includes_sub_workflow_costs_via_trace
+  [+ 21 TraceTree contracts]
+All 29 contracts verified.
+```
+
+### Insights worth preserving
+
+- **The pyc invalidation bug almost shipped silently.** First batch of
+  21 markers reported "5 contracts not enforced" — none of them were
+  actually broken. Manual verification of one (`LlmEventLeaf is
+  WalkEvent`) showed the mutation correctly broke the import; manual
+  pytest run failed. The verifier's discrepancy was the pyc stale-cache
+  issue. Without manually verifying a "false" failure, the bug would
+  have been attributed to test design and the markers would have been
+  weakened. **Top-10% rule confirmed: when verification disagrees with
+  manual reproduction, suspect the verifier.**
+
+- **`@mutation_contract` is the human/machine bridge.** The docstring
+  carries the narrative ("revert the cached short-circuit"); the
+  decorator carries the substrate (`line=215`, `revert='if event.get
+  (...)'`). Future contributors who refactor production code will see
+  the marker break loudly with `revert substring not found` rather
+  than silently passing because the substring no longer exists. That
+  drift detection is the value-add over docstring-only conventions.
+
+- **Subprocess isolation per marker is non-negotiable.** Mutations are
+  not thread-safe across the production file. Running pytest in-process
+  via `pytest.main()` would let one marker's mutation pollute the
+  in-process import state of subsequent markers. The
+  ThreadPoolExecutor parallelism groups by production file so
+  concurrent mutations target different files — the only correctness-
+  preserving form of parallelism here.
+
+### State after Phase 3
+
+- 6100 tests pass (no test count change — markers are decorators, not
+  new tests).
+- `make check` clean; `make mutation-check` clean (29/29).
+- 41 pre-existing ruff errors in test files unchanged (Phase 3
+  introduced zero new ones — tracked across Phase 1 and Phase 2 entries).
+- `test_plan_drift.py` 33/33; `test_prompt_cache_hash.py` 15/15.
+- Parallel mode: 8s; serial mode: 14s.
+- Net code change: ~280 LOC added (decorator module + verifier script +
+  Makefile target + pyproject.toml + 29 marker decorations + tests/
+  CLAUDE.md doc), 0 LOC deleted (additive change).
+
+### Remaining (Phases 4-6)
+
+Phase 4: split `compute_aggregate_costs` into projections-only +
+actually-paid; eliminate compute-and-override pattern; deduplicate
+heterogeneous batch handling. Phase 5: atomic cost primitives (replaces
+`current_cost_per_run_usd` / `cost_without_caching_usd` /
+`rerun_cost_per_run_usd` with named atoms — `actually_paid_usd`,
+`no_cache_hypothetical_usd`, etc.) + JSON 4.0 bump. Phase 6: trace 2.2
+schema with per-event `workflow_path`; deletes the `cw_result.edges`
+threading workaround.
+
+---
+
+## Top-10% cleanup pass — Phase 3 follow-up (loose-end closure)
+
+Self-audit of the initial Phase 3 commit surfaced five real loose ends that
+fell short of the top-10% bar. This entry closes them. No new infrastructure
+beyond what Phase 3 introduced — just hardening and completion of what was
+already there.
+
+### Critical changes
+
+1. **Subprocess timeout (60s) added to the verifier.** A mutation that hangs
+   the test indefinitely would freeze `make mutation-check`. The verifier
+   now passes `timeout=60` to `subprocess.run`; ``TimeoutExpired`` is
+   treated as "mutation caught" (the original code completed; the mutated
+   code didn't). One-line fix; eliminates a real failure mode.
+
+2. **Import-skip is now a verification failure.** Pre-fix: a test module
+   that failed to import had its markers silently skipped — exactly the
+   regression the verifier was supposed to prevent. Post-fix:
+   ``discover_marked_tests`` returns ``(results, skipped)``; the verifier
+   exits non-zero when ``skipped`` is non-empty, listing the failed module
+   + error so an agent can fix it. Markers in failed-to-import modules
+   are no longer invisible.
+
+3. **Class-method discovery added.** ``inspect.getmembers(module,
+   inspect.isfunction)`` finds module-level functions only; pytest tests
+   inside ``TestX`` classes were invisible to the original verifier. The
+   verifier now walks ``inspect.isclass`` → class members and emits
+   ``ClassName::method_name`` node IDs for pytest. Caught when
+   ``test_compute_batch_item_cost_recurses_into_events`` (a class method)
+   was added but the verifier reported "No @mutation_contract markers
+   found" — the test was decorated but the verifier couldn't see it.
+
+4. **mutmut removed from dev-deps.** The Phase 3 commit added
+   ``mutmut>=2.4.0`` with a 2.x-style ``[tool.mutmut]`` config block —
+   neither tested nor working. mutmut 3.x rewrote its config interface
+   and integration model (it requires coverage data + a different runner
+   shape); getting it correctly wired for ``pytest -n 4 --doctest-modules``
+   is non-trivial and not worth doing speculatively. The honest move was
+   to remove the dep + claim and document the decision; broad fuzzing
+   stays as a future follow-up. Targeted ``@mutation_contract`` markers
+   are the load-bearing layer.
+
+5. **Marker backfill completed (60 contracts vs 29 in the initial pass).**
+   31 additional markers covering the previously-unenforced docstring
+   contracts in ``test_cache_analysis_token_estimation.py`` (4),
+   ``test_cache_analysis_per_id_emission.py`` (5),
+   ``test_cache_analysis_renderers.py`` (3),
+   ``test_cache_analysis_analyze.py`` (14 — child-input resolution,
+   recommended-actions sort priority, heterogeneous batch detection,
+   below-min-tokens guard, resolved-prompt tokenization),
+   ``test_trace_report.py`` (1, class method),
+   ``test_markdown_parser.py`` (1, class method),
+   ``test_sub_workflow_resolver.py`` (1),
+   ``test_cache_analysis_cost_estimation.py`` (3 walker semantics tests).
+   Three docstrings were rewritten (not decorated) because their contracts
+   defend ABSENCE of a line, cross-file shape invariants, or
+   architecturally-moved code paths that the single-line mutation primitive
+   can't express; each rewritten docstring now explains why no marker
+   exists.
+
+6. **Conftest enforcement added** in ``tests/conftest.py``. New
+   ``pytest_collection_modifyitems`` hook walks every collected test and
+   checks: if the docstring contains ``"Mutation contract:"``, the
+   function MUST also carry the ``@mutation_contract`` decorator. If not,
+   pytest collection fails with ``UsageError`` (exit code 4) listing the
+   offending test node IDs. This catches drift at the same point pytest
+   catches an import typo — fast, mechanical, no manual audit pass. Smoke-
+   tested by adding a violator file: pytest exits 4 with the correct
+   error message.
+
+### Insights worth preserving
+
+- **Cross-cutting refactors leave anachronistic mutation contracts.**
+   ``test_analyze_end_to_end_current_cost_honors_recorded_trace_cost``
+   carried a docstring claim that mutating ``cost_usd_for_node`` would
+   defend the assertion. Trace-driven rollup work changed the code path
+   (the test's defended behavior now flows through ``_build_summary`` →
+   ``ctx.trace.total_cost``, not ``cost_usd_for_node``), so the original
+   contract no longer mapped to a real mutation. The honest move was to
+   rewrite the docstring (no decorator added) and point at the markers
+   that DO defend it. Mutation contract markers benefit from this kind
+   of audit any time the architecture shifts beneath them.
+
+- **The conftest hook is the missing accountability layer.** Without it,
+   the docstring/decorator pair was an honor-system convention; with it,
+   pytest enforces alignment at collection time. Future agents who add
+   ``"Mutation contract:"`` to a docstring must also add the decorator —
+   or rewrite the docstring to be honest about why no marker exists.
+   This is exactly how typed code prevents stringly-typed drift.
+
+- **"Add a dependency without testing it" is the silent-failure pattern
+   the verifier was meant to prevent applied to itself.** I added
+   ``mutmut>=2.4.0`` + a config block claiming it would work, then
+   documented the claim in ``tests/CLAUDE.md`` without ever running
+   ``mutmut run``. The audit caught it. Lesson: for any infrastructure
+   addition, the smoke test is non-negotiable. Either run it once or
+   don't add it.
+
+### State after follow-up
+
+- 6100 tests pass (full suite via ``make test``: 6103 with the deselect
+  filter dropped).
+- ``make check`` clean (mypy 201 files, deptry, lock).
+- ``make mutation-check`` clean (60/60 contracts verified, up from 29 in
+  the initial Phase 3 commit). Parallel mode (``--jobs 4``): ~16s; serial:
+  ~32s.
+- 41 pre-existing ruff errors in test files unchanged (this commit
+  introduces zero new ones; verified by stashing changes and confirming
+  the same 41 errors appear on the base commit).
+- ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
+- New conftest enforcement hook smoke-tested: a docstring-only violator
+  causes pytest to exit 4 with the correct error message.
+- Net code change vs. prior Phase 3 state: +31 marker decorations,
+  -1 marker (the anachronistic one rewritten as docstring), +3 docstring
+  rewrites, +1 conftest hook (~30 LOC), +2 verifier function changes
+  (timeout, import-skip surfacing, class-method discovery — ~40 LOC),
+  -1 mutmut dep + config block.
+
+### Remaining (Phases 4-6)
+
+Unchanged from the initial Phase 3 entry above. Phase 4 next.
+
+---
+
+## Top-10% cleanup pass — Phase 4 (cost computation simplification)
+
+The previous phase consolidated trace traversal and wired mutation testing
+into CI. Phase 4 takes the next step: split ``compute_aggregate_costs`` into
+two functions, each with one job, and eliminate the compute-and-override
+pattern in ``_build_summary``. Heterogeneous-batch handling stops flowing
+as a flag-passed-everywhere tuple — projections simply exclude it because
+heterogeneous cost is trace-driven, not projected.
+
+### Critical changes
+
+1. **``compute_aggregate_costs`` split into two functions**:
+
+   - ``compute_projections(rows, *, output_tokens_by_node, ttl)`` —
+     IR-driven hypothetical math. NEVER reads ``row.cost_usd``. Returns
+     ``ProjectionBreakdown`` with new ``no_cache_hypothetical_usd`` field
+     (pure no-cache recompute over all priced rows) plus the existing
+     ``cost_without_caching_usd`` (hybrid: no-cache for undeclared +
+     with-cache for declared), ``rerun_usd``, savings, partial,
+     unavailable_models.
+
+   - ``compute_actually_paid(rows, *, trace=None, edges=None)`` —
+     trace-driven recorded cost. Prefers ``TraceTree.total_cost`` (the
+     canonical sum, includes sub-workflow descendants) when a tree is
+     provided; falls back to summing ``row.cost_usd`` for callers without
+     a tree handle. Returns ``ActuallyPaidCost(total_usd, tier)``.
+
+2. **Compute-and-override pattern eliminated.** ``_build_summary``
+   previously called ``compute_aggregate_costs`` (which computed
+   ``current_usd`` from row.cost_usd path), then overrode it with
+   ``ctx.trace.total_cost(...)`` when a trace existed. Post-Phase-4: the
+   summary calls both new functions ONCE; ``current_cost`` is set ONCE
+   from the right source (actually-paid if trace contributed, else
+   no-cache hypothetical). No value computed-then-thrown-away.
+
+3. **Heterogeneous batch handling simplified.** The old
+   ``_partition_rows`` returned a 4-tuple
+   ``(priced_rows, unavailable_models, heterogeneous_recorded_cost,
+   has_heterogeneous_recorded)`` because the old ``current_usd`` mixed
+   actual-paid + projection. With the projection/actually-paid split,
+   heterogeneous rows simply don't flow through projections (we can't
+   price them as one model). Their actually-paid cost surfaces via
+   ``compute_actually_paid`` because ``TraceTree.total_cost`` includes
+   batch-item descendants. ``_partition_priced_rows`` returns just
+   ``(priced_rows, unavailable_models)``. The ``HeterogeneousBatchTotals``
+   value object the plan called for is unnecessary — the value object's
+   purpose was preserving the flow that's now removed.
+
+4. **``AggregateCostBreakdown`` removed.** Replaced by
+   ``ProjectionBreakdown`` and ``ActuallyPaidCost``. Two consumers
+   updated: ``_build_summary`` calls both; ``_build_sub_workflow_rollup``
+   only needs projections (it sources actually-paid from the trace
+   execution index it builds separately).
+
+5. **Dead helpers removed.** ``_per_call_current_cost`` (the old branch
+   that read ``row.cost_usd`` and fell back to recompute),
+   ``_compute_current_usd``, ``_empty_priced_rows_breakdown`` —
+   deleted. Their work is now done in the natural composition of
+   ``compute_projections`` and ``compute_actually_paid``.
+
+6. **``_per_call_current_cost_recomputed`` renamed to
+   ``_per_call_no_cache_cost``** to match its actual semantic. The new
+   name reads itself; future contributors don't have to chase docstrings
+   to learn what "current" meant pre-Track-A.
+
+### Mutation contracts updated
+
+The Phase 4 refactor moved code; six pre-existing mutation contracts
+needed updates:
+
+- ``test_summary_current_cost_includes_sub_workflow_costs_via_trace``:
+  previously defended ``current_cost = trace_total`` (the override line);
+  now defends ``current_cost: float | None = actually_paid.total_usd``
+  (the new clean assignment). Same behavior, cleaner shape.
+- Five contracts in ``test_cache_analysis_analyze.py`` shifted by -1 line
+  each because the docstring comment edit on ``PerCallRow.cost_usd``
+  shrank by 1 line. Mechanical update.
+- ``test_with_cache_projection_does_not_cross_pollinate_workflow_scopes``
+  pinned line=423; new line is 408 (function moved).
+- ``test_did_not_execute_rows_do_not_contribute_to_projection_costs``
+  pinned line=319; new line is 370 (in ``_partition_priced_rows``).
+- ``test_heterogeneous_model_excluded_from_pricing_aggregation`` (in
+  test_cache_analysis_analyze.py) pinned line=321; new line is 372.
+
+### New tests (Phase 4 contract surface)
+
+Three new tests cover the split itself:
+
+- ``test_actually_paid_sums_row_cost_usd_when_set`` — the row-fallback path
+  in ``compute_actually_paid`` (replaces the old
+  ``test_current_cost_returns_recorded_cost_when_set`` whose contract moved
+  to the new function).
+- ``test_actually_paid_returns_unavailable_when_no_rows_have_cost_usd`` —
+  greenfield contract: no row has ``cost_usd`` → ``(None, "unavailable")``.
+- ``test_heterogeneous_batch_cost_surfaces_via_actually_paid`` — replaces
+  ``test_heterogeneous_batch_cost_surfaces_in_current_usd``. Phase 4 makes
+  heterogeneous-cost surfacing a property of ``compute_actually_paid``
+  (where it belongs) rather than the projection function.
+- ``test_heterogeneous_rows_excluded_from_priced_projections`` — defensive
+  guard that heterogeneous rows are skipped BEFORE the pricing lookup, so
+  ``model = ""`` never registers as an "unavailable model". Mutation
+  contract ported from the old test_cache_analysis_analyze.py guard.
+
+### Insights worth preserving
+
+- **The plan's HeterogeneousBatchTotals value object was unnecessary.**
+  Plan suggested wrapping the heterogeneous cost in a frozen dataclass and
+  flowing it through the pipeline. Implementation showed that the cleaner
+  fix is to NOT flow it through projections at all — ``TraceTree.total_cost``
+  in actually-paid handles it. Top-10% rule: when refactoring, ask "does
+  this need to flow at all?" before reaching for value objects.
+
+- **The waste-and-pick pattern is a yellow flag for missing abstractions.**
+  Pre-Phase-4: ``_build_sub_workflow_rollup`` called
+  ``compute_aggregate_costs`` and only used ONE field
+  (``cost_without_caching_usd``) of the seven returned. That's the
+  signature of "this function does too much." Splitting into projections
+  and actually-paid let each consumer ask for exactly what it needs.
+
+- **Mutation contracts catch line-shifting refactors automatically.** Six
+  contracts failed after the Phase 4 edits because lines moved. Each
+  failure pointed at the specific shifted line; fixing them was mechanical
+  (update line number, re-verify). Without the marker enforcement, those
+  six tests could have silently passed against stale production code paths
+  for any subsequent refactor.
+
+- **Greenfield ``current_cost`` semantics preserved bit-for-bit.** Pre-Phase-4
+  greenfield ``current_usd`` was a row-by-row recompute (since no row had
+  ``cost_usd``). Post-Phase-4 greenfield ``current_cost`` is
+  ``projections.no_cache_hypothetical_usd`` which sums the same recompute
+  formula. End-to-end smoke against the gemini-with-cache trace produces
+  identical figures (``current=$0.00067772``, ``cost_without_caching=$0.00229301``).
+  The "compute-and-override" pattern was extra work, not extra capability.
+
+### State after Phase 4
+
+- 6102 tests pass (was 6100 + 3 new + 1 renamed).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- ``make mutation-check`` clean (60/60 contracts verified, includes 5
+  updated for line shifts).
+- ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
+- 41 pre-existing ruff errors in test files unchanged.
+- End-to-end smoke (gemini-with-cache + parent-child fixture) produces
+  identical cost figures vs pre-Phase-4.
+- Net code change: ``cost_estimation.py`` reduced from 506 → 553 LOC (fewer
+  internal branches, but more docstring + the new ``compute_actually_paid``
+  function). Net reduction in cyclomatic complexity at consumer sites.
+
+### Remaining (Phases 5-6)
+
+Phase 5: atomic cost primitives. Replace ``current_cost_per_run_usd`` /
+``cost_without_caching_usd`` / ``rerun_cost_per_run_usd`` with named atomic
+primitives (``actually_paid_usd`` / ``no_cache_hypothetical_usd`` /
+``first_run_with_cache_hypothetical_usd`` / ``rerun_within_ttl_hypothetical_usd``).
+JSON 3.0 → 4.0 (breaking field rename). Type-safe ``CostTier`` /
+``DataTier`` enums replace stringly-typed labels. The ``no_cache_hypothetical_usd``
+field added in Phase 4's projection breakdown propagates to ``AnalysisSummary``
+in Phase 5. Phase 6: trace 2.2 schema with per-event ``workflow_path``;
+deletes the ``cw_result.edges`` threading workaround.
+
+---
+
+## Top-10% cleanup pass — Mutation contract scale-back
+
+After Phase 4 surfaced operational data on the markers' actual catch rate
+(line-shift drift after refactors >> real test-rot catches), the verifier
+was demoted from quality-gate framing to ad-hoc audit positioning. No
+infrastructure deleted — just repositioned to match observed value.
+
+### Changes
+
+- **``Makefile`` target renamed** ``mutation-check`` → ``mutation-audit`` with
+  description "ad-hoc test-honesty check; not a per-PR gate."
+- **``tests/CLAUDE.md`` Pitfall #19 rewritten** — demoted from "you must"
+  prescriptive framing to "optional documentation, ad-hoc audit." Explicitly
+  documents the operational catch rate and the line-shift-update tax. New
+  tests can omit the decorator unless they defend an architectural seam.
+- **``scripts/check_mutation_contracts.py`` module docstring** prefixes the
+  audit-tool framing.
+- **``tests/shared/mutation_contract.py`` module docstring** repositions the
+  decorator as documentation-that-doesn't-lie, not test-honesty enforcement.
+
+### What stayed
+
+- All 60 existing markers (documentation value preserved).
+- The decorator (``@mutation_contract``).
+- The conftest hook enforcing decorator presence when a docstring claims
+  ``Mutation contract:`` (anti-rot at zero ongoing cost).
+- The verifier script (still functional for ad-hoc audits).
+
+### Rationale (preserved here for future agents wondering why)
+
+Across four cleanup phases the markers caught: 1 anachronistic contract
+(real catch — test claimed to defend code that had been refactored away);
+≥6 line-shift drifts (mechanical updates, not real bugs); 0 production
+regressions. Tests with strong assertions did the regression-catching work
+either way. The decorator's value is communicating intent ("this test
+defends this specific seam"); the verifier's value is spot-checking that
+intent on demand. Running it on every PR was paying recurring tax for
+sporadic benefit. Audit positioning matches the cost-benefit shape.
+
+---
+
+## Top-10% cleanup pass — Phase 5 (atomic cost primitives + JSON 4.0)
+
+The previous phases consolidated traversal (Phase 2) and split cost
+computation into projections + actually-paid (Phase 4). Phase 5 takes
+the next step: replace the three overloaded cost fields on
+``AnalysisSummary`` with five atomic primitives that each carry one
+meaning regardless of greenfield/trace context. JSON consumers see a
+breaking 3.x → 4.x bump; the renderer composes context-aware
+presentation by selecting which atoms to display.
+
+### Critical changes
+
+1. **``AnalysisSummary`` cost fields replaced with atomic primitives.**
+
+   - **Removed**: ``current_cost_per_run_usd`` (overloaded — meant
+     "actually paid when trace exists, no-cache hypothetical otherwise"),
+     ``cost_without_caching_usd`` (HYBRID — no-cache for undeclared rows
+     + with-cache first-run for declared rows; the label said "without
+     caching" but the value included cache-write costs for declared rows),
+     ``rerun_cost_per_run_usd``.
+   - **Added**: ``actually_paid_usd: float | None`` (trace-driven; ``None``
+     for greenfield), ``actually_paid_tier: CostTier`` (``TRACE`` /
+     ``TRACE_PARTIAL`` / ``UNAVAILABLE``), ``no_cache_hypothetical_usd``
+     (pure no-cache recompute baseline), ``first_run_with_cache_hypothetical_usd``
+     (first-run projection that honors declared ``prompt_cache:``),
+     ``rerun_within_ttl_hypothetical_usd``.
+
+   Each field has ONE meaning. Agents reading any single primitive know
+   what it represents independent of context.
+
+2. **``SubWorkflowRollupEntry`` mirrors the same atoms.** Removed
+   ``current_cost_usd`` and ``cost_without_caching_usd``; added the four
+   atomic primitives at child-workflow scope. JSON output emits all four
+   per child entry.
+
+3. **``ProjectionBreakdown`` field renames in
+   ``cost_estimation.py``**: ``cost_without_caching_usd`` →
+   ``first_run_with_cache_hypothetical_usd``; ``rerun_usd`` →
+   ``rerun_within_ttl_hypothetical_usd``. The semantic-match names
+   eliminate the naming confusion ("the field said 'without caching' but
+   the math included cache writes for declared rows").
+
+4. **``CostTier`` ``StrEnum`` added** in ``cost_estimation.py``. Closed
+   catalog (``TRACE`` / ``TRACE_PARTIAL`` / ``RECOMPUTED`` /
+   ``UNAVAILABLE``); type-checked at production sites; serializes as the
+   same string value (zero JSON impact). ``ActuallyPaidCost.tier`` field
+   re-typed to ``CostTier``.
+
+5. **Compute-and-override eliminated end-to-end.** Pre-Phase-5
+   ``_build_summary`` had branching that picked ``actually_paid.total_usd``
+   OR ``projections.no_cache_hypothetical_usd`` into a single overloaded
+   ``current_cost`` field. Post-Phase-5 the summary populates each atom
+   independently — no branching, no overload. The savings-percentage
+   anchor (the denominator for ``savings_pct_first_run`` /
+   ``savings_pct_rerun``) is derived locally as
+   ``actually_paid.total_usd if not None else projections.no_cache_hypothetical_usd``
+   — preserving the pre-Phase-5 percentage semantic without baking
+   "current cost has two meanings" into a stored field.
+
+6. **JSON 3.0 → 4.0 (breaking).** ``JSON_FORMAT_VERSION`` and
+   ``JSON_FORMAT_VERSION_MAJOR`` bumped. Module docstring 4.0 entry
+   documents the field-rename + atomic primitive contract. MCP tool
+   docstrings (``execution_tools.py``, ``execution_service.py``) updated
+   in lockstep.
+
+7. **Renderer composes context-aware presentation from atoms.**
+   ``_render_cost_block(s)`` dispatches on ``actually_paid_usd is not None``
+   AND on ``aggregate_savings_first_run_usd > 0``:
+
+   - **Trace path** (``actually_paid`` set): emits ``Actually paid (trace)``
+     + ``Cost without caching`` + ``Cost on rerun (within TTL)``.
+   - **Greenfield with declared cache** (savings > 0): emits ``Cost
+     without caching`` + ``Cost on first run (cache)`` + ``Cost on rerun
+     (within TTL)``.
+   - **Greenfield without declared cache** (savings ≤ 0 / None): emits
+     ONE ``Cost per run`` line — all three projection atoms collapse to
+     the same number when no row has ``prompt_cache:`` (cacheable=0).
+     Three identical lines would be noise.
+
+   The "compute-and-override" smell on the renderer side is also gone —
+   each path renders only the lines that carry signal for that context.
+
+8. **Mutation contracts updated for line shifts.** Phase 5 moved 23
+   contracts' pinned lines (the new ``AnalysisSummary`` dataclass is
+   bigger, ``_build_summary`` got rewritten, helpers shifted). Auto-fixed
+   via a sweep script that re-scanned each contract's ``revert``
+   substring against current line numbers; one contract
+   (``test_summary_current_cost_includes_sub_workflow_costs_via_trace``)
+   needed a new ``revert`` substring because the production code path
+   was restructured (``current_cost: float | None = actually_paid.total_usd``
+   replaced by direct ``actually_paid_usd=actually_paid.total_usd`` at
+   ``AnalysisSummary`` construction).
+
+### Insights worth preserving
+
+- **The ``current_cost`` overload was the bug class behind the previous
+  rename**. Pre-Phase-5 ``current_cost_per_run_usd`` meant three
+  different things depending on context (greenfield-no-trace = full
+  price; greenfield+trace = honored implicit caching; declared+trace =
+  honored explicit caching). The Phase 4 commit's "compute-and-override"
+  was the symptom — production code had to ask "is there a trace?"
+  before knowing what ``current_cost`` meant, then patch it. Phase 5
+  removes the overload. The renderer asks the same question explicitly
+  but at the seam where context-aware presentation belongs (rendering),
+  not where the data is computed.
+
+- **``no_cache_hypothetical_usd`` as the "honest baseline" pattern.**
+  Pre-Phase-5 ``cost_without_caching_usd`` was a HYBRID — it included
+  cache-write costs for declared rows. The label was misleading; the
+  field name was misleading. Top-10% rule: when a data field's name
+  doesn't match its computed value, the fix is ALWAYS to make the value
+  match the name (split into atomic primitives), never to update the
+  label and live with the drift.
+
+- **Renderer dispatch as the seam for context-aware presentation.**
+  ``_render_cost_block`` is the SINGLE function that decides "what should
+  the agent see?" by inspecting atoms. Adding a new presentation context
+  (e.g., a 4th branch for trace+no-declared-cache) means adding one
+  helper + one branch — no upstream data-model change. Pre-Phase-5 the
+  upstream had to encode the same dispatch by overloading
+  ``current_cost``; cross-cutting changes touched both the
+  ``AnalysisSummary`` shape AND the renderer.
+
+- **The factory rewrite (``_make_analysis``) is a forcing function.**
+  Test fixtures with ``current=, optimized=`` knobs were the tip of the
+  iceberg — they exposed how few tests cared about exact atom-level
+  semantics vs how many tests just wanted "two cost numbers to render."
+  Replacing the knobs with atomic-primitive args (``actually_paid``,
+  ``no_cache``, ``first_run_with_cache``, ``rerun``) makes the test
+  intent visible at the call site. Future test authors reading the
+  fixture see the primitive vocabulary, which prevents the original
+  drift from ever creeping back.
+
+### State after Phase 5
+
+- 6102 tests pass (no test count change vs Phase 4 — atomic primitive
+  tests replaced/renamed older ones in place).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- ``make mutation-audit`` clean (60/60 contracts verified, 23 line-shift
+  fixes applied).
+- ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
+- 41 pre-existing ruff errors in test files unchanged (Phase 5 added
+  zero new ones).
+- End-to-end smoke (parent-child fixture):
+  - ``format_version: "4.0"``;
+  - ``summary.actually_paid_usd: 0.15`` with ``actually_paid_tier: "trace"``;
+  - all four hypothetical projection atoms separately populated;
+  - sub-workflow rollup entry carries the same atoms at child scope.
+  Text renderer emits the trace-path layout
+  (``Actually paid (trace): ~$0.15 (trace)`` + ``Cost without caching:
+  ~$0.01`` + ``Cost on rerun: ~$0.0100``).
+- Net code change: ``AnalysisSummary`` dataclass +~30 LOC (atomic
+  primitive fields with docstring), ``SubWorkflowRollupEntry`` +~10 LOC
+  (4 atoms vs 2), ``_build_summary`` -~20 LOC (no compute-and-override),
+  renderer +~80 LOC (context-aware composition with explicit named
+  helpers vs one monolithic block), tests +~120 LOC (factory rewrite
+  + new atom-level assertions). Net JSON schema: 7 fields renamed/added
+  on ``summary``; 4 fields renamed on ``sub_workflow_rollup.per_workflow[]``.
+
+### Remaining (Phase 6)
+
+Phase 6: trace 2.2 schema with per-event ``workflow_path``. Stamps
+``workflow_path`` per event during ``record_node_execution`` so the
+analyzer doesn't have to thread ``cw_result.edges`` through ``TraceTree``
+to attribute leaves to their child workflow. Deletes the
+``edges``-threading machinery and the ``_edge_child_paths`` helper.
+Generated fixture test (runs a workflow, snapshots the trace, asserts
+byte-equality) replaces the hand-crafted ``parent-child-trace.json`` so
+fixture drift becomes a CI failure rather than a silent test pass.
+
+---
+
+## Top-10% cleanup pass — drift-detection generator + Phase 6 deferred (2026-05-02)
+
+After Phase 5 landed, audit of the GitHub issues filed against this branch
+showed two were substantively resolved by Phases 1-5 (#364 walker
+consolidation; #365 sub-workflow cost rollup) and that no remaining open
+issue required the full Phase 6 schema bump. The forward-compat investment
+of trace 2.2 (per-event ``workflow_path`` stamping + delete edges-threading
+machinery) was filed as a v1.x issue (#366) instead of shipped now. The
+ONE Phase 6 piece that pays back independently — generated fixtures for
+drift detection — landed in this commit.
+
+### What shipped
+
+1. **``tests/fixtures/cache_analysis/_generate.py``** (NEW). Programmatic
+   generator for both committed cache-analysis trace fixtures
+   (``parent-child-trace.json`` and ``parent-child-erroring-trace.json``)
+   using ``TraceFixtureBuilder``. Cost figures encoded at the top of the
+   module (load-bearing for downstream test assertions: ``actually_paid_usd
+   == 0.15`` for the success trace, ``== 0.12`` for the erroring trace).
+   Run as a script (``python -m tests.fixtures.cache_analysis._generate``)
+   to regenerate after intentional shape changes.
+
+2. **``TraceFixtureBuilder`` extended** with ``workflow_event(success=,
+   error=)`` and ``trace(workflow_name=, final_status=, failed_node_ids=)``
+   knobs so the builder can express the failed-trace shape end-to-end.
+   Defaults preserve previous behavior (success/zero-failures) so existing
+   call sites are unchanged.
+
+3. **Committed JSON fixtures regenerated** via the generator. Cost values
+   and event shape preserved bit-for-bit; incidental
+   ``node_output.response`` / ``llm_prompt`` / ``llm_response`` strings
+   reduced to the builder's defaults (don't affect any test assertion —
+   analyze-cache reads cost/token fields, not these passthrough strings).
+
+4. **``test_committed_cache_analysis_fixtures_match_generator_output``**
+   added to ``tests/test_core/test_trace_tree.py``. Closes the third link
+   of the drift-detection chain:
+
+   - ``WorkflowTraceCollector`` adds field → existing
+     ``test_trace_fixture_builder_matches_workflow_trace_collector_shape``
+     fails (chain link 1)
+   - ``TraceFixtureBuilder`` updated → generator output changes → new test
+     fails (chain link 2)
+   - Hand-edits to committed JSON → diverge from generator → new test fails
+     (chain link 3)
+
+   Manual mutation verification: changing a single ``cost_usd`` value in
+   the committed JSON produced ``AssertionError`` with a clear "drifted
+   from generator output. Run: python -m
+   tests.fixtures.cache_analysis._generate" remediation message.
+
+### Issues closed
+
+- **#364** (Refactor: consolidate trace-event walkers with divergent
+  ``cached`` filter behavior) — closed with detailed reference to the
+  Phase 1-2 consolidation through ``TraceTree.walk()``. Each walker is
+  now a 3-line accumulator over the shared primitive; cached-event policy
+  is a single kwarg; workflow-path threading is a single kwarg.
+
+- **#365** (Feature: surface sub-workflow LLM costs in pflow analyze-cache
+  parent-scope output) — closed referencing Phases 2a + 5. Implementation
+  went further than the issue's proposed minimal ``sub_workflow_cost_usd:
+  float`` field — sub-workflow rollup carries the full atomic-primitive
+  cost vocabulary at child scope (``actually_paid_usd``,
+  ``no_cache_hypothetical_usd``,
+  ``first_run_with_cache_hypothetical_usd``,
+  ``rerun_within_ttl_hypothetical_usd``).
+
+### Issue filed (deferred work)
+
+- **#366** (Trace 2.2: stamp workflow_path per event; delete
+  cw_result.edges threading workaround) — captures the deferred Phase 6
+  work as a v1.x forward-compat investment. Documents the gap (incomplete
+  attribution for runtime-dynamic / template-items batch sub-workflows),
+  the scope (~5 hours, ~200 LOC), the fallback strategy for 2.1 trace
+  backward-compat, and cross-refs to closed #364 / #365 + open #360
+  (which #366 is potentially a substrate for).
+
+### Why Phase 6 was deferred
+
+The user's standing rule "we cannot defer things that SHOULD be working"
+filtered the analysis: Phase 6's deliverables are forward-compat
+investment plus internal cleanup, not a fix for anything currently broken.
+
+- Sub-workflow cost rollup (#365) ships correct numbers without per-event
+  ``workflow_path`` because ``cw_result.edges`` covers static-IR sub-workflow
+  attribution and ``actually_paid_usd`` is trace-driven across all
+  descendants regardless of attribution.
+- Walker consolidation (#364) ships through ``TraceTree.walk(edges=...)``;
+  the ``edges`` kwarg is the workaround Phase 6 would remove, but it's
+  contained and documented.
+- The runtime-dynamic / template-items attribution gap is documented at
+  the per-call notes layer (``"items: ${list} resolves at runtime;
+  sub-workflow rows for these items are not in the per-call table"``) and
+  does NOT silently produce wrong numbers — ``actually_paid_usd`` is honest.
+- Trace 2.x → 2.2 schema bump touches every consumer of trace events
+  (~15 sites including ``trace_report.py``, runtime tests, analyzer);
+  doing this work without a user need would be over-engineering.
+
+The drift-detection generator landed BECAUSE it pays back independently:
+~30 LOC + 1 test, no schema impact, eliminates a real brittleness vector
+(hand-crafted JSON drifting from production shape).
+
+### Insights worth preserving
+
+- **Ship-or-defer decisions are filtered through the user's principles,
+  not by plan momentum.** The Phase 6 schema bump was in the original
+  plan's "ship Tiers 1-5" scope but the audit-against-issues showed the
+  user-visible benefit was zero today. The generated-fixtures piece was
+  pulled out as the only Phase 6 element that pays back independently.
+  Top-10% rule confirmed: when a phase's deliverables don't all pay back,
+  split the phase rather than ship the bundle.
+
+- **Drift-detection chains compose.** Three tests now form a chain:
+  production shape → builder → committed fixture. Each link defends
+  the next; breaking any link produces a visible CI failure. The chain
+  shape is the point — no individual test is sufficient on its own; the
+  composition is.
+
+- **Closing issues with detailed references is documentation.** The two
+  close-comments on #364 and #365 cite specific function names, file
+  paths, and the resolution mechanism (e.g., ``TraceTree.walk()``
+  consolidation; atomic-primitive child-scope rollup). Future contributors
+  searching for "walker consolidation" will find the closed issue and
+  trace it to the Phase 1-2 implementation. Closed-without-comment is a
+  documentation gap.
+
+### State after this commit
+
+- 6103 tests pass (was 6102 + 1 new
+  ``test_committed_cache_analysis_fixtures_match_generator_output``).
+- ``make check`` clean (ruff, ruff-format, mypy 201 files, deptry).
+- ``make mutation-audit`` clean (60/60 contracts verified, no line shifts
+  this round — drift-detection work didn't touch production).
+- ``test_plan_drift.py`` 33/33; ``test_prompt_cache_hash.py`` 15/15.
+- End-to-end smoke (parent-child fixture, gemini-with-cache fixture)
+  produces identical figures to Phase 5 — drift detector confirms no
+  drift.
+- Net code change: ``_generate.py`` ~110 LOC NEW; ``TraceFixtureBuilder``
+  ~25 LOC additions (additive kwargs); committed JSON fixtures
+  regenerated (cost values + shape preserved); 1 new drift test ~35 LOC.
+
+### Remaining
+
+Tracked in #366. Not a blocker for any current pflow user; will be
+revisited if/when (a) #360 dynamic-batch undercounting work needs
+per-event ``workflow_path`` as substrate, or (b) someone files an issue
+about template-items attribution.
+

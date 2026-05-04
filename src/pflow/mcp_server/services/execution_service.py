@@ -382,8 +382,8 @@ class ExecutionService(BaseService):
         Returns:
             JSON dict with stable schema; ``format_version`` follows
             ``JSON_FORMAT_VERSION``. Consumers should match
-            ``format_version.startswith("2.")`` (accept any minor ``2.x``,
-            reject major ``3.x``).
+            ``format_version.startswith("4.")`` (accept any minor ``4.x``,
+            reject major ``5.x``).
 
         Raises:
             ValueError: workflow path unparseable, validation prevents IR

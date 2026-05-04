@@ -1,11 +1,23 @@
-"""F2 cost wiring — pricing lookup, aggregate cost computation, tri-state contract.
+"""F2 cost wiring — pricing lookup, projection / actually-paid split, tri-state contract.
 
-These tests lock the load-bearing cost contract:
+Phase 4 split:
 
-- Output cost is required for absolute current/optimized/rerun figures.
-- Caching savings (current - optimized) are input-only — work greenfield.
+- ``compute_projections`` — IR-driven hypothetical cost projections. Pure
+  ``tokens * rate`` math; never reads ``row.cost_usd``. Greenfield-safe
+  savings figures.
+- ``compute_actually_paid`` — Trace-driven recorded cost. Prefers
+  ``TraceTree.total_cost``; falls back to summing ``row.cost_usd`` for
+  callers without a TraceTree handle.
+
+These tests lock:
+
+- Output cost is required for absolute no_cache/cost_without_caching/rerun
+  projection figures.
+- Caching savings (input-only — output cancels) work greenfield.
 - Tri-state (priced / partial / unavailable) renders correctly on mixed
   pricing data.
+- Heterogeneous-batch rows are excluded from projections; their actually-paid
+  cost surfaces via :func:`compute_actually_paid`.
 - Anthropic 1h-TTL multiplier mirrors the runtime override at
   ``llm_client.py:1047``.
 """
@@ -17,9 +29,11 @@ import pytest
 from pflow.core.cache_analysis.analyze import PerCallRow
 from pflow.core.cache_analysis.cost_estimation import (
     _pricing_from_dict,
-    compute_aggregate_costs,
+    compute_actually_paid,
+    compute_projections,
     get_model_pricing,
 )
+from tests.shared.mutation_contract import mutation_contract
 
 
 def _row(
@@ -116,19 +130,19 @@ def test_greenfield_returns_none_absolutes_but_real_savings() -> None:
         _row(node_path="A", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["topic"]),
         _row(node_path="B", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["topic"]),
     ]
-    breakdown = compute_aggregate_costs(
+    projections = compute_projections(
         rows,
         output_tokens_by_node={"A": None, "B": None},  # greenfield — no memo.
     )
-    assert breakdown.current_usd is None
-    assert breakdown.optimized_usd is None
-    assert breakdown.rerun_usd is None
+    assert projections.no_cache_hypothetical_usd is None
+    assert projections.first_run_with_cache_hypothetical_usd is None
+    assert projections.rerun_within_ttl_hypothetical_usd is None
     # Savings ARE computable on greenfield because output cancels.
-    assert breakdown.savings_first_run_usd is not None
-    assert breakdown.savings_rerun_usd is not None
-    assert breakdown.savings_first_run_usd > 0
-    assert breakdown.savings_rerun_usd > 0
-    assert breakdown.partial is False  # No mixed state — every priced row is consistent.
+    assert projections.savings_first_run_usd is not None
+    assert projections.savings_rerun_usd is not None
+    assert projections.savings_first_run_usd > 0
+    assert projections.savings_rerun_usd > 0
+    assert projections.partial is False  # No mixed state — every priced row is consistent.
 
 
 def test_single_call_first_run_savings_is_negative_below_break_even() -> None:
@@ -143,11 +157,11 @@ def test_single_call_first_run_savings_is_negative_below_break_even() -> None:
         cacheable_tokens=8_000,
         declared_prompt_cache=["topic"],
     )
-    breakdown = compute_aggregate_costs([row], output_tokens_by_node={"X": None})
-    assert breakdown.savings_first_run_usd is not None
-    assert breakdown.savings_first_run_usd < 0  # 1 write, 0 reads => write cost > save.
-    assert breakdown.savings_rerun_usd is not None
-    assert breakdown.savings_rerun_usd > 0  # All reads => always positive.
+    projections = compute_projections([row], output_tokens_by_node={"X": None})
+    assert projections.savings_first_run_usd is not None
+    assert projections.savings_first_run_usd < 0  # 1 write, 0 reads => write cost > save.
+    assert projections.savings_rerun_usd is not None
+    assert projections.savings_rerun_usd > 0  # All reads => always positive.
 
 
 def test_after_run_returns_real_absolute_costs() -> None:
@@ -156,33 +170,107 @@ def test_after_run_returns_real_absolute_costs() -> None:
         cacheable_tokens=8_000,
         declared_prompt_cache=["topic", "context"],
     )
-    breakdown = compute_aggregate_costs(
+    projections = compute_projections(
         [row],
         output_tokens_by_node={"X": 500},
     )
-    assert breakdown.current_usd is not None
-    assert breakdown.optimized_usd is not None
-    assert breakdown.rerun_usd is not None
-    # Optimized < Current (caching reduces input cost on first call too via 1.25x write < something? Actually
-    # for a single call the optimized_cost includes a write at 1.25x — which is MORE expensive than 1.0x
-    # input rate. So a SINGLE-call workflow doesn't save on optimized. Verify the right invariant.
-    assert breakdown.rerun_usd < breakdown.current_usd  # All-reads always saves.
+    assert projections.no_cache_hypothetical_usd is not None
+    assert projections.first_run_with_cache_hypothetical_usd is not None
+    assert projections.rerun_within_ttl_hypothetical_usd is not None
+    # rerun < no-cache always (all-reads cheaper than full input). For a SINGLE
+    # call, cost_without_caching includes a write at 1.25x — MORE expensive than
+    # the 1.0x input rate — so it does NOT beat no-cache for a single call.
+    # Multi-call (see test_with_cache_projection_amortizes_writes_across_subset_group)
+    # is where with-cache wins.
+    assert projections.rerun_within_ttl_hypothetical_usd < projections.no_cache_hypothetical_usd
 
 
-def test_optimized_cost_amortizes_writes_across_subset_group() -> None:
+def test_with_cache_projection_amortizes_writes_across_subset_group() -> None:
     """Two calls sharing a subset: 1 write + 1 read on the cacheable portion.
-    Optimized aggregate < Current aggregate even when each call has output."""
+    With-cache first-run aggregate < no-cache aggregate even when each call has output."""
     rows = [
         _row(node_path="A", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
         _row(node_path="B", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
     ]
-    breakdown = compute_aggregate_costs(rows, output_tokens_by_node={"A": 500, "B": 500})
-    assert breakdown.current_usd is not None
-    assert breakdown.optimized_usd is not None
-    assert breakdown.optimized_usd < breakdown.current_usd
-    # Rerun: both calls are reads, so even cheaper than optimized first-run.
-    assert breakdown.rerun_usd is not None
-    assert breakdown.rerun_usd < breakdown.optimized_usd
+    projections = compute_projections(rows, output_tokens_by_node={"A": 500, "B": 500})
+    assert projections.no_cache_hypothetical_usd is not None
+    assert projections.first_run_with_cache_hypothetical_usd is not None
+    assert projections.first_run_with_cache_hypothetical_usd < projections.no_cache_hypothetical_usd
+    # Rerun: both calls are reads, so even cheaper than first-run with-cache.
+    assert projections.rerun_within_ttl_hypothetical_usd is not None
+    assert projections.rerun_within_ttl_hypothetical_usd < projections.first_run_with_cache_hypothetical_usd
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/cost_estimation.py",
+    line=426,
+    revert="subset = (row.workflow_path, tuple(row.declared_prompt_cache or ()))",
+    expected_failure="subset undefined — NameError on by_subset.setdefault",
+)
+def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> None:
+    """Mutation contract: group by bare subset only -> second workflow pays read instead of write."""
+    parent = PerCallRow(**{
+        **_row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]).__dict__,
+        "workflow_path": "parent.pflow.md",
+    })
+    child = PerCallRow(**{
+        **_row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]).__dict__,
+        "workflow_path": "child.pflow.md",
+    })
+
+    scoped = compute_projections(
+        [parent, child],
+        output_tokens_by_node={
+            ("parent.pflow.md", "draft"): 500,
+            ("child.pflow.md", "draft"): 500,
+        },
+    )
+    single_scope = compute_projections(
+        [
+            PerCallRow(**{**parent.__dict__, "workflow_path": "parent.pflow.md"}),
+            PerCallRow(**{**child.__dict__, "workflow_path": "parent.pflow.md"}),
+        ],
+        output_tokens_by_node={
+            ("parent.pflow.md", "draft"): 500,
+        },
+    )
+
+    assert scoped.first_run_with_cache_hypothetical_usd is not None
+    assert single_scope.first_run_with_cache_hypothetical_usd is not None
+    assert scoped.first_run_with_cache_hypothetical_usd > single_scope.first_run_with_cache_hypothetical_usd
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/cost_estimation.py",
+    line=388,
+    revert="if row.did_not_execute_in_trace:",
+    expected_failure="phantom row passes through partition; no_cache_hypothetical / rerun aggregates inflate",
+)
+def test_did_not_execute_rows_do_not_contribute_to_projection_costs() -> None:
+    """Mutation contract: remove partition skip -> phantom row adds projection costs and savings."""
+    fired = _row(
+        node_path="fired",
+        input_tokens=10_000,
+        cacheable_tokens=8_000,
+        declared_prompt_cache=["x"],
+    )
+    phantom = PerCallRow(**{
+        **_row(
+            node_path="phantom",
+            input_tokens=10_000,
+            cacheable_tokens=8_000,
+            declared_prompt_cache=["x"],
+        ).__dict__,
+        "did_not_execute_in_trace": True,
+    })
+
+    with_phantom = compute_projections(
+        [fired, phantom],
+        output_tokens_by_node={"fired": 500, "phantom": 500},
+    )
+    without_phantom = compute_projections([fired], output_tokens_by_node={"fired": 500})
+
+    assert with_phantom == without_phantom
 
 
 def test_savings_zero_when_no_subset_declared() -> None:
@@ -190,32 +278,32 @@ def test_savings_zero_when_no_subset_declared() -> None:
 
     The renderer hides the savings line when 0; this test pins the contract."""
     row = _row(input_tokens=10_000, cacheable_tokens=0, declared_prompt_cache=None)
-    breakdown = compute_aggregate_costs([row], output_tokens_by_node={"X": 500})
-    assert breakdown.savings_first_run_usd == 0.0
-    assert breakdown.savings_rerun_usd == 0.0
+    projections = compute_projections([row], output_tokens_by_node={"X": 500})
+    assert projections.savings_first_run_usd == 0.0
+    assert projections.savings_rerun_usd == 0.0
 
 
 def test_partial_state_when_only_some_calls_have_output_data() -> None:
     """Mixed memo: some calls have output_tokens (memo), others don't (no
-    history yet). Aggregate sums what it can, marks partial."""
+    history yet). Projection sums what it can, marks partial."""
     rows = [
         _row(node_path="A", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
         _row(node_path="B", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
     ]
-    breakdown = compute_aggregate_costs(
+    projections = compute_projections(
         rows,
         output_tokens_by_node={"A": 500, "B": None},
     )
-    assert breakdown.partial is True
-    assert breakdown.current_usd is not None  # Has data from row A.
-    assert breakdown.savings_first_run_usd is not None  # Both rows priced for savings.
+    assert projections.partial is True
+    assert projections.no_cache_hypothetical_usd is not None  # Has data from row A.
+    assert projections.savings_first_run_usd is not None  # Both rows priced for savings.
 
 
 def test_unavailable_models_collected_when_pricing_missing() -> None:
     rows = [_row(model="ollama/llama3.2:8b")]
-    breakdown = compute_aggregate_costs(rows, output_tokens_by_node={"X": 500})
-    assert breakdown.current_usd is None  # No priced rows → no aggregate.
-    assert "ollama/llama3.2:8b" in breakdown.unavailable_models
+    projections = compute_projections(rows, output_tokens_by_node={"X": 500})
+    assert projections.no_cache_hypothetical_usd is None  # No priced rows → no aggregate.
+    assert "ollama/llama3.2:8b" in projections.unavailable_models
 
 
 def test_mixed_priced_and_unpriced_models_marks_partial() -> None:
@@ -223,21 +311,21 @@ def test_mixed_priced_and_unpriced_models_marks_partial() -> None:
         _row(node_path="A", model="claude-sonnet-4-5", input_tokens=1000),
         _row(node_path="B", model="ollama/llama3.2:8b", input_tokens=1000),
     ]
-    breakdown = compute_aggregate_costs(
+    projections = compute_projections(
         rows,
         output_tokens_by_node={"A": 500, "B": 500},
     )
-    assert breakdown.partial is True
-    assert breakdown.current_usd is not None
-    assert "ollama/llama3.2:8b" in breakdown.unavailable_models
-    assert "claude-sonnet-4-5" not in breakdown.unavailable_models
+    assert projections.partial is True
+    assert projections.no_cache_hypothetical_usd is not None
+    assert "ollama/llama3.2:8b" in projections.unavailable_models
+    assert "claude-sonnet-4-5" not in projections.unavailable_models
 
 
 def test_empty_rows_produces_empty_breakdown() -> None:
-    breakdown = compute_aggregate_costs([], output_tokens_by_node={})
-    assert breakdown.current_usd is None
-    assert breakdown.savings_first_run_usd is None
-    assert breakdown.unavailable_models == ()
+    projections = compute_projections([], output_tokens_by_node={})
+    assert projections.no_cache_hypothetical_usd is None
+    assert projections.savings_first_run_usd is None
+    assert projections.unavailable_models == ()
 
 
 # ---------------------------------------------------------------------------
@@ -246,18 +334,18 @@ def test_empty_rows_produces_empty_breakdown() -> None:
 
 
 def test_1h_ttl_costs_more_than_5m_for_anthropic_writes() -> None:
-    """1h-TTL writes are 2x base; 5m-TTL writes are 1.25x base. Optimized cost
-    on first run should be HIGHER under 1h than 5m for the same workload."""
+    """1h-TTL writes are 2x base; 5m-TTL writes are 1.25x base. With-cache
+    first-run projection should be HIGHER under 1h than 5m for the same workload."""
     row = _row(
         input_tokens=10_000,
         cacheable_tokens=8_000,
         declared_prompt_cache=["x"],
     )
-    breakdown_5m = compute_aggregate_costs([row], output_tokens_by_node={"X": 500}, ttl="5m")
-    breakdown_1h = compute_aggregate_costs([row], output_tokens_by_node={"X": 500}, ttl="1h")
-    assert breakdown_5m.optimized_usd is not None
-    assert breakdown_1h.optimized_usd is not None
-    assert breakdown_1h.optimized_usd > breakdown_5m.optimized_usd
+    projections_5m = compute_projections([row], output_tokens_by_node={"X": 500}, ttl="5m")
+    projections_1h = compute_projections([row], output_tokens_by_node={"X": 500}, ttl="1h")
+    assert projections_5m.first_run_with_cache_hypothetical_usd is not None
+    assert projections_1h.first_run_with_cache_hypothetical_usd is not None
+    assert projections_1h.first_run_with_cache_hypothetical_usd > projections_5m.first_run_with_cache_hypothetical_usd
 
 
 def test_1h_ttl_does_not_affect_non_anthropic_providers() -> None:
@@ -274,9 +362,9 @@ def test_1h_ttl_does_not_affect_non_anthropic_providers() -> None:
         cacheable_tokens=8_000,
         declared_prompt_cache=["x"],
     )
-    breakdown_5m = compute_aggregate_costs([row], output_tokens_by_node={"X": 500}, ttl="5m")
-    breakdown_1h = compute_aggregate_costs([row], output_tokens_by_node={"X": 500}, ttl="1h")
-    assert breakdown_5m.optimized_usd == breakdown_1h.optimized_usd
+    projections_5m = compute_projections([row], output_tokens_by_node={"X": 500}, ttl="5m")
+    projections_1h = compute_projections([row], output_tokens_by_node={"X": 500}, ttl="1h")
+    assert projections_5m.first_run_with_cache_hypothetical_usd == projections_1h.first_run_with_cache_hypothetical_usd
 
 
 # ---------------------------------------------------------------------------
@@ -294,11 +382,11 @@ def test_batch_invocations_amortize_one_write_across_n_items() -> None:
         is_batch=True,
         batch_size=10,
     )
-    breakdown = compute_aggregate_costs([row], output_tokens_by_node={"X": 500}, ttl="5m")
-    assert breakdown.current_usd is not None
-    assert breakdown.optimized_usd is not None
-    # Optimized should be << current because 9 of 10 calls are reads.
-    assert breakdown.optimized_usd < breakdown.current_usd * 0.6
+    projections = compute_projections([row], output_tokens_by_node={"X": 500}, ttl="5m")
+    assert projections.no_cache_hypothetical_usd is not None
+    assert projections.first_run_with_cache_hypothetical_usd is not None
+    # With-cache should be << no-cache because 9 of 10 calls are reads.
+    assert projections.first_run_with_cache_hypothetical_usd < projections.no_cache_hypothetical_usd * 0.6
 
 
 # ---------------------------------------------------------------------------
@@ -339,33 +427,42 @@ def _row_with_cost(
     )
 
 
-def test_current_cost_returns_recorded_cost_when_set() -> None:
-    """Test 1 — Cost from trace matches recorded cost (Track A primary contract).
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/cost_estimation.py",
+    line=543,
+    revert="if row.cost_usd is not None:",
+    expected_failure="row.cost_usd skipped — actually-paid total reported as None instead of $0.0021",
+)
+def test_actually_paid_sums_row_cost_usd_when_set() -> None:
+    """Track A primary contract: ``compute_actually_paid`` sums ``row.cost_usd``
+    via the row-fallback path (no TraceTree provided).
 
-    Mutation contract: revert the ``if row.cost_usd is not None: return row.cost_usd``
-    branch in ``_per_call_current_cost`` → this test fails because the
-    aggregate falls back to the pre-fix recompute path which produces a
-    much larger number on cached runs.
+    Real Gemini smoke RUN1 baseline cost: $0.0021 (recorded in trace).
+    Pre-Track-A the analyzer recomputed ~$0.0032 (53% over) by ignoring
+    ``row.cost_usd``. The fallback path mirrors the same contract.
+
+    Mutation contract: revert the ``if row.cost_usd is not None`` guard in
+    the row-fallback loop → ``found_any`` stays False → returns
+    ``(None, "unavailable")``.
     """
-    # Real Gemini smoke RUN1 baseline cost: $0.0021 (recorded in trace).
-    # Without the fix, the analyzer recomputed ~$0.0032 (53% over).
     row = _row_with_cost(cost_usd=0.00210488, input_tokens=4709)
-    breakdown = compute_aggregate_costs([row], output_tokens_by_node={"X": 76}, ttl=None)
-    assert breakdown.current_usd is not None
+    actually_paid = compute_actually_paid([row])
+    assert actually_paid.total_usd is not None
     # Within ±5% of the recorded value (no recompute drift).
-    assert abs(breakdown.current_usd - 0.00210488) / 0.00210488 < 0.05
+    assert abs(actually_paid.total_usd - 0.00210488) / 0.00210488 < 0.05
+    assert actually_paid.tier == "trace"
 
 
-def test_heterogeneous_batch_cost_surfaces_in_current_usd() -> None:
-    """Test 8 — Heterogeneous batch + recorded cost.
+def test_heterogeneous_batch_cost_surfaces_via_actually_paid() -> None:
+    """Heterogeneous batch (``model: ${item.model}``) cost surfaces through
+    actually-paid, NOT projections.
 
-    Heterogeneous batch sub-workflows (``model: ${item.model}``) can't be
-    priced as one model; pre-fix they were entirely excluded from
-    ``current_usd``. Track A surfaces their recorded cost separately.
-
-    Mutation contract: drop the ``has_heterogeneous_recorded`` accumulation
-    in ``_partition_rows`` → ``current_usd`` becomes None and the assertion
-    fails.
+    Phase 4 split: heterogeneous rows are excluded from projections (we
+    can't price them as one model). Their actually-paid cost still surfaces
+    via ``compute_actually_paid`` — the row's ``cost_usd`` was recorded by
+    the trace at write-time, summing it via the row fallback (or via
+    ``TraceTree.total_cost`` when a tree is provided) yields the correct
+    figure.
     """
     het = _row_with_cost(
         node_path="batch-call",
@@ -373,11 +470,55 @@ def test_heterogeneous_batch_cost_surfaces_in_current_usd() -> None:
         cost_usd=0.0042,
         model_is_heterogeneous=True,
     )
-    breakdown = compute_aggregate_costs([het], output_tokens_by_node={"batch-call": None}, ttl=None)
-    # Heterogeneous-only workflow: current_usd reflects what was paid; partial
-    # is True (no projection math possible on a heterogeneous model).
-    assert breakdown.current_usd == 0.0042
-    assert breakdown.partial is True
+    # Heterogeneous excluded from projections (no priced model to project).
+    projections = compute_projections([het], output_tokens_by_node={"batch-call": None}, ttl=None)
+    assert projections.no_cache_hypothetical_usd is None
+    assert projections.unavailable_models == ()  # Empty model name doesn't count as unavailable.
+
+    # Actually-paid surfaces the recorded cost.
+    actually_paid = compute_actually_paid([het])
+    assert actually_paid.total_usd == 0.0042
+    assert actually_paid.tier == "trace"
+
+
+def test_actually_paid_returns_unavailable_when_no_rows_have_cost_usd() -> None:
+    """Greenfield (no trace) → row.cost_usd is None on every row → fallback
+    reports ``(None, "unavailable")``."""
+    row = _row(input_tokens=1000)  # No cost_usd — greenfield row.
+    actually_paid = compute_actually_paid([row])
+    assert actually_paid.total_usd is None
+    assert actually_paid.tier == "unavailable"
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/cost_estimation.py",
+    line=390,
+    revert="if row.model_is_heterogeneous:",
+    expected_failure="heterogeneous skip dropped — pricing lookup runs on empty model and projections fabricate",
+)
+def test_heterogeneous_rows_excluded_from_priced_projections() -> None:
+    """Defensive guard: ``_partition_priced_rows`` excludes heterogeneous rows
+    BEFORE the pricing lookup runs. Without the guard, ``model = ""`` flows
+    into ``get_model_pricing`` which would either return None (still safe)
+    or — if a future provider regression maps "" to some default — silently
+    fabricate a price for a row whose model genuinely varies per batch item.
+    """
+    het = _row_with_cost(
+        node_path="batch-call",
+        model="",
+        cost_usd=0.0042,
+        model_is_heterogeneous=True,
+    )
+    homogeneous = _row(node_path="other", model="anthropic/claude-sonnet-4-5")
+    projections = compute_projections(
+        [het, homogeneous],
+        output_tokens_by_node={"batch-call": 100, "other": 100},
+    )
+    # Heterogeneous excluded; only the homogeneous row contributes.
+    assert projections.no_cache_hypothetical_usd is not None
+    # Empty model name MUST NOT register as an "unavailable model" — the
+    # heterogeneous skip fires before the pricing lookup.
+    assert "" not in projections.unavailable_models
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +526,12 @@ def test_heterogeneous_batch_cost_surfaces_in_current_usd() -> None:
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/trace_tree.py",
+    line=215,
+    revert='if event.get("cached") and event.get("llm_call") is None and not (event.get("batch_items") or []):',
+    expected_failure="cached short-circuit dropped — degrades to (None, 'unavailable') and recompute fabricates",
+)
 def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None:
     """Test 5 — Cached events contribute 0.0 (NOT unavailable).
 
@@ -410,12 +557,18 @@ def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None
             }
         ],
     }
-    ctx = AnalysisContext(workflow_ir={}, trace_data=trace)
+    ctx = AnalysisContext.build(workflow_ir={}, trace_data=trace)
     cost, source = ctx.cost_usd_for_node("cached-node")
     assert cost == 0.0
     assert source == "trace"
 
 
+@mutation_contract(
+    file="src/pflow/core/trace_tree.py",
+    line=217,
+    revert="return self._sum_leaves(self.iter_llm_leaves((event,), descend_sub_workflows=False))",
+    expected_failure="cost_for_node descends into sub_workflow_events — parent inflated by child LLM cost",
+)
 def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:
     """Test 6 — Sub-workflow scoping.
 
@@ -448,12 +601,18 @@ def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:
             }
         ],
     }
-    ctx = AnalysisContext(workflow_ir={}, trace_data=trace)
+    ctx = AnalysisContext.build(workflow_ir={}, trace_data=trace)
     cost, source = ctx.cost_usd_for_node("parent-llm")
     assert cost == 0.01  # NOT 1.0 (parent + child).
     assert source == "trace"
 
 
+@mutation_contract(
+    file="src/pflow/core/trace_tree.py",
+    line=273,
+    revert="has_unpriced = True",
+    expected_failure="has_unpriced never set — unpriced leaves report 'trace' (over-confident)",
+)
 def test_cost_usd_for_node_returns_trace_partial_when_some_leaves_unpriced() -> None:
     """Test 7 — ``cost_usd: None`` propagation (4-state trace_partial).
 
@@ -482,7 +641,7 @@ def test_cost_usd_for_node_returns_trace_partial_when_some_leaves_unpriced() -> 
             }
         ],
     }
-    ctx = AnalysisContext(workflow_ir={}, trace_data=trace)
+    ctx = AnalysisContext.build(workflow_ir={}, trace_data=trace)
     cost, source = ctx.cost_usd_for_node("batch-mixed")
     assert cost == 0.005  # Sum of priced leaves only.
     assert source == "trace_partial"

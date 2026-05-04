@@ -61,6 +61,7 @@ class CrossWorkflowEdge:
     line_in_parent: int
     parent_node_id: str
     parent_batch_alias: str | None = None
+    parent_input_value: Any = None
 
     @property
     def is_rename(self) -> bool:
@@ -208,7 +209,9 @@ def _walk_one_level(
     """Visit every ``type: workflow`` node in ``ir`` and recurse."""
     if depth >= max_depth:
         message = (
-            f"Cross-workflow walker reached max_depth={max_depth} at {parent_label} — deeper boundaries not analyzed."
+            f"Cross-workflow walker reached max_depth={max_depth} at {parent_label} — deeper boundaries not analyzed. "
+            "Cost rollup is trace-driven and still reflects actual execution; IR-driven projections under-cover "
+            "deeper boundaries. Increase max_depth in the analyzer call to extend projection coverage."
         )
         logger.info(message)
         if notes is not None and message not in notes:
@@ -218,6 +221,7 @@ def _walk_one_level(
     for node in ir.get("nodes", []):
         if not isinstance(node, dict) or node.get("type") != "workflow":
             continue
+        _maybe_note_template_items_gap(node, parent_label, notes)
         params = node.get("params") or {}
         if not isinstance(params, dict):
             continue
@@ -238,6 +242,26 @@ def _walk_one_level(
                 cache_items_by_workflow=cache_items_by_workflow,
                 irs_by_workflow=irs_by_workflow,
             )
+
+
+def _maybe_note_template_items_gap(node: dict[str, Any], parent_label: str, notes: list[str] | None) -> None:
+    """Surface static-enumeration gaps for template-items workflow batches."""
+    if notes is None:
+        return
+    batch = node.get("batch")
+    if not isinstance(batch, dict) or isinstance(batch.get("items"), list):
+        return
+    items = batch.get("items")
+    if not isinstance(items, str) or "${" not in items:
+        return
+    node_id = str(node.get("id", "?"))
+    message = (
+        f"Workflow batch {node_id} in {parent_label} uses items: {items}; sub-workflow rows for these runtime "
+        "items are not in the per-call table. current_cost is trace-driven and reflects actual execution. "
+        "Provide --inputs with the resolved list, or use inline static batch items, to enable static child enumeration."
+    )
+    if message not in notes:
+        notes.append(message)
 
 
 def _enumerate_calls(node: dict[str, Any], params: dict[str, Any]) -> Any:
@@ -280,7 +304,9 @@ def _process_one_call(
     if child_path_str and child_path_str in seen:
         message = (
             f"Cross-workflow walker detected cycle: {child_path_str} "
-            f"already on recursion stack from {parent_label} — cycle skipped."
+            f"already on recursion stack from {parent_label} — cycle skipped. "
+            "Cost rollup is trace-driven, so actual recursive executions are still summed; "
+            "only static IR enumeration was truncated."
         )
         logger.info(message)
         if notes is not None and message not in notes:
@@ -303,6 +329,7 @@ def _process_one_call(
                     line_in_parent=line_in_parent,
                     parent_node_id=node_id,
                     parent_batch_alias=parent_batch_alias,
+                    parent_input_value=value_expr,
                 )
             )
 

@@ -276,32 +276,15 @@ def _output_from_trace(trace: dict[str, Any], node_id: str) -> int | None:
 
 
 def _find_llm_event(trace: dict[str, Any], node_id: str) -> dict[str, Any] | None:
-    """Return the first matching ``llm_call`` event dict for the given node_id.
+    """Return the first top-level ``llm_call`` dict for ``node_id``."""
+    from pflow.core.trace_tree import TraceTree
 
-    Non-recursive (top-level events only — sub_workflow_events and
-    batch_items[i].events out of scope per existing
-    ``_llm_call_field_from_trace`` contract). The trace JSON's top-level
-    events list is keyed ``"nodes"`` (see
-    ``runtime/workflow_trace.WorkflowTraceCollector.save_to_file``).
-    ``analyze.py`` only ever asks for ``type: llm`` IR nodes which always
-    appear at top level; the recommendations-section's ``_iter_llm_events``
-    walker handles recursive descent for discrepancy detection.
-
-    For batch nodes, trace may have multiple events for one node_id. This
-    helper picks first-match (deterministic). Prewarm flows that shift
-    chunk membership mid-batch may not be representative — revisit when
-    prewarm hits Stage 2.
-    """
-    events = trace.get("nodes")
-    if not isinstance(events, list):
+    try:
+        event = TraceTree.from_dict(trace).event_for(node_id, requires_llm_call=True)
+    except ValueError:
         return None
-    for event in events:
-        if not isinstance(event, dict) or event.get("node_id") != node_id:
-            continue
-        llm_call = event.get("llm_call")
-        if isinstance(llm_call, dict):
-            return llm_call
-    return None
+    llm_call = event.get("llm_call") if event is not None else None
+    return llm_call if isinstance(llm_call, dict) else None
 
 
 def _llm_call_field_from_trace(trace: dict[str, Any], node_id: str, field: str) -> int | None:

@@ -23,6 +23,13 @@ def _write_workflow(tmp_path: Path, content: str) -> Path:
     return path
 
 
+def _json_payload(output: str) -> dict:
+    """Parse CLI JSON even if a dependency logs before Click captures stdout."""
+    start = output.find("{")
+    assert start >= 0, output
+    return json.loads(output[start:])
+
+
 _MINIMAL_VALID_WORKFLOW = """\
 # Test
 
@@ -102,7 +109,7 @@ def test_analyze_cache_json_format(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = _json_payload(result.output)
     assert payload["format_version"] == JSON_FORMAT_VERSION
     assert payload["format_version"].startswith(JSON_FORMAT_VERSION_MAJOR + ".")
     assert "summary" in payload
@@ -128,11 +135,91 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     runner = CliRunner()
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = _json_payload(result.output)
     assert any(w["id"] == "cache.below-min-tokens" for w in payload["warnings"]), (
         f"expected cache.below-min-tokens to fire on _LLM_WORKFLOW; "
         f"got warnings={[w['id'] for w in payload['warnings']]}"
     )
+
+
+def test_analyze_cache_rolls_up_sub_workflow_costs_via_subprocess() -> None:
+    """End-to-end fixture: current cost comes from parent + child trace leaves."""
+    workflow_path = Path("tests/fixtures/cache_analysis/parent.pflow.md")
+    trace_path = Path("tests/fixtures/cache_analysis/parent-child-trace.json")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "analyze-cache",
+            str(workflow_path),
+            "--from-trace",
+            str(trace_path),
+            "--format=json",
+            "topic=cache analysis",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert payload["summary"]["actually_paid_usd"] == pytest.approx(0.15)
+    child_rollup = payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]
+    assert child_rollup["called_by_node_id"] == "call-child"
+    assert child_rollup["actually_paid_usd"] == pytest.approx(0.10)
+
+
+def test_analyze_cache_does_not_cross_pollinate_subset_groups() -> None:
+    """Parent and child both use node id ``draft``; JSON keeps scoped rows separate."""
+    workflow_path = Path("tests/fixtures/cache_analysis/parent.pflow.md")
+    trace_path = Path("tests/fixtures/cache_analysis/parent-child-trace.json")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "analyze-cache",
+            str(workflow_path),
+            "--from-trace",
+            str(trace_path),
+            "--format=json",
+            "topic=cache analysis",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    draft_rows = [row for row in payload["per_call"] if row["node_path"] == "draft"]
+    assert len(draft_rows) == 2
+    assert len({row["workflow_path"] for row in draft_rows}) == 2
+    assert (
+        payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["first_run_with_cache_hypothetical_usd"]
+        is not None
+    )
+
+
+def test_analyze_cache_renders_grouped_per_call_table_with_drill_in() -> None:
+    """End-to-end text UX: grouped child rows plus drill-in commands."""
+    workflow_path = Path("tests/fixtures/cache_analysis/parent.pflow.md")
+    trace_path = Path("tests/fixtures/cache_analysis/parent-child-trace.json")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "analyze-cache",
+            str(workflow_path),
+            "--from-trace",
+            str(trace_path),
+            "--all-rows",
+            "topic=cache analysis",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "### parent.pflow.md" in result.output
+    assert "### child.pflow.md (called by call-child)" in result.output
+    assert "## Sub-workflow drill-in" in result.output
+    assert "pflow analyze-cache" in result.output
 
 
 # ---------------------------------------------------------------------------

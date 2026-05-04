@@ -41,7 +41,7 @@ from collections.abc import Iterable
 
 from pflow.core.diagnostic import Diagnostic
 
-from .analyze import CacheAnalysis, PerCallRow
+from .analyze import AnalysisSummary, CacheAnalysis, PerCallRow
 
 _HIDDEN_RATIO_THRESHOLD = 80
 
@@ -67,6 +67,10 @@ def render_text(analysis: CacheAnalysis, *, all_rows: bool = False) -> str:
     per_call = _render_per_call(analysis, all_rows=all_rows)
     if per_call:
         lines.append(per_call)
+
+    drill = _render_sub_workflow_drill_in(analysis)
+    if drill:
+        lines.append(drill)
 
     # "## All warnings" section was removed entirely (CP4 #16 — see module
     # docstring). Recommended Actions IS the canonical warnings view, sorted
@@ -115,6 +119,9 @@ def _render_header(analysis: CacheAnalysis) -> str:
         "",
         f"  {_format_scale_line(s.total_llm_calls_estimated, s.models_in_use, heterogeneous_node_paths=s.heterogeneous_model_node_paths)}",
     ]
+    sub_line = _format_sub_workflow_breakdown_line(analysis)
+    if sub_line:
+        lines.append(f"  {sub_line}")
     if label in {"medium_from_memo", "high_from_trace"}:
         # Per DD#34 line 638 — append coverage detail.
         source_count = (
@@ -124,6 +131,20 @@ def _render_header(analysis: CacheAnalysis) -> str:
         )
         lines.append(f"  Confidence: {label} ({source_count} of {coverage.get('total', 0)} nodes)")
     return "\n".join(lines)
+
+
+def _format_sub_workflow_breakdown_line(analysis: CacheAnalysis) -> str | None:
+    rollup = analysis.summary.sub_workflow_rollup
+    if rollup is None:
+        return None
+    root_count = sum(1 for row in analysis.per_call if row.workflow_path == analysis.workflow_path)
+    child_count = sum(1 for row in analysis.per_call if row.workflow_path != analysis.workflow_path)
+    child_names = [_workflow_short_name(entry.workflow_path) for entry in rollup.per_workflow]
+    workflow_word = "sub-workflow" if len(child_names) == 1 else "sub-workflows"
+    return (
+        f"({root_count} in {_workflow_filename(analysis.workflow_path)}, "
+        f"{child_count} in {len(child_names)} {workflow_word}: {', '.join(child_names)})"
+    )
 
 
 def _format_scale_line(
@@ -187,36 +208,103 @@ def _format_heterogeneous_suffix(heterogeneous_node_paths: tuple[str, ...]) -> s
     return f" + {count} {word} with {_HETEROGENEOUS_MODEL_TAG} ({names_csv})"
 
 
+def _render_cost_block(s: AnalysisSummary) -> list[str]:
+    """Compose the cost lines from atomic primitives by context.
+
+    Three contexts, each with a distinct line set so agents skimming see
+    only what's load-bearing:
+
+    1. **Trace + workflow paid something** (``actually_paid_usd is not None``):
+       show ``Actually paid (trace): $X``, ``Cost without caching: $Y``,
+       ``Cost on rerun (within TTL): $Z``. The actual figure is the truth;
+       the no-cache hypothetical answers "what would removing caching cost?";
+       the rerun answers "what does steady-state cost?"
+    2. **Greenfield with declared cache** (``actually_paid_usd is None`` AND
+       ``aggregate_savings_first_run_usd > 0``): show
+       ``Cost without caching: $X``, ``Cost on first run (with cache): $Y``,
+       ``Cost on rerun (within TTL): $Z``. The first two differ; the agent
+       sees the savings.
+    3. **Greenfield without declared cache** (no caching means
+       no_cache_hypothetical equals first_run_with_cache exactly): show
+       ``Cost per run: $X`` once. Rerun is the same number.
+    """
+    if s.actually_paid_usd is not None:
+        return _render_trace_cost_lines(s)
+    if s.aggregate_savings_first_run_usd is not None and s.aggregate_savings_first_run_usd > 0:
+        return _render_greenfield_with_cache_lines(s)
+    return _render_greenfield_no_cache_lines(s)
+
+
+def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
+    """Cost lines when a trace contributed actual costs."""
+    actually_paid_str = _format_cost(
+        s.actually_paid_usd,
+        s.partial_cost_usd,
+        s.unavailable_models,
+        tier_annotation=str(s.actually_paid_tier),
+    )
+    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    return [
+        f"  Actually paid (trace):       {actually_paid_str}",
+        f"  Cost without caching:        {no_cache_str}",
+        f"  Cost on rerun (within TTL):  {rerun_str}",
+    ]
+
+
+def _render_greenfield_with_cache_lines(s: AnalysisSummary) -> list[str]:
+    """Cost lines for greenfield workflows that declare ``prompt_cache:``."""
+    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    first_run_str = _format_cost(s.first_run_with_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    return [
+        f"  Cost without caching:        {no_cache_str}",
+        f"  Cost on first run (cache):   {first_run_str}",
+        f"  Cost on rerun (within TTL):  {rerun_str}",
+    ]
+
+
+def _render_greenfield_no_cache_lines(s: AnalysisSummary) -> list[str]:
+    """Cost lines for greenfield workflows with no declared caching.
+
+    All three projection atoms collapse to the same number when no row has
+    ``prompt_cache:`` (cacheable=0, so write/read rates don't apply).
+    Rendering one line is honest; three identical lines would be noise.
+    """
+    cost_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    return [f"  Cost per run:                {cost_str}"]
+
+
+def _is_post_run_greenfield_with_savings(s: AnalysisSummary) -> bool:
+    """Greenfield path where pricing data exists + savings can be computed but
+    output tokens aren't available for absolute figures."""
+    return (
+        s.actually_paid_usd is None
+        and s.no_cache_hypothetical_usd is None
+        and s.aggregate_savings_first_run_usd is not None
+    )
+
+
+def _all_cost_atoms_unavailable(s: AnalysisSummary) -> bool:
+    """True when no cost atom carries a real number.
+
+    Used to dispatch the "Cost data unavailable" message — the four
+    sub-cases (no LLM nodes / all heterogeneous / no model resolved /
+    no run history) each get a distinct hint.
+    """
+    return (
+        s.actually_paid_usd is None
+        and s.no_cache_hypothetical_usd is None
+        and s.first_run_with_cache_hypothetical_usd is None
+        and s.rerun_within_ttl_hypothetical_usd is None
+    )
+
+
 def _render_summary(analysis: CacheAnalysis) -> str:
     s = analysis.summary
-    # Track A: when current_cost is sourced from trace, annotate so agents
-    # know it reflects what the workflow actually paid (vs the recompute
-    # path which projects from tokens x full_rate). Tier label sourced from
-    # the per-call rows — see ``_summarize_cost_tier``.
-    cost_tier = _summarize_cost_tier(analysis)
-    current_str = _format_cost(
-        s.current_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models, tier_annotation=cost_tier
-    )
-    # ``optimized_cost_per_run_usd`` is the no-cache hypothetical (recomputed
-    # full price as if no ``## Cache`` were declared) — it's the BASELINE for
-    # comparison, not the optimization target. Labelling it "Optimized" misled
-    # agents because the value is HIGHER than ``current_cost`` on declared
-    # workflows: the trace-honored ``current`` reflects actual cached cost,
-    # while ``optimized_cost`` reflects what you'd pay without caching. See
-    # progress log entry "Cost-projection fix: Tracks A + B + C", deviation
-    # #5: optimized = recomputed_no_cache_hypothetical, NOT a goal state.
-    # Both projections — never tier-annotated.
-    no_cache_str = _format_cost(s.optimized_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
-    rerun_str = _format_cost(s.rerun_cost_per_run_usd, s.partial_cost_usd, s.unavailable_models)
-
     actionable_word = "opportunity" if s.actionable_opportunities == 1 else "opportunities"
-    summary_lines = [
-        "## Summary",
-        "",
-        f"  Current cost per run:        {current_str}",
-        f"  Cost without caching:        {no_cache_str}",
-        f"  Cost on rerun (within 1h):   {rerun_str}",
-    ]
+    summary_lines = ["## Summary", ""]
+    summary_lines.extend(_render_cost_block(s))
 
     # Aggregate savings — meaningful even on greenfield (output cost cancels;
     # input-only math). Only render when ``prompt_cache:`` is declared on at
@@ -250,18 +338,19 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     )
 
     if s.partial_cost_usd and s.unavailable_models:
-        models_csv = ", ".join(s.unavailable_models)
+        models_csv = _format_unavailable_models(analysis)
         summary_lines.append("")
         summary_lines.append(f"  Unpriced models: {models_csv}")
-    elif s.current_cost_per_run_usd is None and s.aggregate_savings_first_run_usd is not None:
-        # Greenfield path — pricing data exists, but output token counts are
-        # unavailable. Tell the agent how to light up the absolute figures.
+    elif _is_post_run_greenfield_with_savings(s):
+        # Pricing data exists + savings opportunity exists, but output token
+        # counts are unavailable for absolute figures. Tell the agent how to
+        # light up real cost figures.
         summary_lines.append("")
         summary_lines.append(
             "  Absolute cost figures need a prior run. Run the workflow once, then "
             "re-run analyze-cache for real cost figures and cacheable projections."
         )
-    elif s.current_cost_per_run_usd is None and not s.unavailable_models:
+    elif _all_cost_atoms_unavailable(s) and not s.unavailable_models:
         # All-unavailable case — surface explicit reason. The branch fires on
         # four distinct sub-cases; conflating them produced the lyrics-generator
         # bug where ``Cost data unavailable: workflow has no LLM nodes`` rendered
@@ -292,6 +381,19 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     return "\n".join(summary_lines)
 
 
+def _format_unavailable_models(analysis: CacheAnalysis) -> str:
+    by_workflow = analysis.summary.unavailable_models_by_workflow or {}
+    if not by_workflow:
+        return ", ".join(analysis.summary.unavailable_models)
+    parts: list[str] = []
+    for workflow_path, models in sorted(by_workflow.items(), key=lambda item: str(item[0])):
+        workflow_short = _workflow_short_name(str(workflow_path or analysis.workflow_path))
+        for model in models:
+            suffix = f" (in {workflow_short})" if workflow_path != analysis.workflow_path else ""
+            parts.append(f"{model}{suffix}")
+    return ", ".join(parts)
+
+
 def _format_cost(
     value: float | None,
     partial: bool,
@@ -305,12 +407,11 @@ def _format_cost(
     agent doesn't have to scan ``models_in_use`` to find the culprit. The
     plural-count phrasing remains for N>1.
 
-    Track A: optional ``tier_annotation`` (e.g. ``"trace"``,
-    ``"trace_partial"``, ``"recomputed"``) appended in parentheses so the
-    agent sees whether the figure reflects what the workflow actually paid
-    (trace) or a projection (recomputed). Empty string skips the suffix
-    (preserves the bare-cost format for unannotated callers like optimized
-    / rerun projections).
+    Optional ``tier_annotation`` (e.g. ``"trace"``, ``"trace_partial"``)
+    appended in parentheses so the agent sees the confidence tier when
+    rendering ``actually_paid_usd``. Empty string skips the suffix
+    (the no_cache / first_run / rerun projection lines stay unannotated —
+    they're hypotheticals; the tier-confidence concept doesn't apply).
     """
     if value is None:
         if len(unavailable_models) == 1:
@@ -348,33 +449,6 @@ def _format_dollar_amount(value: float) -> str:
     if value >= 0.0001:
         return f"~${value:.4f}"
     return "~<$0.0001"
-
-
-def _summarize_cost_tier(analysis: CacheAnalysis) -> str:
-    """Aggregate ``cost_data_source`` across rows into a single label.
-
-    Mirrors the cost tri-state contract:
-
-    - All rows ``trace`` → ``"trace"`` (high confidence — what was paid).
-    - Any row ``trace_partial`` → ``"trace_partial"`` (medium-high).
-    - Mix of trace + recomputed → ``"trace_partial"`` (some priced via
-      trace, some via recompute).
-    - All rows ``recomputed`` → ``""`` (no annotation — preserves the
-      pre-Track-A bare-cost format for greenfield workflows).
-    - All rows ``unavailable`` → ``""`` (the cost is None upstream; the
-      caller renders ``unavailable`` directly).
-    """
-    sources = [r.cost_data_source for r in analysis.per_call]
-    if not sources:
-        return ""
-    if all(s == "trace" for s in sources):
-        return "trace"
-    if any(s == "trace_partial" for s in sources):
-        return "trace_partial"
-    if any(s == "trace" for s in sources):
-        # Mix of trace + recomputed — treat as partial.
-        return "trace_partial"
-    return ""
 
 
 def _render_recommended_actions(analysis: CacheAnalysis) -> str:
@@ -634,6 +708,13 @@ def _workflow_short_name(path: str) -> str:
     return path
 
 
+def _workflow_filename(path: str) -> str:
+    """Return the filename-like workflow label, preserving .pflow.md suffix."""
+    if "/" in path:
+        return path.rsplit("/", 1)[-1]
+    return path
+
+
 def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     if not analysis.per_call:
         return ""
@@ -657,7 +738,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # inline tuple). The default-hide rule MUST consult analysis-wide warnings;
     # otherwise nodes with cache_ratio ≥ 80% AND analytical warnings get silently
     # hidden from the default report — agents miss high-leverage recommendations.
-    nodes_with_warnings = {d.node_id for d in analysis.warnings if d.node_id}
+    nodes_with_warnings = set(_warnings_by_row_key(analysis))
     visible, hidden_count = _select_visible_rows(
         real_data_rows,
         all_rows=all_rows,
@@ -670,10 +751,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # The ``cache.`` namespace prefix is stripped — every ID in this output is
     # ``cache.*`` so the prefix is 100% redundant in the per-call notes column.
     # Full IDs stay in JSON for machine consumers (DD#27).
-    warnings_by_node: dict[str, list[str]] = {}
-    for diag in analysis.warnings:
-        if diag.node_id and diag.id:
-            warnings_by_node.setdefault(diag.node_id, []).append(_strip_cache_prefix(diag.id))
+    warnings_by_node = _warnings_by_row_key(analysis)
 
     lines = ["## Per-call cache report"]
     explainer = _per_call_scope_explainer(rows)
@@ -684,36 +762,103 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
             f"  Showing {len(visible)} of {len(rows)} LLM nodes; all-clean rows hidden (--all-rows shows everything)."
         )
     lines.append("")
-    for row in visible:
-        marker = f"(×{row.batch_size_estimated})" if row.is_batch and row.batch_size_estimated else ""
-        inline_ids = warnings_by_node.get(row.node_path, [])
-        warning_marker = ", ".join(inline_ids)
-        # Mixed-state rendering: a row that survives the filter (has memo
-        # data for input) might still have None cacheable if the workflow
-        # mixes nodes with/without memo for their refs. Render ``?`` to
-        # distinguish from numeric zero.
-        cacheable_str = (
-            f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
-        )
-        ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
-        # Stage C.1: heterogeneous rows have ``model = ""`` upstream so the
-        # literal ``${item.model}`` template doesn't leak. Render ``<varies>``
-        # so agents reading the per-call table see the same signal as the
-        # scale line ("model varies per batch item"), not a missing field.
-        model_display = "<varies>" if row.model_is_heterogeneous else row.model
-        lines.append(
-            f"  {row.node_path:30s} {marker:<6} model={model_display:35s} "
-            f"tokens={row.input_tokens_estimated:>5}  "
-            f"cacheable={cacheable_str}  "
-            f"ratio={ratio_str}  "
-            f"src={_data_source_display(row.data_source)}  {warning_marker}"
-        )
+    _append_per_call_rows(lines, visible, warnings_by_node, analysis)
     if hidden_count > 0:
         lines.append("")
         lines.append(
             f"  Hidden: {hidden_count} nodes at ≥{_HIDDEN_RATIO_THRESHOLD}% projected "
             "cache ratio with no warnings (rerun with --all-rows)."
         )
+    return "\n".join(lines)
+
+
+def _warnings_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | None, str], list[str]]:
+    warnings_by_node: dict[tuple[str | None, str], list[str]] = {}
+    for diag in analysis.warnings:
+        if diag.node_id and diag.id:
+            context = diag.context or {}
+            workflow_path = context.get("affected_workflow")
+            key = (str(workflow_path) if workflow_path is not None else None, diag.node_id)
+            warnings_by_node.setdefault(key, []).append(_strip_cache_prefix(diag.id))
+    return warnings_by_node
+
+
+def _append_per_call_rows(
+    lines: list[str],
+    visible: list[PerCallRow],
+    warnings_by_node: dict[tuple[str | None, str], list[str]],
+    analysis: CacheAnalysis | None = None,
+) -> None:
+    grouped = _group_rows_by_workflow(visible)
+    multiple_workflows = len(grouped) > 1
+    for workflow_path, group_rows in grouped:
+        if multiple_workflows:
+            lines.append(f"### {_format_workflow_group_heading(workflow_path, analysis)}")
+        for row in group_rows:
+            lines.extend(_format_per_call_row(row, warnings_by_node))
+        if multiple_workflows:
+            lines.append("")
+    if multiple_workflows and lines and lines[-1] == "":
+        lines.pop()
+
+
+def _group_rows_by_workflow(rows: list[PerCallRow]) -> list[tuple[str | None, list[PerCallRow]]]:
+    groups: dict[str | None, list[PerCallRow]] = {}
+    order: list[str | None] = []
+    for row in rows:
+        if row.workflow_path not in groups:
+            groups[row.workflow_path] = []
+            order.append(row.workflow_path)
+        groups[row.workflow_path].append(row)
+    return [(workflow_path, groups[workflow_path]) for workflow_path in order]
+
+
+def _format_workflow_group_heading(workflow_path: str | None, analysis: CacheAnalysis | None) -> str:
+    label = _workflow_filename(workflow_path or "<root>")
+    if analysis is None or workflow_path == analysis.workflow_path:
+        return label
+    rollup = analysis.summary.sub_workflow_rollup
+    if rollup is not None:
+        for entry in rollup.per_workflow:
+            if entry.workflow_path == workflow_path and entry.called_by_node_id:
+                return f"{label} (called by {entry.called_by_node_id})"
+    return label
+
+
+def _format_per_call_row(
+    row: PerCallRow,
+    warnings_by_node: dict[tuple[str | None, str], list[str]],
+) -> list[str]:
+    lines: list[str] = []
+    marker = f"(×{row.batch_size_estimated})" if row.is_batch and row.batch_size_estimated else ""
+    inline_ids = warnings_by_node.get((row.workflow_path, row.node_path), [])
+    if row.did_not_execute_in_trace:
+        inline_ids = [*inline_ids, "not-executed-in-trace"]
+    warning_marker = ", ".join(inline_ids)
+    cacheable_str = f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
+    ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
+    model_display = "<varies>" if row.model_is_heterogeneous else row.model
+    lines.append(
+        f"  {row.node_path:30s} {marker:<6} model={model_display:35s} "
+        f"tokens={row.input_tokens_estimated:>5}  "
+        f"cacheable={cacheable_str}  "
+        f"ratio={ratio_str}  "
+        f"src={_data_source_display(row.data_source)}  {warning_marker}"
+    )
+    return lines
+
+
+def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
+    rollup = analysis.summary.sub_workflow_rollup
+    if rollup is None:
+        return ""
+    lines = [
+        "## Sub-workflow drill-in",
+        "",
+        "  Sub-workflow opportunities don't surface here — run analyze-cache per child:",
+    ]
+    for entry in rollup.per_workflow:
+        lines.append(f"    pflow analyze-cache {entry.workflow_path}")
     return "\n".join(lines)
 
 
@@ -793,7 +938,7 @@ def _select_visible_rows(
     rows: Iterable[PerCallRow],
     *,
     all_rows: bool,
-    nodes_with_warnings: set[str],
+    nodes_with_warnings: set[tuple[str | None, str]],
 ) -> tuple[list[PerCallRow], int]:
     """Apply the default-hide-clean rule.
 
@@ -810,7 +955,7 @@ def _select_visible_rows(
     return sorted_visible, hidden
 
 
-def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[str]) -> bool:
+def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[tuple[str | None, str]]) -> bool:
     """Per spec — show rows with analysis-wide warnings OR ratio < 80%.
 
     Stage 0.3: the inline ``row.warnings`` fallback is gone — production
@@ -821,7 +966,7 @@ def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[str]) -
     real-data filter but has no projection). Treat None as "below threshold"
     — show by default since the agent should at least see that the row exists.
     """
-    if row.node_path in nodes_with_warnings:
+    if (row.workflow_path, row.node_path) in nodes_with_warnings or (None, row.node_path) in nodes_with_warnings:
         return True
     if row.cache_ratio_pct is None:
         return True

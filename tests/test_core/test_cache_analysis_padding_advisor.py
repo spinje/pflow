@@ -20,9 +20,11 @@ def _candidate(
     current_subset: list[str],
     suggested_subset: list[str],
     savings_usd: float,
+    workflow_path: str | None = "x.pflow.md",
 ) -> PaddingCandidate:
     return PaddingCandidate(
         node_id=node_id,
+        workflow_path=workflow_path,
         current_subset=tuple(current_subset),
         suggested_subset=tuple(suggested_subset),
         savings_usd=savings_usd,

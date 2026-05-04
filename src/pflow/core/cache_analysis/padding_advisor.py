@@ -34,6 +34,7 @@ class PaddingCandidate:
     """
 
     node_id: str
+    workflow_path: str | None
     current_subset: tuple[str, ...]
     suggested_subset: tuple[str, ...]
     savings_usd: float
@@ -50,6 +51,7 @@ def compute_padding_advisories(candidates: list[PaddingCandidate]) -> list[Diagn
         make_diagnostic(
             "cache.padding-advisory",
             node_id=c.node_id,
+            affected_workflow=c.workflow_path,
             current_subset=list(c.current_subset),
             suggested_subset=list(c.suggested_subset),
             savings_usd=c.savings_usd,

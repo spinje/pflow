@@ -8,9 +8,9 @@ Surfaces:
 - ``CacheAnalysis`` — structured result.
 
 JSON evolution policy: ``format_version`` follows semver-ish. Minor bumps
-(``2.0`` → ``2.1``) are additive (new fields, new warning IDs); consumers using
-``format_version.startswith("2.")`` keep working. Major bumps (``2.x`` →
-``3.x``) are breaking. Mirrors the trace ``2.x`` consumer policy at
+(``4.0`` → ``4.1``) are additive (new fields, new warning IDs); consumers using
+``format_version.startswith("4.")`` keep working. Major bumps (``4.x`` →
+``5.x``) are breaking. Mirrors the trace ``2.x`` consumer policy at
 ``trace_report.py`` (note: distinct namespace — analyze-cache JSON and trace
 JSON share major-version vocabulary but are independent schemas).
 """

@@ -111,7 +111,7 @@ def _find_notable_items(
     duration_outlier = _compute_outlier_threshold(durations)
     median_duration = statistics.median(durations) if durations else 0
 
-    costs = [_compute_event_cost(item) for item in batch_items]
+    costs = [_compute_batch_item_cost(item) for item in batch_items]
     cost_values = [c for c in costs if c is not None]
     cost_outlier = _compute_outlier_threshold(cost_values)
     median_cost = statistics.median(cost_values) if cost_values else 0
@@ -136,7 +136,7 @@ def _find_notable_items(
             continue
 
         # Cost outlier: must exceed both IQR threshold AND 4x median cost
-        item_cost = _compute_event_cost(item)
+        item_cost = _compute_batch_item_cost(item)
         if (
             cost_outlier is not None
             and item_cost is not None
@@ -163,89 +163,43 @@ def _compute_outlier_threshold(values: list[float]) -> float | None:
     return q3 + 1.5 * iqr
 
 
-def _accumulate_call_cost(call: dict[str, Any] | None, state: list[Any]) -> None:
-    """Fold a single ``llm_call`` dict into ``state = [total, found_any, has_unpriced]``."""
-    if not isinstance(call, dict) or "cost_usd" not in call:
-        return
-    cost = call.get("cost_usd")
-    state[1] = True  # found_any
-    if cost is None:
-        state[2] = True  # has_unpriced
-    else:
-        state[0] += cost  # total
-
-
-def _accumulate_child_cost(child_event: dict[str, Any], state: list[Any]) -> None:
-    """Fold a recursive child cost into ``state``."""
-    child_cost = _compute_event_cost(child_event)
-    if child_cost is None:
-        # Could mean "no data" or "unpriced". Distinguish by scanning the
-        # subtree: if any llm_call exists, the None reflects an unpriced leaf
-        # (propagate). If not, the subtree contributes nothing.
-        if _has_any_cost_data(child_event):
-            state[1] = True
-            state[2] = True
-    else:
-        state[0] += child_cost
-        state[1] = True
-
-
 def _compute_event_cost(event: dict[str, Any]) -> float | None:
-    """Recursively compute total cost for an event (including children).
+    """Total cost for a real trace event (top-level or sub-workflow descendant).
 
-    Returns None when:
-      - no cost data exists anywhere in the tree, OR
-      - any leaf has ``cost_usd: None`` (LiteLLM has no pricing for that
-        model — Ollama, custom endpoints, brand-new models). The unpriced
-        case propagates as None so the report displays "—" rather than a
-        misleading sum that silently drops the unpriced contribution.
+    Returns None when no cost data exists anywhere in the subtree OR when any
+    leaf has ``cost_usd: None`` (unpriced model — Ollama, custom endpoints).
+    The unpriced case propagates as None so the report renders "—" rather
+    than silently dropping the unpriced contribution.
 
     Returns 0.0 only when every leaf is explicitly priced at zero.
 
-    NOTE: This traverses the same tree structure as _collect_llm_summary() in
-    workflow_trace.py. If the trace event shape changes, both must be updated.
+    For batch items (which lack ``node_id`` and store children under
+    ``events`` rather than ``sub_workflow_events``), use
+    :func:`_compute_batch_item_cost` instead.
     """
-    state: list[Any] = [0.0, False, False]  # [total, found_any, has_unpriced]
+    from pflow.core.trace_tree import TraceTree
 
-    _accumulate_call_cost(event.get("llm_call"), state)
-
-    # Recurse into batch items
-    # Invariant (D9): batch items have llm_call XOR events, never both.
-    for item in event.get("batch_items", []):
-        _accumulate_call_cost(item.get("llm_call"), state)
-        for child_event in item.get("events", []):
-            _accumulate_child_cost(child_event, state)
-
-    for child_event in event.get("sub_workflow_events", []):
-        _accumulate_child_cost(child_event, state)
-
-    # "events" — used by sub-workflow batch items (they store child events
-    # under "events", not "sub_workflow_events").
-    for child_event in event.get("events", []):
-        _accumulate_child_cost(child_event, state)
-
-    total, found_any, has_unpriced = state
-    if not found_any or has_unpriced:
+    tree = TraceTree(events=(event,), format_version="2.1")
+    cost, source = tree.cost_for_event(event)
+    if source in {"trace_partial", "unavailable"}:
         return None
-    return float(total)
+    return cost
 
 
-def _has_any_cost_data(event: dict[str, Any]) -> bool:
-    """Quick scan: does this event tree carry an ``llm_call`` anywhere?
+def _compute_batch_item_cost(item: dict[str, Any]) -> float | None:
+    """Total cost for one batch item dict.
 
-    Used by _compute_event_cost to distinguish "child has no cost data
-    (skip)" from "child has cost data but is unpriced (propagate None)".
+    Batch items have a different shape from real events (no top-level
+    ``node_id``; sub-events under ``events`` not ``sub_workflow_events``).
+    See :meth:`TraceTree.cost_for_batch_item`.
     """
-    if isinstance(event.get("llm_call"), dict):
-        return True
-    if any(
-        isinstance(item.get("llm_call"), dict) or any(_has_any_cost_data(c) for c in item.get("events", []))
-        for item in event.get("batch_items", [])
-    ):
-        return True
-    if any(_has_any_cost_data(c) for c in event.get("sub_workflow_events", [])):
-        return True
-    return any(_has_any_cost_data(c) for c in event.get("events", []))
+    from pflow.core.trace_tree import TraceTree
+
+    tree = TraceTree(events=(), format_version="2.1")
+    cost, source = tree.cost_for_batch_item(item)
+    if source in {"trace_partial", "unavailable"}:
+        return None
+    return cost
 
 
 def _format_cost(cost: float | None) -> str:
@@ -1022,7 +976,7 @@ def _build_items_table(
     for item in items:
         idx = item.get("index", "?")
         dur = item.get("duration_ms", 0)
-        cost = _format_cost(_compute_event_cost(item))
+        cost = _format_cost(_compute_batch_item_cost(item))
         status = _format_event_status(item)
         if has_labels:
             label = _item_label_or_index(item)
@@ -1046,7 +1000,7 @@ def _append_batch_stats(batch_items: list[dict[str, Any]], lines: list[str]) -> 
         else:
             lines.append(f"- Median time: {median_dur:.0f}ms")
 
-    costs = [_compute_event_cost(item) for item in batch_items]
+    costs = [_compute_batch_item_cost(item) for item in batch_items]
     total_cost = sum(c for c in costs if c is not None)
     if total_cost > 0:
         lines.append(f"- Total cost: ${total_cost:.4f}")

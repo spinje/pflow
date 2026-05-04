@@ -1,7 +1,7 @@
 """F2.3 — text and JSON renderer tests.
 
 Locks the agent-facing format contracts:
-- JSON ``format_version`` is the constant ``JSON_FORMAT_VERSION`` (current ``"2.0"``).
+- JSON ``format_version`` is the constant ``JSON_FORMAT_VERSION`` (current ``"3.0"``).
 - Empty-array contract for ``cross_workflow.*`` fields.
 - Tri-state cost rendering (priced / partial / unavailable — never silent ``$0.00``).
 - Default-hide-clean per-call rule + ``--all-rows`` override.
@@ -22,8 +22,12 @@ from pflow.core.cache_analysis.analyze import (
     CacheAnalysis,
     CrossWorkflowFindings,
     PerCallRow,
+    SubWorkflowRollup,
+    SubWorkflowRollupEntry,
 )
+from pflow.core.cache_analysis.cost_estimation import CostTier
 from pflow.core.diagnostic import Diagnostic, Severity
+from tests.shared.mutation_contract import mutation_contract
 
 
 def _make_analysis(
@@ -31,11 +35,31 @@ def _make_analysis(
     rows: list[PerCallRow] | None = None,
     warnings: list[Diagnostic] | None = None,
     notes: list[str] | None = None,
-    current: float | None = None,
-    optimized: float | None = None,
+    actually_paid: float | None = None,
+    no_cache: float | None = None,
+    first_run_with_cache: float | None = None,
+    rerun: float | None = None,
     partial: bool = False,
     unavailable: tuple[str, ...] = (),
 ) -> CacheAnalysis:
+    """Construct a renderable analysis with atomic cost primitives.
+
+    Each cost knob populates exactly one atom on ``AnalysisSummary``. Tests
+    set whichever atoms they exercise:
+
+    - ``actually_paid`` populates ``actually_paid_usd`` + a ``TRACE`` tier
+      (else ``UNAVAILABLE``). When set, the renderer takes the trace-path
+      layout (``Actually paid``/``Cost without caching``/``Cost on rerun``).
+    - ``no_cache`` populates ``no_cache_hypothetical_usd``. The "Cost
+      without caching" line in BOTH trace and greenfield layouts reads from
+      this atom. Greenfield-no-declared-cache shows just this on a single
+      "Cost per run" line (collapsed when first_run_with_cache equals it).
+    - ``first_run_with_cache`` populates
+      ``first_run_with_cache_hypothetical_usd``. Greenfield-with-cache
+      layout shows it as "Cost on first run (cache)".
+    - ``rerun`` populates ``rerun_within_ttl_hypothetical_usd`` — the
+      "Cost on rerun (within TTL)" line.
+    """
     rows = rows or []
     warnings = warnings or []
     return CacheAnalysis(
@@ -51,9 +75,11 @@ def _make_analysis(
         },
         trace_path=None,
         summary=AnalysisSummary(
-            current_cost_per_run_usd=current,
-            optimized_cost_per_run_usd=optimized,
-            rerun_cost_per_run_usd=None,
+            actually_paid_usd=actually_paid,
+            actually_paid_tier=CostTier.TRACE if actually_paid is not None else CostTier.UNAVAILABLE,
+            no_cache_hypothetical_usd=no_cache,
+            first_run_with_cache_hypothetical_usd=first_run_with_cache,
+            rerun_within_ttl_hypothetical_usd=rerun,
             savings_pct_first_run=None,
             savings_pct_rerun=None,
             blocking_errors=sum(1 for d in warnings if d.severity == Severity.ERROR),
@@ -84,11 +110,11 @@ def test_json_format_version_is_constant() -> None:
     """JSON output reads from JSON_FORMAT_VERSION; consumer rule passes."""
     result = render_json(_make_analysis())
     assert result["format_version"] == JSON_FORMAT_VERSION
-    # Consumer rule contract — would still pass on a future "2.x" minor bump.
+    # Consumer rule contract — passes on additive minor bumps (4.0 → 4.1).
     assert result["format_version"].startswith(JSON_FORMAT_VERSION_MAJOR + ".")
-    # Strengthened post-Stage-0: literal "2." prefix check catches the next
-    # major bump (constant change wouldn't propagate without this).
-    assert result["format_version"].startswith("2.")
+    # Literal "4." prefix catches the next major bump — both the constant
+    # AND this assertion must update in lockstep when bumping to 5.x.
+    assert result["format_version"].startswith("4.")
 
 
 def test_json_cross_workflow_empty_arrays_are_present() -> None:
@@ -128,15 +154,17 @@ def test_json_warnings_use_diagnostic_to_dict_shape() -> None:
 
 
 def test_text_renders_priced_cost_normally() -> None:
-    text = render_text(_make_analysis(current=2.18, optimized=0.84, partial=False))
-    assert "~$2.18" in text
-    assert "~$0.84" in text
+    """Trace path: actually_paid + no_cache_hypothetical + rerun all render."""
+    text = render_text(_make_analysis(actually_paid=2.18, no_cache=0.84, rerun=0.42, partial=False))
+    assert "~$2.18" in text  # actually_paid
+    assert "~$0.84" in text  # no_cache
+    assert "~$0.42" in text  # rerun
     assert "$0.00" not in text
 
 
 def test_text_renders_unavailable_cost_explicitly_not_zero() -> None:
     """All unpriced models → ``unavailable`` (NEVER ``$0.00``)."""
-    text = render_text(_make_analysis(current=None, optimized=None))
+    text = render_text(_make_analysis())
     assert "$0.00" not in text
     assert "unavailable" in text.lower()
 
@@ -144,8 +172,9 @@ def test_text_renders_unavailable_cost_explicitly_not_zero() -> None:
 def test_text_renders_partial_cost_with_marker() -> None:
     text = render_text(
         _make_analysis(
-            current=0.84,
-            optimized=0.42,
+            actually_paid=0.84,
+            no_cache=1.20,
+            rerun=0.42,
             partial=True,
             unavailable=("ollama/llama3.2:8b",),
         )
@@ -647,6 +676,7 @@ def test_text_recommended_actions_drop_sub_cent_savings() -> None:
         make_diagnostic(
             "cache.dynamic-before-static",
             node_id="x",
+            affected_workflow="/abs/wf.pflow.md",
             dynamic_ref="ref",
             dynamic_line=3,
             cacheable_tokens=1000,
@@ -658,6 +688,7 @@ def test_text_recommended_actions_drop_sub_cent_savings() -> None:
         make_diagnostic(
             "cache.batch-prewarm-recommended",
             node_id="y",
+            affected_workflow="/abs/wf.pflow.md",
             batch_size=8,
             prefix_tokens_estimated=2000,
             savings_pct=89,
@@ -770,7 +801,6 @@ def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> No
 
     diag = make_diagnostic(
         "cache.cross-workflow-rename-detected",
-        node_id="parent-step",
         parent_workflow="/abs/song-creator.pflow.md",
         child_workflow="/abs/chorus-chooser.pflow.md",
         parent_value_expr="concept_brief",
@@ -859,7 +889,6 @@ def test_text_cross_workflow_rename_finding_full_format() -> None:
 
     diag = make_diagnostic(
         "cache.cross-workflow-rename-detected",
-        node_id="parent-step",
         parent_workflow="/abs/song-creator.pflow.md",
         child_workflow="/abs/chorus-chooser.pflow.md",
         parent_value_expr="concept_brief",
@@ -1359,6 +1388,12 @@ def test_text_header_keeps_medium_from_memo_with_coverage() -> None:
 # ---------------------------------------------------------------------------
 
 
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/render_text.py",
+    line=450,
+    revert='return f"~${value:.4f}"',
+    expected_failure="sub-cent path returns None — assertion '~$0.0021' missing",
+)
 def test_text_renders_sub_cent_cost_with_four_decimals() -> None:
     """Track A surfaces sub-cent costs; the renderer must show them with
     enough precision to be useful.
@@ -1367,12 +1402,138 @@ def test_text_renders_sub_cent_cost_with_four_decimals() -> None:
     unconditionally -> sub-cent costs render as ``$0.00`` and the
     ``(trace)`` annotation decorates a useless number.
     """
-    text = render_text(_make_analysis(current=0.0021, optimized=0.0023, partial=False))
+    text = render_text(_make_analysis(actually_paid=0.0021, no_cache=0.0023, rerun=0.0017, partial=False))
     assert "~$0.0021" in text
     assert "~$0.0023" in text
     # Genuine zero stays in 2-decimal format (cleaner with annotations).
-    text_zero = render_text(_make_analysis(current=0.0, optimized=0.0, partial=False))
+    text_zero = render_text(_make_analysis(actually_paid=0.0, no_cache=0.0, rerun=0.0, partial=False))
     assert "~$0.00" in text_zero
     # Below-threshold values render as a less-than indicator.
-    text_tiny = render_text(_make_analysis(current=0.00001, optimized=0.00002, partial=False))
+    text_tiny = render_text(_make_analysis(actually_paid=0.00001, no_cache=0.00002, rerun=0.00001, partial=False))
     assert "~<$0.0001" in text_tiny
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/render_text.py",
+    line=796,
+    revert='lines.append(f"### {_format_workflow_group_heading(workflow_path, analysis)}")',
+    expected_failure="### child.pflow.md heading missing — workflow grouping breaks",
+)
+def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
+    """Mutation contract: revert workflow grouping -> child called-by subheader disappears."""
+    rows = [
+        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"}),
+        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/child.pflow.md"}),
+    ]
+    base = _make_analysis(rows=rows)
+    rollup = SubWorkflowRollup(
+        workflows_included=("/abs/child.pflow.md",),
+        max_depth_walked=1,
+        truncated=False,
+        per_workflow=(
+            SubWorkflowRollupEntry(
+                workflow_path="/abs/child.pflow.md",
+                called_by_node_id="call-child",
+                llm_node_count=1,
+                actually_paid_usd=0.07,
+                no_cache_hypothetical_usd=0.10,
+                first_run_with_cache_hypothetical_usd=0.09,
+                rerun_within_ttl_hypothetical_usd=0.05,
+            ),
+        ),
+    )
+    analysis = CacheAnalysis(**{
+        **base.__dict__,
+        "workflow_path": "/abs/parent.pflow.md",
+        "summary": AnalysisSummary(**{**base.summary.__dict__, "sub_workflow_rollup": rollup}),
+    })
+
+    text = render_text(analysis, all_rows=True)
+
+    assert "### parent.pflow.md" in text
+    assert "### child.pflow.md (called by call-child)" in text
+    assert "(1 in parent.pflow.md, 1 in 1 sub-workflow: child)" in text
+    assert "## Sub-workflow drill-in" in text
+    assert "pflow analyze-cache /abs/child.pflow.md" in text
+
+
+def test_render_text_drill_in_omitted_for_single_workflow() -> None:
+    text = render_text(_make_analysis(rows=[_row("draft", 30)]), all_rows=True)
+    assert "## Sub-workflow drill-in" not in text
+    assert "(called by" not in text
+
+
+def test_render_text_unpriced_model_includes_child_workflow_attribution() -> None:
+    row = PerCallRow(**{
+        **_row("draft", 30).__dict__,
+        "model": "ollama/local",
+        "workflow_path": "/abs/child.pflow.md",
+    })
+    base = _make_analysis(rows=[row], actually_paid=0.1, no_cache=0.1, partial=True, unavailable=("ollama/local",))
+    summary = AnalysisSummary(**{
+        **base.summary.__dict__,
+        "unavailable_models_by_workflow": {"/abs/child.pflow.md": ("ollama/local",)},
+    })
+    text = render_text(CacheAnalysis(**{**base.__dict__, "summary": summary}))
+    assert "ollama/local (in child)" in text
+
+
+def test_render_json_includes_rollup_workflow_paths_and_unavailable_models_by_workflow() -> None:
+    row = PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/child.pflow.md"})
+    base = _make_analysis(rows=[row])
+    rollup = SubWorkflowRollup(
+        workflows_included=("/abs/child.pflow.md",),
+        max_depth_walked=1,
+        truncated=False,
+        per_workflow=(
+            SubWorkflowRollupEntry(
+                workflow_path="/abs/child.pflow.md",
+                called_by_node_id="call-child",
+                llm_node_count=1,
+                actually_paid_usd=0.07,
+                no_cache_hypothetical_usd=0.10,
+                first_run_with_cache_hypothetical_usd=0.09,
+                rerun_within_ttl_hypothetical_usd=0.05,
+            ),
+        ),
+    )
+    summary = AnalysisSummary(**{
+        **base.summary.__dict__,
+        "sub_workflow_rollup": rollup,
+        "unavailable_models_by_workflow": {"/abs/child.pflow.md": ("ollama/local",)},
+    })
+    payload = render_json(CacheAnalysis(**{**base.__dict__, "summary": summary}))
+    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["actually_paid_usd"] == 0.07
+    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["no_cache_hypothetical_usd"] == 0.10
+    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["first_run_with_cache_hypothetical_usd"] == 0.09
+    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["rerun_within_ttl_hypothetical_usd"] == 0.05
+    assert payload["summary"]["unavailable_models_by_workflow"]["/abs/child.pflow.md"] == ["ollama/local"]
+    assert payload["per_call"][0]["workflow_path"] == "/abs/child.pflow.md"
+
+
+@mutation_contract(
+    file="src/pflow/core/cache_analysis/warning_catalog.py",
+    line=429,
+    revert="{node_id} in {workflow_path_short} (trace: {trace_path}): predicted",
+    expected_failure="message template misses workflow_path_short — 'draft in child' substring absent",
+)
+def test_discrepancy_message_includes_workflow_scope() -> None:
+    """Mutation contract: remove workflow_path_short from catalog template -> child scope disappears."""
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.discrepancy",
+        node_id="draft",
+        trace_path="/trace.json",
+        workflow_path_short="child",
+        affected_workflow="/abs/child.pflow.md",
+        predicted_pct=100,
+        predicted_label="hit",
+        actual_pct=0,
+        root_cause="key_mismatch",
+        root_cause_summary="Upstream value changed",
+        cache_age_sec=None,
+        predicted_cache_key="a",
+        actual_cache_key="b",
+    )
+    assert "draft in child" in diag.message

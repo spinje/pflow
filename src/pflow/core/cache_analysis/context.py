@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pflow.core.trace_tree import TraceTree
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,8 +50,50 @@ class AnalysisContext:
     parameters: Mapping[str, Any] = field(default_factory=dict)
     memo_cache: Any | None = None
     trace_data: Mapping[str, Any] | None = None
+    trace: TraceTree | None = None
     workflow_path: str | None = None
     base_path: Path | None = None
+    parameters_by_workflow: Mapping[str | None, Mapping[str, Any]] = field(default_factory=dict)
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        workflow_ir: Mapping[str, Any],
+        parameters: Mapping[str, Any] | None = None,
+        memo_cache: Any | None = None,
+        trace_data: Mapping[str, Any] | None = None,
+        workflow_path: str | None = None,
+        base_path: Path | None = None,
+        parameters_by_workflow: Mapping[str | None, Mapping[str, Any]] | None = None,
+    ) -> AnalysisContext:
+        """The single construction path. Compiles trace JSON into ``TraceTree`` once.
+
+        Production and test callers ALL go through ``build()``. The dataclass
+        ``__init__`` is technically callable directly but doesn't materialize
+        ``trace`` from ``trace_data`` — passing raw trace data directly to the
+        constructor produces a context where ``ctx.trace is None`` while
+        ``ctx.trace_data`` is populated, which is almost certainly a bug in the
+        caller. If a future need arises for low-level construction, harden this
+        with a sentinel in ``__post_init__`` rather than relying on convention.
+        """
+        trace: TraceTree | None = None
+        if trace_data is not None:
+            try:
+                trace = TraceTree.from_dict(trace_data)
+            except ValueError:
+                logger.debug("TraceTree construction failed; analyzer falls back to no trace", exc_info=True)
+                trace = None
+        return cls(
+            workflow_ir=workflow_ir,
+            parameters=parameters or {},
+            memo_cache=memo_cache,
+            trace_data=trace_data,
+            trace=trace,
+            workflow_path=workflow_path,
+            base_path=base_path,
+            parameters_by_workflow=parameters_by_workflow or {},
+        )
 
     # ------------------------------------------------------------------
     # Trace event lookup
@@ -63,15 +107,7 @@ class AnalysisContext:
         trace JSON's top-level events list is keyed ``"nodes"`` (see
         ``runtime/workflow_trace.WorkflowTraceCollector.save_to_file``).
         """
-        if self.trace_data is None:
-            return None
-        events = self.trace_data.get("nodes")
-        if not isinstance(events, list):
-            return None
-        for event in events:
-            if isinstance(event, dict) and event.get("node_id") == node_id:
-                return event
-        return None
+        return self.trace.event_for(node_id) if self.trace is not None else None
 
     # ------------------------------------------------------------------
     # Cost extraction (Track A)
@@ -96,28 +132,15 @@ class AnalysisContext:
         ``type:llm`` only; sub-workflow internals are scoped to their own
         analyze-cache invocation).
         """
-        event = self.trace_event_for(node_id)
-        if event is None:
+        if self.trace is None:
             return None, "unavailable"
+        return self.trace.cost_for_node(node_id)
 
-        # Cached events (cache hit — skipped LLM execution) carry NO
-        # ``llm_call`` field but still represent a real outcome: this run
-        # paid 0 for the LLM call. Treat as ``(0.0, "trace")`` so a
-        # fully-cached rerun reports ``current_cost = $0.00 (trace)``
-        # instead of falling back to recompute / unavailable. Mirrors the
-        # production trace producer at ``workflow_trace.py:312`` which
-        # marks cached events explicitly.
-        if event.get("cached") and event.get("llm_call") is None and not (event.get("batch_items") or []):
-            return 0.0, "trace"
-
-        total, found_any, has_unpriced = _walk_event_for_cost(event)
-
-        if not found_any:
-            return None, "unavailable"
-        if has_unpriced:
-            # Some leaves priced, others unpriced — caller handles the mix.
-            return float(total), "trace_partial"
-        return float(total), "trace"
+    def parameters_for_workflow(self, workflow_path: str | None) -> Mapping[str, Any]:
+        """Return parameters scoped to one workflow in a cross-workflow analysis."""
+        if workflow_path == self.workflow_path:
+            return self.parameters
+        return self.parameters_by_workflow.get(workflow_path, {})
 
     # ------------------------------------------------------------------
     # Template ref resolution (Track B)
@@ -202,48 +225,6 @@ class AnalysisContext:
         if isinstance(resolved, str) and resolved == f"${{{ref}}}":
             return None
         return _normalize_empty(resolved)
-
-
-def _walk_event_for_cost(event: Mapping[str, Any]) -> tuple[float, bool, bool]:
-    """Sum ``llm_call.cost_usd`` across the event tree (top-level + batch items).
-
-    Returns ``(total, found_any, has_unpriced)``. ``found_any`` is True if
-    at least one priced or unpriced leaf was visited. ``has_unpriced`` is
-    True if at least one leaf had ``cost_usd: None`` (unpriced model).
-    Cached batch items contribute to ``found_any`` (priced-at-zero) without
-    inflating the sum.
-
-    Does NOT recurse into ``sub_workflow_events`` — sub-workflow internals
-    are scoped to their own analyze-cache invocation (see GH #365).
-    """
-    total = 0.0
-    found_any = False
-    has_unpriced = False
-
-    def _accumulate(call: Any) -> None:
-        nonlocal total, found_any, has_unpriced
-        if not isinstance(call, dict) or "cost_usd" not in call:
-            return
-        found_any = True
-        cost = call.get("cost_usd")
-        if cost is None:
-            has_unpriced = True
-        else:
-            total += float(cost)
-
-    _accumulate(event.get("llm_call"))
-    for item in event.get("batch_items") or []:
-        if not isinstance(item, dict):
-            continue
-        if item.get("cached") and item.get("llm_call") is None:
-            # Cached batch item — this run paid 0 for it. Count as
-            # priced-at-zero so the whole node doesn't degrade to
-            # "unavailable" just because one item was cached.
-            found_any = True
-            continue
-        _accumulate(item.get("llm_call"))
-
-    return total, found_any, has_unpriced
 
 
 def _normalize_empty(value: Any) -> Any | None:

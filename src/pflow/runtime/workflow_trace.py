@@ -291,48 +291,20 @@ class WorkflowTraceCollector:
         return self._collect_llm_calls_from_events(self.events)
 
     def _collect_llm_calls_from_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Recursively collect llm_call dicts from tree-structured events.
+        """Recursively collect llm_call dicts from tree-structured events."""
+        from pflow.core.trace_tree import TraceTree
 
-        NOTE: Keep tree traversal in sync with _collect_llm_summary() — same structure.
-
-        Invariant: batch items have EITHER llm_call (leaf items — direct LLM execution)
-        OR events (sub-workflow items — containing their own llm_call entries), never both.
-        LLM nodes produce llm_call; WorkflowExecutor nodes produce events. If both were
-        present, this method would double-count. Verified by construction in _capture_item_trace.
-
-        Args:
-            events: List of trace events (may contain nested batch_items/sub_workflow_events)
-
-        Returns:
-            Flat list of llm_call dicts
-        """
+        tree = TraceTree(events=tuple(events), format_version=TRACE_FORMAT_VERSION)
         calls: list[dict[str, Any]] = []
-
-        for event in events:
-            if event.get("cached"):
-                continue  # Cached nodes incurred no cost this run
-
-            if "llm_call" in event:
-                call = dict(event["llm_call"])
-                call["node_id"] = event.get("node_id", "unknown")
-                call["duration_ms"] = event.get("duration_ms", 0)
-                calls.append(call)
-
-            # Recurse into batch items
-            for item in event.get("batch_items", []):
-                if "llm_call" in item:
-                    call = dict(item["llm_call"])
-                    call["node_id"] = event.get("node_id", "unknown")
-                    call["batch_item_index"] = item.get("index", 0)
-                    calls.append(call)
-                # Recurse into nested events within batch items (sub-workflow)
-                calls.extend(self._collect_llm_calls_from_events(item.get("events", [])))
-
-            # Recurse into sub-workflow events
-            sub_events = event.get("sub_workflow_events", [])
-            if sub_events:
-                calls.extend(self._collect_llm_calls_from_events(sub_events))
-
+        for leaf in tree.iter_llm_leaves(descend_cached_subtrees=False):
+            if leaf.llm_call is None:
+                continue
+            call = dict(leaf.llm_call)
+            call["node_id"] = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
+            call["duration_ms"] = leaf.event.get("duration_ms", 0)
+            if leaf.tier == "batch_item":
+                call["batch_item_index"] = leaf.event.get("index", 0)
+            calls.append(call)
         return calls
 
     def _sanitize_for_json(self, data: Any) -> Any:
@@ -474,33 +446,14 @@ class WorkflowTraceCollector:
         return warning.get("source") not in {"parser", "validator"}
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
-        """Recursively collect LLM call data from tree-structured events.
+        """Recursively collect LLM call data from tree-structured events."""
+        from pflow.core.trace_tree import TraceTree
 
-        NOTE: Keep tree traversal in sync with _collect_llm_calls_from_events() — same structure.
-        See that method's docstring for the batch item llm_call/events mutual exclusivity invariant.
-
-        Cost contract mirrors ``MetricsCollector.calculate_costs``: when any
-        observed call has ``cost_usd: None`` (LiteLLM has no pricing data for
-        that model — Ollama, custom endpoints, brand-new models),
-        ``total_cost_usd`` is ``None`` and the summary carries
-        ``partial_cost_usd`` (sum of priced calls only) + ``unavailable_models``
-        + ``pricing_available: False``. When all priced, ``total_cost_usd`` is
-        the float total and ``pricing_available: True``.
-        """
         agg = _LLMSummaryAccumulator()
-        for event in events:
-            if event.get("cached"):
-                continue  # Cached nodes incurred no cost this run
-            if "llm_call" in event:
-                agg.add_leaf(event["llm_call"])
-            for item in event.get("batch_items", []):
-                if "llm_call" in item:
-                    agg.add_leaf(item["llm_call"])
-                # Sub-workflow item with nested events (mutually exclusive with llm_call)
-                agg.merge_sub(self._collect_llm_summary(item.get("events", [])))
-            sub_events = event.get("sub_workflow_events", [])
-            if sub_events:
-                agg.merge_sub(self._collect_llm_summary(sub_events))
+        tree = TraceTree(events=tuple(events), format_version=TRACE_FORMAT_VERSION)
+        for leaf in tree.iter_llm_leaves(descend_cached_subtrees=False):
+            if leaf.llm_call is not None:
+                agg.add_leaf(dict(leaf.llm_call))
         return agg.as_dict()
 
     def save_to_file(self) -> Path:

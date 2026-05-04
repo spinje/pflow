@@ -1,7 +1,21 @@
 """Cost estimation for ``pflow analyze-cache`` summary fields.
 
-Composes per-token rates from ``litellm.model_cost`` with token estimates
-from :mod:`token_estimation` to produce the agent-facing cost figures.
+Two independent cost streams (Phase 4 split):
+
+- :func:`compute_projections` — IR-driven hypothetical cost projections.
+  Pure ``tokens × rate`` math; never reads ``row.cost_usd``. The renderer
+  shows these as "what would this cost?" projections regardless of trace
+  presence.
+- :func:`compute_actually_paid` — Trace-driven recorded cost. Prefers
+  ``TraceTree.total_cost`` when a trace is provided (canonical sum,
+  includes sub-workflow descendants); falls back to summing ``row.cost_usd``
+  for callers that pass rows without a trace handle.
+
+The previous ``compute_aggregate_costs`` mixed actual-paid (``row.cost_usd``)
+with projections under one ``current_usd`` field. ``_build_summary`` then
+overrode ``current_usd`` with ``tree.total_cost()`` when a trace existed —
+the compute-and-override pattern. The split removes that pattern: each
+function does one job, and ``_build_summary`` composes them directly.
 
 **Tri-state contract** (mirrors ``llm_client.py``'s runtime tri-state):
 
@@ -20,7 +34,7 @@ output), output cost is 60-85% of total. Skipping output tokens makes the
 absolute cost figures wrong by 5-10x.
 
 **Why caching savings are input-only** (the load-bearing insight that
-makes greenfield cost analysis useful). ``current_cost - optimized_cost``
+makes greenfield cost analysis useful). ``no_cache - first_run_with_cache``
 collapses to input-side terms because output cost cancels — caching does
 not affect output. Aggregate savings figures therefore work on greenfield
 workflows even when output token data is unavailable.
@@ -35,12 +49,17 @@ actual costs use the same rate.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
 
 from .analyze import PerCallRow
+
+if TYPE_CHECKING:
+    from pflow.core.trace_tree import TraceTree
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +68,20 @@ logger = logging.getLogger(__name__)
 # ``llm_client.py:1047`` — keep the two sites in lockstep so predicted and
 # actual costs price the same byte at the same rate.
 _ANTHROPIC_1H_WRITE_MULTIPLIER: float = 2.0
+
+
+class CostTier(StrEnum):
+    """Confidence tier for a cost figure.
+
+    JSON serialization preserves the string value (StrEnum) — consumers
+    matching ``"trace"`` keep working. mypy type-checks assignments at
+    production sites; agents reading the source see a closed catalog.
+    """
+
+    TRACE = "trace"
+    TRACE_PARTIAL = "trace_partial"
+    RECOMPUTED = "recomputed"
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -65,21 +98,67 @@ class ModelPricing:
 
 
 @dataclass(frozen=True)
-class AggregateCostBreakdown:
-    """Aggregate cost figures for an entire workflow run.
+class ProjectionBreakdown:
+    """IR-driven hypothetical cost projections. Never reads ``row.cost_usd``.
 
-    Per the tri-state contract: ``current_usd`` etc. are ``None`` on full
+    Heterogeneous-batch rows (``model_is_heterogeneous=True``) and rows
+    marked ``did_not_execute_in_trace=True`` are excluded — projections
+    can't price the former and the latter would inflate aggregates with
+    fictional cost.
+
+    Per the tri-state contract: absolute fields are ``None`` on full
     unavailability; populated with partial sums when ``partial`` is True.
     Savings fields work even on greenfield (output cost cancels).
+
+    Each field carries one meaning. The renderer composes context-aware
+    presentation by selecting which fields to display:
+
+    - ``no_cache_hypothetical_usd`` — pure no-cache recompute over ALL
+      priced rows: ``input × full_rate + output × output_rate`` per row.
+      The "what would this cost without any caching?" baseline. Always
+      shown when present.
+    - ``first_run_with_cache_hypothetical_usd`` — first-run cost when
+      declared caching is honored: undeclared rows use no-cache math;
+      declared rows pay write rate on cacheable + input rate on
+      non-cacheable + output rate on output. Equals
+      ``no_cache_hypothetical_usd`` exactly when no row declares
+      ``prompt_cache:`` (the renderer hides the redundant line in that
+      case).
+    - ``rerun_within_ttl_hypothetical_usd`` — all-cacheable-at-read-rate
+      projection (every call after the first, within TTL).
+    - ``savings_*`` — input-only deltas; greenfield-safe.
     """
 
-    current_usd: float | None
-    optimized_usd: float | None
-    rerun_usd: float | None
+    no_cache_hypothetical_usd: float | None
+    first_run_with_cache_hypothetical_usd: float | None
+    rerun_within_ttl_hypothetical_usd: float | None
     savings_first_run_usd: float | None
     savings_rerun_usd: float | None
     partial: bool
     unavailable_models: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ActuallyPaidCost:
+    """Trace-driven recorded cost. Independent from projections.
+
+    ``total_usd``:
+
+    - ``None`` when no trace data is available (greenfield, or trace exists
+      but recorded zero LLM events).
+    - ``float`` when a trace contributed at least one priced leaf. Cached
+      events contribute 0.0 explicitly (this run paid 0 for that leaf).
+
+    ``tier`` (``CostTier``):
+
+    - ``TRACE`` — every leaf was priced.
+    - ``TRACE_PARTIAL`` — at least one leaf had ``cost_usd=None`` (unpriced
+      model in trace); the float sums the priced subset.
+    - ``UNAVAILABLE`` — no leaf carried cost data.
+    """
+
+    total_usd: float | None
+    tier: CostTier
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +229,7 @@ def _pricing_from_dict(d: dict) -> ModelPricing | None:
 
 
 # ---------------------------------------------------------------------------
-# Per-call cost helpers
+# Per-call projection helpers
 # ---------------------------------------------------------------------------
 
 
@@ -169,37 +248,11 @@ def _write_rate_for_ttl(pricing: ModelPricing, ttl: str | None, model: str) -> f
     return pricing.cache_creation_rate
 
 
-def _per_call_current_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int | None) -> float | None:
-    """Cost of one call without any caching.
+def _per_call_no_cache_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
+    """Recompute one call's cost as ``input × input_rate + output × output_rate``.
 
-    Track A (Phase A): when ``row.cost_usd`` is set (trace data exists),
-    return it directly. The recorded cost reflects what the workflow ACTUALLY
-    paid — including provider-side implicit caching (Gemini) and any other
-    discount the trace's recorded cost reflects. Recomputing from
-    ``tokens x full_rate`` ignores those discounts and over-estimates by
-    50-200%+ on cached runs (the bug this fix targets).
-
-    Falls back to recomputing (input x rate + output x rate) when no trace
-    data is available — preserving the pre-fix behavior for greenfield
-    workflows.
-
-    Returns ``None`` when both paths are unavailable (no trace AND no
-    output tokens) — refuses to fabricate per the tri-state contract.
-    """
-    if row.cost_usd is not None:
-        return row.cost_usd
-    if output_tokens is None:
-        return None
-    return _per_call_current_cost_recomputed(row, pricing, output_tokens)
-
-
-def _per_call_current_cost_recomputed(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
-    """Recompute current cost from tokens x rate (no trace path).
-
-    Used by ``_aggregate_optimized_cost`` for the no-declared-subset path —
-    optimized cost projects what would happen IF the row had no caching
-    declared, so the trace's recorded cost (which may include caching) is
-    NOT what we want there. Mirrors the pre-Track-A formula.
+    The "what would this cost without any caching?" projection per row.
+    Multiplied by ``invocations`` for batch rows. Never reads ``row.cost_usd``.
     """
     invocations = _invocation_count(row)
     return float(invocations) * (row.input_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
@@ -230,94 +283,111 @@ def _invocation_count(row: PerCallRow) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Aggregate cost computation
+# Projection aggregation (IR-driven)
 # ---------------------------------------------------------------------------
 
 
-def compute_aggregate_costs(
+def compute_projections(
     rows: list[PerCallRow],
     *,
-    output_tokens_by_node: dict[str, int | None],
+    output_tokens_by_node: Mapping[tuple[str | None, str] | str, int | None],
     ttl: str | None = None,
-) -> AggregateCostBreakdown:
-    """Aggregate per-call costs into the workflow-level summary figures.
+) -> ProjectionBreakdown:
+    """IR-driven projection math. No trace reads.
+
+    Excludes heterogeneous-batch rows and ``did_not_execute_in_trace`` rows.
+    Rows whose model lacks pricing in ``litellm.model_cost`` are tracked in
+    ``unavailable_models`` and excluded from priced sums.
 
     Args:
         rows: All LLM-node per-call rows from the analyzer.
-        output_tokens_by_node: Map ``node_path -> output_tokens | None`` from
-            ``estimate_output_tokens``. ``None`` for nodes lacking memo/trace
-            data (greenfield).
+        output_tokens_by_node: Map ``(workflow_path, node_path) -> output_tokens | None``
+            (or bare ``node_path -> output_tokens | None`` for legacy callers)
+            from ``estimate_output_tokens``. ``None`` for nodes lacking
+            memo/trace data (greenfield).
         ttl: ``"5m"`` or ``"1h"`` from ``workflow_ir["cache"]["ttl"]``, or
             ``None`` for provider default.
 
     Math (per row):
 
-    - ``current``: ``input x input_rate + output x output_rate``
-    - ``rerun``: ``cacheable x read_rate + non_cacheable x input_rate + output x output_rate``
-    - ``optimized``: per declared-subset group, 1 write + (N-1) reads. Calls
-      without a declared subset behave like ``current``.
+    - ``no_cache_hypothetical``: ``input × input_rate + output × output_rate`` (over all priced rows).
+    - ``rerun_within_ttl``: ``cacheable × read_rate + non_cacheable × input_rate + output × output_rate``.
+    - ``first_run_with_cache``: undeclared rows use ``no_cache``; declared rows
+      use the with-cache first-run projection so savings remains comparable.
 
-    Savings (``current - optimized`` and ``current - rerun``) are input-only
-    by construction (output cancels), so they're always computable when
-    pricing is available — even on greenfield (no output tokens needed).
+    Savings (``no_cache - first_run_with_cache`` and ``no_cache - rerun_within_ttl``)
+    are input-only by construction (output cancels), so they're always computable
+    when pricing is available — even on greenfield (no output tokens needed).
     """
-    priced_rows, unavailable_models, heterogeneous_recorded_cost, has_heterogeneous_recorded = _partition_rows(
-        rows, output_tokens_by_node
-    )
+    priced_rows, unavailable_models = _partition_priced_rows(rows, output_tokens_by_node)
 
-    if not priced_rows:
-        return _empty_priced_rows_breakdown(heterogeneous_recorded_cost, has_heterogeneous_recorded, unavailable_models)
+    rows_with_output: list[tuple[PerCallRow, ModelPricing, int]] = [
+        (r, p, o) for r, p, o in priced_rows if o is not None
+    ]
+    rows_without_output = [(r, p, o) for r, p, o in priced_rows if o is None]
+    partial = bool(rows_with_output) and (bool(rows_without_output) or bool(unavailable_models))
 
-    current_usd, has_partial_costs = _compute_current_usd(
-        priced_rows,
-        heterogeneous_recorded_cost,
-        has_heterogeneous_recorded,
-        unavailable_models,
-    )
+    no_cache_hypothetical_usd: float | None = None
+    first_run_with_cache_hypothetical_usd: float | None = None
+    rerun_within_ttl_hypothetical_usd: float | None = None
 
-    rows_with_output = [(r, p, o) for r, p, o in priced_rows if o is not None]
     if rows_with_output:
-        rerun_usd: float | None = sum(_per_call_rerun_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
-        optimized_usd: float | None = _aggregate_optimized_cost(rows_with_output, ttl)
-    else:
-        rerun_usd = None
-        optimized_usd = None
+        no_cache_hypothetical_usd = sum(
+            _per_call_no_cache_cost(row, pricing, output) for row, pricing, output in rows_with_output
+        )
+        rerun_within_ttl_hypothetical_usd = sum(_per_call_rerun_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
+        no_cache_undeclared = _aggregate_no_cache_cost(
+            [r for r in rows_with_output if not r[0].declared_prompt_cache], ttl
+        )
+        with_cache_declared = _aggregate_with_cache_projection(
+            [r for r in rows_with_output if r[0].declared_prompt_cache], ttl
+        )
+        first_run_with_cache_hypothetical_usd = (
+            (no_cache_undeclared or 0.0) + (with_cache_declared or 0.0)
+            if no_cache_undeclared is not None or with_cache_declared is not None
+            else None
+        )
 
-    savings_first_run_usd = _aggregate_first_run_savings(priced_rows, ttl)
-    savings_rerun_usd = _aggregate_rerun_savings(priced_rows)
+    savings_first_run_usd = _aggregate_first_run_savings(priced_rows, ttl) if priced_rows else None
+    savings_rerun_usd = _aggregate_rerun_savings(priced_rows) if priced_rows else None
 
-    return AggregateCostBreakdown(
-        current_usd=current_usd,
-        optimized_usd=optimized_usd,
-        rerun_usd=rerun_usd,
+    return ProjectionBreakdown(
+        no_cache_hypothetical_usd=no_cache_hypothetical_usd,
+        first_run_with_cache_hypothetical_usd=first_run_with_cache_hypothetical_usd,
+        rerun_within_ttl_hypothetical_usd=rerun_within_ttl_hypothetical_usd,
         savings_first_run_usd=savings_first_run_usd,
         savings_rerun_usd=savings_rerun_usd,
-        partial=has_partial_costs,
+        partial=partial,
         unavailable_models=tuple(unavailable_models),
     )
 
 
-def _partition_rows(
+def _partition_priced_rows(
     rows: list[PerCallRow],
-    output_tokens_by_node: dict[str, int | None],
-) -> tuple[list[tuple[PerCallRow, ModelPricing, int | None]], list[str], float, bool]:
-    """Split ``rows`` into priced rows + heterogeneous recorded cost + unavailable model list.
+    output_tokens_by_node: Mapping[tuple[str | None, str] | str, int | None],
+) -> tuple[list[tuple[PerCallRow, ModelPricing, int | None]], list[str]]:
+    """Split ``rows`` into priceable + unavailable-model list.
 
-    Heterogeneous batch sub-workflows (``model: ${item.X}``) carry per-item
-    models we can't price as one model. When their trace recorded a cost,
-    Track A still surfaces it in ``current_usd`` (separate code path).
+    Excluded from priced rows:
+
+    - ``did_not_execute_in_trace=True`` — phantom rows reachable in IR but
+      absent from a workflow that has trace data. Including them would
+      inflate projections with fictional cost.
+    - ``model_is_heterogeneous=True`` — heterogeneous batch sub-workflows
+      (``model: ${item.X}``) carry per-item models we can't price as one
+      model. Their actually-paid cost surfaces via :func:`compute_actually_paid`
+      (trace-driven, includes sub-workflow descendants).
+    - Rows whose model isn't in ``litellm.model_cost`` — tracked in the
+      returned ``unavailable_models`` list, deduped, in declaration order.
     """
     priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]] = []
     unavailable_models: list[str] = []
     seen_unavailable: set[str] = set()
-    heterogeneous_recorded_cost: float = 0.0
-    has_heterogeneous_recorded: bool = False
 
     for row in rows:
+        if row.did_not_execute_in_trace:
+            continue
         if row.model_is_heterogeneous:
-            if row.cost_usd is not None:
-                heterogeneous_recorded_cost += row.cost_usd
-                has_heterogeneous_recorded = True
             continue
         pricing = get_model_pricing(row.model) if row.model else None
         if pricing is None:
@@ -325,115 +395,42 @@ def _partition_rows(
                 unavailable_models.append(row.model)
                 seen_unavailable.add(row.model)
             continue
-        output_tokens = output_tokens_by_node.get(row.node_path)
+        output_tokens = output_tokens_by_node.get((row.workflow_path, row.node_path))
+        if output_tokens is None and row.node_path in output_tokens_by_node:
+            output_tokens = output_tokens_by_node.get(row.node_path)
         priced_rows.append((row, pricing, output_tokens))
 
-    return priced_rows, unavailable_models, heterogeneous_recorded_cost, has_heterogeneous_recorded
+    return priced_rows, unavailable_models
 
 
-def _empty_priced_rows_breakdown(
-    heterogeneous_recorded_cost: float,
-    has_heterogeneous_recorded: bool,
-    unavailable_models: list[str],
-) -> AggregateCostBreakdown:
-    """Build the breakdown when there are no priced rows.
-
-    Even with no priced rows, heterogeneous-batch recorded cost may still
-    be a real signal worth surfacing (workflow that's exclusively
-    heterogeneous batches but was actually run produced a real total).
-    """
-    if has_heterogeneous_recorded:
-        return AggregateCostBreakdown(
-            current_usd=heterogeneous_recorded_cost,
-            optimized_usd=None,
-            rerun_usd=None,
-            savings_first_run_usd=None,
-            savings_rerun_usd=None,
-            partial=True,
-            unavailable_models=tuple(unavailable_models),
-        )
-    return AggregateCostBreakdown(
-        current_usd=None,
-        optimized_usd=None,
-        rerun_usd=None,
-        savings_first_run_usd=None,
-        savings_rerun_usd=None,
-        partial=False,
-        unavailable_models=tuple(unavailable_models),
-    )
-
-
-def _compute_current_usd(
-    priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]],
-    heterogeneous_recorded_cost: float,
-    has_heterogeneous_recorded: bool,
-    unavailable_models: list[str],
-) -> tuple[float | None, bool]:
-    """Sum recorded + recomputed costs into ``current_usd``.
-
-    Track A: per-call current cost honors row.cost_usd directly; falls back
-    to recompute (which needs output tokens) only when no trace data is
-    available. So a row with ``cost_usd is not None`` is "priceable" even
-    without output tokens.
-    """
-    rows_priceable_for_current = [(r, p, o) for r, p, o in priced_rows if r.cost_usd is not None or o is not None]
-    rows_without_output = [(r, p, o) for r, p, o in priced_rows if o is None and r.cost_usd is None]
-    has_partial_costs = bool(rows_priceable_for_current) and (bool(rows_without_output) or bool(unavailable_models))
-
-    if rows_priceable_for_current:
-        current_total: float = sum(_per_call_current_cost(r, p, o) or 0.0 for r, p, o in rows_priceable_for_current)
-        if has_heterogeneous_recorded:
-            current_total += heterogeneous_recorded_cost
-            has_partial_costs = True
-        current_usd: float | None = current_total
-    else:
-        current_usd = heterogeneous_recorded_cost if has_heterogeneous_recorded else None
-        if has_heterogeneous_recorded:
-            has_partial_costs = True
-
-    return current_usd, has_partial_costs
-
-
-def _aggregate_optimized_cost(
-    priced_rows: Sequence[tuple[PerCallRow, ModelPricing, int | None]],
+def _aggregate_no_cache_cost(
+    priced_rows: Sequence[tuple[PerCallRow, ModelPricing, int]],
     ttl: str | None,
-) -> float:
-    """Compute the with-caching cost across all priced rows with output data.
+) -> float | None:
+    """Compute no-cache cost for rows with no declared subset."""
+    del ttl
+    if not priced_rows:
+        return None
+    return sum(_per_call_no_cache_cost(row, pricing, output) for row, pricing, output in priced_rows)
 
-    Groups calls by their declared ``prompt_cache:`` subset (a tuple of chunk
-    names). Each group of N calls pays 1 write + (N-1) reads on the cacheable
-    portion. Calls without a declared subset behave like ``current``.
-    """
-    # Group calls by subset (tuple of chunk names). ``None`` means "no subset".
-    by_subset: dict[tuple[str, ...] | None, list[tuple[PerCallRow, ModelPricing, int]]] = {}
+
+def _aggregate_with_cache_projection(
+    priced_rows: Sequence[tuple[PerCallRow, ModelPricing, int]],
+    ttl: str | None,
+) -> float | None:
+    """Compute first-run cost for rows with declared prompt-cache subsets."""
+    if not priced_rows:
+        return None
+    by_subset: dict[tuple[str | None, tuple[str, ...]], list[tuple[PerCallRow, ModelPricing, int]]] = {}
     for row, pricing, output_tokens in priced_rows:
-        if output_tokens is None:
-            continue
-        subset = tuple(row.declared_prompt_cache) if row.declared_prompt_cache else None
+        subset = (row.workflow_path, tuple(row.declared_prompt_cache or ()))
         by_subset.setdefault(subset, []).append((row, pricing, output_tokens))
 
     total = 0.0
-    for subset, group in by_subset.items():
-        if subset is None:
-            # Track A: optimized cost is a HYPOTHETICAL — what would the cost
-            # be IF this row had no caching declared. Use the recompute path
-            # (tokens x full_rate) instead of ``row.cost_usd``, because the
-            # trace's recorded cost may include caching benefits we want to
-            # exclude here (otherwise optimized < current is impossible to
-            # observe for already-cached runs).
-            for row, pricing, output_tokens in group:
-                if output_tokens is not None:
-                    total += _per_call_current_cost_recomputed(row, pricing, output_tokens)
-            continue
-
-        # First call in the group pays write rate; remaining pay read rate.
-        # Applies per-invocation: a batch of N items in a single row produces
-        # N invocations (1 write + (N-1) reads); subsequent rows in the same
-        # subset are all reads (the cache was already written).
+    for group in by_subset.values():
         first = True
         for row, pricing, output_tokens in group:
             invocations = _invocation_count(row)
-            # See Option C note above — None → 0.
             cacheable = row.cacheable_tokens_estimated or 0
             non_cacheable = max(0, row.input_tokens_estimated - cacheable)
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
@@ -452,13 +449,13 @@ def _aggregate_first_run_savings(
     priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]],
     ttl: str | None,
 ) -> float | None:
-    """Compute total ``current - optimized`` savings (input-only — output cancels).
+    """Compute total ``no_cache - first_run_with_cache`` savings (input-only — output cancels).
 
     Greenfield-safe: doesn't depend on output tokens.
     """
-    by_subset: dict[tuple[str, ...] | None, list[tuple[PerCallRow, ModelPricing]]] = {}
+    by_subset: dict[tuple[str | None, tuple[str, ...]] | None, list[tuple[PerCallRow, ModelPricing]]] = {}
     for row, pricing, _output in priced_rows:
-        subset = tuple(row.declared_prompt_cache) if row.declared_prompt_cache else None
+        subset = (row.workflow_path, tuple(row.declared_prompt_cache)) if row.declared_prompt_cache else None
         by_subset.setdefault(subset, []).append((row, pricing))
 
     total_savings = 0.0
@@ -473,20 +470,20 @@ def _aggregate_first_run_savings(
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
 
             for i in range(invocations):
-                # current: cacheable x input_rate ; optimized: cacheable x (write_rate or read_rate)
+                # no-cache: cacheable * input_rate ; with-cache: cacheable * (write_rate or read_rate)
                 if first and i == 0:
-                    optimized_rate = write_rate
+                    effective_rate = write_rate
                     first = False
                 else:
-                    optimized_rate = pricing.cache_read_rate
-                total_savings += cacheable * (pricing.input_rate - optimized_rate)
+                    effective_rate = pricing.cache_read_rate
+                total_savings += cacheable * (pricing.input_rate - effective_rate)
     return total_savings
 
 
 def _aggregate_rerun_savings(
     priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]],
 ) -> float | None:
-    """Compute total ``current - rerun`` savings (all cacheable tokens at read rate).
+    """Compute total ``no_cache - rerun`` savings (all cacheable tokens at read rate).
 
     Greenfield-safe: doesn't depend on output tokens.
     """
@@ -495,16 +492,70 @@ def _aggregate_rerun_savings(
         if not row.declared_prompt_cache:
             continue
         invocations = _invocation_count(row)
-        # See Option C note in `_full_cost_with_caching` — None → 0.
+        # See Option C note in ``_aggregate_with_cache_projection`` — None → 0.
         cacheable = row.cacheable_tokens_estimated or 0
-        # current: cacheable x input_rate ; rerun: cacheable x read_rate
+        # no-cache: cacheable * input_rate ; rerun: cacheable * read_rate
         total_savings += invocations * cacheable * (pricing.input_rate - pricing.cache_read_rate)
     return total_savings
 
 
+# ---------------------------------------------------------------------------
+# Actually-paid aggregation (trace-driven)
+# ---------------------------------------------------------------------------
+
+
+def compute_actually_paid(
+    rows: list[PerCallRow],
+    *,
+    trace: TraceTree | None = None,
+    edges: Mapping[str, str] | None = None,
+) -> ActuallyPaidCost:
+    """Trace-driven recorded cost (the "actually paid" figure).
+
+    Two paths:
+
+    - **Trace path** (preferred when ``trace`` is provided):
+      ``TraceTree.total_cost(descend_sub_workflows=True, include_cached=False, edges=...)``
+      is the canonical sum — includes batch items and sub-workflow LLM
+      descendants. Used by ``_build_summary``.
+    - **Row fallback** (when ``trace=None``): sum ``row.cost_usd`` across
+      ``rows``. Useful for callers that have rows but no TraceTree handle
+      (mostly tests). Heterogeneous-batch rows contribute their ``cost_usd``
+      since trace recorded it.
+
+    Returns ``(None, "unavailable")`` when no cost data was found in either
+    path. Cached events contribute 0.0 explicitly per the trace contract.
+    """
+    if trace is not None:
+        total, tier_str = trace.total_cost(
+            descend_sub_workflows=True,
+            include_cached=False,
+            edges=edges or {},
+        )
+        return ActuallyPaidCost(total_usd=total, tier=CostTier(tier_str))
+
+    # Row fallback: sum row.cost_usd. Each row's cost_usd was already
+    # recorded from the trace (via the analyzer's TraceExecutionIndex);
+    # summing here reproduces the trace total for callers without a tree.
+    total = 0.0
+    found_any = False
+    for row in rows:
+        if row.cost_usd is not None:
+            total += row.cost_usd
+            found_any = True
+    if not found_any:
+        return ActuallyPaidCost(total_usd=None, tier=CostTier.UNAVAILABLE)
+    return ActuallyPaidCost(total_usd=total, tier=CostTier.TRACE)
+
+
 __all__ = [
-    "AggregateCostBreakdown",
+    "ActuallyPaidCost",
+    "CostTier",
     "ModelPricing",
-    "compute_aggregate_costs",
+    "ProjectionBreakdown",
+    "_aggregate_no_cache_cost",
+    "_aggregate_with_cache_projection",
+    "compute_actually_paid",
+    "compute_projections",
     "get_model_pricing",
 ]
