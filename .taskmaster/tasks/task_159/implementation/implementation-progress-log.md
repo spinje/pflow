@@ -7327,21 +7327,3 @@ templated, non-LLM), multi-node, plus Pattern 4 subprocess driving
 real `pflow save`. Plus catalog round-trip + count + namespace tests
 updated.
 
-**Docs**: `cache_analysis/CLAUDE.md` count refs + validator-delegation
-table.
-
-### Verification
-
-- 6224 tests pass (was 6202 → +22 new); make check clean.
-- Spike at `scratchpads/finding-1-opus-spike/` confirms Opus 4.1/4.7
-  enforce the rule (cost: $0.005, single billed Opus 4.1 control call).
-- End-to-end CLI rendering verified: `--validate-only` text + JSON +
-  `pflow save` non-zero exit all carry catalog ID and structured context.
-
-### Round-trip verification deferred
-
-The lyrics-generator workarounds (11 nodes set to `reasoning_effort:
-none` to dodge this bug) can now be reverted to `reasoning_effort: low`
-and a Haiku rerun would prove the validator catches them at save time.
-Skipped per user direction; unit + Pattern-4 subprocess tests cover the
-wiring.
