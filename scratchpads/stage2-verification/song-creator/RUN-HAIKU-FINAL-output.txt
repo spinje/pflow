@@ -1,0 +1,45 @@
+Executing workflow (14 nodes):
+  creative-direction... ✓ 53.8s
+  song-architecture... ✓ 90.9s
+  easter-eggs... ✓ 51.9s
+  choose-chorus...
+    build-grouped-items... ✓ 0.0s
+    generate-chorus-options... 8/8 42.3s
+    extract-individual-choruses... ✓ 0.0s
+    build-scoring-items... ✓ 0.0s
+    score-choruses... 34/34 15.4s
+    rank-choruses... ✓ 0.0s
+    select-chorus... ✓ 70.2s
+    extract-winners... ✓ 0.0s
+  choose-chorus... ✓ 128.1s
+  write-lyrics... ✓ 4.9s
+  emotional-reviews...
+    review... ✓ 11.6s
+    review... ✓ 48.5s
+    review... ✓ 54.3s
+    review... ✓ 59.8s
+  emotional-reviews... 4/4 59.9s
+  format-emotional-reviews... ✓ 0.0s
+  rewrite-emotional... ✓ 93.6s
+  extract-emotional-lyrics... ✓ 0.0s
+  craft-reviews...
+    review... ✓ 21.6s
+    review... ✓ 25.2s
+    review... ✓ 31.7s
+    review... ✓ 34.7s
+    review... ✓ 37.5s
+  craft-reviews... 5/5 37.6s
+  format-craft-reviews... ✓ 0.0s
+  rewrite-craft... ✓ 29.5s
+  extract-lyrics... ✓ 0.0s
+  generate-suno-prompt... ✗ Failed
+❌ Workflow failed after 550.639s
+
+Error: LLM Call Failed
+
+Invalid request for model 'anthropic/claude-haiku-4-5': litellm.BadRequestError: AnthropicException - {"type":"error","error":{"type":"invalid_request_error","message":"`temperature` may only be set to 1 when thinking is enabled. Please consult our documentation at https://docs.claude.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking"},"request_id":"req_011CajDU4ZtRJzktncQ9kWLY"}
+
+Check the request shape against the provider's documentation. The provider's message above typically identifies the offending parameter.
+  At: node 'generate-suno-prompt'
+📊 Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-40235f89-song-creator-20260505-115133.json
+📋 Execution report: /Users/andfal/.pflow/reports/song-creator

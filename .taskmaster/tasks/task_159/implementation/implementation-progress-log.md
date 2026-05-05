@@ -7205,3 +7205,86 @@ $0.010209 (matches `(input - cache_creation) × $1/M + cache_creation
 × $2/M + output × $5/M`) where pre-fix reported $0.020043.
 
 New test: `test_anthropic_1h_cost_normalization_no_op_when_litellm_has_above_1hr_rate`.
+
+## Stage 2 verification — comprehensive UX + spec-target audit (2026-05-05)
+
+Multi-session verification of every Task 159 surface against the
+motivating workflow (`lyrics-generator/song-creator`) plus targeted
+edge-case workflows. Spec target verified on Anthropic Haiku
+(48% input savings fresh / ~99% cost reduction on rerun); muddied on
+Gemini by the provider's automatic implicit cache. 21 UX/bug findings
+catalogued; cache mechanism itself is solid end-to-end. Total spend
+~$2.59 across 17 paid runs + free validations.
+
+### Documents produced
+
+- `reports/REPORT.md` — Stage 2 final report. Catalogues all 21
+  findings (BUG / REAL UX GAP / PAPER-CUT) with evidence, severity,
+  and proposed fix shapes. Chronological test-run table (cost +
+  outcome + trace path per run). Spec-target verification math per
+  provider. Files inventory + reverts-before-merge guidance.
+
+- `reports/cache-heterogeneous-models-fragment.md` — standalone
+  implementation spec for Finding #11 (the user's explicit ask):
+  analyzer doesn't warn when cross-node mixed exact-models prevent
+  cache sharing. Includes detection algorithm sketch, JSON shape,
+  edge cases, empirical evidence, and ~150-LOC effort estimate.
+  Written so a future agent can implement from this doc alone.
+
+- `handoffs/stage2-findings-fix-decision.md` — braindump handoff for
+  the next agent. Captures tacit knowledge NOT in the report: the
+  user's stated constraints (no provider-constraint table; exact-model
+  match for caching; agent-UX evaluation as load-bearing), 7 critical
+  insights about why findings exist (e.g., temp=1+thinking is pflow's
+  translation layer, not Anthropic's API), decision dimensions for
+  prioritization, and process notes for talking with the user about
+  which fixes to land.
+
+### Auxiliary test fixtures created (live in scratchpads/)
+
+- `scratchpads/stage2-verification/mixed-model-test/` — 2-node
+  workflow with different providers sharing `${context}`. Drives
+  Finding #11 verification.
+- `scratchpads/stage2-verification/cross-workflow-test/` — parent +
+  child workflows with cache propagation. Drives Finding #21 (cache_key
+  is workflow-scoped).
+- `scratchpads/stage2-verification/error-ux-tests/` — three
+  intentionally-broken workflows that trigger `cache.order-mismatch`,
+  `cache.invalid-on-non-llm`, `cache.unused-chunk` validators.
+- `scratchpads/stage2-verification/song-creator/` — full Stage 2.1
+  trace inventory (RUN1-3 Gemini + RUN-HAIKU1-3, RUN-HAIKU-FINAL,
+  RUN-HAIKU-RERUN, CHORUS-HAIKU). Inputs JSON for song-A "The Third
+  Plate".
+
+### Highest-impact findings (top 3 by ROI)
+
+1. **`reasoning_effort` translation bug on Anthropic** (Finding #1):
+   pflow translates `reasoning_effort: low/medium/high` →
+   `thinking: enabled` but doesn't normalize `temperature: 1` (which
+   Anthropic requires when thinking is on). Bit 11 nodes across 3
+   files in lyrics-generator. ~5 LOC fix in the translation layer.
+
+2. **`rerun_within_ttl_hypothetical_usd` ignores memo cache**
+   (Finding #2): analyzer's projection only models provider cache, not
+   pflow's MEMO cache. Real reruns are ~75× cheaper than projected.
+   Agents reading the analyzer dramatically under-estimate caching
+   value.
+
+3. **No `cache.heterogeneous-models-fragment-cache` warning**
+   (Finding #11, the user's explicit ask): mixed exact-models in
+   the same workflow silently fragment cache. No warning. Implementation
+   spec at `reports/cache-heterogeneous-models-fragment.md`.
+
+### State after this verification
+
+- 17 paid LLM runs + 4 free validations executed.
+- Cache mechanism confirmed working end-to-end on Anthropic Haiku 4.5
+  (fresh + rerun spec targets both met).
+- 11 in-place edits to lyrics-generator workflows tracked in
+  REPORT.md "Reverts before merge" — distinguishes test-specific
+  workarounds (revert when Finding #1 lands) from real improvements
+  (keep: prompt-body cleanups, `## Cache` declarations,
+  `prompt_cache:` declarations, increased timeouts).
+- No production code changed in this verification round; all findings
+  filed as actionable inputs for the next planning + implementation
+  session.
