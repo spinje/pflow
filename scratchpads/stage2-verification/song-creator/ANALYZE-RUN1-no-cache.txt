@@ -1,0 +1,183 @@
+# Cache Analysis: /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  19 LLM nodes using gemini/gemini-2.5-flash + generate-chorus-options (model varies per batch item)
+  (7 in song-creator.pflow.md, 12 in 10 sub-workflows: chorus-chooser, review-accuracy, review-ai-tells, review-cliche, review-emotional-architecture, review-genre, review-imagery, review-narrative, review-rhyme, review-stranger-summary)
+
+## Summary
+
+  Actually paid (trace):       ~$0.17 (partial) (trace)
+  Cost without caching:        ~$0.32 (partial)
+  Cost on rerun (within TTL):  ~$0.31 (partial)
+
+  6 opportunities (0 warnings, 6 info)
+
+## Recommended actions (ordered by impact)
+
+  Each item below is one edit that unlocks LLM-provider caching.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Shared context undeclared — declare `concept.core_idea`, `concept.title` +5 more in ## Cache  -$0.01/run
+     song-creator.pflow.md
+     Used by 7 LLM nodes. Chunks: concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response. (saves $0.01/run)
+
+  2. Cross-boundary value undeclared — declare `concept` in song-creator.pflow.md's or chorus-chooser.pflow.md's ## Cache  savings unavailable
+     song-creator.pflow.md
+     `concept` flows to `chorus-chooser.pflow.md` (used by 2 LLM nodes there). Declare it in either workflow's ## Cache to share cached bytes across the boundary.
+
+  3. Cross-boundary value undeclared — declare `concept_brief` in song-creator.pflow.md's ## Cache (covers 2 sub-workflows)  savings unavailable
+     song-creator.pflow.md
+     `concept_brief` flows to 2 sub-workflows. Used by 1 LLM node per destination (review-accuracy.pflow.md, review-emotional-architecture.pflow.md). Declare in this workflow's ## Cache to cover all destinations in one edit.
+
+  4. Cross-boundary value undeclared — declare `extract-emotional-lyrics` in song-creator.pflow.md's ## Cache (covers 5 sub-workflows)  savings unavailable
+     song-creator.pflow.md
+     `extract-emotional-lyrics` flows to 5 sub-workflows. Used by 1 LLM node per destination (review-accuracy.pflow.md, review-ai-tells.pflow.md, review-cliche.pflow.md, review-genre.pflow.md, review-rhyme.pflow.md). Declare in this workflow's ## Cache to cover all destinations in one edit.
+
+  5. Consolidate sub-paths of `concept` to root in ## Cache              savings unavailable
+     song-creator.pflow.md
+     Sub-paths of `concept` (concept.angle, concept.core_idea, concept.title) are individually below gemini/gemini-2.5-flash's min-cache threshold (4096 tokens, max sub-path ~55); consolidating to `${concept}` (~4529 tokens) would cross the threshold and actually cache. Sub-path markers silently no-op at the provider as declared.
+
+  6. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
+     generate-chorus-options in chorus-chooser.pflow.md
+     generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
+
+## Suggested ## Cache block — /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+  Paste between ## Inputs and ## Steps. The labels above each `${var}` are
+  auto-generated starters — replace each with a 1-2 sentence description
+  of what that value is in your workflow's domain. The LLM reads this
+  prose right before the value, so a clearer label helps the LLM
+  understand what it's looking at.
+
+  ## Cache
+
+  - ttl: 5m
+
+  ```cache
+  The core idea from concept:
+
+  ${concept.core_idea}
+
+  The title from concept:
+
+  ${concept.title}
+
+  The angle from concept:
+
+  ${concept.angle}
+
+  The concept brief:
+
+  ${concept_brief}
+
+  The response from creative-direction:
+
+  ${creative-direction.response}
+
+  The response from song-architecture:
+
+  ${song-architecture.response}
+
+  The response from easter-eggs:
+
+  ${easter-eggs.response}
+
+  ```
+
+  Per-node `prompt_cache:` declarations
+
+  Add to each node's params. Order MUST match the ## Cache block above —
+  pflow rejects mismatched orders as `cache.order-mismatch` ERROR.
+
+  ### creative-direction
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief]
+
+  ### easter-eggs
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response]
+
+  ### generate-suno-prompt
+  - prompt_cache: [creative-direction.response]
+
+  ### rewrite-craft
+  - prompt_cache: [concept.core_idea, concept.title, concept_brief, creative-direction.response, song-architecture.response]
+
+  ### rewrite-emotional
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response]
+
+  ### song-architecture
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response]
+
+  ### write-lyrics
+  - prompt_cache: [concept.core_idea, concept.title, concept.angle, concept_brief, creative-direction.response, song-architecture.response, easter-eggs.response]
+
+## Per-call cache report
+  Projected cache ratios from prior run data.
+  Showing 17 of 19 LLM nodes; all-clean rows hidden (--all-rows shows everything).
+
+### song-creator.pflow.md
+  rewrite-emotional                     model=gemini/gemini-2.5-flash             tokens=20294  cacheable=12125  ratio= 60%  src=high
+  rewrite-craft                         model=gemini/gemini-2.5-flash             tokens=17312  cacheable= 9426  ratio= 54%  src=high
+  write-lyrics                          model=gemini/gemini-2.5-flash             tokens=15433  cacheable=12125  ratio= 79%  src=high
+  song-architecture                     model=gemini/gemini-2.5-flash             tokens= 8015  cacheable= 5936  ratio= 74%  src=high
+  generate-suno-prompt                  model=gemini/gemini-2.5-flash             tokens= 4382  cacheable= 2996  ratio= 68%  src=high
+  creative-direction                    model=gemini/gemini-2.5-flash             tokens= 3937  cacheable= 2940  ratio= 75%  src=high
+
+### review-accuracy.pflow.md (called by craft-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 8020  cacheable=    ?  ratio=  ?%  src=high
+
+### chorus-chooser.pflow.md (called by choose-chorus)
+  select-chorus                         model=gemini/gemini-2.5-flash             tokens= 7708  cacheable=   25  ratio=  0%  src=high
+  generate-chorus-options               model=<varies>                            tokens=    3  cacheable=    ?  ratio=  ?%  src=low  opaque-prompt
+
+### review-rhyme.pflow.md (called by craft-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 7628  cacheable=    ?  ratio=  ?%  src=high
+
+### review-genre.pflow.md (called by craft-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 7572  cacheable=    ?  ratio=  ?%  src=high
+
+### review-emotional-architecture.pflow.md (called by emotional-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 7550  cacheable=    ?  ratio=  ?%  src=high
+
+### review-imagery.pflow.md (called by emotional-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 5646  cacheable=    ?  ratio=  ?%  src=high
+
+### review-ai-tells.pflow.md (called by craft-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 4549  cacheable=    ?  ratio=  ?%  src=high
+
+### review-narrative.pflow.md (called by emotional-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 4515  cacheable=    ?  ratio=  ?%  src=high
+
+### review-cliche.pflow.md (called by craft-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 4436  cacheable=    ?  ratio=  ?%  src=high
+
+### review-stranger-summary.pflow.md (called by emotional-reviews)
+  review                                model=gemini/gemini-2.5-flash             tokens= 1795  cacheable=    ?  ratio=  ?%  src=high
+
+  Hidden: 1 nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows).
+
+## Sub-workflow drill-in
+
+  Sub-workflow opportunities don't surface here — run analyze-cache per child:
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
+
+## Notes
+
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.song-architecture skipped — template resolution failed at analyzer-time (unresolvable upstream ref). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.easter-eggs skipped — template resolution failed at analyzer-time (unresolvable upstream ref). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.write-lyrics skipped — template resolution failed at analyzer-time (unresolvable upstream ref). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.rewrite-emotional skipped — template resolution failed at analyzer-time (unresolvable upstream ref). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.rewrite-craft skipped — template resolution failed at analyzer-time (unresolvable upstream ref). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/song-creator.pflow.md.generate-suno-prompt skipped — template resolution failed at analyzer-time (unresolvable upstream ref). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md.generate-chorus-options skipped — plan_node returned no cache_key (status=miss). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md.score-choruses skipped — plan_node returned no cache_key (status=miss). Observable-field attributions still apply.
+  · Discrepancy detection: predicted-key matching for /Users/andfal/projects/music-generation/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md.select-chorus skipped — template resolution failed at analyzer-time (unresolvable upstream ref). Observable-field attributions still apply.
+  · Discrepancy detection: skipped attribution for 1 trace event(s) with no predicted cache_key and no observable signal. Per-node skip reasons (above, when present) explain why prediction was unavailable for the affected nodes; this count covers events whose nodes were not in the analyzed IR (typically batch sub-workflow per-item children with runtime-only context).
+  · Gemini telemetry note: LiteLLM's Vertex/Gemini translation surfaces explicit-cache reads via 'cache_read_input_tokens' (or 'prompt_tokens_details.cached_tokens'); 'cache_creation_input_tokens' is 0/absent even when caching is working. Verification path is reads on subsequent calls. Spike 1 disambiguator (progress log §36) confirmed the marker does real work — no caching fires without it.
