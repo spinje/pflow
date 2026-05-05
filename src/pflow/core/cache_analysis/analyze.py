@@ -126,6 +126,12 @@ class PerCallRow:
     # ``"unavailable"``. ``"parameters"`` is added by Track B (Phase B):
     # workflow-input refs resolved via the agent's ``--inputs``.
     cacheable_data_source: str = "unavailable"
+    # Raw per-call provider cache token splits from the trace event's
+    # ``llm_call`` dict. ``None`` when no trace row matched; ``int`` (including
+    # 0) when trace data exists. Independent of ``cacheable_tokens_estimated``,
+    # which is an analyzer projection of cacheable input bytes.
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
     # Track A (Phase A): per-call recorded cost from the trace (sum of
     # llm_call + batch_items[*].llm_call costs for this node's event tree).
     # ``None`` when no trace event matched. Read by the renderer for the
@@ -1154,6 +1160,11 @@ def _build_per_call_row(
         # which is checked by the renderer separately via ``unavailable_models``).
         cost_source = "recomputed"
 
+    trace_cache_creation = (
+        int(trace_llm_call.get("cache_creation_input_tokens") or 0) if trace_llm_call is not None else None
+    )
+    trace_cache_read = int(trace_llm_call.get("cache_read_input_tokens") or 0) if trace_llm_call is not None else None
+
     return PerCallRow(
         node_path=node_id,
         model=model,
@@ -1168,6 +1179,8 @@ def _build_per_call_row(
         output_data_source=output_source,
         model_is_heterogeneous=model_is_heterogeneous,
         cacheable_data_source=cacheable_source,
+        cache_creation_input_tokens=trace_cache_creation,
+        cache_read_input_tokens=trace_cache_read,
         cost_usd=cost_value,
         cost_data_source=cost_source,
         workflow_path=workflow_path,

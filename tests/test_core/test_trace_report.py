@@ -523,6 +523,189 @@ class TestBuildNodeFile:
         assert "Skipped chunks" not in md
 
 
+class TestCacheTelemetrySection:
+    """Trace report per-call cache telemetry rendering."""
+
+    def test_renders_section_when_cache_creation_nonzero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 1500,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc123",
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" in md
+        assert "Cache write: 1,500 tokens" in md
+        assert "Cache read: 0 tokens" in md
+        assert "Cache key: abc123" in md
+
+    def test_renders_section_when_cache_read_nonzero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_key": "def456",
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" in md
+        assert "Cache read: 8,062 tokens" in md
+
+    def test_omitted_when_no_cache_signal(self) -> None:
+        """Plain LLM call without cache activity suppresses the section."""
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_key": "xyz",
+                "cache_chunks_skipped": [],
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" not in md
+
+    def test_omitted_when_no_llm_call(self) -> None:
+        event = _make_event()
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" not in md
+
+    def test_cached_replay_heading_tag_appears(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_source": "memo",
+                "cache_key": "abc",
+                "cache_age_sec": 559.99,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry (cached result reused from prior run)" in md
+        assert "Result age: 560s" in md
+
+    def test_cached_replay_heading_tag_does_not_leak_pflow_vocabulary(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_source": "memo",
+                "cache_key": "abc",
+                "cache_age_sec": 559.99,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "memo" not in md.lower()
+        assert "in_process" not in md.lower()
+
+    def test_section_appears_between_cached_system_and_prompt(self) -> None:
+        event = _make_event(
+            llm_system="System content",
+            llm_call={
+                "cache_creation_input_tokens": 1500,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc",
+            },
+            template_resolutions={"prompt": {"template": "Hi", "resolved": "Hi there"}},
+        )
+        md = _build_node_file(event)
+
+        cached_idx = md.index("## Cached System")
+        telemetry_idx = md.index("## Cache telemetry")
+        prompt_idx = md.index("## Prompt")
+        assert cached_idx < telemetry_idx < prompt_idx
+
+    def test_renders_when_chunks_skipped_present(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc",
+                "cache_chunks_skipped": ["foo"],
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" in md
+
+    def test_renders_when_cached_system_present_even_with_zero_tokens(self) -> None:
+        """When the workflow opted into caching (llm_system present) but the
+        provider didn't fire (e.g., sub-threshold), the section must still
+        render so agents see the silent no-op."""
+        event = _make_event(
+            llm_system=[{"type": "text", "text": "Reference"}],
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc",
+                "cache_chunks_skipped": [],
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cached System" in md
+        assert "## Cache telemetry" in md
+        assert "Cache write: 0 tokens" in md
+        assert "Cache read: 0 tokens" in md
+
+    def test_renders_in_batch_item_file(self) -> None:
+        """Batch items reuse _format_resolutions; cache telemetry must
+        propagate to per-item .md files. Pins the contract against future
+        refactors that move batch-item rendering off the shared helper."""
+        from pflow.core.trace_report import _build_batch_item_file
+
+        parent_event = _make_event(node_id="batch-parent", node_type="LLMNode")
+        item = {
+            "index": 0,
+            "duration_ms": 50,
+            "success": True,
+            "llm_call": {
+                "cache_creation_input_tokens": 1500,
+                "cache_read_input_tokens": 0,
+                "cache_key": "item-0",
+            },
+        }
+        md = _build_batch_item_file(item, parent_event)
+
+        assert "## Cache telemetry" in md
+        assert "Cache write: 1,500 tokens" in md
+
+    def test_thinking_tokens_renders_in_metadata_when_nonzero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "model": "anthropic/claude-haiku-4-5",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "thinking_tokens": 1024,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "- Thinking: 1,024 tokens" in md
+        assert "## Cache telemetry" not in md
+
+    def test_thinking_tokens_omitted_in_metadata_when_zero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "model": "anthropic/claude-haiku-4-5",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "thinking_tokens": 0,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "Thinking" not in md
+
+
 # --- _build_node_summary() ---
 
 

@@ -171,6 +171,8 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "output_data_source": row.output_data_source,
         "cacheable_tokens_estimated": row.cacheable_tokens_estimated,
         "cache_ratio_pct": row.cache_ratio_pct,
+        "cache_creation_input_tokens": row.cache_creation_input_tokens,
+        "cache_read_input_tokens": row.cache_read_input_tokens,
         "data_source": row.data_source,
         # Independent tier label for the cacheable metric. Sources:
         # ``"trace"``, ``"memo"``, ``"estimator"``, ``"unavailable"``.

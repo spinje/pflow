@@ -7567,3 +7567,48 @@ Critical insights:
    format still needs `format_version` because readers gate on it. Analyze-cache
    JSON had no equivalent in-tree gate, so shape assertions are the stronger
    contract here.
+
+## Stage 2 follow-up — Findings #4/#5: per-call cache telemetry surfaces (2026-05-05)
+
+Implemented `fix-plans/per-call-cache-telemetry-plan.md`. `--report` now
+renders `## Cache telemetry` for LLM calls with provider cache writes/reads,
+memo replay metadata, or skipped cache chunks; replay headings use the
+user-facing phrase `(cached result reused from prior run)` and do not leak
+`memo` / `in_process`. `thinking_tokens > 0` now renders in node metadata as
+`- Thinking: N tokens`.
+
+`analyze-cache --format=json` now emits additive per-call fields
+`cache_creation_input_tokens` and `cache_read_input_tokens`. These are raw
+trace observations (`int`, including 0) and stay `null` when no trace
+`llm_call` exists; they are separate from the analyzer's projected
+`cacheable_tokens_estimated`.
+
+Files touched:
+
+- Production: `core/cache_analysis/analyze.py`,
+  `core/cache_analysis/render_json.py`, `core/trace_report.py`.
+- Tests: `test_cache_analysis_analyze.py`,
+  `test_cache_analysis_renderers.py`, `test_trace_report.py`.
+
+Plan deviations / adaptations:
+
+- The renderer test helper named in the plan (`_make_per_call_row`) does not
+  exist in the current file. Used the existing `_row(...)` helper plus
+  `PerCallRow(**{...})` reconstruction, matching nearby tests.
+- The Stage 2 song-creator scratchpad contains trace JSONs but no checked-in
+  `.pflow.md` workflow file, so the exact plan CLI command against that
+  workflow could not run. Verified the same JSON shape through the checked-in
+  cache-analysis fixture workflow and manually inspected the Stage 2 traces'
+  cache fields.
+
+Critical insights:
+
+1. **Observed cache splits are not projections.** Keeping raw trace fields
+   separate from `cacheable_tokens_estimated` preserves creation-vs-read facts
+   while leaving analyzer math unchanged.
+2. **Replay vocabulary is a UI boundary.** `cache_source` is a useful internal
+   discriminator, but the report should expose the behavior, not the storage
+   implementation.
+3. **Report section gates need a real signal.** A cache key alone can exist
+   without cache activity; rendering on token activity, replay state, or
+   skipped chunks avoids noisy sections on plain calls.

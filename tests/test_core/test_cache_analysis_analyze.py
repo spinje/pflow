@@ -1868,6 +1868,64 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     )
 
 
+def test_per_call_row_carries_raw_cache_token_splits_from_trace(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PerCallRow preserves trace cache_creation/cache_read as distinct fields."""
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_path = "/abs/cache_token_splits.pflow.md"
+    workflow_ir = {
+        "inputs": {},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "context", "var": "context", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": "test-node",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-haiku-4-5", "prompt": "${context}\n\nDo work."},
+                "prompt_cache": ["context"],
+            }
+        ],
+        "edges": [],
+    }
+
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.1.0",
+            "workflow_path": workflow_path,
+            "nodes": [
+                {
+                    "node_id": "test-node",
+                    "llm_call": {
+                        "model": "anthropic/claude-haiku-4-5",
+                        "input_tokens": 9800,
+                        "output_tokens": 350,
+                        "cache_creation_input_tokens": 1500,
+                        "cache_read_input_tokens": 8062,
+                    },
+                }
+            ],
+        })
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+    )
+    row = next(r for r in analysis.per_call if r.node_path == "test-node")
+
+    assert row.cache_creation_input_tokens == 1500
+    assert row.cache_read_input_tokens == 8062
+    assert row.data_source == "trace"
+
+
 def test_below_min_tokens_still_fires_when_estimator_says_below_min(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,

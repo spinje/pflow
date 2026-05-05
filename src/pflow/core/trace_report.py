@@ -713,6 +713,9 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
         tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
         tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
         lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
+        thinking_tokens = llm_call.get("thinking_tokens")
+        if isinstance(thinking_tokens, int) and thinking_tokens > 0:
+            lines.append(f"- Thinking: {thinking_tokens:,} tokens")
         cost = llm_call.get("cost_usd")
         if cost is not None:
             lines.append(f"- Cost: ${cost:.4f}")
@@ -817,6 +820,49 @@ def _format_cached_system(event: dict[str, Any], lines: list[str]) -> None:
     lines.append("")
 
 
+def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
+    """Render per-call cache observations from ``llm_call`` trace data."""
+    llm_call = event.get("llm_call") or {}
+    if not isinstance(llm_call, dict):
+        return
+
+    cache_creation = llm_call.get("cache_creation_input_tokens")
+    cache_read = llm_call.get("cache_read_input_tokens")
+    cache_key = llm_call.get("cache_key")
+    cache_age_sec = llm_call.get("cache_age_sec")
+    chunks_skipped = llm_call.get("cache_chunks_skipped") or []
+    is_cached_replay = bool(llm_call.get("cache_source"))
+
+    # When llm_system is present the workflow opted into caching — render the
+    # section even with all-zero tokens so agents see "declared cache, didn't
+    # fire" instead of silent suppression.
+    has_signal = (
+        is_cached_replay
+        or (isinstance(cache_creation, int) and cache_creation > 0)
+        or (isinstance(cache_read, int) and cache_read > 0)
+        or bool(chunks_skipped)
+        or bool(event.get("llm_system"))
+    )
+    if not has_signal:
+        return
+
+    if is_cached_replay:
+        lines.append("## Cache telemetry (cached result reused from prior run)")
+    else:
+        lines.append("## Cache telemetry")
+    lines.append("")
+
+    if isinstance(cache_creation, int):
+        lines.append(f"- Cache write: {cache_creation:,} tokens")
+    if isinstance(cache_read, int):
+        lines.append(f"- Cache read: {cache_read:,} tokens")
+    if cache_key:
+        lines.append(f"- Cache key: {cache_key}")
+    if is_cached_replay and isinstance(cache_age_sec, (int, float)):
+        lines.append(f"- Result age: {cache_age_sec:.0f}s")
+    lines.append("")
+
+
 def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     """Render template resolutions and static params as markdown sections.
 
@@ -829,6 +875,7 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     # 2.2.0: cached system prefix — rendered before ## Prompt to match the
     # API call order (system → user).
     _format_cached_system(event, lines)
+    _format_cache_telemetry(event, lines)
 
     if "prompt" in resolutions:
         lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])

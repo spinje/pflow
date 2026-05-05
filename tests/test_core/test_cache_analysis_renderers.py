@@ -1944,3 +1944,45 @@ def test_render_json_includes_prompt_body_cleanup_key() -> None:
     block_dict = payload["suggested_blocks"][0]
     assert "prompt_body_cleanup" in block_dict
     assert block_dict["prompt_body_cleanup"] == {"write": ["concept"]}
+
+
+def test_render_json_includes_cache_creation_and_read_tokens() -> None:
+    """Per_call rows surface raw trace cache token splits."""
+    row = PerCallRow(**{
+        **_row("cached-call", 80).__dict__,
+        "cache_creation_input_tokens": 1500,
+        "cache_read_input_tokens": 8062,
+        "data_source": "trace",
+    })
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "per_call": (row,)})
+    payload = render_json(analysis)
+    row_dict = payload["per_call"][0]
+
+    assert row_dict["cache_creation_input_tokens"] == 1500
+    assert row_dict["cache_read_input_tokens"] == 8062
+
+    # Pin key adjacency so future dict refactors don't silently scatter the
+    # cache-related fields. Plan specified placement after cache_ratio_pct
+    # and before data_source.
+    keys = list(row_dict.keys())
+    assert keys.index("cache_creation_input_tokens") == keys.index("cache_ratio_pct") + 1
+    assert keys.index("cache_read_input_tokens") == keys.index("cache_creation_input_tokens") + 1
+    assert keys.index("data_source") == keys.index("cache_read_input_tokens") + 1
+
+
+def test_render_json_per_call_cache_tokens_null_on_greenfield() -> None:
+    """No trace data means cache token fields are null."""
+    row = PerCallRow(**{
+        **_row("greenfield-call", 80).__dict__,
+        "cache_creation_input_tokens": None,
+        "cache_read_input_tokens": None,
+        "data_source": "estimator",
+    })
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "per_call": (row,)})
+    payload = render_json(analysis)
+    row_dict = payload["per_call"][0]
+
+    assert row_dict["cache_creation_input_tokens"] is None
+    assert row_dict["cache_read_input_tokens"] is None
