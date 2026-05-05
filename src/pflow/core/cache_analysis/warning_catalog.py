@@ -5,11 +5,13 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-17 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
+19 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
 temperature-mismatch`` (Stage 2 follow-up: catch Anthropic temperature=1.0 +
-extended thinking constraint at validate-time). The base 14 covers the 9 from
+extended thinking constraint at validate-time) + ``cache.heterogeneous-models-
+fragment-cache`` and ``cache.first-call-write-penalty`` (Stage 2 follow-up:
+detect exact-model cache namespace fragmentation and lone cache writes). The base 14 covers the 9 from
 spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2, dispatch
 over ``root_cause`` enum), ``cache.invalid-on-non-llm`` (Round 3, validator-
 reach gap closure for non-LLM nodes), ``cache.prewarm-no-prefix`` (Round 3,
@@ -509,6 +511,59 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="workflows[path={affected_workflow}]",
         headline_template="Consolidate sub-paths of `{root}` to root in ## Cache",
     ),
+    "cache.heterogeneous-models-fragment-cache": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=(
+            "Workflow declares cached chunks shared across {model_group_count} exact models "
+            "({models_csv}). Each model has a separate cache namespace; bytes are written "
+            "{model_group_count}x instead of 1x.{savings_clause}\n"
+            "{model_groups_lines}"
+        ),
+        required_context_keys=(
+            ("model_group_count", int),
+            ("models_csv", str),
+            ("model_groups", list),
+            ("model_groups_lines", str),
+            ("shared_chunks", list),
+            ("affected_workflow", str),
+            ("savings_usd", float),
+        ),
+        suggestions_template=(
+            "Consolidate to one exact model so all calls share one cache namespace, OR",
+            "Ensure each model has enough calls in the workflow to amortize its own cache write.",
+        ),
+        path_template="workflows[path={affected_workflow}]",
+        nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template=(
+            "Cache fragmented across {model_group_count} exact models — "
+            "declared chunks written {model_group_count}x, never shared"
+        ),
+    ),
+    "cache.first-call-write-penalty": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        message_template=(
+            "{node_id}: only call to {model} in this workflow with `prompt_cache:` declared. "
+            "The cache_creation premium has no subsequent reads to amortize; removing the "
+            "declaration would avoid the premium.{savings_clause}"
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("model", str),
+            ("affected_workflow", str),
+            ("savings_usd", float),
+        ),
+        suggestions_template=(
+            "Remove `prompt_cache:` from {node_id} (single-call write penalty), OR",
+            "Add more calls to {model} elsewhere in the workflow so the cache_creation cost amortizes.",
+        ),
+        path_template="nodes[id={node_id}].prompt_cache",
+        nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template="Single-call cache write penalty on {node_id} ({model})",
+    ),
     "cache.opaque-prompt": CacheWarningSpec(
         severity=Severity.INFO,
         source="cache_analyzer",
@@ -672,6 +727,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.shared-context-undeclared": 10,
     "cache.dynamic-before-static": 10,
     "cache.batch-prewarm-recommended": 10,
+    "cache.heterogeneous-models-fragment-cache": 10,
     # Tier 2 — discrepancy attribution (only fires with trace; usually high-value).
     "cache.discrepancy": 15,
     # Tier 3 — advisories grounded in current state.
@@ -690,6 +746,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.below-min-tokens": 30,
     "cache.prewarm-no-prefix": 30,
     "cache.consolidate-to-root-recommended": 30,
+    "cache.first-call-write-penalty": 30,
     "cache.opaque-prompt": 30,
     # Tier 6 — cross-workflow alignment (informational; no concrete savings).
     "cache.cross-workflow-prose-mismatch": 50,

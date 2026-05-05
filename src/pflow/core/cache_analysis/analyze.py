@@ -24,7 +24,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +54,7 @@ from pflow.core.cache_render import (  # noqa: F401 — see docstring.
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_config import get_default_workflow_model
-from pflow.core.llm_providers import detect_provider
+from pflow.core.llm_providers import detect_provider, normalize_model_name
 from pflow.core.workflow.data_flow import validate_data_flow
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 from pflow.runtime.template_resolver import TemplateResolver
@@ -499,6 +499,14 @@ def analyze(
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
     warnings.extend(
         _consolidate_to_root_advisories(
+            workflow_ir=workflow_ir,
+            rows_by_node=rows_by_node,
+            declared_chunks=declared_chunks,
+            ctx=ctx,
+        )
+    )
+    warnings.extend(
+        _detect_model_cache_fragmentation(
             workflow_ir=workflow_ir,
             rows_by_node=rows_by_node,
             declared_chunks=declared_chunks,
@@ -1941,6 +1949,207 @@ def _check_root_for_consolidation(
         root_tokens=root_tokens,
         affected_workflow=workflow_path,
     )
+
+
+def _detect_model_cache_fragmentation(
+    *,
+    workflow_ir: dict[str, Any],
+    rows_by_node: dict[str, PerCallRow],
+    declared_chunks: list[str],
+    ctx: AnalysisContext,
+) -> list[Diagnostic]:
+    """Emit per-model prompt-cache fragmentation and write-penalty diagnostics.
+
+    Provider caches are keyed by exact model. Two nodes that declare the same
+    cached bytes but call different exact models each pay their own cache write;
+    the cache is not shared across model namespaces. This detector is root-only
+    like the other edit-scope advisories in ``analyze()``.
+    """
+    if not declared_chunks:
+        return []
+    rows = [
+        row
+        for row in rows_by_node.values()
+        if row.declared_prompt_cache
+        and row.model
+        and not row.model_is_heterogeneous
+        and not row.did_not_execute_in_trace
+    ]
+    if not rows:
+        return []
+
+    groups = _group_prompt_cache_rows_by_model(rows)
+    node_by_id = {str(n.get("id")): n for n in workflow_ir.get("nodes", []) if isinstance(n, dict) and n.get("id")}
+    diagnostics: list[Diagnostic] = []
+
+    fragmented_groups = _model_groups_with_shared_chunks(groups)
+    if len(fragmented_groups) >= 2:
+        sorted_groups = sorted(fragmented_groups, key=lambda group: (-len(group["rows"]), str(group["model"])))
+        shared_chunks = _chunks_shared_across_groups(sorted_groups)
+        costs = _compute_model_group_costs(
+            sorted_groups,
+            shared_chunks,
+            ttl=_extract_cache_ttl(workflow_ir.get("cache")),
+            ctx=ctx,
+        )
+        if costs is not None:
+            redundant_groups = sorted_groups[1:]
+            savings_usd = sum(costs[str(group["model"])] for group in redundant_groups)
+            model_groups = _model_groups_payload(sorted_groups, costs)
+            diagnostics.append(
+                make_diagnostic(
+                    "cache.heterogeneous-models-fragment-cache",
+                    node_id=None,
+                    model_group_count=len(sorted_groups),
+                    models_csv=", ".join(str(group["model"]) for group in sorted_groups),
+                    model_groups=model_groups,
+                    model_groups_lines=_format_model_groups_lines(model_groups),
+                    shared_chunks=sorted(shared_chunks),
+                    affected_workflow=ctx.workflow_path,
+                    savings_usd=savings_usd,
+                )
+            )
+
+    for group in sorted(groups.values(), key=lambda item: str(item["model"])):
+        group_rows = group["rows"]
+        if len(group_rows) != 1:
+            continue
+        row = group_rows[0]
+        node = node_by_id.get(row.node_path)
+        if isinstance(node, dict) and node.get("prewarm") is True:
+            continue
+        model = str(group["model"])
+        if model.startswith("gemini/"):
+            continue
+        penalty = _single_call_write_penalty(row, ttl=_extract_cache_ttl(workflow_ir.get("cache")))
+        if penalty is None:
+            continue
+        diagnostics.append(
+            make_diagnostic(
+                "cache.first-call-write-penalty",
+                node_id=row.node_path,
+                model=model,
+                affected_workflow=ctx.workflow_path,
+                savings_usd=penalty,
+            )
+        )
+
+    return diagnostics
+
+
+def _group_prompt_cache_rows_by_model(rows: list[PerCallRow]) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        model = normalize_model_name(row.model)
+        group = groups.setdefault(model, {"model": model, "rows": [], "chunks": set()})
+        group["rows"].append(row)
+        group["chunks"].update(str(chunk) for chunk in row.declared_prompt_cache or ())
+    return groups
+
+
+def _model_groups_with_shared_chunks(groups: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [group for group in groups.values() if _chunks_shared_with_other_group(group, groups.values())]
+
+
+def _chunks_shared_with_other_group(group: dict[str, Any], all_groups: Iterable[dict[str, Any]]) -> set[str]:
+    chunks = set(group["chunks"])
+    shared: set[str] = set()
+    for other in all_groups:
+        if other is group:
+            continue
+        shared.update(chunks & set(other["chunks"]))
+    return shared
+
+
+def _chunks_shared_across_groups(groups: list[dict[str, Any]]) -> set[str]:
+    shared: set[str] = set()
+    for group in groups:
+        shared.update(_chunks_shared_with_other_group(group, iter(groups)))
+    return shared
+
+
+def _compute_model_group_costs(
+    groups: list[dict[str, Any]],
+    shared_chunks: set[str],
+    *,
+    ttl: str | None,
+    ctx: AnalysisContext,
+) -> dict[str, float] | None:
+    """Sum each group's redundant cache_creation cost over the SHARED chunks only.
+
+    Honest-unmeasurable: returns ``None`` if any group lacks pricing OR any
+    shared chunk has no resolvable token estimate (memo miss in greenfield).
+    Mirrors ``_check_root_for_consolidation``'s "any None → skip" pattern so
+    the warning never fabricates dollars when chunk-level data is unavailable.
+    """
+    from .cost_estimation import _write_rate_for_ttl, get_model_pricing
+
+    costs: dict[str, float] = {}
+    for group in groups:
+        model = str(group["model"])
+        pricing = get_model_pricing(model)
+        if pricing is None:
+            return None
+        group_shared = group["chunks"] & shared_chunks
+        chunk_tokens = [
+            _estimate_ref_tokens(
+                chunk,
+                model=model,
+                memo_cache=ctx.memo_cache,
+                workflow_path=ctx.workflow_path,
+                ctx=ctx,
+            )
+            for chunk in group_shared
+        ]
+        if any(tokens is None for tokens in chunk_tokens):
+            return None
+        total_tokens = sum(tokens for tokens in chunk_tokens if tokens is not None)
+        costs[model] = total_tokens * _write_rate_for_ttl(pricing, ttl, model)
+    return costs
+
+
+def _model_groups_payload(groups: list[dict[str, Any]], costs: dict[str, float]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for group in groups:
+        rows = sorted(group["rows"], key=lambda row: row.node_path)
+        model = str(group["model"])
+        payload.append({
+            "model": model,
+            "node_paths": [row.node_path for row in rows],
+            "node_count": len(rows),
+            "cache_creation_cost_usd": costs[model],
+        })
+    return payload
+
+
+def _format_model_groups_lines(groups: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for group in groups:
+        node_paths = ", ".join(str(path) for path in group["node_paths"])
+        noun = "node" if group["node_count"] == 1 else "nodes"
+        lines.append(f"  - {group['model']} ({group['node_count']} {noun}): {node_paths}")
+    return "\n".join(lines)
+
+
+def _single_call_write_penalty(row: PerCallRow, *, ttl: str | None) -> float | None:
+    """Return the savings (write premium - input cost) from removing the cache declaration.
+
+    ``None`` when pricing or token data is unavailable (honest-unmeasurable).
+    Positive value = removing the declaration saves money. Mirrors the catalog's
+    ``savings_usd`` semantics ("savings from fixing it").
+    """
+    from .cost_estimation import _write_rate_for_ttl, get_model_pricing
+
+    tokens = row.cacheable_tokens_estimated
+    if tokens is None:
+        return None
+    pricing = get_model_pricing(row.model)
+    if pricing is None:
+        return None
+    input_rate = _input_rate(row.model)
+    if input_rate is None:
+        return None
+    return tokens * _write_rate_for_ttl(pricing, ttl, row.model) - tokens * input_rate
 
 
 def _batch_aliases(node: dict[str, Any]) -> set[str]:

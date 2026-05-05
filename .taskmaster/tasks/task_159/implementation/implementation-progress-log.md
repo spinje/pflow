@@ -7327,3 +7327,181 @@ templated, non-LLM), multi-node, plus Pattern 4 subprocess driving
 real `pflow save`. Plus catalog round-trip + count + namespace tests
 updated.
 
+## Stage 2 follow-up — Findings #11/#12: exact-model fragmentation + lone-write penalty (2026-05-05)
+
+Implemented `cache.heterogeneous-models-fragment-cache` and
+`cache.first-call-write-penalty` from
+`fix-plans/heterogeneous-models-fragment-cache-plan.md`. The detector is
+root-only and lives beside `_consolidate_to_root_advisories`, reusing
+root `PerCallRow` data and grouping by `normalize_model_name(row.model)`.
+Rows with templated models, missing model, missing trace execution, or no
+declared `prompt_cache:` are excluded before grouping.
+
+Detection behavior:
+
+- Fragmentation warning fires when at least two exact-model groups share
+  declared chunks. Savings use the plan's "largest group survives" rule:
+  sum cache-creation cost for the other participating groups. If any
+  participating group lacks pricing or cacheable-token data, the warning is
+  skipped rather than fabricating dollars.
+- First-call write-penalty advisory fires for exact-model groups of size 1,
+  suppresses `prewarm: true`, and suppresses `gemini/*` because Gemini's
+  implicit cache does not have the same paid first-write penalty shape.
+
+Deviation: manual CLI verification on the mixed-model scratchpad showed
+the initial local formatter rendered tiny real penalties as `$0.0000`.
+Fixed `_format_usd` to use six decimals below `$0.0001`; final manual
+output renders `$0.000019` / `$0.000004`, preserving the sub-cent signal.
+No plan step was skipped.
+
+Files modified:
+
+- Production/docs: `analyze.py`, `warning_catalog.py`,
+  `mcp_server/tools/execution_tools.py`, `cache_analysis/CLAUDE.md`.
+- Tests: catalog count/context samples, producer-driven per-ID coverage,
+  primary per-ID emission tests (+10 detector tests), and two CLI JSON
+  smoke tests.
+
+Verification:
+
+- Focused: 156 passed across cache warning/catalog/emission/CLI/MCP tests.
+- Broad sandbox: 6215 passed, 18 skipped with the known Homebrew-`uv`
+  subprocess panic tests excluded (`test_cli_save_subprocess_with_overlap_exits_nonzero`,
+  `test_thinking_temperature_mismatch_pflow_save_subprocess_exits_nonzero`,
+  plus the 3 exclusions from the sandbox-testing skill).
+- `ruff check`, `ruff format --check`, `mypy`, and `deptry src` clean.
+- Manual:
+  `HOME=/private/tmp/pflow-test-home .venv/bin/pflow analyze-cache scratchpads/stage2-verification/mixed-model-test/mixed-model.pflow.md --format=json`
+  emits both new IDs.
+
+## Stage 2 follow-up — Findings #11/#12: post-review fixes (2026-05-05)
+
+Critical review of the staged implementation surfaced three correctness/UX
+issues and one v1.x carve-out. All three issues fixed in this commit; the
+carve-out filed as GH issue #369.
+
+### Fix 1 — `_format_usd` deviation removed
+
+Initial implementation embedded dollar amounts directly in the
+`cache.first-call-write-penalty` message body via `{write_cost_str}` and
+`{penalty_str}` context fields, requiring a new `_format_usd` helper that
+deviated from the codebase-wide Bug D contract (`< $0.0001 → "savings
+unavailable"`) by rendering 6-decimal precision instead. None of the 17
+other catalog entries embed dollar amounts in message body — they all use
+`{savings_clause}` exclusively.
+
+Rewrote the message template to use `{savings_clause}` only:
+
+> `{node_id}: only call to {model} in this workflow with `prompt_cache:`
+> declared. The cache_creation premium has no subsequent reads to amortize;
+> removing the declaration would avoid the premium.{savings_clause}`
+
+Dropped `write_cost_str`/`penalty_str` from `required_context_keys`.
+Deleted `_format_usd`. Simplified `_single_call_write_penalty` to return a
+single `float | None` (savings) instead of `(write_cost, penalty)`.
+
+CLI verification on the mixed-model fixture: rank line shows `-$0.0012/run`
+in the right column, message body ends with `(saves $0.0012/run)`. Fully
+consistent with all other warnings; no embedded dollar weirdness.
+
+### Fix 2 — `node_count` grammar
+
+`_format_model_groups_lines` always emitted "(N nodes)" regardless of
+count. Renders as "(1 nodes): draft" for size-1 groups. Fixed to use
+`"node"` for count=1, `"nodes"` for count>1. Updated test fixtures in
+`_kwargs_for` and `_minimal_context_kwargs` to match.
+
+### Fix 3 — Cost projection accuracy (precise per-chunk math)
+
+Initial implementation used `min(row.cacheable_tokens_estimated for row in
+group.rows)` as the per-group token estimate. This is the smallest row's
+TOTAL cacheable tokens, not the SHARED-CHUNKS-ONLY tokens. When rows in a
+group declared chunks beyond what's shared with other groups (mixed
+`prompt_cache:` lists), the math overstated redundant cost — the savings
+figure could be 2-3× too high.
+
+Fix: replaced with strict per-chunk math via `_estimate_ref_tokens(chunk,
+...)`. New `_compute_model_group_costs` signature takes `shared_chunks:
+set[str]` and `ctx: AnalysisContext`; for each group, sums tokens over
+`group["chunks"] & shared_chunks` only. If any shared chunk is
+unmeasurable (memo miss in pure greenfield), returns None → skip emit.
+Mirrors `_check_root_for_consolidation`'s "any None → skip" pattern.
+
+Tradeoff: precise math is brownfield-leaning (greenfield without prior
+runs has no memo data → `_estimate_ref_tokens` returns None → warning
+silent). Same constraint already governs `cache.consolidate-to-root-
+recommended`. Honest-unmeasurable beats approximate-and-overstating.
+
+Added regression test:
+`test_fragmentation_skips_when_shared_chunk_tokens_unmeasurable`. Mutation
+contract: reverting to `min(row tokens)` math fails the test because rows
+have measurable cacheable tokens even when per-chunk estimation is
+blocked.
+
+### Out-of-scope: within-batch heterogeneity → GH issue #369
+
+Within-batch fragmentation (`model: ${item.model}` resolving to N exact
+models per batch item) cannot be detected from per_call rows because
+`TraceExecutionIndex.llm_calls_by_key` uses `setdefault` and keeps only
+the FIRST batch item's call data. Detection requires walking
+`tree.iter_llm_leaves` directly and is fundamentally brownfield-only.
+
+Filed as GH issue #369 with full implementation sketch, detection
+algorithm, files to touch, UX considerations, test fixtures, and
+acceptance criteria.
+
+### Files modified
+
+**Production** (2 files):
+- `src/pflow/core/cache_analysis/analyze.py` —
+  `_compute_model_group_costs` signature + body; `_format_model_groups_lines`
+  grammar; `_single_call_write_penalty` simplified return; `_format_usd`
+  deleted; `_detect_model_cache_fragmentation` updated to pass
+  `shared_chunks` + `ctx` to costs and drop the embedded dollar fields.
+- `src/pflow/core/cache_analysis/warning_catalog.py` —
+  `cache.first-call-write-penalty` message template + required_context_keys.
+
+**Tests** (3 files):
+- `tests/test_core/test_cache_analysis_per_id_emission.py` — `_patch_pricing`
+  now stubs `_estimate_ref_tokens`; new
+  `test_fragmentation_skips_when_shared_chunk_tokens_unmeasurable`.
+- `tests/test_core/test_cache_analysis_per_id_coverage.py` — local
+  `_estimate_ref_tokens` stub for the heterogeneous producer block; dropped
+  `write_cost_str`/`penalty_str` from `_kwargs_for`; fixed grammar in
+  `model_groups_lines` fixture.
+- `tests/test_core/test_cache_analysis_warnings.py` — same fixture cleanups
+  in `_minimal_context_kwargs`.
+
+### Verification
+
+- 6239 tests pass, 9 skipped (pre-existing subprocess exclusions per the
+  Homebrew-`uv` panic; same set as before).
+- `make check` clean (ruff + ruff-format + mypy + deptry, 202 source files).
+- Manual CLI verification:
+  `uv run pflow analyze-cache scratchpads/stage2-verification/mixed-model-test/mixed-model.pflow.md`
+  emits `cache.first-call-write-penalty` for the haiku-call with savings
+  rendered via the standard `_format_savings_clause` (`-$0.0012/run` /
+  `(saves $0.0012/run)`). Fragmentation correctly silent in this fixture
+  because the trace's memo cache wasn't pre-populated for the chunk —
+  honest-unmeasurable working as designed.
+
+### Critical insights
+
+1. **Embedded-currency-in-message is an anti-pattern** in this catalog.
+   Every existing warning uses `{savings_clause}` only; new entries should
+   too. The Bug D contract (`< $0.0001 → placeholder`) only works
+   end-to-end when dollars stay in the savings column, not the prose.
+
+2. **Honest-unmeasurable beats approximate-and-overstating.** When the
+   precise input isn't available, returning None and staying silent is
+   strictly better UX than fabricating a number that's 2-3× wrong. Pattern
+   matches `_check_root_for_consolidation`'s established convention.
+
+3. **Singular/plural is load-bearing for agent UX.** "(1 nodes)" reads as
+   a typo and erodes trust in the rest of the analyzer's output. Worth the
+   3 LOC every time.
+
+4. **Tests should not pin grammatical bugs.** The initial fixtures encoded
+   `"(1 nodes)"` strings that locked the bug in. After the fix, fixtures
+   read `"(1 node)"` and the catalog round-trip tests still pass —
+   confirming the bug was a fixture-pinning issue, not a contract issue.

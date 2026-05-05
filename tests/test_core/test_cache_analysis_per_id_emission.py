@@ -16,11 +16,44 @@ from typing import Any
 import pytest
 
 from pflow.core.cache_analysis.analyze import analyze
+from pflow.core.cache_analysis.cost_estimation import ModelPricing
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
 
 def _word_count(_model: str | None, text: str | None, **_kwargs: Any) -> tuple[int, str]:
     return (len((text or "").split()), "heuristic")
+
+
+def _patch_pricing(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    missing_models: set[str] | None = None,
+    missing_chunks: set[str] | None = None,
+) -> None:
+    """Stub pricing + per-chunk token estimation so the fragmentation detector
+    runs end-to-end in pure-greenfield tests without memo data.
+
+    ``missing_models`` makes ``get_model_pricing`` return ``None`` for those
+    models (drives "honest-unmeasurable" path).
+    ``missing_chunks`` makes ``_estimate_ref_tokens`` return ``None`` for those
+    chunk names (drives "any shared chunk None → skip emit" path).
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
+    missing = missing_models or set()
+    missing_chunk_set = missing_chunks or set()
+
+    def fake_pricing(model: str) -> ModelPricing | None:
+        if model in missing:
+            return None
+        return ModelPricing(input_rate=1.0, output_rate=1.0, cache_creation_rate=1.25, cache_read_rate=0.1)
+
+    def fake_ref_tokens(chunk: str, **_kwargs: Any) -> int | None:
+        return None if chunk in missing_chunk_set else 100
+
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda model: None if model in missing else 1.0)
+    monkeypatch.setattr(cost_module, "get_model_pricing", fake_pricing)
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", fake_ref_tokens)
 
 
 @pytest.fixture(autouse=True)
@@ -2592,6 +2625,380 @@ def test_consolidate_to_root_advisory_silent_when_root_already_declared(
     analysis = analyze(workflow_ir, auto_load_trace=False)
     found = [d for d in analysis.warnings if d.id == "cache.consolidate-to-root-recommended"]
     assert not found
+
+
+# ---------------------------------------------------------------------------
+# cache.heterogeneous-models-fragment-cache — shared chunks across exact models
+# cache.first-call-write-penalty — one exact model writes once, never reads
+#
+# Detector: ``_detect_model_cache_fragmentation`` in ``analyze.py``.
+# ---------------------------------------------------------------------------
+
+
+def test_fragmentation_fires_for_two_exact_models_sharing_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two exact models declare the same cached chunk. The analyzer warns
+    because provider cache namespaces do not cross model boundaries.
+
+    Mutation test: remove the ``len(fragmented_groups) >= 2`` emission branch
+    in ``_detect_model_cache_fragmentation``; this test fails because the
+    warning disappears.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.heterogeneous-models-fragment-cache"]
+    assert found, f"fragmentation warning missing: ids={[d.id for d in analysis.warnings]}"
+    ctx = found[0].context
+    assert ctx is not None
+    assert ctx["model_group_count"] == 2
+    assert ctx["shared_chunks"] == ["context"]
+    assert {g["model"] for g in ctx["model_groups"]} == {
+        "anthropic/claude-haiku-4-5",
+        "anthropic/claude-sonnet-4-5",
+    }
+
+
+def test_fragmentation_silent_when_single_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: same exact model across nodes shares one cache namespace.
+
+    Mutation test: remove the shared-group count guard; this test fails
+    because a homogeneous workflow reports false fragmentation.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
+def test_fragmentation_silent_when_no_chunk_overlap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: different models caching disjoint chunks do not fragment
+    one cache opportunity; each model owns independent bytes.
+
+    Mutation test: group only by model and ignore ``_model_groups_with_shared_chunks``;
+    this test fails because disjoint chunks emit a false warning.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["a"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["b"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"a": "alpha " * 20, "b": "bravo " * 20}, auto_load_trace=False)
+    assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
+def test_fragmentation_skips_heterogeneous_batch_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: ``model: ${item.model}`` rows are excluded because one
+    per-call row cannot represent the batch's per-item model distribution.
+
+    Mutation test: remove the ``not row.model_is_heterogeneous`` filter; this
+    test fails because the literal heterogeneous row joins the grouping pass.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "batch",
+                "type": "llm",
+                "model": "${item.model}",
+                "batch": {"items": [{"model": "anthropic/claude-haiku-4-5"}], "as": "item"},
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Batch."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
+def test_fragmentation_skips_when_any_group_cost_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: if any participating model lacks pricing, the analyzer
+    skips the savings-bearing warning instead of fabricating dollars.
+
+    Mutation test: remove the ``costs is not None`` guard; this test fails
+    because an unpriced model still emits a savings warning.
+    """
+    _patch_pricing(monkeypatch, missing_models={"anthropic/claude-sonnet-4-5"})
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
+def test_fragmentation_skips_when_shared_chunk_tokens_unmeasurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: if any shared chunk has no resolvable token estimate
+    (memo miss in pure greenfield), skip the warning instead of summing the
+    smallest row's total cacheable count and overstating savings.
+
+    Mutation test: revert ``_compute_model_group_costs`` to use
+    ``min(row.cacheable_tokens_estimated)`` per group; this test fails because
+    rows have measurable cacheable tokens even when per-chunk estimation is
+    blocked, so the old approximation would still emit.
+    """
+    _patch_pricing(monkeypatch, missing_chunks={"context"})
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
+def test_write_penalty_fires_for_single_call_with_declared_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lone exact-model group writes cached bytes with no later same-model
+    read to amortize the write premium.
+
+    Mutation test: remove the ``len(group_rows) != 1`` emission branch; this
+    test fails because the single-call advisory disappears.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            }
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.first-call-write-penalty"]
+    assert found, f"write-penalty warning missing: ids={[d.id for d in analysis.warnings]}"
+    ctx = found[0].context
+    assert ctx is not None
+    assert found[0].node_id == "draft"
+    assert ctx["model"] == "anthropic/claude-haiku-4-5"
+    assert ctx["savings_usd"] > 0
+
+
+def test_write_penalty_silent_when_group_size_gt_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: two calls to the same exact model can amortize one write.
+
+    Mutation test: remove the group-size guard; this test fails because every
+    homogeneous two-node workflow emits noisy single-call advisories.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
+
+
+def test_write_penalty_silent_when_prewarm_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: explicit prewarm means the write is intentional and
+    amortized through the batch prewarm path.
+
+    Mutation test: remove the ``prewarm is True`` suppression; this test fails
+    because opted-in prewarm nodes report a contradictory write penalty.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prewarm": True,
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            }
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
+
+
+def test_write_penalty_silent_for_gemini_implicit_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppression: Gemini's implicit cache has no comparable paid first-write
+    penalty, so this advisory would be misleading.
+
+    Mutation test: remove the ``model.startswith("gemini/")`` guard; this
+    test fails because Gemini emits an Anthropic-shaped write warning.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            }
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
+
+
+def test_fragmentation_and_write_penalty_coemit_when_one_group_has_size_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A singleton model group can be both part of cross-model fragmentation
+    and a lone-write penalty.
+
+    Mutation test: change the detector to ``elif`` the two checks; this test
+    fails because one of the two independent findings disappears.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "revise",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Revise."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.heterogeneous-models-fragment-cache" in ids
+    assert "cache.first-call-write-penalty" in ids
 
 
 # ---------------------------------------------------------------------------

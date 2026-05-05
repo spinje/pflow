@@ -150,6 +150,41 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
+        "cache.heterogeneous-models-fragment-cache": (
+            None,
+            {
+                "model_group_count": 2,
+                "models_csv": "anthropic/claude-haiku-4-5, anthropic/claude-sonnet-4-5",
+                "model_groups": [
+                    {
+                        "model": "anthropic/claude-haiku-4-5",
+                        "node_paths": ["draft"],
+                        "node_count": 1,
+                        "cache_creation_cost_usd": 0.001,
+                    },
+                    {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "node_paths": ["review"],
+                        "node_count": 1,
+                        "cache_creation_cost_usd": 0.002,
+                    },
+                ],
+                "model_groups_lines": (
+                    "  - anthropic/claude-haiku-4-5 (1 node): draft\n  - anthropic/claude-sonnet-4-5 (1 node): review"
+                ),
+                "shared_chunks": ["context"],
+                "affected_workflow": "x.pflow.md",
+                "savings_usd": 0.001,
+            },
+        ),
+        "cache.first-call-write-penalty": (
+            "draft",
+            {
+                "model": "anthropic/claude-haiku-4-5",
+                "affected_workflow": "x.pflow.md",
+                "savings_usd": 0.0002,
+            },
+        ),
         "cache.opaque-prompt": (
             "process-items",
             {
@@ -320,9 +355,11 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     - ``summarize_from_analysis`` → ``cache.opportunities-available``
     """
     from pflow.core.cache_analysis import analyze, summarize_from_analysis
+    from pflow.core.cache_analysis.cost_estimation import ModelPricing
     from pflow.core.workflow.data_flow import validate_data_flow
 
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
     monkeypatch.setattr(
         analyze_module,
         "estimate_tokens",
@@ -330,6 +367,11 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     )
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    monkeypatch.setattr(
+        cost_module,
+        "get_model_pricing",
+        lambda _model: ModelPricing(input_rate=1.0, output_rate=1.0, cache_creation_rate=1.25, cache_read_rate=0.1),
+    )
 
     seen_ids: set[str] = set()
 
@@ -519,6 +561,66 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.consolidate-to-root-recommended: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.consolidate-to-root-recommended")
+
+    # cache.heterogeneous-models-fragment-cache: two exact models declare the
+    # same chunk, so each provider/model namespace pays a separate cache write.
+    # Override ``_estimate_ref_tokens`` locally so the precise per-chunk math
+    # (introduced after the initial implementation) runs deterministically
+    # without needing memo data to be populated. Production-shape estimator
+    # math is covered by dedicated unit tests; this test only locks the
+    # emission contract.
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda _ref, **_kw: 100)
+    fragment_ir: dict[str, Any] = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft from cached context."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review from cached context."},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(fragment_ir, parameters={"context": "stable " * 20})
+    found = [d for d in analysis.warnings if d.id == "cache.heterogeneous-models-fragment-cache"]
+    assert found, (
+        f"analyze did not emit cache.heterogeneous-models-fragment-cache: ids={[d.id for d in analysis.warnings]}"
+    )
+    payload = _round_trip(found[0])
+    assert payload["context"]["model_groups"][0]["node_paths"]
+    seen_ids.add("cache.heterogeneous-models-fragment-cache")
+
+    # cache.first-call-write-penalty: only one node uses this exact model with
+    # prompt_cache declared, so its cache write has no same-model read.
+    write_penalty_ir: dict[str, Any] = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft from cached context."},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(write_penalty_ir, parameters={"context": "stable " * 20})
+    found = [d for d in analysis.warnings if d.id == "cache.first-call-write-penalty"]
+    assert found, f"analyze did not emit cache.first-call-write-penalty: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.first-call-write-penalty")
 
     # cache.dynamic-before-static: full-path declared cache chunk appears after
     # an undeclared dynamic ref.

@@ -86,6 +86,92 @@ Summarize ${topic}.
 """
 
 
+_MIXED_MODEL_CACHE_WORKFLOW = """\
+# Mixed Models
+
+A workflow with two exact models sharing one cached chunk.
+
+## Inputs
+
+### context
+
+Stable context.
+
+- type: string
+
+## Cache
+
+```cache
+Context:
+
+${context}
+```
+
+## Steps
+
+### draft
+
+Draft from context.
+
+- type: llm
+- model: anthropic/claude-haiku-4-5
+- prompt_cache: [context]
+
+```prompt
+Draft from the cached context.
+```
+
+### review
+
+Review from context.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt_cache: [context]
+
+```prompt
+Review from the cached context.
+```
+"""
+
+
+_SINGLE_CALL_CACHE_WORKFLOW = """\
+# Single Call Cache
+
+A workflow with one cached LLM call.
+
+## Inputs
+
+### context
+
+Stable context.
+
+- type: string
+
+## Cache
+
+```cache
+Context:
+
+${context}
+```
+
+## Steps
+
+### draft
+
+Draft from context.
+
+- type: llm
+- model: anthropic/claude-haiku-4-5
+- prompt_cache: [context]
+
+```prompt
+Draft from the cached context.
+```
+"""
+
+
 # ---------------------------------------------------------------------------
 # Successful invocations — exit 0 regardless of finding severity
 # ---------------------------------------------------------------------------
@@ -139,6 +225,34 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     assert any(w["id"] == "cache.below-min-tokens" for w in payload["warnings"]), (
         f"expected cache.below-min-tokens to fire on _LLM_WORKFLOW; "
         f"got warnings={[w['id'] for w in payload['warnings']]}"
+    )
+
+
+def test_analyze_cache_json_includes_heterogeneous_model_fragmentation(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _MIXED_MODEL_CACHE_WORKFLOW)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 80}"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert any(w["id"] == "cache.heterogeneous-models-fragment-cache" for w in payload["warnings"]), (
+        f"expected cache.heterogeneous-models-fragment-cache; got {[w['id'] for w in payload['warnings']]}"
+    )
+
+
+def test_analyze_cache_json_includes_first_call_write_penalty(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _SINGLE_CALL_CACHE_WORKFLOW)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 80}"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert any(w["id"] == "cache.first-call-write-penalty" for w in payload["warnings"]), (
+        f"expected cache.first-call-write-penalty; got {[w['id'] for w in payload['warnings']]}"
     )
 
 

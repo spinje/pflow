@@ -42,7 +42,7 @@ src/pflow/core/cache_analysis/
 ├── render_text.py               # 1,008 LOC — text projection (orchestrator + 7 sections)
 ├── summarize.py                 # 113 LOC — one-line dry-run nudge Diagnostic
 ├── view_helpers.py              # 143 LOC — recommended-actions ranking + cross-workflow filter
-└── warning_catalog.py           # 1,171 LOC — 17-entry frozen catalog + factory + dispatch
+└── warning_catalog.py           # Frozen catalog + factory + dispatch
 ```
 
 Total: 7,865 LOC. Refactor planned to split `analyze.py` into a thin orchestrator plus `stages/` and `rendering/` subdirectories — see task 160.
@@ -118,7 +118,7 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 ### warning_catalog.py
 
-**Frozen catalog of 17 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
+**Frozen catalog of 19 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
 
 **`Diagnostic.id` is a top-level field, not nested in `context["warning_id"]`.** Mirrors mypy / rustc / ruff / eslint / clippy convention. Identity tuple updated from `(severity, source, node_id, message)` to `(severity, source, node_id, id or message)` — when `id` is set it's the dedup key, falling back to message-keyed dedup when absent (preserves legacy sub-workflow warning dedup byte-for-byte).
 
@@ -242,7 +242,7 @@ Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_
 - **`_iter_llm_events` (analyze.py:2456)** is consumed only by tests after the per-call rendering migration to `TraceTree.iter_llm_leaves`. Lives in production code but has no production caller.
 - **`_build_recommended_actions` (analyze.py:3219)** is a 17-LOC compatibility shim that delegates to `view_helpers.build_recommended_actions`. The shim exists because the call site predates the `view_helpers` extraction; tests import the shim by name from `analyze`.
 - **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`, plus the JSON format-version constants. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
-- **Stable warning ID catalog has 17 entries** as of v1: 10 from the original spec + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
+- **Stable warning ID catalog has 19 entries** as of v1: 10 from the original spec + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
 
 ## Where to add a new feature
 

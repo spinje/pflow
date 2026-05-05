@@ -43,8 +43,8 @@ def test_catalog_count_constant_is_auto_derived() -> None:
     assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT
 
 
-def test_catalog_has_seventeen_entries_v1() -> None:
-    """v1 currently ships with 17 entries (16 ``cache.*`` plus 1 ``llm.*``):
+def test_catalog_has_nineteen_entries_v1() -> None:
+    """v1 currently ships with 19 entries (18 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -57,10 +57,13 @@ def test_catalog_has_seventeen_entries_v1() -> None:
     - ``llm.thinking-temperature-mismatch`` (Task 159 Stage 2 follow-up:
       validate-time check for Anthropic temperature=1.0 + extended-thinking
       requirement; first non-cache entry in the catalog)
+    - ``cache.heterogeneous-models-fragment-cache`` and
+      ``cache.first-call-write-penalty`` (Task 159 Stage 2 follow-up:
+      exact-model cache namespace fragmentation and lone cache writes)
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 17
+    assert len(CACHE_WARNING_CATALOG) == 19
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -535,6 +538,36 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "max_subpath_tokens": 200,
             "root_tokens": 1500,
             "affected_workflow": "x.pflow.md",
+        },
+        "cache.heterogeneous-models-fragment-cache": {
+            "model_group_count": 2,
+            "models_csv": "anthropic/claude-haiku-4-5, anthropic/claude-sonnet-4-5",
+            "model_groups": [
+                {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "node_paths": ["draft"],
+                    "node_count": 1,
+                    "cache_creation_cost_usd": 0.001,
+                },
+                {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "node_paths": ["review"],
+                    "node_count": 1,
+                    "cache_creation_cost_usd": 0.002,
+                },
+            ],
+            "model_groups_lines": (
+                "  - anthropic/claude-haiku-4-5 (1 node): draft\n  - anthropic/claude-sonnet-4-5 (1 node): review"
+            ),
+            "shared_chunks": ["context"],
+            "affected_workflow": "x.pflow.md",
+            "savings_usd": 0.001,
+        },
+        "cache.first-call-write-penalty": {
+            "node_id": "draft",
+            "model": "anthropic/claude-haiku-4-5",
+            "affected_workflow": "x.pflow.md",
+            "savings_usd": 0.0002,
         },
         "cache.opaque-prompt": {
             "node_id": "process-items",

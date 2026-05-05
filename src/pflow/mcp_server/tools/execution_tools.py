@@ -405,7 +405,7 @@ async def analyze_cache(
     ``warnings`` filtered by ``node_id``.
 
     **Closed catalog of warning IDs** that may appear in
-    ``warnings[].id`` (17 entries in v1 — 16 ``cache.*`` plus 1 ``llm.*``):
+    ``warnings[].id`` (19 entries in v1 — 18 ``cache.*`` plus 1 ``llm.*``):
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared
@@ -419,6 +419,8 @@ async def analyze_cache(
       - cache.invalid-on-non-llm
       - cache.prewarm-no-prefix
       - cache.consolidate-to-root-recommended
+      - cache.heterogeneous-models-fragment-cache
+      - cache.first-call-write-penalty
       - cache.opaque-prompt
       - cache.prompt-body-duplicates-cache
       - cache.prompt-body-shadows-cache
