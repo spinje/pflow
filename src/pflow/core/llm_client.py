@@ -1004,10 +1004,17 @@ def _maybe_normalize_anthropic_1h_cost(
     """Add the missing Anthropic 1h cache-write contribution to ``cost_usd``.
 
     Spike 3 (progress log §36) verified that ``litellm.completion_cost``
-    correctly prices Anthropic's 5-min cache writes but completely fails to
-    price ``ephemeral_1h_input_tokens`` — the 1h cache-write cost surfaces
-    as ~$0.0001 when it should be ~$0.018 for a 3060-token write. This
-    helper computes the missing contribution and adds it to ``cost_usd``.
+    correctly prices Anthropic's 5-min cache writes but at the time failed
+    to price ``ephemeral_1h_input_tokens`` — the 1h cache-write cost
+    surfaced as ~$0.0001 when it should be ~$0.018 for a 3060-token write.
+    This helper computes the missing contribution and adds it to ``cost_usd``.
+
+    LiteLLM has since been updated to carry ``cache_creation_input_token_cost_above_1hr``
+    for some Anthropic models (e.g. claude-haiku-4-5, claude-opus-4-1). When
+    that field is present, LiteLLM prices the 1h portion correctly already,
+    so this helper short-circuits to avoid double-charging. For models where
+    the field is still missing (e.g. claude-sonnet-4-5 as of Stage 2.1
+    verification), the helper continues to fill the gap.
 
     Provider-gated to Anthropic (the only provider with a 1h-TTL beta as of
     plan-writing) so a phantom field on a future provider can't trigger
@@ -1017,6 +1024,9 @@ def _maybe_normalize_anthropic_1h_cost(
     - ``ephemeral_1h_input_tokens`` is absent or 0 (no 1h write happened).
     - The model isn't in ``litellm.model_cost`` (no rate available — leave
       unchanged rather than risk over-correction).
+    - LiteLLM's pricing entry already carries
+      ``cache_creation_input_token_cost_above_1hr`` (LiteLLM priced it —
+      adding the override would double-charge).
     """
     if cost_usd is None:
         return cost_usd
@@ -1048,6 +1058,16 @@ def _maybe_normalize_anthropic_1h_cost(
         pricing = model_cost.get(bare)
     if not isinstance(pricing, dict):
         return cost_usd
+
+    # If LiteLLM's pricing entry carries the 1h cache-write rate, LiteLLM
+    # already priced the 1h portion correctly — applying the override here
+    # would double-charge. Stage 2.1 verification on claude-haiku-4-5
+    # observed a 2x over-charge (effective $4/M vs published $2/M for 1h
+    # writes) before this short-circuit was added.
+    above_1hr_rate = pricing.get("cache_creation_input_token_cost_above_1hr")
+    if isinstance(above_1hr_rate, (int, float)):
+        return cost_usd
+
     base_input_rate = pricing.get("input_cost_per_token")
     if not isinstance(base_input_rate, (int, float)):
         return cost_usd

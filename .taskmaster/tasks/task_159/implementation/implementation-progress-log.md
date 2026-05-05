@@ -7184,3 +7184,24 @@ again.
 - All cross-version scaffolding (the `_format_version_at_least_2_1`
   helper, 2.0.0 graceful-note path, dead BC tests) removed because
   pre-merge traces won't exist in any consumer's hands once this lands.
+
+## Stage 2.1 follow-up — Anthropic 1h cost double-charge (2026-05-05)
+
+`_maybe_normalize_anthropic_1h_cost` was added in Spike 3 to compensate
+for LiteLLM not pricing `ephemeral_1h_input_tokens`. LiteLLM has since
+gained `cache_creation_input_token_cost_above_1hr` for some Anthropic
+models (claude-haiku-4-5, claude-opus-4-1) — the override now
+double-charges them. Stage 2.1 verification on Haiku 4.5 observed an
+effective $4/M (vs published $2/M) on 1h cache writes, surfacing as a
+spurious -23% first-run savings instead of the expected ~55%.
+
+Fix: short-circuit when LiteLLM's pricing entry carries
+`cache_creation_input_token_cost_above_1hr`. Falls through to the
+existing override only when the field is missing (e.g.,
+claude-sonnet-4-5 as of 2026-05-05).
+
+Verified end-to-end: fresh Haiku 4.5 cache-write call now reports
+$0.010209 (matches `(input - cache_creation) × $1/M + cache_creation
+× $2/M + output × $5/M`) where pre-fix reported $0.020043.
+
+New test: `test_anthropic_1h_cost_normalization_no_op_when_litellm_has_above_1hr_rate`.

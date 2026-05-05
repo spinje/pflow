@@ -494,6 +494,42 @@ def test_anthropic_1h_cost_normalization_no_op_when_cost_is_none() -> None:
     assert result is None
 
 
+def test_anthropic_1h_cost_normalization_no_op_when_litellm_has_above_1hr_rate(monkeypatch) -> None:
+    """LiteLLM has been updated to carry ``cache_creation_input_token_cost_above_1hr``
+    for some Anthropic models (e.g. claude-haiku-4-5, claude-opus-4-1). When
+    that field is present, LiteLLM already priced the 1h portion — adding the
+    override would double-charge. Stage 2.1 verification reproducer.
+    """
+    import litellm
+
+    from pflow.core.llm_client import _maybe_normalize_anthropic_1h_cost
+
+    base_litellm_cost = 0.010167  # LiteLLM's correct 1h-priced cost
+    usage_obj = _make_usage_obj_with_1h_tokens(tokens=4938)
+
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "anthropic/claude-haiku-4-5": {
+                "input_cost_per_token": 1e-6,
+                "cache_creation_input_token_cost": 1.25e-6,
+                "cache_creation_input_token_cost_above_1hr": 2e-6,
+            }
+        },
+        raising=False,
+    )
+
+    result = _maybe_normalize_anthropic_1h_cost(
+        base_litellm_cost,
+        "anthropic/claude-haiku-4-5",
+        usage_obj,
+    )
+
+    # Override skipped — cost unchanged; no double-charge.
+    assert result == base_litellm_cost
+
+
 def test_anthropic_1h_cost_normalization_no_op_when_model_not_in_pricing(monkeypatch) -> None:
     """Model not in litellm.model_cost → defensive no-op."""
     import litellm
