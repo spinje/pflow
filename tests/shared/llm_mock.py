@@ -276,10 +276,12 @@ class MockLLMClient:
         self.call_history_full.append(full_record)
 
         # Trace hook — fires for tests that exercise trace integration.
-        # Mirror adapter: tracing must never break the call.
+        # Mirror adapter: tracing must never break the call. The ``system``
+        # field carries the effective system content (str / list[dict] /
+        # None) so trace 2.2.0 ``llm_system`` capture works against the mock.
         if trace_hook is not None:
             with contextlib.suppress(Exception):
-                trace_hook({"event": "before_call", "model": model, "prompt": prompt})
+                trace_hook({"event": "before_call", "model": model, "prompt": prompt, "system": system})
 
         # Resolve response
         response_data = self.get_response(model, schema)

@@ -35,11 +35,7 @@ from pflow.runtime.engine.instrumentation import (
 )
 from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION, WorkflowTraceCollector
 
-# --- Format version + workflow_path plumbing ------------------------------
-
-
-def test_format_version_is_2_1_0() -> None:
-    assert TRACE_FORMAT_VERSION == "2.1.0"
+# --- workflow_path plumbing ------------------------------
 
 
 def test_saved_trace_includes_workflow_path_field(tmp_path, monkeypatch) -> None:
@@ -52,7 +48,7 @@ def test_saved_trace_includes_workflow_path_field(tmp_path, monkeypatch) -> None
     trace_path = collector.save_to_file()
     trace_data = json.loads(trace_path.read_text())
 
-    assert trace_data["format_version"] == "2.1.0"
+    assert trace_data["format_version"] == TRACE_FORMAT_VERSION
     assert trace_data["workflow_path"] == "/abs/path/to/workflow.pflow.md"
 
 
@@ -403,18 +399,6 @@ def test_handle_cached_execution_no_op_when_caller_passes_no_cache_source() -> N
     assert "cache_source" not in shared["node-x"]["llm_usage"]
     assert "cache_key" not in shared["node-x"]["llm_usage"]
     assert "cache_age_sec" not in shared["node-x"]["llm_usage"]
-
-
-# --- 2.0.0 backward compat ------------------------------------------------
-
-
-def test_2_0_0_consumer_gate_still_passes_for_2_1_0_traces() -> None:
-    """Existing consumers gate on ``format_version.startswith("2.")``;
-    bumping minor doesn't break that gate."""
-    version = "2.1.0"
-    assert version.startswith("2.")
-    # Sibling check — major bump WOULD break the gate (intentional contract)
-    assert not "3.0.0".startswith("2.")
 
 
 # --- Anthropic 1h-TTL cost normalization (Spike 3 outcome) ---------------

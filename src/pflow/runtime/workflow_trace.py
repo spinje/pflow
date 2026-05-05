@@ -15,7 +15,7 @@ from pflow.core.diagnostic import Diagnostic
 logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
-TRACE_FORMAT_VERSION = "2.1.0"
+TRACE_FORMAT_VERSION = "2.2.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -126,11 +126,26 @@ class WorkflowTraceCollector:
     Captures node execution data, template resolutions, per-node outputs,
     and LLM interactions. Saves traces to ~/.pflow/debug/ for analysis.
 
-    Format 2.0.0 changes:
-    - Removed shared_before/shared_after (O(n²) full-store snapshots)
-    - Added node_params, template_resolutions, node_output per event
-    - Tree-structured: batch_items and sub_workflow_events are nested
-    - No value truncation (only internal key filtering and binary replacement)
+    Format ``2.x`` shape:
+
+    - Tree-structured events with ``node_params``, ``template_resolutions``,
+      ``node_output``, ``batch_items``, ``sub_workflow_events``.
+    - No value truncation (only internal key filtering and binary replacement).
+    - Top-level ``workflow_path`` (resolved file path or ``ir-hash:<md5>``
+      for inline runs).
+    - Per-event cache-correlation fields on LLM events: ``cache_key``,
+      ``cache_source``, ``cache_age_sec``, ``cache_chunks_skipped``
+      (flow through ``llm_call`` via the ``llm_usage`` channel).
+    - Per-event ``llm_system`` capturing the effective system content
+      the LLM saw — ``str`` for plain system params, ``list[dict]`` for
+      cache-rendered prefixes (with provider-specific ``cache_control``
+      markers), absent when no system content was provided. Captured via
+      the adapter's ``trace_hook`` ``before_call`` event; sourced from
+      ``prep_res["system_blocks"]`` when prep built one, else
+      ``prep_res["system"]``.
+
+    Consumer rule: gate on ``format_version.startswith("2.")``. New
+    additive fields are forward-compatible with that gate.
     """
 
     def __init__(
@@ -164,6 +179,10 @@ class WorkflowTraceCollector:
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
         self.llm_prompts: dict[str, str] = {}  # populated by trace_hook fired from the adapter; keyed by node_id
+        # 2.2.0: effective system content (cache-rendered prefix or plain
+        # system string) captured by the same trace_hook on before_call.
+        # ``None``/missing system params produce no entry.
+        self.llm_systems: dict[str, str | list[dict[str, Any]]] = {}
         self.json_output: dict[str, Any] | None = None  # Store final JSON output if generated
         self.execution_warnings: list[dict[str, Any]] | None = None  # Runtime warnings
 
@@ -260,6 +279,17 @@ class WorkflowTraceCollector:
             prompt = node_output.get("prompt")
         if isinstance(prompt, str):
             event["llm_prompt"] = prompt  # No truncation
+
+        # 2.2.0: surface the effective system content. Lookup mirrors prompt:
+        # trace_hook capture wins; node_output fallback covers parallel batch
+        # workers (LLMNode.post writes shared["system"] per item).
+        system = self.llm_systems.get(node_id)
+        if system is None and isinstance(node_output, dict):
+            candidate = node_output.get("system")
+            if isinstance(candidate, (str, list)):
+                system = candidate
+        if system is not None:
+            event["llm_system"] = system  # No truncation
 
         # Look for response in node_output
         response = node_output.get("response") if isinstance(node_output, dict) else None
@@ -543,5 +573,12 @@ class WorkflowTraceCollector:
                 prompt = event.get("prompt")
                 if isinstance(prompt, str):
                     self.llm_prompts[node_id] = prompt
+                # 2.2.0: capture the effective system content (cache-rendered
+                # list[dict] when prep built one, else plain string). ``None``
+                # — i.e. caller passed no system — produces no entry, so the
+                # event omits ``llm_system`` rather than carrying null.
+                system = event.get("system")
+                if isinstance(system, (str, list)):
+                    self.llm_systems[node_id] = system
 
         return hook

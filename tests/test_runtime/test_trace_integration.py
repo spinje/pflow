@@ -948,3 +948,87 @@ class TestParallelBatchOfLLMs:
         # parallel mode this is last-writer-wins by design; the per-item
         # prompts above are the authoritative data.
         assert scorer_event.get("llm_prompt") in seen_prompts
+
+
+class TestCachedSystemEndToEnd:
+    """End-to-end: ``## Cache`` block → trace event → generated report.
+
+    Exercises the full pipeline that gives an agent visibility into the
+    cached prefix the LLM saw. Without this, `pflow ... --report` shows
+    only the user prompt, leaving the cached system content invisible
+    except via raw JSON inspection.
+    """
+
+    def test_cached_system_reaches_report_for_llm_node_with_cache_block(self, tmp_path: "Any") -> None:
+        """Run a workflow with a ## Cache block; verify the trace records
+        ``llm_system`` AND the generated report has a ``## Cached System``
+        section with the cache_control marker visible.
+        """
+        import json
+
+        ir = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "context": {
+                    "type": "string",
+                    "required": False,
+                    "default": "Reference doc body",
+                },
+            },
+            "cache": {
+                "items": [
+                    {"name": "context", "var": "context", "prose_before": ""},
+                ],
+            },
+            "nodes": [
+                {
+                    "id": "answer",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "prompt": "Question: what is the answer?",
+                    },
+                    "prompt_cache": ["context"],
+                },
+            ],
+            "edges": [],
+        }
+
+        _, collector = _run_with_trace(ir)
+
+        event = next(e for e in collector.events if e["node_id"] == "answer")
+        assert "llm_system" in event, "llm_system missing from trace event — cache prefix not surfaced"
+        # Cache-rendered system is a list[dict] with cache_control on the
+        # last block.
+        llm_system = event["llm_system"]
+        assert isinstance(llm_system, list)
+        assert any("cache_control" in block for block in llm_system if isinstance(block, dict))
+
+        # Build a complete trace dict + persist + render
+        from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION
+
+        trace_data = {
+            "format_version": TRACE_FORMAT_VERSION,
+            "execution_id": collector.execution_id,
+            "workflow_name": collector.workflow_name,
+            "workflow_path": None,
+            "start_time": collector.start_time.isoformat(),
+            "end_time": collector.start_time.isoformat(),
+            "duration_ms": 100.0,
+            "final_status": "success",
+            "nodes_executed": len(collector.events),
+            "nodes_failed": 0,
+            "failed_node_ids": [],
+            "nodes": collector.events,
+        }
+        trace_path = tmp_path / "trace.json"
+        trace_path.write_text(json.dumps(trace_data, default=str))
+
+        from pflow.core.trace_report import generate_report
+
+        report_dir = generate_report(str(trace_path), str(tmp_path / "report"))
+        assert report_dir is not None
+        node_md = (report_dir / "01-answer.md").read_text()
+        assert "## Cached System" in node_md
+        assert "```json" in node_md
+        assert "cache_control" in node_md

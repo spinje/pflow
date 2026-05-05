@@ -19,8 +19,9 @@ class TraceFixtureBuilder:
         cache_creation_input_tokens: int = 0,
         cache_read_input_tokens: int = 0,
         success: bool = True,
+        system: str | list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return {
+        event: dict[str, Any] = {
             "node_id": node_id,
             "node_type": "LLMNode",
             "duration_ms": 1.0,
@@ -39,6 +40,9 @@ class TraceFixtureBuilder:
             "llm_prompt": "prompt",
             "llm_response": "ok",
         }
+        if system is not None:
+            event["llm_system"] = system
+        return event
 
     def cached_llm_event(self, node_id: str) -> dict[str, Any]:
         return {
@@ -63,6 +67,7 @@ class TraceFixtureBuilder:
         cache_source: str = "memo",
         cache_key: str = "fixture-cache-key",
         cache_age_sec: float = 30.0,
+        system: str | list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Memo-hit LLM event matching production shape.
 
@@ -85,7 +90,7 @@ class TraceFixtureBuilder:
             "cache_source": cache_source,
             "cache_age_sec": cache_age_sec,
         }
-        return {
+        event: dict[str, Any] = {
             "node_id": node_id,
             "node_type": "LLMNode",
             "duration_ms": 0.0,
@@ -98,6 +103,9 @@ class TraceFixtureBuilder:
             "llm_prompt": "prompt",
             "llm_response": "ok",
         }
+        if system is not None:
+            event["llm_system"] = system
+        return event
 
     def batch_event(self, node_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
         return {
@@ -236,7 +244,7 @@ class TraceFixtureBuilder:
         ids_failed = list(failed_node_ids) if failed_node_ids is not None else []
         status = final_status if final_status is not None else ("failed" if ids_failed else "success")
         return {
-            "format_version": "2.1.0",
+            "format_version": "2.2.0",
             "execution_id": "fixture",
             "workflow_name": workflow_name,
             "workflow_path": workflow_path,

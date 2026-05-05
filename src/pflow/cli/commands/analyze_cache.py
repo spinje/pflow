@@ -35,17 +35,14 @@ import click
     "from_trace",
     type=click.Path(exists=False, dir_okay=False),
     default=None,
-    help=(
-        "Explicit trace file to load for discrepancy mode. Works on both 2.0.0 "
-        "and 2.1.0 traces (2.0.0 emits a graceful info note)."
-    ),
+    help="Explicit trace file to load for discrepancy mode. Accepts any 2.x trace.",
 )
 @click.option(
     "--no-trace-autoload",
     is_flag=True,
     default=False,
     help=(
-        "Disable auto-loading the most recent matching 2.1.0 trace from "
+        "Disable auto-loading the most recent matching trace from "
         "~/.pflow/debug/. Note: this flag is named --no-trace-autoload to avoid "
         "colliding with `pflow run --no-trace` (which disables trace SAVING)."
     ),

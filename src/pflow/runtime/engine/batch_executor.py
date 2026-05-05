@@ -712,9 +712,13 @@ def _capture_item_trace(
         llm_usage = node_output.get("llm_usage")
         if isinstance(llm_usage, dict):
             item_event["llm_call"] = llm_usage
-        for src_key, dst_key in [("response", "llm_response"), ("prompt", "llm_prompt")]:
+        for src_key, dst_key in [
+            ("response", "llm_response"),
+            ("prompt", "llm_prompt"),
+            ("system", "llm_system"),  # 2.2.0 — may be str OR list[dict]
+        ]:
             value = node_output.get(src_key)
-            if isinstance(value, str):
+            if isinstance(value, (str, list)):
                 item_event[dst_key] = value
 
     # Sub-workflow trace events (from WorkflowExecutor batch items).

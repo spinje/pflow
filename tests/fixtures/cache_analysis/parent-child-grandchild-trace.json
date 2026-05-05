@@ -1,5 +1,5 @@
 {
-  "format_version": "2.1.0",
+  "format_version": "2.2.0",
   "execution_id": "fixture",
   "workflow_name": "parent-3deep",
   "workflow_path": "tests/fixtures/cache_analysis/parent-3deep.pflow.md",

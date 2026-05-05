@@ -7000,3 +7000,187 @@ Thread `workflow_path` through `_prepare_compilation()` →
   mypy + deptry).
 - Catalog grew from 14 → 16 entries; `EXPECTED_CATALOG_COUNT = len(...)`
   auto-derives, only the human-prose count constants needed updating.
+
+## Stage 2 follow-up — `## Cached System` in `--report` (trace 2.2.0)
+
+### What
+
+Stage 2.1 verification revealed `pflow run --report` per-node markdown
+exposes only the user prompt — **what the LLM actually saw (the
+cache-rendered system prefix) was invisible** without dropping to the
+raw JSON trace. Closed the gap: trace bumped 2.1.0 → **2.2.0** with a
+new additive `event["llm_system"]` field, surfaced as a `## Cached
+System` section in the report (rendered before `## Prompt` to match
+API call order). `list[dict]` cache-rendered prefixes emit a fenced
+JSON block so the provider-specific `cache_control` markers stay
+visible to agents.
+
+### Files modified
+
+**Production** (6 files):
+
+- `src/pflow/core/llm_client.py` — `before_call` event extended with
+  `system` field; TraceHook docstring updated.
+- `src/pflow/runtime/workflow_trace.py` — `TRACE_FORMAT_VERSION =
+  "2.2.0"`; new `llm_systems` dict mirroring `llm_prompts`; capture in
+  `get_trace_hook()`; write to `event["llm_system"]` in `_add_llm_data`.
+- `src/pflow/nodes/llm/llm.py` — `LLMNode.post()` mirrors
+  `prep_res.get("system_blocks") or prep_res.get("system")` to
+  `shared["system"]` (parallel-batch parity seam, mirrors prompt seam).
+- `src/pflow/runtime/engine/batch_executor.py` — `_capture_item_trace`
+  pair-copy adds `system → llm_system`; isinstance widened to
+  `(str, list)` since `llm_system` may be `list[dict]`.
+- `src/pflow/core/trace_report.py` — extracted `_format_cached_system`
+  helper to keep `_format_resolutions` under the C901 complexity cap.
+- `src/pflow/core/cache_analysis/analyze.py` — replaced the
+  `startswith("2.1")` autoload gate with
+  `_format_version_at_least_2_1()` (numeric-tuple comparison).
+
+**Docs** (1 file):
+
+- `src/pflow/runtime/CLAUDE.md` — 2.2.0 row added; documents the
+  capture+fallback path AND the batch parity seam.
+
+**Tests** (6 files, 1 new):
+
+- `tests/test_runtime/test_trace_format_2_2.py` (NEW) — 9 tests
+  including the `_format_version_at_least_2_1` regression pin.
+- `tests/test_runtime/test_workflow_trace.py` — new
+  `TestTraceHookCapturesSystem` class (8 tests).
+- `tests/test_core/test_trace_report.py` — 6 rendering branches
+  (string / list / order / skipped chunks / absent / empty skipped).
+- `tests/test_runtime/test_trace_integration.py` — new
+  `TestCachedSystemEndToEnd` covering IR → engine → trace → report.
+- `tests/shared/llm_mock.py` — mock fires `system` in `before_call`
+  (mirrors adapter contract).
+- `tests/shared/trace_fixture_builder.py` — version 2.1.0 → 2.2.0;
+  `system` kwarg added to `llm_event` and `cached_llm_event_with_call`.
+- `tests/fixtures/cache_analysis/*.json` — regenerated via
+  `_generate.py` (only `format_version` field changed).
+
+### Deviation 1 — autoload version gate is a hidden dependency on the bump (CRITICAL)
+
+The plan listed 5 production files. Investigation discovered a 6th:
+`cache_analysis/analyze.py:_autoload_trace` had
+`str(data.get("format_version", "")).startswith("2.1")` — which
+**silently rejects 2.2.0 traces**. Without fixing this, every minor
+bump would break `analyze-cache` autoload AND no test would catch it
+(autoload fixtures all carry literal "2.1.0").
+
+Initially replaced with a numeric-tuple `_format_version_at_least_2_1`
+helper, then **trimmed** (see post-implementation cleanup below) once
+it became clear all 2.0/2.1 traces are pre-merge artefacts that won't
+exist in any consumer's hands. Final gate: `startswith("2.")`.
+
+This remains the load-bearing learning for any future trace minor bump:
+**any consumer that gates on a specific minor will silently break,
+and existing tests won't catch it because their fixtures are pinned
+to one version**. The `startswith("2.")` pattern is the right shape
+when post-merge no pre-bump traces exist; for cross-version branches,
+a numeric-tuple comparison would be needed.
+
+### Deviation 2 — pre-merge backward compat is dead code (POST-IMPLEMENTATION CLEANUP)
+
+After the implementation landed, realized: trace formats 2.0.0 / 2.1.0
+only ever existed pre-merge on `feat/prompt-caching`. Once the branch
+lands, every trace produced by pflow is 2.2.0 (or whatever the
+current-shipping version is). All BC scaffolding I'd carefully
+preserved was dead code:
+
+- `_format_version_at_least_2_1` helper — distinguishing 2.0 from 2.1+
+  is meaningless when only 2.2+ traces exist. **Removed**, both call
+  sites simplified to `startswith("2.")`.
+- 2.0.0 graceful-info-note path in `_load_trace_explicit` — **removed**.
+- `test_autoload_skips_2_0_0_trace_silently`,
+  `test_explicit_from_trace_2_0_0_emits_graceful_note`,
+  `test_discrepancy_silent_when_trace_is_2_0` (cache-analysis tests
+  that fed 2.0.0 traces to assert specific dead-path behaviors) —
+  **deleted**.
+- `test_2_0_0_consumer_gate_still_passes_for_2_1_0_traces` (tautology
+  test that `"2.1.0".startswith("2.")` is True) — **deleted**.
+- `test_format_version_is_at_least_2_1` (numeric-tuple gate test that
+  I'd added) — **deleted**.
+- Discrepancy stage's `if not fv.startswith("2.") or fv.startswith("2.0"):`
+  — **simplified** to `if not fv.startswith("2."):`.
+- Agent-facing CLI help text mentioning "2.0.0 emits a graceful info
+  note" — **removed**.
+- `WorkflowTraceCollector` docstring's per-minor history (Format 2.0.0
+  changes / Format 2.1.0 changes / Format 2.2.0 changes) — **collapsed**
+  into a single "Format 2.x shape" section listing what exists.
+- `runtime/CLAUDE.md`'s twin Format-2.1.0 / Format-2.2.0 entries —
+  **collapsed** into one Format-2.x entry.
+- Tests with hand-rolled `format_version="2.2.0"` literals or
+  softened `startswith("2.")` assertions — **changed** to
+  `== TRACE_FORMAT_VERSION` so the test suite has one place expressing
+  the version-equality contract.
+
+### Critical insight: test what's actually a contract
+
+The post-implementation cleanup highlights a subtle test-design rule:
+**not every behavior worth pinning when written is worth pinning
+forever**. Tests like
+`test_2_0_0_consumer_gate_still_passes_for_2_1_0_traces` documented
+the bump intent at the moment of bumping but encode no permanent
+contract. After merge they're noise — and noise is more expensive
+than its line count because it makes future cleanups harder
+("does this test guard a real invariant?"). The trim deleted ~80 LOC
+of test code that was correct when written but never going to fire
+again.
+
+### Critical insights
+
+1. **A minor trace-format bump has more dependencies than the
+   producer-side files suggest.** Production-side: 6 files. The
+   *consumers* with version gates are subtler — `analyze-cache`
+   autoload had a `startswith("2.1")` literal that was invisible to
+   the plan's file enumeration. Audit pattern for future bumps: grep
+   for the OUTGOING version literal (`"2.1"` here) across `src/`, not
+   just the type definition.
+
+2. **The plan's `node_output["system"]` fallback is dead code in
+   normal operation but worth keeping for symmetry.** For non-batch
+   LLM nodes, the trace_hook always fires successfully; for batch
+   items, `_capture_item_trace` reads `node_output["system"]`
+   directly, never going through `_add_llm_data`. So the fallback in
+   `_add_llm_data` only fires in degenerate paths. But removing it
+   would make the prompt/system pair asymmetric (prompt has the same
+   fallback) — the asymmetry is harder to maintain than the dead
+   line.
+
+3. **`tests/shared/llm_mock.py` is a producer of trace events for
+   integration tests.** Without firing `system` in its `before_call`
+   event, every integration test that runs an LLM node through the
+   mock would be invisible to trace 2.2.0. The mock's fidelity to the
+   real adapter's contract is load-bearing — not just a test
+   convenience. Same lesson would apply to any future field added to
+   `before_call`/`after_call`.
+
+4. **`make check` C901 violations surface late.** Adding a section to
+   `_format_resolutions` pushed it from complexity 10 to 12. The fix
+   was a 30-LOC helper extraction; trivial when caught here, but
+   catching it AFTER the test suite was passing means I had to
+   re-run the whole pipeline. For future renderer changes touching
+   `_format_resolutions` / `_format_node_output`, expect to extract
+   to a helper rather than inline.
+
+5. **Committed cache-analysis fixtures regenerate from a generator.**
+   `tests/fixtures/cache_analysis/_generate.py` is the SSoT;
+   `test_committed_cache_analysis_fixtures_match_generator_output`
+   pins drift. Bumping the trace fixture builder to "2.2.0"
+   automatically required regenerating (the test failure even
+   includes the regen command verbatim — `python -m
+   tests.fixtures.cache_analysis._generate`). This drift-detection
+   pattern earned its keep.
+
+### State after this commit
+
+- 6201 tests pass after trim (gross: +21 new tests for `llm_system`
+  capture/render/integration; net: -7 from deleting pre-merge BC
+  tests).
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- Trace format: **2.2.0** (current shipping version on this branch).
+  Consumer rule: `startswith("2.")`. Future additive minor bumps
+  (2.3, 2.4, ...) stay forward-compat without consumer changes.
+- All cross-version scaffolding (the `_format_version_at_least_2_1`
+  helper, 2.0.0 graceful-note path, dead BC tests) removed because
+  pre-merge traces won't exist in any consumer's hands once this lands.

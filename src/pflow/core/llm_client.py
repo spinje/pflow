@@ -101,9 +101,15 @@ TraceHook = Callable[[dict], None]
 
 The adapter calls it with two events:
 
-* ``{"event": "before_call", "model": str, "prompt": str}`` — before the API call,
-  with the rendered user prompt text. Replaces the prompt-capture half of
-  the legacy ``runtime/workflow_trace.py`` monkey-patch.
+* ``{"event": "before_call", "model": str, "prompt": str,
+  "system": str | list[dict] | None}`` — before the API call, with the
+  rendered user prompt text and the effective system content. ``system``
+  is the value passed to ``complete()``: ``None`` when no system content
+  was provided, ``str`` for a plain user-supplied system, or
+  ``list[dict]`` of cache-rendered content blocks (with provider-specific
+  ``cache_control`` markers) when the caller assembled a cached prefix.
+  Replaces the prompt-capture half of the legacy
+  ``runtime/workflow_trace.py`` monkey-patch.
 * ``{"event": "after_call", "model": str, "response": AdapterResponse | None,
   "error": str | None}`` — after the call (success or error). Replaces the
   response-capture half of the legacy monkey-patch.
@@ -310,7 +316,10 @@ def complete(
     # mirror request kwargs into outputs.
     thinking_budget = _extract_thinking_budget(kwargs)
 
-    _emit_trace(trace_hook, {"event": "before_call", "model": model, "prompt": prompt})
+    _emit_trace(
+        trace_hook,
+        {"event": "before_call", "model": model, "prompt": prompt, "system": system},
+    )
 
     # Lazy litellm import — see module docstring at top. First call pays
     # ~700ms; subsequent calls resolve from sys.modules instantly.

@@ -452,6 +452,76 @@ class TestBuildNodeFile:
         assert "## Resolved Parameters" in md
         assert "api.example.com" in md
 
+    # --- 2.2.0: ## Cached System rendering ---
+
+    def test_cached_system_string_shape_renders_section(self) -> None:
+        """Plain-string llm_system renders as text under the section heading."""
+        event = _make_event(
+            llm_system="You are a helpful assistant.",
+            llm_prompt="Answer the question.",
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "You are a helpful assistant." in md
+
+    def test_cached_system_list_of_blocks_renders_json_block(self) -> None:
+        """list[dict] llm_system emits a fenced JSON block preserving the
+        ``cache_control`` marker shape so agents can verify it."""
+        event = _make_event(
+            llm_system=[
+                {"type": "text", "text": "Background"},
+                {"type": "text", "text": "Reference", "cache_control": {"type": "ephemeral"}},
+            ],
+            llm_prompt="Answer the question.",
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "```json" in md
+        assert "cache_control" in md
+        assert "ephemeral" in md
+
+    def test_cached_system_section_appears_before_prompt_section(self) -> None:
+        """API call order is system → user; the report mirrors that order."""
+        event = _make_event(
+            llm_system="System content",
+            template_resolutions={
+                "prompt": {"template": "Hi", "resolved": "Hi there"},
+            },
+        )
+        md = _build_node_file(event)
+        cached_idx = md.index("## Cached System")
+        prompt_idx = md.index("## Prompt")
+        assert cached_idx < prompt_idx
+
+    def test_cached_system_with_skipped_chunks(self) -> None:
+        """``cache_chunks_skipped`` from llm_call surfaces under the section
+        as a single quoted line."""
+        event = _make_event(
+            llm_system=[{"type": "text", "text": "Reference"}],
+            llm_call={"cache_chunks_skipped": ["foo", "bar"]},
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "Skipped chunks (resolved as ABSENT): foo, bar" in md
+
+    def test_cached_system_omitted_when_field_absent(self) -> None:
+        """No ``llm_system`` field → no ``## Cached System`` heading."""
+        event = _make_event(
+            template_resolutions={"prompt": {"template": "Hi", "resolved": "Hi"}},
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" not in md
+
+    def test_cached_system_no_skipped_chunks_line_when_empty(self) -> None:
+        """Empty ``cache_chunks_skipped`` → no skipped-chunks line."""
+        event = _make_event(
+            llm_system="Plain system",
+            llm_call={"cache_chunks_skipped": []},
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "Skipped chunks" not in md
+
 
 # --- _build_node_summary() ---
 

@@ -791,6 +791,32 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
             lines.append("")
 
 
+def _format_cached_system(event: dict[str, Any], lines: list[str]) -> None:
+    """Render the ``## Cached System`` section for trace 2.2.0 events.
+
+    Plain string is rendered verbatim; ``list[dict]`` (cache-rendered blocks)
+    emits a fenced JSON block so provider-specific ``cache_control`` markers
+    stay visible to agents reading the report. No-op when the field is absent.
+    """
+    llm_system = event.get("llm_system")
+    if llm_system is None:
+        return
+
+    lines.append("## Cached System")
+    lines.append("")
+    if isinstance(llm_system, str):
+        lines.append(llm_system)
+    else:
+        lines.append("```json")
+        lines.append(json.dumps(llm_system, indent=2, default=str))
+        lines.append("```")
+    skipped = (event.get("llm_call") or {}).get("cache_chunks_skipped") or []
+    if skipped:
+        lines.append("")
+        lines.append(f"> Skipped chunks (resolved as ABSENT): {', '.join(skipped)}")
+    lines.append("")
+
+
 def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     """Render template resolutions and static params as markdown sections.
 
@@ -799,6 +825,10 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     """
     resolutions = event.get("template_resolutions", {})
     shown: set[str] = set()
+
+    # 2.2.0: cached system prefix — rendered before ## Prompt to match the
+    # API call order (system → user).
+    _format_cached_system(event, lines)
 
     if "prompt" in resolutions:
         lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])

@@ -712,20 +712,6 @@ def test_autoload_finds_2_1_0_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert result.trace_path == str(path)
 
 
-def test_autoload_skips_2_0_0_trace_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """2.0.0 traces are not auto-loaded (DD#34). No advisory note —
-    pre-2.1.0 traces age out naturally, and the 2.0.0 explicit-load path
-    (via --from-trace) emits its own graceful note."""
-    fake_home = tmp_path / "home"
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-    debug_dir = fake_home / ".pflow" / "debug"
-    _write_trace(debug_dir, workflow_path="/abs/x.pflow.md", format_version="2.0.0")
-
-    workflow_ir = {"nodes": []}
-    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
-    assert result.trace_path is None
-
-
 def test_autoload_skips_unparseable_files_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unparseable trace files in ~/.pflow/debug/ are skipped at debug log
     level. Disk corruption / aborted writes are rare; the producer side
@@ -760,25 +746,6 @@ def test_autoload_skips_traces_for_other_workflows(tmp_path: Path, monkeypatch: 
     workflow_ir = {"nodes": []}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
     assert result.trace_path is None
-
-
-def test_explicit_from_trace_2_0_0_emits_graceful_note(tmp_path: Path) -> None:
-    path = tmp_path / "trace.json"
-    path.write_text(
-        json.dumps({"format_version": "2.0.0", "workflow_path": "/abs/x.pflow.md", "events": []}),
-        encoding="utf-8",
-    )
-    workflow_ir = {"nodes": []}
-    result = analyze(
-        workflow_ir,
-        workflow_path="/abs/x.pflow.md",
-        auto_load_trace=False,
-        trace_path=path,
-    )
-    assert result.trace_path == str(path)
-    # Tighter match — 2.0.0 trace AND graceful "discrepancy analysis omitted" wording.
-    # Substring-only would match a hypothetical "2.0.0.1" version note too.
-    assert any("2.0.0" in note and "discrepancy analysis omitted" in note for note in result.notes)
 
 
 def test_explicit_from_trace_missing_path_raises() -> None:

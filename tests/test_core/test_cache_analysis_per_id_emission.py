@@ -998,27 +998,6 @@ def test_discrepancy_fires_for_key_mismatch_when_prediction_available(
     assert diag.context["actual_cache_key"] == "actual-key"
 
 
-def test_discrepancy_silent_when_trace_is_2_0(tmp_path: Path) -> None:
-    trace_path = _write_trace(
-        tmp_path,
-        [
-            {
-                "node_id": "gen",
-                "llm_call": {
-                    "model": "anthropic/claude-sonnet-4-5",
-                    "cache_creation_input_tokens": 100,
-                    "cache_read_input_tokens": 0,
-                    "cache_age_sec": 301,
-                    "cache_chunks_skipped": [],
-                },
-            }
-        ],
-        format_version="2.0.0",
-    )
-    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
-    assert "cache.discrepancy" not in {d.id for d in result.warnings}
-
-
 def test_discrepancy_ttl_attribution_uses_leaf_workflows_ttl_not_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

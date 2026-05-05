@@ -335,10 +335,10 @@ class TestWorkflowTraceCollector:
             assert "end_time" in trace_data
             assert "duration_ms" in trace_data
 
-            # Verify format version (bumped to 2.1.0 in Task 159 E.1 — adds
-            # cache-correlation fields: workflow_path, cache_key, cache_source,
-            # cache_age_sec, cache_chunks_skipped).
-            assert trace_data["format_version"] == "2.1.0"
+            # Saved trace carries the current format_version constant.
+            from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION
+
+            assert trace_data["format_version"] == TRACE_FORMAT_VERSION
 
             # Verify node counts
             assert trace_data["nodes_executed"] == 2
@@ -1530,3 +1530,117 @@ class TestSaveToFileFailedNodeIds:
             trace_data = self._read_trace(collector.save_to_file())
 
             assert trace_data["failed_node_ids"] == ["alpha", "zebra"]
+
+
+class TestTraceHookCapturesSystem:
+    """Trace 2.2.0 — get_trace_hook + _add_llm_data capture the effective
+    system content the LLM saw.
+
+    Mirrors the existing prompt-capture pattern (llm_prompts dict populated
+    by the trace_hook on before_call, surfaced as event["llm_prompt"] by
+    _add_llm_data). The system pathway is symmetric.
+    """
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("t")
+
+    def test_get_trace_hook_captures_system_string_shape(self, collector):
+        hook = collector.get_trace_hook("node-1")
+        hook({
+            "event": "before_call",
+            "model": "anthropic/claude-sonnet-4-5",
+            "prompt": "Hi",
+            "system": "You are helpful.",
+        })
+
+        assert collector.llm_systems["node-1"] == "You are helpful."
+
+    def test_get_trace_hook_captures_system_list_of_blocks(self, collector):
+        blocks = [
+            {"type": "text", "text": "Background"},
+            {"type": "text", "text": "Reference", "cache_control": {"type": "ephemeral"}},
+        ]
+        hook = collector.get_trace_hook("node-1")
+        hook({"event": "before_call", "model": "m", "prompt": "p", "system": blocks})
+
+        assert collector.llm_systems["node-1"] == blocks
+        # Marker preserved deeply
+        assert collector.llm_systems["node-1"][1]["cache_control"]["type"] == "ephemeral"
+
+    def test_get_trace_hook_omits_llm_system_when_none(self, collector):
+        hook = collector.get_trace_hook("node-1")
+        hook({"event": "before_call", "model": "m", "prompt": "p", "system": None})
+
+        assert "node-1" not in collector.llm_systems
+
+    def test_get_trace_hook_other_events_dont_overwrite_system(self, collector):
+        """``after_call`` events don't carry ``system`` — the hook must not
+        clobber a previously-captured value."""
+        hook = collector.get_trace_hook("node-1")
+        hook({"event": "before_call", "model": "m", "prompt": "p", "system": "S"})
+        hook({"event": "after_call", "model": "m", "response": None, "error": None})
+
+        assert collector.llm_systems["node-1"] == "S"
+
+    def test_attach_llm_call_writes_event_llm_system_string(self, collector):
+        hook = collector.get_trace_hook("node-1")
+        hook({"event": "before_call", "model": "m", "prompt": "p", "system": "S"})
+        collector.record_node_execution(
+            node_id="node-1",
+            node_type="LLMNode",
+            duration_ms=1.0,
+            success=True,
+            node_output={"response": "ok", "llm_usage": {"input_tokens": 5}},
+        )
+
+        assert collector.events[0]["llm_system"] == "S"
+
+    def test_attach_llm_call_writes_event_llm_system_list(self, collector):
+        blocks = [
+            {"type": "text", "text": "User base"},
+            {"type": "text", "text": "Cached", "cache_control": {"type": "ephemeral"}},
+        ]
+        hook = collector.get_trace_hook("node-1")
+        hook({"event": "before_call", "model": "m", "prompt": "p", "system": blocks})
+        collector.record_node_execution(
+            node_id="node-1",
+            node_type="LLMNode",
+            duration_ms=1.0,
+            success=True,
+            node_output={"response": "ok", "llm_usage": {"input_tokens": 5}},
+        )
+
+        assert collector.events[0]["llm_system"] == blocks
+
+    def test_attach_llm_call_omits_event_llm_system_when_no_capture(self, collector):
+        """No before_call fired (e.g. shell node) → no ``llm_system`` key."""
+        collector.record_node_execution(
+            node_id="shell-1",
+            node_type="ShellNode",
+            duration_ms=1.0,
+            success=True,
+            node_output={"stdout": "hi"},
+        )
+
+        assert "llm_system" not in collector.events[0]
+
+    def test_attach_llm_call_falls_back_to_node_output_system(self, collector):
+        """Parallel batch parity: when the trace_hook overwrote llm_systems
+        from a sibling worker, ``_add_llm_data`` falls back to
+        ``node_output["system"]`` (mirrors the prompt fallback).
+        """
+        # Note: no hook fired for "node-1"
+        collector.record_node_execution(
+            node_id="node-1",
+            node_type="LLMNode",
+            duration_ms=1.0,
+            success=True,
+            node_output={
+                "response": "ok",
+                "llm_usage": {"input_tokens": 5},
+                "system": "Per-item system from LLMNode.post()",
+            },
+        )
+
+        assert collector.events[0]["llm_system"] == "Per-item system from LLMNode.post()"

@@ -875,6 +875,13 @@ class LLMNode(Node):
         rendered_prompt = prep_res.get("prompt")
         if isinstance(rendered_prompt, str):
             shared["prompt"] = rendered_prompt
+        # 2.2.0: same seam for the effective system content (cache-rendered
+        # list[dict] when present, else plain string). Parallel batch workers
+        # overwrite the collector's llm_systems slot; the per-item trace
+        # falls back to node_output["system"] for per-item visibility.
+        rendered_system = prep_res.get("system_blocks") or prep_res.get("system")
+        if isinstance(rendered_system, (str, list)):
+            shared["system"] = rendered_system
 
         # Check for error first
         if isinstance(exec_res, dict) and exec_res.get("status") == "error":

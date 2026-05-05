@@ -396,9 +396,8 @@ def analyze(
 
     ``trace_path`` is an explicit override (mode-4 from-trace). When ``None``
     and ``auto_load_trace`` is ``True``, the analyzer scans
-    ``~/.pflow/debug/`` for the most recent 2.1.0 trace whose ``workflow_path``
-    matches; 2.0.0 traces are skipped (with an info note appended to the
-    result), per DD#34.
+    ``~/.pflow/debug/`` for the most recent 2.x trace whose ``workflow_path``
+    matches, per DD#34.
 
     ``memo_cache`` is a ``MemoizationCache`` instance for the ``memo`` token
     tier. Pass ``None`` to disable that tier.
@@ -616,8 +615,10 @@ def _load_trace_explicit(path: Path, notes: list[str]) -> dict[str, Any] | None:
 
     Per F3.1 contract: missing path or invalid JSON → caller reports as
     non-zero exit. Here we raise so the CLI layer can format the error.
-    2.0.0 traces load successfully but emit a graceful info note.
+    Accepts any ``2.x`` trace; future additive minor bumps stay compatible
+    via the ``startswith("2.")`` gate.
     """
+    del notes  # currently unused; preserved for caller contract symmetry
     if not path.exists():
         raise FileNotFoundError(f"Trace file not found: {path}")
     try:
@@ -629,27 +630,19 @@ def _load_trace_explicit(path: Path, notes: list[str]) -> dict[str, Any] | None:
     fv = str(data.get("format_version", ""))
     if not fv.startswith("2."):
         raise ValueError(f"Trace file {path} format_version={fv!r}; analyze-cache requires 2.x.")
-    if not fv.startswith("2.1"):
-        notes.append(
-            f"Loaded {fv} trace from {path} — discrepancy analysis omitted "
-            "(requires 2.1.0 cache_key/cache_age_sec fields). Re-run the workflow "
-            "to produce a 2.1.0 trace, OR use --no-trace-autoload to skip trace loading."
-        )
     return data
 
 
 def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
-    """Find the newest 2.1.0 trace whose ``workflow_path`` matches.
+    """Find the newest 2.x trace whose ``workflow_path`` matches.
 
     O(matching-traces) lookup, not O(directory-size): trace filenames encode
     an 8-char md5 hash of ``workflow_path`` at write time (see
     ``runtime/workflow_trace.format_trace_filename``). The reader globs by the
     same hash prefix so we only read files that could match.
 
-    Pre-2.1.0 traces and 2.1.0 traces written before the hash-prefix scheme
-    are not findable via auto-load — pass ``--from-trace <path>`` to load
-    them explicitly. Per DD#34, auto-load is a convenience; explicit loading
-    is the contract.
+    Per DD#34, auto-load is a convenience; explicit loading
+    (``--from-trace <path>``) is the contract.
 
     The ``notes`` parameter is preserved for future use (e.g., a Gemini
     telemetry note appended by F2 callers).
@@ -676,7 +669,7 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
         # for trace files, but the inner check makes it impossible.
         if data.get("workflow_path") != workflow_path:
             continue
-        if str(data.get("format_version", "")).startswith("2.1"):
+        if str(data.get("format_version", "")).startswith("2."):
             return data, str(trace_file)
     return None, None
 
@@ -2785,13 +2778,11 @@ def _emit_discrepancy_diagnostics(
     if trace_data is None:
         return []
     workflow_path = ctx.workflow_path
-    # Trace consumer rule (runtime/CLAUDE.md): gate on the major version and
-    # exclude 2.0.0 explicitly. 2.0.0 traces lack cache_key/cache_age_sec; a
-    # graceful note is already emitted at trace-load time. Future 2.2+ traces
-    # are forward-compat: they carry at least the 2.1 fields per the additive
-    # rule. Per-event guards below handle missing optional fields.
+    # Trace consumer rule (runtime/CLAUDE.md): gate on the major version.
+    # Per-event guards below handle missing optional fields, so future
+    # additive minor bumps are forward-compat.
     fv = str(trace_data.get("format_version", ""))
-    if not fv.startswith("2.") or fv.startswith("2.0"):
+    if not fv.startswith("2."):
         return []
 
     predicted_keys, predict_notes = _predict_cache_keys(cw_result, ctx)
