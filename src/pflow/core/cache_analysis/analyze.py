@@ -2049,11 +2049,18 @@ def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str
     The validator's diagnostic constructors (``_make_invalid_on_non_llm_diagnostic``,
     ``_make_order_mismatch_diagnostic`` in ``core/workflow/data_flow.py``) are
     workflow-agnostic — they don't know which workflow is being analyzed. We
-    enrich each ``cache.*`` finding with ``affected_workflow`` here so the
+    enrich each catalog finding with ``affected_workflow`` here so the
     renderer can scope per-row warnings correctly. ``replace`` rather than
     in-place mutation: the validator may cache diagnostic instances across
     calls, so mutating ``diag.context`` would leak the workflow tag.
+
+    Filter is **catalog-membership**, not prefix match: the catalog historically
+    held only ``cache.*`` IDs but now also carries one ``llm.*`` entry
+    (``llm.thinking-temperature-mismatch``). Pinning to membership instead of
+    prefix prevents future namespace additions from silently being dropped here.
     """
+    from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
+
     try:
         diagnostics = validate_data_flow(workflow_ir, check_inputs=False)
     except Exception:
@@ -2061,7 +2068,7 @@ def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str
         return []
     enriched: list[Diagnostic] = []
     for diag in diagnostics:
-        if diag.id is None or not diag.id.startswith("cache."):
+        if diag.id is None or diag.id not in CACHE_WARNING_CATALOG:
             continue
         existing = dict(diag.context or {})
         existing.setdefault("affected_workflow", workflow_path)

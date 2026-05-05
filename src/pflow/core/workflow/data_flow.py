@@ -401,6 +401,16 @@ def validate_data_flow(
         workflow_path=workflow_path,
     )
 
+    # LLM parameter-composition validation (Task 159 Stage 2 follow-up):
+    # Anthropic temperature=1.0 + extended thinking constraint. Catches the
+    # workflow-level error class before it crashes at runtime. See
+    # llm.thinking-temperature-mismatch in CACHE_WARNING_CATALOG.
+    _validate_thinking_temperature_compatibility(
+        workflow_ir,
+        diagnostics,
+        workflow_path=workflow_path,
+    )
+
     return diagnostics
 
 
@@ -997,6 +1007,113 @@ def _emit_prompt_body_overlap_diagnostics(
                 ],
                 affected_workflow=affected_workflow,
                 overlap_lines=overlap_lines,
+            )
+        )
+
+
+# Reasoning-effort values that enable thinking on Anthropic. Mirrors
+# ``llm_reasoning_map.EFFORT_RATIOS`` keys; ``"none"`` (or unset) disables
+# thinking and is excluded.
+_REASONING_EFFORT_ENABLES_THINKING = frozenset({"xhigh", "high", "medium", "low", "minimal"})
+
+
+def _is_templated(value: Any) -> bool:
+    """Return True if a param value is a templated string (defer-to-runtime)."""
+    return isinstance(value, str) and "${" in value
+
+
+def _literal_non_one_temperature(temperature: Any) -> Optional[float]:
+    """Return the temperature as a float if it's a literal numeric ≠ 1.0,
+    otherwise None. Filters: None (default → 1.0), bools (subclass of int),
+    non-numeric, and exactly 1.0.
+    """
+    if temperature is None or isinstance(temperature, bool):
+        return None
+    if not isinstance(temperature, (int, float)):
+        return None
+    value = float(temperature)
+    if value == 1.0:
+        return None
+    return value
+
+
+def _extract_thinking_temp_violation(node: dict[str, Any]) -> Optional[tuple[str, str, str, float]]:
+    """Return ``(node_id, model, reasoning_effort, temperature)`` if the node
+    is an Anthropic LLM node with reasoning_effort enabled AND a literal
+    temperature ≠ 1.0; otherwise ``None``.
+
+    Skips templated values (``${...}``) and absent fields — those defer to
+    runtime. The ``LLMNode`` default temperature is 1.0, so omitting
+    ``temperature`` is silently safe.
+    """
+    from pflow.core.llm_providers import detect_provider
+
+    if node.get("type") != "llm":
+        return None
+    node_id = node.get("id")
+    if not isinstance(node_id, str):
+        return None
+
+    params = node.get("params")
+    if not isinstance(params, dict):
+        return None
+
+    model = params.get("model")
+    if not isinstance(model, str) or _is_templated(model):
+        return None
+    provider = detect_provider(model)
+    if provider is None or provider.name != "anthropic":
+        return None
+
+    reasoning_effort = params.get("reasoning_effort")
+    if not isinstance(reasoning_effort, str) or _is_templated(reasoning_effort):
+        return None
+    if reasoning_effort not in _REASONING_EFFORT_ENABLES_THINKING:
+        return None
+
+    temperature = _literal_non_one_temperature(params.get("temperature"))
+    if temperature is None:
+        return None
+
+    return (node_id, model, reasoning_effort, temperature)
+
+
+def _validate_thinking_temperature_compatibility(
+    workflow_ir: dict[str, Any],
+    diagnostics: list[Diagnostic],
+    *,
+    workflow_path: Optional[str] = None,
+) -> None:
+    """Emit ``llm.thinking-temperature-mismatch`` ERROR for Anthropic LLM nodes
+    that combine ``reasoning_effort`` (which pflow translates to
+    ``thinking: enabled``) with an explicit ``temperature`` other than 1.0.
+
+    Anthropic's API rejects every such request — verified empirically across
+    Opus 4.1/4.5/4.7, Sonnet 4.5/4.6, Haiku 4.5 (uniform behavior). Catching
+    this at validate-time spares the agent the runtime BadRequestError and
+    surfaces the actionable workflow-level fix (set temperature to 1.0 OR
+    set reasoning_effort to none).
+    """
+    # Lazy import: keeps catalog import out of the validator hot path
+    # (``data_flow.py`` runs on every workflow validation including
+    # ones that never touch LLM nodes).
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    affected_workflow = workflow_path or "<unknown>"
+
+    for node in workflow_ir.get("nodes", []):
+        violation = _extract_thinking_temp_violation(node)
+        if violation is None:
+            continue
+        node_id, model, reasoning_effort, temperature = violation
+        diagnostics.append(
+            make_diagnostic(
+                "llm.thinking-temperature-mismatch",
+                node_id=node_id,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                temperature=temperature,
+                affected_workflow=affected_workflow,
             )
         )
 

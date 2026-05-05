@@ -43,8 +43,8 @@ def test_catalog_count_constant_is_auto_derived() -> None:
     assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT
 
 
-def test_catalog_has_sixteen_entries_v1() -> None:
-    """v1 currently ships with 16 cache.* IDs:
+def test_catalog_has_seventeen_entries_v1() -> None:
+    """v1 currently ships with 17 entries (16 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -54,16 +54,28 @@ def test_catalog_has_sixteen_entries_v1() -> None:
     - ``cache.prompt-body-duplicates-cache`` and
       ``cache.prompt-body-shadows-cache`` (Task 159 follow-up:
       detect prompt-body / prompt_cache overlap)
+    - ``llm.thinking-temperature-mismatch`` (Task 159 Stage 2 follow-up:
+      validate-time check for Anthropic temperature=1.0 + extended-thinking
+      requirement; first non-cache entry in the catalog)
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 16
+    assert len(CACHE_WARNING_CATALOG) == 17
 
 
-def test_all_entries_are_cache_namespaced() -> None:
-    """Every catalog ID lives under the ``cache.*`` namespace."""
+def test_entries_use_known_namespaces() -> None:
+    """Every catalog ID lives under one of the supported namespaces.
+
+    Historically the catalog held only ``cache.*`` IDs; ``llm.*`` was added
+    when validate-time checks for non-cache provider rules became necessary
+    (the temp+thinking constraint). Future namespaces require updating this
+    test alongside the catalog addition.
+    """
+    allowed_prefixes = ("cache.", "llm.")
     for warning_id in CACHE_WARNING_CATALOG:
-        assert warning_id.startswith("cache.")
+        assert any(warning_id.startswith(p) for p in allowed_prefixes), (
+            f"{warning_id!r} does not start with any allowed prefix in {allowed_prefixes}"
+        )
 
 
 def test_opportunities_nudge_id_is_outside_catalog() -> None:
@@ -96,6 +108,9 @@ def test_source_split_validator_vs_cache_analyzer() -> None:
         # declared and overlaps the prompt body.
         "cache.prompt-body-duplicates-cache",
         "cache.prompt-body-shadows-cache",
+        # Task 159 Stage 2 follow-up: Anthropic temperature=1.0 +
+        # extended-thinking requirement check, also validator-emitted.
+        "llm.thinking-temperature-mismatch",
     }
     for warning_id, spec in CACHE_WARNING_CATALOG.items():
         if warning_id in validator_ids:
@@ -540,6 +555,13 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
                 {"chunk_name": "concept", "body_ref": "concept.title", "direction": "cache_contains_body"}
             ],
             "overlap_lines": "  - cached `${concept}` overlaps inline `${concept.title}` (cache_contains_body)",
+        },
+        "llm.thinking-temperature-mismatch": {
+            "node_id": "score-choruses",
+            "affected_workflow": "x.pflow.md",
+            "model": "anthropic/claude-haiku-4-5",
+            "reasoning_effort": "low",
+            "temperature": 0.3,
         },
     }
     return samples[warning_id]

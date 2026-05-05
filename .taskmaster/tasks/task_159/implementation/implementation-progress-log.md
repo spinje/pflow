@@ -7288,3 +7288,60 @@ catalogued; cache mechanism itself is solid end-to-end. Total spend
 - No production code changed in this verification round; all findings
   filed as actionable inputs for the next planning + implementation
   session.
+
+## Stage 2 follow-up — Finding #1: thinking + temperature validate-time check (2026-05-05)
+
+Anthropic's API rejects every request that combines `thinking: enabled`
+with `temperature ≠ 1.0`. pflow translates `reasoning_effort: low/medium/
+high/...` to `thinking: enabled` for Anthropic models in
+`llm_client._translate_reasoning_for_litellm` but never normalized
+temperature, so workflows with this composition crashed at runtime.
+Verified empirically the rule is uniform across Opus 4.1/4.5/4.7,
+Sonnet 4.5/4.6, Haiku 4.5 (six models, three families, four generations).
+
+Fix: validate-time ERROR via new catalog entry
+`llm.thinking-temperature-mismatch` (first non-`cache.*` entry in the
+catalog — namespace mixed deliberately rather than splitting catalogs
+for one entry). Static check on each LLM node; skips templated values.
+Save-path blocks; runtime path unchanged so the existing actionable
+BadRequestError still fires if validation is bypassed.
+
+Decision rationale: chose validate-time ERROR over silent runtime
+auto-normalization to avoid corrupting user temperature on any future
+model where Anthropic relaxes the rule. Matches existing pflow patterns
+(`cache.invalid-on-non-llm`, `cache.prompt-body-duplicates-cache`).
+
+### Files modified
+
+**Production** (5 files): `core/diagnostic.py` (+`LLM_VALIDATION_CATEGORY`),
+`core/cache_analysis/warning_catalog.py` (+catalog entry, +`see_also`
+field on `CacheWarningSpec`), `core/cache_analysis/analyze.py` (filter
+switched from `cache.*` prefix to catalog membership so `llm.*` IDs
+surface in `analyze-cache`), `core/workflow/data_flow.py` (+validator),
+`mcp_server/tools/execution_tools.py` (docstring catalog list).
+
+**Tests** (3 files, +22 tests): 20 validator tests in
+`test_prompt_cache_validation.py` covering positive cases (5 effort
+variants), negative cases (none, temp=1, temp omitted, non-Anthropic,
+templated, non-LLM), multi-node, plus Pattern 4 subprocess driving
+real `pflow save`. Plus catalog round-trip + count + namespace tests
+updated.
+
+**Docs**: `cache_analysis/CLAUDE.md` count refs + validator-delegation
+table.
+
+### Verification
+
+- 6224 tests pass (was 6202 → +22 new); make check clean.
+- Spike at `scratchpads/finding-1-opus-spike/` confirms Opus 4.1/4.7
+  enforce the rule (cost: $0.005, single billed Opus 4.1 control call).
+- End-to-end CLI rendering verified: `--validate-only` text + JSON +
+  `pflow save` non-zero exit all carry catalog ID and structured context.
+
+### Round-trip verification deferred
+
+The lyrics-generator workarounds (11 nodes set to `reasoning_effort:
+none` to dodge this bug) can now be reverted to `reasoning_effort: low`
+and a Haiku rerun would prove the validator catches them at save time.
+Skipped per user direction; unit + Pattern-4 subprocess tests cover the
+wiring.

@@ -176,6 +176,15 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
+        "llm.thinking-temperature-mismatch": (
+            "score-choruses",
+            {
+                "model": "anthropic/claude-haiku-4-5",
+                "reasoning_effort": "low",
+                "temperature": 0.3,
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
     }
     return samples[warning_id]
 
@@ -758,6 +767,32 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"validate_data_flow did not emit cache.prompt-body-shadows-cache: ids={[d.id for d in diags]}"
     _round_trip(found[0])
     seen_ids.add("cache.prompt-body-shadows-cache")
+
+    # llm.thinking-temperature-mismatch: Anthropic LLM node with reasoning_effort
+    # enabled AND temperature != 1.0 (Anthropic's API rejects this composition).
+    thinking_temp_ir: dict[str, Any] = {
+        "inputs": {"q": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "score-choruses",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "reasoning_effort": "low",
+                    "temperature": 0.3,
+                    "prompt": "Score: ${q}",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    diags = validate_data_flow(thinking_temp_ir, check_inputs=False, workflow_path="x.pflow.md")
+    found = [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+    assert found, f"validate_data_flow did not emit llm.thinking-temperature-mismatch: ids={[d.id for d in diags]}"
+    payload = _round_trip(found[0])
+    # Pin numeric temperature survives JSON round-trip without coercion drift.
+    assert payload["context"]["temperature"] == 0.3
+    seen_ids.add("llm.thinking-temperature-mismatch")
 
     # --- summarize-emitted id (summarize.py) -----------------------------
     # cache.opportunities-available: the dry-run nudge fires when actionable

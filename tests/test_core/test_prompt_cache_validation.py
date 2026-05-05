@@ -988,3 +988,334 @@ def test_overlap_does_not_fire_when_prompt_empty() -> None:
     diagnostics = validate_data_flow(ir, workflow_path="t.pflow.md")
     overlap_ids = {"cache.prompt-body-duplicates-cache", "cache.prompt-body-shadows-cache"}
     assert not [d for d in diagnostics if d.id in overlap_ids]
+
+
+# ------------------------------------------------------------------------------
+# Task 159 Stage 2 follow-up — llm.thinking-temperature-mismatch
+#
+# Anthropic API requires temperature=1.0 whenever extended thinking is enabled.
+# pflow translates ``reasoning_effort: low/medium/high/...`` to
+# ``thinking: {"type": "enabled", ...}`` for Anthropic models in
+# ``llm_client._translate_reasoning_for_litellm``. Catching the offending
+# composition at validate-time spares the agent the runtime BadRequestError.
+#
+# Empirically verified across Opus 4.1/4.5/4.7, Sonnet 4.5/4.6, Haiku 4.5
+# (uniform behavior — Anthropic treats this as a single API rule across the
+# extended-thinking model family). See task 159 Stage 2 follow-up handoff.
+# ------------------------------------------------------------------------------
+
+
+def _llm_node_with_thinking(node_id: str, **params) -> dict:
+    """Helper: LLM node with custom params (for thinking+temp tests)."""
+    full_params = {"prompt": "do thing"}
+    full_params.update(params)
+    return {"id": node_id, "type": "llm", "params": full_params}
+
+
+def test_thinking_temperature_mismatch_fires_on_anthropic_low_effort_low_temp() -> None:
+    """The canonical positive case: Anthropic model + reasoning_effort: low +
+    temperature: 0.3 → ERROR diagnostic with all required context populated."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "score-choruses",
+                model="anthropic/claude-haiku-4-5",
+                reasoning_effort="low",
+                temperature=0.3,
+            )
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    matched = [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+    assert len(matched) == 1
+    diag = matched[0]
+    assert diag.severity == Severity.ERROR
+    assert diag.source == "validator"
+    assert diag.node_id == "score-choruses"
+    assert diag.title == "LLM Configuration"
+    assert diag.see_also == ["llm"]
+    # Spec-locked message format.
+    assert diag.message == (
+        "Node 'score-choruses': temperature 0.3 conflicts with "
+        "reasoning_effort 'low' on model anthropic/claude-haiku-4-5 — "
+        "Anthropic requires temperature=1.0 when extended thinking is enabled."
+    )
+    # Both fix paths surfaced.
+    assert diag.suggestions is not None
+    assert any("temperature: 1.0" in s for s in diag.suggestions)
+    assert any("reasoning_effort: none" in s for s in diag.suggestions)
+    # Structured context preserves typed values.
+    assert diag.context["model"] == "anthropic/claude-haiku-4-5"
+    assert diag.context["reasoning_effort"] == "low"
+    assert diag.context["temperature"] == 0.3
+    assert diag.context["affected_workflow"] == "t.pflow.md"
+    assert diag.context["path"] == "nodes[id=score-choruses].params.temperature"
+
+
+@pytest.mark.parametrize(
+    "effort",
+    ["minimal", "low", "medium", "high", "xhigh"],
+)
+def test_thinking_temperature_mismatch_fires_for_every_thinking_effort(effort: str) -> None:
+    """Every reasoning_effort that pflow translates to ``thinking: enabled``
+    (per ``EFFORT_RATIOS`` in ``llm_reasoning_map``) trips the validator when
+    paired with non-1.0 temperature on Anthropic."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model="anthropic/claude-sonnet-4-5",
+                reasoning_effort=effort,
+                temperature=0.5,
+            )
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert any(d.id == "llm.thinking-temperature-mismatch" for d in diags)
+
+
+def test_thinking_temperature_mismatch_silent_when_reasoning_effort_is_none() -> None:
+    """``reasoning_effort: none`` disables thinking → no conflict regardless of
+    temperature."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model="anthropic/claude-haiku-4-5",
+                reasoning_effort="none",
+                temperature=0.3,
+            )
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+def test_thinking_temperature_mismatch_silent_when_temperature_is_one() -> None:
+    """Explicit ``temperature: 1.0`` matches Anthropic's requirement → silent.
+    Tested with both int and float to guard against subtle equality bugs."""
+    for temp in (1, 1.0):
+        ir = _ir(
+            nodes=[
+                _llm_node_with_thinking(
+                    "n",
+                    model="anthropic/claude-haiku-4-5",
+                    reasoning_effort="low",
+                    temperature=temp,
+                )
+            ],
+        )
+        diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+        assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+def test_thinking_temperature_mismatch_silent_when_temperature_omitted() -> None:
+    """No declared ``temperature`` → LLMNode default is 1.0 → no conflict.
+
+    This is the agent's natural fallthrough when they only set reasoning_effort
+    and trust the default. The validator MUST stay silent here; firing would
+    be agent-noise on the common case.
+    """
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model="anthropic/claude-haiku-4-5",
+                reasoning_effort="low",
+            )
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gemini/gemini-2.5-flash",
+        "gemini/gemini-3-flash-preview",
+        "openai/gpt-5",
+        "openai/o3-mini",
+    ],
+)
+def test_thinking_temperature_mismatch_silent_on_non_anthropic(model: str) -> None:
+    """The Anthropic temp=1 rule does not apply to Gemini/OpenAI; their
+    reasoning APIs follow different rules (Gemini accepts non-1 temperature
+    with thinking_budget; OpenAI's o-series ignores temperature entirely)."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model=model,
+                reasoning_effort="low",
+                temperature=0.3,
+            )
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+def test_thinking_temperature_mismatch_silent_when_model_is_templated() -> None:
+    """Templated ``model: ${m}`` → defer to runtime (the validator can't
+    resolve the provider statically)."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model="${m}",
+                reasoning_effort="low",
+                temperature=0.3,
+            )
+        ],
+        inputs={"m": {"type": "string"}},
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+def test_thinking_temperature_mismatch_silent_when_effort_is_templated() -> None:
+    """Templated ``reasoning_effort: ${e}`` → defer to runtime."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model="anthropic/claude-haiku-4-5",
+                reasoning_effort="${e}",
+                temperature=0.3,
+            )
+        ],
+        inputs={"e": {"type": "string"}},
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+def test_thinking_temperature_mismatch_silent_when_temperature_is_templated() -> None:
+    """Templated ``temperature: ${t}`` (string literal) → defer to runtime."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model="anthropic/claude-haiku-4-5",
+                reasoning_effort="low",
+                temperature="${t}",
+            )
+        ],
+        inputs={"t": {"type": "number"}},
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+def test_thinking_temperature_mismatch_silent_on_non_llm_node() -> None:
+    """Shell node with reasoning_effort/temperature in params would be
+    nonsensical, but the validator should not trip — only LLM nodes are
+    in scope."""
+    ir = _ir(
+        nodes=[
+            {
+                "id": "n",
+                "type": "shell",
+                "params": {
+                    "command": "echo hi",
+                    "reasoning_effort": "low",
+                    "temperature": 0.3,
+                    "model": "anthropic/claude-haiku-4-5",
+                },
+            }
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert not [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+
+
+def test_thinking_temperature_mismatch_works_with_bare_anthropic_prefix() -> None:
+    """Bare ``claude-...`` (no ``anthropic/`` prefix) is detected as Anthropic
+    via ``detect_provider``'s bare-prefix path. The check must work on it too.
+    """
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                "n",
+                model="claude-sonnet-4-5",
+                reasoning_effort="low",
+                temperature=0.3,
+            )
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    assert any(d.id == "llm.thinking-temperature-mismatch" for d in diags)
+
+
+def test_thinking_temperature_mismatch_emits_one_diagnostic_per_node() -> None:
+    """Multi-node case: each offending node gets its own ERROR (so the agent
+    sees all 11 violations at once when reverting lyrics-generator
+    workarounds, not just the first)."""
+    ir = _ir(
+        nodes=[
+            _llm_node_with_thinking(
+                f"n{i}",
+                model="anthropic/claude-haiku-4-5",
+                reasoning_effort="low",
+                temperature=0.5,
+            )
+            for i in range(3)
+        ],
+    )
+    diags = validate_data_flow(ir, workflow_path="t.pflow.md")
+    matched = [d for d in diags if d.id == "llm.thinking-temperature-mismatch"]
+    assert len(matched) == 3
+    assert {d.node_id for d in matched} == {"n0", "n1", "n2"}
+
+
+def test_thinking_temperature_mismatch_pflow_save_subprocess_exits_nonzero(
+    tmp_path, uv_exe, prepared_subprocess_env
+) -> None:
+    """Pattern 4 subprocess regression: drive the real ``pflow save`` CLI
+    against a workflow with the offending composition. Without the validator
+    wiring (data_flow.py → save_service → CLI), the workflow saves and the
+    runtime crash is the agent's first signal. With the wiring, save exits
+    non-zero and stderr carries the catalog ID.
+    """
+    import subprocess
+
+    workflow_file = tmp_path / "thinking-temp-conflict.pflow.md"
+    workflow_file.write_text(
+        "# Thinking-temp test\n\n"
+        "Anthropic model with reasoning_effort + non-1 temperature.\n\n"
+        "## Inputs\n\n### question\n\nThe question.\n\n- type: string\n- required: true\n\n"
+        "## Steps\n\n"
+        "### answer\n\nAnswer with thinking on a low temperature.\n\n"
+        "- type: llm\n"
+        "- model: anthropic/claude-haiku-4-5\n"
+        "- reasoning_effort: low\n"
+        "- temperature: 0.3\n"
+        "- prompt: ${question}\n"
+    )
+
+    completed = subprocess.run(  # noqa: S603 — fixture-controlled args, mirrors the established subprocess CLI test pattern
+        [
+            uv_exe,
+            "run",
+            "pflow",
+            "save",
+            str(workflow_file),
+            "--name",
+            "thinking-temp-conflict-test",
+            "--force",
+        ],
+        capture_output=True,
+        text=True,
+        env=prepared_subprocess_env,
+        timeout=60,
+    )
+    assert completed.returncode != 0, (
+        f"Expected non-zero exit when save detects thinking+temperature conflict. "
+        f"stdout: {completed.stdout!r}\nstderr: {completed.stderr!r}"
+    )
+    combined = completed.stdout + completed.stderr
+    assert "llm.thinking-temperature-mismatch" in combined, (
+        f"Expected the catalog id 'llm.thinking-temperature-mismatch' in CLI output; got:\n"
+        f"stdout: {completed.stdout!r}\nstderr: {completed.stderr!r}"
+    )

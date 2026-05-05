@@ -1,21 +1,23 @@
-"""Closed catalog of ``cache.*`` warning IDs and the ``make_diagnostic`` helper.
+"""Closed catalog of warning IDs and the ``make_diagnostic`` helper.
 
 The catalog is the agent-facing contract: each entry pins severity, source,
 category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-14 entries in v1 plus ``cache.prompt-body-duplicates-cache`` and
+17 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
-prompt_cache overlap that silently nullifies declared caching). The base 14
-covers the 9 from spec § "Stable Warning ID Catalog" + ``cache.discrepancy``
-(Round 2, dispatch over ``root_cause`` enum), ``cache.invalid-on-non-llm``
-(Round 3, validator-reach gap closure for non-LLM nodes),
-``cache.prewarm-no-prefix`` (Round 3, prewarm-without-static-prefix advisory),
-``cache.consolidate-to-root-recommended`` (CP3, sub-paths below threshold
-that would cross when consolidated to the parent dict), and
-``cache.opaque-prompt`` (Stage-1.5, LLM nodes whose prompt is a single var-ref
-to a ``type: code`` node — opaque to static analysis).
+prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
+temperature-mismatch`` (Stage 2 follow-up: catch Anthropic temperature=1.0 +
+extended thinking constraint at validate-time). The base 14 covers the 9 from
+spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2, dispatch
+over ``root_cause`` enum), ``cache.invalid-on-non-llm`` (Round 3, validator-
+reach gap closure for non-LLM nodes), ``cache.prewarm-no-prefix`` (Round 3,
+prewarm-without-static-prefix advisory), ``cache.consolidate-to-root-
+recommended`` (CP3, sub-paths below threshold that would cross when
+consolidated to the parent dict), and ``cache.opaque-prompt`` (Stage-1.5, LLM
+nodes whose prompt is a single var-ref to a ``type: code`` node — opaque to
+static analysis).
 
 The dry-run nudge ID ``cache.opportunities-available`` is reserved separately —
 it's emitted by ``summarize()`` not ``analyze()``, so it isn't part of the
@@ -38,6 +40,7 @@ from pflow.core.diagnostic import (
     CACHE_ADVISORY_CATEGORY,
     CACHE_FAILURE_CATEGORY,
     CACHE_WARNING_CATEGORY,
+    LLM_VALIDATION_CATEGORY,
     Diagnostic,
     Severity,
 )
@@ -76,6 +79,11 @@ class CacheWarningSpec:
     path_template: str
     nullable_cost_keys: frozenset[str] = frozenset()
     headline_template: str = ""
+    # Routes the rendered "See also: pflow guide X" hint per entry. Defaults
+    # to ``("caching",)`` because the catalog is historically cache-scoped;
+    # entries pointing elsewhere (e.g. the ``llm.*`` thinking-temperature
+    # check) override.
+    see_also: tuple[str, ...] = ("caching",)
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +599,44 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="nodes[id={node_id}].params.prompt",
         headline_template="Prompt body shadows cached chunks on {node_id}",
     ),
+    # Validator-tier: Anthropic API requires temperature=1.0 whenever extended
+    # thinking is enabled. Workflows that combine ``reasoning_effort`` (which
+    # pflow translates to ``thinking: enabled`` for Anthropic models) with a
+    # declared ``temperature`` other than 1.0 are guaranteed to fail at runtime
+    # with ``BadRequestError: temperature may only be set to 1 when thinking
+    # is enabled``. Empirically verified across Opus 4.1/4.5/4.7, Sonnet
+    # 4.5/4.6, Haiku 4.5 (uniform behavior — Anthropic treats this as a single
+    # API rule across the extended-thinking model family).
+    #
+    # Why namespaced ``llm.*`` rather than ``cache.*``: this isn't a cache rule;
+    # the catalog has historically held cache.* IDs but the dispatch
+    # infrastructure (Diagnostic, make_diagnostic, render pipeline) is general.
+    # Mixing one ``llm.*`` ID into the existing catalog is preferable to
+    # building a parallel catalog for one entry.
+    "llm.thinking-temperature-mismatch": CacheWarningSpec(
+        severity=Severity.ERROR,
+        source="validator",
+        category=LLM_VALIDATION_CATEGORY,
+        message_template=(
+            "Node '{node_id}': temperature {temperature} conflicts with "
+            "reasoning_effort '{reasoning_effort}' on model {model} — "
+            "Anthropic requires temperature=1.0 when extended thinking is enabled."
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("model", str),
+            ("reasoning_effort", str),
+            ("temperature", float),
+            ("affected_workflow", str),
+        ),
+        suggestions_template=(
+            "Set `temperature: 1.0` on `{node_id}` (recommended for thinking-enabled calls), OR",
+            "Set `reasoning_effort: none` on `{node_id}` to disable thinking and keep your declared temperature.",
+        ),
+        path_template="nodes[id={node_id}].params.temperature",
+        headline_template="Temperature conflicts with reasoning_effort on {node_id}",
+        see_also=("llm",),
+    ),
 }
 
 
@@ -635,6 +681,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.order-mismatch": 5,
     "cache.invalid-on-non-llm": 5,
     "cache.prompt-body-duplicates-cache": 5,
+    "llm.thinking-temperature-mismatch": 5,
     # Sub-path shadow is WARNING but more actionable than cache.unused-chunk —
     # it silently nullifies a cache decision the user explicitly made.
     "cache.prompt-body-shadows-cache": 10,
@@ -1002,7 +1049,7 @@ def make_diagnostic(
         message=message,
         suggestions=suggestions if suggestions else None,
         context=context,
-        see_also=["caching"],
+        see_also=list(spec.see_also),
     )
 
 
@@ -1050,6 +1097,7 @@ _CATEGORY_TITLE: Final[dict[str, str]] = {
     CACHE_FAILURE_CATEGORY: "Cache Failure",
     CACHE_WARNING_CATEGORY: "Cache Warning",
     CACHE_ADVISORY_CATEGORY: "Cache Advisory",
+    LLM_VALIDATION_CATEGORY: "LLM Configuration",
 }
 
 

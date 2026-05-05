@@ -219,6 +219,14 @@ CACHE_FAILURE_CATEGORY = "cache_failure"
 CACHE_WARNING_CATEGORY = "cache_warning"
 CACHE_ADVISORY_CATEGORY = "cache_advisory"
 
+# LLM validation category — for static-analysis ERROR-level diagnostics about
+# LLM node parameter compositions that will fail at the provider boundary.
+# Currently used by ``llm.thinking-temperature-mismatch`` (validate-time check
+# for Anthropic temperature=1.0 requirement when thinking is enabled). Distinct
+# from LLM_FAILURE_CATEGORY because no provider call has happened yet — the
+# fix is in the workflow file, not in the runtime.
+LLM_VALIDATION_CATEGORY = "llm_validation"
+
 
 CATEGORY_TITLES: dict[str, str] = {
     "compilation": "Compilation Failed",
@@ -235,6 +243,7 @@ CATEGORY_TITLES: dict[str, str] = {
     "cli": "Error",
     LLM_FAILURE_CATEGORY: "LLM Call Failed",
     LLM_WARNING_CATEGORY: "LLM Warning",
+    LLM_VALIDATION_CATEGORY: "LLM Configuration",
     CACHE_FAILURE_CATEGORY: "Cache Failure",
     CACHE_WARNING_CATEGORY: "Cache Warning",
     CACHE_ADVISORY_CATEGORY: "Cache Advisory",
