@@ -86,6 +86,51 @@ Summarize ${topic}.
 """
 
 
+_ORDER_MISMATCH_WORKFLOW = """\
+# Order Mismatch
+
+A workflow with an invalid prompt_cache order.
+
+## Inputs
+
+### a
+
+First cached value.
+
+- type: string
+
+### b
+
+Second cached value.
+
+- type: string
+
+## Cache
+
+```cache
+A:
+${a}
+
+B:
+${b}
+```
+
+## Steps
+
+### test-call
+
+Summarize both values.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt_cache: [b, a]
+
+```prompt
+Summarize the cached values.
+```
+"""
+
+
 _MIXED_MODEL_CACHE_WORKFLOW = """\
 # Mixed Models
 
@@ -186,23 +231,34 @@ def test_analyze_cache_text_format_default(tmp_path: Path) -> None:
 
 
 def test_analyze_cache_json_format(tmp_path: Path) -> None:
-    """JSON output shape locked. Format-version asserts use the constant +
-    consumer rule so a future additive minor bump (1.0 → 1.1) doesn't
-    spuriously fail the test."""
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION, JSON_FORMAT_VERSION_MAJOR
-
+    """JSON output shape locked."""
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
     runner = CliRunner()
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0
     payload = _json_payload(result.output)
-    assert payload["format_version"] == JSON_FORMAT_VERSION
-    assert payload["format_version"].startswith(JSON_FORMAT_VERSION_MAJOR + ".")
+    assert "format_version" not in payload
     assert "summary" in payload
+    assert payload["blocking_errors"] == []
+    assert payload["recommended_actions"] == []
     assert "warnings" in payload
     assert "cross_workflow" in payload
     # Empty-array contract.
     assert payload["cross_workflow"]["rename_detections"] == []
+
+
+def test_analyze_cache_json_splits_blocking_errors_from_recommended_actions(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _ORDER_MISMATCH_WORKFLOW)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+
+    blocking_ids = [item["warning_id"] for item in payload["blocking_errors"]]
+    recommended_ids = [item["warning_id"] for item in payload["recommended_actions"]]
+    assert "cache.order-mismatch" in blocking_ids
+    assert "cache.order-mismatch" not in recommended_ids
+    assert payload["blocking_errors"][0]["rank"] == 1
 
 
 def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(

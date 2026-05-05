@@ -130,21 +130,19 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 ### render_text.py and render_json.py
 
-Both are projections of `CacheAnalysis` — read-only, no mutation. `render_text` is one orchestrator (`render_text(analysis, all_rows=False)`) calling 7 section renderers (header / cost block / summary / recommended actions / suggested blocks / cross-workflow / per-call rows / sub-workflow drill-in / notes). Each section reads only the fields it needs.
+Both are projections of `CacheAnalysis` — read-only, no mutation. `render_text` is one orchestrator (`render_text(analysis, all_rows=False)`) calling section renderers (header / cost block / summary / blocking errors / recommended actions / suggested blocks / cross-workflow / per-call rows / sub-workflow drill-in / notes). Each section reads only the fields it needs.
 
 **Section visibility is deterministic from `CacheAnalysis`.** When per-call rows have no real data (greenfield, no execution), the renderer hides them and emits a Notes entry explaining the absence is intentional. The analyzer mirrors this predicate at analyze-time so the absence note appears in JSON too.
 
-**JSON `format_version` policy (mirrors trace 2.x)**: minor bumps (`4.0` → `4.1`) are additive — new fields, new warning IDs. Major bumps (`4.x` → `5.x`) are breaking. Consumers should match `format_version.startswith("4.")`.
-
 ### view_helpers.py
 
-Renderer-side projections. Two exports: `build_recommended_actions(warnings) → list[RecommendedAction]` and `is_cross_workflow_alignment(diag) → bool`.
+Renderer-side projections. Three exports: `build_blocking_errors(warnings) → list[RecommendedAction]`, `build_recommended_actions(warnings) → list[RecommendedAction]`, and `is_cross_workflow_alignment(diag) → bool`.
 
 **Lazy import at line 84** is a documented circular-import workaround: `RecommendedAction` is defined in `analyze.py` but built here from a list of `Diagnostic`s. Top-level import would cycle.
 
 **`_CROSS_WORKFLOW_ALIGNMENT_IDS` is a frozenset of warning IDs** (`cache.cross-workflow-rename-detected`, `cache.cross-workflow-prose-mismatch`) that render in the "Sub-workflow boundaries" section ONLY — filtered OUT of recommended actions to keep each finding visible in exactly one section. **Adding a new cross-workflow alignment ID requires extending this constant in lockstep.**
 
-**Recommended-actions ranking key** (lexicographic, all ascending after negation/inversion): severity (ERROR > WARNING > INFO) → detection-class priority (from `RECOMMENDED_ACTION_PRIORITY` in `warning_catalog`) → savings (descending within priority tier) → stable alphabetical on `id`. The detection-class priority resolves the common "all INFO, no savings" case where alphabetical tiebreak used to bury actionable findings.
+**Action-view ranking key** (lexicographic, all ascending after negation/inversion): severity (ERROR only for blocking errors; WARNING > INFO for recommended actions) → detection-class priority (from `RECOMMENDED_ACTION_PRIORITY` in `warning_catalog`) → savings (descending within priority tier) → stable alphabetical on `id`. The detection-class priority resolves the common "all INFO, no savings" case where alphabetical tiebreak used to bury actionable findings.
 
 ### padding_advisor.py
 
@@ -240,8 +238,7 @@ Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_
 
 - **`_workflow_short_name` is duplicated** at `analyze.py:2911` and `render_text.py:721`. Both implement the same basename-strip-`.pflow.md` logic. The duplication is a known follow-up (task 160).
 - **`_iter_llm_events` (analyze.py:2456)** is consumed only by tests after the per-call rendering migration to `TraceTree.iter_llm_leaves`. Lives in production code but has no production caller.
-- **`_build_recommended_actions` (analyze.py:3219)** is a 17-LOC compatibility shim that delegates to `view_helpers.build_recommended_actions`. The shim exists because the call site predates the `view_helpers` extraction; tests import the shim by name from `analyze`.
-- **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`, plus the JSON format-version constants. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
+- **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
 - **Stable warning ID catalog has 19 entries** as of v1: 10 from the original spec + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
 
 ## Where to add a new feature

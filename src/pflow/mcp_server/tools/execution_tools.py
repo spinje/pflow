@@ -366,19 +366,14 @@ async def analyze_cache(
 
     Returns the same JSON shape as ``pflow analyze-cache --format=json``.
 
-    Top-level keys: ``format_version``, ``workflow_path``, ``analyzed_at``,
+    Top-level keys: ``workflow_path``, ``analyzed_at``,
     ``estimate_confidence``, ``estimate_confidence_coverage``, ``trace_path``,
-    ``summary``, ``recommended_actions``, ``suggested_blocks``, ``per_call``,
-    ``cross_workflow``, ``warnings``, ``notes``.
+    ``summary``, ``blocking_errors``, ``recommended_actions``,
+    ``suggested_blocks``, ``per_call``, ``cross_workflow``, ``warnings``,
+    ``notes``.
 
-    **Version policy**: ``format_version`` follows semver-ish. Minor bumps
-    (``4.0`` → ``4.1``) are additive (new fields, new warning IDs); consumers
-    tolerant via ``format_version.startswith("4.")`` continue to work. Major
-    bumps (``4.x`` → ``5.x``) are breaking; pinned consumers refuse to consume.
-
-    **4.0 cost-field shape**: ``summary`` carries five atomic cost
-    primitives, each with ONE meaning (independent of greenfield/trace
-    context):
+    **Cost-field shape**: ``summary`` carries five atomic cost primitives,
+    each with ONE meaning (independent of greenfield/trace context):
 
       - ``actually_paid_usd`` (number | null): trace-driven recorded cost;
         ``null`` for greenfield. Includes provider-side implicit caching
@@ -393,16 +388,13 @@ async def analyze_cache(
         at-read-rate projection.
 
     Sub-workflow rollup entries carry the same four primitives at child
-    scope. The deprecated 3.x fields (``current_cost_per_run_usd``,
-    ``cost_without_caching_usd``, ``rerun_cost_per_run_usd``) were
-    removed because their meaning shifted with greenfield/trace context.
+    scope.
 
-    **Stage 0 (2.0) shape changes**: ``recommended_actions`` is a
-    renderer-derived view (cross-workflow alignment IDs filtered into
-    ``cross_workflow.*`` only). ``cross_workflow.{rename, prose, value_flow}``
-    arrays are derived from ``warnings`` by ``Diagnostic.id``. ``per_call[]``
-    no longer carries ``warnings``; per-row markers derive from the top-level
-    ``warnings`` filtered by ``node_id``.
+    ``blocking_errors`` contains ERROR-severity findings. ``recommended_actions``
+    contains WARNING + INFO opportunities. Both are renderer-derived views
+    over ``warnings``; cross-workflow alignment IDs are filtered into
+    ``cross_workflow.*`` only. ``cross_workflow.{rename, prose, value_flow}``
+    arrays are derived from ``warnings`` by ``Diagnostic.id``.
 
     **Closed catalog of warning IDs** that may appear in
     ``warnings[].id`` (19 entries in v1 — 18 ``cache.*`` plus 1 ``llm.*``):

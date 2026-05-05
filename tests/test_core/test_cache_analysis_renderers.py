@@ -1,8 +1,7 @@
 """F2.3 — text and JSON renderer tests.
 
 Locks the agent-facing format contracts:
-- JSON ``format_version`` is the constant ``JSON_FORMAT_VERSION`` (current ``"3.0"``).
-- Empty-array contract for ``cross_workflow.*`` fields.
+- Empty-array contract for derived-view arrays.
 - Tri-state cost rendering (priced / partial / unavailable — never silent ``$0.00``).
 - Default-hide-clean per-call rule + ``--all-rows`` override.
 """
@@ -12,8 +11,6 @@ from __future__ import annotations
 import json
 
 from pflow.core.cache_analysis import (
-    JSON_FORMAT_VERSION,
-    JSON_FORMAT_VERSION_MAJOR,
     render_json,
     render_text,
 )
@@ -89,7 +86,7 @@ def _make_analysis(
             savings_pct_first_run=None,
             savings_pct_rerun=None,
             blocking_errors=sum(1 for d in warnings if d.severity == Severity.ERROR),
-            actionable_opportunities=len(warnings),
+            actionable_opportunities=sum(1 for d in warnings if d.severity != Severity.ERROR),
             warnings_count=sum(1 for d in warnings if d.severity == Severity.WARNING),
             info_count=sum(1 for d in warnings if d.severity == Severity.INFO),
             total_llm_calls_estimated=len(rows),
@@ -114,17 +111,6 @@ def _make_analysis(
 # ---------------------------------------------------------------------------
 
 
-def test_json_format_version_is_constant() -> None:
-    """JSON output reads from JSON_FORMAT_VERSION; consumer rule passes."""
-    result = render_json(_make_analysis())
-    assert result["format_version"] == JSON_FORMAT_VERSION
-    # Consumer rule contract — passes on additive minor bumps (4.0 → 4.1).
-    assert result["format_version"].startswith(JSON_FORMAT_VERSION_MAJOR + ".")
-    # Literal "4." prefix catches the next major bump — both the constant
-    # AND this assertion must update in lockstep when bumping to 5.x.
-    assert result["format_version"].startswith("4.")
-
-
 def test_json_cross_workflow_empty_arrays_are_present() -> None:
     """Empty-array contract — agents treat absence as a positive signal."""
     result = render_json(_make_analysis())
@@ -133,6 +119,14 @@ def test_json_cross_workflow_empty_arrays_are_present() -> None:
     assert cw["prose_mismatches"] == []
     assert cw["value_flow_opportunities"] == []
     assert cw["boundaries_analyzed"] == 0
+
+
+def test_json_action_view_empty_arrays_are_present() -> None:
+    """Derived action views are always present, even when empty."""
+    result = render_json(_make_analysis())
+    assert result["blocking_errors"] == []
+    assert result["recommended_actions"] == []
+    assert "format_version" not in result
 
 
 def test_json_round_trips_through_dumps_loads() -> None:
@@ -262,6 +256,7 @@ def test_text_summary_renders_blocking_errors_categorically() -> None:
         "blocking_errors > 0. Without this, agents skimming the count see "
         "'2 opportunities' and miss the ERROR-severity finding entirely."
     )
+    assert "## Blocking errors (must fix before save and run)" in text
     # Opportunity line still present, distinct from the error line.
     assert "2 opportunities (2 warnings, 0 info)" in text
     # The blocking line precedes the opportunity line (errors first).
@@ -665,6 +660,50 @@ def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> N
     }
     assert ("draft", "/abs/workflows/parent.pflow.md") in action_scopes
     assert ("draft", "/abs/workflows/child.pflow.md") in action_scopes
+
+
+def test_json_blocking_errors_array_present_and_excludes_warnings() -> None:
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id="cache.order-mismatch",
+            node_id="test-call",
+            message="Order mismatch",
+        ),
+        Diagnostic(
+            severity=Severity.WARNING,
+            source="cache_analyzer",
+            id="cache.below-min-tokens",
+            node_id="test-call",
+            message="Below minimum",
+        ),
+    ]
+    result = render_json(_make_analysis(warnings=warnings))
+    assert [a["warning_id"] for a in result["blocking_errors"]] == ["cache.order-mismatch"]
+    assert [a["rank"] for a in result["blocking_errors"]] == [1]
+
+
+def test_json_recommended_actions_excludes_errors_after_split() -> None:
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id="cache.order-mismatch",
+            node_id="test-call",
+            message="Order mismatch",
+        ),
+        Diagnostic(
+            severity=Severity.INFO,
+            source="cache_analyzer",
+            id="cache.first-call-write-penalty",
+            node_id="test-call",
+            message="Single-call penalty",
+        ),
+    ]
+    result = render_json(_make_analysis(warnings=warnings))
+    assert [a["warning_id"] for a in result["recommended_actions"]] == ["cache.first-call-write-penalty"]
+    assert [a["rank"] for a in result["recommended_actions"]] == [1]
 
 
 def test_text_recommended_actions_inline_label_passes_through() -> None:
@@ -1213,6 +1252,67 @@ def _analysis_with_warnings(warnings: list) -> CacheAnalysis:
     return _make_analysis(warnings=warnings)
 
 
+def _section(text: str, header: str) -> str:
+    start = text.index(header)
+    next_header = text.find("\n\n## ", start + len(header))
+    if next_header == -1:
+        return text[start:]
+    return text[start:next_header]
+
+
+def test_text_blocking_errors_section_appears_between_summary_and_recommended_actions() -> None:
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id="cache.order-mismatch",
+            node_id="test-call",
+            message="Order mismatch",
+        ),
+        Diagnostic(
+            severity=Severity.WARNING,
+            source="cache_analyzer",
+            id="cache.below-min-tokens",
+            node_id="test-call",
+            message="Below minimum",
+        ),
+    ]
+    text = render_text(_analysis_with_warnings(warnings))
+    assert text.index("## Summary") < text.index("## Blocking errors")
+    assert text.index("## Blocking errors") < text.index("## Recommended actions")
+
+
+def test_text_blocking_errors_section_omitted_when_no_errors() -> None:
+    warnings = [
+        Diagnostic(
+            severity=Severity.WARNING,
+            source="cache_analyzer",
+            id="cache.below-min-tokens",
+            node_id="test-call",
+            message="Below minimum",
+        )
+    ]
+    text = render_text(_analysis_with_warnings(warnings))
+    assert "## Blocking errors" not in text
+    assert "## Recommended actions" in text
+
+
+def test_text_blocking_errors_does_not_render_savings_column() -> None:
+    warning = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id="cache.order-mismatch",
+        node_id="test-call",
+        message="Order mismatch",
+        context={"savings_usd": 2.0},
+    )
+    text = render_text(_analysis_with_warnings([warning]))
+    blocking = _section(text, "## Blocking errors")
+    assert "Order mismatch" in blocking
+    assert "-$2.00/run" not in blocking
+    assert "savings unavailable" not in blocking
+
+
 def test_text_does_NOT_render_all_warnings_section() -> None:
     """CP4 #16 — the "## All warnings" section is dropped from text output.
 
@@ -1251,23 +1351,23 @@ def test_text_does_NOT_render_all_warnings_section() -> None:
     assert "Node: some-node" not in text
 
 
-def test_text_brownfield_error_diagnostic_visible_in_recommended_actions() -> None:
+def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recommended_actions() -> None:
     """Brownfield safety (CP4 #16): ERROR-severity diagnostics MUST stay
     visible after dropping "## All warnings".
 
     A workflow with ``cache.order-mismatch`` (ERROR) had its sole text-mode
     rendering path through the now-deleted "## All warnings" section if
-    Recommended Actions skipped errors. Mutation test: drop ERROR severity
-    from priority sort or omit ERRORs from ``_build_recommended_actions``;
-    this test fails because the order-mismatch becomes invisible to text
-    consumers.
+    action views skipped errors. Mutation test: drop the ERROR severity filter
+    from ``build_blocking_errors`` or route ERRORs back into
+    ``build_recommended_actions``; this test fails because the order-mismatch
+    either becomes invisible or lands in the wrong section.
 
     This is the load-bearing brownfield contract: workflows with declared
     ``## Cache`` blocks may have validator-emitted ERRORs that previously
     appeared ONLY in the now-deleted ``## All warnings`` view. The test
     drives the analyzer through a real production-shape workflow that
     triggers ``cache.order-mismatch``, then asserts the diagnostic survives
-    in Recommended Actions.
+    in Blocking errors and is absent from Recommended actions.
     """
     from pflow.core.cache_analysis import analyze
 
@@ -1292,26 +1392,31 @@ def test_text_brownfield_error_diagnostic_visible_in_recommended_actions() -> No
     }
     analysis = analyze(workflow_ir, auto_load_trace=False)
     text = render_text(analysis)
-    assert "## Recommended actions" in text
+    assert "## Blocking errors (must fix before save and run)" in text
     # Stage-1 final UX pass: ``[cache.order-mismatch]`` brackets are gone.
     # The load-bearing brownfield contract: the ERROR-severity diagnostic
-    # surfaces in Recommended Actions with enough discriminator for the
+    # surfaces in Blocking errors with enough discriminator for the
     # agent to act on it. The order-mismatch message body carries the
     # exact fix (``expected:``/``you wrote:``/``fix:`` lines), so the
     # agent sees both WHAT failed and HOW to fix without ID brackets.
     #
     # Verified:
-    # - Recommended Actions section renders the diagnostic
+    # - Blocking errors section renders the diagnostic
     # - Node ID is visible (so the agent knows which node failed)
     # - The fix lines from the message body are visible
     # - Brackets are gone (the visual coding regression we deliberately
     #   removed in this UX pass)
-    assert "write-lyrics" in text
-    assert "expected:" in text  # one of the message body's fix lines
-    assert "you wrote:" in text  # ditto — confirms full message rendered
-    assert "[cache.order-mismatch]" not in text  # brackets dropped
+    blocking = _section(text, "## Blocking errors")
+    assert "write-lyrics" in blocking
+    assert "expected:" in blocking  # one of the message body's fix lines
+    assert "you wrote:" in blocking  # ditto — confirms full message rendered
+    assert "[cache.order-mismatch]" not in blocking  # brackets dropped
+    if "## Recommended actions" in text:
+        recommended = _section(text, "## Recommended actions")
+        assert "expected:" not in recommended
+        assert "you wrote:" not in recommended
     # Crucially, "## All warnings" is gone — the ERROR's ONLY rendering
-    # path is now Recommended Actions.
+    # path is now Blocking errors.
     assert "## All warnings" not in text
 
 

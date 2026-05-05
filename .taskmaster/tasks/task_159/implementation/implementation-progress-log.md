@@ -7505,3 +7505,65 @@ acceptance criteria.
    `"(1 nodes)"` strings that locked the bug in. After the fix, fixtures
    read `"(1 node)"` and the catalog round-trip tests still pass —
    confirming the bug was a fixture-pinning issue, not a contract issue.
+
+## Stage 2 follow-up — Finding #6: split blocking errors from recommendations (2026-05-05)
+
+Implemented `fix-plans/blocking-errors-section-split-plan.md`. Text output now
+renders ERROR-severity findings in `## Blocking errors (must fix before run)`
+between Summary and Recommended actions, with no savings column. WARNING/INFO
+findings remain in `## Recommended actions`. JSON now emits symmetric
+`blocking_errors[]` and `recommended_actions[]` arrays, both always present;
+errors are removed from `recommended_actions[]`.
+
+Simplifications shipped with the split:
+
+- Removed analyze-cache JSON `format_version` / `JSON_FORMAT_VERSION_MAJOR`
+  constants and package re-exports. No in-tree programmatic consumer used
+  them; tests now assert the current key shape instead of a version ceremony.
+- Deleted the `analyze.py::_build_recommended_actions` compatibility shim.
+  Tests import `build_recommended_actions` / `build_blocking_errors` from
+  `view_helpers`, matching production renderers.
+
+Files touched:
+
+- Production/docs: `view_helpers.py`, `render_text.py`, `render_json.py`,
+  `__init__.py`, `analyze.py`, `warning_catalog.py`, MCP analyze-cache
+  docstrings, `cache_analysis/CLAUDE.md`.
+- Tests: renderer, analyzer helper, CLI, MCP, per-ID coverage tests.
+
+Verification:
+
+- Focused: 174 passed across cache-analysis renderer/analyzer/per-ID, CLI,
+  and MCP tests.
+- Broad sandbox: 6223 passed, 18 skipped using the sandbox-safe pytest command
+  with the five known Homebrew-`uv` subprocess exclusions.
+- Static: `ruff check`, `ruff format --check`, `mypy src`, and `deptry src`
+  clean. Direct `.venv/bin/pre-commit run -a` reached the code hooks cleanly
+  but failed in `end-of-file-fixer` with sandbox `PermissionError` opening
+  `.agents/skills/pflow-sandbox-testing/agents/openai.yaml`; no task files
+  were changed by the failed hook.
+- Manual CLI: order-mismatch scratchpad renders Blocking errors only and JSON
+  has two `blocking_errors` plus empty `recommended_actions`; mixed-model
+  scratchpad renders Recommended actions only.
+
+Plan deviation / stale fixture note:
+
+- The plan expected the existing `error-ux-tests/order-mismatch.pflow.md`
+  scratchpad to show 2 blocking errors plus 2 opportunities. In the current
+  worktree it resolves no model, so below-min/write-penalty opportunities do
+  not fire there. I did not edit the scratchpad just to satisfy the manual
+  example; production tests cover the mixed error+opportunity split, and the
+  manual checks verified the two real current fixture shapes separately.
+
+Critical insights:
+
+1. **Severity belongs in the view split, not the data model.** Keeping
+   `warnings` as the raw SSoT and deriving two ranked projections avoided a
+   second copy of findings while making text/JSON parity straightforward.
+2. **Local ranks are clearer than global ranks after a split.** Each array /
+   section starts at rank 1, so agents can treat Blocking errors and
+   Recommended actions as independent work queues.
+3. **Version constants without a consumer gate are ceremony.** The trace
+   format still needs `format_version` because readers gate on it. Analyze-cache
+   JSON had no equivalent in-tree gate, so shape assertions are the stronger
+   contract here.

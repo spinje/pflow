@@ -380,10 +380,8 @@ class ExecutionService(BaseService):
                 prompt).
 
         Returns:
-            JSON dict with stable schema; ``format_version`` follows
-            ``JSON_FORMAT_VERSION``. Consumers should match
-            ``format_version.startswith("4.")`` (accept any minor ``4.x``,
-            reject major ``5.x``).
+            JSON dict with the same schema as ``pflow analyze-cache
+            --format=json``.
 
         Raises:
             ValueError: workflow path unparseable, validation prevents IR

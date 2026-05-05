@@ -4,11 +4,12 @@ Implements spec § "Output Format — Text" with section ordering:
 
 1. Header (workflow path, scale, confidence label — only when actionable).
 2. Summary (cost tri-state — partial / unavailable rendering).
-3. Recommended actions (rank-ordered) — the canonical warnings view.
-4. Suggested ## Cache block(s) — greenfield-only.
-5. Cross-workflow alignment (Tier 2) — only when findings exist.
-6. Per-call cache report (default-hide-clean unless ``--all-rows``).
-7. Notes (info notes appended in the analyzer's locked order).
+3. Blocking errors (rank-ordered) — must-fix validation findings.
+4. Recommended actions (rank-ordered) — optimization opportunities.
+5. Suggested ## Cache block(s) — greenfield-only.
+6. Cross-workflow alignment (Tier 2) — only when findings exist.
+7. Per-call cache report (default-hide-clean unless ``--all-rows``).
+8. Notes (info notes appended in the analyzer's locked order).
 
 Cost tri-state contract (Suggestion 26):
 
@@ -41,7 +42,7 @@ from collections.abc import Iterable
 
 from pflow.core.diagnostic import Diagnostic
 
-from .analyze import AnalysisSummary, CacheAnalysis, PerCallRow
+from .analyze import AnalysisSummary, CacheAnalysis, PerCallRow, RecommendedAction
 
 _HIDDEN_RATIO_THRESHOLD = 80
 
@@ -51,6 +52,10 @@ def render_text(analysis: CacheAnalysis, *, all_rows: bool = False) -> str:
     lines: list[str] = []
     lines.append(_render_header(analysis))
     lines.append(_render_summary(analysis))
+
+    errors = _render_blocking_errors(analysis)
+    if errors:
+        lines.append(errors)
 
     actions = _render_recommended_actions(analysis)
     if actions:
@@ -451,46 +456,74 @@ def _format_dollar_amount(value: float) -> str:
     return "~<$0.0001"
 
 
+def _render_blocking_errors(analysis: CacheAnalysis) -> str:
+    """Render must-fix findings separately from optimization opportunities."""
+    from .view_helpers import build_blocking_errors
+
+    actions = build_blocking_errors(list(analysis.warnings))
+    if not actions:
+        return ""
+    return _render_action_list(
+        header="## Blocking errors (must fix before save and run)",
+        intro="",
+        actions=actions,
+        workflow_path=analysis.workflow_path,
+        show_savings=False,
+    )
+
+
 def _render_recommended_actions(analysis: CacheAnalysis) -> str:
-    """Render the agent-skim list: action headline + scope + reason paragraph.
-
-    Stage 0 (Task 159): the ranked list is computed on demand from
-    ``analysis.warnings`` via ``view_helpers.build_recommended_actions`` (no
-    longer a pre-computed field on ``CacheAnalysis``). Cross-workflow
-    alignment findings (rename, prose-mismatch) are filtered out by the view
-    helper — they render in the "Sub-workflow boundaries" section.
-
-    Stage-1 final UX pass: dropped the ``[cache.X]`` bracket prefix (visually
-    coded category names as error codes — top-10% codebases like mypy/ruff
-    don't bracket long namespaced descriptors). Headline now leads from the
-    catalog's ``headline_template`` ("<category> — <action>"); scope on its
-    own line; descriptive message indented underneath as the reason.
-    """
+    """Render optimization findings as action headline + scope + reason."""
     from .view_helpers import build_recommended_actions
 
     actions = build_recommended_actions(list(analysis.warnings))
     if not actions:
         return ""
-    # Stage B.4 (Task 159): one-time block-level intro replaces per-finding
-    # mechanic explanations. Each item below is one ## Cache edit; the intro
-    # carries the "why caching matters" context once instead of repeating it
-    # in every finding's reason paragraph.
-    lines = [
-        "## Recommended actions (ordered by impact)",
-        "",
-        "  Each item below is one edit that unlocks LLM-provider caching.",
-        "  Declared values are sent once and reused at 0.1× input cost.",
-        "",
-    ]
+    return _render_action_list(
+        header="## Recommended actions (ordered by impact)",
+        intro=(
+            "Each item below is one edit that unlocks LLM-provider caching.\n"
+            "Declared values are sent once and reused at 0.1× input cost."
+        ),
+        actions=actions,
+        workflow_path=analysis.workflow_path,
+        show_savings=True,
+    )
+
+
+def _render_action_list(
+    *,
+    header: str,
+    intro: str,
+    actions: list[RecommendedAction],
+    workflow_path: str,
+    show_savings: bool,
+) -> str:
+    """Render ranked action rows with optional savings column.
+
+    Stage-1 final UX pass: dropped the ``[cache.X]`` bracket prefix (visually
+    coded category names as error codes — top-10% codebases like mypy/ruff
+    don't bracket long namespaced descriptors). Headline leads from the
+    catalog's ``headline_template``; scope is on its own line; descriptive
+    message is indented underneath as the reason.
+    """
+    lines = [header, ""]
+    if intro:
+        for intro_line in intro.splitlines():
+            lines.append(f"  {intro_line}")
+        lines.append("")
     for action in actions:
         # Headline + savings on the rank line. Falls back to message when no
         # catalog headline (defense-in-depth for non-catalog diagnostics).
         title = action.headline or action.message or action.warning_id
-        savings = _format_savings_usd(action.estimated_savings_usd)
-        lines.append(f"  {action.rank}. {title}{_pad_savings(title, savings)}{savings}")
+        if show_savings:
+            savings = _format_savings_usd(action.estimated_savings_usd)
+            lines.append(f"  {action.rank}. {title}{_pad_savings(title, savings)}{savings}")
+        else:
+            lines.append(f"  {action.rank}. {title}")
         if action.node_id:
             scope_suffix = ""
-            if action.scope_workflow and action.scope_workflow != analysis.workflow_path:
+            if action.scope_workflow and action.scope_workflow != workflow_path:
                 scope_suffix = f" in {_short_workflow_label(action.scope_workflow)}"
             lines.append(f"     {action.node_id}{scope_suffix}")
         elif action.scope_workflow:

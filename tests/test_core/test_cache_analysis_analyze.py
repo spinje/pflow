@@ -1019,10 +1019,10 @@ def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() ->
 
 
 # ---------------------------------------------------------------------------
-# _build_recommended_actions sort priority (Tier 1 #1)
+# Recommended action view sort priority (Tier 1 #1)
 #
 # Defends: drop the ``priority`` dimension from the sort key in
-# ``_build_recommended_actions._key`` and the priority test fails — the
+# ``view_helpers._build_actions`` and the priority test fails — the
 # alphabetical tie-break re-buries actionable findings under informational
 # ones (the lyrics-generator regression we observed).
 # ---------------------------------------------------------------------------
@@ -1058,9 +1058,9 @@ def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     ``test_recommended_actions_filters_cross_workflow_alignment_ids`` for
     that contract.)
     """
-    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
 
-    actions = _build_recommended_actions([
+    actions = build_recommended_actions([
         _make_diag("cache.unused-chunk", Severity.INFO),
         _make_diag("cache.shared-context-undeclared", Severity.INFO),
     ])
@@ -1075,9 +1075,9 @@ def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
     boundaries" section. This keeps each finding visible in exactly ONE
     section (Stage 0 + B.3).
     """
-    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
 
-    actions = _build_recommended_actions([
+    actions = build_recommended_actions([
         _make_diag("cache.cross-workflow-rename-detected", Severity.INFO),
         _make_diag("cache.cross-workflow-prose-mismatch", Severity.INFO),
         _make_diag("cache.shared-context-undeclared", Severity.INFO),
@@ -1087,17 +1087,26 @@ def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
     assert ids == ["cache.shared-context-undeclared"], f"alignment IDs leaked into recommended actions: {ids}"
 
 
-def test_recommended_actions_severity_overrides_priority() -> None:
-    """ERROR severity always wins over priority — structural blockers come first."""
-    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+def test_blocking_errors_rank_deterministically_after_split() -> None:
+    """ERRORs no longer live in Recommended actions; their own list ranks locally."""
+    from pflow.core.cache_analysis.view_helpers import build_blocking_errors
 
-    actions = _build_recommended_actions([
-        _make_diag("cache.shared-context-undeclared", Severity.INFO),  # priority 10
-        _make_diag("cache.order-mismatch", Severity.ERROR),  # priority 5, ERROR
+    actions = build_blocking_errors([
+        _make_diag("llm.thinking-temperature-mismatch", Severity.ERROR),  # priority 5
+        _make_diag("cache.order-mismatch", Severity.ERROR),  # priority 5
     ])
-    # ERROR severity ranks above INFO regardless of priority dimension.
     assert actions[0].warning_id == "cache.order-mismatch"
-    assert actions[1].warning_id == "cache.shared-context-undeclared"
+    assert actions[1].warning_id == "llm.thinking-temperature-mismatch"
+
+
+def test_recommended_actions_filter_out_errors_after_split() -> None:
+    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+
+    actions = build_recommended_actions([
+        _make_diag("cache.order-mismatch", Severity.ERROR),
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),
+    ])
+    assert [a.warning_id for a in actions] == ["cache.shared-context-undeclared"]
 
 
 def test_recommended_actions_savings_orders_within_priority_tier() -> None:
@@ -1106,9 +1115,9 @@ def test_recommended_actions_savings_orders_within_priority_tier() -> None:
     Two same-priority IDs (priority 10) with different savings — higher
     savings ranks first.
     """
-    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
 
-    actions = _build_recommended_actions([
+    actions = build_recommended_actions([
         _make_diag("cache.dynamic-before-static", Severity.INFO, savings_usd=0.50),
         _make_diag("cache.shared-context-undeclared", Severity.INFO, savings_usd=2.10),
     ])
@@ -1122,15 +1131,39 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
     hasn't been added to the dict) gets ``DEFAULT_RECOMMENDED_ACTION_PRIORITY``
     (100 — lowest). Defensive: graceful degradation rather than KeyError.
     """
-    from pflow.core.cache_analysis.analyze import _build_recommended_actions
+    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
 
-    actions = _build_recommended_actions([
+    actions = build_recommended_actions([
         _make_diag("cache.future-unknown-id", Severity.INFO),  # no priority entry
         _make_diag("cache.shared-context-undeclared", Severity.INFO),  # priority 10
     ])
     # Known priority wins over default.
     assert actions[0].warning_id == "cache.shared-context-undeclared"
     assert actions[1].warning_id == "cache.future-unknown-id"
+
+
+def test_blocking_errors_filters_out_warnings_and_info() -> None:
+    from pflow.core.cache_analysis.view_helpers import build_blocking_errors
+
+    actions = build_blocking_errors([
+        _make_diag("cache.order-mismatch", Severity.ERROR),
+        _make_diag("cache.below-min-tokens", Severity.WARNING),
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),
+    ])
+    assert [a.warning_id for a in actions] == ["cache.order-mismatch"]
+
+
+def test_blocking_errors_rank_starts_at_one_independent_of_recommended_actions() -> None:
+    from pflow.core.cache_analysis.view_helpers import build_blocking_errors, build_recommended_actions
+
+    warnings = [
+        _make_diag("cache.order-mismatch", Severity.ERROR),
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),
+    ]
+    blocking = build_blocking_errors(warnings)
+    recommended = build_recommended_actions(warnings)
+    assert blocking[0].rank == 1
+    assert recommended[0].rank == 1
 
 
 # ---------------------------------------------------------------------------

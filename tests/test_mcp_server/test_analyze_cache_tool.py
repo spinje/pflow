@@ -5,7 +5,7 @@ two call sites, and ``render_json(analyze(...))`` is the single formatter the
 MCP tool reuses. Tests assert:
 - The MCP service returns the same JSON shape as CLI ``--format=json``.
 - Round-trips through json.dumps/loads cleanly (no Path/set leaking).
-- The tool docstring contains every catalog ID + version policy + tri-state.
+- The tool docstring contains every catalog ID + top-level shape + tri-state.
 """
 
 from __future__ import annotations
@@ -67,13 +67,13 @@ def _write_workflow(tmp_path: Path, content: str) -> Path:
 
 
 def test_service_returns_json_shape(tmp_path: Path) -> None:
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
-
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
     result = ExecutionService.analyze_cache(str(workflow_path))
     assert isinstance(result, dict)
-    assert result["format_version"] == JSON_FORMAT_VERSION
+    assert "format_version" not in result
     assert "summary" in result
+    assert "blocking_errors" in result
+    assert "recommended_actions" in result
     assert "warnings" in result
     assert "cross_workflow" in result
 
@@ -98,12 +98,10 @@ def test_service_empty_arrays_in_cross_workflow(tmp_path: Path) -> None:
 
 
 def test_service_with_parameters(tmp_path: Path) -> None:
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
-
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
     # Optional parameters per DD#35.
     result = ExecutionService.analyze_cache(str(workflow_path), {"topic": "climate change"})
-    assert result["format_version"] == JSON_FORMAT_VERSION
+    assert "blocking_errors" in result
 
 
 def test_service_raises_for_invalid_workflow_path() -> None:
@@ -122,8 +120,6 @@ def test_async_tool_wrapping_returns_dict(tmp_path: Path) -> None:
     ``CallToolResult`` without unwrapping."""
     import asyncio
 
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
-
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
     # FastMCP wraps the original async function in a FunctionTool; reach
     # through ``.fn`` to call the coroutine directly. Falls back to the tool
@@ -134,7 +130,7 @@ def test_async_tool_wrapping_returns_dict(tmp_path: Path) -> None:
 
     sync_result = ExecutionService.analyze_cache(str(workflow_path))
     assert isinstance(result, dict)
-    assert result["format_version"] == JSON_FORMAT_VERSION
+    assert "format_version" not in result
     # Strip the only non-deterministic field — ``analyzed_at`` uses
     # ``datetime.now`` per analyze.py:257. Both calls land within the same
     # second in practice, but exclude defensively so a tick-boundary doesn't
@@ -171,19 +167,10 @@ def _docstring_text() -> str:
     return desc or ""
 
 
-def test_docstring_contains_format_version() -> None:
+def test_docstring_contains_action_view_keys() -> None:
     doc = _docstring_text()
-    assert "format_version" in doc
-
-
-def test_docstring_contains_version_policy() -> None:
-    doc = _docstring_text()
-    assert "startswith" in doc
-    # Tightened post-Stage-0: single check on the current major. The OR-shaped
-    # check ``"1.x" in doc or "1.0" in doc`` accepted partial reverts (one
-    # half passes while the other regresses); the single-check shape catches
-    # the next major bump cleanly.
-    assert "3.x" in doc
+    assert "blocking_errors" in doc
+    assert "recommended_actions" in doc
 
 
 def test_docstring_contains_partial_cost_usd() -> None:

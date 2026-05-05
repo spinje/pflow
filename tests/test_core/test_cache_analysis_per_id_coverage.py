@@ -17,7 +17,6 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis import JSON_FORMAT_VERSION, JSON_FORMAT_VERSION_MAJOR
 from pflow.core.cache_analysis.warning_catalog import (
     CACHE_OPPORTUNITIES_NUDGE_ID,
     CACHE_WARNING_CATALOG,
@@ -280,25 +279,6 @@ def test_per_id_diagnostic_json_round_trip(warning_id: str) -> None:
     round_tripped = json.loads(json.dumps(payload))
     assert round_tripped == payload
     assert payload["id"] == warning_id
-
-
-# ---------------------------------------------------------------------------
-# JSON format_version contract
-# ---------------------------------------------------------------------------
-
-
-def test_json_format_version_consumer_rule_holds() -> None:
-    """Consumer rule: ``format_version.startswith(JSON_FORMAT_VERSION_MAJOR + ".")``
-    accepts current ``"4.x"`` AND any future ``"4.x"`` minor bump. Lock both.
-
-    Phase 5 (Task 159 cleanup) bumped 3.x → 4.0 — breaking field rename:
-    the three overloaded summary cost fields (``current_cost_per_run_usd``,
-    ``cost_without_caching_usd``, ``rerun_cost_per_run_usd``) were replaced
-    with five atomic primitives, each carrying one meaning regardless of
-    greenfield/trace context.
-    """
-    assert JSON_FORMAT_VERSION.startswith("4.")
-    assert JSON_FORMAT_VERSION.startswith(JSON_FORMAT_VERSION_MAJOR + ".")
 
 
 # ---------------------------------------------------------------------------

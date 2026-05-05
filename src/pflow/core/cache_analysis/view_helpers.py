@@ -6,9 +6,9 @@ the single source of truth for findings; ranked / categorized / filtered
 this shape — pre-computed views in the data model create duplication, drift,
 and ordering invariants that test fixtures encode incorrectly.
 
-The recommended-actions ranking and the cross-workflow alignment filter live
-here. Both renderers (``render_text``, ``render_json``) call into this module;
-no caller in ``analyze.py`` needs them.
+The blocking-errors / recommended-actions rankings and the cross-workflow
+alignment filter live here. Both renderers (``render_text``, ``render_json``)
+call into this module; no caller in ``analyze.py`` needs them.
 """
 
 from __future__ import annotations
@@ -50,26 +50,40 @@ _CROSS_WORKFLOW_ALIGNMENT_IDS: frozenset[str] = frozenset({
 def is_cross_workflow_alignment(diag: Diagnostic) -> bool:
     """Return True when the diagnostic belongs in the Sub-workflow boundaries section.
 
-    Used by ``_render_cross_workflow`` (include) and ``build_recommended_actions``
+    Used by ``_render_cross_workflow`` (include) and both action-view builders
     (exclude). Single source of truth for the renderer-side dispatch.
     """
     return diag.id in _CROSS_WORKFLOW_ALIGNMENT_IDS
 
 
 # ---------------------------------------------------------------------------
-# Recommended-actions ranking (relocated from analyze.py:2087)
+# Action-view ranking
 # ---------------------------------------------------------------------------
 
 
+def build_blocking_errors(warnings: list[Diagnostic]) -> list[RecommendedAction]:
+    """Project ERROR-severity findings into a ranked action list.
+
+    Cross-workflow alignment findings (rename, prose-mismatch) are filtered
+    out — they render in the "Sub-workflow boundaries" section instead.
+
+    Ranking reuses the same core key as recommended actions. The severity
+    dimension is degenerate inside this bucket because every eligible finding
+    is an ERROR, so priority then savings then stable ID decide ties.
+    """
+    eligible = [d for d in warnings if d.severity == Severity.ERROR and not is_cross_workflow_alignment(d)]
+    return _build_actions(eligible)
+
+
 def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAction]:
-    """Order findings by impact descending; rank starts at 1.
+    """Project WARNING + INFO findings into a ranked action list.
 
     Cross-workflow alignment findings (rename, prose-mismatch) are filtered
     out — they render in the "Sub-workflow boundaries" section instead.
 
     Sort key dimensions (lexicographic, all ascending after negation/inversion):
 
-    1. **Severity** (ERROR > WARNING > INFO) — structural blockers first.
+    1. **Severity** (WARNING > INFO) — higher-severity opportunities first.
     2. **Detection-class priority** (``RECOMMENDED_ACTION_PRIORITY`` in
        ``warning_catalog``) — actionable opportunities ahead of informational
        findings. Resolves the common "all INFO, no savings" case where
@@ -79,6 +93,12 @@ def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAct
        priority tier.
     4. **Stable alphabetical** on ``d.id`` — deterministic tie-break.
     """
+    eligible = [d for d in warnings if d.severity != Severity.ERROR and not is_cross_workflow_alignment(d)]
+    return _build_actions(eligible)
+
+
+def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
+    """Sort eligible findings and project them to ``RecommendedAction``."""
     # Local imports keep this module light and avoid a circular import with
     # ``analyze`` (RecommendedAction) and ``warning_catalog`` (priority table).
     from .analyze import RecommendedAction
@@ -98,11 +118,6 @@ def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAct
             savings = float(savings_value)
         return (-sev_weight, priority, -savings, d.id or "")
 
-    # Filter cross-workflow alignment findings out before ranking — they
-    # belong in the Sub-workflow boundaries section. Mutation contract:
-    # removing this filter causes rename + prose-mismatch findings to appear
-    # in BOTH sections (regression test in test_cache_analysis_renderers).
-    eligible = [d for d in warnings if not is_cross_workflow_alignment(d)]
     sorted_warnings = sorted(eligible, key=_key)
     actions: list[RecommendedAction] = []
     for rank, d in enumerate(sorted_warnings, start=1):
@@ -138,6 +153,7 @@ def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAct
 
 
 __all__ = [
+    "build_blocking_errors",
     "build_recommended_actions",
     "is_cross_workflow_alignment",
 ]

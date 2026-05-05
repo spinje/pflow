@@ -3430,30 +3430,6 @@ def _safe_pct_or_none(numerator: float | None, denominator: float | None) -> int
 
 
 # ---------------------------------------------------------------------------
-# Recommended actions
-# ---------------------------------------------------------------------------
-
-
-def _build_recommended_actions(
-    warnings: list[Diagnostic],
-) -> list[RecommendedAction]:
-    """Compatibility shim — relocated to ``view_helpers.build_recommended_actions``.
-
-    Stage 0 of the data-shape redesign moved this function to the renderer
-    layer (recommended actions are a presentation projection over a stable
-    findings list, not a data-model field). Direct callers — the 4 algorithm
-    tests at ``test_cache_analysis_analyze.py:670-734`` — keep working through
-    this shim; new callers should import from ``view_helpers`` directly.
-
-    Filters cross-workflow alignment findings (rename, prose-mismatch) to
-    match the unified renderer behavior; see ``view_helpers`` docstring.
-    """
-    from .view_helpers import build_recommended_actions
-
-    return build_recommended_actions(warnings)
-
-
-# ---------------------------------------------------------------------------
 # Gemini telemetry note (Spike 1 outcome — last in note ordering)
 # ---------------------------------------------------------------------------
 

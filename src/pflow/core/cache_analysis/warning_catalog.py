@@ -1210,7 +1210,7 @@ def resolve_headline_for(diag: Diagnostic) -> str:
     when ``context["child_workflow"]`` is present (mirrors the message
     dispatch in ``make_diagnostic``).
 
-    Used by ``analyze.py:_build_recommended_actions`` for the rank line and
+    Used by ``view_helpers.build_recommended_actions`` for the rank line and
     by ``render_text.py:_format_boundary_finding`` for the cross-workflow
     findings. Both consumers in the same package layer.
     """
