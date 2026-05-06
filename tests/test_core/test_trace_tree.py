@@ -554,6 +554,142 @@ def test_total_cost_includes_cached_when_kwarg_true() -> None:
     assert included == (pytest.approx(0.05), "trace")
 
 
+def test_total_cost_all_cached_llm_events_is_zero_trace() -> None:
+    """All memo-hit LLM events are known zero-cost evidence for this run.
+
+    A cached LLM event can retain the original ``llm_call.cost_usd`` for
+    diagnostics, but ``total_cost(include_cached=False)`` answers "what did
+    this run pay?" and must therefore report 0.0, not unavailable.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    tree = TraceTree.from_dict(
+        builder.trace(
+            workflow_path="parent.pflow.md",
+            nodes=[
+                builder.cached_llm_event_with_call("draft", cost_usd=0.05),
+                builder.cached_llm_event_with_call("review", cost_usd=0.03),
+            ],
+        )
+    )
+
+    assert tree.total_cost() == (0.0, "trace")
+    assert tree.total_cost(include_cached=True) == (pytest.approx(0.08), "trace")
+
+
+def test_total_cost_cached_llm_event_without_call_is_zero_trace() -> None:
+    """Older/minimal memo-hit traces can mark an LLM node cached without
+    retaining ``llm_call``. The cached LLM boundary is still observed
+    zero-cost evidence for this run.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    trace = builder.trace(
+        workflow_path="parent.pflow.md",
+        nodes=[{**builder.cached_llm_event("draft"), "node_type": "LLMNode"}],
+    )
+    tree = TraceTree.from_dict(trace)
+
+    assert tree.total_cost() == (0.0, "trace")
+
+
+def test_total_cost_cached_llm_batch_item_without_call_is_zero_trace() -> None:
+    """A cached item under an LLM batch is known zero-cost evidence even when
+    the memo-hit item does not retain its original ``llm_call``.
+    """
+    tree = TraceTree(
+        events=(
+            {
+                "node_id": "fanout",
+                "node_type": "LLMNode",
+                "batch_items": [{"index": 0, "cached": True}],
+            },
+        ),
+        format_version="2.1",
+    )
+
+    assert tree.total_cost() == (0.0, "trace")
+
+
+def test_total_cost_cached_non_llm_event_is_not_llm_cost_evidence() -> None:
+    """Cached shell/code-style events do not prove anything about LLM cost.
+
+    This is the negative side of the cached-boundary policy: a cached LLM
+    boundary is known zero-cost evidence, but a cached non-LLM boundary is not
+    LLM cost evidence at all.
+    """
+    tree = TraceTree(
+        events=(
+            {"node_id": "shell", "node_type": "ShellNode", "cached": True},
+            {"node_id": "workflow", "node_type": "WorkflowExecutor", "cached": True},
+        ),
+        format_version="2.1",
+    )
+
+    assert tree.total_cost() == (None, "unavailable")
+
+
+def test_total_cost_cached_workflow_boundary_does_not_leak_historical_child_cost() -> None:
+    """A cached workflow container is a paid-cost boundary.
+
+    Its historical ``sub_workflow_events`` are useful for diagnostics when
+    explicitly requested, but the current run paid $0 for the whole child
+    workflow.
+    """
+    tree = TraceTree(
+        events=(
+            {
+                "node_id": "call-child",
+                "node_type": "WorkflowExecutor",
+                "cached": True,
+                "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.08}}],
+            },
+        ),
+        format_version="2.1",
+    )
+
+    assert tree.cost_for_event(tree.events[0]) == (0.0, "trace")
+    assert tree.total_cost() == (0.0, "trace")
+    assert tree.total_cost(include_cached=True) == (pytest.approx(0.08), "trace")
+
+
+def test_total_cost_mixed_fresh_and_cached_workflow_boundary_sums_fresh_only() -> None:
+    tree = TraceTree(
+        events=(
+            {"node_id": "fresh", "node_type": "LLMNode", "llm_call": {"cost_usd": 0.05}},
+            {
+                "node_id": "cached-child",
+                "node_type": "WorkflowExecutor",
+                "cached": True,
+                "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.08}}],
+            },
+        ),
+        format_version="2.1",
+    )
+
+    assert tree.total_cost() == (pytest.approx(0.05), "trace")
+
+
+def test_total_cost_fresh_unpriced_plus_cached_boundary_is_trace_partial() -> None:
+    """Cached zero-cost evidence must not hide genuinely unpriced fresh work."""
+    tree = TraceTree(
+        events=(
+            {"node_id": "fresh-custom", "node_type": "LLMNode", "llm_call": {"cost_usd": None}},
+            {
+                "node_id": "cached-child",
+                "node_type": "WorkflowExecutor",
+                "cached": True,
+                "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.08}}],
+            },
+        ),
+        format_version="2.1",
+    )
+
+    assert tree.total_cost() == (0.0, "trace_partial")
+
+
 def test_walk_event_carries_workflow_path_via_edges() -> None:
     """Defends: for 2.1 traces (no per-event workflow_path field),
     ``cw_result.edges`` is the only attribution mechanism. Sub-workflow

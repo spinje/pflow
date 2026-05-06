@@ -23,7 +23,7 @@ If execution succeeds, present results concisely. Do not re-run.
 
 Run Options:
   --only <node>         Run just this node (upstream cached, downstream skipped)
-  --no-cache            Force fresh execution (bypass memo-cache)
+  --no-cache            Bypass pflow memo-cache reads
   --report              Generate per-node execution report
   -o, --output-key <key>  Extract specific output
   --validate-only       Validate without executing

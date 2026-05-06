@@ -7998,3 +7998,46 @@ agents to reason about.
 - #18: documented allowed `## Cache` TTL values (`5m`, `1h`) in guide and
   suggested-block output.
 
+## Stage 2 follow-up — Finding #17: all-memo trace cost is known zero (2026-05-06)
+
+Fixed the remaining `actually_paid_usd: null` paper-cut for all-memo traces by
+moving the policy into `TraceTree`, not into analyzer rendering. `TraceTree`
+now exposes `iter_actual_cost_events()` for the current-run cost view:
+
+- cached LLM trace events are paid-cost boundaries and yield observed
+  zero-cost evidence;
+- cached non-LLM events without LLM descendants do not contribute LLM cost
+  evidence;
+- historical cached descendants are not traversed unless `include_cached=True`;
+- fresh priced leaves sum normally;
+- fresh `cost_usd: None` leaves still downgrade to `trace_partial`;
+- empty/no-evidence traces remain `unavailable`.
+
+`cost_for_event()`, `cost_for_node()`, `cost_for_batch_item()`, and
+`total_cost()` now share this actual-run policy. The analyze-cache
+`TraceExecutionIndex` also uses the same iterator for current cost while
+keeping the existing `iter_llm_leaves()` pass for historical cached
+`llm_call` token recovery.
+
+Additional regression coverage:
+
+- all cached LLM events → `total_cost() == (0.0, "trace")`;
+- cached LLM event without retained `llm_call` → known zero;
+- cached LLM batch item without retained `llm_call` → known zero;
+- cached shell/workflow events without LLM descendants → `unavailable`, not a
+  fabricated LLM zero;
+- cached workflow boundary no longer leaks historical child cost;
+- mixed fresh + cached workflow boundary sums only fresh cost;
+- fresh unpriced + cached boundary remains `trace_partial`;
+- analyze-cache all-memo summary reports `actually_paid_usd == 0.0` and
+  `actually_paid_tier == "trace"`;
+- child workflow rollup no longer accepts `None` for memo-hit child cost.
+
+Also fixed two stale `pflow guide` wording lines from the earlier #13 cleanup
+(`--no-cache` now consistently says it bypasses pflow memo-cache reads, not all
+provider prompt caching). This was discovered by the full non-e2e suite and was
+not part of the trace-cost change.
+
+Filed follow-up GitHub issue #376 for the related but separate child-rollup
+confidence gap: `sub_workflow_rollup.per_workflow[]` carries
+`actually_paid_usd` but not the child-scope `actually_paid_tier`.

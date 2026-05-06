@@ -2705,7 +2705,7 @@ def test_build_trace_execution_index_excludes_cached_llm_cost() -> None:
     assert result.summary.actually_paid_usd == pytest.approx(0.05)
     assert result.summary.sub_workflow_rollup is not None
     child_entry = result.summary.sub_workflow_rollup.per_workflow[0]
-    assert child_entry.actually_paid_usd in (None, 0.0)
+    assert child_entry.actually_paid_usd == 0.0
 
 
 def test_actually_paid_and_trace_index_agree_on_memo_hit_child() -> None:
@@ -3038,8 +3038,9 @@ def test_memo_hit_trace_recovers_input_and_output_tokens_via_index(
     assert row.output_tokens_estimated == 76
     assert row.data_source == "trace"
     assert row.output_data_source == "trace"
-    # Bug 1 invariant: cached events must NOT inflate cost. The cost
-    # summation path skips them via the unchanged ``if leaf.is_cached:
-    # continue`` after index population.
+    # Bug 1 invariant: cached events must NOT inflate cost. They are
+    # observed zero-cost evidence for the current run, not unavailable.
     assert row.cost_usd == 0.0
     assert row.cost_data_source == "trace"
+    assert result.summary.actually_paid_usd == 0.0
+    assert str(result.summary.actually_paid_tier) == "trace"

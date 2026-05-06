@@ -1,15 +1,22 @@
 """Read-only traversal helpers for pflow workflow traces.
 
 Trace JSON has a small tree shape: top-level events, batch items inside an
-event, sub-workflow events nested under a parent event. Consumers need
-different policies (some skip cached subtrees, some recurse into sub-
-workflows, some stay shallow). One primitive — :meth:`TraceTree.walk` —
-yields every event in the tree; everything else (LLM-only filter, cost
-summation, batch-item cost, total cost) is a thin layer on top.
+event, sub-workflow events nested under a parent event. Consumers need two
+recursive views:
+
+- :meth:`TraceTree.walk` yields the structural event tree for inspection,
+  attribution, token recovery, and historical/audit views.
+- :meth:`TraceTree.iter_actual_cost_events` yields the current-run cost view,
+  where cached events are paid-cost boundaries: the cached boundary contributes
+  observed zero-cost evidence and historical descendants are not traversed.
+
+Cost helpers are thin layers over those views. Default cost methods answer
+"what did this run pay?"; ``include_cached=True`` switches to the historical
+audit view and sums retained cached ``llm_call`` costs.
 
 For one-level reads (immediate children of a single event) direct dict
-access is allowed and preferred. The walker primitive is for recursive
-traversal across the tree shape; flat per-event work doesn't need it.
+access is allowed and preferred. These traversal views are for recursive
+work across the trace tree; flat per-event work doesn't need them.
 """
 
 from __future__ import annotations
@@ -225,21 +232,50 @@ class TraceTree:
             if we.has_llm_call
         )
 
+    def iter_actual_cost_events(
+        self,
+        events: Iterable[Mapping[str, Any]] | None = None,
+        *,
+        descend_sub_workflows: bool = True,
+        edges: Mapping[str, str] | None = None,
+        owner_node_id: str | None = None,
+        workflow_path: str | None = None,
+        _tier: EventTier = "top",
+    ) -> Iterator[WalkEvent]:
+        """Yield events that contribute evidence to this run's LLM cost.
+
+        Cached LLM events are paid-cost boundaries: yield the cached boundary
+        itself as known zero-cost evidence and do not descend into its
+        historical children. Cached non-LLM events without LLM descendants do
+        not contribute LLM cost evidence. Non-cached events yield their LLM
+        calls and recurse normally.
+        """
+        source = self.events if events is None else events
+        for raw_event in source:
+            if not isinstance(raw_event, Mapping):
+                continue
+            yield from self._iter_actual_cost_event(
+                raw_event,
+                descend_sub_workflows=descend_sub_workflows,
+                edges=edges,
+                owner_node_id=owner_node_id,
+                workflow_path=workflow_path,
+                tier=_tier,
+                assume_llm_event=False,
+            )
+
     def cost_for_event(self, event: Mapping[str, Any], *, include_cached: bool = False) -> tuple[float | None, str]:
         """Return recorded cost for one event subtree, including child workflows.
 
-        Cached policy: when the EVENT itself is cached, return ``(0.0, "trace")``
-        unconditionally — this run paid $0 regardless of any historical
-        ``llm_call.cost_usd`` retained on the cached blob. Cached descendants
-        in batch_items or sub_workflow_events are similarly excluded from the
-        leaf sum unless ``include_cached=True``.
+        Cached policy: cached events are paid-cost boundaries. Default mode
+        returns what this run paid, so cached LLM subtrees contribute observed
+        zero cost and historical descendants are not traversed. Diagnostic
+        mode (``include_cached=True``) traverses cached descendants and sums
+        retained historical costs.
         """
-        if event.get("cached") and not include_cached:
-            return 0.0, "trace"
-        leaves = self.iter_llm_leaves((event,))
         if include_cached:
-            return self._sum_leaves(leaves)
-        return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)
+            return self._sum_leaves(self.iter_llm_leaves((event,)))
+        return self._sum_actual_cost_events(self.iter_actual_cost_events((event,)))
 
     def cost_for_node(self, node_id: str, *, include_cached: bool = False) -> tuple[float | None, str]:
         """Return recorded cost for one top-level node, excluding sub-workflows.
@@ -249,12 +285,9 @@ class TraceTree:
         event = self.event_for(node_id)
         if event is None:
             return None, "unavailable"
-        if event.get("cached") and not include_cached:
-            return 0.0, "trace"
-        leaves = self.iter_llm_leaves((event,), descend_sub_workflows=False)
         if include_cached:
-            return self._sum_leaves(leaves)
-        return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)
+            return self._sum_leaves(self.iter_llm_leaves((event,), descend_sub_workflows=False))
+        return self._sum_actual_cost_events(self.iter_actual_cost_events((event,), descend_sub_workflows=False))
 
     def cost_for_batch_item(self, item: Mapping[str, Any], *, include_cached: bool = False) -> tuple[float | None, str]:
         """Return recorded cost for one batch item dict.
@@ -268,23 +301,30 @@ class TraceTree:
 
         Cached policy: see :meth:`cost_for_event`.
         """
-        if item.get("cached") and not include_cached:
-            return 0.0, "trace"
-
-        leaves: list[WalkEvent] = []
-        if isinstance(item.get("llm_call"), Mapping):
-            leaves.append(
-                WalkEvent(
-                    event=item,
-                    owner_node_id=str(item.get("node_id", item.get("index", "?"))),
-                    tier="batch_item",
-                )
-            )
-        for sub_event in _mapping_events(item.get("events")):
-            leaves.extend(we for we in self.walk((sub_event,), _tier="sub_workflow_descendant") if we.has_llm_call)
         if include_cached:
+            leaves: list[WalkEvent] = []
+            if isinstance(item.get("llm_call"), Mapping):
+                leaves.append(
+                    WalkEvent(
+                        event=item,
+                        owner_node_id=str(item.get("node_id", item.get("index", "?"))),
+                        tier="batch_item",
+                    )
+                )
+            for sub_event in _mapping_events(item.get("events")):
+                leaves.extend(we for we in self.walk((sub_event,), _tier="sub_workflow_descendant") if we.has_llm_call)
             return self._sum_leaves(leaves)
-        return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)
+
+        return self._sum_actual_cost_events(
+            self._iter_actual_cost_batch_item(
+                item,
+                owner_node_id=str(item.get("node_id", item.get("index", "?"))),
+                workflow_path=None,
+                descend_sub_workflows=True,
+                edges=None,
+                assume_llm_event=True,
+            )
+        )
 
     def total_cost(
         self,
@@ -300,7 +340,130 @@ class TraceTree:
         )
         if include_cached:
             return self._sum_leaves(leaves)
-        return self._sum_leaves(leaf for leaf in leaves if not leaf.is_cached)
+        return self._sum_actual_cost_events(
+            self.iter_actual_cost_events(
+                descend_sub_workflows=descend_sub_workflows,
+                edges=edges,
+            )
+        )
+
+    def _iter_actual_cost_event(
+        self,
+        event: Mapping[str, Any],
+        *,
+        descend_sub_workflows: bool,
+        edges: Mapping[str, str] | None,
+        owner_node_id: str | None,
+        workflow_path: str | None,
+        tier: EventTier,
+        assume_llm_event: bool,
+    ) -> Iterator[WalkEvent]:
+        event_node_id = str(event.get("node_id", owner_node_id or "unknown"))
+        leaf_owner = owner_node_id or event_node_id
+        if event.get("cached"):
+            if _has_llm_cost_evidence(
+                event,
+                assume_llm_event=assume_llm_event,
+                descend_sub_workflows=descend_sub_workflows,
+            ):
+                event_workflow_path = workflow_path
+                if descend_sub_workflows and event.get("sub_workflow_events") and edges is not None:
+                    event_workflow_path = edges.get(event_node_id, workflow_path)
+                yield WalkEvent(event=event, owner_node_id=leaf_owner, tier=tier, workflow_path=event_workflow_path)
+            return
+
+        event_is_llm = _is_llm_like_event(event, assume_llm_event=assume_llm_event)
+        if isinstance(event.get("llm_call"), Mapping):
+            yield WalkEvent(event=event, owner_node_id=leaf_owner, tier=tier, workflow_path=workflow_path)
+
+        for item in event.get("batch_items") or []:
+            if not isinstance(item, Mapping):
+                continue
+            item_workflow_path = (
+                _resolved_child_workflow_from_event(item)
+                or (edges.get(event_node_id) if edges is not None else None)
+                or workflow_path
+            )
+            yield from self._iter_actual_cost_batch_item(
+                item,
+                owner_node_id=event_node_id,
+                workflow_path=item_workflow_path,
+                descend_sub_workflows=descend_sub_workflows,
+                edges=edges,
+                assume_llm_event=event_is_llm,
+            )
+
+        if descend_sub_workflows:
+            child_workflow_path = edges.get(event_node_id) if edges is not None else workflow_path
+            for sub_event in _mapping_events(event.get("sub_workflow_events")):
+                yield from self._iter_actual_cost_event(
+                    sub_event,
+                    descend_sub_workflows=True,
+                    edges=edges,
+                    owner_node_id=event_node_id,
+                    workflow_path=child_workflow_path,
+                    tier="sub_workflow_descendant",
+                    assume_llm_event=False,
+                )
+
+    def _iter_actual_cost_batch_item(
+        self,
+        item: Mapping[str, Any],
+        *,
+        owner_node_id: str,
+        workflow_path: str | None,
+        descend_sub_workflows: bool,
+        edges: Mapping[str, str] | None,
+        assume_llm_event: bool,
+    ) -> Iterator[WalkEvent]:
+        if item.get("cached"):
+            if _has_llm_cost_evidence(
+                item,
+                assume_llm_event=assume_llm_event,
+                descend_sub_workflows=descend_sub_workflows,
+                batch_item=True,
+            ):
+                yield WalkEvent(event=item, owner_node_id=owner_node_id, tier="batch_item", workflow_path=workflow_path)
+            return
+
+        if isinstance(item.get("llm_call"), Mapping):
+            yield WalkEvent(event=item, owner_node_id=owner_node_id, tier="batch_item", workflow_path=workflow_path)
+
+        if descend_sub_workflows:
+            for sub_event in _mapping_events(item.get("events")):
+                yield from self._iter_actual_cost_event(
+                    sub_event,
+                    descend_sub_workflows=True,
+                    edges=edges,
+                    owner_node_id=owner_node_id,
+                    workflow_path=workflow_path,
+                    tier="sub_workflow_descendant",
+                    assume_llm_event=False,
+                )
+
+    @staticmethod
+    def _sum_actual_cost_events(events: Iterable[WalkEvent]) -> tuple[float | None, str]:
+        total = 0.0
+        found_any = False
+        has_unpriced = False
+        for event in events:
+            if event.is_cached:
+                found_any = True
+                continue
+            call = event.llm_call
+            if call is None or "cost_usd" not in call:
+                continue
+            found_any = True
+            cost = call.get("cost_usd")
+            if cost is None:
+                has_unpriced = True
+            else:
+                total += float(cost)
+        if not found_any:
+            return None, "unavailable"
+        if has_unpriced:
+            return total, "trace_partial"
+        return total, "trace"
 
     @staticmethod
     def _sum_leaves(leaves: Iterable[WalkEvent]) -> tuple[float | None, str]:
@@ -328,6 +491,44 @@ def _mapping_events(value: Any) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, list):
         return ()
     return tuple(item for item in value if isinstance(item, Mapping))
+
+
+def _is_llm_like_event(event: Mapping[str, Any], *, assume_llm_event: bool) -> bool:
+    return assume_llm_event or event.get("node_type") == "LLMNode" or isinstance(event.get("llm_call"), Mapping)
+
+
+def _has_llm_cost_evidence(
+    event: Mapping[str, Any],
+    *,
+    assume_llm_event: bool,
+    descend_sub_workflows: bool,
+    batch_item: bool = False,
+) -> bool:
+    if _is_llm_like_event(event, assume_llm_event=assume_llm_event):
+        return True
+
+    parent_is_llm = _is_llm_like_event(event, assume_llm_event=assume_llm_event)
+    for item in event.get("batch_items") or []:
+        if isinstance(item, Mapping) and _has_llm_cost_evidence(
+            item,
+            assume_llm_event=parent_is_llm,
+            descend_sub_workflows=descend_sub_workflows,
+            batch_item=True,
+        ):
+            return True
+
+    if not descend_sub_workflows:
+        return False
+
+    child_events = _mapping_events(event.get("events") if batch_item else event.get("sub_workflow_events"))
+    return any(
+        _has_llm_cost_evidence(
+            child_event,
+            assume_llm_event=False,
+            descend_sub_workflows=True,
+        )
+        for child_event in child_events
+    )
 
 
 def _resolved_child_workflow_from_event(event: Mapping[str, Any]) -> str | None:

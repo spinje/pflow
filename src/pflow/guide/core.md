@@ -390,7 +390,7 @@ Caching is automatic — unchanged nodes return instantly on re-run. Use this:
 - Edit a prompt or parameter → re-run → only changed nodes re-execute
 - `--dry-run` — preview plan + historical cost/duration without executing (expensive LLM runs, verifying what an edit invalidated)
 - `--only <node>` — run just that node (upstream from cache, downstream skipped)
-- `--no-cache` — Force fresh execution (bypass memo-cache)
+- `--no-cache` — bypass pflow memo-cache reads; provider prompt caching may still apply
 - `cache: false` on a node — permanently opt out for nodes reading runtime state (date, git branch, env vars)
 - `pflow report` — when errors aren't enough, inspect per-node resolved inputs and outputs
 

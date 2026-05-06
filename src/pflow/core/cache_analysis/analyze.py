@@ -920,32 +920,22 @@ def _build_trace_execution_index(
             continue
         node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
         key = (leaf.workflow_path or root_workflow_path, node_id)
-        workflow_key = leaf.workflow_path or root_workflow_path
         # Always populate the call index — cached events carry historical
         # ``input_tokens`` / ``output_tokens`` preserved from the original
         # run, which downstream tier-1 token readers (``_estimate_row_tokens``)
-        # need to project costs for memo-hit-only traces. Cost summation is
-        # gated separately below.
+        # need to project costs for memo-hit-only traces. Current-cost
+        # summation happens in the actual-cost pass below.
         llm_calls_by_key.setdefault(key, dict(call))
-        if leaf.is_cached:
-            # Cached events: this run paid $0 (cache hit). Skip the cost
-            # summation only — the index population above gives token
-            # readers access to the historical llm_call data without
-            # inflating cost. Mirrors compute_actually_paid's
-            # total_cost(include_cached=False).
-            continue
-        if "cost_usd" not in call:
-            continue
-        found.add(key)
-        workflow_found.add(workflow_key)
-        cost = call.get("cost_usd")
-        if cost is None:
-            partial.add(key)
-            totals.setdefault(key, 0.0)
-            workflow_totals.setdefault(workflow_key, 0.0)
-        else:
-            totals[key] = totals.get(key, 0.0) + float(cost)
-            workflow_totals[workflow_key] = workflow_totals.get(workflow_key, 0.0) + float(cost)
+    for leaf in tree.iter_actual_cost_events(edges=edge_child_paths, workflow_path=root_workflow_path):
+        _record_trace_cost_leaf(
+            leaf,
+            root_workflow_path=root_workflow_path,
+            totals=totals,
+            workflow_totals=workflow_totals,
+            found=found,
+            workflow_found=workflow_found,
+            partial=partial,
+        )
     costs_by_key: dict[tuple[str | None, str], tuple[float | None, str]] = {
         key: (totals.get(key, 0.0), "trace_partial" if key in partial else "trace") for key in found
     }
@@ -957,6 +947,45 @@ def _build_trace_execution_index(
         workflows_with_trace=workflows_with_trace,
         current_cost_by_workflow=cost_by_workflow,
     )
+
+
+def _record_trace_cost_leaf(
+    leaf: Any,
+    *,
+    root_workflow_path: str,
+    totals: dict[tuple[str | None, str], float],
+    workflow_totals: dict[str | None, float],
+    found: set[tuple[str | None, str]],
+    workflow_found: set[str | None],
+    partial: set[tuple[str | None, str]],
+) -> None:
+    node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
+    key = (leaf.workflow_path or root_workflow_path, node_id)
+    workflow_key = leaf.workflow_path or root_workflow_path
+    if leaf.is_cached:
+        # Cached events are observed zero-cost boundaries for this run.
+        # Historical llm_call data remains indexed separately for token
+        # estimation, but current cost is zero.
+        found.add(key)
+        workflow_found.add(workflow_key)
+        totals.setdefault(key, 0.0)
+        workflow_totals.setdefault(workflow_key, 0.0)
+        return
+
+    call = leaf.llm_call
+    if call is None or "cost_usd" not in call:
+        return
+
+    found.add(key)
+    workflow_found.add(workflow_key)
+    cost = call.get("cost_usd")
+    if cost is None:
+        partial.add(key)
+        totals.setdefault(key, 0.0)
+        workflow_totals.setdefault(workflow_key, 0.0)
+    else:
+        totals[key] = totals.get(key, 0.0) + float(cost)
+        workflow_totals[workflow_key] = workflow_totals.get(workflow_key, 0.0) + float(cost)
 
 
 def _build_sub_workflow_rollup(
