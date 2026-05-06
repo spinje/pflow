@@ -29,6 +29,303 @@
 
 ---
 
+## Final verification plan
+
+Use this order when closing Task 159. It reflects the implementation log
+through 2026-05-06, including the Stage 2 follow-up fixes after the original
+provider-cache smoke tests.
+
+### Handoff trust boundary
+
+The two handoff docs change how to interpret this final pass:
+
+- **Verified**: the provider mechanism already met the spec target on real
+  Anthropic Haiku song-creator traces (`RUN-HAIKU-FINAL` = 48% fresh input
+  reduction, `RUN-HAIKU-RERUN` = ~99% rerun reduction). Do not spend money
+  re-proving this unless runtime prompt rendering, telemetry, trace cost
+  accounting, or the external lyrics-generator workflow changed.
+- **Primary remaining risk**: agent-facing UX and integration drift. Read full
+  `analyze-cache`, `--report`, guide, and JSON output; do not truncate with
+  `head`, because blocking errors and notes often appear below the first
+  screen.
+- **Agent UX is a first-class verification target**: a check does not pass
+  just because the command exits correctly. The output must tell a new agent
+  what happened, why it matters, and what concrete edit or next command to run.
+  Treat confusing wording, hidden caveats, stale terminology, missing warning
+  IDs, or ambiguous savings as verification failures.
+- **Provider truth**: Anthropic is the clean verification path. Gemini has
+  implicit cache that can fire without explicit `prompt_cache:`, so it is good
+  for compatibility checks but bad for spec-target proof.
+- **Model truth**: provider cache scope is exact-model scoped, not
+  provider-family scoped. Any mixed-model verification must preserve this
+  distinction.
+- **Finding #1 current contract**: Anthropic `reasoning_effort:
+  low|medium|high` with static `temperature != 1.0` is now expected to fail
+  validation via `llm.thinking-temperature-mismatch`. Do not expect pflow to
+  silently normalize the temperature.
+- **Out of scope for this final pass**: MCP parity. The CLI/analyzer/trace
+  surfaces below are the verification target.
+
+### Progress-log reading list
+
+The README is runnable on its own, but a final-verification agent should read
+these progress-log sections first to understand the trust boundaries behind
+the expected output:
+
+- `Segment 2 — Memo-hash gate (2026-04-29)` — why rendered
+  `prompt_cache:` content must affect memo hashes, while no-`prompt_cache`
+  workflows keep their old hash.
+- `Segment 3 — Rendering + Prewarm + Trace (2026-04-29)` and
+  `Post-segment-3 adversarial CLI verification + 2 bug fixes` — cache
+  rendering, prewarm, trace fields, and the dotted-path cache-rendering bug.
+- `Segment 4 — Analyzer + Docs (2026-04-29)` and
+  `Post-segment-4 follow-up: cost wiring + honest loose-ends audit` —
+  analyzer output shape, tri-state cost rules, and why `$0` vs unavailable is
+  load-bearing UX.
+- `Detect prompt-body / prompt_cache overlap (2026-05-04)` — why duplicated
+  cached chunks in prompt bodies are blocking errors.
+- `Stage 2 follow-up — ## Cached System in --report (trace 2.2.0)` — current
+  trace/report visibility contract and the 2.x consumer gate.
+- `Stage 2.1 follow-up — Anthropic 1h cost double-charge (2026-05-05)` —
+  Haiku 1h TTL pricing expectation.
+- `Stage 2 verification — comprehensive UX + spec-target audit (2026-05-05)`
+  — source of truth for the real-provider proof, Gemini confounding, and the
+  original 21 findings.
+- `Stage 2 follow-up — Finding #1: thinking + temperature validate-time check`
+  — current Anthropic reasoning/temperature contract.
+- `Stage 2 follow-up — Findings #11/#12: exact-model fragmentation + lone-write
+  penalty` and its `post-review fixes` section — exact-model scoping and
+  honest-unmeasurable behavior.
+- `Stage 2 follow-up — Finding #6: split blocking errors from recommendations`
+  — current text/JSON severity split.
+- `Stage 2 follow-up — Findings #4/#5: per-call cache telemetry surfaces` —
+  current `--report` and JSON telemetry expectations.
+- `Test-suite performance triage and isolation cleanup (2026-05-06)` —
+  current `make test` / `make test-e2e` split and why sandbox commands differ.
+- `Stage 2 follow-up — Findings #9/#10 + phantom-savings: unified
+  below-min-token detection` and `post-implementation review + tightening` —
+  below-min runtime warnings, provider-aware wording, phantom-savings
+  suppression, and missing-telemetry guard.
+- `Stage 2 follow-up — Finding #8: drift-aware analyze-cache auto-load` —
+  stale-trace/manual drift expectations.
+- `Stage 2 follow-up — Finding #7: LLM node count vs invocation count` —
+  batch/node/invocation summary expectations.
+- `Stage 2 status check — Findings #3, #14, #16` — sub-workflow cost
+  attribution, thinking-temperature validation, and skipped-chunk status.
+- `Stage 2 follow-up — Finding #21: child-scoped sub-workflow cache
+  recommendations` — child-owned cache declaration behavior.
+- `Stage 2 follow-up — Finding #17: all-memo trace cost is known zero` —
+  all-memo rerun cost expectations.
+
+### 1. Automated regression gate
+
+These tests verify the fixed implementation contracts without spending LLM
+budget. In a normal local shell, run:
+
+```bash
+make test
+make test-e2e
+make check
+```
+
+In Codex sandbox mode, avoid `uv run` and write pflow state under
+`/private/tmp`:
+
+```bash
+HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest -n 4 \
+  --doctest-modules \
+  --ignore=tests/test_nodes/test_llm/test_llm_integration.py \
+  -m "not e2e"
+
+HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest -n 4 \
+  --dist=worksteal \
+  --doctest-modules \
+  --ignore=tests/test_nodes/test_llm/test_llm_integration.py \
+  -m e2e
+
+.venv/bin/ruff check
+.venv/bin/ruff format --check
+.venv/bin/mypy src
+.venv/bin/deptry src
+```
+
+If the full gate fails, start with this focused cache sweep before debugging
+unrelated failures:
+
+```bash
+HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest \
+  tests/test_core/test_cache_analysis_analyze.py \
+  tests/test_core/test_cache_analysis_token_estimation.py \
+  tests/test_core/test_cache_analysis_renderers.py \
+  tests/test_core/test_cache_analysis_per_id_emission.py \
+  tests/test_core/test_cache_analysis_per_id_coverage.py \
+  tests/test_core/test_cache_analysis_warnings.py \
+  tests/test_core/test_cache_analysis_summarize.py \
+  tests/test_core/test_cache_analysis_cross_workflow.py \
+  tests/test_core/test_ir_schema_cache.py \
+  tests/test_core/test_cache_opt_out_parser.py \
+  tests/test_core/test_prompt_cache_validation.py \
+  tests/test_core/test_trace_report.py \
+  tests/test_cli/test_dry_run.py \
+  tests/test_execution/test_plan_cache_nudge.py \
+  tests/test_execution/test_plan_drift.py \
+  tests/test_execution/test_runner.py \
+  tests/test_nodes/test_llm/test_batch_cache_prefix.py \
+  tests/test_nodes/test_llm/test_prompt_cache_rendering.py \
+  tests/test_runtime/test_cache_opt_out.py \
+  tests/test_runtime/test_cache_opt_out_compiler.py \
+  tests/test_runtime/test_prompt_cache_compile.py \
+  tests/test_runtime/test_prompt_cache_hash.py \
+  tests/test_runtime/test_trace_format_2_2.py \
+  tests/test_runtime/test_trace_integration.py \
+  tests/test_runtime/test_workflow_trace.py
+```
+
+### 2. Free CLI UX checks
+
+These catch renderer, validator, guide, JSON, and autoload behavior that unit
+tests cover but humans still need to inspect for agent readability. Evaluate
+these as UX surfaces, not just command outputs:
+
+```bash
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow guide caching
+
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow \
+  scratchpads/stage2-verification/error-ux-tests/order-mismatch.pflow.md \
+  --validate-only a="hello" b="world"
+
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow analyze-cache \
+  scratchpads/stage2-verification/error-ux-tests/order-mismatch.pflow.md \
+  a="hello" b="world"
+
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow analyze-cache \
+  scratchpads/stage2-verification/error-ux-tests/order-mismatch.pflow.md \
+  --format=json a="hello" b="world"
+```
+
+Expected signal:
+- `pflow guide caching` says `--no-cache` disables only pflow's memo layer,
+  not provider prompt caching.
+- `ttl` docs mention only `5m` and `1h`.
+- Blocking errors render in `## Blocking errors (must fix before save and run)`.
+- JSON has `blocking_errors[]` and `recommended_actions[]`; errors are not
+  duplicated into recommendations.
+
+### 3. Analyzer regression checks on scratch fixtures
+
+Run the synthetic fixtures after the automated gate. These are cheap and catch
+the fixes most likely to regress through text/JSON drift:
+
+```bash
+CTX="$(cat scratchpads/stage2-verification/gemini-smoke/reference.md)"
+
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow analyze-cache \
+  scratchpads/stage2-verification/mixed-model-test/mixed-model.pflow.md \
+  --format=json context="$CTX"
+
+HOME=/private/tmp/pflow-test-home .venv/bin/pflow analyze-cache \
+  scratchpads/stage2-verification/cross-workflow-test/parent.pflow.md \
+  --format=json shared_doc="$CTX"
+```
+
+Expected signal:
+- Mixed-model fixture emits `cache.first-call-write-penalty` when token data is
+  measurable. `cache.heterogeneous-models-fragment-cache` may be silent when
+  exact shared-chunk token data is unavailable; this is intentional
+  honest-unmeasurable behavior, not a failure.
+- The checked-in cross-workflow fixture has a child `## Cache`, so it should
+  suppress `cache.sub-workflow-cache-undeclared`. To verify the positive #21
+  path manually, copy `child.pflow.md`, remove the child `## Cache` block and
+  `prompt_cache:` declarations, point `parent.pflow.md` at the copy, then run
+  `analyze-cache`; parent `## Cache` must not suppress the child-scoped
+  recommendation.
+- Suggested blocks include per-node threshold information and allowed TTL
+  values.
+
+### 4. Real provider smoke
+
+Only run this if API keys are available. This verifies the actual rendering
+layer still reaches providers after all analyzer/report work:
+
+```bash
+CTX="$(cat scratchpads/stage2-verification/anthropic-haiku/reference.md)"
+
+uv run pflow settings llm set-default anthropic/claude-haiku-4-5
+
+uv run pflow scratchpads/stage2-verification/anthropic-haiku/smoke-no-cache.pflow.md \
+  --report --no-cache context="$CTX"
+
+uv run pflow scratchpads/stage2-verification/anthropic-haiku/smoke-with-cache.pflow.md \
+  --report --no-cache context="$CTX"
+
+uv run pflow scratchpads/stage2-verification/anthropic-haiku/smoke-with-cache.pflow.md \
+  --report --no-cache context="$CTX"
+```
+
+Expected signal:
+- Fresh with-cache run: one Anthropic cache write plus later cache reads.
+- Rerun within TTL: all calls show cache reads.
+- `--report` includes `## Cached System`, `## Cache telemetry`, warning IDs
+  where applicable, and no stale `memo`/`in_process` implementation wording.
+- Analyze the freshest trace with `pflow analyze-cache --from-trace <trace>`
+  and confirm per-call JSON includes raw
+  `cache_creation_input_tokens` / `cache_read_input_tokens`.
+
+### 5. Spec-target check
+
+The historical Haiku song-creator traces already prove the locked target:
+`RUN-HAIKU-FINAL` hit 48% fresh input-cost reduction and
+`RUN-HAIKU-RERUN` hit about 99% rerun reduction. Re-run the paid
+song-creator workflow only if code changes touched runtime prompt rendering,
+provider telemetry, trace cost accounting, or the external lyrics-generator
+workflow.
+
+If re-run is justified, use Anthropic Haiku, not Gemini, because Gemini's
+implicit cache confounds explicit `prompt_cache:` measurement. Before running,
+validate the external workflow and inspect that the prior Finding #1
+workarounds are no longer needed if `llm.thinking-temperature-mismatch` is
+now enforced.
+
+### Manual things worth testing hard
+
+These are the edges the implementation log says were most likely to hide
+silent failures:
+
+- **Trace autoload drift**: run `analyze-cache` against a workflow, rename one
+  root LLM node or change its static model, then run `analyze-cache` again
+  without `--from-trace`. It should silently discard the stale trace. Explicit
+  `--from-trace` should still load it.
+- **All-memo cost**: run a cached workflow once, then rerun without
+  `--no-cache`; `analyze-cache --from-trace` should report
+  `actually_paid_usd: 0.0` with tier `trace`, not `null`.
+- **Below-min runtime warning**: run a tiny Anthropic cached prompt below that
+  model's minimum. It should warn after the run using
+  `cache.below-min-tokens`. Missing provider telemetry should not fabricate
+  this warning.
+- **Skipped chunks**: use a workflow where one `prompt_cache:` chunk is below
+  provider minimum or dropped by the renderer. `--report` should surface
+  `cache_chunks_skipped`, and `analyze-cache` discrepancy attribution should
+  say `chunk_skipped`.
+- **Batch language**: analyze one static inline batch and one dynamic batch.
+  Summary should distinguish LLM node count from invocation count and expose
+  `dynamic_batch_node_count` in JSON when the invocation count is unknown.
+- **Sub-workflow attribution**: use parent/child workflows with same node IDs
+  in different files. Costs and cache recommendations must be scoped by
+  `(workflow_path, node_id)`, not node ID alone.
+- **Dry-run cache nudge**: run `--dry-run` on a workflow with actionable cache
+  opportunities and confirm `cache.opportunities-available` appears with
+  readable savings context. Run it on an already-optimal workflow and confirm
+  the nudge is silent.
+- **Cache-layer independence**: `cache: false` and `--no-cache` disable pflow
+  memo reads only. They must not remove rendered provider `prompt_cache:`
+  content, and workflows without `prompt_cache:` must keep their pre-task memo
+  hash.
+- **Prewarm remains opt-in**: `cache.batch-prewarm-recommended` should be
+  advisory in `analyze-cache` / `--dry-run`; plain `pflow run` should not block
+  or auto-enable `prewarm: true`.
+
+---
+
 ## Prerequisites
 
 Most tests require a default LLM model configured. **Always check first**:
@@ -183,9 +480,11 @@ uv run pflow scratchpads/stage2-verification/anthropic-haiku/smoke-with-cache.pf
 - 7 per-node `prompt_cache:` declarations
 - Prompts cleaned of duplicate references (no `${concept.title}` etc.
   in prompt bodies — those are now in cache)
-- `reasoning_effort: none` on score-choruses + 9 review sub-workflows
-  + generate-suno-prompt (workaround for Finding #1; revert when
-  the pflow translation bug is fixed)
+- Finding #1 is now fixed as `llm.thinking-temperature-mismatch`.
+  `reasoning_effort: low|medium|high` with static Anthropic
+  `temperature != 1.0` should fail validation. If the external workflow
+  still carries `reasoning_effort: none` workarounds from the old run,
+  treat them as test-era edits, not required cache configuration.
 
 **Run with Haiku** (clean spec-target, ~$0.86 fresh / $0.01 rerun):
 ```bash
@@ -252,12 +551,10 @@ uv run pflow analyze-cache \
   (`gemini/gemini-2.5-flash` + `anthropic/claude-haiku-4-5`), both
   reference the same `${context}` via `## Cache`
 
-**What it tests** (Finding #11): **does cache fragment across
-non-matching exact models?** Two nodes share `## Cache` declaration
-but use different models — pflow should warn that the cache won't
-share (each model gets its own namespace), or the analyzer's projected
-savings would be misleading. **Currently no warning fires** — that's
-the gap to fix.
+**What it tests** (Findings #11/#12): **does cache fragment across
+non-matching exact models, and does a lone exact-model cache write get
+flagged?** Two nodes share `## Cache` declaration but use different
+models, so each exact model has its own provider cache namespace.
 
 **Run**:
 ```bash
@@ -273,13 +570,19 @@ uv run pflow scratchpads/stage2-verification/mixed-model-test/mixed-model.pflow.
   cache_creation telemetry)
 - DIFFERENT cache_keys per call (proves separate namespaces)
 
-**Verify analyze-cache silence**:
+**Verify analyze-cache**:
 ```bash
 uv run pflow analyze-cache scratchpads/stage2-verification/mixed-model-test/mixed-model.pflow.md \
   context="$CTX"
-# Should report 0-1 opportunities, NO `cache.heterogeneous-models-fragment-cache` warning.
-# When the fix lands, the warning should fire here.
 ```
+
+Expected now:
+- `cache.first-call-write-penalty` should fire for the Anthropic single-call
+  group when pricing/token evidence is measurable.
+- `cache.heterogeneous-models-fragment-cache` should fire only when exact
+  shared-chunk token evidence is measurable. If it is silent because the
+  shared chunk is unmeasurable, that is the intended honest-unmeasurable
+  behavior after the precise per-chunk math fix.
 
 ---
 
@@ -289,10 +592,11 @@ uv run pflow analyze-cache scratchpads/stage2-verification/mixed-model-test/mixe
 - `parent.pflow.md` — declares `## Cache` with `${shared_doc}`, calls child
 - `child.pflow.md` — receives `shared_doc`, ALSO declares its own `## Cache`
 
-**What it tests** (Finding #21): **cache_keys are workflow-scoped**.
-Even when parent + child both declare `## Cache` with identical content
-and the same model, their cache_keys differ. Cross-workflow cache only
-"works" via Gemini's implicit cache (Anthropic wouldn't share).
+**What it tests** (Finding #21): **cache_keys are workflow-scoped** and
+child cache declarations are child-owned. Even when parent + child both
+declare `## Cache` with identical content and the same model, their
+cache_keys differ. Cross-workflow cache only "works" via Gemini's
+implicit cache (Anthropic wouldn't share).
 
 **Run**:
 ```bash
@@ -306,6 +610,10 @@ uv run pflow scratchpads/stage2-verification/cross-workflow-test/parent.pflow.md
 - BUT both got cache_read on Gemini (implicit cache fires regardless)
 - On Anthropic: child-call would NOT cache_read (different cache_key,
   no implicit cache compensation)
+- `analyze-cache` should not emit `cache.sub-workflow-cache-undeclared` for
+  this checked-in fixture because the child has its own `## Cache`. To test
+  the positive diagnostic, remove the child cache block in a scratch copy and
+  confirm the new ID fires; parent cache must not suppress it.
 
 ---
 
@@ -320,7 +628,9 @@ uv run pflow scratchpads/stage2-verification/cross-workflow-test/parent.pflow.md
   referenced by any LLM node → triggers `cache.unused-chunk` warning
 
 **What it verifies**: validator catalog entries fire correctly with
-actionable error messages.
+actionable error messages. In `analyze-cache` text output, ERROR-severity
+items should render under `## Blocking errors (must fix before save and run)`,
+not under `## Recommended actions`.
 
 **Run** (all are `--validate-only`, no LLM cost):
 ```bash
