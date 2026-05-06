@@ -20,6 +20,7 @@ from pflow.core.cache_analysis.analyze import (
 )
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.execution.workflow_resolver import resolve_workflow
+from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 # ---------------------------------------------------------------------------
 # Confidence aggregation — STRICT semantics per DD#34 line 634 verbatim
@@ -770,6 +771,7 @@ def _write_trace(
     *,
     workflow_path: str,
     format_version: str,
+    nodes: list[dict[str, Any]] | None = None,
     workflow_name: str = "x",
 ) -> Path:
     """Write a synthetic trace under the production filename schema.
@@ -777,6 +779,10 @@ def _write_trace(
     Uses ``format_trace_filename`` so the test fixture matches the same hash
     prefix the autoload reader globs by — without that, autoload skips the
     file even when contents match.
+
+    The trace body uses the production ``nodes`` key (events list); a
+    pre-existing ``events`` shape was test-fixture-only and never matched
+    real traces. New consumers walk ``trace_data["nodes"]`` via TraceTree.
     """
     from pflow.runtime.workflow_trace import format_trace_filename
 
@@ -785,10 +791,45 @@ def _write_trace(
     name = format_trace_filename(workflow_path, workflow_name, timestamp)
     path = debug_dir / name
     path.write_text(
-        json.dumps({"format_version": format_version, "workflow_path": workflow_path, "events": []}),
+        json.dumps({"format_version": format_version, "workflow_path": workflow_path, "nodes": nodes or []}),
         encoding="utf-8",
     )
     return path
+
+
+def _llm_ir_node(
+    node_id: str = "ask",
+    *,
+    model: str | None = "anthropic/claude-haiku-4-5",
+) -> dict[str, Any]:
+    node: dict[str, Any] = {
+        "id": node_id,
+        "type": "llm",
+        "params": {"prompt": "Answer briefly."},
+    }
+    if model is not None:
+        node["model"] = model
+        node["params"]["model"] = model
+    return node
+
+
+def _autoload_analysis(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    workflow_ir: dict[str, Any],
+    trace_nodes: list[dict[str, Any]],
+    workflow_path: str = "/abs/x.pflow.md",
+) -> tuple[CacheAnalysis, Path]:
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    trace_path = _write_trace(
+        fake_home / ".pflow" / "debug",
+        workflow_path=workflow_path,
+        format_version="2.2.0",
+        nodes=trace_nodes,
+    )
+    return analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=True), trace_path
 
 
 def test_autoload_finds_2_1_0_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -800,6 +841,241 @@ def test_autoload_finds_2_1_0_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     workflow_ir = {"nodes": []}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
     assert result.trace_path == str(path)
+
+
+def test_autoload_skips_when_trace_models_differ_from_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, _ = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node(model="anthropic/claude-haiku-4-5")]},
+        trace_nodes=[builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
+    )
+    assert result.trace_path is None
+
+
+def test_autoload_skips_when_root_node_ids_differ_from_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, _ = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node("ask-question")]},
+        trace_nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+    )
+    assert result.trace_path is None
+
+
+def test_autoload_skips_when_root_node_added_in_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, _ = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node("ask"), _llm_ir_node("summarize")]},
+        trace_nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+    )
+    assert result.trace_path is None
+
+
+def test_autoload_skips_when_root_node_removed_in_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, _ = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node("ask")]},
+        trace_nodes=[
+            builder.llm_event("ask", model="anthropic/claude-haiku-4-5"),
+            builder.llm_event("summarize", model="anthropic/claude-haiku-4-5"),
+        ],
+    )
+    assert result.trace_path is None
+
+
+def test_autoload_returns_trace_when_models_and_node_ids_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node()]},
+        trace_nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_proceeds_when_trace_has_no_root_llm_activity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node()]},
+        trace_nodes=[
+            {"node_id": "prepare", "node_type": "ShellNode", "success": True},
+            builder.workflow_event(
+                "child",
+                [builder.llm_event("child-ask", model="gemini/gemini-2.5-flash")],
+                workflow_path="/abs/child.pflow.md",
+            ),
+        ],
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_proceeds_when_ir_has_no_llm_nodes_and_trace_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [{"id": "prepare", "type": "shell", "params": {"command": "echo ok"}}]},
+        trace_nodes=[{"node_id": "prepare", "node_type": "ShellNode", "success": True}],
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_tolerates_root_heterogeneous_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "Score ${item.text}", "model": "${item.model}"},
+            },
+            _llm_ir_node("review", model="anthropic/claude-haiku-4-5"),
+        ]
+    }
+    trace_nodes = [
+        builder.batch_event(
+            "score",
+            [
+                {
+                    "index": 0,
+                    "success": True,
+                    "llm_call": {"model": "anthropic/claude-haiku-4-5"},
+                },
+                {
+                    "index": 1,
+                    "success": True,
+                    "llm_call": {"model": "gemini/gemini-2.5-flash"},
+                },
+            ],
+        ),
+        builder.llm_event("review", model="anthropic/claude-haiku-4-5"),
+    ]
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir=workflow_ir,
+        trace_nodes=trace_nodes,
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_includes_default_model_in_ir_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    builder = TraceFixtureBuilder()
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node(model=None)]},
+        trace_nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_skips_when_default_model_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    builder = TraceFixtureBuilder()
+    result, _ = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node(model=None)]},
+        trace_nodes=[builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
+    )
+    assert result.trace_path is None
+
+
+def test_autoload_normalizes_provider_prefix_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node(model="gemini-2.5-flash")]},
+        trace_nodes=[builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_excludes_cached_events_from_drift_signal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node("ask")]},
+        trace_nodes=[
+            builder.llm_event("ask", model="anthropic/claude-haiku-4-5"),
+            builder.cached_llm_event_with_call(
+                "old-ask",
+                model="gemini/gemini-2.5-flash",
+            ),
+        ],
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_ignores_sub_workflow_llm_events(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node("ask")]},
+        trace_nodes=[
+            builder.llm_event("ask", model="anthropic/claude-haiku-4-5"),
+            builder.workflow_event(
+                "child",
+                [builder.llm_event("child-ask", model="gemini/gemini-2.5-flash")],
+                workflow_path="/abs/child.pflow.md",
+            ),
+        ],
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_explicit_from_trace_bypasses_drift_check(tmp_path: Path) -> None:
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "/abs/x.pflow.md",
+            "nodes": [builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
+        }),
+        encoding="utf-8",
+    )
+    result = analyze(
+        {"nodes": [_llm_ir_node(model="anthropic/claude-haiku-4-5")]},
+        workflow_path="/abs/x.pflow.md",
+        trace_path=trace_path,
+        auto_load_trace=False,
+    )
+    assert result.trace_path == str(trace_path)
+
+
+def test_autoload_silent_skip_no_notes_appended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = TraceFixtureBuilder()
+    workflow_ir = {"nodes": [_llm_ir_node(model="anthropic/claude-haiku-4-5")]}
+    drifted, _ = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir=workflow_ir,
+        trace_nodes=[builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
+    )
+    baseline = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    assert drifted.trace_path is None
+    assert drifted.notes == baseline.notes
 
 
 def test_autoload_skips_unparseable_files_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

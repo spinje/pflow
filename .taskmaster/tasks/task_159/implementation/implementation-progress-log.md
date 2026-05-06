@@ -7830,3 +7830,57 @@ Three follow-up issues filed on `spinje/pflow`, all labeled `enhancement`:
    pin via runner pipeline. Worth filing the mock improvement (#375) as a
    first-class test-infrastructure enhancement rather than carrying the
    awkward unit test forward.
+
+## Stage 2 follow-up — Finding #8: drift-aware analyze-cache auto-load (2026-05-06)
+
+Implemented `fix-plans/auto-load-trace-ir-drift-plan.md`. `analyze-cache`
+auto-load now silently discards a discovered trace when its root-level LLM
+context no longer matches the current parent IR: root LLM node-id sets must be
+equal, and statically resolvable IR models must be present in the trace's
+observed root models. Explicit `--from-trace` bypasses the gate.
+
+Files changed:
+
+- `src/pflow/core/cache_analysis/analyze.py` — added `_trace_aligns_with_ir`
+  plus root trace / IR context collectors; inserted the auto-load-only gate
+  immediately after `_resolve_trace_data`.
+- `tests/test_core/test_cache_analysis_analyze.py` — added 15 autoload drift
+  tests covering model swaps, node rename/add/remove, no-root-LLM traces,
+  pure-shell IR, heterogeneous root batches, default-model changes, provider
+  prefix normalization, cached-event exclusion, sub-workflow exclusion,
+  explicit trace bypass, and silent skip notes.
+- `src/pflow/core/cache_analysis/CLAUDE.md` and `src/pflow/runtime/CLAUDE.md`
+  — documented the consumer contract and the trace fields it relies on.
+
+Deviation / adaptation:
+
+- The existing test helper wrote synthetic traces with an `events` key, but
+  production trace 2.x uses `nodes`. Updated the helper to write `nodes`
+  rather than teaching the new gate a non-production fixture shape.
+- The sub-workflow exclusion test initially put a relative workflow node in
+  the parent IR without a `base_path`; `walk_cross_workflow` correctly rejected
+  it before the drift gate mattered. The final test keeps the sub-workflow
+  event only on the trace side, which is the actual root-only invariant being
+  pinned.
+
+Mutation safety:
+
+- Verified the planned high-value mutants go red and restored each change:
+  removing model subset comparison breaks the model-swap/default-model tests;
+  bypassing node-id equality breaks rename detection; using batch item
+  `event_node_id` breaks heterogeneous batch tolerance; including cached
+  subtrees breaks cached-event exclusion; descending into sub-workflows breaks
+  root-only scoping; applying the gate to explicit traces breaks the
+  `--from-trace` escape hatch.
+
+Key learnings:
+
+1. **Trace-shape fidelity matters even in unit helpers.** The old `events`
+   fixture shape was harmless while autoload only checked metadata, but became
+   a false trust boundary once code started walking trace leaves.
+2. **Root-only scope is the right small contract.** The analyzer has only the
+   parent IR at the auto-load decision point; trying to validate child drift
+   there would couple this cheap gate to cross-workflow materialization.
+3. **Explicit-field comparison is enough at this scale.** The two fields
+   already consumed elsewhere (`node_id`, `llm_call.model`) catch the observed
+   drift without a trace-format bump or permanent fingerprint contract.

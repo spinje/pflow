@@ -176,6 +176,8 @@ The discrepancy stage and the actually-paid cost path read trace 2.1.0 fields th
 | `event["cache_age_sec"]` (cache-hit events only) | `apply_memo_hit` | reserved (TTL analysis) |
 | `trace["workflow_path"]` | `runtime/workflow_trace.py::WorkflowTraceCollector` (constructor accepts it; saved to JSON unconditionally) | autoload matching by `cache_analysis.analyze:_autoload_trace`; cross-trace correlation |
 
+Auto-load silently skips when the trace's root-level LLM `(node_id, model)` context drifts from the current IR. This mirrors the existing silent format-version / workflow-path miss behavior: `analyze-cache <workflow.pflow.md>` falls back to greenfield analysis, while explicit `--from-trace <path>` bypasses the drift gate. Sub-workflow drift is root-scoped out here; run `analyze-cache <child.pflow.md>` directly to catch child workflow changes.
+
 **2.0.0 traces lack these fields and are skipped by autoload.** Agents pass `--from-trace <path>` to use a 2.0.0 trace explicitly. `format_version.startswith("2.")` keeps 2.0.0 readers compatible (they ignore the new fields).
 
 **There is no Python type for this contract.** The fields are agreed-upon JSON keys. Producer and consumer must be kept in sync manually. A `TypedDict` is a candidate future addition.

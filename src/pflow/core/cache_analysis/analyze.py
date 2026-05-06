@@ -448,6 +448,12 @@ def analyze(
         memo_cache = _default_memo_cache()
 
     trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
+    # Auto-load only: if the workflow's current root-level LLM context drifted
+    # from the trace's recorded context, silently fall back to greenfield
+    # analysis. Explicit ``--from-trace`` bypasses this gate.
+    if trace_path is None and trace_data is not None and not _trace_aligns_with_ir(trace_data, workflow_ir):
+        trace_data = None
+        used_trace_path = None
 
     cache_block = workflow_ir.get("cache")
     declared_chunks = _extract_declared_chunks(cache_block)
@@ -704,6 +710,91 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
     return None, None
 
 
+def _trace_aligns_with_ir(trace_data: Mapping[str, Any], workflow_ir: Mapping[str, Any]) -> bool:
+    """Return whether an auto-loaded trace matches the current root LLM IR.
+
+    The comparison is intentionally explicit instead of fingerprint based:
+    root-level LLM node ids must match exactly, and statically-known IR models
+    must be present in the trace's observed root models. Templated IR models
+    are excluded because runtime batch values are not knowable from the IR
+    alone.
+    """
+    trace_node_ids, trace_models = _collect_root_trace_llm_context(trace_data)
+    if not trace_node_ids:
+        return True
+
+    if trace_node_ids != _collect_ir_llm_node_ids(workflow_ir):
+        return False
+
+    ir_models = _collect_ir_static_llm_models(workflow_ir)
+    return not ir_models or ir_models <= trace_models
+
+
+def _collect_root_trace_llm_context(trace_data: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Collect root-level executed LLM ``(node_id, model)`` context.
+
+    Cached subtrees and sub-workflow descendants are excluded because this gate
+    is only deciding whether a root workflow should auto-load a trace that
+    actually ran for the same root LLM context.
+    """
+    from pflow.core.trace_tree import TraceTree
+
+    try:
+        tree = TraceTree.from_dict(trace_data)
+    except (TypeError, ValueError):
+        return set(), set()
+
+    node_ids: set[str] = set()
+    models: set[str] = set()
+    for leaf in tree.iter_llm_leaves(
+        descend_sub_workflows=False,
+        descend_cached_subtrees=False,
+    ):
+        node_id = leaf.owner_node_id if leaf.tier == "batch_item" else leaf.event_node_id
+        if node_id and node_id != "unknown":
+            node_ids.add(node_id)
+        call = leaf.llm_call
+        if call is None:
+            continue
+        model = call.get("model")
+        if isinstance(model, str) and model:
+            models.add(normalize_model_name(model))
+    return node_ids, models
+
+
+def _collect_ir_llm_node_ids(workflow_ir: Mapping[str, Any]) -> set[str]:
+    """Collect root LLM node ids from the current parent workflow IR."""
+    out: set[str] = set()
+    for node in workflow_ir.get("nodes", []) or []:
+        if not _is_llm_node(node):
+            continue
+        node_id = node.get("id")
+        if isinstance(node_id, str) and node_id:
+            out.add(node_id)
+    return out
+
+
+def _collect_ir_static_llm_models(workflow_ir: Mapping[str, Any]) -> set[str]:
+    """Collect statically resolvable root LLM models from current IR."""
+    out: set[str] = set()
+    has_unspecified = False
+    for node in workflow_ir.get("nodes", []) or []:
+        if not _is_llm_node(node):
+            continue
+        explicit = node.get("params", {}).get("model") or node.get("model")
+        if isinstance(explicit, str) and "${" in explicit:
+            continue
+        if explicit:
+            out.add(normalize_model_name(str(explicit)))
+        else:
+            has_unspecified = True
+    if has_unspecified:
+        default = get_default_workflow_model()
+        if default:
+            out.add(normalize_model_name(default))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Pipeline helpers (lift complexity out of ``analyze()``)
 # ---------------------------------------------------------------------------
@@ -715,7 +806,13 @@ def _resolve_trace_data(
     lookup_path: str,
     notes: list[str],
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Load trace data via explicit path or autoload, returning ``(data, path)``."""
+    """Load trace data via explicit path or autoload, returning ``(data, path)``.
+
+    The auto-load result may be discarded by the drift gate in ``analyze()``
+    (immediately after the call site) when current IR's root LLM context
+    differs from the trace's recorded context. Explicit ``trace_path`` is
+    never gated.
+    """
     if trace_path is not None:
         return _load_trace_explicit(trace_path, notes), str(trace_path)
     if auto_load_trace:
