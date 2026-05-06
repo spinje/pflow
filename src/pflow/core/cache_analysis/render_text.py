@@ -708,19 +708,17 @@ def _render_cross_workflow(analysis: CacheAnalysis) -> str:
     action.
     """
     # Filter analysis.warnings by Diagnostic.id to recover the two alignment
-    # categories. Value-flow findings (cache.shared-context-undeclared with
-    # child_workflow in context) are NOT rendered here — they're surfaced in
-    # Recommended actions, which is the agent's primary action list.
+    # categories. Child cache-declaration findings render in Recommended
+    # actions, which is the agent's primary action list.
     rename_detections = [d for d in analysis.warnings if d.id == "cache.cross-workflow-rename-detected"]
     prose_mismatches = [d for d in analysis.warnings if d.id == "cache.cross-workflow-prose-mismatch"]
     if not (rename_detections or prose_mismatches):
         return ""
     # Stage B.3 (Task 159): section narrows to alignment-only — rename +
     # prose-mismatch findings (inherently boundary-shaped, not aggregable).
-    # Cross-boundary value-flow opportunities are emitted as collapsed
-    # findings in Recommended actions above (one per (parent_workflow,
-    # value_root) group). The cross-reference signposts where related
-    # findings live so an agent skimming this section knows.
+    # Child cache-declaration opportunities are emitted in Recommended actions
+    # above. The cross-reference signposts where related findings live so an
+    # agent skimming this section knows.
     lines = [
         "## Sub-workflow boundaries",
         "",

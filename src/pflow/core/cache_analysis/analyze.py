@@ -2583,9 +2583,10 @@ def _build_cross_workflow_findings(
 
     rename_diags: list[Diagnostic] = []
     prose_mismatches: list[Diagnostic] = []
-    value_flow_candidates: list[_ValueFlowCandidate] = []
+    sub_workflow_cache_candidates: list[_SubWorkflowCacheCandidate] = []
     for edge in edges:
-        if edge.is_rename and edge.parent_value_expr is not None:
+        is_rename = bool(edge.is_rename and edge.parent_value_expr is not None)
+        if is_rename:
             # Evidence-basis principle: the rename warning predicts that
             # cross-workflow byte-level cache match WILL fail because of
             # diverging prose labels. That prediction is only meaningful
@@ -2601,34 +2602,28 @@ def _build_cross_workflow_findings(
                 continue  # Iteration-variable substitution, not a rename.
             parent_has_cache = bool(result.cache_items_by_workflow.get(edge.parent_workflow))
             child_has_cache = bool(result.cache_items_by_workflow.get(edge.child_workflow))
-            if not parent_has_cache and not child_has_cache:
-                continue  # No cached state to break — prediction unactionable.
-            rename_diags.append(
-                make_diagnostic(
-                    "cache.cross-workflow-rename-detected",
-                    parent_workflow=edge.parent_workflow,
-                    child_workflow=edge.child_workflow,
-                    parent_value_expr=edge.parent_value_expr,
-                    child_input_name=edge.child_input_name,
-                    line_in_parent=edge.line_in_parent,
-                    parent_node_id=edge.parent_node_id,
+            if parent_has_cache or child_has_cache:
+                rename_diags.append(
+                    make_diagnostic(
+                        "cache.cross-workflow-rename-detected",
+                        parent_workflow=edge.parent_workflow,
+                        child_workflow=edge.child_workflow,
+                        parent_value_expr=edge.parent_value_expr,
+                        child_input_name=edge.child_input_name,
+                        line_in_parent=edge.line_in_parent,
+                        parent_node_id=edge.parent_node_id,
+                    )
                 )
-            )
-            continue
 
-        prose_mismatches.extend(_cross_workflow_prose_mismatches(edge, result.cache_items_by_workflow))
-        candidate = _value_flow_candidate(edge, result.cache_items_by_workflow, result.irs_by_workflow)
+        if not is_rename:
+            prose_mismatches.extend(_cross_workflow_prose_mismatches(edge, result.cache_items_by_workflow))
+        candidate = _sub_workflow_cache_candidate(edge, result.cache_items_by_workflow, result.irs_by_workflow)
         if candidate is not None:
-            value_flow_candidates.append(candidate)
+            sub_workflow_cache_candidates.append(candidate)
 
-    # Stage B.1 (Task 159): collapse per-edge candidates into per-(parent_workflow,
-    # value_root) groups. Aggregation key is the root segment of parent_value_expr
-    # so ``${concept}``, ``${concept.title}``, ``${concept.core_idea}`` all map
-    # to one group keyed by ``concept`` — one ## Cache addition covers all
-    # sub-paths simultaneously.
-    value_flow_diagnostics = _emit_value_flow_groups(value_flow_candidates, result.irs_by_workflow, notes=notes)
+    sub_workflow_cache_diags = _emit_sub_workflow_cache_findings(sub_workflow_cache_candidates)
 
-    findings: list[Diagnostic] = [*rename_diags, *prose_mismatches, *value_flow_diagnostics]
+    findings: list[Diagnostic] = [*rename_diags, *prose_mismatches, *sub_workflow_cache_diags]
     return (CrossWorkflowFindings(boundaries_analyzed=len(edges)), findings)
 
 
@@ -2658,12 +2653,13 @@ def _cross_workflow_prose_mismatches(
 
 
 @dataclass(frozen=True)
-class _ValueFlowCandidate:
-    """One per-edge value-flow finding before group collapse (Stage B.1).
+class _SubWorkflowCacheCandidate:
+    """One child-workflow cache declaration opportunity.
 
-    Carries the data the walker produced + per-side LLM-consumer counts so
-    ``_emit_value_flow_groups`` can build the destinations list and total
-    consumer count without re-walking the IR.
+    Sub-workflows do not inherit parent ``## Cache`` blocks, so a parent-side
+    declaration never satisfies the child. The actionable edit is in the
+    receiving workflow when that child has repeated LLM consumers of the
+    incoming input.
     """
 
     parent_workflow: str
@@ -2675,38 +2671,37 @@ class _ValueFlowCandidate:
     child_count: int
 
 
-def _value_flow_candidate(
+def _sub_workflow_cache_candidate(
     edge: Any,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
     irs_by_workflow: dict[str, dict[str, Any]],
-) -> _ValueFlowCandidate | None:
+) -> _SubWorkflowCacheCandidate | None:
     """Return a candidate for one boundary edge, or None if suppressed.
 
-    Suppression rules (Stage B.1 preserves the per-edge contract):
+    Suppression rules:
     - ``parent_value_expr is None``: literal or multi-ref string at the
       boundary; no template to track.
-    - Either side already declares the chunk in ## Cache: declaring is
-      already in place, so the finding has no value to surface.
+    - the child already declares the receiving input in its own ``## Cache``.
+    - fewer than two LLM nodes in the child consume the input.
 
-    The minimum-consumer threshold (``< 2``) does NOT apply per-edge anymore;
-    Stage B.1 aggregates multiple destinations into one finding, so the
-    threshold applies to ``total_consumer_count`` at group emission time.
+    Batch-scoped parent values are still valid here: ``${item.concept}`` varies
+    across parent fanout items, but inside each child invocation the receiving
+    input can be stable context reused by multiple child LLM nodes.
     """
     if edge.parent_value_expr is None:
         return None
-    parent_declared = set(_items_by_name(cache_items_by_workflow.get(edge.parent_workflow, ())))
     child_declared = set(_items_by_name(cache_items_by_workflow.get(edge.child_workflow, ())))
-    if edge.parent_value_expr in parent_declared or edge.child_input_name in child_declared:
+    if edge.child_input_name in child_declared:
         return None
 
-    # Per-destination child consumer count. Counts LLM nodes in the child IR
-    # that reference ``${child_input_name}`` (or sub-paths). Exact match +
-    # dotted-prefix per ``_count_llm_nodes_referencing_path``.
     child_count = _count_llm_nodes_referencing_path(
         irs_by_workflow.get(edge.child_workflow, {}),
         edge.child_input_name,
     )
-    return _ValueFlowCandidate(
+    if child_count < 2:
+        return None
+
+    return _SubWorkflowCacheCandidate(
         parent_workflow=edge.parent_workflow,
         parent_value_expr=edge.parent_value_expr,
         parent_node_id=edge.parent_node_id,
@@ -2717,160 +2712,44 @@ def _value_flow_candidate(
     )
 
 
-def _build_destinations_for_group(
-    group_candidates: list[_ValueFlowCandidate],
-) -> list[dict[str, Any]]:
-    """Collapse per-edge candidates within a group into per-destination entries.
-
-    Filters destinations with no LLM consumer in the child (``child_count == 0``)
-    — see ``_emit_value_flow_groups`` docstring "Destination filter" paragraph
-    for the rationale and contract dependencies. Returns destinations sorted
-    lex by ``child_workflow`` for deterministic output.
-
-    Returns ``[]`` when every destination in the group filters out (caller
-    treats that as the "fully filtered" signal for transparency notes).
-    """
-    by_child: dict[str, _ValueFlowCandidate] = {}
-    for candidate in group_candidates:
-        if candidate.child_count == 0:
-            continue  # No LLM consumer in this child — no cross-boundary leverage.
-        existing = by_child.get(candidate.child_workflow)
-        if existing is None or candidate.parent_node_id < existing.parent_node_id:
-            by_child[candidate.child_workflow] = candidate
-
-    destinations: list[dict[str, Any]] = []
-    for child_workflow in sorted(by_child.keys()):
-        c = by_child[child_workflow]
-        child_basename = c.child_workflow.rsplit("/", 1)[-1] if "/" in c.child_workflow else c.child_workflow
-        destinations.append({
-            "child_workflow": c.child_workflow,
-            "child_workflow_basename": child_basename,
-            "node_count": c.child_count,
-            "parent_node_id": c.parent_node_id,
-            "line_in_parent": c.line_in_parent,
-        })
-    return destinations
-
-
-def _emit_value_flow_groups(
-    candidates: list[_ValueFlowCandidate],
-    irs_by_workflow: dict[str, dict[str, Any]],
-    *,
-    notes: list[str],
-) -> list[Diagnostic]:
-    """Group candidates by ``(parent_workflow, value_root)`` and emit one Diagnostic per group.
-
-    Stage B.1 (Task 159): one ## Cache addition covers ${concept},
-    ${concept.title}, ${concept.core_idea} simultaneously. Aggregating by
-    root collapses N per-edge findings into the agent's "one resolution
-    edit" model.
-
-    Determinism (review-silent-failures W-A): destinations sorted lex by
-    child_workflow; within a destination, the lex-smallest parent_node_id
-    is the representative when the same child is reachable from multiple
-    parent nodes.
-
-    Threshold: total_consumer_count < 2 → group suppressed (declaring would
-    share across at most one call — not worth declaring). Symmetric with
-    the per-edge ``node_count < 2`` rule prior to Stage B.1.
-
-    Destination filter (evidence-basis principle, symmetric with rename
-    suppression #362): drop destinations whose child IR has zero LLM nodes
-    template-referencing the value. Cross-boundary advice is only actionable
-    when there's an actual cross-boundary cache opportunity — i.e., the
-    child's LLM prompts contain ``${value_root}`` or a sub-path. When all
-    destinations filter out, the group is suppressed entirely and ``notes``
-    gets a transparency line so agents understand WHY no finding emitted
-    for a value that visibly crosses the boundary.
-
-    NOTE on the ``child_count`` signal: this filter depends on
-    ``resolve_sub_workflow`` returning file-resolved child IRs (the
-    boundary contract documented in ``sub_workflow_resolver.py``). Without
-    that contract, file-ref prompts (``./*.prompt.md``) appear in the IR
-    as path strings, ``_count_llm_nodes_referencing_path`` returns 0
-    universally, and this filter would silently drop every cross-boundary
-    finding on real workflows. The contract is locked by
-    ``test_resolve_sub_workflow_cross_workflow_walker_sees_resolved_prompts``;
-    if that test fails, the filter's signal is corrupt — fix the boundary,
-    don't relax the filter.
-    """
-    # Group by (parent_workflow, value_root).
-    groups: dict[tuple[str, str], list[_ValueFlowCandidate]] = {}
+def _dedupe_sub_workflow_cache_candidates(
+    candidates: list[_SubWorkflowCacheCandidate],
+) -> list[_SubWorkflowCacheCandidate]:
+    """Return one deterministic candidate per child workflow + input."""
+    by_target: dict[tuple[str, str], _SubWorkflowCacheCandidate] = {}
     for candidate in candidates:
-        root = _template_root_segment(candidate.parent_value_expr)
-        if not root:
-            # Defensive: empty/None root signals an unparseable parent_value_expr.
-            # Skip silently — a Diagnostic with no value_root would be useless.
-            continue
-        groups.setdefault((candidate.parent_workflow, root), []).append(candidate)
+        key = (candidate.child_workflow, candidate.child_input_name)
+        existing = by_target.get(key)
+        if existing is None or candidate.parent_node_id < existing.parent_node_id:
+            by_target[key] = candidate
 
+    return [by_target[key] for key in sorted(by_target)]
+
+
+def _emit_sub_workflow_cache_findings(
+    candidates: list[_SubWorkflowCacheCandidate],
+) -> list[Diagnostic]:
+    """Emit child-scoped diagnostics for missing sub-workflow cache declarations."""
     diagnostics: list[Diagnostic] = []
-    # Track values whose ENTIRE group filtered out — surfaced via notes for
-    # transparency so agents don't wonder "why didn't analyze flag X crossing
-    # the boundary?". Sorted lex on emission for deterministic output.
-    fully_filtered_roots: list[str] = []
-    # Iterate groups in lex order for stable output across runs.
-    for (parent_workflow, root), group_candidates in sorted(groups.items()):
-        destinations = _build_destinations_for_group(group_candidates)
-        if not destinations:
-            # All destinations filtered — record for the transparency note
-            # below and skip emission. Without this trail, agents looking
-            # at a workflow where a value visibly flows across boundaries
-            # but no cross-boundary finding fires would have no signal
-            # explaining the silence.
-            fully_filtered_roots.append(root)
-            continue
-
-        # Parent count is computed against the ROOT (not parent_value_expr)
-        # so all sub-paths in the group contribute. Otherwise sub-paths to
-        # different children would each compute against their leaf, missing
-        # nodes that reference other sub-paths of the same root.
-        parent_count = _count_llm_nodes_referencing_path(irs_by_workflow.get(parent_workflow, {}), root)
-        total_consumer_count = parent_count + sum(int(d["node_count"]) for d in destinations)
-
-        # Group-level suppression mirrors the per-edge ``< 2`` rule: declaring
-        # in ## Cache shares across at most one call when total < 2 — not
-        # worth surfacing as a recommendation.
-        if total_consumer_count < 2:
-            continue
-
+    for candidate in _dedupe_sub_workflow_cache_candidates(candidates):
+        child_basename = (
+            candidate.child_workflow.rsplit("/", 1)[-1] if "/" in candidate.child_workflow else candidate.child_workflow
+        )
         diagnostics.append(
             make_diagnostic(
-                "cache.shared-context-undeclared",
-                # node_id=None → workflow-level action (renderer shows scope_workflow).
-                # Old keys for ``_validate_required`` compat — semantics symmetric to
-                # workflow scope (node_count = total consumers, shared_chunks = [root]).
-                node_count=total_consumer_count,
-                shared_chunks=[root],
-                affected_workflow=parent_workflow,
+                "cache.sub-workflow-cache-undeclared",
+                node_count=candidate.child_count,
+                affected_workflow=candidate.child_workflow,
                 savings_usd=None,
-                # New keys for boundary template + headline rendering (Stage B.1).
-                value_root=root,
-                destinations=destinations,
-                destination_count=len(destinations),
-                total_consumer_count=total_consumer_count,
-                # Presence of ``child_workflow`` triggers the boundary-scope
-                # template/headline dispatch in ``make_diagnostic``. Use the
-                # first (lex-smallest) destination's path.
-                child_workflow=destinations[0]["child_workflow"],
+                parent_workflow=candidate.parent_workflow,
+                child_workflow=candidate.child_workflow,
+                child_workflow_basename=child_basename,
+                parent_value_expr=candidate.parent_value_expr,
+                child_input_name=candidate.child_input_name,
+                parent_node_id=candidate.parent_node_id,
+                line_in_parent=candidate.line_in_parent,
             )
         )
-
-    # Transparency note: when entire groups filtered out (no LLM consumer in
-    # any child), surface the count so agents who notice "X visibly crosses
-    # a boundary but analyze didn't flag it" have an answer in the output
-    # rather than silence. Names are lex-sorted for deterministic Notes.
-    if fully_filtered_roots:
-        unique_roots = sorted(set(fully_filtered_roots))
-        names = ", ".join(f"`{n}`" for n in unique_roots)
-        plural = "s" if len(unique_roots) != 1 else ""
-        notes.append(
-            f"Cross-boundary value-flow suppressed for {len(unique_roots)} value{plural} "
-            f"({names}): no LLM consumer in any receiving sub-workflow. "
-            f"Parent-side caching, if applicable, appears in workflow-internal "
-            f"recommendations."
-        )
-
     return diagnostics
 
 

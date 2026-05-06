@@ -119,13 +119,13 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 ### warning_catalog.py
 
-**Frozen catalog of 19 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
+**Frozen catalog of 20 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
 
 **`Diagnostic.id` is a top-level field, not nested in `context["warning_id"]`.** Mirrors mypy / rustc / ruff / eslint / clippy convention. Identity tuple updated from `(severity, source, node_id, message)` to `(severity, source, node_id, id or message)` — when `id` is set it's the dedup key, falling back to message-keyed dedup when absent (preserves legacy sub-workflow warning dedup byte-for-byte).
 
 **Catalog-as-SSoT for headlines**: `resolve_headline_for(diag)` looks up `headline_template` from the catalog by `diag.id` and formats against `diag.context`. **Works whether the diagnostic came from `make_diagnostic(...)` OR was built directly via `Diagnostic(id="cache.X", ...)`** — the validator emitters in `data_flow.py` use direct construction; the analyzer-side emitters use `make_diagnostic`. Both produce equivalent renderable diagnostics.
 
-**Dispatch tables** for `cache.shared-context-undeclared` (workflow vs boundary scope), `cache.below-min-tokens` (predicted vs observed evidence), and `cache.discrepancy` (per-`root_cause`) live in this file. Validation of required context keys happens in `make_diagnostic` so missing context fails at construction, not at render.
+**Dispatch tables** for `cache.below-min-tokens` (predicted vs observed evidence) and `cache.discrepancy` (per-`root_cause`) live in this file. Validation of required context keys happens in `make_diagnostic` so missing context fails at construction, not at render.
 
 **`cache.below-min-tokens` has two drivers but one catalog ID**: analyzer predicted-tier emission and `LLMNode.post()` runtime observed-tier emission both call `below_min_tokens_detector.detect()`. The detector imports only stdlib plus `llm_capabilities` and `llm_providers` so `nodes/llm/llm.py` can import it without pulling analyzer/runtime-heavy dependencies. Runtime observed-tier findings surface post-run through `__warnings__` as `Diagnostic` instances; same-id child sub-workflow collisions remain limited by the existing `__warnings__[node_id]` key shape.
 
@@ -244,7 +244,7 @@ Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_
 - **`_workflow_short_name` is duplicated** at `analyze.py:2911` and `render_text.py:721`. Both implement the same basename-strip-`.pflow.md` logic. The duplication is a known follow-up (task 160).
 - **`_iter_llm_events` (analyze.py:2456)** is consumed only by tests after the per-call rendering migration to `TraceTree.iter_llm_leaves`. Lives in production code but has no production caller.
 - **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
-- **Stable warning ID catalog has 19 entries** as of v1: 10 from the original spec + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
+- **Stable warning ID catalog has 20 entries** as of v1: 10 from the original spec + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `cache.sub-workflow-cache-undeclared` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
 
 ## Where to add a new feature
 

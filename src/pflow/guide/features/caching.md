@@ -187,7 +187,9 @@ After the refactor the static walkers see the prompt template directly:
 
 ## Sub-Workflows
 
-Each `.pflow.md` declares its own `## Cache` block. Sub-workflows render their own cache; they do NOT inherit the parent's. Cross-workflow cache hits happen incidentally at the byte level when prose labels match across boundaries.
+Each `.pflow.md` declares its own `## Cache` block. Sub-workflows render their own cache; they do NOT inherit the parent's. If a child workflow reuses an input across multiple LLM nodes, declare that input in the child workflow's own `## Cache` and add it to the child nodes' `prompt_cache:` lists.
+
+Matching prose labels, exact model, and prefix ordering can help incidental provider-level cache hits across workflow boundaries. That is byte-level alignment, not inheritance; every workflow that reuses a value still needs its own cache declaration.
 
 `pflow analyze-cache` walks across workflow boundaries (Tier 2) and warns about:
 
@@ -208,6 +210,7 @@ Each `.pflow.md` declares its own `## Cache` block. Sub-workflows render their o
 | `cache.unused-chunk` | warning | declared chunk no node references |
 | `cache.invalid-on-non-llm` | error | `prompt_cache:` or `prewarm:` on a non-LLM node |
 | `cache.shared-context-undeclared` | info | analyzer found shared context not in any `## Cache` |
+| `cache.sub-workflow-cache-undeclared` | info | child workflow reuses an input but lacks its own `## Cache` chunk |
 | `cache.batch-prewarm-recommended` | warning | batch ≥5% cacheable, no explicit `prewarm:` |
 | `cache.dynamic-before-static` | warning | `${var}` precedes the cacheable prefix in a prompt |
 | `cache.padding-advisory` | info | extending `prompt_cache:` would unlock prefix hits |

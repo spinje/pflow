@@ -7946,3 +7946,47 @@ Verification:
 - Sub-workflow cost/report focused tests: passed.
 - `cache_chunks_skipped` analyze-cache attribution tests: passed.
 - `llm.thinking-temperature-mismatch` validator tests: 19 passed.
+
+## Stage 2 follow-up — Finding #21: child-scoped sub-workflow cache recommendations (2026-05-06)
+
+Implemented the #21 fix as a diagnostic split, not a text-only patch. The
+analyzer no longer overloads `cache.shared-context-undeclared` for both
+workflow-local sharing and sub-workflow boundary cache declarations. New ID:
+`cache.sub-workflow-cache-undeclared`.
+
+Behavior:
+
+- `cache.shared-context-undeclared` is now workflow-local only.
+- `cache.sub-workflow-cache-undeclared` fires when a parent passes a value into
+  a child workflow, the child has at least two LLM consumers of that input, and
+  the child does not declare that input in its own `## Cache`.
+- Parent `## Cache` declarations do not suppress the child recommendation;
+  sub-workflows do not inherit parent cache blocks.
+- Child declarations suppress the child recommendation.
+- Rename/prose-mismatch findings remain separate alignment guidance under the
+  existing `cache.cross-workflow-*` IDs.
+
+Files changed:
+
+- Production/docs: `core/cache_analysis/analyze.py`,
+  `core/cache_analysis/warning_catalog.py`, `render_json.py`, `render_text.py`,
+  MCP analyze-cache docstring, `pflow guide caching`, cache-analysis
+  `CLAUDE.md`, and Task 159 spec.
+- Tests: producer, catalog round-trip, renderer, and catalog helper tests.
+
+Verification:
+
+- Focused cache-analysis producer/catalog/renderer tests: 202 passed.
+- Broader affected cache-analysis + CLI + MCP tests: 325 passed.
+- Cross-workflow/summarize focused sweep: 35 passed.
+- Targeted #21 regressions: 3 passed.
+- `ruff check`, `ruff format --check`, `mypy` on touched source: clean.
+- Manual `pflow guide caching` confirmed sub-workflow inheritance wording.
+- `git diff --check`: clean.
+
+Critical insight:
+
+`cache.shared-context-undeclared` and child-workflow cache declaration are
+different agent actions. Splitting the ID removes context-shape dispatch,
+shrinks final code, and makes future cache-analysis extensions easier for
+agents to reason about.

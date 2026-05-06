@@ -5,13 +5,15 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-19 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
+20 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
 temperature-mismatch`` (Stage 2 follow-up: catch Anthropic temperature=1.0 +
 extended thinking constraint at validate-time) + ``cache.heterogeneous-models-
 fragment-cache`` and ``cache.first-call-write-penalty`` (Stage 2 follow-up:
-detect exact-model cache namespace fragmentation and lone cache writes). The base 14 covers the 9 from
+detect exact-model cache namespace fragmentation and lone cache writes) +
+``cache.sub-workflow-cache-undeclared`` (Stage 2 follow-up: sub-workflows need
+their own cache declarations). The base 14 covers the 9 from
 spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2, dispatch
 over ``root_cause`` enum), ``cache.invalid-on-non-llm`` (Round 3, validator-
 reach gap closure for non-LLM nodes), ``cache.prewarm-no-prefix`` (Round 3,
@@ -117,52 +119,24 @@ _UNUSED_CHUNK_MESSAGE = (
 )
 
 
-# cache.shared-context-undeclared has two distinct emission contexts that
-# warrant different prose (CP5 #1+#5):
-#
-#   - WORKFLOW scope (node_id=None, no ``child_workflow`` key): the analyzer
-#     detected a value used by N≥2 LLM nodes inside this workflow. The fix is
-#     to declare the value in this workflow's ## Cache block.
-#
-#   - BOUNDARY scope (``child_workflow`` set in context): the value flows into
-#     one or more sub-workflows via ``type: workflow`` nodes. Stage B.1 collapses
-#     per-edge findings into per-(parent_workflow, value_root) groups; the
-#     destinations list carries one entry per child workflow. The boundary form
-#     is further dispatched on ``destination_count`` to produce SINGLE vs MULTI
-#     prose: 1-destination cases name BOTH parent and child as valid declaration
-#     sites; multi-destination cases recommend declaring in the parent (one edit
-#     covers N destinations).
-#
-# All templates use ``{savings_clause}`` for the optional parenthetical so
-# ``None`` savings produces grammatical output (no "saves savings unavailable/run").
+# cache.shared-context-undeclared is workflow-local: the analyzer detected a
+# value used by N>=2 LLM nodes inside one workflow. Cross-boundary child-cache
+# declarations use ``cache.sub-workflow-cache-undeclared`` so the remediation
+# path stays explicit and does not depend on context-shape dispatch.
 _SHARED_CONTEXT_WORKFLOW_TEMPLATE = "Used by {node_count} LLM nodes. Chunks: {shared_chunks_csv}.{savings_clause}"
-_SHARED_CONTEXT_BOUNDARY_TEMPLATE_SINGLE = (
-    "`{value_root}` flows to `{child_workflow_basename}` "
-    "(used by {child_consumer_count} LLM nodes there). Declare it in either "
-    "workflow's ## Cache to share cached bytes across the boundary."
-    "{savings_clause}"
-)
-_SHARED_CONTEXT_BOUNDARY_TEMPLATE_MULTI = (
-    "`{value_root}` flows to {destination_count} sub-workflows. "
-    "{distribution_clause} Declare in this workflow's ## Cache to cover all "
-    "destinations in one edit.{savings_clause}"
+_SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = (
+    "`{parent_value_expr}` flows into `{child_workflow_basename}` as "
+    "`{child_input_name}` and is used by {node_count} LLM nodes there. Add "
+    "`{child_input_name}` to that sub-workflow's ## Cache; sub-workflows do "
+    "not inherit the parent cache block."
 )
 
 
 # Headline templates — short action-led titles for analyze-cache text output.
 # Per-id, catalog-driven; the renderer reads these without knowing the IDs.
-# Boundary headline dispatches on destination_count (SINGLE vs MULTI) to match
-# the message dispatch — single-destination preserves "either side" framing
-# (declaring on the child is equally valid); multi-destination recommends the
-# parent because that's the single edit unlocking N destinations.
 _SHARED_CONTEXT_WORKFLOW_HEADLINE = "Shared context undeclared — declare {shared_chunks_short} in ## Cache"
-_SHARED_CONTEXT_BOUNDARY_HEADLINE_SINGLE = (
-    "Cross-boundary value undeclared — declare `{value_root}` in "
-    "{parent_workflow_basename}'s or {child_workflow_basename}'s ## Cache"
-)
-_SHARED_CONTEXT_BOUNDARY_HEADLINE_MULTI = (
-    "Cross-boundary value undeclared — declare `{value_root}` in "
-    "{parent_workflow_basename}'s ## Cache (covers {destination_count} sub-workflows)"
+_SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE = (
+    "Sub-workflow cache undeclared — add `{child_input_name}` in {child_workflow_basename}'s ## Cache"
 )
 
 # cache.below-min-tokens has two evidence tiers with different remediation
@@ -186,32 +160,6 @@ _BELOW_MIN_TOKENS_DISPATCH = {
 def _basename_for_workflow(path: str) -> str:
     """Strip directory components for compact rendering. Non-paths pass through."""
     return path.rsplit("/", 1)[-1] if "/" in path else path
-
-
-def _compute_distribution_clause(destinations: list[dict[str, Any]]) -> str:
-    """Return a fact-dense per-destination breakdown for the multi-destination boundary message.
-
-    Uniform case (all destinations have the same node_count): renders as
-    ``"Used by {N} LLM nodes per destination ({csv})."`` so the agent doesn't
-    have to mentally parse a sum.
-
-    Non-uniform: renders as ``"Used by {total} LLM nodes ({per-dest breakdown})."``
-    Per-agent-ux Finding 2: aggregate alone hides distribution; the agent can't
-    tell whether 18 = 6+6+6 or 16+1+1 without the breakdown.
-    """
-    if not destinations:
-        return ""
-    counts = [int(d.get("node_count", 0)) for d in destinations]
-    basenames = [str(d.get("child_workflow_basename", "")) for d in destinations]
-    csv = ", ".join(basenames)
-    total = sum(counts)
-    # Uniform when all counts equal AND > 0 (zero-count is degenerate; pre-suppression should catch it).
-    if counts and all(c == counts[0] for c in counts) and counts[0] > 0:
-        noun = "node" if counts[0] == 1 else "nodes"
-        return f"Used by {counts[0]} LLM {noun} per destination ({csv})."
-    breakdown = ", ".join(f"{name}: {count}" for name, count in zip(basenames, counts, strict=True))
-    total_noun = "node" if total == 1 else "nodes"
-    return f"Used by {total} LLM {total_noun} ({breakdown})."
 
 
 CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
@@ -273,12 +221,6 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         severity=Severity.INFO,
         source="cache_analyzer",
         category=CACHE_ADVISORY_CATEGORY,
-        # Dispatched on context: workflow scope (default) vs boundary scope
-        # (when ``child_workflow`` is present in context). The placeholder here
-        # is replaced at make_diagnostic time — see ``_dispatch_shared_context``.
-        # Two distinct sentences are needed because workflow-internal sharing
-        # and cross-boundary value flow have different remediation paths.
-        # Headline is also dispatched (see ``_select_headline_template``).
         message_template=_SHARED_CONTEXT_WORKFLOW_TEMPLATE,
         required_context_keys=(
             ("node_count", int),
@@ -293,6 +235,31 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="workflows[path={affected_workflow}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template=_SHARED_CONTEXT_WORKFLOW_HEADLINE,
+    ),
+    "cache.sub-workflow-cache-undeclared": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        message_template=_SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE,
+        required_context_keys=(
+            ("parent_workflow", str),
+            ("child_workflow", str),
+            ("child_workflow_basename", str),
+            ("parent_value_expr", str),
+            ("child_input_name", str),
+            ("parent_node_id", str),
+            ("line_in_parent", int),
+            ("node_count", int),
+            ("affected_workflow", str),
+            ("savings_usd", float),
+        ),
+        suggestions_template=(
+            "In {child_workflow}, add a ## Cache chunk for `${child_input_name}`.",
+            "Add `{child_input_name}` to `prompt_cache:` on the child LLM nodes that reuse it.",
+        ),
+        path_template="workflows[path={child_workflow}].inputs[name={child_input_name}]",
+        nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template=_SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE,
     ),
     "cache.batch-prewarm-recommended": CacheWarningSpec(
         severity=Severity.WARNING,
@@ -741,6 +708,7 @@ DEFAULT_RECOMMENDED_ACTION_PRIORITY: Final[int] = 100
 RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     # Tier 1 — actionable opportunities with concrete suggestions agents can apply.
     "cache.shared-context-undeclared": 10,
+    "cache.sub-workflow-cache-undeclared": 10,
     "cache.dynamic-before-static": 10,
     "cache.batch-prewarm-recommended": 10,
     "cache.heterogeneous-models-fragment-cache": 10,
@@ -973,55 +941,9 @@ def _select_message_template(
     context_kwargs: dict[str, Any],
     format_dict: dict[str, Any],
 ) -> str:
-    if warning_id == "cache.shared-context-undeclared" and "child_workflow" in context_kwargs:
-        return _select_shared_context_boundary_template(context_kwargs=context_kwargs, format_dict=format_dict)
     if warning_id == "cache.below-min-tokens":
         return _select_below_min_tokens_template(context_kwargs=context_kwargs, format_dict=format_dict)
     return spec.message_template
-
-
-def _select_shared_context_boundary_template(
-    *,
-    context_kwargs: dict[str, Any],
-    format_dict: dict[str, Any],
-) -> str:
-    """Dispatch cache.shared-context-undeclared boundary prose by destination count."""
-    destinations = context_kwargs.get("destinations") or []
-    destination_count = int(context_kwargs.get("destination_count", len(destinations) or 1))
-    parent_workflow = str(context_kwargs.get("affected_workflow", ""))
-    format_dict["parent_workflow_basename"] = _basename_for_workflow(parent_workflow)
-    if destination_count == 1:
-        _populate_single_destination_fields(
-            destinations=destinations,
-            context_kwargs=context_kwargs,
-            format_dict=format_dict,
-        )
-        return _SHARED_CONTEXT_BOUNDARY_TEMPLATE_SINGLE
-
-    format_dict["destination_count"] = destination_count
-    format_dict["child_workflows_csv"] = ", ".join(str(d.get("child_workflow_basename", "")) for d in destinations)
-    format_dict["total_consumer_count"] = int(
-        context_kwargs.get("total_consumer_count", context_kwargs.get("node_count", 0))
-    )
-    format_dict["distribution_clause"] = _compute_distribution_clause(destinations)
-    return _SHARED_CONTEXT_BOUNDARY_TEMPLATE_MULTI
-
-
-def _populate_single_destination_fields(
-    *,
-    destinations: list[dict[str, Any]],
-    context_kwargs: dict[str, Any],
-    format_dict: dict[str, Any],
-) -> None:
-    if destinations:
-        first_destination = destinations[0]
-        format_dict["child_workflow_basename"] = str(first_destination.get("child_workflow_basename", ""))
-        format_dict["child_consumer_count"] = int(first_destination.get("node_count", 0))
-        return
-
-    child_path = str(context_kwargs["child_workflow"])
-    format_dict["child_workflow_basename"] = _basename_for_workflow(child_path)
-    format_dict["child_consumer_count"] = int(context_kwargs.get("node_count", 0))
 
 
 def _select_below_min_tokens_template(
@@ -1257,10 +1179,6 @@ def resolve_headline_for(diag: Diagnostic) -> str:
     constructed — both ``make_diagnostic`` (cache_analyzer-emitted) and raw
     ``Diagnostic(...)`` (validator-emitted in ``data_flow.py``) get headlines.
 
-    Dispatches the boundary headline for ``cache.shared-context-undeclared``
-    when ``context["child_workflow"]`` is present (mirrors the message
-    dispatch in ``make_diagnostic``).
-
     Used by ``view_helpers.build_recommended_actions`` for the rank line and
     by ``render_text.py:_format_boundary_finding`` for the cross-workflow
     findings. Both consumers in the same package layer.
@@ -1275,24 +1193,6 @@ def resolve_headline_for(diag: Diagnostic) -> str:
         ctx.setdefault("node_id", diag.node_id)
 
     template = spec.headline_template
-    if diag.id == "cache.shared-context-undeclared" and "child_workflow" in ctx:
-        # Mirror the message dispatch in ``make_diagnostic``: boundary headline
-        # is dispatched on destination_count. SINGLE names both workflows;
-        # MULTI commits to the parent + advertises the destination count.
-        destinations = ctx.get("destinations") or []
-        destination_count = int(ctx.get("destination_count", len(destinations) or 1))
-        parent_workflow = str(ctx.get("affected_workflow", ""))
-        ctx["parent_workflow_basename"] = _basename_for_workflow(parent_workflow)
-        if destination_count == 1:
-            template = _SHARED_CONTEXT_BOUNDARY_HEADLINE_SINGLE
-            if destinations:
-                ctx["child_workflow_basename"] = str(destinations[0].get("child_workflow_basename", ""))
-            else:
-                child_path = str(ctx["child_workflow"])
-                ctx["child_workflow_basename"] = _basename_for_workflow(child_path)
-        else:
-            template = _SHARED_CONTEXT_BOUNDARY_HEADLINE_MULTI
-            ctx["destination_count"] = destination_count
 
     # Mirror make_diagnostic's typed-alias derivations so headline templates
     # can use the same placeholders. ``shared_chunks_short`` only matters for

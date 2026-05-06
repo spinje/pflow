@@ -43,8 +43,8 @@ def test_catalog_count_constant_is_auto_derived() -> None:
     assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT
 
 
-def test_catalog_has_nineteen_entries_v1() -> None:
-    """v1 currently ships with 19 entries (18 ``cache.*`` plus 1 ``llm.*``):
+def test_catalog_has_twenty_entries_v1() -> None:
+    """v1 currently ships with 20 entries (19 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -60,10 +60,12 @@ def test_catalog_has_nineteen_entries_v1() -> None:
     - ``cache.heterogeneous-models-fragment-cache`` and
       ``cache.first-call-write-penalty`` (Task 159 Stage 2 follow-up:
       exact-model cache namespace fragmentation and lone cache writes)
+    - ``cache.sub-workflow-cache-undeclared`` (Task 159 Stage 2 follow-up:
+      child workflows need their own cache declarations)
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 19
+    assert len(CACHE_WARNING_CATALOG) == 20
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -505,6 +507,18 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "affected_workflow": "x.pflow.md",
             "savings_usd": 0.78,
         },
+        "cache.sub-workflow-cache-undeclared": {
+            "parent_workflow": "parent.pflow.md",
+            "child_workflow": "child.pflow.md",
+            "child_workflow_basename": "child.pflow.md",
+            "parent_value_expr": "concept",
+            "child_input_name": "concept",
+            "parent_node_id": "call-child",
+            "line_in_parent": 42,
+            "node_count": 2,
+            "affected_workflow": "child.pflow.md",
+            "savings_usd": None,
+        },
         "cache.batch-prewarm-recommended": {
             "node_id": "score",
             "affected_workflow": "x.pflow.md",
@@ -749,47 +763,3 @@ def test_format_dry_run_nudge_renders_at_one_cent_threshold() -> None:
     # Below the floor — figure dropped.
     below_floor = format_dry_run_nudge(opportunity_count=1, savings_usd=0.00009, savings_pct=None)
     assert below_floor == "Cache: 1 design opportunity available."
-
-
-def test_compute_distribution_clause_pluralizes_node_noun_correctly() -> None:
-    """Singular vs plural noun in the boundary distribution clause.
-
-    Pre-fix surfaced on lyrics-generator song-creator: ``concept_brief`` and
-    ``extract-emotional-lyrics`` flow to N sub-workflows with 1 LLM consumer
-    each — the rendered output read "Used by 1 LLM nodes per destination"
-    (grammatically wrong). The helper must agree number for both the
-    uniform-per-destination case and the non-uniform total.
-
-    Mutation test: revert either pluralization branch in
-    ``_compute_distribution_clause`` and the matching parametrized case
-    fails with the literal "1 LLM nodes" string in output.
-    """
-    from pflow.core.cache_analysis.warning_catalog import _compute_distribution_clause
-
-    def _dest(name: str, count: int) -> dict:
-        return {
-            "child_workflow": f"/abs/{name}.pflow.md",
-            "child_workflow_basename": f"{name}.pflow.md",
-            "node_count": count,
-        }
-
-    # Uniform with count=1 per destination → "1 LLM node per destination" (singular).
-    out = _compute_distribution_clause([_dest("a", 1), _dest("b", 1)])
-    assert "1 LLM node per destination" in out
-    assert "1 LLM nodes" not in out
-
-    # Uniform with count>1 per destination → "N LLM nodes per destination" (plural).
-    out = _compute_distribution_clause([_dest("a", 3), _dest("b", 3)])
-    assert "3 LLM nodes per destination" in out
-
-    # Non-uniform with total=1 → "1 LLM node" (singular total).
-    out = _compute_distribution_clause([_dest("a", 1), _dest("b", 0)])
-    # b is filtered upstream; if it slipped through, the total should still pluralize correctly.
-    # This case exercises total==1 specifically:
-    out_single = _compute_distribution_clause([_dest("only", 1)])
-    assert "Used by 1 LLM node " in out_single  # trailing space anchors the noun position
-    assert "1 LLM nodes" not in out_single
-
-    # Non-uniform with total>1 → "N LLM nodes" (plural total).
-    out = _compute_distribution_clause([_dest("a", 1), _dest("b", 2)])
-    assert "Used by 3 LLM nodes (" in out

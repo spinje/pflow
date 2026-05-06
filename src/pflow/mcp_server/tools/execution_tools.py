@@ -404,10 +404,11 @@ async def analyze_cache(
     arrays are derived from ``warnings`` by ``Diagnostic.id``.
 
     **Closed catalog of warning IDs** that may appear in
-    ``warnings[].id`` (19 entries in v1 — 18 ``cache.*`` plus 1 ``llm.*``):
+    ``warnings[].id`` (20 entries in v1 — 19 ``cache.*`` plus 1 ``llm.*``):
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared
+      - cache.sub-workflow-cache-undeclared
       - cache.batch-prewarm-recommended
       - cache.dynamic-before-static
       - cache.padding-advisory

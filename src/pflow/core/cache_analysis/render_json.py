@@ -216,10 +216,8 @@ def _cross_workflow_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
     Filter discriminators:
     - ``rename_detections``: ``Diagnostic.id == "cache.cross-workflow-rename-detected"``
     - ``prose_mismatches``: ``Diagnostic.id == "cache.cross-workflow-prose-mismatch"``
-    - ``value_flow_opportunities``: ``Diagnostic.id == "cache.shared-context-undeclared"``
-      AND ``"child_workflow" in (Diagnostic.context or {})`` (the boundary-scope
-      dispatch — workflow-scope shared-context findings are NOT
-      cross-workflow).
+    - ``value_flow_opportunities``:
+      ``Diagnostic.id == "cache.sub-workflow-cache-undeclared"``.
     """
     cf = analysis.cross_workflow
     return {
@@ -231,9 +229,7 @@ def _cross_workflow_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
             _warning_to_dict(d) for d in analysis.warnings if d.id == "cache.cross-workflow-prose-mismatch"
         ],
         "value_flow_opportunities": [
-            _warning_to_dict(d)
-            for d in analysis.warnings
-            if d.id == "cache.shared-context-undeclared" and "child_workflow" in (d.context or {})
+            _warning_to_dict(d) for d in analysis.warnings if d.id == "cache.sub-workflow-cache-undeclared"
         ],
     }
 

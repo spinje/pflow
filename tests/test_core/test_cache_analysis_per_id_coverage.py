@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -56,6 +57,21 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
         "cache.shared-context-undeclared": (
             None,
             {"node_count": 3, "shared_chunks": ["concept"], "affected_workflow": "x.pflow.md", "savings_usd": 0.78},
+        ),
+        "cache.sub-workflow-cache-undeclared": (
+            None,
+            {
+                "parent_workflow": "parent.pflow.md",
+                "child_workflow": "child.pflow.md",
+                "child_workflow_basename": "child.pflow.md",
+                "parent_value_expr": "concept",
+                "child_input_name": "concept",
+                "parent_node_id": "call-child",
+                "line_in_parent": 42,
+                "node_count": 2,
+                "affected_workflow": "child.pflow.md",
+                "savings_usd": None,
+            },
         ),
         "cache.batch-prewarm-recommended": (
             "score",
@@ -694,6 +710,34 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+
+    # cache.sub-workflow-cache-undeclared: parent passes a value into a child
+    # workflow that has repeated LLM consumers but no child-local ## Cache.
+    child_cache_ir = {
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_cache_child_ir = {
+        "nodes": [
+            {"id": "use", "type": "llm", "params": {"prompt": "Use ${concept}"}},
+            {"id": "review", "type": "llm", "params": {"prompt": "Review ${concept}"}},
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_cache_child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+    analysis = analyze(child_cache_ir, workflow_path="parent.pflow.md")
+    found = [d for d in analysis.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert found, f"analyze did not emit cache.sub-workflow-cache-undeclared: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.sub-workflow-cache-undeclared")
 
     # cache.cross-workflow-rename-detected: parent value tail differs from the
     # child input name. Per the evidence-basis suppression (#362), the warning

@@ -83,7 +83,7 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
                 "batch": {"items": [{"text": str(i)} for i in range(34)], "as": "item"},
                 "params": {"prompt": prefix + "${item.text}"},
             }
-        ]
+        ],
     }
 
     result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
@@ -262,21 +262,9 @@ def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest
     assert diag.context["child_prose"] == "Child prose\n"
 
 
-def test_cross_workflow_value_flow_collapses_per_value_with_destinations(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stage B.1 (Task 159) — by-value collapse contract.
-
-    Replaces the pre-Stage-B.1 ``test_cross_workflow_value_flow_uses_parent_node_id_for_dedup``
-    test, which asserted ``node_id == "child-call"`` (per-edge contract).
-    Stage B.1 emits per-(parent_workflow, value_root) groups with
-    ``node_id=None`` (workflow-level action) and a ``destinations`` list
-    carrying per-child detail. Aggregation key is the root segment of
-    parent_value_expr so sub-paths collapse into one finding.
-    """
+def test_sub_workflow_cache_undeclared_emits_for_reused_child_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child workflow with repeated LLM consumers needs its own ## Cache."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
-    # Parent has an LLM node referencing ${creative.direction} AND a child
-    # workflow call passing the same value through. Child has an LLM node
-    # referencing the input. By-value collapse produces ONE Diagnostic with
-    # value_root="creative", destinations=[chorus-chooser].
     parent_ir = {
         "nodes": [
             {
@@ -299,7 +287,13 @@ def test_cross_workflow_value_flow_collapses_per_value_with_destinations(monkeyp
                 "type": "llm",
                 "model": "anthropic/claude-haiku-4-5",
                 "params": {"prompt": "Use ${direction}"},
-            }
+            },
+            {
+                "id": "review-input",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${direction}"},
+            },
         ]
     }
     monkeypatch.setattr(
@@ -309,44 +303,23 @@ def test_cross_workflow_value_flow_collapses_per_value_with_destinations(monkeyp
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
-    matching = [d for d in result.warnings if d.id == "cache.shared-context-undeclared"]
-    # Stage B.1 contract: ONE Diagnostic per (parent_workflow, value_root) group.
+    matching = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
     assert len(matching) == 1
     diag = matching[0]
-    # node_id=None for workflow-level action — declaring in ## Cache is not
-    # attributable to a single node. Renderer surfaces ``affected_workflow``
-    # as scope label.
     assert diag.node_id is None
     assert diag.context is not None
-    # New keys (Stage B.1 by-value emission shape):
-    assert diag.context["value_root"] == "creative"
-    assert diag.context["destination_count"] == 1
-    destinations = diag.context["destinations"]
-    assert len(destinations) == 1
-    # SubWorkflowResult(child_ir, None, ()) → walker labels child path as "<inline>".
-    assert destinations[0]["child_workflow"] == "<inline>"
-    assert destinations[0]["node_count"] == 1  # use-input in child
-    assert destinations[0]["parent_node_id"] == "child-call"  # group representative
-    # parent_count=1 (use-direction references ${creative.direction}) +
-    # child_count=1 (use-input references ${direction}) → total_consumer_count=2.
-    assert diag.context["total_consumer_count"] == 2
-    # Old keys preserved for ``_validate_required`` compat (semantically symmetric):
-    assert diag.context["shared_chunks"] == ["creative"]
-    assert diag.context["node_count"] == 2  # = total_consumer_count
-    assert diag.context["affected_workflow"] == "parent.pflow.md"
+    assert diag.context["parent_workflow"] == "parent.pflow.md"
+    assert diag.context["child_workflow"] == "<inline>"
+    assert diag.context["child_workflow_basename"] == "<inline>"
+    assert diag.context["parent_value_expr"] == "creative.direction"
+    assert diag.context["child_input_name"] == "direction"
+    assert diag.context["node_count"] == 2
+    assert diag.context["affected_workflow"] == "<inline>"
+    assert "sub-workflows do not inherit" in diag.message
 
 
-def test_cross_workflow_value_flow_suppresses_when_no_llm_consumers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bug E regression (preserved through Stage B.1) — when neither side
-    has LLM nodes referencing the value, declaring it in ## Cache wouldn't
-    help (no consumers to share with). The threshold is now applied at
-    group emission time (``total_consumer_count < 2``); the suppression
-    semantics are unchanged.
-
-    Mutation test: drop the ``total_consumer_count < 2`` guard in
-    ``_emit_value_flow_groups`` and this test fails (warning fires for
-    shell-only child workflows).
-    """
+def test_sub_workflow_cache_undeclared_suppresses_when_no_llm_consumers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No child LLM consumers means no child-cache recommendation."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
@@ -364,33 +337,14 @@ def test_cross_workflow_value_flow_suppresses_when_no_llm_consumers(monkeypatch:
         lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
     )
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
-    # No cache.shared-context-undeclared cross-boundary warning fires when the
-    # combined parent+child consumer count is below the threshold. Stage B.1
-    # emissions have ``node_id=None`` (workflow-level), so we filter on the
-    # boundary discriminator (``child_workflow`` in context).
-    assert all(
-        not (d.id == "cache.shared-context-undeclared" and d.context and "child_workflow" in d.context)
-        for d in result.warnings
-    )
+    assert "cache.sub-workflow-cache-undeclared" not in {d.id for d in result.warnings}
 
 
-def test_value_flow_filtered_groups_emit_transparency_note(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When entire groups filter out (no LLM consumer in any child), surface a
-    transparency note so agents have an answer for "why didn't analyze flag X?"
-
-    Mutation test: drop the ``fully_filtered_roots.append(root)`` line OR the
-    note append at the end of ``_emit_value_flow_groups`` and this test fails
-    (silence on a value that visibly crosses the boundary).
-    """
+def test_sub_workflow_cache_undeclared_suppresses_single_child_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A single child LLM consumer has no repeated-read cache leverage."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
-    # Parent has 2 LLM consumers of ${opaque} so the workflow-internal finding
-    # fires AND the boundary edge to a code-only child also exists. Without
-    # the transparency note, the agent sees workflow-internal advice but
-    # zero signal explaining why the cross-boundary flow was dropped.
     parent_ir = {
         "nodes": [
-            {"id": "consumer-a", "type": "llm", "params": {"prompt": "Use ${opaque}"}},
-            {"id": "consumer-b", "type": "llm", "params": {"prompt": "Also use ${opaque}"}},
             {
                 "id": "branch",
                 "type": "workflow",
@@ -398,12 +352,9 @@ def test_value_flow_filtered_groups_emit_transparency_note(monkeypatch: pytest.M
             },
         ]
     }
-    # Child receives `opaque` but feeds it only into a code node — no LLM
-    # template-references it, so child_count == 0 and the destination filters.
     child_ir = {
         "nodes": [
-            {"id": "transform", "type": "code", "params": {"code": "result = opaque.upper()"}},
-            {"id": "llm", "type": "llm", "params": {"prompt": "Process ${transform.result}"}},
+            {"id": "llm", "type": "llm", "params": {"prompt": "Process ${opaque}"}},
         ]
     }
     monkeypatch.setattr(
@@ -412,41 +363,70 @@ def test_value_flow_filtered_groups_emit_transparency_note(monkeypatch: pytest.M
         lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
     )
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.sub-workflow-cache-undeclared" not in {d.id for d in result.warnings}
 
-    # Cross-boundary finding is correctly suppressed (no LLM consumer in child).
-    cross_boundary = [
-        d
-        for d in result.warnings
-        if d.id == "cache.shared-context-undeclared" and d.context and "child_workflow" in d.context
-    ]
-    assert not cross_boundary, "Expected destination filter to drop the cross-boundary value-flow finding"
 
-    # AND the transparency note explains the silence.
-    assert any("Cross-boundary value-flow suppressed" in note and "`opaque`" in note for note in result.notes), (
-        f"Expected transparency note explaining filtered cross-boundary value-flow. Got notes: {result.notes}"
+def test_sub_workflow_cache_undeclared_emits_for_batch_item_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parent batch values can be child-local stable context.
+
+    ``${item.concept}`` changes across parent fanout items, so it is correctly
+    ignored by rename/prose-alignment checks. But each child invocation receives
+    one concrete ``concept`` input, and repeated child LLM consumers can reuse
+    that input through the child's own ``## Cache`` block.
+
+    Mutation test: reintroduce the old ``is_batch_alias_root`` suppression in
+    ``_sub_workflow_cache_candidate`` and this warning disappears.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "song-fanout",
+                "type": "workflow",
+                "params": {
+                    "workflow": "./song-child.pflow.md",
+                    "inputs": {"concept": "${item.concept}"},
+                },
+                "batch": {"items": "${concepts}", "as": "item"},
+            }
+        ]
+    }
+    child_ir = {
+        "nodes": [
+            {"id": "draft", "type": "llm", "params": {"prompt": "Draft ${concept}"}},
+            {"id": "review", "type": "llm", "params": {"prompt": "Review ${concept}"}},
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/song-child.pflow.md"), ()),
     )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    found = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert len(found) == 1
+    assert found[0].context is not None
+    assert found[0].context["parent_value_expr"] == "item.concept"
+    assert found[0].context["child_input_name"] == "concept"
+    assert found[0].context["affected_workflow"] == "/abs/song-child.pflow.md"
+    assert "cache.cross-workflow-rename-detected" not in {d.id for d in result.warnings}
 
 
 # ---------------------------------------------------------------------------
-# Stage B.1 (Task 159) — by-value cross-boundary collapse + Pitfall #19 defense
+# Sub-workflow cache declaration recommendations
 #
 # Each of the tests below drives ``analyze(workflow_ir, ...)`` end-to-end with
 # monkeypatched sub-workflow resolution. They MUST NOT construct Diagnostics
-# directly — that bypasses the aggregation logic and reproduces Pitfall #19
+# directly — that bypasses the analyzer logic and reproduces Pitfall #19
 # (synthetic fixture matches buggy code shape; production code path differs).
 # ---------------------------------------------------------------------------
 
 
-def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
+def test_sub_workflow_cache_undeclared_emits_one_diagnostic_per_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One value flowing to N children → ONE collapsed Diagnostic with
-    destinations=[N entries].
-
-    Defends: the GROUP-BY step in ``_emit_value_flow_groups`` collapses
-    per-edge Diagnostics into one workflow-level finding; reverting it
-    re-emits N per-edge Diagnostics.
-    """
+    """One value flowing to N children creates N child-scoped edits."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     # Names match across the boundary (parent_value_expr.last_segment == child_input_name)
     # so this exercises the VALUE-FLOW branch, not the rename branch. Renames
@@ -478,7 +458,7 @@ def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
         ]
     }
 
-    # Both child workflows have an LLM node consuming the input.
+    # Both child workflows have repeated LLM consumers of the input.
     child_ir = {
         "nodes": [
             {
@@ -486,12 +466,17 @@ def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
                 "type": "llm",
                 "model": "anthropic/claude-haiku-4-5",
                 "params": {"prompt": "Review ${concept_brief}"},
-            }
+            },
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Score ${concept_brief}"},
+            },
         ]
     }
     # Walker calls resolve_sub_workflow per child. The fake returns the same
-    # IR but DIFFERENT path each call so the walker labels destinations
-    # distinctly.
+    # IR but DIFFERENT path each call so the walker labels children distinctly.
     call_count = [0]
     paths = ["/abs/review-emotional.pflow.md", "/abs/review-craft.pflow.md"]
 
@@ -503,31 +488,16 @@ def test_value_flow_collapses_to_single_diagnostic_for_one_value_to_n_children(
     monkeypatch.setattr(cross_module, "resolve_sub_workflow", fake_resolve)
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
-    matching = [
-        d
-        for d in result.warnings
-        if d.id == "cache.shared-context-undeclared" and d.context and "child_workflow" in d.context
+    matching = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert [d.context["child_workflow"] for d in matching if d.context] == [
+        "/abs/review-craft.pflow.md",
+        "/abs/review-emotional.pflow.md",
     ]
-    # ONE collapsed Diagnostic for the (parent_workflow, "concept_brief") group.
-    assert len(matching) == 1
-    diag = matching[0]
-    assert diag.context is not None
-    assert diag.context["value_root"] == "concept_brief"
-    assert diag.context["destination_count"] == 2
-    destinations = diag.context["destinations"]
-    assert len(destinations) == 2
-    # Destinations sorted lexicographically by child_workflow.
-    assert destinations[0]["child_workflow"] == "/abs/review-craft.pflow.md"
-    assert destinations[1]["child_workflow"] == "/abs/review-emotional.pflow.md"
+    assert all(d.context and d.context["child_input_name"] == "concept_brief" for d in matching)
 
 
-def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Different sub-paths of the same root collapse to ONE group.
-
-    Boundaries pass ``${concept.title}`` and ``${concept.core_idea}`` to
-    different children. Aggregation key is the root segment ("concept"), so
-    both edges land in the same group → 1 Diagnostic with destinations=[2].
-    """
+def test_sub_workflow_cache_undeclared_tracks_child_input_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sub-paths passed to different child inputs produce child-input edits."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     # Use child_input_name == last_segment(parent_value_expr) to avoid the
     # rename branch — names match across the boundary.
@@ -567,7 +537,13 @@ def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch)
                 "type": "llm",
                 "model": "anthropic/claude-haiku-4-5",
                 "params": {"prompt": "Title: ${title}"},
-            }
+            },
+            {
+                "id": "review-title",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${title}"},
+            },
         ]
     }
     child_b_ir = {
@@ -577,7 +553,13 @@ def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch)
                 "type": "llm",
                 "model": "anthropic/claude-haiku-4-5",
                 "params": {"prompt": "Core: ${core_idea}"},
-            }
+            },
+            {
+                "id": "review-core",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${core_idea}"},
+            },
         ]
     }
     call_count = [0]
@@ -592,26 +574,12 @@ def test_value_flow_collapses_sub_paths_to_root(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(cross_module, "resolve_sub_workflow", fake_resolve)
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
-    matching = [
-        d
-        for d in result.warnings
-        if d.id == "cache.shared-context-undeclared" and d.context and "child_workflow" in d.context
-    ]
-    # ONE Diagnostic with value_root="concept" and 2 destinations.
-    assert len(matching) == 1
-    diag = matching[0]
-    assert diag.context is not None
-    assert diag.context["value_root"] == "concept"
-    assert diag.context["destination_count"] == 2
+    matching = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert [d.context["child_input_name"] for d in matching if d.context] == ["title", "core_idea"]
 
 
-def test_value_flow_brownfield_suppression_when_parent_declares(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Parent workflow declares the value's root in ## Cache → no Diagnostic.
-
-    Defends: ``_value_flow_candidate`` must suppress the diagnostic when
-    the parent already declares the value's root; otherwise a finding
-    fires even though caching is already in place.
-    """
+def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parent ## Cache blocks are not inherited by sub-workflows."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
         "cache": {
@@ -647,8 +615,14 @@ def test_value_flow_brownfield_suppression_when_parent_declares(monkeypatch: pyt
                 "type": "llm",
                 "model": "anthropic/claude-haiku-4-5",
                 "params": {"prompt": "Use ${concept}"},
-            }
-        ]
+            },
+            {
+                "id": "review-concept",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ],
     }
     monkeypatch.setattr(
         cross_module,
@@ -657,36 +631,18 @@ def test_value_flow_brownfield_suppression_when_parent_declares(monkeypatch: pyt
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
-    # No cross-boundary value-flow Diagnostic fires — parent already declares.
-    boundary_findings = [
-        d
-        for d in result.warnings
-        if d.id == "cache.shared-context-undeclared" and d.context and "child_workflow" in d.context
-    ]
-    assert boundary_findings == []
+    found = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert len(found) == 1
+    assert found[0].context is not None
+    assert found[0].context["affected_workflow"] == "/abs/child.pflow.md"
+    assert found[0].context["child_input_name"] == "concept"
 
 
-def test_value_flow_distribution_clause_uniform_vs_nonuniform(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Per-agent-ux Finding 2: aggregate hides distribution. The boundary
-    template renders distribution-aware:
-    - Uniform: "Used by N LLM nodes per destination (csv)."
-    - Non-uniform: "Used by total LLM nodes (per-dest breakdown)."
-    """
+def test_child_cache_declaration_suppresses_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child-owned ## Cache declaration satisfies the child recommendation."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
-    # Parent passes ${shared} to TWO children; one child has 1 LLM consumer,
-    # the other has 2 → non-uniform distribution.
     parent_ir = {
         "nodes": [
-            {
-                "id": "child-light",
-                "type": "workflow",
-                "params": {
-                    "workflow": "./light.pflow.md",
-                    "inputs": {"shared": "${shared}"},
-                },
-            },
             {
                 "id": "child-heavy",
                 "type": "workflow",
@@ -697,17 +653,8 @@ def test_value_flow_distribution_clause_uniform_vs_nonuniform(
             },
         ]
     }
-    light_ir = {
-        "nodes": [
-            {
-                "id": "use1",
-                "type": "llm",
-                "model": "anthropic/claude-haiku-4-5",
-                "params": {"prompt": "${shared}"},
-            }
-        ]
-    }
     heavy_ir = {
+        "cache": {"items": [{"name": "shared", "var": "${shared}", "prose_before": "Shared:\n"}]},
         "nodes": [
             {
                 "id": "use1",
@@ -721,7 +668,48 @@ def test_value_flow_distribution_clause_uniform_vs_nonuniform(
                 "model": "anthropic/claude-haiku-4-5",
                 "params": {"prompt": "Again ${shared}"},
             },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(heavy_ir, Path("/abs/heavy.pflow.md"), ()),
+    )
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.sub-workflow-cache-undeclared" not in {d.id for d in result.warnings}
+
+
+def test_child_cache_recommendation_emits_only_for_undeclared_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When one receiving child declares the input, only the missing child is reported."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "declared-child",
+                "type": "workflow",
+                "params": {"workflow": "./declared.pflow.md", "inputs": {"shared": "${shared}"}},
+            },
+            {
+                "id": "missing-child",
+                "type": "workflow",
+                "params": {"workflow": "./missing.pflow.md", "inputs": {"shared": "${shared}"}},
+            },
         ]
+    }
+    declared_ir = {
+        "cache": {"items": [{"name": "shared", "var": "${shared}", "prose_before": "Shared:\n"}]},
+        "nodes": [
+            {"id": "use", "type": "llm", "params": {"prompt": "Use ${shared}"}},
+            {"id": "review", "type": "llm", "params": {"prompt": "Review ${shared}"}},
+        ],
+    }
+    missing_ir = {
+        "nodes": [
+            {"id": "use", "type": "llm", "params": {"prompt": "Use ${shared}"}},
+            {"id": "review", "type": "llm", "params": {"prompt": "Review ${shared}"}},
+        ],
     }
     call_count = [0]
 
@@ -729,21 +717,16 @@ def test_value_flow_distribution_clause_uniform_vs_nonuniform(
         idx = call_count[0]
         call_count[0] += 1
         if idx == 0:
-            return SubWorkflowResult(light_ir, Path("/abs/light.pflow.md"), ())
-        return SubWorkflowResult(heavy_ir, Path("/abs/heavy.pflow.md"), ())
+            return SubWorkflowResult(declared_ir, Path("/abs/declared.pflow.md"), ())
+        return SubWorkflowResult(missing_ir, Path("/abs/missing.pflow.md"), ())
 
     monkeypatch.setattr(cross_module, "resolve_sub_workflow", fake_resolve)
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
-    diag = next(
-        d
-        for d in result.warnings
-        if d.id == "cache.shared-context-undeclared" and d.context and "child_workflow" in d.context
-    )
-    # Non-uniform: message must show per-destination breakdown, not "per destination".
-    assert "per destination" not in diag.message
-    assert "light.pflow.md: 1" in diag.message
-    assert "heavy.pflow.md: 2" in diag.message
+    found = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert len(found) == 1
+    assert found[0].context is not None
+    assert found[0].context["child_workflow"] == "/abs/missing.pflow.md"
 
 
 # ---------------------------------------------------------------------------

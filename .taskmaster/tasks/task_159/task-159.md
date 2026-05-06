@@ -302,6 +302,7 @@ Catalog organized by emission path (per DD#36 three-tier architecture). "Run val
 | ID | Severity | Triggers when... |
 |---|---|---|
 | `cache.shared-context-undeclared` | `info` | Static analysis finds N≥2 LLM calls sharing a context object that isn't in any `## Cache` block. Suggests adding it. |
+| `cache.sub-workflow-cache-undeclared` | `info` | A parent passes a value into a child workflow where N≥2 child LLM nodes reuse it, but the child workflow does not declare that input in its own `## Cache`. |
 | `cache.batch-prewarm-recommended` | `warning` | Prewarm savings_ratio ≥ 5% (per DD#33), no explicit `prewarm:` decision declared. `context.savings_pct` and `context.savings_usd` carry the magnitude — agent decides based on intent. |
 | `cache.dynamic-before-static` | `warning` | A node's prompt has a `${var}` reference high up that prevents the rest of the prompt (which IS stable) from caching. Highest-leverage individual fix when it appears. |
 | `cache.padding-advisory` | `info` | A node's `prompt_cache:` subset doesn't start at position 1 of the master order; padding would unlock prefix hits at 0.1× read rate, net-positive. |
@@ -660,7 +661,7 @@ New module: `src/pflow/core/cache_analysis/cross_workflow.py` (~50 LOC). Mirrors
 - **Detection rules** (rename takes precedence — never double-emit on a renamed chunk):
   - **Rename detection** (`cache.cross-workflow-rename-detected`): when a parent edge has `child_input_name != tail_of_parent_value_expr` (e.g. parent passes `${concept_brief}` to child input named `creative_brief`). Emitted whenever rename occurs, regardless of whether either side has a `## Cache` declaration.
   - **Prose mismatch** (`cache.cross-workflow-prose-mismatch`): emitted ONLY when names are identical across the boundary (no rename) AND parent and child both declare `## Cache` blocks with the same chunk identifier AND the prose-before-the-`${var}` differs byte-by-byte. If a rename was already detected for the same chunk, prose-mismatch is suppressed — the rename warning subsumes it.
-  - **Value-flow opportunity**: when parent passes a value into child but neither file's `## Cache` declares it. Surfaces as a `cache.shared-context-undeclared` warning scoped to the boundary.
+  - **Child cache declaration opportunity** (`cache.sub-workflow-cache-undeclared`): when a parent passes a value into a child workflow, the child has N≥2 LLM consumers of that input, and the child workflow does not declare the input in its own `## Cache`. Parent `## Cache` declarations do not suppress this; sub-workflows do not inherit parent cache blocks.
 - **Auto-fix**: out of v1. v1 emits the warning; the canonicalization fix is deferred per DD#26 (no clearly right answer for "which prose wins").
 
 ### Token Estimation Strategy

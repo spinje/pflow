@@ -903,52 +903,27 @@ def test_text_renders_notes_in_locked_order() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_value_flow_diag(
+def _make_sub_workflow_cache_diag(
     node_id: str,
-    chunk: str,
+    child_input_name: str,
     child_workflow: str = "/abs/child.pflow.md",
-    *,
-    destinations: list[dict[str, object]] | None = None,
 ) -> Diagnostic:
-    """Build a cache.shared-context-undeclared diag mirroring how the analyzer
-    emits it for cross-workflow value-flow boundaries (Stage B.1 by-value
-    collapse — ``analyze.py:_emit_value_flow_groups``).
-
-    Stage B.1 emission shape: ``node_id=None`` (workflow-level action),
-    ``destinations: list[dict]`` carrying per-child detail. Old keys
-    (``node_count``, ``shared_chunks``, ``savings_usd``) preserved for
-    ``_validate_required`` compat.
-
-    The legacy ``node_id`` parameter is kept for backwards-compat with the
-    pre-Stage-B.1 test fixtures — it now propagates as the
-    ``destinations[0].parent_node_id`` (group representative).
-    """
+    """Build the child-scoped sub-workflow cache diagnostic."""
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
-    if destinations is None:
-        child_basename = child_workflow.rsplit("/", 1)[-1] if "/" in child_workflow else child_workflow
-        destinations = [
-            {
-                "child_workflow": child_workflow,
-                "child_workflow_basename": child_basename,
-                "node_count": 6,
-                "parent_node_id": node_id,
-                "line_in_parent": 0,
-            }
-        ]
+    child_basename = child_workflow.rsplit("/", 1)[-1] if "/" in child_workflow else child_workflow
     return make_diagnostic(
-        "cache.shared-context-undeclared",
-        node_count=6 * len(destinations),
-        shared_chunks=[chunk],
-        affected_workflow="/abs/parent.pflow.md",
+        "cache.sub-workflow-cache-undeclared",
+        node_count=6,
+        affected_workflow=child_workflow,
         savings_usd=None,
-        # Stage B.1 keys:
-        value_root=chunk,
-        destinations=destinations,
-        destination_count=len(destinations),
-        total_consumer_count=6 * len(destinations),
-        # ``child_workflow`` triggers the boundary-scope dispatch in make_diagnostic.
-        child_workflow=destinations[0]["child_workflow"],
+        parent_workflow="/abs/parent.pflow.md",
+        child_workflow=child_workflow,
+        child_workflow_basename=child_basename,
+        parent_value_expr=child_input_name,
+        child_input_name=child_input_name,
+        parent_node_id=node_id,
+        line_in_parent=0,
     )
 
 
@@ -981,20 +956,19 @@ def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> No
     assert "Tier 2" not in text
 
 
-def test_text_cross_workflow_findings_are_distinguishable() -> None:
-    """Stage B.1 (Task 159) — by-value collapse + boundary template dispatch
-    produces distinct ranked entries per (parent_workflow, value_root) group.
-
-    Stage B.1 emits ONE Diagnostic per value root. To surface multiple distinct
-    findings in this test, we use different chunk names. Each rec entry
-    carries the value_root in its headline as the discriminator.
-
-    Mutation test: drop ``value_root`` from the boundary headline template
-    (SINGLE form) and the three rec entries collapse to identical text.
-    """
-    diag1 = _make_value_flow_diag("choose-chorus", "concept", child_workflow="/abs/chorus-chooser.pflow.md")
-    diag2 = _make_value_flow_diag("emotional-reviews", "concept_brief", child_workflow="/abs/review-emotional.pflow.md")
-    diag3 = _make_value_flow_diag("craft-reviews", "concept_other", child_workflow="/abs/review-craft.pflow.md")
+def test_text_sub_workflow_cache_findings_are_distinguishable() -> None:
+    """Child-scoped cache findings name both the child workflow and input."""
+    diag1 = _make_sub_workflow_cache_diag("choose-chorus", "concept", child_workflow="/abs/chorus-chooser.pflow.md")
+    diag2 = _make_sub_workflow_cache_diag(
+        "emotional-reviews",
+        "concept_brief",
+        child_workflow="/abs/review-emotional.pflow.md",
+    )
+    diag3 = _make_sub_workflow_cache_diag(
+        "craft-reviews",
+        "concept_other",
+        child_workflow="/abs/review-craft.pflow.md",
+    )
 
     text = render_text(_make_analysis(warnings=[diag1, diag2, diag3]))
 
@@ -1002,39 +976,27 @@ def test_text_cross_workflow_findings_are_distinguishable() -> None:
     assert "1. " in text
     assert "2. " in text
     assert "3. " in text
-    # Each value_root appears as a discriminator in the rendered output.
+    # Each child input appears as a discriminator in the rendered output.
     assert "`concept`" in text
     assert "`concept_brief`" in text
     assert "`concept_other`" in text
-    # SINGLE-destination boundary headlines name BOTH parent and child workflow
-    # basenames so the agent knows declaring on either side is valid.
-    assert "parent.pflow.md" in text
     assert "chorus-chooser.pflow.md" in text
     assert "review-emotional.pflow.md" in text
     assert "review-craft.pflow.md" in text
 
 
-def test_text_cross_workflow_value_flow_emits_action_line() -> None:
-    """Stage B.1 (Task 159): single-destination boundary findings render in
-    Recommended actions with the SINGLE template. The headline names BOTH
-    parent and child workflow basenames so the agent knows declaring on
-    either side is valid (single-destination case keeps "either side"
-    framing per review-agent-ux Finding 1).
-
-    Mutation test: drop the boundary template dispatch in ``make_diagnostic``;
-    this test fails because the workflow-scope template fires instead and
-    the discriminator-bearing "either workflow's ## Cache" prose disappears.
-    """
-    diag = _make_value_flow_diag("choose-chorus", "concept")
+def test_text_sub_workflow_cache_finding_emits_child_action_line() -> None:
+    """Sub-workflow cache findings render as child-scoped Recommended actions."""
+    diag = _make_sub_workflow_cache_diag("choose-chorus", "concept")
     text = render_text(_make_analysis(warnings=[diag]))
     # Headline surfaces in Recommended actions section.
-    assert "Cross-boundary value undeclared" in text
+    assert "Sub-workflow cache undeclared" in text
     assert "`concept`" in text
-    # SINGLE-destination message: "either workflow's ## Cache" framing
-    # (per-agent-ux Finding 1 — declaring on the child is equally valid).
-    assert "either workflow's ## Cache" in text
+    assert "sub-workflows do not inherit the parent cache block" in text
+    assert "either workflow's ## Cache" not in text
+    assert "share cached bytes across the boundary" not in text
     # Stage-1 UX pass: per-finding ``[cache.X]`` footer is gone.
-    assert "[cache.shared-context-undeclared]" not in text
+    assert "[cache.sub-workflow-cache-undeclared]" not in text
 
 
 def test_text_cross_workflow_rename_finding_full_format() -> None:
