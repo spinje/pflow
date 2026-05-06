@@ -38,7 +38,7 @@ CP4 changes (#16, #9, #7, #6+#13 — agent UX cleanup):
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from pflow.core.diagnostic import Diagnostic
 
@@ -639,6 +639,7 @@ def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
             for node_id, assignment in block.per_node_assignments.items():
                 chunks.append(f"  ### {node_id}")
                 chunks.append(f"  - prompt_cache: [{', '.join(assignment)}]")
+                chunks.append(_format_threshold_line(block.per_node_thresholds.get(node_id) or {}))
                 cleanup_refs = block.prompt_body_cleanup.get(node_id) or []
                 if cleanup_refs:
                     refs_csv = ", ".join(f"${{{ref}}}" for ref in cleanup_refs)
@@ -650,6 +651,25 @@ def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
     while chunks and chunks[-1] == "":
         chunks.pop()
     return "\n".join(chunks)
+
+
+def _format_threshold_line(threshold_info: Mapping[str, object]) -> str:
+    status = threshold_info.get("meets_threshold")
+    total = threshold_info.get("total_tokens")
+    min_tokens = threshold_info.get("min_tokens")
+    model_label = threshold_info.get("model", "<unknown>")
+    if status is True:
+        return f"  - threshold: {total} tokens / {min_tokens} ({model_label}) ✓"
+    if status is False:
+        return (
+            f"  - threshold: {total} tokens / {min_tokens} ({model_label}) ⚠ BELOW THRESHOLD — "
+            "cache will not fire as suggested"
+        )
+    if status is None and model_label == "<varies>":
+        return "  - threshold: varies per item (heterogeneous model)"
+    if status is None:
+        return "  - threshold: unable to estimate (no run data; first run will populate)"
+    return "  - threshold: <unavailable>"
 
 
 def _render_cross_workflow(analysis: CacheAnalysis) -> str:

@@ -38,6 +38,7 @@ src/pflow/core/cache_analysis/
 ├── cost_estimation.py           # 561 LOC — row-level cost projections + actually-paid math
 ├── token_estimation.py          # 419 LOC — 4-tier token estimation hierarchy
 ├── padding_advisor.py           # 63 LOC — sensitivity-floored padding advisories
+├── below_min_tokens_detector.py # ~90 LOC — shared predicted/observed below-threshold detector
 ├── render_json.py               # 399 LOC — JSON projection of CacheAnalysis
 ├── render_text.py               # 1,008 LOC — text projection (orchestrator + 7 sections)
 ├── summarize.py                 # 113 LOC — one-line dry-run nudge Diagnostic
@@ -112,7 +113,7 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 - For DECLARED subsets: partial memo data → falls through to Tier 3 (heuristic) to preserve `cache.below-min-tokens` warning fidelity.
 - For CANDIDATE-only (greenfield projection): partial memo data → returns `(None, "unavailable")` (Option C — honest unmeasurable).
 
-**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2/3. Downstream `cache.below-min-tokens` warning is gated on `cacheable_data_source != "trace"` so it fires correctly without contradicting trace evidence when cache demonstrably worked.
+**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2/3. Downstream `cache.below-min-tokens` warning is emitted through `below_min_tokens_detector.py` in predicted mode and is suppressed when `cacheable_data_source == "trace"` so it doesn't contradict trace evidence when cache demonstrably worked.
 
 **LiteLLM is lazy-imported** (mirrors the `llm_client.py` lazy-import pattern) to keep the analyzer package import-cheap.
 
@@ -124,7 +125,9 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 **Catalog-as-SSoT for headlines**: `resolve_headline_for(diag)` looks up `headline_template` from the catalog by `diag.id` and formats against `diag.context`. **Works whether the diagnostic came from `make_diagnostic(...)` OR was built directly via `Diagnostic(id="cache.X", ...)`** — the validator emitters in `data_flow.py` use direct construction; the analyzer-side emitters use `make_diagnostic`. Both produce equivalent renderable diagnostics.
 
-**Dispatch tables** for `cache.shared-context-undeclared` (workflow vs boundary scope) and `cache.discrepancy` (per-`root_cause`) live in this file. Validation of required context keys happens in `make_diagnostic` so missing context fails at construction, not at render.
+**Dispatch tables** for `cache.shared-context-undeclared` (workflow vs boundary scope), `cache.below-min-tokens` (predicted vs observed evidence), and `cache.discrepancy` (per-`root_cause`) live in this file. Validation of required context keys happens in `make_diagnostic` so missing context fails at construction, not at render.
+
+**`cache.below-min-tokens` has two drivers but one catalog ID**: analyzer predicted-tier emission and `LLMNode.post()` runtime observed-tier emission both call `below_min_tokens_detector.detect()`. The detector imports only stdlib plus `llm_capabilities` and `llm_providers` so `nodes/llm/llm.py` can import it without pulling analyzer/runtime-heavy dependencies. Runtime observed-tier findings surface post-run through `__warnings__` as `Diagnostic` instances; same-id child sub-workflow collisions remain limited by the existing `__warnings__[node_id]` key shape.
 
 **About 75% of the file is data**: catalog dict + message templates + headline templates. The remaining 25% is constructors and dispatch logic.
 
@@ -132,7 +135,7 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 Both are projections of `CacheAnalysis` — read-only, no mutation. `render_text` is one orchestrator (`render_text(analysis, all_rows=False)`) calling section renderers (header / cost block / summary / blocking errors / recommended actions / suggested blocks / cross-workflow / per-call rows / sub-workflow drill-in / notes). Each section reads only the fields it needs.
 
-**Section visibility is deterministic from `CacheAnalysis`.** When per-call rows have no real data (greenfield, no execution), the renderer hides them and emits a Notes entry explaining the absence is intentional. The analyzer mirrors this predicate at analyze-time so the absence note appears in JSON too.
+**Section visibility is deterministic from `CacheAnalysis`.** When per-call rows have no real data (greenfield, no execution), the renderer hides them and emits a Notes entry explaining the absence is intentional. The analyzer mirrors this predicate at analyze-time so the absence note appears in JSON too. Suggested-block output carries `per_node_thresholds` so greenfield recommendations show whether each node's assigned subset clears that node's model threshold.
 
 ### view_helpers.py
 

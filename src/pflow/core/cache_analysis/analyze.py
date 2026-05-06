@@ -28,7 +28,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
     # ``CostTier`` lives in ``cost_estimation.py`` (where it's produced).
@@ -59,6 +59,12 @@ from pflow.core.workflow.data_flow import validate_data_flow
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 from pflow.runtime.template_resolver import TemplateResolver
 
+from .below_min_tokens_detector import (
+    BelowMinTokensEvidence,
+)
+from .below_min_tokens_detector import (
+    detect as detect_below_min_tokens,
+)
 from .context import AnalysisContext, _normalize_empty
 from .cross_workflow import walk_cross_workflow
 from .padding_advisor import PaddingCandidate, compute_padding_advisories
@@ -209,6 +215,15 @@ class SuggestedBlockChunk:
     prose_placeholder: str
 
 
+class PerNodeThresholdEntry(TypedDict):
+    """Per-node threshold check for a SuggestedBlock recommendation."""
+
+    model: str
+    min_tokens: int | None
+    total_tokens: int | None
+    meets_threshold: bool | None
+
+
 @dataclass(frozen=True)
 class SuggestedBlock:
     target_file: str
@@ -222,6 +237,7 @@ class SuggestedBlock:
     # Empty dict for blocks with no overlapping refs (greenfield workflows
     # where the suggested ## Cache wouldn't conflict with existing prompts).
     prompt_body_cleanup: dict[str, list[str]] = field(default_factory=dict)
+    per_node_thresholds: dict[str, PerNodeThresholdEntry] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1405,32 +1421,27 @@ def _per_node_warnings(
     diagnostics: list[Diagnostic] = []
     node_id = row.node_path
 
-    # cache.below-min-tokens — declared cache content below provider minimum.
-    # ``cacheable_tokens_estimated`` may be None for greenfield rows without
-    # memo data; this warning gates on declared_prompt_cache so it only fires
-    # in steady-state where cacheable is always int. ALSO gates on
-    # ``cacheable_data_source != "trace"``: when source is trace AND cacheable
-    # is nonzero, cache demonstrably worked at this size; the warning would
-    # contradict trace evidence. When source is memo/estimator (or trace
-    # fell through), the warning fires correctly.
-    cacheable = row.cacheable_tokens_estimated
-    if (
-        row.declared_prompt_cache
-        and cacheable is not None
-        and cacheable > 0
-        and row.model
-        and row.cacheable_data_source != "trace"
-    ):
-        min_tokens = get_min_cache_tokens(row.model)
-        if cacheable < min_tokens:
+    if row.declared_prompt_cache:
+        finding = detect_below_min_tokens(
+            BelowMinTokensEvidence(
+                node_id=node_id,
+                model=row.model,
+                declared_prompt_cache=list(row.declared_prompt_cache),
+                estimated_tokens=row.cacheable_tokens_estimated,
+                estimated_data_source=row.cacheable_data_source,
+            )
+        )
+        if finding is not None:
             diagnostics.append(
                 make_diagnostic(
                     "cache.below-min-tokens",
-                    node_id=node_id,
+                    node_id=finding.node_id,
                     affected_workflow=row.workflow_path,
-                    model=row.model,
-                    cacheable_tokens=int(cacheable),
-                    min_tokens=int(min_tokens),
+                    model=finding.model,
+                    min_tokens=finding.min_tokens,
+                    evidence_kind=finding.evidence_kind,
+                    cacheable_tokens=finding.cacheable_tokens,
+                    provider_note=finding.provider_note,
                 )
             )
 
@@ -1726,6 +1737,7 @@ def _populate_suggested_blocks(
     )
     chunks: list[SuggestedBlockChunk] = []
     assignments: dict[str, list[str]] = {}
+    ref_sizes: dict[str, int | None] = {}
     total_savings: float | None = 0.0
     affected_nodes: set[str] = set()
 
@@ -1737,6 +1749,7 @@ def _populate_suggested_blocks(
         size_tokens = _estimate_ref_tokens(
             ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx
         )
+        ref_sizes[ref] = size_tokens
         # ``size_tokens_est`` on the suggested-block chunk stays ``int`` — the
         # block is paste-ready prose so we render 0 (or the real value) rather
         # than expose ``None``. Agents reading the chunk size see "0" and know
@@ -1750,14 +1763,27 @@ def _populate_suggested_blocks(
                 prose_placeholder=_starter_prose_for_ref(ref),
             )
         )
-        chunk_savings = _savings_for_shared_ref(ref, node_ids, rows_by_node, size_tokens)
-        if chunk_savings is None:
-            total_savings = None
-        elif total_savings is not None:
-            total_savings += chunk_savings
         for node_id in node_ids:
             affected_nodes.add(node_id)
             assignments.setdefault(node_id, []).append(ref)
+
+    per_node_thresholds, eligible_nodes = _thresholds_for_assignments(
+        assignments=assignments,
+        rows_by_node=rows_by_node,
+        ctx=ctx,
+        memo_cache=memo_cache,
+        workflow_path=workflow_path,
+    )
+
+    if len(eligible_nodes) < 2:
+        total_savings = 0.0
+    else:
+        for ref, node_ids in shared_refs:
+            chunk_savings = _savings_for_shared_ref(ref, node_ids, rows_by_node, ref_sizes[ref], eligible_nodes)
+            if chunk_savings is None:
+                total_savings = None
+            elif total_savings is not None:
+                total_savings += chunk_savings
 
     target_file = workflow_path or "<root>"
     block = SuggestedBlock(
@@ -1767,6 +1793,7 @@ def _populate_suggested_blocks(
         per_node_assignments={node_id: assignments[node_id] for node_id in sorted(assignments)},
         estimated_savings_usd=total_savings,
         prompt_body_cleanup=_compute_prompt_body_cleanup(workflow_ir, chunks, assignments),
+        per_node_thresholds={node_id: per_node_thresholds[node_id] for node_id in sorted(per_node_thresholds)},
     )
     warning = make_diagnostic(
         "cache.shared-context-undeclared",
@@ -1777,6 +1804,58 @@ def _populate_suggested_blocks(
         savings_usd=total_savings,
     )
     return [block], [warning]
+
+
+def _thresholds_for_assignments(
+    *,
+    assignments: dict[str, list[str]],
+    rows_by_node: dict[str, PerCallRow],
+    ctx: AnalysisContext,
+    memo_cache: Any,
+    workflow_path: str | None,
+) -> tuple[dict[str, PerNodeThresholdEntry], set[str]]:
+    per_node_thresholds: dict[str, PerNodeThresholdEntry] = {}
+    eligible_nodes: set[str] = set()
+    for node_id, assigned_refs in assignments.items():
+        entry = _threshold_entry_for_node(
+            node_id=node_id,
+            assigned_refs=assigned_refs,
+            rows_by_node=rows_by_node,
+            ctx=ctx,
+            memo_cache=memo_cache,
+            workflow_path=workflow_path,
+        )
+        per_node_thresholds[node_id] = entry
+        if entry["meets_threshold"] is True:
+            eligible_nodes.add(node_id)
+    return per_node_thresholds, eligible_nodes
+
+
+def _threshold_entry_for_node(
+    *,
+    node_id: str,
+    assigned_refs: list[str],
+    rows_by_node: dict[str, PerCallRow],
+    ctx: AnalysisContext,
+    memo_cache: Any,
+    workflow_path: str | None,
+) -> PerNodeThresholdEntry:
+    node_row = rows_by_node.get(node_id)
+    if node_row is None:
+        return {"model": "<unknown>", "min_tokens": None, "total_tokens": None, "meets_threshold": None}
+    if node_row.model_is_heterogeneous:
+        return {"model": "<varies>", "min_tokens": None, "total_tokens": None, "meets_threshold": None}
+    if not node_row.model:
+        return {"model": "<unknown>", "min_tokens": None, "total_tokens": None, "meets_threshold": None}
+
+    total = _sum_chunk_tokens(assigned_refs, node_row.model, ctx, memo_cache, workflow_path)
+    threshold = get_min_cache_tokens(node_row.model)
+    return {
+        "model": node_row.model,
+        "min_tokens": threshold,
+        "total_tokens": total,
+        "meets_threshold": (total >= threshold) if total is not None else None,
+    }
 
 
 def _collect_llm_template_references(workflow_ir: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, int]]:
@@ -2005,16 +2084,19 @@ def _detect_model_cache_fragmentation(
             ttl=_extract_cache_ttl(workflow_ir.get("cache")),
             ctx=ctx,
         )
-        if costs is not None:
-            redundant_groups = sorted_groups[1:]
+        participating_groups = (
+            [group for group in sorted_groups if str(group["model"]) in costs] if costs is not None else []
+        )
+        if costs is not None and len(participating_groups) >= 2:
+            redundant_groups = participating_groups[1:]
             savings_usd = sum(costs[str(group["model"])] for group in redundant_groups)
-            model_groups = _model_groups_payload(sorted_groups, costs)
+            model_groups = _model_groups_payload(participating_groups, costs)
             diagnostics.append(
                 make_diagnostic(
                     "cache.heterogeneous-models-fragment-cache",
                     node_id=None,
-                    model_group_count=len(sorted_groups),
-                    models_csv=", ".join(str(group["model"]) for group in sorted_groups),
+                    model_group_count=len(participating_groups),
+                    models_csv=", ".join(str(group["model"]) for group in participating_groups),
                     model_groups=model_groups,
                     model_groups_lines=_format_model_groups_lines(model_groups),
                     shared_chunks=sorted(shared_chunks),
@@ -2104,19 +2186,11 @@ def _compute_model_group_costs(
         if pricing is None:
             return None
         group_shared = group["chunks"] & shared_chunks
-        chunk_tokens = [
-            _estimate_ref_tokens(
-                chunk,
-                model=model,
-                memo_cache=ctx.memo_cache,
-                workflow_path=ctx.workflow_path,
-                ctx=ctx,
-            )
-            for chunk in group_shared
-        ]
-        if any(tokens is None for tokens in chunk_tokens):
+        total_tokens = _sum_chunk_tokens(list(group_shared), model, ctx, ctx.memo_cache, ctx.workflow_path)
+        if total_tokens is None:
             return None
-        total_tokens = sum(tokens for tokens in chunk_tokens if tokens is not None)
+        if total_tokens < get_min_cache_tokens(model):
+            continue
         costs[model] = total_tokens * _write_rate_for_ttl(pricing, ttl, model)
     return costs
 
@@ -2155,6 +2229,8 @@ def _single_call_write_penalty(row: PerCallRow, *, ttl: str | None) -> float | N
 
     tokens = row.cacheable_tokens_estimated
     if tokens is None:
+        return None
+    if row.model and tokens < get_min_cache_tokens(row.model):
         return None
     pricing = get_model_pricing(row.model)
     if pricing is None:
@@ -2317,18 +2393,39 @@ def _estimate_chunk_tokens(item: dict[str, Any], model: str) -> int:
     return estimate_tokens(model, text)[0]
 
 
+def _sum_chunk_tokens(
+    refs: list[str],
+    model: str,
+    ctx: AnalysisContext,
+    memo_cache: Any,
+    workflow_path: str | None,
+) -> int | None:
+    """Sum chunk tokens across refs. Returns None if any ref is unmeasurable."""
+    total = 0
+    for ref in refs:
+        tokens = _estimate_ref_tokens(ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx)
+        if tokens is None:
+            return None
+        total += tokens
+    return total
+
+
 def _savings_for_shared_ref(
     ref: str,
     node_ids: list[str],
     rows_by_node: dict[str, PerCallRow],
     tokens: int | None,
+    eligible_nodes: set[str],
 ) -> float | None:
     if tokens is None:
         # No memo data → can't compute savings honestly. Mirror the existing
         # cost tri-state contract: None propagates rather than fabricating 0.
         return None
+    eligible_in_order = [node_id for node_id in node_ids if node_id in eligible_nodes]
+    if len(eligible_in_order) < 2:
+        return 0.0
     total = 0.0
-    for node_id in node_ids[1:]:
+    for node_id in eligible_in_order[1:]:
         row = rows_by_node.get(node_id)
         if row is None:
             return None

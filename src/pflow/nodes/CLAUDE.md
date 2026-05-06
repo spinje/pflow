@@ -11,6 +11,8 @@ This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the
 
 Rule of thumb: if the value changes between workflow runs, it's shared store data. If it's the same regardless of input, it's a param.
 
+`LLMNode.post()` is one approved direct producer of `shared["__warnings__"]`: after an LLM call it can write a catalog-backed `Diagnostic` for observed prompt-cache misses (`cache.below-min-tokens`) when provider telemetry reports zero cache creation/read tokens for a node declaring `prompt_cache:`. The write uses `setdefault` so pre-existing warnings survive; adapter warnings such as empty-response use assignment later in `post()` and intentionally take precedence.
+
 ## Critical Pattern: Node Error Handling
 
 **This is non-negotiable** - violating this pattern disables automatic retries, severely impacting reliability.

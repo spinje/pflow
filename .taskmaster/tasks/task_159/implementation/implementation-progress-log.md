@@ -7644,3 +7644,189 @@ Filed GitHub issues for audit trail and follow-up:
 - #371: original pytest slowdown investigation, closed after this fix.
 - #372: remaining performance follow-ups, including SQLite cache write
   reduction and targeted optimization of remaining slow non-e2e tests.
+
+## Stage 2 follow-up — Findings #9/#10 + phantom-savings: unified below-min-token detection (2026-05-06)
+
+Implemented `fix-plans/cache-below-min-tokens-unified-detection-plan.md`. Closes
+two Stage 2 findings plus a correctness bug surfaced during planning:
+
+- **Finding #9 (discoverability gap)** — `cache.below-min-tokens` previously
+  fired only from `analyze-cache`. Agents who ran `pflow run --validate-only`
+  saw "Workflow is valid" even when their `prompt_cache:` decoration silently
+  no-op'd at the provider. Stage 2 evidence: RUN-HAIKU-RERUN's
+  `generate-suno-prompt` had 3,764 tokens against Haiku's 4,096 minimum with
+  zero signal. Closed by adding observed-tier emission from `LLMNode.post()`
+  using post-call provider telemetry — fires during the run, surfaces in
+  `--report` and trace JSON without requiring agents to remember to invoke
+  `analyze-cache`. Discussed at length in the planning thread; decided
+  against literal `--validate-only` emission because DD#36 forbids tokenizers
+  in the runtime/validation hot path.
+- **Finding #10 (misleading message text)** — the warning's "cache_control
+  markers will silently no-op" text was accurate for Anthropic but
+  misleading for Gemini (whose implicit cache may still fire on stable
+  prefixes regardless of `cache_control` markers). Closed via provider-aware
+  message dispatch in the catalog: Anthropic keeps the original phrasing,
+  Gemini distinguishes explicit `cachedContents` from possible implicit
+  caching, OpenAI omits the suffix because the main "below {model}'s
+  minimum" already conveys it cleanly.
+- **Phantom-savings correctness bug (no finding number; surfaced during
+  planning)** — three analyzer paths computed non-zero `estimated_savings_usd`
+  for caches that won't fire because totals are below threshold
+  (`_savings_for_shared_ref`, `_single_call_write_penalty`,
+  `_compute_model_group_costs`). The phantom values flowed into
+  `RecommendedAction.estimated_savings_usd` and contaminated action-priority
+  ranking — sub-threshold suggestions could outrank valid above-threshold
+  ones. Closed by adding threshold gates at all three sites following the
+  established convention from `cache.batch-prewarm-recommended` and
+  `cache.dynamic-before-static`.
+
+`cache.below-min-tokens` now has one detector module with two evidence tiers:
+analyzer predicted estimates and runtime observed provider telemetry. Analyzer
+emission was refactored through the detector; `LLMNode.post()` now emits a
+catalog-backed `Diagnostic` after calls that declare `prompt_cache:` but report
+0 provider cache creation/read tokens. Runtime warning transport now preserves
+`Diagnostic` instances end-to-end, and `--report` shows warning IDs plus
+catalog suggestions.
+
+Closed the phantom-savings paths:
+
+- Greenfield suggested-block savings now count only nodes whose assigned
+  subset clears that node's model threshold; the first eligible node is the
+  writer and only later eligible readers contribute savings.
+- `cache.first-call-write-penalty` suppresses below-threshold declarations
+  because no provider write premium exists when the cache cannot fire.
+- `cache.heterogeneous-models-fragment-cache` filters model groups below
+  threshold before calculating redundant writes and suppresses when fewer
+  than two groups survive.
+
+Suggested blocks now carry/render `per_node_thresholds` in text and JSON so
+agents can see whether each proposed `prompt_cache:` subset clears the selected
+model threshold. The `cache.below-min-tokens` catalog entry dispatches message
+text by `evidence_kind` and uses provider-aware notes: Anthropic names
+`cache_control` no-op behavior, Gemini distinguishes explicit cachedContents
+from possible implicit caching, and OpenAI omits the suffix.
+
+Deviations / adaptations:
+
+- Refactored new inline logic into helpers after ruff complexity checks caught
+  `_populate_suggested_blocks`, `_render_suggested_blocks`, `make_diagnostic`,
+  and `LLMNode.post()` crossing complexity limits. This was not a scope change;
+  it keeps the final code simpler than the literal inline plan.
+- Updated `test_prompt_cache_fires_under_no_cache_flag` to stage nonzero mock
+  provider cache telemetry. The test's intent is "memo `--no-cache` does not
+  disable provider prompt-cache markers"; after runtime observed-tier detection,
+  the previous mock default of 0 cache tokens correctly meant "observed cache
+  miss" and degraded the run.
+- CLI warning fixtures for model-fragmentation and first-write-penalty now pass
+  larger context values so they exercise above-threshold warnings. Below-
+  threshold suppression is covered separately.
+
+Verification:
+
+- Focused affected tests: 520 passed.
+- Full sandbox non-e2e suite:
+  `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e"`
+  → 6248 passed.
+- Sandbox e2e subset with known Homebrew-`uv` subprocess exclusions:
+  18 passed, 18 skipped.
+- Static checks: ruff check/format clean on touched files; `mypy src` clean
+  (203 source files); `deptry src` clean.
+
+Key learnings:
+
+1. Runtime telemetry changes test semantics. A mock default of
+   `cache_creation=0, cache_read=0` is no longer neutral for cache-declaring
+   LLM calls; it is evidence that provider caching did not fire.
+2. Threshold gating must happen at the same granularity as the provider cache:
+   per node and exact model for suggested blocks, per exact-model group for
+   fragmentation. Row-total or block-level shortcuts recreate phantom savings.
+3. Passing `Diagnostic` through `__warnings__` is the right channel shape for
+   catalog-backed runtime findings. Normalization remains useful for legacy
+   string/dict paths, but the runner must preserve typed diagnostics instead
+   of wrapping them as generic api warnings.
+
+## Stage 2 follow-up — post-implementation review + tightening (2026-05-06)
+
+After the unified detector landed, ran a 4-agent code review (`/code-review`
+with `review-plan` + `review-silent-failures` + `review-feature-interactions` +
+`review-impact-completeness`) against the staged implementation. Reviewers
+confirmed plan adherence and flagged one residual silent-failure path in the
+runtime emit site.
+
+### Tightening — empty `llm_usage` guard
+
+`_emit_observed_below_min_cache_warning` (`nodes/llm/llm.py`) was firing
+observed-tier findings even when the adapter returned no usage at all (the
+case where `LLMNode.post()` line 977 sets `shared["llm_usage"] = {}`). With
+both cache fields absent from the dict, `int(llm_usage.get(...) or 0)` resolved
+to 0+0 and the helper synthesized a false-positive "did not fire" finding
+rather than recognizing missing telemetry.
+
+Added an early-return guard before the `detect()` call:
+
+```python
+if "cache_creation_input_tokens" not in llm_usage and "cache_read_input_tokens" not in llm_usage:
+    return  # honest unmeasurable — mirrors _estimate_ref_tokens / _compute_model_group_costs
+```
+
+Pinned by `test_emit_observed_below_min_cache_warning_skips_when_no_provider_telemetry`
+in `tests/test_execution/test_runner.py` — a helper-level unit test that
+constructs a `CacheRenderContext` and calls the helper with `llm_usage={}`
+directly. Mutation contract verified by reverting the guard and confirming
+the test fails with the exact false-positive message it was designed to catch.
+
+The test runs at the helper level rather than through the runner pipeline
+because `MockLLMClient.set_response` always populates cache fields in usage
+(defaults to 0); there is no current way to simulate `AdapterResponse(usage={})`
+end-to-end. The runner-pipeline equivalent is filed as GH issue #375.
+
+### GitHub follow-ups filed
+
+Three follow-up issues filed on `spinje/pflow`, all labeled `enhancement`:
+
+- **#373** — Add near-threshold expansion hints for greenfield `SuggestedBlock`.
+  When a node's assigned subset is below threshold but within 50% of the
+  minimum, scan the workflow for unreferenced template refs that could
+  bridge the gap and render `Add ${notes} (~1500 tokens) → 4920 tokens`
+  hints. ~80 LOC. Most agent-actionable piece of advice the
+  `cache.below-min-tokens` feature could surface; deferred during planning
+  via explicit `AskUserQuestion` decision.
+- **#374** — Modernize the `__warnings__` channel: workflow scoping, live
+  emission, list-shaped values. Bundles three independent structural
+  improvements that all touch `shared["__warnings__"]` keying and value
+  shape. Cross-cutting refactor (~250 LOC); fixes (a) parent/child
+  same-`node_id` collisions, (b) post-run-only warning surfacing, (c)
+  cache-miss vs empty-response setdefault overwrite. Out of scope for v1
+  per the plan.
+- **#375** — Mock fidelity: add `usage_present` toggle to
+  `MockLLMClient.set_response`. Lets runner-level pipeline tests exercise
+  the `shared["llm_usage"] = {}` path that the empty-telemetry guard
+  protects. ~15 LOC; replaces the helper-level unit test with a
+  pipeline-level one. Self-contained test-infrastructure improvement.
+
+### Verification (after tightening)
+
+- `tests/test_execution/test_runner.py`: 32 passed (was 31 pre-tightening; +1
+  for the new guard test).
+- Cache-related sweep across detector / catalog / renderers / per-id /
+  analyze / diagnostic / runtime LLM / no-cache-flag: 370 passed.
+- `ruff check` and `mypy` clean on `nodes/llm/llm.py` and the test file.
+
+### Key learnings (from review + tightening)
+
+1. **The four-agent code review caught what manual self-review missed.** The
+   `review-feature-interactions` agent specifically pinned the silent-failure
+   path by tracing the helper's data flow through the post-call pipeline. The
+   bug was in code I had read multiple times during implementation.
+2. **"Honest unmeasurable" is a load-bearing convention in this codebase.**
+   Three sites already implement it (`_estimate_ref_tokens`,
+   `_compute_model_group_costs`, `_savings_for_shared_ref`). Any new emission
+   path that consumes externally-supplied data should follow the same
+   convention by default — return None / skip when data is absent rather
+   than fabricate from defaults.
+3. **Mock infrastructure can preclude end-to-end tests for genuinely
+   important paths.** `MockLLMClient`'s always-populates-cache-fields
+   default forced a helper-level unit test for a guard that we'd ideally
+   pin via runner pipeline. Worth filing the mock improvement (#375) as a
+   first-class test-infrastructure enhancement rather than carrying the
+   awkward unit test forward.

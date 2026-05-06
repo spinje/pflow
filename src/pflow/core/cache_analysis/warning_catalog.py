@@ -165,6 +165,23 @@ _SHARED_CONTEXT_BOUNDARY_HEADLINE_MULTI = (
     "{parent_workflow_basename}'s ## Cache (covers {destination_count} sub-workflows)"
 )
 
+# cache.below-min-tokens has two evidence tiers with different remediation
+# framing: predicted analyzer estimates and observed provider telemetry.
+_BELOW_MIN_TOKENS_MESSAGE_PREDICTED = (
+    "{node_id}: declared cache content is ~{cacheable_tokens} tokens, "
+    "below {model}'s minimum of {min_tokens}{provider_clause}"
+)
+_BELOW_MIN_TOKENS_MESSAGE_OBSERVED = (
+    "{node_id}: declared cache did not fire on this call (provider reported "
+    "0 cache_creation + 0 cache_read tokens) — likely because rendered content "
+    "is below {model}'s minimum of {min_tokens}{provider_clause}"
+)
+_BELOW_MIN_TOKENS_MESSAGE_UNKNOWN = "{node_id}: declared cache below {model}'s minimum of {min_tokens}{provider_clause}"
+_BELOW_MIN_TOKENS_DISPATCH = {
+    "predicted": _BELOW_MIN_TOKENS_MESSAGE_PREDICTED,
+    "observed": _BELOW_MIN_TOKENS_MESSAGE_OBSERVED,
+}
+
 
 def _basename_for_workflow(path: str) -> str:
     """Strip directory components for compact rendering. Non-paths pass through."""
@@ -359,21 +376,20 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         severity=Severity.WARNING,
         source="cache_analyzer",
         category=CACHE_WARNING_CATEGORY,
-        message_template=(
-            "{node_id}: declared cache content is ~{cacheable_tokens} tokens, below "
-            "{model}'s minimum of {min_tokens}; cache_control markers will silently "
-            "no-op at the provider"
-        ),
+        # Dispatched by ``evidence_kind`` in ``make_diagnostic``.
+        message_template="",
         required_context_keys=(
             ("node_id", str),
             ("model", str),
             ("cacheable_tokens", int),
             ("min_tokens", int),
+            ("evidence_kind", str),
+            ("provider_note", str),
         ),
         suggestions_template=(
             "Increase cache content above {min_tokens} tokens by adding more chunks "
             "to ## Cache, OR remove `prompt_cache:` from {node_id} since the cache "
-            "won't fire anyway.",
+            "won't fire as declared.",
         ),
         path_template="nodes[id={node_id}].prompt_cache",
         headline_template="Cache content below provider minimum on {node_id}",
@@ -950,6 +966,82 @@ def _dispatch_discrepancy(
     return suggestions, action_payload
 
 
+def _select_message_template(
+    *,
+    warning_id: str,
+    spec: CacheWarningSpec,
+    context_kwargs: dict[str, Any],
+    format_dict: dict[str, Any],
+) -> str:
+    if warning_id == "cache.shared-context-undeclared" and "child_workflow" in context_kwargs:
+        return _select_shared_context_boundary_template(context_kwargs=context_kwargs, format_dict=format_dict)
+    if warning_id == "cache.below-min-tokens":
+        return _select_below_min_tokens_template(context_kwargs=context_kwargs, format_dict=format_dict)
+    return spec.message_template
+
+
+def _select_shared_context_boundary_template(
+    *,
+    context_kwargs: dict[str, Any],
+    format_dict: dict[str, Any],
+) -> str:
+    """Dispatch cache.shared-context-undeclared boundary prose by destination count."""
+    destinations = context_kwargs.get("destinations") or []
+    destination_count = int(context_kwargs.get("destination_count", len(destinations) or 1))
+    parent_workflow = str(context_kwargs.get("affected_workflow", ""))
+    format_dict["parent_workflow_basename"] = _basename_for_workflow(parent_workflow)
+    if destination_count == 1:
+        _populate_single_destination_fields(
+            destinations=destinations,
+            context_kwargs=context_kwargs,
+            format_dict=format_dict,
+        )
+        return _SHARED_CONTEXT_BOUNDARY_TEMPLATE_SINGLE
+
+    format_dict["destination_count"] = destination_count
+    format_dict["child_workflows_csv"] = ", ".join(str(d.get("child_workflow_basename", "")) for d in destinations)
+    format_dict["total_consumer_count"] = int(
+        context_kwargs.get("total_consumer_count", context_kwargs.get("node_count", 0))
+    )
+    format_dict["distribution_clause"] = _compute_distribution_clause(destinations)
+    return _SHARED_CONTEXT_BOUNDARY_TEMPLATE_MULTI
+
+
+def _populate_single_destination_fields(
+    *,
+    destinations: list[dict[str, Any]],
+    context_kwargs: dict[str, Any],
+    format_dict: dict[str, Any],
+) -> None:
+    if destinations:
+        first_destination = destinations[0]
+        format_dict["child_workflow_basename"] = str(first_destination.get("child_workflow_basename", ""))
+        format_dict["child_consumer_count"] = int(first_destination.get("node_count", 0))
+        return
+
+    child_path = str(context_kwargs["child_workflow"])
+    format_dict["child_workflow_basename"] = _basename_for_workflow(child_path)
+    format_dict["child_consumer_count"] = int(context_kwargs.get("node_count", 0))
+
+
+def _select_below_min_tokens_template(
+    *,
+    context_kwargs: dict[str, Any],
+    format_dict: dict[str, Any],
+) -> str:
+    provider_note = str(context_kwargs["provider_note"])
+    format_dict["provider_clause"] = f"; {provider_note}" if provider_note else ""
+    evidence_kind = context_kwargs["evidence_kind"]
+    template = _BELOW_MIN_TOKENS_DISPATCH.get(evidence_kind)
+    if template is not None:
+        return template
+    logger.warning(
+        "cache.below-min-tokens: unknown evidence_kind=%r; falling back to generic template",
+        evidence_kind,
+    )
+    return _BELOW_MIN_TOKENS_MESSAGE_UNKNOWN
+
+
 def make_diagnostic(
     warning_id: str,
     *,
@@ -1022,53 +1114,12 @@ def make_diagnostic(
             "this field is" if context_kwargs["is_or_are"] == "is" else "these fields are"
         )
 
-    # cache.shared-context-undeclared: select boundary template when
-    # ``child_workflow`` is set in context. Stage B.1 (Task 159) collapses
-    # per-edge findings into per-(parent_workflow, value_root) groups; the
-    # boundary form is further dispatched on ``destination_count`` (number
-    # of sub-workflows the value flows to):
-    #
-    #   - SINGLE (destination_count == 1): name BOTH parent and child as valid
-    #     declaration sites. Declaring on the child is equally valid (and
-    #     sometimes preferable when the child is the canonical owner).
-    #   - MULTI (destination_count >= 2): recommend declaring in the parent
-    #     because that's the single edit unlocking N destinations.
-    #
-    # Workflow-scope emission (no ``child_workflow`` in context) gets the
-    # straight workflow template.
-    selected_message_template = spec.message_template
-    if warning_id == "cache.shared-context-undeclared" and "child_workflow" in context_kwargs:
-        destinations = context_kwargs.get("destinations") or []
-        destination_count = int(context_kwargs.get("destination_count", len(destinations) or 1))
-        # Parent basename for both branches (used by SINGLE headline + MULTI message).
-        parent_workflow = str(context_kwargs.get("affected_workflow", ""))
-        format_dict["parent_workflow_basename"] = _basename_for_workflow(parent_workflow)
-        if destination_count == 1:
-            selected_message_template = _SHARED_CONTEXT_BOUNDARY_TEMPLATE_SINGLE
-            # Single destination: pull child basename + consumer count from
-            # destinations[0] when present, else fall back to context's
-            # child_workflow path. Pre-Stage-B.1 callers (or future per-edge
-            # paths) that don't pass destinations still produce sensible output.
-            if destinations:
-                d0 = destinations[0]
-                format_dict["child_workflow_basename"] = str(d0.get("child_workflow_basename", ""))
-                format_dict["child_consumer_count"] = int(d0.get("node_count", 0))
-            else:
-                child_path = str(context_kwargs["child_workflow"])
-                format_dict["child_workflow_basename"] = _basename_for_workflow(child_path)
-                # Fall back to node_count (the validator-required key) when
-                # destinations isn't carried — symmetric with old per-edge form.
-                format_dict["child_consumer_count"] = int(context_kwargs.get("node_count", 0))
-        else:
-            selected_message_template = _SHARED_CONTEXT_BOUNDARY_TEMPLATE_MULTI
-            format_dict["destination_count"] = destination_count
-            format_dict["child_workflows_csv"] = ", ".join(
-                str(d.get("child_workflow_basename", "")) for d in destinations
-            )
-            format_dict["total_consumer_count"] = int(
-                context_kwargs.get("total_consumer_count", context_kwargs.get("node_count", 0))
-            )
-            format_dict["distribution_clause"] = _compute_distribution_clause(destinations)
+    selected_message_template = _select_message_template(
+        warning_id=warning_id,
+        spec=spec,
+        context_kwargs=context_kwargs,
+        format_dict=format_dict,
+    )
 
     # cache.discrepancy → dispatch; everything else → straight format.
     if warning_id == "cache.discrepancy":

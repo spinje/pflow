@@ -1952,6 +1952,21 @@ class TestRuntimeWarningsInSummary:
         assert "node-a" in md
         assert "node-b" in md
 
+    def test_runtime_warning_with_id_and_suggestions_rendered(self) -> None:
+        trace = _make_trace(
+            warnings=[
+                {
+                    "node_id": "draft",
+                    "id": "cache.below-min-tokens",
+                    "message": "draft: declared cache did not fire",
+                    "suggestions": ["Increase cache content above 1024 tokens."],
+                },
+            ]
+        )
+        md = _build_summary(trace)
+        assert "[cache.below-min-tokens] **draft**: draft: declared cache did not fire" in md
+        assert "  - Increase cache content above 1024 tokens." in md
+
 
 # --- Item counts in pipeline status (Issue 6) ---
 

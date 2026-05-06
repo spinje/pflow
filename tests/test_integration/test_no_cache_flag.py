@@ -63,6 +63,7 @@ def _has_cache_control(system_blocks: object) -> bool:
 def test_prompt_cache_fires_under_no_cache_flag(tmp_path: Path, mock_llm_client: MockLLMClient) -> None:
     """``--no-cache`` (cache_enabled=False) MUST NOT disable LLM provider
     prompt caching. The system message still carries cache_control markers."""
+    mock_llm_client.set_response("*", None, "ok", cache_creation_input_tokens=1024)
     workflow_path = tmp_path / "wf.pflow.md"
     workflow_path.write_text(_WORKFLOW_WITH_PROMPT_CACHE, encoding="utf-8")
 

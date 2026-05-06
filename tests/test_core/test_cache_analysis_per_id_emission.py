@@ -2845,6 +2845,48 @@ def test_fragmentation_skips_when_shared_chunk_tokens_unmeasurable(monkeypatch: 
     assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
 
 
+def test_fragmentation_suppresses_when_only_one_model_group_meets_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single surviving model namespace is not fragmentation.
+
+    Mutation test: revert the ``len(participating_groups) >= 2`` guard after
+    threshold filtering; this test fails with either a KeyError or a false
+    fragmentation warning.
+    """
+    _patch_pricing(monkeypatch)
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(
+        analyze_module,
+        "get_min_cache_tokens",
+        lambda model: 10_000 if model == "anthropic/claude-sonnet-4-5" else 10,
+    )
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Review."},
+            },
+        ],
+    }
+
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+
+    assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
 def test_write_penalty_fires_for_single_call_with_declared_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """A lone exact-model group writes cached bytes with no later same-model
     read to amortize the write premium.
@@ -2874,6 +2916,35 @@ def test_write_penalty_fires_for_single_call_with_declared_cache(monkeypatch: py
     assert found[0].node_id == "draft"
     assert ctx["model"] == "anthropic/claude-haiku-4-5"
     assert ctx["savings_usd"] > 0
+
+
+def test_write_penalty_silent_when_declared_cache_below_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No first-write premium exists when the provider cache cannot fire.
+
+    Mutation test: remove the threshold gate in ``_single_call_write_penalty``;
+    this test fails because a below-threshold declaration still reports
+    positive savings from removing a write that never happens.
+    """
+    _patch_pricing(monkeypatch)
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10_000)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Draft."},
+            }
+        ],
+    }
+
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+
+    assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
 
 
 def test_write_penalty_silent_when_group_size_gt_one(monkeypatch: pytest.MonkeyPatch) -> None:

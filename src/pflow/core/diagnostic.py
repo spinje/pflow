@@ -170,10 +170,20 @@ def normalize_runtime_warning(warning: Any) -> tuple[str, dict[str, Any]]:
     """Normalize a shared-store runtime warning to display text + context.
 
     ``__warnings__`` started as a string-only channel. LLM adapter warnings
-    are structured dicts (``kind``/``text``/``context``) so agents can inspect
-    the non-fatal condition programmatically. Consumers should call this helper
-    instead of assuming either shape.
+    are structured dicts (``kind``/``text``/``context``), and catalog-backed
+    producers can write ``Diagnostic`` objects directly. Consumers should call
+    this helper instead of assuming one shape.
     """
+    if isinstance(warning, Diagnostic):
+        context = dict(warning.context or {})
+        if warning.id:
+            context.setdefault("id", warning.id)
+        if warning.suggestions:
+            context.setdefault("suggestions", list(warning.suggestions))
+        severity = warning.severity.value if hasattr(warning.severity, "value") else str(warning.severity)
+        context.setdefault("severity", severity)
+        return warning.message, context
+
     if isinstance(warning, dict):
         text = warning.get("text")
         message = text if isinstance(text, str) and text else str(warning)

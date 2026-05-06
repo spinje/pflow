@@ -594,6 +594,8 @@ def test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_mu
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
+            evidence_kind="predicted",
+            provider_note="",
         ),
         make_diagnostic(
             "cache.below-min-tokens",
@@ -602,6 +604,8 @@ def test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_mu
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
+            evidence_kind="predicted",
+            provider_note="",
         ),
     ]
     text = render_text(_make_analysis(warnings=warnings))
@@ -621,6 +625,8 @@ def test_text_recommended_actions_single_workflow_omits_scope_suffix() -> None:
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
+            evidence_kind="predicted",
+            provider_note="",
         ),
     ]
     text = render_text(_make_analysis(warnings=warnings))
@@ -642,6 +648,8 @@ def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> N
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
+            evidence_kind="predicted",
+            provider_note="",
         ),
         make_diagnostic(
             "cache.below-min-tokens",
@@ -650,6 +658,8 @@ def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> N
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
+            evidence_kind="predicted",
+            provider_note="",
         ),
     ]
     result = render_json(_make_analysis(warnings=warnings))
@@ -1944,6 +1954,93 @@ def test_render_json_includes_prompt_body_cleanup_key() -> None:
     block_dict = payload["suggested_blocks"][0]
     assert "prompt_body_cleanup" in block_dict
     assert block_dict["prompt_body_cleanup"] == {"write": ["concept"]}
+
+
+def test_render_text_includes_per_node_threshold_statuses() -> None:
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept",
+                var="${concept}",
+                size_tokens_est=512,
+                prose_placeholder="The concept:",
+            ),
+        ),
+        per_node_assignments={
+            "above": ["concept"],
+            "below": ["concept"],
+            "varies": ["concept"],
+            "unknown": ["concept"],
+        },
+        estimated_savings_usd=0.0,
+        per_node_thresholds={
+            "above": {
+                "model": "anthropic/claude-sonnet-4-5",
+                "min_tokens": 1024,
+                "total_tokens": 1500,
+                "meets_threshold": True,
+            },
+            "below": {
+                "model": "anthropic/claude-sonnet-4-5",
+                "min_tokens": 1024,
+                "total_tokens": 512,
+                "meets_threshold": False,
+            },
+            "varies": {"model": "<varies>", "min_tokens": None, "total_tokens": None, "meets_threshold": None},
+            "unknown": {"model": "<unknown>", "min_tokens": None, "total_tokens": None, "meets_threshold": None},
+        },
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+
+    text = render_text(analysis)
+
+    assert "threshold: 1500 tokens / 1024 (anthropic/claude-sonnet-4-5)" in text
+    assert "threshold: 512 tokens / 1024 (anthropic/claude-sonnet-4-5)" in text
+    assert "BELOW THRESHOLD" in text
+    assert "threshold: varies per item (heterogeneous model)" in text
+    assert "threshold: unable to estimate (no run data; first run will populate)" in text
+
+
+def test_render_json_includes_per_node_thresholds() -> None:
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept", var="${concept}", size_tokens_est=512, prose_placeholder="The concept:"
+            ),
+        ),
+        per_node_assignments={"write": ["concept"]},
+        estimated_savings_usd=0.0,
+        per_node_thresholds={
+            "write": {
+                "model": "anthropic/claude-sonnet-4-5",
+                "min_tokens": 1024,
+                "total_tokens": 512,
+                "meets_threshold": False,
+            }
+        },
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+
+    block_dict = render_json(analysis)["suggested_blocks"][0]
+
+    assert block_dict["per_node_thresholds"] == {
+        "write": {
+            "model": "anthropic/claude-sonnet-4-5",
+            "min_tokens": 1024,
+            "total_tokens": 512,
+            "meets_threshold": False,
+        }
+    }
 
 
 def test_render_json_includes_cache_creation_and_read_tokens() -> None:

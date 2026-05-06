@@ -156,6 +156,8 @@ def _block_to_dict(block: SuggestedBlock) -> dict[str, Any]:
         # analyzer's prompt_cache: recommendation isn't silently cancelled
         # by inline duplication. Empty dict when no overlaps exist.
         "prompt_body_cleanup": dict(block.prompt_body_cleanup),
+        # dict[node_id, {model, min_tokens, total_tokens, meets_threshold}]
+        "per_node_thresholds": dict(block.per_node_thresholds),
     }
 
 

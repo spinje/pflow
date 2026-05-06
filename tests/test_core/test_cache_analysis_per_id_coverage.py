@@ -94,6 +94,8 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "model": "claude-sonnet-4-5",
                 "cacheable_tokens": 512,
                 "min_tokens": 1024,
+                "evidence_kind": "predicted",
+                "provider_note": "",
                 "affected_workflow": "x.pflow.md",
             },
         ),

@@ -571,6 +571,14 @@ class WorkflowRunner:
         warnings: list[Diagnostic] = []
         failures = shared_store.get("__failures__", {})
         for node_id, raw_message in shared_store.get("__warnings__", {}).items():
+            if isinstance(raw_message, Diagnostic):
+                # Catalog-emitted Diagnostic. Preserve as-is and bypass the
+                # recovery/api_warning classifier plus canned suggestions:
+                # the Diagnostic already carries id, severity, category,
+                # suggestions, and path context end-to-end.
+                warnings.append(raw_message if raw_message.node_id else replace(raw_message, node_id=node_id))
+                continue
+
             message, warning_context = normalize_runtime_warning(raw_message)
             failure = failures.get(node_id)
             is_recovery = (
@@ -631,8 +639,6 @@ class WorkflowRunner:
                     node_id,
                 )
                 continue
-
-            from dataclasses import replace
 
             warning = replace(attached, severity=Severity.WARNING)
             if not warning.node_id:

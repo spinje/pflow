@@ -167,11 +167,45 @@ def test_make_diagnostic_below_min_tokens() -> None:
         model="claude-sonnet-4-5",
         cacheable_tokens=512,
         min_tokens=1024,
+        evidence_kind="predicted",
+        provider_note="cache_control markers will silently no-op at the provider",
     )
     assert diag.severity == Severity.WARNING
     assert diag.id == "cache.below-min-tokens"
     assert "1024" in diag.message
     assert "claude-sonnet-4-5" in diag.message
+    assert "cache_control markers" in diag.message
+
+
+def test_make_diagnostic_below_min_tokens_observed_message() -> None:
+    diag = make_diagnostic(
+        "cache.below-min-tokens",
+        node_id="rewrite",
+        affected_workflow="x.pflow.md",
+        model="gemini/gemini-2.5-pro",
+        cacheable_tokens=0,
+        min_tokens=4096,
+        evidence_kind="observed",
+        provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply",
+    )
+    assert "did not fire on this call" in diag.message
+    assert "0 cache_creation + 0 cache_read tokens" in diag.message
+    assert "Gemini's automatic implicit cache" in diag.message
+
+
+def test_make_diagnostic_below_min_tokens_unknown_evidence_kind_fallback(caplog: pytest.LogCaptureFixture) -> None:
+    diag = make_diagnostic(
+        "cache.below-min-tokens",
+        node_id="rewrite",
+        affected_workflow="x.pflow.md",
+        model="openai/gpt-5",
+        cacheable_tokens=0,
+        min_tokens=1024,
+        evidence_kind="suspected",
+        provider_note="",
+    )
+    assert "declared cache below openai/gpt-5's minimum of 1024" in diag.message
+    assert "unknown evidence_kind" in caplog.text
 
 
 def test_make_diagnostic_padding_advisory_with_savings() -> None:
@@ -279,6 +313,8 @@ def test_make_diagnostic_node_id_without_affected_workflow_raises() -> None:
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
+            evidence_kind="predicted",
+            provider_note="",
         )
 
 
@@ -292,6 +328,8 @@ def test_make_diagnostic_node_id_with_affected_workflow_none_raises() -> None:
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
+            evidence_kind="predicted",
+            provider_note="",
         )
 
 
@@ -498,6 +536,8 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "model": "claude-sonnet-4-5",
             "cacheable_tokens": 512,
             "min_tokens": 1024,
+            "evidence_kind": "predicted",
+            "provider_note": "",
         },
         "cache.cross-workflow-prose-mismatch": {
             "parent_workflow": "p.pflow.md",

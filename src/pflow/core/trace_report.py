@@ -625,7 +625,12 @@ def _append_runtime_warnings(warnings: list[dict[str, Any]], lines: list[str]) -
     for w in warnings:
         node_id = w.get("node_id", "?")
         message = w.get("message", "Unknown warning")
-        lines.append(f"- **{node_id}**: {message}")
+        warning_id = w.get("id")
+        suggestions = w.get("suggestions") or []
+        prefix = f"[{warning_id}] " if warning_id else ""
+        lines.append(f"- {prefix}**{node_id}**: {message}")
+        for suggestion in suggestions:
+            lines.append(f"  - {suggestion}")
     lines.append("")
 
 

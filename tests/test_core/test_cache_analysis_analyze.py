@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import time
 from pathlib import Path
@@ -44,6 +45,95 @@ def test_confidence_high_when_all_trace() -> None:
     confidence, coverage = _aggregate_confidence([_row("trace"), _row("trace")])
     assert confidence == "high_from_trace"
     assert coverage == {"trace": 2, "memo": 0, "estimator": 0, "heuristic": 0, "total": 2}
+
+
+def test_suggested_block_below_threshold_has_zero_savings_and_threshold_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Greenfield shared-context structure still renders, but savings are zero
+    when no node's suggested subset clears its model threshold.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Draft about ${topic}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Review ${topic}."},
+            },
+        ],
+    }
+
+    result = analyze(workflow_ir, parameters={"topic": "small"}, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    assert result.suggested_blocks
+    block = result.suggested_blocks[0]
+    assert block.estimated_savings_usd == 0.0
+    assert block.per_node_thresholds["draft"] == {
+        "model": "anthropic/claude-sonnet-4-5",
+        "min_tokens": 1000,
+        "total_tokens": 100,
+        "meets_threshold": False,
+    }
+
+
+def test_suggested_block_savings_skip_first_eligible_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only eligible readers count toward savings; the first eligible node is
+    the writer that pays the cache_creation premium.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    monkeypatch.setattr(
+        analyze_module,
+        "get_min_cache_tokens",
+        lambda model: 1000 if model == "anthropic/claude-haiku-4-5" else 10,
+    )
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "too-small",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "First ${topic}."},
+            },
+            {
+                "id": "writer",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Second ${topic}."},
+            },
+            {
+                "id": "reader",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Third ${topic}."},
+            },
+        ],
+    }
+
+    result = analyze(workflow_ir, parameters={"topic": "small"}, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    assert result.suggested_blocks
+    block = result.suggested_blocks[0]
+    assert block.per_node_thresholds["too-small"]["meets_threshold"] is False
+    assert block.per_node_thresholds["writer"]["meets_threshold"] is True
+    assert block.per_node_thresholds["reader"]["meets_threshold"] is True
+    assert block.estimated_savings_usd == pytest.approx(90.0)
 
 
 def test_confidence_NOT_high_when_one_row_is_memo() -> None:

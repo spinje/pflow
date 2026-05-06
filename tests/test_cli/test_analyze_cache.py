@@ -289,7 +289,7 @@ def test_analyze_cache_json_includes_heterogeneous_model_fragmentation(tmp_path:
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 80}"],
+        ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 5000}"],
     )
     assert result.exit_code == 0, result.output
     payload = _json_payload(result.output)
@@ -303,7 +303,7 @@ def test_analyze_cache_json_includes_first_call_write_penalty(tmp_path: Path) ->
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 80}"],
+        ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 5000}"],
     )
     assert result.exit_code == 0, result.output
     payload = _json_payload(result.output)

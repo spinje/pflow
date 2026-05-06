@@ -106,6 +106,8 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 `Diagnostic` dataclass, `Severity` enum, dedup, exception conversion. Identity (eq/hash) is `(severity, source, node_id, id or message)` — context, title, suggestions are display data. When `id` is `None` the tuple falls back to `message` (preserving sub-workflow dedup byte-for-byte); when `id` is set (cache-namespaced diagnostics from Task 159) it becomes the dedup key. Use `deduplicate_diagnostics()` for collections.
 
+`normalize_runtime_warning()` accepts all three `__warnings__` value shapes: legacy strings, structured dicts (`kind`/`text`/`context`), and `Diagnostic` instances. The Diagnostic branch preserves catalog `id`, `severity`, and suggestions in the returned context so runtime fallback paths can render a clean message without losing typed metadata.
+
 **`CATEGORY_TITLES`** maps diagnostic categories to human-readable titles. Used by both `executor_service.py` (error categorization) and `diagnostic_render.py` (error title rendering). Lives here because it's a data constant, not rendering logic.
 
 **`exception_to_diagnostics()`** is a factory/dispatcher: calls `to_diagnostics()` on exceptions that implement it, falls back to `_builtin_exception_diagnostic()` for stdlib types. Creates `Diagnostic` instances — it does not render them. Used by both display-layer code (CLI, formatters) and execution pipeline code (`runner.py`).

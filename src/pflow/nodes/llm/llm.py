@@ -10,6 +10,13 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
+from pflow.core.cache_analysis.below_min_tokens_detector import (
+    BelowMinTokensEvidence,
+)
+from pflow.core.cache_analysis.below_min_tokens_detector import (
+    detect as detect_below_min_tokens,
+)
+from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 from pflow.core.cache_render import (
     CacheRenderContext,
     _build_cache_control_marker,
@@ -156,6 +163,55 @@ def _read_cache_render_context(shared: dict[str, Any], node_id: str | None) -> C
     if node_id is None:
         return None
     return (shared.get("__pflow_cache_render__") or {}).get(node_id)
+
+
+def _emit_observed_below_min_cache_warning(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    model: str,
+    llm_usage: dict[str, Any],
+) -> None:
+    """Emit observed-tier cache.below-min-tokens for LLMNode cache misses."""
+    cache_ctx = _read_cache_render_context(shared, node_id)
+    declared_prompt_cache = list(cache_ctx.subset) if cache_ctx and cache_ctx.subset else []
+    if node_id is None or not declared_prompt_cache:
+        return
+
+    # When the adapter returned no cache telemetry at all (e.g. provider
+    # returned no usage and the adapter set ``shared["llm_usage"] = {}``),
+    # we cannot honestly observe whether the cache fired. Skip rather than
+    # emit a false-positive observed-tier finding. Mirrors the analyzer's
+    # honest-unmeasurable convention used by ``_estimate_ref_tokens`` and
+    # ``_compute_model_group_costs``.
+    if "cache_creation_input_tokens" not in llm_usage and "cache_read_input_tokens" not in llm_usage:
+        return
+
+    finding = detect_below_min_tokens(
+        BelowMinTokensEvidence(
+            node_id=node_id,
+            model=model,
+            declared_prompt_cache=declared_prompt_cache,
+            has_observed=True,
+            observed_creation_tokens=int(llm_usage.get("cache_creation_input_tokens") or 0),
+            observed_read_tokens=int(llm_usage.get("cache_read_input_tokens") or 0),
+        )
+    )
+    if finding is None:
+        return
+
+    workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
+    diagnostic = make_diagnostic(
+        "cache.below-min-tokens",
+        node_id=finding.node_id,
+        affected_workflow=workflow_path,
+        model=finding.model,
+        min_tokens=finding.min_tokens,
+        evidence_kind=finding.evidence_kind,
+        cacheable_tokens=finding.cacheable_tokens,
+        provider_note=finding.provider_note,
+    )
+    shared.setdefault("__warnings__", {}).setdefault(node_id, diagnostic)
 
 
 def _build_openai_cache_kwargs(
@@ -920,6 +976,22 @@ class LLMNode(Node):
             # Empty dict per spec when usage unavailable
             shared["llm_usage"] = {}
 
+        # LLMNode-specific prompt-cache miss observation. This uses provider
+        # telemetry after the call, not tokenizer work in the hot path. It
+        # preserves earlier warnings via setdefault; the empty-response warning
+        # below intentionally overwrites this observational warning when both
+        # fire because empty response is the critical failure signal.
+        # node_id is a compiler-set dynamic attribute (compilation/compiler.py:299).
+        node_id = getattr(self, "node_id", None)
+        observed_usage = shared.get("llm_usage")
+        if isinstance(observed_usage, dict):
+            _emit_observed_below_min_cache_warning(
+                shared=shared,
+                node_id=node_id,
+                model=prep_res.get("model") or self.params.get("model") or "",
+                llm_usage=observed_usage,
+            )
+
         # Surface adapter warnings (e.g. empty-response trap on reasoning
         # models) into __warnings__ so JSON consumers see them and the
         # workflow status shifts to DEGRADED. setdefault routes __*__ keys
@@ -930,8 +1002,6 @@ class LLMNode(Node):
         # Consumers normalize it with core.diagnostic.normalize_runtime_warning
         # so legacy string warnings and structured LLM warnings can coexist.
         warnings_list = exec_res.get("warnings") or []
-        # node_id is a compiler-set dynamic attribute (compilation/compiler.py:299).
-        node_id = getattr(self, "node_id", None)
         if warnings_list and node_id is not None:
             # In v1 the adapter emits at most one warning per call. If a
             # future case needs multiple, change the contract to a list value.

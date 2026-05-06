@@ -7,7 +7,7 @@ workflow runs through the full pipeline producing structured results.
 from pathlib import Path
 from unittest.mock import patch
 
-from pflow.core.diagnostic import Severity
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.core.workflow.validator import WorkflowValidator
@@ -126,6 +126,180 @@ def test_llm_structured_warning_survives_runner_pipeline(mock_llm_client):
     assert runtime_warning.context["category"] == "llm_warning"
     assert runtime_warning.context["kind"] == "llm_empty_response_reasoning"
     assert runtime_warning.context["model"] == "gemini/gemini-3-flash-preview"
+
+
+def test_runtime_warning_diagnostic_passes_through_without_api_warning_wrapping() -> None:
+    diagnostic = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.below-min-tokens",
+        node_id="ask",
+        message="ask: declared cache did not fire",
+        suggestions=["Increase cache content above 1024 tokens."],
+        context={"category": "cache_warning"},
+    )
+    runner = WorkflowRunner()
+
+    warnings = runner._extract_runtime_warnings({"__warnings__": {"ask": diagnostic}})
+
+    assert warnings == [diagnostic]
+    assert warnings[0].id == "cache.below-min-tokens"
+    assert warnings[0].suggestions == ["Increase cache content above 1024 tokens."]
+    assert warnings[0].context == {"category": "cache_warning"}
+
+
+def test_runtime_warning_diagnostic_missing_node_id_gets_store_key() -> None:
+    diagnostic = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.below-min-tokens",
+        message="declared cache did not fire",
+    )
+    runner = WorkflowRunner()
+
+    warnings = runner._extract_runtime_warnings({"__warnings__": {"ask": diagnostic}})
+
+    assert warnings[0].node_id == "ask"
+
+
+def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_client) -> None:
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+    workflow_ir = {
+        "inputs": {"small_doc": {"type": "string"}},
+        "cache": {"items": [{"name": "small_doc", "var": "small_doc", "prose_before": "Small doc:\n"}]},
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "prompt_cache": ["small_doc"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {"small_doc": "short"}, RunnerConfig())
+
+    warning = result.shared_after["__warnings__"]["ask"]
+    assert isinstance(warning, Diagnostic)
+    assert warning.id == "cache.below-min-tokens"
+    assert warning.context is not None
+    assert warning.context["evidence_kind"] == "observed"
+    assert result.status == WorkflowStatus.DEGRADED
+    assert any(w.id == "cache.below-min-tokens" for w in result.warnings)
+
+
+def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(mock_llm_client) -> None:
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=1024,
+        cache_read_input_tokens=0,
+    )
+    workflow_ir = {
+        "inputs": {"small_doc": {"type": "string"}},
+        "cache": {"items": [{"name": "small_doc", "var": "small_doc", "prose_before": "Small doc:\n"}]},
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "prompt_cache": ["small_doc"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {"small_doc": "short"}, RunnerConfig())
+
+    assert not result.shared_after.get("__warnings__")
+    assert result.status == WorkflowStatus.SUCCESS
+
+
+def test_llm_empty_response_warning_overwrites_cache_miss_observation(mock_llm_client) -> None:
+    adapter_warning = {
+        "kind": "llm_empty_response_reasoning",
+        "text": "Empty response from model.",
+        "context": {"model": "anthropic/claude-sonnet-4-5"},
+    }
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "",
+        warnings=[adapter_warning],
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+    workflow_ir = {
+        "inputs": {"small_doc": {"type": "string"}},
+        "cache": {"items": [{"name": "small_doc", "var": "small_doc", "prose_before": "Small doc:\n"}]},
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "prompt_cache": ["small_doc"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {"small_doc": "short"}, RunnerConfig())
+
+    assert result.shared_after["__warnings__"]["ask"] == adapter_warning
+
+
+def test_emit_observed_below_min_cache_warning_skips_when_no_provider_telemetry() -> None:
+    """When the adapter returned no usage at all and ``LLMNode.post()`` set
+    ``shared["llm_usage"] = {}`` (line 977 / "adapter failed completely"),
+    ``_emit_observed_below_min_cache_warning`` MUST skip rather than fabricate
+    a "did not fire" observation. Mirrors the analyzer's honest-unmeasurable
+    convention used by ``_estimate_ref_tokens`` and ``_compute_model_group_costs``.
+
+    Tested directly at the helper level because the runtime pipeline always
+    routes the missing-usage case through ``shared["llm_usage"] = {}`` —
+    the mock can't easily simulate ``AdapterResponse(usage=None)`` without
+    additional plumbing, and ``cache_telemetry=False`` on the mock just
+    omits cache keys (which ``LLMNode.post()`` then normalizes to zero, a
+    legitimate "cache didn't fire" case the guard correctly does NOT skip).
+
+    Mutation test: revert the missing-telemetry guard in
+    ``_emit_observed_below_min_cache_warning``; this test fails because the
+    helper falls through to ``detect()`` with both fields defaulting to 0
+    and writes a false-positive observed-tier finding.
+    """
+    from types import MappingProxyType
+
+    from pflow.core.cache_render import CacheRenderContext
+    from pflow.nodes.llm.llm import _emit_observed_below_min_cache_warning
+
+    cache_ctx = CacheRenderContext(
+        cache_block=None,
+        subset=("small_doc",),
+        prewarm=False,
+        unresolved_batch_prompt=None,
+        batch_alias=None,
+    )
+    shared: dict[str, object] = {
+        "__pflow_cache_render__": MappingProxyType({"ask": cache_ctx}),
+        "_pflow_workflow_file": "/abs/x.pflow.md",
+    }
+
+    _emit_observed_below_min_cache_warning(
+        shared=shared,
+        node_id="ask",
+        model="anthropic/claude-sonnet-4-5",
+        llm_usage={},
+    )
+
+    assert "__warnings__" not in shared
 
 
 def test_validator_called_exactly_once():

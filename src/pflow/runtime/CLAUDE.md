@@ -166,7 +166,13 @@ shared["__failures__"] = {
 # System keys
 shared["__trace_collector__"] = WorkflowTraceCollector
 shared["__progress_callback__"] = func
-shared["__warnings__"] = {}               # Node warnings → DEGRADED status
+shared["__warnings__"] = {}               # Node warnings → DEGRADED status.
+                                          # Values may be legacy strings,
+                                          # structured warning dicts, or
+                                          # Diagnostic instances. Consumers use
+                                          # normalize_runtime_warning(), except
+                                          # runner._extract_runtime_warnings
+                                          # preserves Diagnostic values as-is.
 shared["__cache_hits__"] = []             # Nodes served from cache
 shared["__template_errors__"] = {}        # Permissive mode errors
 shared["__mcp_pool__"] = MCPConnectionPool
