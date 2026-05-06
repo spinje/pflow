@@ -14,7 +14,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION, WorkflowTraceCollector
+
+pytestmark = pytest.mark.trace_files
 
 # --- Format version ---------------------------------------------------------
 

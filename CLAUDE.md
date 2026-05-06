@@ -70,6 +70,7 @@ pflow's node system is built on `BaseNode` and `Node` (~90 lines in `src/pflow/c
 ```bash
 make install                    # Install dependencies and pre-commit hooks
 make test                      # Run all tests with pytest
+make test-e2e                  # Run e2e tests with pytest
 make check                     # Run all quality checks (lint, type check, etc.)
 ```
 

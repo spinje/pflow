@@ -297,6 +297,7 @@ class TestMetricsCollection:
             Path(workflow_file).unlink()
 
 
+@pytest.mark.trace_files
 class TestTraceGeneration:
     """Test trace file generation and opt-out behavior."""
 
@@ -617,6 +618,7 @@ class TestWrapperIntegration:
 class TestCLIFlags:
     """Test CLI flag behavior for metrics and tracing."""
 
+    @pytest.mark.trace_files
     def test_trace_file_saved_without_flag(self, temp_home, temp_registry, simple_workflow):
         """Trace files should be generated without specifying tracing flags."""
         runner = CliRunner()

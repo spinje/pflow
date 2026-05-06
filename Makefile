@@ -17,8 +17,13 @@ check: ## Run code quality tools.
 
 .PHONY: test
 test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)
-	@echo "🚀 Testing code: Running pytest in parallel with 4 workers (excluding LLM tests)"
-	@uv run python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+	@echo "🚀 Testing code: Running non-e2e pytest in parallel with 4 workers (excluding LLM tests)"
+	@uv run python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e"
+
+.PHONY: test-e2e
+test-e2e: ## Run real subprocess / shell / pipe boundary tests in parallel
+	@echo "🚀 Testing e2e code: Running pytest in parallel with 4 workers (excluding LLM tests)"
+	@uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m e2e
 
 .PHONY: test-debug
 test-debug: ## Test the code with pytest sequentially for debugging
@@ -35,6 +40,11 @@ test-llm: ## Run LLM integration tests with real API calls (requires API keys)
 test-all: ## Run all tests including LLM integration tests in parallel
 	@echo "🚀 Testing code: Running all tests including LLM integration (4 workers)"
 	@RUN_LLM_TESTS=1 uv run python -m pytest -n 4 --doctest-modules
+
+.PHONY: test-all-local
+test-all-local: ## Run all non-LLM tests, including e2e, in parallel
+	@echo "🚀 Testing code: Running all non-LLM pytest tests in parallel with 4 workers"
+	@uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
 
 .PHONY: test-with-skipped
 test-with-skipped: ## Run tests showing all skipped tests (useful for debugging)

@@ -109,6 +109,8 @@ testpaths = ["tests"]
 markers = [
     "serial: marks tests that must run sequentially (deselect with '-m \"not serial\"')",
     "integration: marks integration tests that spawn subprocesses",
+    "e2e: marks real process, shell, pipe, or external-boundary tests",
+    "trace_files: allows tests to write workflow trace JSON files",
 ]
 # Note: We don't set addopts with -n here to allow flexibility
 # Use 'make test' for parallel or 'make test-debug' for sequential

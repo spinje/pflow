@@ -17,7 +17,10 @@ import sys
 
 import pytest
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Unix subprocess test")
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(sys.platform == "win32", reason="Unix subprocess test"),
+]
 
 
 def _skip_if_uv_sandbox_panics(result: subprocess.CompletedProcess) -> None:

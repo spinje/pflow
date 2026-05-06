@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
 from pflow.mcp_server.services.execution_service import ExecutionService
 from pflow.mcp_server.tools.execution_tools import analyze_cache as analyze_cache_tool
@@ -210,6 +212,7 @@ def test_docstring_lists_every_catalog_id() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.trace_files
 def test_inline_workflow_autoload_finds_canonical_ir_hash_trace(tmp_path: Path, monkeypatch: Any) -> None:
     """When the MCP service receives an inline (dict) workflow that was
     previously run + traced, autoload must find the trace via the same

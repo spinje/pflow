@@ -10,6 +10,8 @@ import pytest
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime.workflow_trace import WorkflowTraceCollector, final_events_by_node
 
+pytestmark = pytest.mark.trace_files
+
 
 class TestWorkflowTraceCollector:
     """Test suite for WorkflowTraceCollector."""

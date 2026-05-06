@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import click.testing
+import pytest
 
 from pflow.cli.main import main
 
@@ -56,6 +57,7 @@ def test_report_command_no_traces(tmp_path: Path, monkeypatch):
     assert "No trace files found" in result.output
 
 
+@pytest.mark.trace_files
 def test_report_command_generates_from_trace(tmp_path: Path, monkeypatch):
     """pflow report reads the latest trace and produces a report directory."""
     # Run a workflow first to generate a trace
@@ -76,6 +78,7 @@ def test_report_command_generates_from_trace(tmp_path: Path, monkeypatch):
     assert "Report generated" in result.output
 
 
+@pytest.mark.trace_files
 def test_report_flag_generates_report(tmp_path: Path, monkeypatch):
     """Test that --report flag generates an execution report directory."""
     # Create a minimal workflow
@@ -97,6 +100,7 @@ def test_report_flag_generates_report(tmp_path: Path, monkeypatch):
     assert len(node_files) == 1, f"Expected 1 node file, got {node_files}"
 
 
+@pytest.mark.trace_files
 def test_report_flag_overrides_no_trace(tmp_path: Path, monkeypatch):
     """Test that --report overrides --no-trace (report requires trace data)."""
     workflow = tmp_path / "test.pflow.md"

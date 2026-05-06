@@ -35,6 +35,8 @@ from pflow.runtime.engine.instrumentation import (
 )
 from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION, WorkflowTraceCollector
 
+pytestmark = pytest.mark.trace_files
+
 # --- workflow_path plumbing ------------------------------
 
 

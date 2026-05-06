@@ -151,6 +151,7 @@ def test_memo_without_input_tokens_falls_through_to_estimator() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.trace_files
 def test_tier_1_trace_works_with_real_collector_round_trip(tmp_path: Any, monkeypatch: Any) -> None:
     """Production-shape contract: a trace produced by ``WorkflowTraceCollector``
     and saved via ``save_to_file`` must be readable by ``estimate_tokens`` for
@@ -503,7 +504,7 @@ def test_cacheable_tier_2_short_circuits_when_model_empty(monkeypatch: pytest.Mo
         _fake_estimate,
     )
     memo = _FakeMemoCache({"some": "data"})
-    tokens, source = estimate_cacheable_tokens(
+    _tokens, source = estimate_cacheable_tokens(
         declared_subset=["a"],
         candidate_subset=None,
         trace_event=None,
@@ -724,7 +725,7 @@ def test_estimate_tokens_marks_partial_when_unresolved_refs_present() -> None:
     assert tokens > 0
     assert source == "estimator-partial"
 
-    tokens2, source2 = estimate_tokens(
+    _tokens2, source2 = estimate_tokens(
         "anthropic/claude-sonnet-4-5",
         "Same text but fully resolved.",
         has_unresolved_refs=False,

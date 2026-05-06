@@ -870,6 +870,7 @@ def test_external_prompt_file_resolved_at_save_then_overlap_detected(tmp_path) -
     )
 
 
+@pytest.mark.e2e
 def test_cli_save_subprocess_with_overlap_exits_nonzero(tmp_path, uv_exe, prepared_subprocess_env) -> None:
     """Pattern 4 subprocess regression test for the save-path file-resolution wiring.
 
@@ -1269,6 +1270,7 @@ def test_thinking_temperature_mismatch_emits_one_diagnostic_per_node() -> None:
     assert {d.node_id for d in matched} == {"n0", "n1", "n2"}
 
 
+@pytest.mark.e2e
 def test_thinking_temperature_mismatch_pflow_save_subprocess_exits_nonzero(
     tmp_path, uv_exe, prepared_subprocess_env
 ) -> None:

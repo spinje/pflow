@@ -160,6 +160,7 @@ def test_read_stdin_enhanced_returns_none_without_fifo(monkeypatch):
 
 @pytest.mark.integration
 @pytest.mark.serial
+@pytest.mark.e2e
 def test_stdin_no_hang_integration(tmp_path, uv_exe):
     """Integration test: pflow doesn't hang when stdout is non-TTY.
 

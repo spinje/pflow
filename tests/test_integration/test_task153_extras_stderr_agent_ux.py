@@ -26,6 +26,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 CHILD_PFLOW_MD = """\
 # Child
 
@@ -88,6 +90,7 @@ Child output.
 """
 
 
+@pytest.mark.e2e
 class TestExtrasDiagnosticStderrAgentUX:
     """Guard that the task-153 extras diagnostic renders correctly through the
     full CLI → format_diagnostic → stderr pipeline."""

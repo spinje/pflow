@@ -7612,3 +7612,35 @@ Critical insights:
 3. **Report section gates need a real signal.** A cache key alone can exist
    without cache activity; rendering on token activity, replay state, or
    skipped chunks avoids noisy sections on plain calls.
+
+## Test-suite performance triage and isolation cleanup (2026-05-06)
+
+Investigated the local `make test` regression after Task 159 expanded the
+suite from roughly 5.1k to 6.2k tests. The main finding was that the default
+suite had accumulated true e2e/subprocess tests plus avoidable test I/O
+overhead: repeated full `registry.json` writes and trace JSON writes during
+ordinary in-process tests.
+
+Implemented a narrower default test path:
+
+- Marked real subprocess / shell-pipe boundary tests as `e2e`.
+- Updated `make test` to run `-m "not e2e"`.
+- Added `make test-e2e` and `make test-all-local`.
+- Changed test isolation so default `Registry()` loads precomputed core node
+  metadata in memory instead of writing a full registry file per test.
+- Disabled trace file writes by default in tests, with explicit
+  `@pytest.mark.trace_files` opt-in for trace/report/autoload assertions.
+
+Sandbox verification after the changes:
+
+- Focused trace/registry-sensitive tests: 170 passed.
+- Default non-e2e suite: 6220 passed.
+- Fixed-basetemp output dropped from about 51M to 16M.
+- Registry files dropped from about 860 to 83.
+- Trace files dropped from 129 to 39.
+
+Filed GitHub issues for audit trail and follow-up:
+
+- #371: original pytest slowdown investigation, closed after this fix.
+- #372: remaining performance follow-ups, including SQLite cache write
+  reduction and targeted optimization of remaining slow non-e2e tests.
