@@ -440,6 +440,36 @@ def test_text_suggested_block_intro_explains_starter_prose_audience() -> None:
     assert intro_pos < cache_heading_pos, "Block-level intro must precede the ## Cache heading"
 
 
+def test_text_suggested_block_documents_ttl_allowed_values() -> None:
+    """Suggested blocks should tell agents the complete accepted TTL vocabulary.
+
+    The parser rejects any value other than ``5m`` or ``1h``; surfacing that
+    beside the generated ``- ttl:`` line prevents authoring-time guesses.
+    """
+    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+
+    block = SuggestedBlock(
+        target_file="/abs/x.pflow.md",
+        ttl="5m",
+        chunks=(
+            SuggestedBlockChunk(
+                name="concept.core_idea",
+                var="${concept.core_idea}",
+                size_tokens_est=500,
+                prose_placeholder="The core idea from concept:",
+            ),
+        ),
+        per_node_assignments={},
+        estimated_savings_usd=None,
+    )
+    base = _make_analysis()
+    analysis = CacheAnalysis(**{**base.__dict__, "suggested_blocks": (block,)})
+    text = render_text(analysis)
+
+    assert "  - ttl: 5m" in text
+    assert "`ttl` accepts only `5m` or `1h`" in text
+
+
 # ---------------------------------------------------------------------------
 # Text renderer — default-hide-clean per-call rule
 # ---------------------------------------------------------------------------

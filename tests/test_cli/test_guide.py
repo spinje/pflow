@@ -33,6 +33,13 @@ def test_render_entry_content_is_nonempty() -> None:
     assert len(content.strip()) > 100
 
 
+def test_entry_no_cache_wording_is_memo_specific() -> None:
+    content = render_entry_content()
+    assert "--no-cache" in content
+    assert "Bypass pflow memo-cache reads" in content
+    assert "Force fresh execution" not in content
+
+
 # ---------------------------------------------------------------------------
 # list_topics
 # ---------------------------------------------------------------------------
@@ -78,6 +85,21 @@ def test_compose_core_only() -> None:
     assert "# pflow Framework" in result
 
 
+def test_core_no_cache_wording_distinguishes_provider_prompt_cache() -> None:
+    result = compose_guide(["core"])
+    assert "`--no-cache` — bypass pflow memo-cache reads" in result
+    assert "provider prompt caching may still apply" in result
+    assert "does not disable LLM" in result
+    assert "all caches" not in result
+
+
+def test_caching_guide_documents_allowed_ttl_values() -> None:
+    result = compose_guide(["caching"])
+    assert "Allowed values are exactly `5m` and `1h`" in result
+    assert "Omit `ttl`" in result
+    assert "default `5m` behavior" in result
+
+
 def test_compose_multiple_topics_preserves_order() -> None:
     result = compose_guide(["batch", "http"])
     batch_pos = result.index("Batch")
@@ -107,7 +129,7 @@ def test_compose_unknown_topic_raises() -> None:
 
 
 def test_compose_unknown_topic_lists_available() -> None:
-    with pytest.raises(GuideError, match="Available topics:.*http"):
+    with pytest.raises(GuideError, match=r"Available topics:.*http"):
         compose_guide(["nonexistent"])
 
 
@@ -295,7 +317,7 @@ def test_compose_nonexistent_workflow_raises(tmp_path: Path) -> None:
 def test_compose_unparseable_workflow_raises(tmp_path: Path) -> None:
     wf = tmp_path / "broken.pflow.md"
     wf.write_text("not a valid workflow at all")
-    with pytest.raises(GuideError, match="Failed to parse|No guide topics"):
+    with pytest.raises(GuideError, match=r"Failed to parse|No guide topics"):
         compose_guide([str(wf)])
 
 

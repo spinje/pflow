@@ -7990,3 +7990,11 @@ Critical insight:
 different agent actions. Splitting the ID removes context-shape dispatch,
 shrinks final code, and makes future cache-analysis extensions easier for
 agents to reason about.
+
+## Stage 2 follow-up — Findings #13/#18 wording cleanup (2026-05-06)
+
+- #13: replaced stale `--no-cache` wording with memo-cache-read scope in guide,
+  CLI docs, and MCP agent instructions.
+- #18: documented allowed `## Cache` TTL values (`5m`, `1h`) in guide and
+  suggested-block output.
+

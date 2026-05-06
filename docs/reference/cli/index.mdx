@@ -398,15 +398,15 @@ pflow ./workflow.pflow.md --only process-data
 
 This is how agents iterate on a specific node without re-running the full workflow.
 
-### Bypass caching
+### Bypass memo cache reads
 
-Use `--no-cache` to force fresh execution. Cache writes still happen, so the next run without `--no-cache` benefits from the results:
+Use `--no-cache` to bypass pflow memo-cache reads, so nodes execute again. Memo cache writes still happen, so the next run without `--no-cache` benefits from the results:
 
 ```bash
 pflow ./workflow.pflow.md --no-cache
 ```
 
-Use this when a node has external side effects (API calls, file writes) that should always run, or when cached results seem stale.
+Use this when a node has external side effects (API calls, file writes) that should run again, or when memoized results seem stale. It does not disable LLM provider prompt caching declared with `## Cache` / `prompt_cache:`, OpenAI automatic prompt caching, or Gemini implicit caching.
 
 ### Per-node opt-out
 

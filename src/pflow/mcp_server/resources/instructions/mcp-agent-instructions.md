@@ -636,7 +636,7 @@ pflow caches node outputs automatically. When you edit a prompt or parameter and
 - Edit a prompt file → re-run → only affected nodes execute (~seconds, not minutes)
 - `--dry-run` → preview plan + cost/duration estimate without running (expensive runs, checking what an edit invalidated)
 - `--only <node>` → run just that node (upstream cached, downstream skipped)
-- `--no-cache` → force everything fresh (side-effect nodes, external API changes)
+- `--no-cache` → bypass pflow memo-cache reads; nodes execute again, but provider prompt caching may still apply
 
 <!-- PART 2 START: Building Workflows -->
 <!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->

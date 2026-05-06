@@ -633,6 +633,7 @@ def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
         chunks.append("  of what that value is in your workflow's domain. The LLM reads this")
         chunks.append("  prose right before the value, so a clearer label helps the LLM")
         chunks.append("  understand what it's looking at.")
+        chunks.append("  `ttl` accepts only `5m` or `1h`.")
         chunks.append("")
         chunks.append("  ## Cache")
         chunks.append("")

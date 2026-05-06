@@ -94,6 +94,9 @@ Prefix-based caching requires bytes-identical prefix across calls. Reordering br
 
 Default TTL is 5 minutes (provider default). Long-running workflows or reruns benefit from `- ttl: 1h`:
 
+Allowed values are exactly `5m` and `1h`; other TTLs are rejected. Omit `ttl`
+for the default `5m` behavior.
+
 ```markdown
 ## Cache
 
