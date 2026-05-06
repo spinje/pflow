@@ -65,6 +65,12 @@ def _make_analysis(
     # ``or root_workflow_path`` pattern for inline-IR cases).
     root_count = sum(1 for r in rows if r.workflow_path is None or r.workflow_path == workflow_path)
     sub_count = len(rows) - root_count
+    dynamic_batch_count = sum(1 for r in rows if r.is_batch and r.batch_size_estimated is None)
+    total_invocations = (
+        None
+        if dynamic_batch_count
+        else sum(r.batch_size_estimated if r.is_batch and r.batch_size_estimated is not None else 1 for r in rows)
+    )
     return CacheAnalysis(
         workflow_path=workflow_path,
         analyzed_at="2026-04-29T12:00:00Z",
@@ -89,7 +95,9 @@ def _make_analysis(
             actionable_opportunities=sum(1 for d in warnings if d.severity != Severity.ERROR),
             warnings_count=sum(1 for d in warnings if d.severity == Severity.WARNING),
             info_count=sum(1 for d in warnings if d.severity == Severity.INFO),
-            total_llm_calls_estimated=len(rows),
+            total_llm_nodes_estimated=len(rows),
+            total_llm_invocations_estimated=total_invocations,
+            dynamic_batch_node_count=dynamic_batch_count,
             total_input_tokens_estimated=sum(r.input_tokens_estimated for r in rows),
             total_cacheable_tokens_estimated=sum(r.cacheable_tokens_estimated for r in rows),
             models_in_use=tuple(sorted({r.model for r in rows if r.model})),
@@ -1204,6 +1212,18 @@ def test_text_header_lists_models_when_two_resolved() -> None:
     assert "gemini/gemini-3.1-pro-preview" in text
 
 
+def test_text_header_shows_static_batch_invocations() -> None:
+    row = PerCallRow(**{**_row("batch-review", 50).__dict__, "is_batch": True, "batch_size_estimated": 8})
+    text = render_text(_make_analysis(rows=[row]))
+    assert "1 LLM node, ~8 invocations using anthropic/claude-sonnet-4-5" in text
+
+
+def test_text_header_shows_dynamic_batch_invocation_unknown() -> None:
+    row = PerCallRow(**{**_row("batch-review", 50).__dict__, "is_batch": True, "batch_size_estimated": None})
+    text = render_text(_make_analysis(rows=[row]))
+    assert ("1 LLM node, invocation count unavailable (1 dynamic batch node) using anthropic/claude-sonnet-4-5") in text
+
+
 def test_text_header_handles_no_model_resolved() -> None:
     """CP5 #6 — when LLM nodes exist but no model resolves, surface the
     actionable hint inline with the count.
@@ -1785,6 +1805,10 @@ def test_json_emits_root_and_sub_workflow_llm_node_counts() -> None:
     )
 
     payload = render_json(analysis)
+    assert payload["summary"]["total_llm_nodes_estimated"] == 3
+    assert payload["summary"]["total_llm_invocations_estimated"] == 3
+    assert payload["summary"]["dynamic_batch_node_count"] == 0
+    assert "total_llm_calls_estimated" not in payload["summary"]
     assert payload["summary"]["root_llm_node_count"] == 1
     assert payload["summary"]["sub_workflow_llm_node_count"] == 2
 

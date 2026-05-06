@@ -522,7 +522,9 @@ Full schema (anchored to greenfield mode):
     "actionable_opportunities": 4,
     "warnings_count": 1,
     "info_count": 3,
-    "total_llm_calls_estimated": 252,
+    "total_llm_nodes_estimated": 19,
+    "total_llm_invocations_estimated": 252,
+    "dynamic_batch_node_count": 0,
     "total_input_tokens_estimated": 78100,
     "total_cacheable_tokens_estimated": 47300,
     "models_in_use": ["anthropic/claude-sonnet-4-5", "gemini/gemini-3.1-pro-preview", "gemini-3-flash-preview"]

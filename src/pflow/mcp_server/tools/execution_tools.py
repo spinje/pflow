@@ -386,6 +386,13 @@ async def analyze_cache(
         first-run projection that honors declared ``prompt_cache:``.
       - ``rerun_within_ttl_hypothetical_usd`` (number | null): all-cacheable-
         at-read-rate projection.
+      - ``total_llm_nodes_estimated`` (number): LLM node rows in the analyzed
+        workflow graph.
+      - ``total_llm_invocations_estimated`` (number | null): static estimate
+        of runtime LLM calls after batch fanout; ``null`` when any batch size
+        is dynamic.
+      - ``dynamic_batch_node_count`` (number): batch LLM nodes whose fanout
+        count could not be estimated statically.
 
     Sub-workflow rollup entries carry the same four primitives at child
     scope.

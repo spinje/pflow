@@ -41,6 +41,61 @@ def _row(source: str) -> PerCallRow:
     )
 
 
+def test_summary_reports_static_batch_invocation_estimate() -> None:
+    rows = [
+        PerCallRow(
+            node_path="batch-llm",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=True,
+            batch_size_estimated=8,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=50,
+            cache_ratio_pct=50,
+            data_source="estimator",
+            declared_prompt_cache=None,
+        ),
+        PerCallRow(
+            node_path="single-llm",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=50,
+            cache_ratio_pct=50,
+            data_source="estimator",
+            declared_prompt_cache=None,
+        ),
+    ]
+
+    summary = _build_summary(rows, warnings=[], ttl="5m")
+
+    assert summary.total_llm_nodes_estimated == 2
+    assert summary.total_llm_invocations_estimated == 9
+    assert summary.dynamic_batch_node_count == 0
+
+
+def test_summary_reports_unknown_invocations_when_batch_size_is_dynamic() -> None:
+    rows = [
+        PerCallRow(
+            node_path="dynamic-batch-llm",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=True,
+            batch_size_estimated=None,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=50,
+            cache_ratio_pct=50,
+            data_source="estimator",
+            declared_prompt_cache=None,
+        )
+    ]
+
+    summary = _build_summary(rows, warnings=[], ttl="5m")
+
+    assert summary.total_llm_nodes_estimated == 1
+    assert summary.total_llm_invocations_estimated is None
+    assert summary.dynamic_batch_node_count == 1
+
+
 def test_confidence_high_when_all_trace() -> None:
     """STRICT: all rows must be 'trace' for high. Mixed trace/memo → medium."""
     confidence, coverage = _aggregate_confidence([_row("trace"), _row("trace")])

@@ -333,7 +333,9 @@ class AnalysisSummary:
     actionable_opportunities: int
     warnings_count: int
     info_count: int
-    total_llm_calls_estimated: int
+    total_llm_nodes_estimated: int
+    total_llm_invocations_estimated: int | None
+    dynamic_batch_node_count: int
     total_input_tokens_estimated: int
     total_cacheable_tokens_estimated: int
     models_in_use: tuple[str, ...]
@@ -362,7 +364,7 @@ class AnalysisSummary:
     # split. The text renderer has computed this on-the-fly since Phase 5
     # sub-workflow rollup landed; promoting it into the data model gives
     # JSON consumers (MCP, structured tools) parity with text.
-    # ``root_llm_node_count`` == ``total_llm_calls_estimated`` for
+    # ``root_llm_node_count`` == ``total_llm_nodes_estimated`` for
     # single-workflow analyses; ``sub_workflow_llm_node_count`` == 0 in
     # that case.
     root_llm_node_count: int = 0
@@ -3522,7 +3524,7 @@ def _build_summary(
     # ``PerCallRow`` from this module at module load time.
     from .cost_estimation import CostTier, compute_actually_paid, compute_projections
 
-    total_calls = len(rows)
+    total_nodes = len(rows)
     # Phase 6 split: count root rows vs sub-workflow rows. Mirrors the
     # text renderer's previous inline ``sum(...)`` comprehensions in
     # ``_format_sub_workflow_breakdown_line`` so JSON consumers see the
@@ -3532,7 +3534,8 @@ def _build_summary(
     # ``render_text._format_sub_workflow_breakdown_line``.
     root_workflow_path = ctx.workflow_path if ctx is not None else None
     root_count = sum(1 for row in rows if root_workflow_path is None or row.workflow_path == root_workflow_path)
-    sub_workflow_count = total_calls - root_count
+    sub_workflow_count = total_nodes - root_count
+    total_invocations, dynamic_batch_count = _estimate_total_invocations(rows)
     total_input = sum(r.input_tokens_estimated for r in rows)
     # ``cacheable_tokens_estimated`` may be ``None`` for greenfield rows
     # without memo (Option C — projection unmeasurable). Sum only the known
@@ -3600,7 +3603,9 @@ def _build_summary(
         actionable_opportunities=actionable,
         warnings_count=warnings_count,
         info_count=info_count,
-        total_llm_calls_estimated=total_calls,
+        total_llm_nodes_estimated=total_nodes,
+        total_llm_invocations_estimated=total_invocations,
+        dynamic_batch_node_count=dynamic_batch_count,
         total_input_tokens_estimated=total_input,
         total_cacheable_tokens_estimated=total_cacheable,
         models_in_use=tuple(models),
@@ -3614,6 +3619,22 @@ def _build_summary(
         root_llm_node_count=root_count,
         sub_workflow_llm_node_count=sub_workflow_count,
     )
+
+
+def _estimate_total_invocations(rows: list[PerCallRow]) -> tuple[int | None, int]:
+    """Estimate runtime LLM invocations from statically-known batch sizes."""
+    total = 0
+    dynamic_batch_count = 0
+    for row in rows:
+        if not row.is_batch:
+            total += 1
+        elif row.batch_size_estimated is None:
+            dynamic_batch_count += 1
+        else:
+            total += row.batch_size_estimated
+    if dynamic_batch_count:
+        return None, dynamic_batch_count
+    return total, dynamic_batch_count
 
 
 def _unavailable_models_by_workflow(rows: list[PerCallRow]) -> dict[str | None, tuple[str, ...]]:

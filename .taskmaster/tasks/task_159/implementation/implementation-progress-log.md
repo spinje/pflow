@@ -7884,3 +7884,65 @@ Key learnings:
 3. **Explicit-field comparison is enough at this scale.** The two fields
    already consumed elsewhere (`node_id`, `llm_call.model`) catch the observed
    drift without a trace-format bump or permanent fingerprint contract.
+
+## Stage 2 follow-up — Finding #7: LLM node count vs invocation count (2026-05-06)
+
+Replaced the misleading analyze-cache summary field
+`total_llm_calls_estimated` with separate node and invocation fields:
+
+- `total_llm_nodes_estimated`
+- `total_llm_invocations_estimated`
+- `dynamic_batch_node_count`
+
+Text output now reports invocation fanout only when it differs from node count
+or cannot be known statically:
+
+- `2 LLM nodes using ...`
+- `1 LLM node, ~8 invocations using ...`
+- `1 LLM node, invocation count unavailable (1 dynamic batch node) using ...`
+
+Implementation notes:
+
+- Static inline batch sizes contribute their item count to
+  `total_llm_invocations_estimated`.
+- Dynamic batch sizes make `total_llm_invocations_estimated = null` and
+  increment `dynamic_batch_node_count`.
+- No compatibility alias was kept. The old `calls` field was wrong, and there
+  are no users to preserve it for.
+
+Files changed:
+
+- `src/pflow/core/cache_analysis/analyze.py`
+- `src/pflow/core/cache_analysis/render_text.py`
+- `src/pflow/core/cache_analysis/render_json.py`
+- `src/pflow/mcp_server/tools/execution_tools.py`
+- `tests/test_core/test_cache_analysis_analyze.py`
+- `tests/test_core/test_cache_analysis_renderers.py`
+- `tests/test_core/test_cache_analysis_summarize.py`
+- `.taskmaster/tasks/task_159/task-159.md`
+
+Verification:
+
+- Cache analysis + CLI + MCP analyze-cache tests: 202 passed.
+- Cost-estimation tests: 27 passed.
+- Focused producer/renderer tests after final naming cleanup: 3 passed.
+- `ruff check`, `ruff format --check`, and `mypy` clean on touched source.
+
+## Stage 2 status check — Findings #3, #14, #16 (2026-05-06)
+
+Current status:
+
+- **Finding #3: fixed.** Sub-workflow LLM cost attribution is keyed by
+  `(workflow_path, node_id)`, and focused tests cover direct child rollup and
+  homogeneous static workflow-batch attribution.
+- **Finding #14: fixed.** Static Anthropic `reasoning_effort` +
+  `temperature != 1.0` combinations now fail validation with
+  `llm.thinking-temperature-mismatch`, pflow vocabulary, and concrete fixes.
+- **Finding #16: fixed.** `cache_chunks_skipped` is surfaced in `--report` and
+  participates in analyze-cache discrepancy attribution as `chunk_skipped`.
+
+Verification:
+
+- Sub-workflow cost/report focused tests: passed.
+- `cache_chunks_skipped` analyze-cache attribution tests: passed.
+- `llm.thinking-temperature-mismatch` validator tests: 19 passed.

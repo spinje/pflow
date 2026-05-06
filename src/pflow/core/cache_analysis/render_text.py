@@ -122,7 +122,7 @@ def _render_header(analysis: CacheAnalysis) -> str:
     lines = [
         f"# Cache Analysis: {analysis.workflow_path}",
         "",
-        f"  {_format_scale_line(s.total_llm_calls_estimated, s.models_in_use, heterogeneous_node_paths=s.heterogeneous_model_node_paths)}",
+        f"  {_format_scale_line(s)}",
     ]
     sub_line = _format_sub_workflow_breakdown_line(analysis)
     if sub_line:
@@ -152,16 +152,11 @@ def _format_sub_workflow_breakdown_line(analysis: CacheAnalysis) -> str | None:
     )
 
 
-def _format_scale_line(
-    node_count: int,
-    models_in_use: tuple[str, ...],
-    *,
-    heterogeneous_node_paths: tuple[str, ...] = (),
-) -> str:
+def _format_scale_line(s: AnalysisSummary) -> str:
     """Render the scale line with model names listed instead of just a count.
 
     Renders as ``"N LLM nodes ..."`` (the "calls" wording was misleading —
-    the count IS nodes, calls per run depend on batch sizes).
+    the count IS nodes, invocations per run depend on batch sizes).
 
     Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
     are excluded from ``models_in_use`` upstream so the literal template
@@ -170,30 +165,51 @@ def _format_scale_line(
     such nodes exist — naming them so the agent doesn't have to scan the
     per-call table to find which nodes vary.
     """
+    node_count = s.total_llm_nodes_estimated
     nodes_word = "node" if node_count == 1 else "nodes"
     if node_count == 0:
         return "0 LLM nodes"
-    hetero_count = len(heterogeneous_node_paths)
+    hetero_count = len(s.heterogeneous_model_node_paths)
     homogeneous_count = node_count - hetero_count
-    hetero_suffix = _format_heterogeneous_suffix(heterogeneous_node_paths)
+    hetero_suffix = _format_heterogeneous_suffix(s.heterogeneous_model_node_paths)
+    invocation_suffix = _format_invocation_suffix(s)
 
     if homogeneous_count == 0 and hetero_count > 0:
         # All-heterogeneous workflow — no homogeneous models to list.
         hetero_word = "node" if hetero_count == 1 else "nodes"
-        names_csv = ", ".join(heterogeneous_node_paths)
+        names_csv = ", ".join(s.heterogeneous_model_node_paths)
         if hetero_count == 1:
-            return f"{node_count} LLM {nodes_word} ({heterogeneous_node_paths[0]}: {_HETEROGENEOUS_MODEL_TAG})"
+            return (
+                f"{node_count} LLM {nodes_word}{invocation_suffix} "
+                f"({s.heterogeneous_model_node_paths[0]}: {_HETEROGENEOUS_MODEL_TAG})"
+            )
         return (
-            f"{node_count} LLM {nodes_word} with {_HETEROGENEOUS_MODEL_TAG} ({hetero_count} {hetero_word}: {names_csv})"
+            f"{node_count} LLM {nodes_word}{invocation_suffix} with {_HETEROGENEOUS_MODEL_TAG} "
+            f"({hetero_count} {hetero_word}: {names_csv})"
         )
 
-    if not models_in_use:
-        return f"{node_count} LLM {nodes_word} (no model resolved — set settings.default_model)"
-    if len(models_in_use) == 1:
-        base = f"{node_count} LLM {nodes_word} using {models_in_use[0]}"
+    if not s.models_in_use:
+        return f"{node_count} LLM {nodes_word}{invocation_suffix} (no model resolved — set settings.default_model)"
+    if len(s.models_in_use) == 1:
+        base = f"{node_count} LLM {nodes_word}{invocation_suffix} using {s.models_in_use[0]}"
     else:
-        base = f"{node_count} LLM {nodes_word} using {len(models_in_use)} models: {', '.join(models_in_use)}"
+        base = (
+            f"{node_count} LLM {nodes_word}{invocation_suffix} "
+            f"using {len(s.models_in_use)} models: {', '.join(s.models_in_use)}"
+        )
     return f"{base}{hetero_suffix}"
+
+
+def _format_invocation_suffix(s: AnalysisSummary) -> str:
+    if s.total_llm_invocations_estimated is not None:
+        if s.total_llm_invocations_estimated == s.total_llm_nodes_estimated:
+            return ""
+        return f", ~{s.total_llm_invocations_estimated} invocations"
+    dynamic_count = s.dynamic_batch_node_count
+    if dynamic_count == 0:
+        return ""
+    word = "node" if dynamic_count == 1 else "nodes"
+    return f", invocation count unavailable ({dynamic_count} dynamic batch {word})"
 
 
 def _format_heterogeneous_suffix(heterogeneous_node_paths: tuple[str, ...]) -> str:
@@ -371,9 +387,9 @@ def _render_summary(analysis: CacheAnalysis) -> str:
         #   4. LLM nodes with priced models but no run history yet (greenfield
         #      without shared context — no opportunity figure to show).
         summary_lines.append("")
-        if s.total_llm_calls_estimated == 0:
+        if s.total_llm_nodes_estimated == 0:
             summary_lines.append("  Cost data unavailable: workflow has no LLM nodes.")
-        elif s.heterogeneous_model_node_count == s.total_llm_calls_estimated:
+        elif s.heterogeneous_model_node_count == s.total_llm_nodes_estimated:
             # Stage C.1: gate ahead of the "no model resolved" branch.
             summary_lines.append("  Cost data unavailable: all LLM nodes use models that vary per batch item.")
         elif not s.models_in_use:
