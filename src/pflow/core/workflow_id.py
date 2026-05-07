@@ -37,6 +37,14 @@ def synthesize_inline_workflow_id(ir: dict[str, Any]) -> str:
     the runner derived. Cache-key invalidation already handles file-content
     changes via ``resolved_params`` hashing; the ``workflow_path`` scope
     just needs to partition across distinct inline submissions.
+
+    MD5 collision class: the same inline IR submitted twice produces the
+    same id by contract (that's the whole point — scope reuse across
+    repeated submissions). Collisions across distinct IRs are not
+    adversarially defended — there is no security boundary here, only a
+    cache-scoping partition. If two distinct IRs ever hash-collide, the
+    consequence is shared memo cache scope between them; the cache-key
+    layer's own hashing prevents incorrect output reuse.
     """
     canonical = json.dumps(ir, sort_keys=True, default=str, separators=(",", ":"))
     digest = hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()

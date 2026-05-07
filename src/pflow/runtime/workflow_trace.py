@@ -29,6 +29,13 @@ def format_trace_filename(workflow_path: str | None, workflow_name: str, timesta
     candidates before reading any file's contents. Filename collisions across
     distinct workflows are guarded by a contents-level ``workflow_path``
     re-check at read time.
+
+    Collision class for ``workflow_path=None``/empty: ``wf_hash`` is
+    ``d41d8cd9`` (md5 of empty string), so all None-path traces share that
+    prefix. Production paths always pass a real value (file path or
+    ``ir-hash:<md5>`` for inline runs); test fixtures and report-generation
+    tools doing prefix-based discovery should expect this collision class
+    and use the contents-level re-check as the discriminator.
     """
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", workflow_name)[:30]
     safe_name = re.sub(r"-+", "-", safe_name).strip("-")

@@ -2167,3 +2167,23 @@ def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_c
         "Likely cause: _create_planner_shared did not install __pflow_cache_render__, "
         "so plan_node's config_hash excludes cache content while engine's includes it."
     )
+
+
+def test_create_planner_shared_underscore_alias_is_preserved() -> None:
+    """Back-compat: ``_create_planner_shared`` alias must resolve and point at
+    the canonical ``create_planner_shared`` callable.
+
+    The alias was preserved during Stage A/0/B/C data-model redesign so existing
+    in-tree imports don't churn. There are no production callers of the
+    underscored name today, so a future cleanup could silently delete the
+    alias. This test makes deletion fail loudly.
+
+    Mutation contract: removing
+    ``_create_planner_shared = create_planner_shared`` at ``plan.py:503``
+    breaks this import.
+    """
+    from pflow.execution.plan import _create_planner_shared, create_planner_shared
+
+    assert _create_planner_shared is create_planner_shared, (
+        "alias drift: _create_planner_shared should be the same callable as create_planner_shared (set at plan.py:503)."
+    )
