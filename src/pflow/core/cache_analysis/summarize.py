@@ -5,10 +5,15 @@ the existing plan formatter renders it inline. ``None`` is returned when
 the cache plan is already optimal so the dry-run output stays silent on
 workflows with nothing to surface.
 
-Locked text format (per spec § "—dry-run Cache Nudge"):
+Text shape:
 
-    Cache: {n} design opportunit{y_or_ies} available (estimated -${savings:.2f}/run, -{pct}%).
+    Cache: {n} design opportunit{y_or_ies} available.
+    Cache: {n} design opportunit{y_or_ies} available (saves ~$X/run on first run).
+    Cache: {n} design opportunit{y_or_ies} available (saves ~$X/run on rerun; adds ~$Y on first run).
         Run 'pflow analyze-cache' for details.
+
+Direction comes from ``AnalysisSummary``'s ``CostDelta.kind`` fields. Do not
+render negative-signed "savings"; first-run write premiums are cost increases.
 
 JSON shape (emitted via ``Diagnostic.to_dict()`` with
 ``id="cache.opportunities-available"``):
@@ -22,7 +27,9 @@ JSON shape (emitted via ``Diagnostic.to_dict()`` with
             "category": "cache_advisory",
             "opportunity_count": 4,
             "estimated_savings_usd": 1.34,
-            "estimated_savings_pct": 61
+            "estimated_savings_pct": 61,
+            "first_run_delta_kind": "savings",
+            "rerun_delta_kind": "savings"
         },
         "see_also": ["caching"]
     }
@@ -66,31 +73,14 @@ def summarize_from_analysis(analysis: CacheAnalysis) -> Diagnostic | None:
     if actionable <= 0:
         return None
 
-    # Anchor the savings percentage on the most authoritative figure:
-    # ``actually_paid_usd`` when a trace contributed; ``no_cache_hypothetical_usd``
-    # otherwise. Both atoms carry one meaning — agents reading the dry-run
-    # nudge see "savings vs what was paid" or "savings vs no-cache baseline."
     summary = analysis.summary
-    anchor = summary.actually_paid_usd if summary.actually_paid_usd is not None else summary.no_cache_hypothetical_usd
-    first_run_with_cache = summary.first_run_with_cache_hypothetical_usd
-    savings_value: float | None
-    savings_pct: int | None
-    if summary.aggregate_savings_first_run_usd is not None:
-        savings_value = max(0.0, summary.aggregate_savings_first_run_usd)
-        savings_pct = summary.savings_pct_first_run
-        if savings_pct is None and anchor is not None and anchor > 0:
-            savings_pct = round(100 * savings_value / anchor)
-    elif first_run_with_cache is None or anchor is None or anchor <= 0:
-        savings_value = None
-        savings_pct = None
-    else:
-        savings_value = max(0.0, anchor - first_run_with_cache)
-        savings_pct = round(100 * savings_value / anchor)
-
     message = format_dry_run_nudge(
         opportunity_count=actionable,
-        savings_usd=savings_value,
-        savings_pct=savings_pct,
+        first_run_savings_usd=_delta_amount(summary.first_run_delta, "savings"),
+        first_run_savings_pct=_delta_pct(summary.first_run_delta, "savings"),
+        rerun_savings_usd=_delta_amount(summary.rerun_delta, "savings"),
+        rerun_savings_pct=_delta_pct(summary.rerun_delta, "savings"),
+        first_run_added_usd=_delta_amount(summary.first_run_delta, "cost_increase"),
     )
 
     return Diagnostic(
@@ -103,11 +93,29 @@ def summarize_from_analysis(analysis: CacheAnalysis) -> Diagnostic | None:
         context={
             "category": CACHE_ADVISORY_CATEGORY,
             "opportunity_count": actionable,
-            "estimated_savings_usd": savings_value,
-            "estimated_savings_pct": savings_pct,
+            "estimated_savings_usd": _delta_amount(summary.first_run_delta, "savings")
+            or _delta_amount(summary.rerun_delta, "savings"),
+            "estimated_savings_pct": _delta_pct(summary.first_run_delta, "savings")
+            or _delta_pct(summary.rerun_delta, "savings"),
+            "first_run_delta_kind": summary.first_run_delta.kind,
+            "rerun_delta_kind": summary.rerun_delta.kind,
         },
         see_also=["caching"],
     )
+
+
+def _delta_amount(delta: Any, kind: str) -> float | None:
+    if getattr(delta, "kind", None) != kind:
+        return None
+    amount = getattr(delta, "amount_usd", None)
+    return float(amount) if isinstance(amount, (int, float)) else None
+
+
+def _delta_pct(delta: Any, kind: str) -> int | None:
+    if getattr(delta, "kind", None) != kind:
+        return None
+    pct = getattr(delta, "pct_of_baseline", None)
+    return int(pct) if isinstance(pct, int) else None
 
 
 __all__ = ["summarize", "summarize_from_analysis"]

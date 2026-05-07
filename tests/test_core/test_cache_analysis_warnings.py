@@ -678,13 +678,13 @@ def test_every_id_round_trips_through_make_diagnostic(warning_id: str) -> None:
 
 
 def test_format_dry_run_nudge_plural() -> None:
-    text = format_dry_run_nudge(opportunity_count=4, savings_usd=1.34, savings_pct=61)
-    assert text == "Cache: 4 design opportunities available (estimated -$1.34/run, -61%)."
+    text = format_dry_run_nudge(opportunity_count=4, first_run_savings_usd=1.34, first_run_savings_pct=61)
+    assert text == "Cache: 4 design opportunities available (saves ~$1.34/run, 61% on first run)."
 
 
 def test_format_dry_run_nudge_singular() -> None:
-    text = format_dry_run_nudge(opportunity_count=1, savings_usd=0.10, savings_pct=5)
-    assert text == "Cache: 1 design opportunity available (estimated -$0.10/run, -5%)."
+    text = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.10, first_run_savings_pct=5)
+    assert text == "Cache: 1 design opportunity available (saves ~$0.10/run, 5% on first run)."
 
 
 def test_format_dry_run_nudge_drops_dollar_figure_when_savings_unavailable() -> None:
@@ -692,7 +692,7 @@ def test_format_dry_run_nudge_drops_dollar_figure_when_savings_unavailable() -> 
     emit ``-$0.00/run, -0%`` — that's the silent-failure attractor that
     misleads agents into thinking there's no upside. Drop the figure
     entirely instead."""
-    text = format_dry_run_nudge(opportunity_count=4, savings_usd=None, savings_pct=None)
+    text = format_dry_run_nudge(opportunity_count=4)
     assert text == "Cache: 4 design opportunities available."
     assert "-$0.00" not in text
     assert "-0%" not in text
@@ -701,8 +701,21 @@ def test_format_dry_run_nudge_drops_dollar_figure_when_savings_unavailable() -> 
 def test_format_dry_run_nudge_drops_figure_when_only_pct_unavailable() -> None:
     """When dollar savings are known but percentage is unavailable, keep the
     actionable dollar estimate rather than hiding greenfield savings."""
-    text = format_dry_run_nudge(opportunity_count=2, savings_usd=0.50, savings_pct=None)
-    assert text == "Cache: 2 design opportunities available (estimated -$0.50/run)."
+    text = format_dry_run_nudge(opportunity_count=2, first_run_savings_usd=0.50)
+    assert text == "Cache: 2 design opportunities available (saves ~$0.50/run on first run)."
+
+
+def test_format_dry_run_nudge_rerun_savings_with_first_run_write_premium() -> None:
+    text = format_dry_run_nudge(
+        opportunity_count=2,
+        rerun_savings_usd=0.0267,
+        rerun_savings_pct=85,
+        first_run_added_usd=0.0049,
+    )
+    assert text == (
+        "Cache: 2 design opportunities available (saves ~$0.03/run, 85% on rerun; adds ~$0.0049 on first run)."
+    )
+    assert "-$" not in text
 
 
 def test_format_dry_run_nudge_renders_sub_cent_with_4_decimal_precision() -> None:
@@ -723,24 +736,24 @@ def test_format_dry_run_nudge_renders_sub_cent_with_4_decimal_precision() -> Non
     test must fail.
     """
     # Sub-cent values render with 4-decimal precision.
-    text = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0012, savings_pct=None)
-    assert text == "Cache: 1 design opportunity available (estimated -$0.0012/run)."
+    text = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.0012)
+    assert text == "Cache: 1 design opportunity available (saves ~$0.0012/run on first run)."
     assert "-$0.00/run" not in text  # Bug D regression — never the placeholder.
 
     # With percentage too.
-    text2 = format_dry_run_nudge(opportunity_count=4, savings_usd=0.005, savings_pct=12)
-    assert text2 == "Cache: 4 design opportunities available (estimated -$0.0050/run, -12%)."
+    text2 = format_dry_run_nudge(opportunity_count=4, first_run_savings_usd=0.005, first_run_savings_pct=12)
+    assert text2 == "Cache: 4 design opportunities available (saves ~$0.0050/run, 12% on first run)."
 
     # Below display ($0.00005) — drops the figure (truly negligible).
-    text3 = format_dry_run_nudge(opportunity_count=2, savings_usd=0.00005, savings_pct=None)
+    text3 = format_dry_run_nudge(opportunity_count=2, first_run_savings_usd=0.00005)
     assert text3 == "Cache: 2 design opportunities available."
 
     # Zero / None — drops the figure (genuinely unavailable).
-    text4 = format_dry_run_nudge(opportunity_count=3, savings_usd=0.0, savings_pct=0)
+    text4 = format_dry_run_nudge(opportunity_count=3, first_run_savings_usd=0.0, first_run_savings_pct=0)
     assert text4 == "Cache: 3 design opportunities available."
     assert "-$0.00" not in text4
 
-    text5 = format_dry_run_nudge(opportunity_count=1, savings_usd=None, savings_pct=None)
+    text5 = format_dry_run_nudge(opportunity_count=1)
     assert text5 == "Cache: 1 design opportunity available."
 
 
@@ -752,14 +765,14 @@ def test_format_dry_run_nudge_renders_at_one_cent_threshold() -> None:
     - Below ``$0.0001`` drops the figure entirely (truly negligible).
     """
     # At the cent boundary — 2-decimal rendering kicks in.
-    at_cent = format_dry_run_nudge(opportunity_count=1, savings_usd=0.01, savings_pct=None)
-    assert "(estimated -$0.01/run)" in at_cent
+    at_cent = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.01)
+    assert "(saves ~$0.01/run on first run)" in at_cent
     # Just below the cent boundary — 4-decimal precision.
-    just_below = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0099, savings_pct=None)
-    assert "(estimated -$0.0099/run)" in just_below
+    just_below = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.0099)
+    assert "(saves ~$0.0099/run on first run)" in just_below
     # At the display floor — 4-decimal precision.
-    at_floor = format_dry_run_nudge(opportunity_count=1, savings_usd=0.0001, savings_pct=None)
-    assert "(estimated -$0.0001/run)" in at_floor
+    at_floor = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.0001)
+    assert "(saves ~$0.0001/run on first run)" in at_floor
     # Below the floor — figure dropped.
-    below_floor = format_dry_run_nudge(opportunity_count=1, savings_usd=0.00009, savings_pct=None)
+    below_floor = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.00009)
     assert below_floor == "Cache: 1 design opportunity available."

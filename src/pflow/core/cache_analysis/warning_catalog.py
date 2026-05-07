@@ -1139,30 +1139,44 @@ _CATEGORY_TITLE: Final[dict[str, str]] = {
 def format_dry_run_nudge(
     *,
     opportunity_count: int,
-    savings_usd: float | None,
-    savings_pct: int | None,
+    first_run_savings_usd: float | None = None,
+    first_run_savings_pct: int | None = None,
+    rerun_savings_usd: float | None = None,
+    rerun_savings_pct: int | None = None,
+    first_run_added_usd: float | None = None,
 ) -> str:
-    """Format the spec-locked dry-run nudge text per § "—dry-run Cache Nudge".
-
-    Tri-state savings contract with adaptive sub-cent precision (mirrors
-    ``render_text._format_savings_usd`` /
-    ``warning_catalog._format_savings``):
-
-    - ``None`` → drop the dollar figure entirely (genuinely unknown).
-    - ``< $0.0001`` → drop the dollar figure entirely (below display
-      precision; rendering ``-$0.0000/run`` would imply "we computed it,
-      it's zero" when it's too small to surface).
-    - ``$0.0001 ≤ value < $0.01`` → render with 4 decimals
-      (``-$0.0012/run`` — Gemini-shaped sub-cent visibility).
-    - ``≥ $0.01`` → render with 2 decimals (``-$0.42/run``).
-    """
+    """Format the dry-run nudge without negative-savings wording."""
     word = "opportunity" if opportunity_count == 1 else "opportunities"
-    if savings_usd is None or savings_usd < 0.0001:
-        return f"Cache: {opportunity_count} design {word} available."
-    amount_str = f"-${savings_usd:.4f}/run" if savings_usd < 0.01 else f"-${savings_usd:.2f}/run"
-    if savings_pct is None:
-        return f"Cache: {opportunity_count} design {word} available (estimated {amount_str})."
-    return f"Cache: {opportunity_count} design {word} available (estimated {amount_str}, -{savings_pct}%)."
+    base = f"Cache: {opportunity_count} design {word} available"
+    first_run = _format_positive_delta(first_run_savings_usd, first_run_savings_pct)
+    rerun = _format_positive_delta(rerun_savings_usd, rerun_savings_pct)
+    added = _format_added_cost(first_run_added_usd)
+    if first_run:
+        parts = [f"saves {first_run} on first run"]
+        if rerun:
+            parts.append(f"{rerun} on rerun")
+        return f"{base} ({'; '.join(parts)})."
+    if rerun:
+        parts = [f"saves {rerun} on rerun"]
+        if added:
+            parts.append(f"adds {added} on first run")
+        return f"{base} ({'; '.join(parts)})."
+    return f"{base}."
+
+
+def _format_positive_delta(amount: float | None, pct: int | None) -> str:
+    if amount is None or amount < 0.0001:
+        return ""
+    amount_str = f"~${amount:.4f}/run" if amount < 0.01 else f"~${amount:.2f}/run"
+    if pct is None:
+        return amount_str
+    return f"{amount_str}, {pct}%"
+
+
+def _format_added_cost(amount: float | None) -> str:
+    if amount is None or amount < 0.0001:
+        return ""
+    return f"~${amount:.4f}" if amount < 0.01 else f"~${amount:.2f}"
 
 
 # ---------------------------------------------------------------------------

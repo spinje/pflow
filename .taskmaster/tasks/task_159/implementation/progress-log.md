@@ -1704,3 +1704,43 @@ Total cost across all three spikes: **~$0.04** (well under the $0.30 budget — 
 ### Next step
 
 B1.1 implementation can now proceed. The implementing agent reads §36 to confirm spike outcomes; the two plan updates above are already encoded in the plan. No further pre-implementation gating remains.
+
+## 2026-05-07 — Cost semantics cleanup implementation
+
+Implemented the cleanup from Fix Brief 01 + session addendum.
+
+Key changes:
+- Added `core.llm_usage.normalize_litellm_usage_tokens()` and wired it into both `llm_client._normalize()` and analyzer trace reads. `input_tokens` is now total prompt/input tokens; `uncached_input_tokens` and `input_token_accounting` make the split explicit. Analyzer trace math no longer depends on `ProviderInfo.splits_cache_from_input_tokens`.
+- Replaced summary JSON's ambiguous `savings_pct_*` and `aggregate_savings_*` fields with explicit `CostDelta` objects: `first_run_delta`, `rerun_delta`, and `actual_vs_no_cache_delta`. `CostDelta.amount_usd` is a non-negative magnitude; `kind` carries direction (`savings`, `cost_increase`, `break_even`, `unavailable`). This was chosen to make negative-savings rendering impossible by construction.
+- Added summary trace coverage (`trace_coverage`, static/executed counts, unexecuted node list). Explicit/loaded traces now mark absent static LLM rows as `did_not_execute_in_trace`, exclude them from projections, and suppress analytical per-node warnings for those rows. Static validator diagnostics still flow normally.
+- Changed dry-run and text rendering to use delta kind wording (`saves`, `adds`, `no meaningful cost change`) and removed negative-signed savings text from cache nudge/recommendation output.
+- Suppressed suggested `## Cache` blocks and `cache.shared-context-undeclared` actions when every assigned node is definitively below provider threshold. A note explains that shared refs exist but no provider-cache edit is currently actionable.
+
+Verification added:
+- Adapter tests cover LiteLLM total-style and split-style cache token accounting plus Gemini/OpenAI cached-token fallback.
+- Checked-in Haiku rerun trace now projects no-cache cost near `$0.031284` and rerun cost near actual `$0.0046188`; old JSON savings fields are asserted absent.
+- Partial trace test covers trace coverage metadata, unexecuted row marking, projection exclusion, and warning suppression.
+- Follow-up high-value test review added two bug-class tests: summary construction must classify a first-run write premium as `cost_increase`, and text output must render the partial-trace coverage note.
+- Rendering/dry-run tests assert cost increases are not rendered as negative savings and recommendation ranking ignores non-positive savings.
+- Sandbox verification passed: focused cache/CLI/MCP suite (`531 passed`), targeted ruff on touched files, `mypy src/pflow`, and near-full pytest (`6304 passed, 18 skipped`) with five uv-subprocess tests excluded for the known Homebrew `uv` sandbox panic.
+
+Deviations / decisions:
+- Did not preserve analyzer JSON compatibility. This matches the cleanup brief and avoids keeping misleading aliases alive.
+- Kept `ProjectionBreakdown.savings_*` internal to `cost_estimation.py` for focused unit coverage of raw projection math, but stopped exposing those fields on `AnalysisSummary` or JSON. This isolates low-level arithmetic from user-facing semantics.
+- Follow-up removed stale `ProviderInfo.splits_cache_from_input_tokens` metadata after confirming provider detection/env-var lookup do not depend on it. Cache-token accounting now has one authority: `core.llm_usage.normalize_litellm_usage_tokens()`.
+
+## 2026-05-07 — Manual no-spend regression pass after cost-semantics cleanup
+
+Ran a stage2-inspired manual verification pass against guide, validator, analyzer text/JSON, checked-in Haiku rerun trace, partial trace fixture, suggested-block actionability, dry-run nudge behavior, and cross-workflow cache ownership.
+
+Key finding:
+- `analyze-cache` text kept blocking errors visible but dropped the diagnostic ID from the blocking section. That failed the stage2 UX standard because users could not search or cross-reference `cache.order-mismatch` across CLI text, JSON, docs, and tests. Fixed by rendering diagnostic IDs inline for blocking errors only, while preserving the prior decision to avoid bracketed `[cache.X]` prefixes on recommendation rank lines.
+
+Verification:
+- Manual checks passed for guide memo/provider-cache wording, TTL wording, normalized `llm_usage.input_tokens` guidance, blocking-error split, Haiku normalized cost numbers (`no_cache_hypothetical_usd ~= 0.031284`, rerun cost near actual `0.0046188`), partial trace coverage, below-threshold suggested-block suppression, unknown-threshold suggested-block retention, dry-run opportunity silence for non-actionable small inputs, and child-owned sub-workflow cache recommendations.
+- Focused cache regression sweep passed with sandbox-only Homebrew `uv` subprocess tests excluded: `887 passed, 2 deselected`.
+- Near-full sandbox regression passed with the known `uv` subprocess exclusions: `6305 passed, 18 skipped`.
+- `ruff check`, `ruff format --check`, and `mypy src/pflow` passed after the renderer change.
+
+Deviation:
+- The dry-run manual scratch workflow did not render a dollar savings amount because it had no cost history. This is expected under the cleanup contract: when no displayable savings exists, dry-run renders only the opportunity count and avoids invented projections.

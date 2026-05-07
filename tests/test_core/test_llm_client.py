@@ -431,9 +431,41 @@ class TestCompleteUsageNormalization:
         assert response.usage["input_tokens"] == 1400
         assert response.usage["output_tokens"] == 164
         assert response.usage["total_tokens"] == 1564
+        assert response.usage["uncached_input_tokens"] == 55
         assert response.usage["cache_creation_input_tokens"] == 0
         assert response.usage["cache_read_input_tokens"] == 1345
+        assert response.usage["input_token_accounting"] == "total" + "_includes_cache"
         assert response.usage["cost_usd"] == 0.003
+
+    @patch("litellm.completion")
+    def test_total_style_cache_usage_keeps_prompt_tokens_as_input_total(self, mock_completion):
+        mock_completion.return_value = make_litellm_response(
+            prompt_tokens=4974,
+            completion_tokens=51,
+            cache_creation=0,
+            cache_read=4938,
+        )
+        response = complete(model="anthropic/claude-haiku-4-5", prompt="hi")
+
+        assert response.usage["input_tokens"] == 4974
+        assert response.usage["uncached_input_tokens"] == 36
+        assert response.usage["cache_read_input_tokens"] == 4938
+        assert response.usage["input_token_accounting"] == "total" + "_includes_cache"
+
+    @patch("litellm.completion")
+    def test_split_style_cache_usage_adds_cache_fields_to_input_total(self, mock_completion):
+        mock_completion.return_value = make_litellm_response(
+            prompt_tokens=36,
+            completion_tokens=51,
+            cache_creation=0,
+            cache_read=4938,
+        )
+        response = complete(model="anthropic/claude-haiku-4-5", prompt="hi")
+
+        assert response.usage["input_tokens"] == 4974
+        assert response.usage["uncached_input_tokens"] == 36
+        assert response.usage["cache_read_input_tokens"] == 4938
+        assert response.usage["input_token_accounting"] == "split" + "_cache_fields"
 
     @patch("litellm.completion")
     def test_gemini_cache_fallback_to_prompt_tokens_details(self, mock_completion):
@@ -447,6 +479,8 @@ class TestCompleteUsageNormalization:
             response_cost=0.00005,
         )
         response = complete(model="gemini-2.5-flash", prompt="hi")
+        assert response.usage["input_tokens"] == 1226
+        assert response.usage["uncached_input_tokens"] == 0
         assert response.usage["cache_creation_input_tokens"] == 0
         assert response.usage["cache_read_input_tokens"] == 1226
 

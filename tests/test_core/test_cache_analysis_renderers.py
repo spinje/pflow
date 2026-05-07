@@ -17,6 +17,7 @@ from pflow.core.cache_analysis import (
 from pflow.core.cache_analysis.analyze import (
     AnalysisSummary,
     CacheAnalysis,
+    CostDelta,
     CrossWorkflowFindings,
     PerCallRow,
     SubWorkflowRollup,
@@ -71,6 +72,9 @@ def _make_analysis(
         if dynamic_batch_count
         else sum(r.batch_size_estimated if r.is_batch and r.batch_size_estimated is not None else 1 for r in rows)
     )
+    first_run_delta = _test_delta(no_cache, first_run_with_cache, "no_cache", "first_run")
+    rerun_delta = _test_delta(no_cache, rerun, "no_cache", "rerun")
+    actual_delta = _test_delta(no_cache, actually_paid, "no_cache", "actual")
     return CacheAnalysis(
         workflow_path=workflow_path,
         analyzed_at="2026-04-29T12:00:00Z",
@@ -89,8 +93,13 @@ def _make_analysis(
             no_cache_hypothetical_usd=no_cache,
             first_run_with_cache_hypothetical_usd=first_run_with_cache,
             rerun_within_ttl_hypothetical_usd=rerun,
-            savings_pct_first_run=None,
-            savings_pct_rerun=None,
+            first_run_delta=first_run_delta,
+            rerun_delta=rerun_delta,
+            actual_vs_no_cache_delta=actual_delta,
+            trace_coverage="complete" if actually_paid is not None else "none",
+            trace_llm_nodes_static=len(rows),
+            trace_llm_nodes_executed=len(rows) if actually_paid is not None else 0,
+            trace_unexecuted_llm_nodes=(),
             blocking_errors=sum(1 for d in warnings if d.severity == Severity.ERROR),
             actionable_opportunities=sum(1 for d in warnings if d.severity != Severity.ERROR),
             warnings_count=sum(1 for d in warnings if d.severity == Severity.WARNING),
@@ -111,6 +120,26 @@ def _make_analysis(
         cross_workflow=CrossWorkflowFindings(0),
         warnings=tuple(warnings),
         notes=tuple(notes or []),
+    )
+
+
+def _test_delta(
+    baseline_value: float | None,
+    compared_value: float | None,
+    baseline: str,
+    compared_to: str,
+) -> CostDelta:
+    if baseline_value is None or compared_value is None or baseline_value <= 0:
+        return CostDelta(None, None, "unavailable", baseline, compared_to)
+    raw = baseline_value - compared_value
+    if abs(raw) < 0.0000001:
+        return CostDelta(0.0, 0, "break_even", baseline, compared_to)
+    return CostDelta(
+        abs(raw),
+        round(100 * abs(raw) / baseline_value),
+        "savings" if raw > 0 else "cost_increase",
+        baseline,
+        compared_to,
     )
 
 
@@ -207,10 +236,13 @@ def test_text_summary_greenfield_cost_note_drops_pflow_internals() -> None:
     """
     from pflow.core.cache_analysis.analyze import AnalysisSummary
 
-    # Greenfield path: no current cost, but aggregate_savings is set so the
-    # branch fires (mirrors ``_render_summary:181``).
+    # Greenfield path: no current cost, but first-run delta is set so the
+    # branch fires.
     base = _make_analysis()
-    summary = AnalysisSummary(**{**base.summary.__dict__, "aggregate_savings_first_run_usd": 0.50})
+    summary = AnalysisSummary(**{
+        **base.summary.__dict__,
+        "first_run_delta": CostDelta(0.50, None, "savings", "no_cache", "first_run"),
+    })
     analysis = CacheAnalysis(**{**base.__dict__, "summary": summary})
     text = render_text(analysis)
 
@@ -370,7 +402,7 @@ def test_analyze_emits_starter_prose_placeholder_end_to_end() -> None:
             },
         ],
     }
-    result = analyze(workflow_ir, parameters={"topic": "x"}, workflow_path="/abs/x.pflow.md")
+    result = analyze(workflow_ir, parameters={"topic": "x " * 6000}, workflow_path="/abs/x.pflow.md")
 
     assert result.suggested_blocks, "Analyzer should detect shared context"
     placeholders = [c.prose_placeholder for b in result.suggested_blocks for c in b.chunks]
@@ -891,14 +923,16 @@ def test_text_recommended_actions_render_savings_with_adaptive_precision() -> No
     text = render_text(_make_analysis(warnings=warnings))
 
     # Sub-cent ($0.0012) renders with 4-decimal precision.
-    assert "-$0.0012/run" in text, f"expected sub-cent savings to render as '-$0.0012/run'; text:\n{text}"
+    assert "saves ~$0.0012/run" in text, f"expected sub-cent savings to render as savings text; text:\n{text}"
+    assert "-$0.0012/run" not in text
     # None and below-display ($0.00005) both render as "savings unavailable".
     savings_unavailable_count = text.count("savings unavailable")
     assert savings_unavailable_count >= 2, (
         f"expected ≥2 'savings unavailable' (None + below-display); got {savings_unavailable_count}"
     )
     # Above-threshold value renders the dollar figure on its rank line.
-    assert "-$0.42/run" in text
+    assert "saves ~$0.42/run" in text
+    assert "-$0.42/run" not in text
     # Bug D regression: NO "-$0.00/run" placeholder anywhere. (Note: a broad
     # "$0.00" check would false-trigger on "$0.0012" — match the precise
     # placeholder string instead.)
@@ -1331,6 +1365,7 @@ def test_text_blocking_errors_does_not_render_savings_column() -> None:
     text = render_text(_analysis_with_warnings([warning]))
     blocking = _section(text, "## Blocking errors")
     assert "Order mismatch" in blocking
+    assert "cache.order-mismatch" in blocking
     assert "-$2.00/run" not in blocking
     assert "savings unavailable" not in blocking
 
@@ -1415,7 +1450,8 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
     analysis = analyze(workflow_ir, auto_load_trace=False)
     text = render_text(analysis)
     assert "## Blocking errors (must fix before save and run)" in text
-    # Stage-1 final UX pass: ``[cache.order-mismatch]`` brackets are gone.
+    # Stage-1 final UX pass: ``[cache.order-mismatch]`` brackets are gone,
+    # while the diagnostic ID remains visible in a quieter inline form.
     # The load-bearing brownfield contract: the ERROR-severity diagnostic
     # surfaces in Blocking errors with enough discriminator for the
     # agent to act on it. The order-mismatch message body carries the
@@ -1430,6 +1466,7 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
     #   removed in this UX pass)
     blocking = _section(text, "## Blocking errors")
     assert "write-lyrics" in blocking
+    assert "cache.order-mismatch" in blocking
     assert "expected:" in blocking  # one of the message body's fix lines
     assert "you wrote:" in blocking  # ditto — confirms full message rendered
     assert "[cache.order-mismatch]" not in blocking  # brackets dropped
@@ -1837,7 +1874,7 @@ def test_suggested_block_carries_prompt_body_cleanup_for_greenfield() -> None:
             },
         ],
     }
-    result = analyze(workflow_ir, parameters={"concept": "x"}, workflow_path="/abs/x.pflow.md")
+    result = analyze(workflow_ir, parameters={"concept": "x " * 6000}, workflow_path="/abs/x.pflow.md")
 
     assert result.suggested_blocks, "Analyzer should detect shared context"
     block = result.suggested_blocks[0]

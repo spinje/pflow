@@ -147,8 +147,8 @@ def test_greenfield_returns_none_absolutes_but_real_savings() -> None:
 def test_single_call_first_run_savings_is_negative_below_break_even() -> None:
     """Anthropic 5m-TTL break-even is 1 read = 2 total uses. A single call
     with declared cache pays 1.25x for the write with no reads to amortize:
-    first-run savings is NEGATIVE. Correct math; the renderer hides the line
-    when ``aggregate_savings_first_run_usd <= 0``.
+    first-run savings is NEGATIVE. Correct math; summary/rendering must expose
+    this as a cost-increase delta, not negative savings.
 
     Rerun savings stays positive (all reads, no writes)."""
     row = _row(

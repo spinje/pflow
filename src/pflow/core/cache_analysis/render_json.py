@@ -16,7 +16,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 
-from .analyze import CacheAnalysis, PerCallRow, RecommendedAction, SuggestedBlock
+from .analyze import CacheAnalysis, CostDelta, PerCallRow, RecommendedAction, SuggestedBlock
 
 
 def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
@@ -63,10 +63,13 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "no_cache_hypothetical_usd": s.no_cache_hypothetical_usd,
         "first_run_with_cache_hypothetical_usd": s.first_run_with_cache_hypothetical_usd,
         "rerun_within_ttl_hypothetical_usd": s.rerun_within_ttl_hypothetical_usd,
-        "savings_pct_first_run": s.savings_pct_first_run,
-        "savings_pct_rerun": s.savings_pct_rerun,
-        "aggregate_savings_first_run_usd": s.aggregate_savings_first_run_usd,
-        "aggregate_savings_rerun_usd": s.aggregate_savings_rerun_usd,
+        "first_run_delta": _delta_to_dict(s.first_run_delta),
+        "rerun_delta": _delta_to_dict(s.rerun_delta),
+        "actual_vs_no_cache_delta": _delta_to_dict(s.actual_vs_no_cache_delta),
+        "trace_coverage": s.trace_coverage,
+        "trace_llm_nodes_static": s.trace_llm_nodes_static,
+        "trace_llm_nodes_executed": s.trace_llm_nodes_executed,
+        "trace_unexecuted_llm_nodes": list(s.trace_unexecuted_llm_nodes),
         "blocking_errors": s.blocking_errors,
         "actionable_opportunities": s.actionable_opportunities,
         "warnings_count": s.warnings_count,
@@ -96,6 +99,16 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "root_llm_node_count": s.root_llm_node_count,
         "sub_workflow_llm_node_count": s.sub_workflow_llm_node_count,
         "sub_workflow_rollup": _sub_workflow_rollup_to_dict(s.sub_workflow_rollup),
+    }
+
+
+def _delta_to_dict(delta: CostDelta) -> dict[str, Any]:
+    return {
+        "amount_usd": delta.amount_usd,
+        "pct_of_baseline": delta.pct_of_baseline,
+        "kind": delta.kind,
+        "baseline": delta.baseline,
+        "compared_to": delta.compared_to,
     }
 
 

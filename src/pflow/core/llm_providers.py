@@ -20,31 +20,21 @@ class ProviderInfo:
     ``GEMINI_API_KEY`` and ``GOOGLE_API_KEY``); the canonical entry is
     what pflow surfaces as the recommended setup target.
 
-    ``splits_cache_from_input_tokens`` reports the provider's cache-token
-    accounting shape on trace events. ``True`` means the provider reports
-    ``input_tokens`` excluding the cache portion, with cache contribution
-    in ``cache_creation_input_tokens`` + ``cache_read_input_tokens``
-    (Anthropic shape — sum the three for total billed). ``False`` means
-    cache is folded into ``input_tokens`` already (Gemini, OpenAI shape —
-    don't double-count). Read by the cache analyzer's ``_estimate_row_tokens``
-    when surfacing total billed tokens for a trace event.
+    Cache-token accounting is intentionally NOT represented here. LiteLLM's
+    response shape can vary by provider version and trace vintage; pflow
+    normalizes usage with ``core.llm_usage.normalize_litellm_usage_tokens()``
+    at the adapter/analyzer boundary instead of trusting static provider
+    metadata for arithmetic.
     """
 
     name: str
     provider_prefix: str
     bare_prefixes: tuple[str, ...]
     env_vars: tuple[str, ...]
-    splits_cache_from_input_tokens: bool = False
 
 
 PROVIDERS: tuple[ProviderInfo, ...] = (
-    ProviderInfo(
-        "anthropic",
-        "anthropic/",
-        ("claude-",),
-        ("ANTHROPIC_API_KEY",),
-        splits_cache_from_input_tokens=True,
-    ),
+    ProviderInfo("anthropic", "anthropic/", ("claude-",), ("ANTHROPIC_API_KEY",)),
     ProviderInfo("openai", "openai/", ("gpt-", "o1", "o3", "o4"), ("OPENAI_API_KEY",)),
     # LiteLLM checks GOOGLE_API_KEY first then GEMINI_API_KEY for the Gemini
     # path (see litellm/llms/gemini/common_utils.py). pflow's canonical is

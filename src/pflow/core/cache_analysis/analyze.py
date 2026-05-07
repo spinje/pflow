@@ -55,6 +55,7 @@ from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import detect_provider, normalize_model_name
+from pflow.core.llm_usage import normalize_litellm_usage_tokens
 from pflow.core.workflow.data_flow import validate_data_flow
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 from pflow.runtime.template_resolver import TemplateResolver
@@ -288,6 +289,22 @@ class TraceExecutionIndex:
     executed_keys: set[tuple[str | None, str]]
     workflows_with_trace: set[str | None]
     current_cost_by_workflow: dict[str | None, float | None]
+    trace_loaded: bool = False
+
+
+@dataclass(frozen=True)
+class CostDelta:
+    """Comparable delta between two cost atoms.
+
+    ``amount_usd`` is a non-negative magnitude. Direction lives in ``kind`` so
+    renderers cannot accidentally describe a write premium as negative savings.
+    """
+
+    amount_usd: float | None
+    pct_of_baseline: int | None
+    kind: str
+    baseline: str
+    compared_to: str
 
 
 @dataclass(frozen=True)
@@ -318,8 +335,9 @@ class AnalysisSummary:
       ``no_cache_hypothetical_usd`` exactly when no row declares cache.
     - ``rerun_within_ttl_hypothetical_usd`` — projection for every call
       after the first within TTL (all cacheable at read rate).
-    - ``aggregate_savings_*`` — input-only deltas (output cancels);
-      greenfield-safe — populated even when absolute fields are None.
+    - ``*_delta`` — explicit comparisons between comparable cost atoms.
+      ``kind`` distinguishes savings from cost increases and unavailable
+      comparisons.
     """
 
     actually_paid_usd: float | None
@@ -327,8 +345,13 @@ class AnalysisSummary:
     no_cache_hypothetical_usd: float | None
     first_run_with_cache_hypothetical_usd: float | None
     rerun_within_ttl_hypothetical_usd: float | None
-    savings_pct_first_run: int | None
-    savings_pct_rerun: int | None
+    first_run_delta: CostDelta
+    rerun_delta: CostDelta
+    actual_vs_no_cache_delta: CostDelta
+    trace_coverage: str
+    trace_llm_nodes_static: int
+    trace_llm_nodes_executed: int
+    trace_unexecuted_llm_nodes: tuple[str, ...]
     blocking_errors: int
     actionable_opportunities: int
     warnings_count: int
@@ -342,14 +365,6 @@ class AnalysisSummary:
     partial_cost_usd: bool
     unavailable_models: tuple[str, ...]
     unavailable_models_by_workflow: dict[str | None, tuple[str, ...]] | None = None
-    # Aggregate dollar savings if ``prompt_cache:`` declarations are utilized.
-    # Computed from input-only math (output cost cancels in
-    # ``no_cache - first_run_with_cache`` / ``no_cache - rerun_within_ttl``),
-    # so these are populated even on greenfield workflows whose absolute
-    # cost figures stay ``None``. ``None`` only when no priced rows have
-    # any ``prompt_cache:`` declared.
-    aggregate_savings_first_run_usd: float | None = None
-    aggregate_savings_rerun_usd: float | None = None
     # Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
     # can't be priced as one model. ``models_in_use`` excludes them so the
     # literal ``${...}`` template doesn't leak into the rendered scale line;
@@ -892,13 +907,13 @@ def _build_trace_execution_index(
     inside :meth:`TraceTree.walk`.
     """
     if trace_data is None:
-        return TraceExecutionIndex({}, {}, set(), set(), {})
+        return TraceExecutionIndex({}, {}, set(), set(), {}, trace_loaded=False)
     from pflow.core.trace_tree import TraceTree
 
     try:
         tree = TraceTree.from_dict(trace_data)
     except ValueError:
-        return TraceExecutionIndex({}, {}, set(), set(), {})
+        return TraceExecutionIndex({}, {}, set(), set(), {}, trace_loaded=False)
 
     totals: dict[tuple[str | None, str], float] = {}
     workflow_totals: dict[str | None, float] = {}
@@ -946,6 +961,7 @@ def _build_trace_execution_index(
         executed_keys=executed_keys,
         workflows_with_trace=workflows_with_trace,
         current_cost_by_workflow=cost_by_workflow,
+        trace_loaded=True,
     )
 
 
@@ -1148,12 +1164,12 @@ def _build_per_call_rows_and_warnings(
                 trace_cost=trace_index.costs_by_key.get((workflow_path, node_id)),
                 trace_llm_call=trace_index.llm_calls_by_key.get((workflow_path, node_id)),
                 did_not_execute_in_trace=(
-                    workflow_path in trace_index.workflows_with_trace
-                    and (workflow_path, node_id) not in trace_index.executed_keys
+                    trace_index.trace_loaded and (workflow_path, node_id) not in trace_index.executed_keys
                 ),
             )
             rows.append(row)
-            warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks, nodes_by_id=nodes_by_id))
+            if not row.did_not_execute_in_trace:
+                warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks, nodes_by_id=nodes_by_id))
     return rows, warnings
 
 
@@ -1352,27 +1368,18 @@ def _estimate_row_tokens(
     were referenced by name (``prompt_cache: [name]``) but not inlined in
     the prompt body. See Bug 4 in the verification report.
 
-    Trace-tier accounting is provider-aware: providers that report
-    ``input_tokens`` excluding the cache portion (with cache contribution in
-    ``cache_creation_input_tokens`` + ``cache_read_input_tokens``) need both
-    summed for total billed tokens. Either cache field can be zero on the
-    same call — first-write events have ``cache_creation > 0, cache_read == 0``;
-    rerun-within-TTL has ``cache_creation == 0, cache_read > 0``. Providers
-    that fold cache into ``input_tokens`` already need no sum. The
-    discriminator lives on ``ProviderInfo.splits_cache_from_input_tokens``
-    (data-driven, not value-based) — value-based heuristics (e.g.
-    ``cache_creation > 0``) silently misclassify split-style cache-read
-    events as fold-style and truncate ``input_tokens`` on the most common
-    cached scenario. Long-term fix: normalize ``billed_input_tokens`` at
-    ``llm_client._normalize``.
+    Trace-tier accounting uses the same LiteLLM normalization rule as the
+    runtime adapter. Older traces may contain either total-style
+    ``input_tokens`` or split-style ``input_tokens``; provider metadata must
+    not decide trace arithmetic because LiteLLM's behavior changed under us.
     """
     if trace_llm_call is not None and isinstance(trace_llm_call.get("input_tokens"), int):
-        input_tokens = int(trace_llm_call["input_tokens"])
-        provider = detect_provider(trace_llm_call.get("model") or model)
-        if provider is not None and provider.splits_cache_from_input_tokens:
-            cache_creation = int(trace_llm_call.get("cache_creation_input_tokens") or 0)
-            cache_read = int(trace_llm_call.get("cache_read_input_tokens") or 0)
-            input_tokens = input_tokens + cache_creation + cache_read
+        normalized_usage = normalize_litellm_usage_tokens(
+            prompt_tokens=int(trace_llm_call["input_tokens"]),
+            cache_creation_input_tokens=int(trace_llm_call.get("cache_creation_input_tokens") or 0),
+            cache_read_input_tokens=int(trace_llm_call.get("cache_read_input_tokens") or 0),
+        )
+        input_tokens = normalized_usage.input_tokens
         source = "trace"
     else:
         input_tokens, source = estimate_tokens(
@@ -1817,12 +1824,7 @@ def _populate_suggested_blocks(
     candidate subsets directly from the IR walker via
     ``_detect_candidate_subsets``).
     """
-    declared_names = set(_cache_item_names(workflow_ir))
-    if declared_names:
-        notes.append(
-            "Suggested-blocks: workflow already declares ## Cache; steady-state "
-            "(partial-block) suggestions deferred to v1.x."
-        )
+    if _skip_suggested_blocks_for_declared_cache(workflow_ir, notes):
         return [], []
 
     ref_to_nodes, first_seen = _collect_llm_template_references(workflow_ir)
@@ -1863,37 +1865,15 @@ def _populate_suggested_blocks(
             item[0],
         )
     )
-    chunks: list[SuggestedBlockChunk] = []
-    assignments: dict[str, list[str]] = {}
-    ref_sizes: dict[str, int | None] = {}
+    chunks, assignments, ref_sizes, affected_nodes = _build_suggested_chunks_and_assignments(
+        shared_refs=shared_refs,
+        rows_by_node=rows_by_node,
+        ctx=ctx,
+    )
     total_savings: float | None = 0.0
-    affected_nodes: set[str] = set()
 
     memo_cache = ctx.memo_cache
     workflow_path = ctx.workflow_path
-    for ref, node_ids in shared_refs:
-        first_row = rows_by_node.get(node_ids[0])
-        model = first_row.model if first_row else ""
-        size_tokens = _estimate_ref_tokens(
-            ref, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx
-        )
-        ref_sizes[ref] = size_tokens
-        # ``size_tokens_est`` on the suggested-block chunk stays ``int`` — the
-        # block is paste-ready prose so we render 0 (or the real value) rather
-        # than expose ``None``. Agents reading the chunk size see "0" and know
-        # to disregard until run data exists.
-        display_size = size_tokens if size_tokens is not None else 0
-        chunks.append(
-            SuggestedBlockChunk(
-                name=ref,
-                var=f"${{{ref}}}",
-                size_tokens_est=display_size,
-                prose_placeholder=_starter_prose_for_ref(ref),
-            )
-        )
-        for node_id in node_ids:
-            affected_nodes.add(node_id)
-            assignments.setdefault(node_id, []).append(ref)
 
     per_node_thresholds, eligible_nodes = _thresholds_for_assignments(
         assignments=assignments,
@@ -1902,6 +1882,13 @@ def _populate_suggested_blocks(
         memo_cache=memo_cache,
         workflow_path=workflow_path,
     )
+    if _all_assignments_definitively_below_threshold(per_node_thresholds):
+        notes.append(
+            "Suggested-blocks: shared refs were found, but every assigned LLM node is below "
+            "the provider cache threshold under current model/token evidence; no provider-cache "
+            "edit is actionable yet."
+        )
+        return [], []
 
     if len(eligible_nodes) < 2:
         total_savings = 0.0
@@ -1932,6 +1919,59 @@ def _populate_suggested_blocks(
         savings_usd=total_savings,
     )
     return [block], [warning]
+
+
+def _build_suggested_chunks_and_assignments(
+    *,
+    shared_refs: list[tuple[str, list[str]]],
+    rows_by_node: dict[str, PerCallRow],
+    ctx: AnalysisContext,
+) -> tuple[list[SuggestedBlockChunk], dict[str, list[str]], dict[str, int | None], set[str]]:
+    chunks: list[SuggestedBlockChunk] = []
+    assignments: dict[str, list[str]] = {}
+    ref_sizes: dict[str, int | None] = {}
+    affected_nodes: set[str] = set()
+    for ref, node_ids in shared_refs:
+        first_row = rows_by_node.get(node_ids[0])
+        model = first_row.model if first_row else ""
+        size_tokens = _estimate_ref_tokens(
+            ref,
+            model=model,
+            memo_cache=ctx.memo_cache,
+            workflow_path=ctx.workflow_path,
+            ctx=ctx,
+        )
+        ref_sizes[ref] = size_tokens
+        chunks.append(
+            SuggestedBlockChunk(
+                name=ref,
+                var=f"${{{ref}}}",
+                size_tokens_est=size_tokens if size_tokens is not None else 0,
+                prose_placeholder=_starter_prose_for_ref(ref),
+            )
+        )
+        for node_id in node_ids:
+            affected_nodes.add(node_id)
+            assignments.setdefault(node_id, []).append(ref)
+    return chunks, assignments, ref_sizes, affected_nodes
+
+
+def _skip_suggested_blocks_for_declared_cache(workflow_ir: dict[str, Any], notes: list[str]) -> bool:
+    if not _cache_item_names(workflow_ir):
+        return False
+    notes.append(
+        "Suggested-blocks: workflow already declares ## Cache; steady-state "
+        "(partial-block) suggestions deferred to v1.x."
+    )
+    return True
+
+
+def _all_assignments_definitively_below_threshold(
+    per_node_thresholds: Mapping[str, PerNodeThresholdEntry],
+) -> bool:
+    return bool(per_node_thresholds) and all(
+        entry["meets_threshold"] is False for entry in per_node_thresholds.values()
+    )
 
 
 def _thresholds_for_assignments(
@@ -3479,25 +3519,30 @@ def _build_summary(
     # incomplete (which can happen on EITHER stream independently).
     partial_cost_usd = actually_paid.tier == CostTier.TRACE_PARTIAL or projections.partial
 
-    # Savings percentage anchor: actually_paid when present (most accurate
-    # baseline for "how much does caching save vs what we paid?"); else the
-    # no-cache hypothetical (greenfield approximation). Top-10% rule: the
-    # anchor for a percentage must be the most authoritative absolute we have.
-    savings_anchor = (
-        actually_paid.total_usd if actually_paid.total_usd is not None else projections.no_cache_hypothetical_usd
+    trace_coverage, executed_count, unexecuted_nodes = _trace_coverage_for_rows(rows, ctx)
+    no_cache_baseline = "no_cache_hypothetical_usd"
+    first_run_delta = _cost_delta(
+        baseline_value=projections.no_cache_hypothetical_usd,
+        compared_value=projections.first_run_with_cache_hypothetical_usd,
+        baseline=no_cache_baseline,
+        compared_to="first_run_with_cache_hypothetical_usd",
     )
-    cohort_first_run_savings = (
-        savings_anchor - projections.first_run_with_cache_hypothetical_usd
-        if savings_anchor is not None and projections.first_run_with_cache_hypothetical_usd is not None
-        else None
+    rerun_delta = _cost_delta(
+        baseline_value=projections.no_cache_hypothetical_usd,
+        compared_value=projections.rerun_within_ttl_hypothetical_usd,
+        baseline=no_cache_baseline,
+        compared_to="rerun_within_ttl_hypothetical_usd",
     )
-    cohort_rerun_savings = (
-        savings_anchor - projections.rerun_within_ttl_hypothetical_usd
-        if savings_anchor is not None and projections.rerun_within_ttl_hypothetical_usd is not None
-        else None
+    actual_vs_no_cache_delta = (
+        _cost_delta(
+            baseline_value=projections.no_cache_hypothetical_usd,
+            compared_value=actually_paid.total_usd,
+            baseline=no_cache_baseline,
+            compared_to="actually_paid_usd",
+        )
+        if trace_coverage == "complete"
+        else _unavailable_delta(no_cache_baseline, "actually_paid_usd")
     )
-    savings_pct_first_run = _safe_pct_or_none(cohort_first_run_savings, savings_anchor)
-    savings_pct_rerun = _safe_pct_or_none(cohort_rerun_savings, savings_anchor)
 
     return AnalysisSummary(
         actually_paid_usd=actually_paid.total_usd,
@@ -3505,8 +3550,13 @@ def _build_summary(
         no_cache_hypothetical_usd=projections.no_cache_hypothetical_usd,
         first_run_with_cache_hypothetical_usd=projections.first_run_with_cache_hypothetical_usd,
         rerun_within_ttl_hypothetical_usd=projections.rerun_within_ttl_hypothetical_usd,
-        savings_pct_first_run=savings_pct_first_run,
-        savings_pct_rerun=savings_pct_rerun,
+        first_run_delta=first_run_delta,
+        rerun_delta=rerun_delta,
+        actual_vs_no_cache_delta=actual_vs_no_cache_delta,
+        trace_coverage=trace_coverage,
+        trace_llm_nodes_static=total_nodes,
+        trace_llm_nodes_executed=executed_count,
+        trace_unexecuted_llm_nodes=unexecuted_nodes,
         blocking_errors=blocking_errors,
         actionable_opportunities=actionable,
         warnings_count=warnings_count,
@@ -3520,12 +3570,63 @@ def _build_summary(
         partial_cost_usd=partial_cost_usd,
         unavailable_models=projections.unavailable_models,
         unavailable_models_by_workflow=_unavailable_models_by_workflow(rows),
-        aggregate_savings_first_run_usd=projections.savings_first_run_usd,
-        aggregate_savings_rerun_usd=projections.savings_rerun_usd,
         heterogeneous_model_node_count=len(heterogeneous_paths),
         heterogeneous_model_node_paths=heterogeneous_paths,
         root_llm_node_count=root_count,
         sub_workflow_llm_node_count=sub_workflow_count,
+    )
+
+
+def _trace_coverage_for_rows(
+    rows: list[PerCallRow],
+    ctx: AnalysisContext | None,
+) -> tuple[str, int, tuple[str, ...]]:
+    """Classify trace coverage over the static LLM rows."""
+    if ctx is None or ctx.trace_data is None:
+        return "none", 0, ()
+    unexecuted = tuple(sorted(row.node_path for row in rows if row.did_not_execute_in_trace))
+    executed = len(rows) - len(unexecuted)
+    if not rows:
+        return "complete", 0, ()
+    if unexecuted:
+        return "partial", executed, unexecuted
+    return "complete", executed, ()
+
+
+def _cost_delta(
+    *,
+    baseline_value: float | None,
+    compared_value: float | None,
+    baseline: str,
+    compared_to: str,
+) -> CostDelta:
+    if baseline_value is None or compared_value is None or baseline_value <= 0:
+        return _unavailable_delta(baseline, compared_to)
+    delta = baseline_value - compared_value
+    if abs(delta) < 0.0000001:
+        return CostDelta(
+            amount_usd=0.0,
+            pct_of_baseline=0,
+            kind="break_even",
+            baseline=baseline,
+            compared_to=compared_to,
+        )
+    return CostDelta(
+        amount_usd=abs(delta),
+        pct_of_baseline=round(100 * abs(delta) / baseline_value),
+        kind="savings" if delta > 0 else "cost_increase",
+        baseline=baseline,
+        compared_to=compared_to,
+    )
+
+
+def _unavailable_delta(baseline: str, compared_to: str) -> CostDelta:
+    return CostDelta(
+        amount_usd=None,
+        pct_of_baseline=None,
+        kind="unavailable",
+        baseline=baseline,
+        compared_to=compared_to,
     )
 
 

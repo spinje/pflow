@@ -23,7 +23,7 @@ The two layers interact at one point: per DD#19 (task-159.md), declared `prompt_
 |---|---|---|
 | **Memo config-hash** | MD5 of the per-node config dict (resolved templates, model, params, conditional `prompt_cache` content per DD#19). Determines memoization hits. | `runtime/engine/instrumentation.py::compute_node_config` |
 | **LLM provider prompt cache key** | `prompt_cache_key` MD5 of the rendered cache-block content. Sent to OpenAI for sticky-routing requests sharing the prefix to the same backend (read-rate hits). | `nodes/llm/llm.py::_build_openai_cache_kwargs` |
-| **Provider-side cacheable token counts** | `cache_creation_input_tokens` / `cache_read_input_tokens` reported by the provider in trace events. | Trace 2.1.0 — read by `token_estimation.py` |
+| **Provider-side cacheable token counts** | `cache_creation_input_tokens` / `cache_read_input_tokens` reported by the provider in trace events. `input_tokens` means total prompt/input tokens after `core.llm_usage` normalization; `uncached_input_tokens` is the non-cache subset when available. | Runtime `llm_client.py`; analyzer trace reads normalize legacy traces with the same helper |
 
 The discrepancy stage in `analyze.py` predicts **memo config-hashes** (not provider prompt cache keys) and compares them to trace events to detect when the analyzer's prediction diverged from what the engine actually computed.
 
@@ -99,9 +99,11 @@ Cycle handling: the root workflow path is seeded into `seen` from the outset so 
 
 Chunk-level pricing helpers (the "if this ref were cached, how much would N callsites save?" math used by greenfield suggested-block discovery) live in `analyze.py` lines 2082-2127 — `_input_rate`, `_estimate_token_savings_usd`, `_savings_for_shared_ref`, `_estimate_chunk_tokens`. These are different abstraction levels; not duplication.
 
-**Tri-state contract (load-bearing)**: `priced` / `partial` / `unavailable`. Mirrors the LiteLLM adapter's runtime tri-state. Aggregate fields stay `None` on full unavailability.
+**Tri-state contract (load-bearing)**: `priced` / `partial` / `unavailable`. Mirrors the LiteLLM adapter's runtime tri-state. Absolute cost atoms stay `None` on full unavailability.
 
-**Output tokens dominate, but caching savings are input-only.** Anthropic Sonnet output rate is 5× input rate; on output-heavy workflows, output cost is 60-85% of total. But `no_cache - first_run_with_cache` collapses to input-side terms because output cost cancels — so aggregate savings figures work on greenfield even when output token data is unavailable.
+**Cost deltas are summary-level domain objects.** `cost_estimation.py` still exposes low-level `ProjectionBreakdown.savings_*` values for raw arithmetic tests, but user-facing summary/JSON uses `CostDelta`: `amount_usd` is a non-negative magnitude and `kind` carries direction (`savings`, `cost_increase`, `break_even`, `unavailable`). Renderers must branch on `kind`, never infer "savings" from a signed number.
+
+**Output tokens dominate absolute costs.** Anthropic Sonnet output rate is 5× input rate; on output-heavy workflows, output cost is 60-85% of total. Cost deltas compare complete cost atoms (`no_cache_hypothetical_usd` vs `first_run_with_cache_hypothetical_usd`, etc.) so percentages are only computed over comparable baselines.
 
 **1h-TTL Anthropic multiplier (DD#37)**: LiteLLM's `cache_creation_input_token_cost` is the 5-min rate (1.25× base); 1h-TTL writes cost 2× base. `_write_rate_for_ttl` applies the multiplier. Mirrors the runtime override at `llm_client.py::_maybe_normalize_anthropic_1h_cost` — keep in lockstep so predicted and actual costs price the same byte at the same rate.
 
@@ -137,6 +139,10 @@ Both are projections of `CacheAnalysis` — read-only, no mutation. `render_text
 
 **Section visibility is deterministic from `CacheAnalysis`.** When per-call rows have no real data (greenfield, no execution), the renderer hides them and emits a Notes entry explaining the absence is intentional. The analyzer mirrors this predicate at analyze-time so the absence note appears in JSON too. Suggested-block output carries `per_node_thresholds` so greenfield recommendations show whether each node's assigned subset clears that node's model threshold.
 
+**Trace coverage is first-class.** `AnalysisSummary.trace_coverage` is `none`, `partial`, or `complete`. When a trace exists and a static LLM row is absent from `executed_keys`, the row gets `did_not_execute_in_trace=True`, is excluded from projections, and analytical per-node warnings are suppressed for that row. Static validator findings still flow because they describe workflow structure, not execution evidence.
+
+**Suggested blocks are only rendered when actionable.** If shared refs are found but every assigned node is definitively below the provider threshold, the analyzer emits no paste-ready `## Cache` block and no `cache.shared-context-undeclared` action. A note explains that shared refs exist but no provider-cache edit is actionable under current model/token evidence. Unknown threshold status still keeps the block, with savings unavailable.
+
 ### view_helpers.py
 
 Renderer-side projections. Three exports: `build_blocking_errors(warnings) → list[RecommendedAction]`, `build_recommended_actions(warnings) → list[RecommendedAction]`, and `is_cross_workflow_alignment(diag) → bool`.
@@ -161,9 +167,9 @@ By the time a `PaddingCandidate` reaches `compute_padding_advisories`, `savings_
 
 **`summarize()` runs the full `analyze()` pipeline.** It is NOT a cheap shortcut — per DD#36 (task-159.md), `--dry-run` runs the full analytical pass because agents opted in. The cheaper variant `summarize_from_analysis(analysis)` exists for callers that already ran `analyze()`.
 
-The dry-run nudge stays **silent when no actionable opportunities exist** (returns `None`). The text format is locked: `Cache: {n} design opportunit{y_or_ies} available (estimated -${savings:.2f}/run, -{pct}%).`.
+The dry-run nudge stays **silent when no actionable opportunities exist** (returns `None`). It reads `AnalysisSummary.first_run_delta` / `rerun_delta` and renders by `CostDelta.kind`: first-run savings, rerun savings, first-run added cost, or only the opportunity count when no savings is displayable. Negative-signed savings text is not allowed.
 
-The savings anchor is `summary.actually_paid_usd` when a trace contributed; otherwise `summary.no_cache_hypothetical_usd`. Both atoms carry one meaning — agents reading the dry-run nudge see "savings vs what was paid" or "savings vs no-cache baseline" depending on which is available.
+The nudge's compatibility context still exposes `estimated_savings_usd` / `estimated_savings_pct` for callers that need one headline number, but it also carries `first_run_delta_kind` and `rerun_delta_kind`. Prefer the kind fields when deciding how to phrase cost impact.
 
 ## Runtime → analyzer trace contract
 

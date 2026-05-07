@@ -106,9 +106,7 @@ def test_confidence_high_when_all_trace() -> None:
 def test_suggested_block_below_threshold_has_zero_savings_and_threshold_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Greenfield shared-context structure still renders, but savings are zero
-    when no node's suggested subset clears its model threshold.
-    """
+    """Below-threshold-only shared refs produce no paste-ready edit."""
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
@@ -134,15 +132,9 @@ def test_suggested_block_below_threshold_has_zero_savings_and_threshold_payload(
 
     result = analyze(workflow_ir, parameters={"topic": "small"}, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
 
-    assert result.suggested_blocks
-    block = result.suggested_blocks[0]
-    assert block.estimated_savings_usd == 0.0
-    assert block.per_node_thresholds["draft"] == {
-        "model": "anthropic/claude-sonnet-4-5",
-        "min_tokens": 1000,
-        "total_tokens": 100,
-        "meets_threshold": False,
-    }
+    assert result.suggested_blocks == ()
+    assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
+    assert any("below the provider cache threshold" in note for note in result.notes)
 
 
 def test_suggested_block_savings_skip_first_eligible_writer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -344,10 +336,108 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() 
     # did-not-execute skip it would add a second child-row savings contribution.
     executed_child = by_key[(child_path, "draft")]
     unexecuted_child = by_key[(child_path, "review")]
-    assert result.summary.aggregate_savings_rerun_usd is not None
+    assert result.summary.rerun_delta.kind == "savings"
+    assert result.summary.rerun_delta.amount_usd is not None
     assert executed_child.cacheable_tokens_estimated
     assert unexecuted_child.cacheable_tokens_estimated is not None
-    assert result.summary.aggregate_savings_rerun_usd < 0.003
+    assert result.summary.rerun_delta.amount_usd < 0.003
+
+
+def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics() -> None:
+    """Regression for the double-counted Anthropic trace-token bug."""
+    fixture_dir = Path("scratchpads/stage2-verification/anthropic-haiku")
+    workflow_path = fixture_dir / "smoke-with-cache.pflow.md"
+    trace_path = fixture_dir / "RUN-C-rerun-trace.json"
+    resolved = resolve_workflow(str(workflow_path))
+
+    result = analyze(
+        resolved.ir,
+        parameters={"context": (fixture_dir / "reference.md").read_text()},
+        workflow_path=resolved.file_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    from pflow.core.cache_analysis.render_json import render_json
+
+    summary = render_json(result)["summary"]
+    assert summary["no_cache_hypothetical_usd"] == pytest.approx(0.031284)
+    assert summary["rerun_within_ttl_hypothetical_usd"] == pytest.approx(0.0046188)
+    assert summary["rerun_delta"]["kind"] == "savings"
+    assert summary["rerun_delta"]["amount_usd"] == pytest.approx(0.0266652)
+    assert summary["trace_coverage"] == "complete"
+    assert "savings_pct_first_run" not in summary
+    assert "savings_pct_rerun" not in summary
+    assert "aggregate_savings_first_run_usd" not in summary
+    assert "aggregate_savings_rerun_usd" not in summary
+
+
+def test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_path: Path) -> None:
+    workflow_ir = {
+        "cache": {"items": [{"name": "ctx", "var": "ctx", "prose_before": ""}]},
+        "inputs": {"ctx": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "ran",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["ctx"],
+                "params": {"prompt": "Use ${ctx}."},
+            },
+            {
+                "id": "skipped",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["ctx"],
+                "params": {"prompt": "Also use ${ctx}."},
+            },
+        ],
+    }
+    trace_path = tmp_path / "partial-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "nodes": [
+                {
+                    "node_id": "ran",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "llm_call": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "input_tokens": 2000,
+                        "output_tokens": 10,
+                        "cost_usd": 0.001,
+                        "cache_creation_input_tokens": 1500,
+                        "cache_read_input_tokens": 0,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"ctx": "small"},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    rows = {row.node_path: row for row in result.per_call}
+    assert rows["ran"].did_not_execute_in_trace is False
+    assert rows["skipped"].did_not_execute_in_trace is True
+    assert result.summary.trace_coverage == "partial"
+    assert result.summary.trace_llm_nodes_static == 2
+    assert result.summary.trace_llm_nodes_executed == 1
+    assert result.summary.trace_unexecuted_llm_nodes == ("skipped",)
+    assert result.summary.actual_vs_no_cache_delta.kind == "unavailable"
+    assert not any(d.node_id == "skipped" and d.id == "cache.below-min-tokens" for d in result.warnings)
+    from pflow.core.cache_analysis.render_text import render_text
+
+    text = render_text(result)
+    assert "Trace coverage: partial (1 of 2 LLM nodes executed; unexecuted rows excluded)" in text
 
 
 def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
@@ -608,14 +698,12 @@ def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block
     assert "cache.below-min-tokens" not in {d.id for d in result.warnings}
 
 
-def test_total_input_tokens_anthropic_trace_sums_cache_portions() -> None:
-    """Anthropic-style trace event: ``input_tokens`` excludes cache portions;
-    the analyzer must sum them back into ``input_tokens_estimated``.
-    """
+def test_total_input_tokens_trace_total_style_keeps_prompt_tokens() -> None:
+    """Trace event where ``input_tokens`` already includes cache portions."""
     from pflow.core.cache_analysis.analyze import _estimate_row_tokens
 
     trace_llm_call = {
-        "input_tokens": 500,
+        "input_tokens": 2000,
         "cache_creation_input_tokens": 1500,
         "cache_read_input_tokens": 0,
         "output_tokens": 50,
@@ -635,11 +723,8 @@ def test_total_input_tokens_anthropic_trace_sums_cache_portions() -> None:
 
 def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
     """Gemini provider: ``input_tokens`` already includes cached content;
-    don't double-count. Provider discrimination is by
-    ``ProviderInfo.splits_cache_from_input_tokens`` (False for Gemini), not
-    by the value of ``cache_creation_input_tokens`` — cache-write vs
-    cache-read events have different cache-creation values within the same
-    provider.
+    don't double-count. The analyzer uses the shared LiteLLM usage
+    normalization rule rather than provider metadata.
     """
     from pflow.core.cache_analysis.analyze import _estimate_row_tokens
 
@@ -662,17 +747,11 @@ def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
     assert input_tokens == 2000
 
 
-def test_total_input_tokens_anthropic_cache_read_event_sums_cache_portions() -> None:
-    """Bug 7 regression: Anthropic rerun-within-TTL events report
-    ``cache_creation_input_tokens == 0`` and ``cache_read_input_tokens > 0``.
-    The previous heuristic ``cache_creation > 0`` misclassified these as
-    Gemini-style and truncated ``input_tokens`` to the non-cache portion.
-    Detection by model-name prefix fixes this — Anthropic always splits
-    cache from ``input_tokens``, regardless of which side fired."""
+def test_total_input_tokens_trace_split_style_adds_cache_portions() -> None:
+    """Legacy split-style trace event: ``input_tokens`` is uncached-only."""
     from pflow.core.cache_analysis.analyze import _estimate_row_tokens
 
     trace_llm_call = {
-        "model": "anthropic/claude-sonnet-4-5",
         "input_tokens": 50,
         "cache_creation_input_tokens": 0,
         "cache_read_input_tokens": 1500,
@@ -1326,7 +1405,7 @@ def _summary_row(
     )
 
 
-def test_savings_pct_uses_cohort_consistent_denominator_not_input_only_superset() -> None:
+def test_cost_delta_uses_comparable_absolute_cost_atoms() -> None:
     """CR-1430 C2 regression — drives the buggy mixed-state cohort directly.
 
     Pre-fix bug: ``projections.savings_first_run_usd`` was input-only over
@@ -1345,15 +1424,14 @@ def test_savings_pct_uses_cohort_consistent_denominator_not_input_only_superset(
     it dominates ``no_cache_hypothetical_usd`` with full input+output cost
     but contributes zero to savings). Rows B/C/D have NO output tokens AND
     large cache subsets — they contribute substantial input-only savings to
-    ``savings_first_run_usd`` but ZERO to ``no_cache_hypothetical_usd``. The
-    fixture's structural assertion (``aggregate_savings > current``) confirms
-    the bug scenario IS exercised before the percentage check fires.
+    input-only savings math but ZERO to comparable absolute cost atoms. The
+    explicit delta must stay cohort-consistent instead of comparing different
+    rowsets.
     """
     # Row A: tiny input (100) + tiny output (50), no cache subset. This is
     # the only row contributing to ``no_cache_hypothetical_usd`` — and it's small.
-    # Rows B/C/D/E/F: large cache-using rows with NO output. They populate
-    # ``savings_first_run_usd`` (input-only superset) but NOT ``no_cache_hypothetical_usd``.
-    # Result: savings >> current → pre-fix pct > 100% → bug.
+    # Rows B/C/D/E/F: large cache-using rows with NO output. They must not
+    # contribute to deltas that require absolute first-run/no-cache atoms.
     rows = [
         _summary_row(
             node_path="A",
@@ -1375,40 +1453,41 @@ def test_savings_pct_uses_cohort_consistent_denominator_not_input_only_superset(
     ]
     summary = _build_summary(rows, warnings=[], ttl="5m")
 
-    # Sanity: fixture must induce the bug scenario before assertions fire.
-    # Post-Phase-5: this is post-run greenfield (no trace ctx → actually_paid
-    # is None; no_cache_hypothetical is non-None for Row A which has output
-    # tokens). The savings anchor falls back to no_cache_hypothetical.
+    # Sanity: Row A is the only row with output tokens, so complete cost atoms
+    # are computable only for a no-cache row. Large no-output cache rows must
+    # not distort summary deltas.
     assert summary.no_cache_hypothetical_usd is not None, "Row A must populate no_cache_hypothetical_usd"
-    assert summary.aggregate_savings_first_run_usd is not None, "Rows B/C/D must populate savings"
-    assert summary.aggregate_savings_first_run_usd > summary.no_cache_hypothetical_usd, (
-        f"Fixture must induce ``savings > no_cache`` to exercise the C2 bug: "
-        f"savings={summary.aggregate_savings_first_run_usd}, "
-        f"no_cache={summary.no_cache_hypothetical_usd}. Adjust token sizes."
+    assert summary.first_run_delta.kind == "break_even"
+    assert summary.first_run_delta.amount_usd == 0.0
+    assert summary.first_run_delta.pct_of_baseline == 0
+
+
+def test_first_run_write_premium_is_cost_increase_delta() -> None:
+    """A lone cache write can be more expensive than no-cache. Summary must
+    preserve that direction as ``cost_increase`` instead of negative savings."""
+    row = _summary_row(
+        node_path="writer",
+        input_tokens=10_000,
+        cacheable_tokens=8_000,
+        declared_prompt_cache=["topic"],
+        output_tokens=500,
     )
+    summary = _build_summary([row], warnings=[], ttl="5m")
 
-    # Post-fix: percentage is cohort-consistent (rows-with-output only).
-    # Row A has no cache subset → its (anchor - first_run_with_cache) is 0 → pct == 0.
-    # Pre-fix would render ``savings_first_run_usd / anchor`` over different
-    # rowsets which exceeds 100% — > 100% → bug.
-    pct = summary.savings_pct_first_run
-    assert pct is not None, "savings anchor is non-None → pct must be computable"
-    assert pct <= 100, (
-        f"savings_pct_first_run = {pct} > 100 — denominator mismatch reopened. "
-        f"Numerator and denominator must be over the same rowset (rows-with-output)."
-    )
-    assert pct >= -100, f"savings_pct_first_run = {pct} < -100 — implausible; check cohort math"
+    assert summary.no_cache_hypothetical_usd is not None
+    assert summary.first_run_with_cache_hypothetical_usd is not None
+    assert summary.first_run_with_cache_hypothetical_usd > summary.no_cache_hypothetical_usd
+    assert summary.first_run_delta.kind == "cost_increase"
+    assert summary.first_run_delta.amount_usd is not None
+    assert summary.first_run_delta.amount_usd > 0
+    assert summary.first_run_delta.baseline == "no_cache_hypothetical_usd"
+    assert summary.first_run_delta.compared_to == "first_run_with_cache_hypothetical_usd"
+    assert summary.rerun_delta.kind == "savings"
 
 
-def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() -> None:
-    """CR-1430 C2 fix preserves the load-bearing greenfield contract: the
-    ``aggregate_savings_first_run_usd`` field continues to be input-only and
-    superset-of-priced-rows so greenfield workflows still surface a positive
-    absolute savings opportunity even when ``current_cost_per_run_usd`` is None.
-
-    The fix is local to ``savings_pct_first_run`` — the absolute aggregate
-    savings figure is unchanged.
-    """
+def test_greenfield_without_output_data_keeps_cost_deltas_unavailable() -> None:
+    """Deltas compare cost atoms only; greenfield input-only guesses are not
+    exposed as summary savings when absolute costs are unavailable."""
     workflow_ir = {
         "inputs": {"topic": {"type": "string", "required": False}},
         "cache": {
@@ -1434,9 +1513,8 @@ def test_aggregate_savings_field_remains_input_only_superset_for_greenfield() ->
     # Greenfield: no memo cache → no output tokens → no projection atoms.
     assert analysis.summary.actually_paid_usd is None
     assert analysis.summary.no_cache_hypothetical_usd is None
-    # But the aggregate savings figure IS populated (input-only, output cancels).
-    assert analysis.summary.aggregate_savings_first_run_usd is not None
-    assert analysis.summary.aggregate_savings_first_run_usd > 0
+    assert analysis.summary.first_run_delta.kind == "unavailable"
+    assert analysis.summary.rerun_delta.kind == "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -2114,7 +2192,7 @@ def test_no_cache_trace_with_memo_projects_via_candidate(
     from pflow.runtime.cache import MemoizationCache
 
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    monkeypatch.setattr("litellm.token_counter", lambda model, text: 800)
+    monkeypatch.setattr("litellm.token_counter", lambda model, text: 1200)
 
     workflow_path = "/abs/no_cache_with_memo.pflow.md"
     cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
@@ -3005,11 +3083,8 @@ def test_memo_hit_trace_recovers_input_and_output_tokens_via_index(
     )
 
     builder = TraceFixtureBuilder()
-    # cache_read_input_tokens=0 keeps the fixture simple — Anthropic's
-    # ``splits_cache_from_input_tokens=True`` policy would otherwise sum
-    # cache portions into the row's ``input_tokens_estimated`` (verified
-    # in ``test_total_input_tokens_anthropic_trace_sums_cache_portions``)
-    # and conflate this regression test with that orthogonal contract.
+    # cache_read_input_tokens=0 keeps the fixture simple; this test is about
+    # memo-hit cost behavior, not trace token-accounting normalization.
     cached_event = builder.cached_llm_event_with_call(
         "draft",
         cost_usd=0.00034006,

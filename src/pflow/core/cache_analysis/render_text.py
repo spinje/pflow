@@ -42,7 +42,7 @@ from collections.abc import Iterable, Mapping
 
 from pflow.core.diagnostic import Diagnostic
 
-from .analyze import AnalysisSummary, CacheAnalysis, PerCallRow, RecommendedAction
+from .analyze import AnalysisSummary, CacheAnalysis, CostDelta, PerCallRow, RecommendedAction
 
 _HIDDEN_RATIO_THRESHOLD = 80
 
@@ -240,8 +240,8 @@ def _render_cost_block(s: AnalysisSummary) -> list[str]:
        ``Cost on rerun (within TTL): $Z``. The actual figure is the truth;
        the no-cache hypothetical answers "what would removing caching cost?";
        the rerun answers "what does steady-state cost?"
-    2. **Greenfield with declared cache** (``actually_paid_usd is None`` AND
-       ``aggregate_savings_first_run_usd > 0``): show
+    2. **Greenfield with declared cache** (``first_run_delta`` is displayable):
+       show
        ``Cost without caching: $X``, ``Cost on first run (with cache): $Y``,
        ``Cost on rerun (within TTL): $Z``. The first two differ; the agent
        sees the savings.
@@ -251,7 +251,7 @@ def _render_cost_block(s: AnalysisSummary) -> list[str]:
     """
     if s.actually_paid_usd is not None:
         return _render_trace_cost_lines(s)
-    if s.aggregate_savings_first_run_usd is not None and s.aggregate_savings_first_run_usd > 0:
+    if s.first_run_delta.kind in {"savings", "cost_increase"}:
         return _render_greenfield_with_cache_lines(s)
     return _render_greenfield_no_cache_lines(s)
 
@@ -302,7 +302,7 @@ def _is_post_run_greenfield_with_savings(s: AnalysisSummary) -> bool:
     return (
         s.actually_paid_usd is None
         and s.no_cache_hypothetical_usd is None
-        and s.aggregate_savings_first_run_usd is not None
+        and s.first_run_delta.kind in {"savings", "cost_increase"}
     )
 
 
@@ -327,19 +327,15 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     summary_lines = ["## Summary", ""]
     summary_lines.extend(_render_cost_block(s))
 
-    # Aggregate savings — meaningful even on greenfield (output cost cancels;
-    # input-only math). Only render when ``prompt_cache:`` is declared on at
-    # least one node (otherwise the figure is 0 by construction).
-    if s.aggregate_savings_first_run_usd is not None and s.aggregate_savings_first_run_usd > 0:
-        first_str = f"{_format_dollar_amount(s.aggregate_savings_first_run_usd)}/run"
-        rerun_savings = s.aggregate_savings_rerun_usd
-        if rerun_savings is not None and rerun_savings > 0:
-            summary_lines.append(
-                f"  Estimated savings if applied: {first_str} (first run); "
-                f"{_format_dollar_amount(rerun_savings)}/run on rerun"
-            )
-        else:
-            summary_lines.append(f"  Estimated savings if applied: {first_str}")
+    delta_lines = _render_summary_deltas(s)
+    if delta_lines:
+        summary_lines.extend(delta_lines)
+
+    if s.trace_coverage == "partial":
+        summary_lines.append(
+            f"  Trace coverage: partial ({s.trace_llm_nodes_executed} of "
+            f"{s.trace_llm_nodes_static} LLM nodes executed; unexecuted rows excluded)"
+        )
 
     summary_lines.append("")
     # Top-10% pattern (mypy / rustc / clippy / ruff): errors render
@@ -400,6 +396,34 @@ def _render_summary(analysis: CacheAnalysis) -> str:
         else:
             summary_lines.append("  Cost data unavailable: run the workflow once for cost figures.")
     return "\n".join(summary_lines)
+
+
+def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
+    lines: list[str] = []
+    first = _format_delta(s.first_run_delta, label="on first run")
+    rerun = _format_delta(s.rerun_delta, label="on rerun")
+    actual = _format_delta(s.actual_vs_no_cache_delta, label="actual vs no-cache")
+    if first:
+        lines.append(f"  First-run delta:            {first}")
+    if rerun:
+        lines.append(f"  Rerun delta:                {rerun}")
+    if actual:
+        lines.append(f"  Actual trace delta:         {actual}")
+    return lines
+
+
+def _format_delta(delta: CostDelta, *, label: str) -> str:
+    if delta.kind == "unavailable":
+        return ""
+    if delta.kind == "break_even":
+        return "no meaningful cost change"
+    if delta.amount_usd is None:
+        return ""
+    amount = _format_dollar_amount(delta.amount_usd)
+    pct = f", {delta.pct_of_baseline}% of baseline" if delta.pct_of_baseline is not None else ""
+    if delta.kind == "savings":
+        return f"saves {amount}/run {label}{pct}"
+    return f"adds {amount} {label}{pct}"
 
 
 def _format_unavailable_models(analysis: CacheAnalysis) -> str:
@@ -485,6 +509,7 @@ def _render_blocking_errors(analysis: CacheAnalysis) -> str:
         actions=actions,
         workflow_path=analysis.workflow_path,
         show_savings=False,
+        show_warning_id=True,
     )
 
 
@@ -504,6 +529,7 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
         actions=actions,
         workflow_path=analysis.workflow_path,
         show_savings=True,
+        show_warning_id=False,
     )
 
 
@@ -514,6 +540,7 @@ def _render_action_list(
     actions: list[RecommendedAction],
     workflow_path: str,
     show_savings: bool,
+    show_warning_id: bool,
 ) -> str:
     """Render ranked action rows with optional savings column.
 
@@ -521,7 +548,9 @@ def _render_action_list(
     coded category names as error codes — top-10% codebases like mypy/ruff
     don't bracket long namespaced descriptors). Headline leads from the
     catalog's ``headline_template``; scope is on its own line; descriptive
-    message is indented underneath as the reason.
+    message is indented underneath as the reason. Blocking errors still show
+    their diagnostic ID inline so validator failures remain searchable across
+    CLI, JSON, docs, and tests.
     """
     lines = [header, ""]
     if intro:
@@ -531,7 +560,7 @@ def _render_action_list(
     for action in actions:
         # Headline + savings on the rank line. Falls back to message when no
         # catalog headline (defense-in-depth for non-catalog diagnostics).
-        title = action.headline or action.message or action.warning_id
+        title = _format_action_title(action, show_warning_id=show_warning_id)
         if show_savings:
             savings = _format_savings_usd(action.estimated_savings_usd)
             lines.append(f"  {action.rank}. {title}{_pad_savings(title, savings)}{savings}")
@@ -558,6 +587,13 @@ def _render_action_list(
     while lines and lines[-1] == "":
         lines.pop()
     return "\n".join(lines)
+
+
+def _format_action_title(action: RecommendedAction, *, show_warning_id: bool) -> str:
+    title = action.headline or action.message or action.warning_id
+    if show_warning_id and action.warning_id:
+        return f"{title} (`{action.warning_id}`)"
+    return title
 
 
 def _pad_savings(title: str, savings: str) -> str:
@@ -617,8 +653,8 @@ def _format_savings_usd(value: float | None) -> str:
     if value is None or value < 0.0001:
         return "savings unavailable"
     if value < 0.01:
-        return f"-${value:.4f}/run"
-    return f"-${value:.2f}/run"
+        return f"saves ~${value:.4f}/run"
+    return f"saves ~${value:.2f}/run"
 
 
 def _render_suggested_blocks(analysis: CacheAnalysis) -> str:

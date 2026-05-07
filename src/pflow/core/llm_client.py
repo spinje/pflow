@@ -53,6 +53,7 @@ from pflow.core.exceptions import (
 )
 from pflow.core.llm_providers import detect_provider, normalize_model_name
 from pflow.core.llm_reasoning_map import DEFAULT_MAX_TOKENS_BASE, EFFORT_RATIOS
+from pflow.core.llm_usage import normalize_litellm_usage_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -810,8 +811,13 @@ def _normalize(
         if details is not None:
             cache_read = _safe_int(getattr(details, "cached_tokens", None))
 
-    input_tokens = _safe_int(getattr(usage_obj, "prompt_tokens", None))
+    prompt_tokens = _safe_int(getattr(usage_obj, "prompt_tokens", None))
     output_tokens = _safe_int(getattr(usage_obj, "completion_tokens", None))
+    normalized_usage = normalize_litellm_usage_tokens(
+        prompt_tokens=prompt_tokens,
+        cache_creation_input_tokens=cache_creation,
+        cache_read_input_tokens=cache_read,
+    )
 
     # Reasoning tokens: LiteLLM-standardized field for thinking/reasoning
     # token count. Populated for any reasoning model regardless of provider.
@@ -851,11 +857,13 @@ def _normalize(
 
     usage: dict[str, Any] = {
         "model": model,
-        "input_tokens": input_tokens,
+        "input_tokens": normalized_usage.input_tokens,
+        "uncached_input_tokens": normalized_usage.uncached_input_tokens,
         "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens,
-        "cache_creation_input_tokens": cache_creation,
-        "cache_read_input_tokens": cache_read,
+        "total_tokens": normalized_usage.input_tokens + output_tokens,
+        "cache_creation_input_tokens": normalized_usage.cache_creation_input_tokens,
+        "cache_read_input_tokens": normalized_usage.cache_read_input_tokens,
+        "input_token_accounting": normalized_usage.input_token_accounting,
         "thinking_tokens": thinking_tokens,
         "thinking_budget": thinking_budget,
         "cost_usd": cost_usd,

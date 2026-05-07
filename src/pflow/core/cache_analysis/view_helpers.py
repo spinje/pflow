@@ -114,7 +114,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
         savings = 0.0
         ctx = d.context or {}
         savings_value = ctx.get("savings_usd")
-        if isinstance(savings_value, (int, float)):
+        if isinstance(savings_value, (int, float)) and savings_value > 0:
             savings = float(savings_value)
         return (-sev_weight, priority, -savings, d.id or "")
 
@@ -123,7 +123,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
     for rank, d in enumerate(sorted_warnings, start=1):
         ctx = d.context or {}
         savings = ctx.get("savings_usd")
-        if not isinstance(savings, (int, float)):
+        if not isinstance(savings, (int, float)) or savings <= 0:
             savings = None
         # Workflow scope: when ``context.affected_workflow`` is set, surface it
         # for both workflow-level and per-node findings. Per-node diagnostics

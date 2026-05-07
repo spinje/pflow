@@ -5,6 +5,7 @@ from __future__ import annotations
 from pflow.core.cache_analysis.analyze import (
     AnalysisSummary,
     CacheAnalysis,
+    CostDelta,
     CrossWorkflowFindings,
 )
 from pflow.core.cache_analysis.cost_estimation import CostTier
@@ -16,20 +17,35 @@ def _analysis_with(
     actionable: int,
     current: float | None = None,
     optimized: float | None = None,
-    aggregate_savings: float | None = None,
+    first_run_savings: float | None = None,
 ) -> CacheAnalysis:
-    """``current`` populates both ``actually_paid_usd`` and the no-cache
-    anchor so summarize's percentage-anchor logic has the same baseline as
-    pre-Phase-5 (when ``current_cost_per_run_usd`` was a single overloaded
-    field)."""
+    """Build a minimal analysis around explicit cost deltas."""
+    if first_run_savings is not None:
+        first_run_delta = CostDelta(first_run_savings, None, "savings", "no_cache", "first_run")
+    elif current is not None and optimized is not None and current > 0:
+        raw_delta = current - optimized
+        first_run_delta = CostDelta(
+            abs(raw_delta),
+            round(100 * abs(raw_delta) / current),
+            "savings" if raw_delta > 0 else "cost_increase" if raw_delta < 0 else "break_even",
+            "no_cache",
+            "first_run",
+        )
+    else:
+        first_run_delta = CostDelta(None, None, "unavailable", "no_cache", "first_run")
     summary = AnalysisSummary(
         actually_paid_usd=current,
         actually_paid_tier=CostTier.TRACE if current is not None else CostTier.UNAVAILABLE,
         no_cache_hypothetical_usd=current,
         first_run_with_cache_hypothetical_usd=optimized,
         rerun_within_ttl_hypothetical_usd=None,
-        savings_pct_first_run=None,
-        savings_pct_rerun=None,
+        first_run_delta=first_run_delta,
+        rerun_delta=CostDelta(None, None, "unavailable", "no_cache", "rerun"),
+        actual_vs_no_cache_delta=CostDelta(None, None, "unavailable", "no_cache", "actual"),
+        trace_coverage="none",
+        trace_llm_nodes_static=10,
+        trace_llm_nodes_executed=0,
+        trace_unexecuted_llm_nodes=(),
         blocking_errors=0,
         actionable_opportunities=actionable,
         warnings_count=actionable,
@@ -42,7 +58,6 @@ def _analysis_with(
         models_in_use=("anthropic/claude-sonnet-4-5",),
         partial_cost_usd=False,
         unavailable_models=(),
-        aggregate_savings_first_run_usd=aggregate_savings,
     )
     return CacheAnalysis(
         workflow_path="x.pflow.md",
@@ -124,13 +139,11 @@ def test_nudge_drops_dollar_figure_when_cost_unavailable() -> None:
     assert diag.context["estimated_savings_pct"] is None
 
 
-def test_nudge_uses_aggregate_savings_when_absolute_cost_unavailable() -> None:
-    """Greenfield workflows can know input-side savings before output-token
-    history exists. The dry-run nudge should surface that dollar figure rather
-    than hiding it behind unavailable absolute costs."""
-    diag = summarize_from_analysis(_analysis_with(actionable=2, aggregate_savings=0.42))
+def test_nudge_uses_first_run_delta_when_absolute_cost_unavailable() -> None:
+    """A precomputed first-run delta can be rendered without absolute atoms."""
+    diag = summarize_from_analysis(_analysis_with(actionable=2, first_run_savings=0.42))
     assert diag is not None
-    assert diag.message == "Cache: 2 design opportunities available (estimated -$0.42/run)."
+    assert diag.message == "Cache: 2 design opportunities available (saves ~$0.42/run on first run)."
     assert diag.context is not None
     assert diag.context["estimated_savings_usd"] == pytest_approx(0.42)
     assert diag.context["estimated_savings_pct"] is None

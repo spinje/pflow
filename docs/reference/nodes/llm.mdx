@@ -48,10 +48,12 @@ See [LLM model settings](/reference/cli/settings#llm-model-settings) for the ful
 {
   "model": "openai/gpt-5.2",
   "input_tokens": 150,
+  "uncached_input_tokens": 150,
   "output_tokens": 89,
   "total_tokens": 239,
   "cache_creation_input_tokens": 0,
-  "cache_read_input_tokens": 0
+  "cache_read_input_tokens": 0,
+  "input_token_accounting": "total_includes_cache"
 }
 ```
 

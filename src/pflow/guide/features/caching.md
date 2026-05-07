@@ -205,6 +205,8 @@ Matching prose labels, exact model, and prefix ordering can help incidental prov
 - **OpenAI**: automatic at ≥1024 tokens. Markers are no-ops; `prompt_cache_key` (auto-emitted) improves hit rate on parallel batches. `prompt_cache_retention: "24h"` is set on `- ttl: 1h` workflows.
 - **Gemini**: explicit caching via LiteLLM's `cachedContents`. Telemetry caveat — `cache_creation_input_tokens` is 0/absent even when caching is working; verify via `cache_read_input_tokens` on subsequent calls.
 
+`llm_usage.input_tokens` is normalized to total prompt/input tokens, including cached prefixes. Use `uncached_input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` to inspect the split.
+
 ## Catalog of Warning IDs
 
 | ID | Severity | Triggered by |
