@@ -174,6 +174,16 @@ class PerCallRow:
 
 
 @dataclass(frozen=True)
+class ProjectionExclusion:
+    """One row deliberately excluded from absolute cost projections."""
+
+    workflow_path: str | None
+    node_path: str
+    reason: str
+    actual_cost_usd: float | None = None
+
+
+@dataclass(frozen=True)
 class RecommendedAction:
     """One pre-sorted dispatch row for the recommended-actions section.
 
@@ -311,6 +321,7 @@ class CostDelta:
     kind: str
     baseline: str
     compared_to: str
+    unavailable_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -393,6 +404,7 @@ class AnalysisSummary:
     root_llm_node_count: int = 0
     sub_workflow_llm_node_count: int = 0
     sub_workflow_rollup: SubWorkflowRollup | None = None
+    projection_exclusions: tuple[ProjectionExclusion, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -3640,16 +3652,25 @@ def _build_summary(
         baseline=no_cache_baseline,
         compared_to="rerun_within_ttl_hypothetical_usd",
     )
-    actual_vs_no_cache_delta = (
-        _cost_delta(
+    if trace_coverage != "complete":
+        actual_vs_no_cache_delta = _unavailable_delta(
+            no_cache_baseline,
+            "actually_paid_usd",
+            reason="trace_coverage_partial",
+        )
+    elif projections.absolute_exclusions:
+        actual_vs_no_cache_delta = _unavailable_delta(
+            no_cache_baseline,
+            "actually_paid_usd",
+            reason="projection_exclusions",
+        )
+    else:
+        actual_vs_no_cache_delta = _cost_delta(
             baseline_value=projections.no_cache_hypothetical_usd,
             compared_value=actually_paid.total_usd,
             baseline=no_cache_baseline,
             compared_to="actually_paid_usd",
         )
-        if trace_coverage == "complete"
-        else _unavailable_delta(no_cache_baseline, "actually_paid_usd")
-    )
 
     return AnalysisSummary(
         actually_paid_usd=actually_paid.total_usd,
@@ -3683,6 +3704,7 @@ def _build_summary(
         heterogeneous_model_node_paths=heterogeneous_paths,
         root_llm_node_count=root_count,
         sub_workflow_llm_node_count=sub_workflow_count,
+        projection_exclusions=projections.absolute_exclusions,
     )
 
 
@@ -3742,13 +3764,14 @@ def _cost_delta(
     )
 
 
-def _unavailable_delta(baseline: str, compared_to: str) -> CostDelta:
+def _unavailable_delta(baseline: str, compared_to: str, *, reason: str | None = None) -> CostDelta:
     return CostDelta(
         amount_usd=None,
         pct_of_baseline=None,
         kind="unavailable",
         baseline=baseline,
         compared_to=compared_to,
+        unavailable_reason=reason,
     )
 
 

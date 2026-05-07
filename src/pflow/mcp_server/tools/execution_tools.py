@@ -393,9 +393,19 @@ async def analyze_cache(
         is dynamic.
       - ``dynamic_batch_node_count`` (number): batch LLM nodes whose fanout
         count could not be estimated statically.
+      - ``projection_exclusions`` (array): LLM rows excluded from absolute
+        hypothetical projections, with ``workflow_path``, ``node_path``,
+        ``reason``, and optional ``actual_cost_usd``. When non-empty, actual
+        trace cost and projection cost cover different cohorts. Reasons include
+        ``heterogeneous_model``, ``unresolved_model``, ``unpriced_model``, and
+        ``missing_output_tokens``.
 
     Sub-workflow rollup entries carry the same four primitives at child
     scope.
+
+    Delta objects include ``unavailable_reason``. ``actual_vs_no_cache_delta``
+    is unavailable when trace coverage is partial or when projection exclusions
+    would make the actual-vs-projection comparison cross cohorts.
 
     ``blocking_errors`` contains ERROR-severity findings. ``recommended_actions``
     contains WARNING + INFO opportunities. Both are renderer-derived views

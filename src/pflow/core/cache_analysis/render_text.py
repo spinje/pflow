@@ -268,7 +268,7 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     """Cost lines when a trace contributed actual costs."""
     actually_paid_str = _format_cost(
         s.actually_paid_usd,
-        s.partial_cost_usd,
+        str(s.actually_paid_tier) == "trace_partial",
         s.unavailable_models,
         tier_annotation=str(s.actually_paid_tier),
     )
@@ -280,10 +280,14 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
             f"  Cost without caching (executed):      {no_cache_str}",
             f"  Cost on rerun (executed, within TTL): {rerun_str}",
         ]
+    no_cache_label = "Cost without caching (projected subset)" if s.projection_exclusions else "Cost without caching"
+    rerun_label = (
+        "Cost on rerun (within TTL, projected subset)" if s.projection_exclusions else "Cost on rerun (within TTL)"
+    )
     return [
         f"  Actually paid (trace):       {actually_paid_str}",
-        f"  Cost without caching:        {no_cache_str}",
-        f"  Cost on rerun (within TTL):  {rerun_str}",
+        f"  {no_cache_label}:        {no_cache_str}",
+        f"  {rerun_label}:  {rerun_str}",
     ]
 
 
@@ -292,10 +296,17 @@ def _render_greenfield_with_cache_lines(s: AnalysisSummary) -> list[str]:
     no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
     first_run_str = _format_cost(s.first_run_with_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    no_cache_label = "Cost without caching (projected subset)" if s.projection_exclusions else "Cost without caching"
+    first_run_label = (
+        "Cost on first run (cache, projected subset)" if s.projection_exclusions else "Cost on first run (cache)"
+    )
+    rerun_label = (
+        "Cost on rerun (within TTL, projected subset)" if s.projection_exclusions else "Cost on rerun (within TTL)"
+    )
     return [
-        f"  Cost without caching:        {no_cache_str}",
-        f"  Cost on first run (cache):   {first_run_str}",
-        f"  Cost on rerun (within TTL):  {rerun_str}",
+        f"  {no_cache_label}:        {no_cache_str}",
+        f"  {first_run_label}:   {first_run_str}",
+        f"  {rerun_label}:  {rerun_str}",
     ]
 
 
@@ -424,6 +435,15 @@ def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
         lines.append(f"  {label:29s} {rerun}")
     if actual:
         lines.append(f"  Actual trace delta:         {actual}")
+    elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:
+        paths = ", ".join(
+            exclusion.node_path
+            for exclusion in sorted(
+                s.projection_exclusions,
+                key=lambda exclusion: (exclusion.workflow_path or "", exclusion.node_path),
+            )
+        )
+        lines.append(f"  Actual trace delta:         unavailable (projection excludes {paths})")
     return lines
 
 

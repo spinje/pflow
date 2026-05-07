@@ -698,6 +698,114 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
     assert result.summary.models_in_use == row.observed_models
 
 
+def test_complete_trace_with_heterogeneous_projection_exclusion_suppresses_actual_delta(tmp_path: Path) -> None:
+    """Actual-vs-no-cache requires actual and projection to cover the same rows."""
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "${item.prompt}"},
+                "batch": {"items": "${items}"},
+            },
+            {
+                "id": "static-call",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-haiku-4-5", "prompt": "Score the options."},
+            },
+        ]
+    }
+    trace_path = tmp_path / "mixed-batch-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "nodes": [
+                {
+                    "node_id": "generate",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "batch_items": [
+                        {
+                            "index": 0,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/gemini-2.5-flash-lite",
+                                "input_tokens": 100,
+                                "output_tokens": 10,
+                                "cost_usd": 0.01,
+                            },
+                        },
+                        {
+                            "index": 1,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/gemini-3-flash-preview",
+                                "input_tokens": 200,
+                                "output_tokens": 20,
+                                "cost_usd": 0.02,
+                            },
+                        },
+                    ],
+                },
+                {
+                    "node_id": "static-call",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "llm_call": {
+                        "model": "anthropic/claude-haiku-4-5",
+                        "input_tokens": 500,
+                        "output_tokens": 50,
+                        "cost_usd": 0.05,
+                    },
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"items": [{"model": "a", "prompt": "x"}, {"model": "b", "prompt": "y"}]},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    heterogeneous_row = next(row for row in result.per_call if row.node_path == "generate")
+    assert result.summary.trace_coverage == "complete"
+    assert result.summary.actually_paid_usd == pytest.approx(0.08)
+    assert result.summary.no_cache_hypothetical_usd is not None
+    assert heterogeneous_row.model_is_heterogeneous is True
+    assert heterogeneous_row.observed_call_count == 2
+    assert heterogeneous_row.observed_models == ("gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview")
+    assert result.summary.actual_vs_no_cache_delta.kind == "unavailable"
+    assert result.summary.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions"
+    assert result.summary.projection_exclusions[0].node_path == "generate"
+    assert result.summary.projection_exclusions[0].reason == "heterogeneous_model"
+
+    from pflow.core.cache_analysis.render_json import render_json
+    from pflow.core.cache_analysis.render_text import render_text
+
+    payload = render_json(result)
+    assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] == "unavailable"
+    assert payload["summary"]["actual_vs_no_cache_delta"]["unavailable_reason"] == "projection_exclusions"
+    assert payload["summary"]["projection_exclusions"] == [
+        {
+            "workflow_path": "x",
+            "node_path": "generate",
+            "reason": "heterogeneous_model",
+            "actual_cost_usd": 0.03,
+        }
+    ]
+
+    text = render_text(result)
+    assert "Cost without caching (projected subset):" in text
+    assert "Actual trace delta:         unavailable (projection excludes generate)" in text
+    assert "Actual trace delta:         adds" not in text
+
+
 def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

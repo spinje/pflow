@@ -103,6 +103,8 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 **Cost deltas are summary-level domain objects.** `cost_estimation.py` still exposes low-level `ProjectionBreakdown.savings_*` values for raw arithmetic tests, but user-facing summary/JSON uses `CostDelta`: `amount_usd` is a non-negative magnitude and `kind` carries direction (`savings`, `cost_increase`, `break_even`, `unavailable`). Renderers must branch on `kind`, never infer "savings" from a signed number.
 
+**Trace coverage is not projection coverage.** `AnalysisSummary.trace_coverage` says whether static LLM rows executed. `ProjectionBreakdown.absolute_exclusions` says which executed/static rows were left out of absolute hypothetical projections (`heterogeneous_model`, `unresolved_model`, `unpriced_model`, or `missing_output_tokens`). Actual-vs-projection deltas require both complete trace coverage and no projection exclusions; otherwise `CostDelta.kind` stays `unavailable` with `unavailable_reason`.
+
 **Output tokens dominate absolute costs.** Anthropic Sonnet output rate is 5× input rate; on output-heavy workflows, output cost is 60-85% of total. Cost deltas compare complete cost atoms (`no_cache_hypothetical_usd` vs `first_run_with_cache_hypothetical_usd`, etc.) so percentages are only computed over comparable baselines.
 
 **1h-TTL Anthropic multiplier (DD#37)**: LiteLLM's `cache_creation_input_token_cost` is the 5-min rate (1.25× base); 1h-TTL writes cost 2× base. `_write_rate_for_ttl` applies the multiplier. Mirrors the runtime override at `llm_client.py::_maybe_normalize_anthropic_1h_cost` — keep in lockstep so predicted and actual costs price the same byte at the same rate.

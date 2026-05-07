@@ -20,6 +20,7 @@ from pflow.core.cache_analysis.analyze import (
     CostDelta,
     CrossWorkflowFindings,
     PerCallRow,
+    ProjectionExclusion,
     SubWorkflowRollup,
     SubWorkflowRollupEntry,
 )
@@ -38,6 +39,8 @@ def _make_analysis(
     rerun: float | None = None,
     partial: bool = False,
     unavailable: tuple[str, ...] = (),
+    projection_exclusions: tuple[ProjectionExclusion, ...] = (),
+    actual_delta_unavailable_reason: str | None = None,
     workflow_path: str = "/abs/x.pflow.md",
 ) -> CacheAnalysis:
     """Construct a renderable analysis with atomic cost primitives.
@@ -75,6 +78,15 @@ def _make_analysis(
     first_run_delta = _test_delta(no_cache, first_run_with_cache, "no_cache", "first_run")
     rerun_delta = _test_delta(no_cache, rerun, "no_cache", "rerun")
     actual_delta = _test_delta(no_cache, actually_paid, "no_cache", "actual")
+    if actual_delta_unavailable_reason is not None:
+        actual_delta = CostDelta(
+            None,
+            None,
+            "unavailable",
+            "no_cache",
+            "actual",
+            actual_delta_unavailable_reason,
+        )
     return CacheAnalysis(
         workflow_path=workflow_path,
         analyzed_at="2026-04-29T12:00:00Z",
@@ -112,6 +124,7 @@ def _make_analysis(
             models_in_use=tuple(sorted({r.model for r in rows if r.model})),
             partial_cost_usd=partial,
             unavailable_models=unavailable,
+            projection_exclusions=projection_exclusions,
             root_llm_node_count=root_count,
             sub_workflow_llm_node_count=sub_count,
         ),
@@ -218,7 +231,7 @@ def test_text_renders_partial_cost_with_marker() -> None:
             unavailable=("ollama/llama3.2:8b",),
         )
     )
-    assert "~$0.84 (partial)" in text
+    assert "~$1.20 (partial)" in text
     assert "ollama/llama3.2:8b" in text
 
 
@@ -619,6 +632,60 @@ def test_json_partial_trace_exposes_evidence_scope_and_observed_models() -> None
     assert payload["summary"]["observed_models_in_trace"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_models"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_call_count"] == 2
+
+
+def test_json_summary_exposes_projection_exclusions_and_delta_reason() -> None:
+    exclusion = ProjectionExclusion(
+        workflow_path="/abs/x.pflow.md",
+        node_path="generate",
+        reason="heterogeneous_model",
+        actual_cost_usd=0.03,
+    )
+    analysis = _make_analysis(
+        actually_paid=0.05,
+        no_cache=0.02,
+        partial=True,
+        projection_exclusions=(exclusion,),
+        actual_delta_unavailable_reason="projection_exclusions",
+    )
+
+    payload = render_json(analysis)
+
+    assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] == "unavailable"
+    assert payload["summary"]["actual_vs_no_cache_delta"]["unavailable_reason"] == "projection_exclusions"
+    assert payload["summary"]["projection_exclusions"] == [
+        {
+            "workflow_path": "/abs/x.pflow.md",
+            "node_path": "generate",
+            "reason": "heterogeneous_model",
+            "actual_cost_usd": 0.03,
+        }
+    ]
+
+
+def test_text_summary_explains_projection_excluded_actual_delta() -> None:
+    exclusion = ProjectionExclusion(
+        workflow_path="/abs/x.pflow.md",
+        node_path="generate",
+        reason="heterogeneous_model",
+        actual_cost_usd=0.03,
+    )
+    analysis = _make_analysis(
+        actually_paid=0.05,
+        no_cache=0.02,
+        partial=True,
+        projection_exclusions=(exclusion,),
+        actual_delta_unavailable_reason="projection_exclusions",
+    )
+
+    text = render_text(analysis)
+
+    assert "Actually paid (trace):       ~$0.05 (trace)" in text
+    assert "Actually paid (trace):       ~$0.05 (partial) (trace)" not in text
+    assert "Cost without caching (projected subset):" in text
+    assert "Cost on rerun (within TTL, projected subset):" in text
+    assert "Actual trace delta:         unavailable (projection excludes generate)" in text
+    assert "Actual trace delta:         adds" not in text
 
 
 def test_text_rows_with_analysis_wide_warning_show_even_above_threshold() -> None:

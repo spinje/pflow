@@ -56,7 +56,7 @@ from typing import TYPE_CHECKING
 
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
 
-from .analyze import PerCallRow
+from .analyze import PerCallRow, ProjectionExclusion
 
 if TYPE_CHECKING:
     from pflow.core.trace_tree import TraceTree
@@ -101,10 +101,11 @@ class ModelPricing:
 class ProjectionBreakdown:
     """IR-driven hypothetical cost projections. Never reads ``row.cost_usd``.
 
-    Heterogeneous-batch rows (``model_is_heterogeneous=True``) and rows
-    marked ``did_not_execute_in_trace=True`` are excluded — projections
-    can't price the former and the latter would inflate aggregates with
-    fictional cost.
+    Heterogeneous-batch rows (``model_is_heterogeneous=True``), unresolved
+    models, unpriced models, missing output-token rows, and rows marked
+    ``did_not_execute_in_trace=True`` are excluded from at least some absolute
+    projection atoms. Exclusions are explicit so summary deltas can avoid
+    comparing actual trace cost against a different projection cohort.
 
     Per the tri-state contract: absolute fields are ``None`` on full
     unavailability; populated with partial sums when ``partial`` is True.
@@ -136,6 +137,7 @@ class ProjectionBreakdown:
     savings_rerun_usd: float | None
     partial: bool
     unavailable_models: tuple[str, ...]
+    absolute_exclusions: tuple[ProjectionExclusion, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -319,13 +321,25 @@ def compute_projections(
     are input-only by construction (output cancels), so they're always computable
     when pricing is available — even on greenfield (no output tokens needed).
     """
-    priced_rows, unavailable_models = _partition_priced_rows(rows, output_tokens_by_node)
+    priced_rows, unavailable_models, exclusions = _partition_priced_rows(rows, output_tokens_by_node)
 
     rows_with_output: list[tuple[PerCallRow, ModelPricing, int]] = [
         (r, p, o) for r, p, o in priced_rows if o is not None
     ]
     rows_without_output = [(r, p, o) for r, p, o in priced_rows if o is None]
-    partial = bool(rows_with_output) and (bool(rows_without_output) or bool(unavailable_models))
+    output_exclusions = tuple(
+        ProjectionExclusion(
+            workflow_path=row.workflow_path,
+            node_path=row.node_path,
+            reason="missing_output_tokens",
+            actual_cost_usd=row.cost_usd,
+        )
+        for row, _pricing, _output in rows_without_output
+    )
+    absolute_exclusions = (*exclusions, *output_exclusions)
+    partial = bool(rows_with_output) and (
+        bool(rows_without_output) or bool(unavailable_models) or bool(absolute_exclusions)
+    )
 
     no_cache_hypothetical_usd: float | None = None
     first_run_with_cache_hypothetical_usd: float | None = None
@@ -359,13 +373,14 @@ def compute_projections(
         savings_rerun_usd=savings_rerun_usd,
         partial=partial,
         unavailable_models=tuple(unavailable_models),
+        absolute_exclusions=absolute_exclusions,
     )
 
 
 def _partition_priced_rows(
     rows: list[PerCallRow],
     output_tokens_by_node: Mapping[tuple[str | None, str] | str, int | None],
-) -> tuple[list[tuple[PerCallRow, ModelPricing, int | None]], list[str]]:
+) -> tuple[list[tuple[PerCallRow, ModelPricing, int | None]], list[str], tuple[ProjectionExclusion, ...]]:
     """Split ``rows`` into priceable + unavailable-model list.
 
     Excluded from priced rows:
@@ -377,30 +392,58 @@ def _partition_priced_rows(
       (``model: ${item.X}``) carry per-item models we can't price as one
       model. Their actually-paid cost surfaces via :func:`compute_actually_paid`
       (trace-driven, includes sub-workflow descendants).
+    - Rows with no resolved model — tracked as a projection exclusion.
     - Rows whose model isn't in ``litellm.model_cost`` — tracked in the
       returned ``unavailable_models`` list, deduped, in declaration order.
     """
     priced_rows: list[tuple[PerCallRow, ModelPricing, int | None]] = []
     unavailable_models: list[str] = []
+    exclusions: list[ProjectionExclusion] = []
     seen_unavailable: set[str] = set()
 
     for row in rows:
         if row.did_not_execute_in_trace:
             continue
         if row.model_is_heterogeneous:
+            exclusions.append(
+                ProjectionExclusion(
+                    workflow_path=row.workflow_path,
+                    node_path=row.node_path,
+                    reason="heterogeneous_model",
+                    actual_cost_usd=row.cost_usd,
+                )
+            )
             continue
-        pricing = get_model_pricing(row.model) if row.model else None
+        if not row.model:
+            exclusions.append(
+                ProjectionExclusion(
+                    workflow_path=row.workflow_path,
+                    node_path=row.node_path,
+                    reason="unresolved_model",
+                    actual_cost_usd=row.cost_usd,
+                )
+            )
+            continue
+        pricing = get_model_pricing(row.model)
         if pricing is None:
             if row.model and row.model not in seen_unavailable:
                 unavailable_models.append(row.model)
                 seen_unavailable.add(row.model)
+            exclusions.append(
+                ProjectionExclusion(
+                    workflow_path=row.workflow_path,
+                    node_path=row.node_path,
+                    reason="unpriced_model",
+                    actual_cost_usd=row.cost_usd,
+                )
+            )
             continue
         output_tokens = output_tokens_by_node.get((row.workflow_path, row.node_path))
         if output_tokens is None and row.node_path in output_tokens_by_node:
             output_tokens = output_tokens_by_node.get(row.node_path)
         priced_rows.append((row, pricing, output_tokens))
 
-    return priced_rows, unavailable_models
+    return priced_rows, unavailable_models, tuple(exclusions)
 
 
 def _aggregate_no_cache_cost(

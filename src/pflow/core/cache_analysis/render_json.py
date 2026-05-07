@@ -88,6 +88,15 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
             str(workflow_path): list(models)
             for workflow_path, models in (s.unavailable_models_by_workflow or {}).items()
         },
+        "projection_exclusions": [
+            {
+                "workflow_path": exclusion.workflow_path,
+                "node_path": exclusion.node_path,
+                "reason": exclusion.reason,
+                "actual_cost_usd": exclusion.actual_cost_usd,
+            }
+            for exclusion in s.projection_exclusions
+        ],
         # Heterogeneous batch sub-workflows whose ``model: ${item.model}``
         # can't be aggregated as one model.
         # Excluded from ``models_in_use`` so the literal template doesn't
@@ -111,6 +120,7 @@ def _delta_to_dict(delta: CostDelta) -> dict[str, Any]:
         "kind": delta.kind,
         "baseline": delta.baseline,
         "compared_to": delta.compared_to,
+        "unavailable_reason": delta.unavailable_reason,
     }
 
 

@@ -8255,3 +8255,55 @@ actually failed verification:
   the production-shaped test catches drift through the analyzer output path
   that agents consume.
 
+## Stage 2 follow-up — Dynamic batch cost comparison cohorts (2026-05-07)
+
+Implemented the atomic projection-cohort contract from
+`scratchpads/task159-fix-briefs/09-dynamic-batch-cost-comparison-cohorts.md`.
+
+Behavior:
+
+- `compute_projections()` now returns explicit `absolute_exclusions` for rows
+  left out of absolute hypothetical projections: `heterogeneous_model`,
+  `unresolved_model`, `unpriced_model`, and `missing_output_tokens`.
+- `AnalysisSummary` exposes `projection_exclusions`; JSON renders the list and
+  every `CostDelta` now includes `unavailable_reason`.
+- `actual_vs_no_cache_delta` is unavailable when trace coverage is incomplete
+  or when projection exclusions would compare full actual trace cost against a
+  narrower hypothetical cohort.
+- Text output now says the actual trace delta is unavailable because projection
+  excludes specific node paths instead of rendering a misleading cost increase.
+- Trace actual-cost rendering now uses `actually_paid_tier` for its partial
+  marker, while projection lines still use `partial_cost_usd`. This prevents
+  projection partiality from making a complete trace cost look partial.
+
+Deviation / adaptation:
+
+- Added `unresolved_model` beyond the original three reason values. Clear
+  reason: `_partition_priced_rows()` also skips rows with no resolved model;
+  leaving that skip silent would preserve the same class of cohort bug under a
+  different input shape.
+- Fixed the actual-paid partial label while verifying the external trace. Clear
+  reason: the new projection exclusions correctly make projections partial, but
+  a complete trace actual cost should not inherit projection partiality.
+
+Key learnings:
+
+1. `trace_coverage == "complete"` proves execution coverage only; it says
+   nothing about whether hypothetical projections cover the same row cohort.
+2. Projection exclusions belong in `cost_estimation.py`, where rows are
+   partitioned. Summary logic should only decide whether two already-built cost
+   atoms are comparable.
+3. One shared `partial_cost_usd` flag is too coarse for actual-vs-projection
+   presentation. The actual line has its own tier; projection lines have their
+   own partiality.
+
+### Follow-up polish
+
+- Text cost labels now mark projection values as `(projected subset)` when
+  projection exclusions exist, so agents do not read subset hypotheticals as
+  full-workflow projections.
+- Filed GH issue #377 to split `partial_cost_usd` into clearer actual-cost
+  confidence vs projection partiality semantics. This was not folded into the
+  current patch because the immediate renderer ambiguity is fixed and the
+  data-model rename is broader JSON/MCP schema churn best handled as a focused
+  follow-up.

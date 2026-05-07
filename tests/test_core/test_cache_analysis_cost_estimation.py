@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pytest
 
-from pflow.core.cache_analysis.analyze import PerCallRow
+from pflow.core.cache_analysis.analyze import PerCallRow, ProjectionExclusion
 from pflow.core.cache_analysis.cost_estimation import (
     _pricing_from_dict,
     compute_actually_paid,
@@ -496,6 +496,83 @@ def test_heterogeneous_rows_excluded_from_priced_projections() -> None:
     # Empty model name MUST NOT register as an "unavailable model" — the
     # heterogeneous skip fires before the pricing lookup.
     assert "" not in projections.unavailable_models
+
+
+def test_heterogeneous_projection_exclusion_preserves_actual_cost() -> None:
+    """Projection coverage is explicit when actual cost has a row projections skip."""
+    het = _row_with_cost(
+        node_path="batch-call",
+        model="",
+        cost_usd=0.0042,
+        model_is_heterogeneous=True,
+    )
+    homogeneous = _row(node_path="other", model="anthropic/claude-sonnet-4-5")
+
+    projections = compute_projections(
+        [het, homogeneous],
+        output_tokens_by_node={"batch-call": 100, "other": 100},
+    )
+
+    assert projections.no_cache_hypothetical_usd is not None
+    assert projections.partial is True
+    assert projections.absolute_exclusions == (
+        ProjectionExclusion(
+            workflow_path=None,
+            node_path="batch-call",
+            reason="heterogeneous_model",
+            actual_cost_usd=0.0042,
+        ),
+    )
+
+
+def test_missing_output_tokens_are_projection_exclusions() -> None:
+    row = _row(node_path="missing-output", model="anthropic/claude-sonnet-4-5")
+
+    projections = compute_projections([row], output_tokens_by_node={"missing-output": None})
+
+    assert projections.no_cache_hypothetical_usd is None
+    assert projections.absolute_exclusions == (
+        ProjectionExclusion(
+            workflow_path=None,
+            node_path="missing-output",
+            reason="missing_output_tokens",
+            actual_cost_usd=None,
+        ),
+    )
+
+
+def test_unpriced_models_are_projection_exclusions_and_unavailable_models() -> None:
+    row = _row_with_cost(node_path="local", model="ollama/llama3.2:8b", cost_usd=0.01)
+
+    projections = compute_projections([row], output_tokens_by_node={"local": 500})
+
+    assert projections.no_cache_hypothetical_usd is None
+    assert projections.unavailable_models == ("ollama/llama3.2:8b",)
+    assert projections.absolute_exclusions == (
+        ProjectionExclusion(
+            workflow_path=None,
+            node_path="local",
+            reason="unpriced_model",
+            actual_cost_usd=0.01,
+        ),
+    )
+
+
+def test_unresolved_models_are_projection_exclusions_without_unavailable_model_name() -> None:
+    row = _row_with_cost(node_path="no-model", model="", cost_usd=0.01)
+
+    projections = compute_projections([row], output_tokens_by_node={"no-model": 500})
+
+    assert projections.no_cache_hypothetical_usd is None
+    assert projections.unavailable_models == ()
+    assert projections.absolute_exclusions == (
+        ProjectionExclusion(
+            workflow_path=None,
+            node_path="no-model",
+            reason="unresolved_model",
+            actual_cost_usd=0.01,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
