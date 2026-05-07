@@ -441,17 +441,56 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() 
     assert result.summary.rerun_delta.amount_usd < 0.003
 
 
-def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics() -> None:
+def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics(tmp_path: Path) -> None:
     """Regression for the double-counted Anthropic trace-token bug."""
-    fixture_dir = Path("scratchpads/stage2-verification/anthropic-haiku")
-    workflow_path = fixture_dir / "smoke-with-cache.pflow.md"
-    trace_path = fixture_dir / "RUN-C-rerun-trace.json"
-    resolved = resolve_workflow(str(workflow_path))
+    usage_rows = [
+        ("answer-1", 4974, 51),
+        ("answer-2", 4967, 80),
+        ("answer-3", 4979, 51),
+        ("answer-4", 4976, 34),
+        ("answer-5", 4974, 31),
+        ("answer-6", 4994, 37),
+    ]
+    model = "anthropic/claude-haiku-4-5"
+    workflow_ir = {
+        "cache": {
+            "ttl": "1h",
+            "items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}],
+        },
+        "inputs": {"context": {"type": "string"}},
+        "nodes": [
+            {
+                "id": node_id,
+                "type": "llm",
+                "model": model,
+                "prompt_cache": ["context"],
+                "params": {"prompt": f"Question for {node_id}."},
+            }
+            for node_id, _input_tokens, _output_tokens in usage_rows
+        ],
+    }
+    builder = TraceFixtureBuilder()
+    trace = builder.trace(
+        "tests/fixtures/cache_analysis/anthropic-haiku-smoke-with-cache.pflow.md",
+        [
+            builder.llm_event(
+                node_id,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_input_tokens=4938,
+            )
+            for node_id, input_tokens, output_tokens in usage_rows
+        ],
+        workflow_name="anthropic-haiku-smoke-with-cache",
+    )
+    trace_path = tmp_path / "anthropic-haiku-rerun-trace.json"
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
 
     result = analyze(
-        resolved.ir,
-        parameters={"context": (fixture_dir / "reference.md").read_text()},
-        workflow_path=resolved.file_path,
+        workflow_ir,
+        parameters={"context": "trace supplies cacheable-token truth"},
+        workflow_path="tests/fixtures/cache_analysis/anthropic-haiku-smoke-with-cache.pflow.md",
         trace_path=trace_path,
         auto_load_trace=False,
         memo_cache=None,
