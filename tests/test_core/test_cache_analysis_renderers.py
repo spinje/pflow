@@ -8,7 +8,11 @@ Locks the agent-facing format contracts:
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, cast
 
 from pflow.core.cache_analysis import (
     render_json,
@@ -135,6 +139,241 @@ def _make_analysis(
         warnings=tuple(warnings),
         notes=tuple(notes or []),
     )
+
+
+# Fields where _make_analysis intentionally relies on the AnalysisSummary
+# dataclass default while production analyze() overwrites a computed value.
+# Tests asserting on these fields must drive analyze(...) end-to-end.
+#
+# When AnalysisSummary grows a field, either populate it in _make_analysis or
+# add it here after migrating any tests that assert on the field. See Pitfall
+# #19 in tests/CLAUDE.md and TestMakeAnalysisShapeParity below.
+_BUILDER_DOCUMENTED_DEFAULTS: frozenset[str] = frozenset({
+    "evidence_scope",
+    "observed_models_in_trace",
+    "unavailable_models_by_workflow",
+    "heterogeneous_model_node_count",
+    "heterogeneous_model_node_paths",
+    "sub_workflow_rollup",
+})
+
+
+class TestMakeAnalysisShapeParity:
+    """Locks _make_analysis against drift from production analyze().
+
+    When AnalysisSummary grows a field, this class fails noisily so a
+    contributor must either populate it in _make_analysis or add it to
+    _BUILDER_DOCUMENTED_DEFAULTS. Tests asserting on documented-default fields
+    must drive analyze(...) end-to-end. See Pitfall #19 in tests/CLAUDE.md.
+    """
+
+    def test_builder_field_set_matches_dataclass_minus_documented_defaults(
+        self,
+    ) -> None:
+        empty = _make_analysis()
+        loaded = _make_analysis(
+            rows=[
+                PerCallRow(
+                    node_path="root",
+                    model="anthropic/claude-sonnet-4-5",
+                    is_batch=True,
+                    batch_size_estimated=2,
+                    input_tokens_estimated=100,
+                    cacheable_tokens_estimated=50,
+                    cache_ratio_pct=50,
+                    data_source="trace",
+                    declared_prompt_cache=None,
+                    workflow_path="/abs/x.pflow.md",
+                ),
+                PerCallRow(
+                    node_path="child",
+                    model="anthropic/claude-sonnet-4-5",
+                    is_batch=False,
+                    batch_size_estimated=None,
+                    input_tokens_estimated=100,
+                    cacheable_tokens_estimated=50,
+                    cache_ratio_pct=50,
+                    data_source="trace",
+                    declared_prompt_cache=None,
+                    workflow_path="/abs/child.pflow.md",
+                ),
+            ],
+            warnings=[
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    id="cache.order-mismatch",
+                    message="x",
+                ),
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    source="cache_analyzer",
+                    id="cache.below-min-tokens",
+                    message="x",
+                ),
+                Diagnostic(
+                    severity=Severity.INFO,
+                    source="cache_analyzer",
+                    id="cache.first-call-write-penalty",
+                    message="x",
+                ),
+            ],
+            actually_paid=0.05,
+            no_cache=0.10,
+            first_run_with_cache=0.07,
+            rerun=0.03,
+            partial=True,
+            unavailable=("custom/model",),
+            projection_exclusions=(_make_exclusion(),),
+            actual_delta_unavailable_reason="trace_coverage_partial",
+        )
+
+        def _at_default(summary: AnalysisSummary, field: dataclasses.Field[Any]) -> bool:
+            value = getattr(summary, field.name)
+            if field.default is not dataclasses.MISSING:
+                return value == field.default
+            if field.default_factory is not dataclasses.MISSING:
+                factory = cast(Callable[[], object], field.default_factory)
+                return value == factory()
+            return False
+
+        unrepresented = {
+            field.name
+            for field in dataclasses.fields(AnalysisSummary)
+            if _at_default(empty.summary, field) and _at_default(loaded.summary, field)
+        }
+
+        assert unrepresented == _BUILDER_DOCUMENTED_DEFAULTS, (
+            f"Synthetic builder shape drift detected.\n"
+            f"  Unrepresented by _make_analysis: {sorted(unrepresented)}\n"
+            f"  Documented (allowlist):          {sorted(_BUILDER_DOCUMENTED_DEFAULTS)}\n"
+            f"  Newly drifted (add a kwarg or document): "
+            f"{sorted(unrepresented - _BUILDER_DOCUMENTED_DEFAULTS)}\n"
+            f"  Stale entries (remove from allowlist):   "
+            f"{sorted(_BUILDER_DOCUMENTED_DEFAULTS - unrepresented)}\n"
+            f"\n"
+            f"Fix: either extend _make_analysis (near the top of "
+            f"test_cache_analysis_renderers.py) to populate the new field, "
+            f"or add it to _BUILDER_DOCUMENTED_DEFAULTS and migrate any "
+            f"test asserting on the field to drive analyze(...) end-to-end. "
+            f"See Pitfall #19 in tests/CLAUDE.md."
+        )
+
+    def test_documented_defaults_get_overwritten_by_production(self, tmp_path: Path) -> None:
+        from pflow.core.cache_analysis.analyze import analyze
+        from pflow.execution.workflow_resolver import resolve_workflow
+        from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+        builder = TraceFixtureBuilder()
+
+        wf_path = str(tmp_path / "x.pflow.md")
+        ir_inline = {
+            "ir_version": "0.1.0",
+            "inputs": {"topic": {"type": "string"}},
+            "nodes": [
+                {
+                    "id": "generate",
+                    "type": "llm",
+                    "params": {"model": "${item.model}", "prompt": "About ${topic}"},
+                    "batch": {"items": [{"model": "gemini/a"}, {"model": "gemini/b"}]},
+                },
+                {
+                    "id": "local",
+                    "type": "llm",
+                    "params": {"model": "ollama/local", "prompt": "Local ${topic}"},
+                },
+            ],
+        }
+        trace_inline = {
+            "format_version": "2.2.0",
+            "workflow_path": wf_path,
+            "nodes": [
+                builder.batch_event(
+                    "generate",
+                    [
+                        {
+                            "index": 0,
+                            "success": True,
+                            "duration_ms": 1.0,
+                            "node_output": {"response": "ok"},
+                            "llm_call": {
+                                "model": "gemini/a",
+                                "input_tokens": 100,
+                                "output_tokens": 10,
+                                "cost_usd": 0.001,
+                            },
+                        },
+                        {
+                            "index": 1,
+                            "success": True,
+                            "duration_ms": 1.0,
+                            "node_output": {"response": "ok"},
+                            "llm_call": {
+                                "model": "gemini/b",
+                                "input_tokens": 100,
+                                "output_tokens": 10,
+                                "cost_usd": 0.001,
+                            },
+                        },
+                    ],
+                ),
+                builder.llm_event(
+                    "local",
+                    model="ollama/local",
+                    input_tokens=100,
+                    output_tokens=10,
+                    cost_usd=None,
+                ),
+            ],
+        }
+        result = analyze(
+            ir_inline,
+            parameters={"topic": "x"},
+            trace_path=_write_trace(tmp_path / "inline-trace.json", trace_inline),
+            workflow_path=wf_path,
+            auto_load_trace=False,
+            memo_cache=None,
+        )
+        assert result.summary.evidence_scope != "static_analysis", "evidence_scope production overwrite missing"
+        assert result.summary.observed_models_in_trace, "observed_models_in_trace production overwrite missing"
+        assert result.summary.unavailable_models_by_workflow, (
+            "unavailable_models_by_workflow production overwrite missing"
+        )
+        assert result.summary.heterogeneous_model_node_count > 0, (
+            "heterogeneous_model_node_count production overwrite missing"
+        )
+        assert result.summary.heterogeneous_model_node_paths, (
+            "heterogeneous_model_node_paths production overwrite missing"
+        )
+
+        fixture_dir = Path("tests/fixtures/cache_analysis")
+        parent_path = fixture_dir / "parent-3deep.pflow.md"
+        trace_path = fixture_dir / "parent-child-grandchild-trace.json"
+        resolved = resolve_workflow(str(parent_path))
+        result_subwf = analyze(
+            resolved.ir,
+            parameters={"topic": "hello"},
+            workflow_path=resolved.file_path,
+            base_path=parent_path.parent,
+            trace_path=trace_path,
+            memo_cache=None,
+            auto_load_trace=False,
+        )
+        assert result_subwf.summary.sub_workflow_rollup is not None, "sub_workflow_rollup production overwrite missing"
+
+
+def _make_exclusion() -> ProjectionExclusion:
+    return ProjectionExclusion(
+        workflow_path="/abs/x.pflow.md",
+        node_path="generate",
+        reason="heterogeneous_model",
+        actual_cost_usd=0.03,
+    )
+
+
+def _write_trace(path: Path, trace_data: object) -> Path:
+    path.write_text(json.dumps(trace_data), encoding="utf-8")
+    return path
 
 
 def _test_delta(
@@ -605,70 +844,167 @@ def test_text_partial_trace_labels_executed_scope() -> None:
     assert "Workflow-design recommendations suppressed for partial trace evidence." in text
 
 
-def test_json_partial_trace_exposes_evidence_scope_and_observed_models() -> None:
-    row = PerCallRow(**{
-        **_row("generate", 90).__dict__,
-        "model": "",
-        "model_is_heterogeneous": True,
-        "observed_models": ("gemini/a", "gemini/b"),
-        "observed_call_count": 2,
-    })
-    base = _make_analysis(rows=[row], actually_paid=0.001)
-    analysis = CacheAnalysis(**{
-        **base.__dict__,
-        "summary": AnalysisSummary(**{
-            **base.summary.__dict__,
-            "trace_coverage": "partial",
-            "evidence_scope": "partial_trace_executed_subset",
-            "observed_models_in_trace": ("gemini/a", "gemini/b"),
-            "trace_llm_nodes_static": 2,
-            "trace_llm_nodes_executed": 1,
-            "trace_unexecuted_llm_rows": (
-                TraceUnexecutedLLMRow("/abs/review-a.pflow.md", "review"),
-                TraceUnexecutedLLMRow("/abs/review-b.pflow.md", "review"),
+def test_json_partial_trace_exposes_evidence_scope_and_observed_models(tmp_path: Path) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    wf_path = str(tmp_path / "x.pflow.md")
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "About ${topic}"},
+                "batch": {"items": [{"model": "gemini/a"}, {"model": "gemini/b"}]},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Review ${generate.response}",
+                },
+            },
+        ],
+    }
+    builder = TraceFixtureBuilder()
+    trace_data = {
+        "format_version": "2.2.0",
+        "workflow_path": wf_path,
+        "nodes": [
+            builder.batch_event(
+                "generate",
+                [
+                    {
+                        "index": 0,
+                        "success": True,
+                        "duration_ms": 1.0,
+                        "node_output": {"response": "ok"},
+                        "llm_call": {
+                            "model": "gemini/a",
+                            "input_tokens": 100,
+                            "output_tokens": 10,
+                            "cost_usd": 0.001,
+                        },
+                    },
+                    {
+                        "index": 1,
+                        "success": True,
+                        "duration_ms": 1.0,
+                        "node_output": {"response": "ok"},
+                        "llm_call": {
+                            "model": "gemini/b",
+                            "input_tokens": 100,
+                            "output_tokens": 10,
+                            "cost_usd": 0.001,
+                        },
+                    },
+                ],
             ),
-        }),
-    })
+        ],
+    }
+    analysis = analyze(
+        workflow_ir,
+        parameters={"topic": "x"},
+        workflow_path=wf_path,
+        trace_path=_write_trace(tmp_path / "partial-trace.json", trace_data),
+        auto_load_trace=False,
+        memo_cache=None,
+    )
 
     payload = render_json(analysis)
 
     assert payload["summary"]["evidence_scope"] == "partial_trace_executed_subset"
-    assert payload["summary"]["trace_unexecuted_llm_rows"] == [
-        {"workflow_path": "/abs/review-a.pflow.md", "node_path": "review"},
-        {"workflow_path": "/abs/review-b.pflow.md", "node_path": "review"},
-    ]
     assert payload["summary"]["observed_models_in_trace"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_models"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_call_count"] == 2
+    unexecuted = payload["summary"]["trace_unexecuted_llm_rows"]
+    assert any(row["node_path"] == "review" for row in unexecuted)
 
 
-def test_json_summary_exposes_projection_exclusions_and_delta_reason() -> None:
-    exclusion = ProjectionExclusion(
-        workflow_path="/abs/x.pflow.md",
-        node_path="generate",
-        reason="heterogeneous_model",
-        actual_cost_usd=0.03,
-    )
-    analysis = _make_analysis(
-        actually_paid=0.05,
-        no_cache=0.02,
-        partial=True,
-        projection_exclusions=(exclusion,),
-        actual_delta_unavailable_reason="projection_exclusions",
+def test_json_summary_exposes_projection_exclusions_and_delta_reason(tmp_path: Path) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "${item.prompt}"},
+                "batch": {"items": "${items}"},
+            },
+            {
+                "id": "static-call",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-haiku-4-5", "prompt": "Score the options."},
+            },
+        ]
+    }
+    trace_data = {
+        "format_version": "2.2.0",
+        "workflow_path": "x",
+        "nodes": [
+            {
+                "node_id": "generate",
+                "node_type": "LLMNode",
+                "success": True,
+                "batch_items": [
+                    {
+                        "index": 0,
+                        "success": True,
+                        "llm_call": {
+                            "model": "gemini/gemini-2.5-flash-lite",
+                            "input_tokens": 100,
+                            "output_tokens": 10,
+                            "cost_usd": 0.01,
+                        },
+                    },
+                    {
+                        "index": 1,
+                        "success": True,
+                        "llm_call": {
+                            "model": "gemini/gemini-3-flash-preview",
+                            "input_tokens": 200,
+                            "output_tokens": 20,
+                            "cost_usd": 0.02,
+                        },
+                    },
+                ],
+            },
+            {
+                "node_id": "static-call",
+                "node_type": "LLMNode",
+                "success": True,
+                "llm_call": {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "input_tokens": 500,
+                    "output_tokens": 50,
+                    "cost_usd": 0.05,
+                },
+            },
+        ],
+    }
+    analysis = analyze(
+        workflow_ir,
+        parameters={"items": [{"model": "a", "prompt": "x"}, {"model": "b", "prompt": "y"}]},
+        workflow_path="x",
+        trace_path=_write_trace(tmp_path / "heterogeneous-trace.json", trace_data),
+        auto_load_trace=False,
+        memo_cache=None,
     )
 
     payload = render_json(analysis)
 
-    assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] == "unavailable"
-    assert payload["summary"]["actual_vs_no_cache_delta"]["unavailable_reason"] == "projection_exclusions"
-    assert payload["summary"]["projection_exclusions"] == [
-        {
-            "workflow_path": "/abs/x.pflow.md",
-            "node_path": "generate",
-            "reason": "heterogeneous_model",
-            "actual_cost_usd": 0.03,
-        }
-    ]
+    exclusions = payload["summary"]["projection_exclusions"]
+    assert any(exclusion["reason"] == "heterogeneous_model" for exclusion in exclusions)
+    assert any(exclusion["node_path"] == "generate" for exclusion in exclusions)
+    delta = payload["summary"]["actual_vs_no_cache_delta"]
+    assert delta["kind"] == "unavailable"
+    assert delta["unavailable_reason"] == "projection_exclusions"
+    assert payload["summary"]["heterogeneous_model_node_count"] >= 1
+    assert "generate" in payload["summary"]["heterogeneous_model_node_paths"]
 
 
 def test_text_summary_explains_projection_excluded_actual_delta() -> None:
@@ -1881,37 +2217,102 @@ def test_render_text_unpriced_model_includes_child_workflow_attribution() -> Non
     assert "ollama/local (in child)" in text
 
 
-def test_render_json_includes_rollup_workflow_paths_and_unavailable_models_by_workflow() -> None:
-    row = PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/child.pflow.md"})
-    base = _make_analysis(rows=[row])
-    rollup = SubWorkflowRollup(
-        workflows_included=("/abs/child.pflow.md",),
-        max_depth_walked=1,
-        truncated=False,
-        per_workflow=(
-            SubWorkflowRollupEntry(
-                workflow_path="/abs/child.pflow.md",
-                called_by_node_id="call-child",
-                llm_node_count=1,
-                actually_paid_usd=0.07,
-                no_cache_hypothetical_usd=0.10,
-                first_run_with_cache_hypothetical_usd=0.09,
-                rerun_within_ttl_hypothetical_usd=0.05,
+def test_render_json_includes_rollup_workflow_paths_and_unavailable_models_by_workflow(
+    tmp_path: Path,
+) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+    from tests.shared.markdown_utils import write_workflow_file
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    parent_path = tmp_path / "parent.pflow.md"
+    child_path = tmp_path / "child.pflow.md"
+    child_path_str = str(child_path)
+    parent_path_str = str(parent_path)
+
+    child_ir = {
+        "inputs": {"topic": {"type": "string", "description": "Topic"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "params": {
+                    "model": "ollama/local",
+                    "prompt": "Make a draft about ${topic}",
+                },
+            },
+        ],
+    }
+    write_workflow_file(child_ir, child_path, title="Child")
+
+    parent_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Brief: ${topic}",
+                },
+            },
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {
+                    "workflow": child_path_str,
+                    "inputs": {"topic": "${topic}"},
+                },
+            },
+        ],
+    }
+
+    builder = TraceFixtureBuilder()
+    trace_data = {
+        "format_version": "2.2.0",
+        "workflow_path": parent_path_str,
+        "nodes": [
+            builder.llm_event(
+                "draft",
+                model="anthropic/claude-sonnet-4-5",
+                input_tokens=1000,
+                output_tokens=100,
+                cost_usd=0.05,
             ),
-        ),
+            builder.workflow_event(
+                "call-child",
+                [
+                    builder.llm_event(
+                        "draft",
+                        model="ollama/local",
+                        input_tokens=900,
+                        output_tokens=90,
+                        cost_usd=None,
+                    ),
+                ],
+                workflow_path=child_path_str,
+            ),
+        ],
+    }
+    analysis = analyze(
+        parent_ir,
+        parameters={"topic": "hello"},
+        workflow_path=parent_path_str,
+        base_path=tmp_path,
+        trace_path=_write_trace(tmp_path / "parent-child-unpriced-trace.json", trace_data),
+        auto_load_trace=False,
+        memo_cache=None,
     )
-    summary = AnalysisSummary(**{
-        **base.summary.__dict__,
-        "sub_workflow_rollup": rollup,
-        "unavailable_models_by_workflow": {"/abs/child.pflow.md": ("ollama/local",)},
-    })
-    payload = render_json(CacheAnalysis(**{**base.__dict__, "summary": summary}))
-    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["actually_paid_usd"] == 0.07
-    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["no_cache_hypothetical_usd"] == 0.10
-    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["first_run_with_cache_hypothetical_usd"] == 0.09
-    assert payload["summary"]["sub_workflow_rollup"]["per_workflow"][0]["rerun_within_ttl_hypothetical_usd"] == 0.05
-    assert payload["summary"]["unavailable_models_by_workflow"]["/abs/child.pflow.md"] == ["ollama/local"]
-    assert payload["per_call"][0]["workflow_path"] == "/abs/child.pflow.md"
+
+    payload = render_json(analysis)
+
+    rollup = payload["summary"]["sub_workflow_rollup"]
+    assert rollup is not None
+    assert any(entry["workflow_path"].endswith("child.pflow.md") for entry in rollup["per_workflow"])
+    unavailable = payload["summary"]["unavailable_models_by_workflow"]
+    assert unavailable is not None
+    child_key = next(key for key in unavailable if key and key.endswith("child.pflow.md"))
+    assert "ollama/local" in unavailable[child_key]
+    assert any(row["workflow_path"] and row["workflow_path"].endswith("child.pflow.md") for row in payload["per_call"])
 
 
 def test_discrepancy_message_includes_workflow_scope() -> None:
