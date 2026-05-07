@@ -8092,3 +8092,43 @@ Key regression guard:
 - `test_partial_trace_suppresses_executed_subset_optimization_advice` proves
   the same executed row emits `cache.first-call-write-penalty` under complete
   trace coverage but is suppressed under partial trace evidence.
+
+## Stage 2 follow-up — report paid-vs-source cost semantics for memo hits (2026-05-07)
+
+Implemented
+`scratchpads/task159-fix-briefs/03-report-cost-semantics-memo-hits.md`.
+Per-node and simple batch-item report pages no longer render retained
+`llm_call.cost_usd` as a generic `Cost:` line. LLM metadata now flows through
+one shared report helper:
+
+- fresh calls render `Model`, `Tokens`, optional `Thinking`, and
+  `Paid this run`;
+- cached calls render `Source model`, `Source tokens`, optional
+  `Source thinking`, and `Paid this run`;
+- memo hits with retained source cost render `Historical source cost`;
+- in-process cache hits with retained source cost render `Source call cost`;
+- simple cached batch-item pages now mark `Status: success [cached]`.
+
+The paid value is always computed through `_compute_event_cost()` /
+`_compute_batch_item_cost()`, which delegate to `TraceTree`'s current-run cost
+contract. Raw `llm_call.cost_usd` is displayed only as source-call context.
+
+Deviation / adaptation:
+
+- Also made the cache telemetry heading source-aware: memo hits keep
+  `(cached result reused from prior run)`, while in-process cache hits render
+  `(cached result reused)`. This was not in the original narrow brief, but it
+  follows from the same semantics: `in_process` source data is not historical
+  prior-run data, and the UI should not imply that it is.
+
+Key learnings:
+
+1. The simplest final model is not "hide old cost"; it is "paid cost comes
+   from `TraceTree`, source-call cost comes from retained `llm_call` only when
+   explicitly labeled."
+2. Batch item pages were the second integration point with the same duplicated
+   direct-cost read. Sharing the helper removes the chance that future report
+   metadata changes fix nodes but miss batch items.
+3. `cache_source` matters in report language. Memo and in-process hits are
+   both zero-cost for the cached event, but only memo source cost is historical
+   prior-run cost.

@@ -31,6 +31,7 @@ from pflow.core.trace_report import (
     _suggest_template_fixes,
     generate_report,
 )
+from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 # --- Fixtures ---
 
@@ -328,7 +329,40 @@ class TestBuildNodeFile:
         md = _build_node_file(event)
         assert "- Model: gpt-4" in md
         assert "- Tokens: 1,000 in / 200 out" in md
-        assert "- Cost: $0.0420" in md
+        assert "- Paid this run: $0.0420" in md
+
+    def test_cached_llm_metadata_splits_paid_and_historical_cost(self) -> None:
+        builder = TraceFixtureBuilder()
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07)
+
+        md = _build_node_file(event)
+
+        assert "- Status: success [cached]" in md
+        assert "- Source model: anthropic/claude-sonnet-4-5" in md
+        assert "- Source tokens: 1,000 in / 100 out" in md
+        assert "- Paid this run: $0.0000" in md
+        assert "- Historical source cost: $0.0700" in md
+        assert "- Cost: $0.0700" not in md
+
+    def test_cached_llm_metadata_omits_historical_cost_when_absent(self) -> None:
+        builder = TraceFixtureBuilder()
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07)
+        event["llm_call"]["cost_usd"] = None
+
+        md = _build_node_file(event)
+
+        assert "- Paid this run: $0.0000" in md
+        assert "Historical source cost" not in md
+
+    def test_in_process_cached_llm_metadata_uses_non_historical_source_cost_label(self) -> None:
+        builder = TraceFixtureBuilder()
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07, cache_source="in_process")
+
+        md = _build_node_file(event)
+
+        assert "- Paid this run: $0.0000" in md
+        assert "- Source call cost: $0.0700" in md
+        assert "Historical source cost" not in md
 
     def test_template_resolutions_prompt(self) -> None:
         event = _make_event(
@@ -604,6 +638,21 @@ class TestCacheTelemetrySection:
         assert "memo" not in md.lower()
         assert "in_process" not in md.lower()
 
+    def test_in_process_replay_heading_does_not_claim_prior_run(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_source": "in_process",
+                "cache_key": "abc",
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry (cached result reused)" in md
+        assert "prior run" not in md
+        assert "in_process" not in md
+
     def test_section_appears_between_cached_system_and_prompt(self) -> None:
         event = _make_event(
             llm_system="System content",
@@ -787,7 +836,35 @@ class TestBuildBatchItemFile:
         }
         md = _build_batch_item_file(item, parent)
         assert "- Tokens: 800 in / 150 out" in md
-        assert "- Cost: $0.0100" in md
+        assert "- Paid this run: $0.0100" in md
+
+    def test_cached_item_splits_paid_and_historical_cost(self) -> None:
+        parent = _make_event(node_id="batch", node_type="LLMNode")
+        item = {
+            "index": 0,
+            "success": True,
+            "cached": True,
+            "duration_ms": 0,
+            "node_output": {"response": "ok"},
+            "llm_call": {
+                "model": "anthropic/claude-sonnet-4-5",
+                "input_tokens": 1000,
+                "output_tokens": 100,
+                "cost_usd": 0.03,
+                "cache_source": "memo",
+                "cache_key": "fixture-cache-key",
+                "cache_age_sec": 30.0,
+            },
+        }
+
+        md = _build_batch_item_file(item, parent)
+
+        assert "- Status: success [cached]" in md
+        assert "- Source model: anthropic/claude-sonnet-4-5" in md
+        assert "- Source tokens: 1,000 in / 100 out" in md
+        assert "- Paid this run: $0.0000" in md
+        assert "- Historical source cost: $0.0300" in md
+        assert "- Cost: $0.0300" not in md
 
     def test_item_with_template_resolutions(self) -> None:
         parent = _make_event(node_id="process")

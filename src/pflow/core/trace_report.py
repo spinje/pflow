@@ -209,6 +209,39 @@ def _format_cost(cost: float | None) -> str:
     return f"${cost:.4f}"
 
 
+def _format_llm_call_metadata(
+    llm_call: dict[str, Any],
+    lines: list[str],
+    *,
+    paid_cost: float | None,
+    cached: bool,
+) -> None:
+    """Append LLM metadata with explicit current-run cost semantics.
+
+    ``llm_call`` is retained provider-call metadata. On cached events it
+    describes the source call that produced the reused result, not work paid
+    for by this event. ``paid_cost`` must come from ``TraceTree`` via the
+    report cost helpers so the display uses the same current-run contract as
+    summary tables.
+    """
+    model_label = "Source model" if cached else "Model"
+    tokens_label = "Source tokens" if cached else "Tokens"
+    thinking_label = "Source thinking" if cached else "Thinking"
+    lines.append(f"- {model_label}: {llm_call.get('model', '?')}")
+    tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
+    tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
+    lines.append(f"- {tokens_label}: {tokens_in:,} in / {tokens_out:,} out")
+    thinking_tokens = llm_call.get("thinking_tokens")
+    if isinstance(thinking_tokens, int) and thinking_tokens > 0:
+        lines.append(f"- {thinking_label}: {thinking_tokens:,} tokens")
+    lines.append(f"- Paid this run: {_format_cost(paid_cost)}")
+
+    historical_cost = llm_call.get("cost_usd")
+    if cached and historical_cost is not None and historical_cost != paid_cost:
+        source_cost_label = "Historical source cost" if llm_call.get("cache_source") == "memo" else "Source call cost"
+        lines.append(f"- {source_cost_label}: ${historical_cost:.4f}")
+
+
 def _collect_errors(
     events: list[dict[str, Any]],
     failed_node_ids: list[str] | None = None,
@@ -713,17 +746,13 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
     lines.append(f"- Status: {status}")
 
     llm_call = event.get("llm_call")
-    if llm_call:
-        lines.append(f"- Model: {llm_call.get('model', '?')}")
-        tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
-        tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
-        lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
-        thinking_tokens = llm_call.get("thinking_tokens")
-        if isinstance(thinking_tokens, int) and thinking_tokens > 0:
-            lines.append(f"- Thinking: {thinking_tokens:,} tokens")
-        cost = llm_call.get("cost_usd")
-        if cost is not None:
-            lines.append(f"- Cost: ${cost:.4f}")
+    if isinstance(llm_call, dict):
+        _format_llm_call_metadata(
+            llm_call,
+            lines,
+            paid_cost=_compute_event_cost(event),
+            cached=bool(event.get("cached")),
+        )
 
     # Show user-configured LLM parameters (only when explicitly set in workflow)
     node_params = event.get("node_params", {})
@@ -851,8 +880,10 @@ def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
     if not has_signal:
         return
 
-    if is_cached_replay:
+    if llm_call.get("cache_source") == "memo":
         lines.append("## Cache telemetry (cached result reused from prior run)")
+    elif is_cached_replay:
+        lines.append("## Cache telemetry (cached result reused)")
     else:
         lines.append("## Cache telemetry")
     lines.append("")
@@ -1096,17 +1127,19 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
     label = _item_label_or_index(item)
     lines = [f"# {node_id} — {label}", ""]
     lines.append(f"- Time: {item.get('duration_ms', 0):.0f}ms")
-    lines.append(f"- Status: {'success' if item.get('success') else 'failed'}")
+    status = "success" if item.get("success") else "failed"
+    if item.get("cached"):
+        status += " [cached]"
+    lines.append(f"- Status: {status}")
 
     llm_call = item.get("llm_call")
-    if llm_call:
-        lines.append(f"- Model: {llm_call.get('model', '?')}")
-        tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
-        tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
-        lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
-        cost = llm_call.get("cost_usd")
-        if cost is not None:
-            lines.append(f"- Cost: ${cost:.4f}")
+    if isinstance(llm_call, dict):
+        _format_llm_call_metadata(
+            llm_call,
+            lines,
+            paid_cost=_compute_batch_item_cost(item),
+            cached=bool(item.get("cached")),
+        )
 
     error = item.get("error")
     if error:
