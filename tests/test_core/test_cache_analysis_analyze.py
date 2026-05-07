@@ -13,11 +13,13 @@ import pytest
 from pflow.core.cache_analysis.analyze import (
     CacheAnalysis,
     PerCallRow,
+    TraceUnexecutedLLMRow,
     _aggregate_confidence,
     _build_summary,
     _maybe_append_gemini_note,
     analyze,
 )
+from pflow.core.cache_analysis.context import AnalysisContext
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.execution.workflow_resolver import resolve_workflow
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
@@ -528,7 +530,7 @@ def test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_pat
     assert result.summary.evidence_scope == "partial_trace_executed_subset"
     assert result.summary.trace_llm_nodes_static == 2
     assert result.summary.trace_llm_nodes_executed == 1
-    assert result.summary.trace_unexecuted_llm_nodes == ("skipped",)
+    assert result.summary.trace_unexecuted_llm_rows == (TraceUnexecutedLLMRow("x", "skipped"),)
     assert result.summary.actual_vs_no_cache_delta.kind == "unavailable"
     assert not any(d.node_id == "skipped" and d.id == "cache.below-min-tokens" for d in result.warnings)
     assert result.warnings
@@ -540,6 +542,74 @@ def test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_pat
     assert "Evidence: partial trace (1 of 2 LLM nodes executed)" in text
     assert "Trace-backed costs below cover executed nodes only." in text
     assert "Workflow-design recommendations suppressed for partial trace evidence." in text
+
+
+def test_partial_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
+    rows = [
+        PerCallRow(
+            node_path="ran",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=50,
+            cache_ratio_pct=50,
+            data_source="trace",
+            declared_prompt_cache=None,
+            workflow_path="/abs/parent.pflow.md",
+        ),
+        PerCallRow(
+            node_path="review",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=50,
+            cache_ratio_pct=50,
+            data_source="estimator",
+            declared_prompt_cache=None,
+            workflow_path="/abs/review-b.pflow.md",
+            did_not_execute_in_trace=True,
+        ),
+        PerCallRow(
+            node_path="review",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=50,
+            cache_ratio_pct=50,
+            data_source="estimator",
+            declared_prompt_cache=None,
+            workflow_path="/abs/review-a.pflow.md",
+            did_not_execute_in_trace=True,
+        ),
+    ]
+    ctx = AnalysisContext.build(
+        workflow_ir={"nodes": []},
+        workflow_path="/abs/parent.pflow.md",
+        trace_data={
+            "format_version": "2.2.0",
+            "workflow_path": "/abs/parent.pflow.md",
+            "nodes": [
+                {
+                    "node_id": "ran",
+                    "llm_call": {"cost_usd": 0.001, "input_tokens": 100, "output_tokens": 10},
+                }
+            ],
+        },
+    )
+
+    summary = _build_summary(rows, warnings=[], ctx=ctx)
+
+    assert summary.trace_coverage == "partial"
+    assert summary.trace_llm_nodes_static == 3
+    assert summary.trace_llm_nodes_executed == 1
+    assert summary.trace_unexecuted_llm_rows == (
+        TraceUnexecutedLLMRow("/abs/review-a.pflow.md", "review"),
+        TraceUnexecutedLLMRow("/abs/review-b.pflow.md", "review"),
+    )
+    assert [row.node_path for row in summary.trace_unexecuted_llm_rows] == ["review", "review"]
 
 
 def test_partial_trace_suppresses_executed_subset_optimization_advice(tmp_path: Path) -> None:

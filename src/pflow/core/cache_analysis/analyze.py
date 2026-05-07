@@ -325,6 +325,14 @@ class CostDelta:
 
 
 @dataclass(frozen=True)
+class TraceUnexecutedLLMRow:
+    """Scoped identity for a static LLM row absent from a loaded trace."""
+
+    workflow_path: str | None
+    node_path: str
+
+
+@dataclass(frozen=True)
 class AnalysisSummary:
     """Atomic cost primitives + counts for an analyze-cache result.
 
@@ -368,7 +376,7 @@ class AnalysisSummary:
     trace_coverage: str
     trace_llm_nodes_static: int
     trace_llm_nodes_executed: int
-    trace_unexecuted_llm_nodes: tuple[str, ...]
+    trace_unexecuted_llm_rows: tuple[TraceUnexecutedLLMRow, ...]
     blocking_errors: int
     actionable_opportunities: int
     warnings_count: int
@@ -3685,7 +3693,7 @@ def _build_summary(
         evidence_scope=_evidence_scope_for_trace_coverage(trace_coverage),
         trace_llm_nodes_static=total_nodes,
         trace_llm_nodes_executed=executed_count,
-        trace_unexecuted_llm_nodes=unexecuted_nodes,
+        trace_unexecuted_llm_rows=unexecuted_nodes,
         blocking_errors=blocking_errors,
         actionable_opportunities=actionable,
         warnings_count=warnings_count,
@@ -3711,11 +3719,17 @@ def _build_summary(
 def _trace_coverage_for_rows(
     rows: list[PerCallRow],
     ctx: AnalysisContext | None,
-) -> tuple[str, int, tuple[str, ...]]:
+) -> tuple[str, int, tuple[TraceUnexecutedLLMRow, ...]]:
     """Classify trace coverage over the static LLM rows."""
     if ctx is None or ctx.trace_data is None:
         return "none", 0, ()
-    unexecuted = tuple(sorted(row.node_path for row in rows if row.did_not_execute_in_trace))
+    unexecuted = tuple(
+        TraceUnexecutedLLMRow(workflow_path=row.workflow_path, node_path=row.node_path)
+        for row in sorted(
+            (row for row in rows if row.did_not_execute_in_trace),
+            key=lambda row: (row.workflow_path or "", row.node_path),
+        )
+    )
     executed = len(rows) - len(unexecuted)
     if not rows:
         return "complete", 0, ()

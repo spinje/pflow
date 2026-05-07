@@ -8320,3 +8320,19 @@ unsafe report paths do not trigger side effects.
 
 Verification: focused report + CLI tests passed (`177 passed`), plus ruff,
 ruff format check, mypy on touched source, and `git diff --check`.
+
+## Stage 2 follow-up — Scoped unexecuted-node trace summary (2026-05-07)
+
+Fixed partial-trace JSON ambiguity for multi-workflow analyses. Summary output
+now reports unexecuted static LLM rows as scoped objects
+(`trace_unexecuted_llm_rows[]` with `workflow_path` and `node_path`) instead of
+bare node IDs, so repeated child node IDs such as `review` remain
+disambiguated at summary level. The old ambiguous
+`trace_unexecuted_llm_nodes` field was removed.
+
+Trace coverage semantics, partial-trace recommendation suppression, text
+output, and per-call row behavior were left unchanged.
+
+Verification: focused cache-analysis tests passed (`323 passed`), plus ruff,
+ruff format check, mypy on touched source, manual closure-trace JSON
+verification, and `git diff --check`.

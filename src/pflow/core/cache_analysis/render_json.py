@@ -70,7 +70,13 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "evidence_scope": s.evidence_scope,
         "trace_llm_nodes_static": s.trace_llm_nodes_static,
         "trace_llm_nodes_executed": s.trace_llm_nodes_executed,
-        "trace_unexecuted_llm_nodes": list(s.trace_unexecuted_llm_nodes),
+        "trace_unexecuted_llm_rows": [
+            {
+                "workflow_path": row.workflow_path,
+                "node_path": row.node_path,
+            }
+            for row in s.trace_unexecuted_llm_rows
+        ],
         "blocking_errors": s.blocking_errors,
         "actionable_opportunities": s.actionable_opportunities,
         "warnings_count": s.warnings_count,

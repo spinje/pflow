@@ -23,6 +23,7 @@ from pflow.core.cache_analysis.analyze import (
     ProjectionExclusion,
     SubWorkflowRollup,
     SubWorkflowRollupEntry,
+    TraceUnexecutedLLMRow,
 )
 from pflow.core.cache_analysis.cost_estimation import CostTier
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -111,7 +112,7 @@ def _make_analysis(
             trace_coverage="complete" if actually_paid is not None else "none",
             trace_llm_nodes_static=len(rows),
             trace_llm_nodes_executed=len(rows) if actually_paid is not None else 0,
-            trace_unexecuted_llm_nodes=(),
+            trace_unexecuted_llm_rows=(),
             blocking_errors=sum(1 for d in warnings if d.severity == Severity.ERROR),
             actionable_opportunities=sum(1 for d in warnings if d.severity != Severity.ERROR),
             warnings_count=sum(1 for d in warnings if d.severity == Severity.WARNING),
@@ -588,7 +589,7 @@ def test_text_partial_trace_labels_executed_scope() -> None:
             "evidence_scope": "partial_trace_executed_subset",
             "trace_llm_nodes_static": 2,
             "trace_llm_nodes_executed": 1,
-            "trace_unexecuted_llm_nodes": ("skipped",),
+            "trace_unexecuted_llm_rows": (TraceUnexecutedLLMRow("/abs/x.pflow.md", "skipped"),),
         }),
     })
 
@@ -622,13 +623,20 @@ def test_json_partial_trace_exposes_evidence_scope_and_observed_models() -> None
             "observed_models_in_trace": ("gemini/a", "gemini/b"),
             "trace_llm_nodes_static": 2,
             "trace_llm_nodes_executed": 1,
-            "trace_unexecuted_llm_nodes": ("skipped",),
+            "trace_unexecuted_llm_rows": (
+                TraceUnexecutedLLMRow("/abs/review-a.pflow.md", "review"),
+                TraceUnexecutedLLMRow("/abs/review-b.pflow.md", "review"),
+            ),
         }),
     })
 
     payload = render_json(analysis)
 
     assert payload["summary"]["evidence_scope"] == "partial_trace_executed_subset"
+    assert payload["summary"]["trace_unexecuted_llm_rows"] == [
+        {"workflow_path": "/abs/review-a.pflow.md", "node_path": "review"},
+        {"workflow_path": "/abs/review-b.pflow.md", "node_path": "review"},
+    ]
     assert payload["summary"]["observed_models_in_trace"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_models"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_call_count"] == 2

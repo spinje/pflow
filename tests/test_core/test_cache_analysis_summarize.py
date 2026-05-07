@@ -45,7 +45,7 @@ def _analysis_with(
         trace_coverage="none",
         trace_llm_nodes_static=10,
         trace_llm_nodes_executed=0,
-        trace_unexecuted_llm_nodes=(),
+        trace_unexecuted_llm_rows=(),
         blocking_errors=0,
         actionable_opportunities=actionable,
         warnings_count=actionable,
