@@ -8543,3 +8543,250 @@ Documented because future reviewers may raise the same concerns:
 - All 5 mutation contracts on Phase 4's regression gates verified
   (3 production-overwrite mutations + 1 dataclass-field-add mutation +
   the `[skip review]` cohort-key revert from Phase 3).
+
+## PR #378 specialized-agent review — 2 polish batches (2026-05-07)
+
+After the `/evaluate-review` sweep above, ran a SECOND review pass
+deploying the seven specialized review agents in parallel
+(`review-silent-failures`, `review-concurrency-safety`,
+`review-feature-interactions`, `review-impact-completeness`,
+`review-validation-consistency`, `review-test-fidelity`,
+`review-agent-ux`). Different distribution model from the
+`/evaluate-review` sweep — that one was 6 verifiers reproducing existing
+findings; this was 7 specialized pattern-matchers each scoped to a
+specific surface with hand-tuned context (~900 lines Tier 1 mandatory
++ ≤200 lines Tier 2 cherry-picked supplementary, progress log forbidden).
+
+### Review distribution strategy (worth re-using)
+
+Each agent received:
+1. **Tier 1 mandatory context**: `task-review.md` + root `CLAUDE.md`
+   (~900 lines).
+2. **Tier 2 cherry-picked context**: 1-2 surface-specific `CLAUDE.md`
+   files OR specific spec sections. Examples:
+   - `review-validation-consistency` → spec lines 226-298 (Validation
+     Location + Memo Cache Hash Correctness + Stable Warning ID Catalog
+     + DD#36 + DD#20).
+   - `review-agent-ux` → spec lines 316-616 (Output Format — Text +
+     JSON + Confidence Labeling Algorithm + catalog table).
+   - `review-concurrency-safety` → `runtime/CLAUDE.md` + `engine/CLAUDE.md`.
+3. **Forbidden context list**: progress log (8,338 lines — would deplete
+   context window) + implementation plan (2,120 lines — superseded).
+4. **"Already found and fixed" exclusion list** (8 Pitfall #19 instances
+   from Stage 1-2; segment-specific fixes) so agents don't re-litigate.
+5. **"Deliberately deferred" exclusion list** so agents don't flag
+   intentional v1.x scope cuts as bugs.
+6. **Confidence rubric self-filter at ≥80** (per `/code-review` plugin's
+   0/25/50/75/100 scale) — saves triage work.
+7. **Output format**: structured `FINDING N` blocks with file/line, class,
+   confidence, evidence quote, recommendation.
+
+This shape compressed wall-clock to ~5 min per agent (parallel).
+
+### Findings summary
+
+| Agent | ≥80 findings |
+|---|---|
+| concurrency-safety | 0 (clean) |
+| silent-failures | 0 (3 advisory 50-60) |
+| validation-consistency | 2 |
+| impact-completeness | 3 |
+| feature-interactions | 0 (5 advisory 40-65) |
+| test-fidelity | 0 (Pitfall #19 instance #9 NOT found) |
+| agent-ux | 9 |
+
+**Total: 14 ≥80 + ~8 advisory.** Strong signal: two findings independently
+flagged by separate agents (`cache.unused-chunk` source_line drift at
+`data_flow.py` + `warning_catalog.py`) — that's the strongest "must fix"
+indicator the methodology produces.
+
+### Pre-fix verification
+
+Before fixing, spot-checked 10 of the 13 ≥80 agent-ux findings against
+actual code (the agent had the most volume; highest a-priori false-
+positive risk). 11/13 confirmed real, 1 confirmed real-but-design-call
+(`format_version` deliberately removed but docs still reference),
+1 marginal (`fuzzy-match` may already work via `exception_to_diagnostics`).
+
+### Round 1 polish (commit `f91814be`) — 6 unambiguous fixes
+
+Files: `mcp_server/tools/execution_tools.py`, `core/cache_analysis/render_text.py`,
+`cli/workflow_output.py`, `core/workflow/data_flow.py`, `task-review.md`,
+`tests/test_execution/formatters/test_output_utils.py`.
+
+1. **MCP `analyze_cache` docstring trace filename schema** — the
+   built-in-behavior line described the OLD non-hashed filename
+   (`workflow-trace-{name}-{timestamp}.json`); updated to the
+   identity-encoded format with rationale.
+
+2. **Suggested ## Cache block paste-safety** — `- threshold:` lines
+   under per-node assignments now render as `# threshold:` comments.
+   Previously an agent copy-pasting the suggested block (per the section
+   intro saying "Add to each node's params") would include a
+   `- threshold:` line that pflow rejects as unknown param.
+
+3. **Per-call cache report `[unexecuted]` marker** — replaced
+   `not-executed-in-trace` (which appeared alongside catalog warning IDs
+   in the inline column) with bracketed `[unexecuted]`. Agents grepping
+   the catalog or guide for the marker found nothing; bracket prefix
+   makes the row-state vs warning distinction structural.
+
+4. **`--only` no-output enumerates routable keys** — previously the
+   error said "Pass `-o <key>` to select a specific shared-store key"
+   without listing candidates. New `_list_routable_keys_for_only_target`
+   helper surfaces top-level non-internal keys.
+
+5. **`cache.unused-chunk` source_line drift fix** (cross-flagged by
+   validation-consistency + impact-completeness) — producer at
+   `_make_unused_chunk_diagnostic` now accepts `source_line` and threads
+   it from `cache.items[i]["_source_line"]`, matching the catalog's
+   `required_context_keys=(("chunk_name", str), ("source_line", int))`.
+   Closes a latent `KeyError` trap if the producer were ever migrated to
+   `make_diagnostic("cache.unused-chunk", ...)`.
+
+6. **Path 1 boundary contract docs** — `task-review.md` now enumerates
+   all 3 retained `resolve_file_references` call sites (compiler,
+   validator, save_service) with split-IR rationale. Previously listed
+   only 2; future contributors reading the contract could miss
+   `save_service.py:129`'s deliberate split-IR pattern (validation-
+   resolved deep-copy vs bundle-original literal-paths).
+
+### Round 2 polish (commit `60a2eec8`) — 5 ≥80 contract fixes
+
+Files: `cli/commands/analyze_cache.py`, `core/cache_analysis/__init__.py`,
+`core/cache_analysis/analyze.py`, `core/cache_analysis/render_json.py`,
+`core/cache_analysis/render_text.py`, `mcp_server/tools/execution_tools.py`,
+`runtime/compilation/compile_validation.py`, plus 3 test files.
+
+1. **`compile_validation._validate_data_flow_at_compile_time` threads
+   `workflow_path`** — every other `validate_data_flow` call site
+   already threaded it; this path was the missing one. Cache findings
+   emitted via `make_diagnostic` no longer get
+   `affected_workflow="<unknown>"` baked into
+   `CompilationError.wrapped_diagnostics`. The earlier Stage 2
+   `<unknown>` cleanup only patched the analyzer adapter — this is the
+   symmetric compile-path fix. `_prepare_compilation` reads from
+   `initial_params["_pflow_workflow_file"]`.
+
+2. **`format_version` re-added to JSON output** — git history showed it
+   was deliberately removed in a prior commit (test
+   `test_json_action_view_empty_arrays_are_present` asserted absence).
+   But the spec, task-review.md, version-history docstring, and the
+   stage A/0/B/C JSON-version-bump narrative ALL documented the field as
+   load-bearing for consumer version-gating
+   (`startswith(MAJOR + ".")`). The removal eliminated the entire
+   versioning architecture's consumer surface. Re-added as
+   `JSON_FORMAT_VERSION = "4.0"` constant in `cache_analysis/__init__.py`,
+   emitted as the FIRST key in `render_json` via local-import (avoids
+   `__init__` ↔ renderer circular ref). 4 test sites flipped from
+   "assert absence" to "assert presence + value matches constant".
+   Module docstring extended with full 1.0 → 4.0 version history.
+
+3. **`PerNodeThresholdEntry` typed discriminator** — replaced magic
+   strings (`"<unknown>"`, `"<varies>"`) in JSON output with
+   `model: str | None` + `model_state: "resolved" | "heterogeneous" |
+   "unknown"`. Producer at `_threshold_entry_for_node` returns None +
+   typed state; text renderer dispatches on `model_state` (still shows
+   human-readable `<varies>` / `<unknown>` labels via new
+   `_label_for_model_state` helper). JSON consumers can now dispatch on
+   the typed field instead of memorizing pflow's sentinel vocabulary.
+   2 test fixtures updated to match the new shape.
+
+4. **`--format=json` error envelope** — when an error fires under
+   `--format=json`, the CLI now emits a structured JSON envelope to
+   stdout (`{format_version, error: {id, message, suggestion?}}`) AND
+   the human-readable line to stderr in parallel. Pre-fix: stdout was
+   empty, stderr had free-form text → JSON-consuming agents got
+   parse-failure on empty stdout. Wired into all 4 error paths via new
+   `_emit_error` helper. C901-driven decomposition: extracted
+   `_try_or_emit_diagnostic` to keep `analyze_cache` ≤ 10 complexity
+   (project rule: no `# noqa: C901`). New regression test
+   `test_analyze_cache_json_error_envelope_on_workflow_not_found` with
+   mutation contract documented.
+
+5. **MCP `analyze_cache` docstring fields** — additive doc-only changes
+   covering: `format_version` consumer-rule (matches the JSON re-add),
+   `cacheable_data_source` 5-state independent-tier semantics,
+   `did_not_execute_in_trace` boolean, `summary.evidence_scope` 3-state,
+   `summary.trace_coverage` 3-state, `per_node_thresholds[]` typed
+   discriminator note. Agents calling MCP get the same documented
+   contract as CLI consumers.
+
+### What I deferred and why
+
+- **Workflow resolution fuzzy-match for `WorkflowNotFoundError`** —
+  marginal; Round 2's JSON envelope wraps the diagnostic stream in a
+  parseable shape regardless. `exception_to_diagnostics` may already
+  surface `similar_names` via the diagnostic-renderer; verification
+  cost > finding value.
+- **Sentinel standardization (`<root>` / `<inline>` / `ir-hash:`)** —
+  re-investigation showed these reference adjacent-but-distinct concepts
+  (workflow group heading vs display label vs canonical ID), not a
+  single-concept-three-conventions drift. Drop the finding.
+- **Tier 2 advisory items** (`success_formatter` cost-line truthy trap,
+  row-fallback partial-tier mislabel, drift-rejected-trace silent-null,
+  N=1 prewarm batch cost surprise) — real but small; confidence 40-65;
+  diminishing-returns territory. Worth filing as v1.x GH issues if any
+  surface in real usage; no value blocking the merge for them.
+
+### Tacit knowledge for next agent
+
+1. **Specialized-agent review distribution scales differently from
+   `/evaluate-review`.** Six verifiers reproducing existing findings vs
+   seven pattern-matchers scoped to surfaces is a different cost/yield
+   curve. The pattern-matcher mode found 14 new ≥80 issues at ~5 min
+   wall-clock each; the verifier mode confirmed 10 of 18 existing
+   findings. Both have a place; choose based on whether you want
+   exploration or confirmation.
+
+2. **The Tier 1 + cherry-picked Tier 2 + forbidden-list pattern keeps
+   each agent at ~10% of context window for orientation**, leaving room
+   for code reading. Critical for keeping output focused. Each Tier 2
+   bundle was hand-picked to the agent's pattern (validation-consistency
+   got the spec's "Validation Location" + DD#36; agent-ux got the spec's
+   Output Format sections). Generic context pollutes findings with
+   noise.
+
+3. **Cross-agent finding cross-validation is a strong signal.** Two
+   agents independently flagged the `cache.unused-chunk` source_line
+   drift via different framings (validation-consistency:
+   producer-vs-catalog drift; impact-completeness: catalog-spec
+   consumer drift). When the same finding emerges from independent
+   pattern-matchers, fix-priority should bump.
+
+4. **`format_version` removal lesson**: if you remove a versioning
+   field, scan ALL of: spec, task-review, module docstring, MCP
+   docstring, version-history block, and tests-that-assert-absence.
+   The removal here only updated the `assert "format_version" not in
+   result` test sites — every other surface still documented the field
+   as load-bearing. Hard to detect via tests because the test-locked
+   absence WAS the contract. Lesson: contract changes require
+   doc-vs-test cross-audit, not just test-pass-after-edit.
+
+5. **C901 discipline survives polish rounds**. Round 2's `_emit_error`
+   addition pushed `analyze_cache` from 8 → 11 complexity. Decomposing
+   into `_try_or_emit_diagnostic` brought it back to 10 AND made the
+   two parallel try/except blocks (resolve_workflow + parse_workflow_params)
+   structurally identical. The user's no-`# noqa: C901` directive
+   continues to produce more readable code than suppression comments.
+
+6. **JSON output position-as-first-key invariant**. `format_version` is
+   emitted as the first key in `render_json`. The test asserts
+   `next(iter(result)) == "format_version"`. Python dicts preserve
+   insertion order so this is structurally enforced; if a future
+   refactor builds the dict via `dict.update()` from arbitrary sources,
+   the first-key invariant could regress. Documented inline at the
+   render_json call site.
+
+### Verification
+
+- **6,338 tests passing** on default suite (`-m "not e2e"`) — +3 from
+  the post-evaluate-review baseline (Round 1 added 1 enumerate-keys
+  test; Round 2 added 1 format_version test + 1 JSON error envelope
+  test).
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- `test_golden_baseline_hashes_match` (DD#19) green throughout both
+  rounds.
+- `test_plan_drift.py` (34/34) green throughout both rounds.
+- All ≥80 confidence findings either fixed (11) or actively deferred
+  with rationale (3).
