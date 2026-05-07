@@ -277,12 +277,17 @@ def test_analyze_cache_text_format_default(tmp_path: Path) -> None:
 
 def test_analyze_cache_json_format(tmp_path: Path) -> None:
     """JSON output shape locked."""
+    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
     runner = CliRunner()
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0
     payload = _json_payload(result.output)
-    assert "format_version" not in payload
+    # Version-gated contract: ``format_version`` is the first key + matches
+    # the package constant. JSON consumers dispatch on
+    # ``startswith(MAJOR + ".")`` per ``cache_analysis/__init__.py``.
+    assert payload.get("format_version") == JSON_FORMAT_VERSION
     assert "summary" in payload
     assert payload["blocking_errors"] == []
     assert payload["recommended_actions"] == []
@@ -290,6 +295,29 @@ def test_analyze_cache_json_format(tmp_path: Path) -> None:
     assert "cross_workflow" in payload
     # Empty-array contract.
     assert payload["cross_workflow"]["rename_detections"] == []
+
+
+def test_analyze_cache_json_error_envelope_on_workflow_not_found(tmp_path: Path) -> None:
+    """When ``--format=json`` is set and workflow resolution fails, stdout MUST
+    carry a structured error envelope (parseable JSON), not a free-form text
+    line. Stderr keeps the human-readable message in parallel.
+
+    Mutation contract: removing the ``json_mode`` branch in ``_emit_error``
+    makes this test fail because ``json.loads(result.stdout)`` would parse-fail.
+    """
+    import json as _json
+
+    runner = CliRunner()
+    missing_workflow = tmp_path / "does-not-exist.pflow.md"
+    result = runner.invoke(cli, ["analyze-cache", str(missing_workflow), "--format=json"], catch_exceptions=False)
+    assert result.exit_code != 0
+    # Stdout must be parseable JSON — the agent's primary contract.
+    envelope = _json.loads(result.stdout or "{}")
+    assert envelope.get("error", {}).get("id") == "analyze-cache.workflow-resolution-failed", envelope
+    assert "message" in envelope["error"]
+    # Format version included in error envelope so consumers can dispatch
+    # the same way as on success.
+    assert envelope.get("format_version")
 
 
 def test_analyze_cache_json_splits_blocking_errors_from_recommended_actions(tmp_path: Path) -> None:

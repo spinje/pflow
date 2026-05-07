@@ -416,7 +416,27 @@ def test_json_action_view_empty_arrays_are_present() -> None:
     result = render_json(_make_analysis())
     assert result["blocking_errors"] == []
     assert result["recommended_actions"] == []
-    assert "format_version" not in result
+
+
+def test_json_format_version_present_and_first_key() -> None:
+    """JSON consumers version-gate via ``format_version.startswith("4.")``.
+    The field MUST be present (deliberately absent in earlier 4.0 builds —
+    re-added per Task 159 PR #378 review). Position-as-first-key is best-
+    effort (Python dicts preserve insertion order); the load-bearing contract
+    is presence + value matching the package constant.
+
+    Mutation contract: removing the ``"format_version": JSON_FORMAT_VERSION``
+    line in ``render_json`` makes this test fail with the package constant
+    diff so the regression class is observable.
+    """
+    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+
+    result = render_json(_make_analysis())
+    assert "format_version" in result
+    assert result["format_version"] == JSON_FORMAT_VERSION
+    # First-key invariant — agents reading the JSON top-down see the version
+    # discriminator immediately.
+    assert next(iter(result)) == "format_version"
 
 
 def test_json_round_trips_through_dumps_loads() -> None:
@@ -2576,18 +2596,32 @@ def test_render_text_includes_per_node_threshold_statuses() -> None:
         per_node_thresholds={
             "above": {
                 "model": "anthropic/claude-sonnet-4-5",
+                "model_state": "resolved",
                 "min_tokens": 1024,
                 "total_tokens": 1500,
                 "meets_threshold": True,
             },
             "below": {
                 "model": "anthropic/claude-sonnet-4-5",
+                "model_state": "resolved",
                 "min_tokens": 1024,
                 "total_tokens": 512,
                 "meets_threshold": False,
             },
-            "varies": {"model": "<varies>", "min_tokens": None, "total_tokens": None, "meets_threshold": None},
-            "unknown": {"model": "<unknown>", "min_tokens": None, "total_tokens": None, "meets_threshold": None},
+            "varies": {
+                "model": None,
+                "model_state": "heterogeneous",
+                "min_tokens": None,
+                "total_tokens": None,
+                "meets_threshold": None,
+            },
+            "unknown": {
+                "model": None,
+                "model_state": "unknown",
+                "min_tokens": None,
+                "total_tokens": None,
+                "meets_threshold": None,
+            },
         },
     )
     base = _make_analysis()
@@ -2618,6 +2652,7 @@ def test_render_json_includes_per_node_thresholds() -> None:
         per_node_thresholds={
             "write": {
                 "model": "anthropic/claude-sonnet-4-5",
+                "model_state": "resolved",
                 "min_tokens": 1024,
                 "total_tokens": 512,
                 "meets_threshold": False,
@@ -2632,6 +2667,7 @@ def test_render_json_includes_per_node_thresholds() -> None:
     assert block_dict["per_node_thresholds"] == {
         "write": {
             "model": "anthropic/claude-sonnet-4-5",
+            "model_state": "resolved",
             "min_tokens": 1024,
             "total_tokens": 512,
             "meets_threshold": False,

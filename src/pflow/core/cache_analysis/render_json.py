@@ -31,11 +31,18 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
     findings (rename, prose-mismatch) are excluded from both ranked lists and
     surfaced under ``cross_workflow.*``.
     """
+    # Local import: ``JSON_FORMAT_VERSION`` lives at the package root for
+    # consumer-side reachability; importing here avoids a circular ref between
+    # ``__init__.py`` and the renderers.
+    from . import JSON_FORMAT_VERSION
     from .view_helpers import build_blocking_errors, build_recommended_actions
 
     blocking = build_blocking_errors(list(analysis.warnings))
     actions = build_recommended_actions(list(analysis.warnings))
     return {
+        # First key — agents version-gate via ``startswith(MAJOR + ".")`` per
+        # the consumer rule documented in ``cache_analysis/__init__.py``.
+        "format_version": JSON_FORMAT_VERSION,
         "workflow_path": analysis.workflow_path,
         "analyzed_at": analysis.analyzed_at,
         "estimate_confidence": analysis.estimate_confidence,

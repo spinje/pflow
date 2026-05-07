@@ -747,10 +747,16 @@ def _format_threshold_line(threshold_info: Mapping[str, object]) -> str:
     # accidentally include a `- threshold:` line — pflow rejects it as an unknown
     # node parameter. The leading `#` clearly signals "informational, not part of
     # the paste-target."
+    #
+    # Dispatch on ``model_state`` (typed discriminator) per Task 159 PR #378
+    # review (#4). Human-readable labels (``<varies>``, ``<unknown>``) only
+    # appear in rendered text — JSON consumers see ``model: null`` + the
+    # discriminator, so they don't need to special-case sentinel strings.
     status = threshold_info.get("meets_threshold")
     total = threshold_info.get("total_tokens")
     min_tokens = threshold_info.get("min_tokens")
-    model_label = threshold_info.get("model", "<unknown>")
+    model_state = threshold_info.get("model_state", "unknown")
+    model_label = threshold_info.get("model") or _label_for_model_state(model_state)
     if status is True:
         return f"  # threshold: {total} tokens / {min_tokens} ({model_label}) ✓"
     if status is False:
@@ -758,11 +764,18 @@ def _format_threshold_line(threshold_info: Mapping[str, object]) -> str:
             f"  # threshold: {total} tokens / {min_tokens} ({model_label}) ⚠ BELOW THRESHOLD — "
             "cache will not fire as suggested"
         )
-    if status is None and model_label == "<varies>":
+    if status is None and model_state == "heterogeneous":
         return "  # threshold: varies per item (heterogeneous model)"
     if status is None:
         return "  # threshold: unable to estimate (no run data; first run will populate)"
     return "  # threshold: <unavailable>"
+
+
+def _label_for_model_state(model_state: object) -> str:
+    """Human-readable label for ``model_state`` discriminator values."""
+    if model_state == "heterogeneous":
+        return "<varies>"
+    return "<unknown>"
 
 
 def _render_cross_workflow(analysis: CacheAnalysis) -> str:

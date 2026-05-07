@@ -69,10 +69,14 @@ def _write_workflow(tmp_path: Path, content: str) -> Path:
 
 
 def test_service_returns_json_shape(tmp_path: Path) -> None:
+    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
     result = ExecutionService.analyze_cache(str(workflow_path))
     assert isinstance(result, dict)
-    assert "format_version" not in result
+    # Version-gated contract per Task 159 PR #378 review: ``format_version``
+    # must be present so MCP consumers can dispatch on schema version.
+    assert result.get("format_version") == JSON_FORMAT_VERSION
     assert "summary" in result
     assert "blocking_errors" in result
     assert "recommended_actions" in result
@@ -132,7 +136,10 @@ def test_async_tool_wrapping_returns_dict(tmp_path: Path) -> None:
 
     sync_result = ExecutionService.analyze_cache(str(workflow_path))
     assert isinstance(result, dict)
-    assert "format_version" not in result
+    # Same version-gating contract on the async tool path.
+    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+
+    assert result.get("format_version") == JSON_FORMAT_VERSION
     # Strip the only non-deterministic field — ``analyzed_at`` uses
     # ``datetime.now`` per analyze.py:257. Both calls land within the same
     # second in practice, but exclude defensively so a tick-boundary doesn't

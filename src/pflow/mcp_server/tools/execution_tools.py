@@ -368,7 +368,13 @@ async def analyze_cache(
 
     Returns the same JSON shape as ``pflow analyze-cache --format=json``.
 
-    Top-level keys: ``workflow_path``, ``analyzed_at``,
+    **Schema versioning**: top-level ``format_version`` (string, e.g. ``"4.0"``)
+    is the FIRST key. Consumers dispatch on
+    ``format_version.startswith(MAJOR + ".")``. Additive 4.x minor fields don't
+    bump; semantic shifts in field meaning bump minor; field-shape removal bumps
+    major. Full version history in ``pflow.core.cache_analysis.__init__``.
+
+    Top-level keys: ``format_version``, ``workflow_path``, ``analyzed_at``,
     ``estimate_confidence``, ``estimate_confidence_coverage``, ``trace_path``,
     ``summary``, ``blocking_errors``, ``recommended_actions``,
     ``suggested_blocks``, ``per_call``, ``cross_workflow``, ``warnings``,
@@ -446,6 +452,37 @@ async def analyze_cache(
 
     **per_call[].data_source** carries the four-value tier: ``trace`` /
     ``memo`` / ``estimator`` / ``heuristic`` (highest-fidelity first).
+
+    **per_call[].cacheable_data_source** is INDEPENDENT from ``data_source``
+    and tracks the cacheable-tokens metric specifically. Values: ``trace``
+    / ``memo`` / ``parameters`` / ``estimator`` / ``unavailable``. The two
+    labels may legitimately diverge — e.g., trace fires for input but
+    cacheable falls through to memo when ``cache_creation+cache_read==0``.
+
+    **per_call[].did_not_execute_in_trace** (boolean): True when the IR
+    declares the LLM node but the loaded trace did not record an execution
+    for it. Distinguishes "static analysis row" from "trace evidence row";
+    agents should treat fields like ``cost_usd`` as projections (not
+    actuals) when this is True.
+
+    **summary.evidence_scope** (string): ``"static_analysis"`` /
+    ``"complete_trace"`` / ``"partial_trace_executed_subset"``. Indicates
+    how broadly the trace covers the IR. Under
+    ``"partial_trace_executed_subset"``, workflow-design recommendations are
+    suppressed and per-call output is scoped to executed rows; agents should
+    not act on absent recommendations as if the analysis were exhaustive.
+
+    **summary.trace_coverage** (string): ``"none"`` / ``"complete"`` /
+    ``"partial"``. The static-vs-execution coverage discriminator that
+    drives ``evidence_scope`` and the per-row ``did_not_execute_in_trace``
+    flag.
+
+    **per_node_thresholds[node_id]** in ``suggested_blocks[]`` carries
+    ``model: string | null`` and ``model_state: "resolved" |
+    "heterogeneous" | "unknown"``. Dispatch on ``model_state`` rather than
+    sentinel strings — JSON output uses ``null`` for the heterogeneous /
+    unknown cases (the magic-string ``"<varies>"`` / ``"<unknown>"``
+    appears only in rendered text).
 
     **Empty-array contract**: ``cross_workflow.rename_detections``,
     ``prose_mismatches``, ``value_flow_opportunities`` are always present

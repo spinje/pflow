@@ -232,9 +232,26 @@ class SuggestedBlockChunk:
 
 
 class PerNodeThresholdEntry(TypedDict):
-    """Per-node threshold check for a SuggestedBlock recommendation."""
+    """Per-node threshold check for a SuggestedBlock recommendation.
 
-    model: str
+    ``model_state`` discriminator added per Task 159 PR #378 review (#4):
+    JSON consumers should dispatch on the typed field, not magic strings.
+    Value semantics:
+
+    - ``"resolved"``  — node has a concrete model; ``model`` carries the
+      provider-prefixed identifier (e.g. ``"anthropic/claude-sonnet-4-5"``).
+    - ``"heterogeneous"`` — IR ``params.model`` was an unresolved ``${...}``
+      template (model varies per batch item); ``model`` is ``None``.
+    - ``"unknown"`` — model could not be resolved (no row, empty model
+      field, etc.); ``model`` is ``None``. ``min_tokens``/``total_tokens``/
+      ``meets_threshold`` all ``None``.
+
+    Text rendering still surfaces human-readable labels (``<varies>``,
+    ``<unknown>``) — the sentinel-string-in-JSON anti-pattern is closed.
+    """
+
+    model: str | None
+    model_state: str
     min_tokens: int | None
     total_tokens: int | None
     meets_threshold: bool | None
@@ -2132,16 +2149,35 @@ def _threshold_entry_for_node(
 ) -> PerNodeThresholdEntry:
     node_row = rows_by_node.get(node_id)
     if node_row is None:
-        return {"model": "<unknown>", "min_tokens": None, "total_tokens": None, "meets_threshold": None}
+        return {
+            "model": None,
+            "model_state": "unknown",
+            "min_tokens": None,
+            "total_tokens": None,
+            "meets_threshold": None,
+        }
     if node_row.model_is_heterogeneous:
-        return {"model": "<varies>", "min_tokens": None, "total_tokens": None, "meets_threshold": None}
+        return {
+            "model": None,
+            "model_state": "heterogeneous",
+            "min_tokens": None,
+            "total_tokens": None,
+            "meets_threshold": None,
+        }
     if not node_row.model:
-        return {"model": "<unknown>", "min_tokens": None, "total_tokens": None, "meets_threshold": None}
+        return {
+            "model": None,
+            "model_state": "unknown",
+            "min_tokens": None,
+            "total_tokens": None,
+            "meets_threshold": None,
+        }
 
     total = _sum_chunk_tokens(assigned_refs, node_row.model, ctx, memo_cache, workflow_path)
     threshold = get_min_cache_tokens(node_row.model)
     return {
         "model": node_row.model,
+        "model_state": "resolved",
         "min_tokens": threshold,
         "total_tokens": total,
         "meets_threshold": (total >= threshold) if total is not None else None,
