@@ -59,7 +59,7 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         # ``actually_paid_usd`` is ``null`` for greenfield (no trace);
         # the three hypothetical fields are projections from IR rows.
         "actually_paid_usd": s.actually_paid_usd,
-        "actually_paid_tier": str(s.actually_paid_tier),
+        "actually_paid_tier": s.actually_paid_tier.value,
         "no_cache_hypothetical_usd": s.no_cache_hypothetical_usd,
         "first_run_with_cache_hypothetical_usd": s.first_run_with_cache_hypothetical_usd,
         "rerun_within_ttl_hypothetical_usd": s.rerun_within_ttl_hypothetical_usd,

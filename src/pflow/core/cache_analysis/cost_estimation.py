@@ -51,7 +51,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
@@ -70,10 +70,10 @@ logger = logging.getLogger(__name__)
 _ANTHROPIC_1H_WRITE_MULTIPLIER: float = 2.0
 
 
-class CostTier(StrEnum):
+class CostTier(str, Enum):
     """Confidence tier for a cost figure.
 
-    JSON serialization preserves the string value (StrEnum) — consumers
+    JSON serialization preserves the string value — consumers
     matching ``"trace"`` keep working. mypy type-checks assignments at
     production sites; agents reading the source see a closed catalog.
     """
@@ -82,6 +82,10 @@ class CostTier(StrEnum):
     TRACE_PARTIAL = "trace_partial"
     RECOMPUTED = "recomputed"
     UNAVAILABLE = "unavailable"
+
+    def __str__(self) -> str:
+        """Match ``StrEnum`` stringification while supporting Python 3.10."""
+        return self.value
 
 
 @dataclass(frozen=True)

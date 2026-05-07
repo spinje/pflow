@@ -266,11 +266,12 @@ def _render_cost_block(s: AnalysisSummary) -> list[str]:
 
 def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     """Cost lines when a trace contributed actual costs."""
+    tier = s.actually_paid_tier.value
     actually_paid_str = _format_cost(
         s.actually_paid_usd,
-        str(s.actually_paid_tier) == "trace_partial",
+        tier == "trace_partial",
         s.unavailable_models,
-        tier_annotation=str(s.actually_paid_tier),
+        tier_annotation=tier,
     )
     no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
