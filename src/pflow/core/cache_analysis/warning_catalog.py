@@ -254,7 +254,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("savings_usd", float),
         ),
         suggestions_template=(
-            "In {child_workflow}, add a ## Cache chunk for `${child_input_name}`.",
+            "In {child_workflow}, add a ## Cache chunk for `${{{child_input_name}}}`.",
             "Add `{child_input_name}` to `prompt_cache:` on the child LLM nodes that reuse it.",
         ),
         path_template="workflows[path={child_workflow}].inputs[name={child_input_name}]",

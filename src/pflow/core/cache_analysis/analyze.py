@@ -1967,23 +1967,17 @@ def _populate_suggested_blocks(
         memo_cache=memo_cache,
         workflow_path=workflow_path,
     )
-    if _all_assignments_definitively_below_threshold(per_node_thresholds):
-        notes.append(
-            "Suggested-blocks: shared refs were found, but every assigned LLM node is below "
-            "the provider cache threshold under current model/token evidence; no provider-cache "
-            "edit is actionable yet."
-        )
+    actionability_note = _suggested_block_non_actionable_note(per_node_thresholds)
+    if actionability_note is not None:
+        notes.append(actionability_note)
         return [], []
 
-    if len(eligible_nodes) < 2:
-        total_savings = 0.0
-    else:
-        for ref, node_ids in shared_refs:
-            chunk_savings = _savings_for_shared_ref(ref, node_ids, rows_by_node, ref_sizes[ref], eligible_nodes)
-            if chunk_savings is None:
-                total_savings = None
-            elif total_savings is not None:
-                total_savings += chunk_savings
+    for ref, node_ids in shared_refs:
+        chunk_savings = _savings_for_shared_ref(ref, node_ids, rows_by_node, ref_sizes[ref], eligible_nodes)
+        if chunk_savings is None:
+            total_savings = None
+        elif total_savings is not None:
+            total_savings += chunk_savings
 
     target_file = workflow_path or "<root>"
     block = SuggestedBlock(
@@ -2051,12 +2045,35 @@ def _skip_suggested_blocks_for_declared_cache(workflow_ir: dict[str, Any], notes
     return True
 
 
-def _all_assignments_definitively_below_threshold(
+def _suggested_block_non_actionable_note(
     per_node_thresholds: Mapping[str, PerNodeThresholdEntry],
-) -> bool:
-    return bool(per_node_thresholds) and all(
-        entry["meets_threshold"] is False for entry in per_node_thresholds.values()
-    )
+) -> str | None:
+    """Return a note when a greenfield suggested block is not paste-ready.
+
+    ``cache.shared-context-undeclared`` means "paste the suggested block".
+    Keep that contract simple: every rendered assignment must have enough
+    evidence to clear the provider threshold, and at least two LLM nodes must
+    be able to reuse the cache.
+    """
+    if len(per_node_thresholds) < 2:
+        return (
+            "Suggested-blocks: shared refs were found, but fewer than two LLM nodes can reuse "
+            "the provider cache; no paste-ready provider-cache edit is actionable yet."
+        )
+    statuses = [entry["meets_threshold"] for entry in per_node_thresholds.values()]
+    if any(status is None for status in statuses):
+        return (
+            "Suggested-blocks: shared refs were found, but model/token evidence is incomplete; "
+            "no paste-ready provider-cache edit is actionable yet. Set settings.default_model "
+            "or run the workflow once, then re-run analyze-cache."
+        )
+    if any(status is False for status in statuses):
+        return (
+            "Suggested-blocks: shared refs were found, but at least one assigned LLM node is below "
+            "the provider cache threshold under current model/token evidence; no paste-ready "
+            "provider-cache edit is actionable yet."
+        )
+    return None
 
 
 def _thresholds_for_assignments(
@@ -2597,13 +2614,11 @@ def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str
     invocation. The malformed-IR cases will surface separately at
     ``pflow run`` validation; the analyzer's job is best-effort signal.
 
-    The validator's diagnostic constructors (``_make_invalid_on_non_llm_diagnostic``,
-    ``_make_order_mismatch_diagnostic`` in ``core/workflow/data_flow.py``) are
-    workflow-agnostic — they don't know which workflow is being analyzed. We
-    enrich each catalog finding with ``affected_workflow`` here so the
-    renderer can scope per-row warnings correctly. ``replace`` rather than
-    in-place mutation: the validator may cache diagnostic instances across
-    calls, so mutating ``diag.context`` would leak the workflow tag.
+    Pass ``workflow_path`` into validation and normalize any placeholder
+    ``affected_workflow`` values here so the renderer can scope per-row
+    warnings correctly. ``replace`` rather than in-place mutation: the
+    validator may cache diagnostic instances across calls, so mutating
+    ``diag.context`` would leak the workflow tag.
 
     Filter is **catalog-membership**, not prefix match: the catalog historically
     held only ``cache.*`` IDs but now also carries one ``llm.*`` entry
@@ -2613,7 +2628,7 @@ def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str
     from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
 
     try:
-        diagnostics = validate_data_flow(workflow_ir, check_inputs=False)
+        diagnostics = validate_data_flow(workflow_ir, check_inputs=False, workflow_path=workflow_path)
     except Exception:
         logger.debug("validate_data_flow raised on malformed IR; skipping cache findings", exc_info=True)
         return []
@@ -2622,7 +2637,11 @@ def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str
         if diag.id is None or diag.id not in CACHE_WARNING_CATALOG:
             continue
         existing = dict(diag.context or {})
-        existing.setdefault("affected_workflow", workflow_path)
+        affected = existing.get("affected_workflow")
+        if workflow_path and (not isinstance(affected, str) or not affected or affected == "<unknown>"):
+            existing["affected_workflow"] = workflow_path
+        else:
+            existing.setdefault("affected_workflow", workflow_path)
         enriched.append(replace(diag, context=existing))
     return enriched
 

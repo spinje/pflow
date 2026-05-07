@@ -488,6 +488,28 @@ def test_discrepancy_dispatch_maps_consistent() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_sub_workflow_cache_suggestions_use_exact_pflow_syntax() -> None:
+    """Catalog suggestions distinguish ## Cache syntax from prompt_cache syntax."""
+    diag = make_diagnostic(
+        "cache.sub-workflow-cache-undeclared",
+        parent_workflow="parent.pflow.md",
+        child_workflow="child.pflow.md",
+        child_workflow_basename="child.pflow.md",
+        parent_value_expr="shared_doc",
+        child_input_name="shared_doc",
+        parent_node_id="call-child",
+        line_in_parent=42,
+        node_count=2,
+        affected_workflow="child.pflow.md",
+        savings_usd=None,
+    )
+
+    assert diag.suggestions is not None
+    assert "`${shared_doc}`" in diag.suggestions[0]
+    assert "`$shared_doc`" not in diag.suggestions[0]
+    assert "`shared_doc` to `prompt_cache:`" in diag.suggestions[1]
+
+
 def _minimal_context_kwargs(warning_id: str) -> dict:
     """Build a minimal-but-valid context_kwargs payload for each catalog ID,
     using the required_context_keys from the spec."""

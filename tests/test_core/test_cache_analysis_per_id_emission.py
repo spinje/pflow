@@ -195,7 +195,12 @@ def test_padding_advisory_uses_dotted_path_subset(monkeypatch: pytest.MonkeyPatc
     assert review.context["suggested_subset"] == ["concept", "concept-brief.response", "scorer.response"]
 
 
-def test_shared_context_undeclared_populates_suggested_block_with_dotted_path() -> None:
+def test_shared_context_undeclared_populates_suggested_block_with_dotted_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
         "nodes": [
             {
@@ -636,6 +641,12 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
     assert found[0].context is not None
     assert found[0].context["affected_workflow"] == "/abs/child.pflow.md"
     assert found[0].context["child_input_name"] == "concept"
+    from pflow.core.cache_analysis.render_json import render_json
+
+    payload = render_json(result)
+    warning = next(w for w in payload["warnings"] if w["id"] == "cache.sub-workflow-cache-undeclared")
+    assert warning["suggestions"][0] == "In /abs/child.pflow.md, add a ## Cache chunk for `${concept}`."
+    assert warning["suggestions"][1] == "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
 
 
 def test_child_cache_declaration_suppresses_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2341,7 +2352,7 @@ def test_analyze_cache_emits_discrepancy_for_sub_workflow_node_via_subprocess(
 # ---------------------------------------------------------------------------
 
 
-def test_template_honest_default_keeps_subpaths_separate() -> None:
+def test_template_honest_default_keeps_subpaths_separate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default behavior: sub-paths of a parent dict are NOT auto-collapsed.
 
     Workflow uses ``${concept.core_idea}`` and ``${concept.title}`` in two
@@ -2356,6 +2367,9 @@ def test_template_honest_default_keeps_subpaths_separate() -> None:
     your prompts actually reference; consolidation is opt-in via
     ``cache.consolidate-to-root-recommended``.
     """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
         "inputs": {"concept": {"type": "object"}},
         "nodes": [
@@ -2387,7 +2401,7 @@ def test_template_honest_default_keeps_subpaths_separate() -> None:
     )
 
 
-def test_subpath_sort_clusters_siblings_by_root() -> None:
+def test_subpath_sort_clusters_siblings_by_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sibling sub-paths of the same root cluster contiguously regardless of
     individual share counts.
 
@@ -2400,6 +2414,9 @@ def test_subpath_sort_clusters_siblings_by_root() -> None:
     drop the root-grouping dimension; this test fails because individual
     share counts scatter ``concept.angle`` away from its siblings.
     """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
         "inputs": {
             "concept": {"type": "object"},

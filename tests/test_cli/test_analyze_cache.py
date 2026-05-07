@@ -131,6 +131,51 @@ Summarize the cached values.
 """
 
 
+_ORDER_MISMATCH_WITH_OVERLAP_WORKFLOW = """\
+# Order Mismatch With Overlap
+
+A workflow with invalid prompt_cache order and duplicated cached prompt body refs.
+
+## Inputs
+
+### a
+
+First cached value.
+
+- type: string
+
+### b
+
+Second cached value.
+
+- type: string
+
+## Cache
+
+```cache
+A:
+${a}
+
+B:
+${b}
+```
+
+## Steps
+
+### test-call
+
+Summarize both values.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt_cache: [b, a]
+
+```prompt
+Summarize ${a} and ${b}.
+```
+"""
+
+
 _MIXED_MODEL_CACHE_WORKFLOW = """\
 # Mixed Models
 
@@ -259,6 +304,24 @@ def test_analyze_cache_json_splits_blocking_errors_from_recommended_actions(tmp_
     assert "cache.order-mismatch" in blocking_ids
     assert "cache.order-mismatch" not in recommended_ids
     assert payload["blocking_errors"][0]["rank"] == 1
+
+
+def test_analyze_cache_json_scopes_validator_findings_to_workflow_path(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _ORDER_MISMATCH_WITH_OVERLAP_WORKFLOW)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+
+    scoped_errors = {
+        item["warning_id"]: item["scope_workflow"]
+        for item in payload["blocking_errors"]
+        if item["warning_id"] in {"cache.order-mismatch", "cache.prompt-body-duplicates-cache"}
+    }
+    assert scoped_errors == {
+        "cache.order-mismatch": str(workflow_path),
+        "cache.prompt-body-duplicates-cache": str(workflow_path),
+    }
 
 
 def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(

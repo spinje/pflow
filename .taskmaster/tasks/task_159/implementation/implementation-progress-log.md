@@ -8187,3 +8187,71 @@ Key learnings:
    observability for completed execution, not process failure.
 3. User-facing docs should state behavior and control surfaces. Internal
    mechanics belong in `CLAUDE.md` and tests.
+
+## Stage 2 follow-up — Recommendation actionability, scope, and syntax (2026-05-07)
+
+Implemented the atomic actionability contract from
+`scratchpads/task159-fix-briefs/05-recommendation-actionability-scope-and-syntax.md`.
+
+Behavior:
+
+- Greenfield `cache.shared-context-undeclared` now emits only with a matching
+  paste-ready `SuggestedBlock`. Unknown model/token evidence, any below-
+  threshold assigned node, or fewer than two reusable LLM nodes produces a
+  `Notes` explanation instead of a recommended action or `## Cache` block.
+- This keeps the text UX invariant simple: `Recommended actions` and
+  `Suggested ## Cache block` are edits an agent can apply now; speculative or
+  not-yet-actionable shared refs live in `Notes`.
+- Sub-workflow cache suggestions now distinguish exact pflow syntax:
+  `## Cache` uses `${shared_doc}`, while `prompt_cache:` remains bare
+  `shared_doc`.
+- Analyzer validator findings now pass `workflow_path` into
+  `validate_data_flow()` and replace `<unknown>` placeholders when the analyzed
+  workflow path is known. `cache.prompt-body-duplicates-cache` now scopes to
+  the actual workflow path in JSON/text action views.
+
+Files changed:
+
+- `src/pflow/core/cache_analysis/analyze.py`
+- `src/pflow/core/cache_analysis/warning_catalog.py`
+- focused analyzer/catalog/CLI/per-ID tests
+
+Deviation / adaptation:
+
+- Updated existing per-ID structural tests that exercised dotted-path and
+  sibling-sort behavior to provide above-threshold evidence explicitly. Clear
+  reason: those tests were never about unknown-threshold UX; letting them rely
+  on speculative suggested blocks would preserve the old bug as test setup.
+  The structural assertions remain the same once the candidate is genuinely
+  actionable.
+- Removed the old all-below-threshold helper instead of layering the new gate
+  beside it. Clear reason: a single producer-side actionability gate is simpler
+  final code and prevents future renderers from needing to reconcile multiple
+  suppression policies.
+
+Key learnings:
+
+1. The simplest final model is producer-side, not renderer-side:
+   `Diagnostic` carries facts, `RecommendedAction` means actionable edit, and
+   `SuggestedBlock` means paste-ready syntax.
+2. Tests that need suggested-block structure must supply actionable evidence.
+   Otherwise they accidentally encode a product policy about unknown evidence.
+3. `<unknown>` is a useful internal fallback only when no path exists. Once the
+   analyzer has a workflow path, preserving the placeholder is a scope bug, not
+   a harmless display fallback.
+
+### Test-quality tightening before closeout
+
+After implementation review, tightened tests at the behavioral seams that had
+actually failed verification:
+
+- Unknown-threshold shared refs now assert the full text/JSON actionability
+  contract: zero actionable opportunities, empty `recommended_actions`, empty
+  `suggested_blocks`, no `Recommended actions` / `Suggested ## Cache block`
+  sections, and a visible incomplete-evidence note.
+- Sub-workflow syntax now has both a catalog SSoT assertion and a production-
+  shaped `analyze()` → `render_json()` assertion. Clear reason for retaining
+  both: the catalog test pins the public suggestion template directly, while
+  the production-shaped test catches drift through the analyzer output path
+  that agents consume.
+

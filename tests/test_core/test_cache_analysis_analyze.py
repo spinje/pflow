@@ -103,7 +103,7 @@ def test_confidence_high_when_all_trace() -> None:
     assert coverage == {"trace": 2, "memo": 0, "estimator": 0, "heuristic": 0, "total": 2}
 
 
-def test_suggested_block_below_threshold_has_zero_savings_and_threshold_payload(
+def test_suggested_block_suppressed_when_all_assigned_nodes_below_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Below-threshold-only shared refs produce no paste-ready edit."""
@@ -134,13 +134,83 @@ def test_suggested_block_below_threshold_has_zero_savings_and_threshold_payload(
 
     assert result.suggested_blocks == ()
     assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
-    assert any("below the provider cache threshold" in note for note in result.notes)
+    assert any("at least one assigned LLM node is below the provider cache threshold" in note for note in result.notes)
 
 
-def test_suggested_block_savings_skip_first_eligible_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unknown model/token evidence stays out of paste-ready action sections."""
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {"id": "draft", "type": "llm", "params": {"prompt": "Draft about ${topic}."}},
+            {"id": "review", "type": "llm", "params": {"prompt": "Review ${topic}."}},
+        ],
+    }
+
+    result = analyze(
+        workflow_ir, parameters={"topic": "x " * 6000}, workflow_path="/abs/x.pflow.md", auto_load_trace=False
+    )
+
+    assert result.suggested_blocks == ()
+    assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
+    assert result.summary.actionable_opportunities == 0
+    assert any("model/token evidence is incomplete" in note for note in result.notes)
+    from pflow.core.cache_analysis.render_json import render_json
+    from pflow.core.cache_analysis.render_text import render_text
+
+    payload = render_json(result)
+    assert payload["recommended_actions"] == []
+    assert payload["suggested_blocks"] == []
+    text = render_text(result)
+    assert "## Recommended actions" not in text
+    assert "## Suggested ## Cache block" not in text
+    assert "model/token evidence is incomplete" in text
+
+
+def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     """Only eligible readers count toward savings; the first eligible node is
     the writer that pays the cache_creation premium.
     """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "writer",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "First ${topic}."},
+            },
+            {
+                "id": "reader",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Second ${topic}."},
+            },
+        ],
+    }
+
+    result = analyze(workflow_ir, parameters={"topic": "small"}, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    assert result.suggested_blocks
+    block = result.suggested_blocks[0]
+    assert block.per_node_thresholds["writer"]["meets_threshold"] is True
+    assert block.per_node_thresholds["reader"]["meets_threshold"] is True
+    assert block.estimated_savings_usd == pytest.approx(90.0)
+    assert any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
+
+
+def test_suggested_block_suppressed_when_any_assigned_node_below_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partially actionable block is not paste-ready enough to render."""
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
@@ -176,12 +246,38 @@ def test_suggested_block_savings_skip_first_eligible_writer(monkeypatch: pytest.
 
     result = analyze(workflow_ir, parameters={"topic": "small"}, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
 
-    assert result.suggested_blocks
-    block = result.suggested_blocks[0]
-    assert block.per_node_thresholds["too-small"]["meets_threshold"] is False
-    assert block.per_node_thresholds["writer"]["meets_threshold"] is True
-    assert block.per_node_thresholds["reader"]["meets_threshold"] is True
-    assert block.estimated_savings_usd == pytest.approx(90.0)
+    assert result.suggested_blocks == ()
+    assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
+    assert any("at least one assigned LLM node is below the provider cache threshold" in note for note in result.notes)
+
+
+def test_analyze_cache_validator_findings_replace_unknown_scope() -> None:
+    """Analyzer knows the workflow path and must not leak validator placeholders."""
+    workflow_path = "/abs/order-mismatch.pflow.md"
+    workflow_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:"},
+                {"name": "b", "var": "b", "prose_before": "B:"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "test-call",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["b", "a"],
+                "params": {"prompt": "Summarize ${a} and ${b}."},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False, memo_cache=None)
+
+    duplicate = next(d for d in result.warnings if d.id == "cache.prompt-body-duplicates-cache")
+    assert duplicate.context is not None
+    assert duplicate.context["affected_workflow"] == workflow_path
 
 
 def test_confidence_NOT_high_when_one_row_is_memo() -> None:
