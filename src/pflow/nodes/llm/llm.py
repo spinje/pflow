@@ -178,13 +178,17 @@ def _emit_observed_below_min_cache_warning(
     if node_id is None or not declared_prompt_cache:
         return
 
-    # When the adapter returned no cache telemetry at all (e.g. provider
-    # returned no usage and the adapter set ``shared["llm_usage"] = {}``),
-    # we cannot honestly observe whether the cache fired. Skip rather than
-    # emit a false-positive observed-tier finding. Mirrors the analyzer's
+    # When the provider didn't expose cache telemetry, we cannot honestly
+    # observe whether the cache fired. Skip rather than emit a false-positive
+    # observed-tier finding. ``has_cache_telemetry`` is the load-bearing
+    # signal: it's True iff the source provider returned at least one cache
+    # field. The previous ``not in llm_usage`` check was structurally
+    # ineffective because ``LLMNode.post()`` always synthesizes the cache
+    # keys (defaulting to 0); the presence flag carries the absence semantic
+    # cleanly through the runtime → trace boundary. Mirrors the analyzer's
     # honest-unmeasurable convention used by ``_estimate_ref_tokens`` and
     # ``_compute_model_group_costs``.
-    if "cache_creation_input_tokens" not in llm_usage and "cache_read_input_tokens" not in llm_usage:
+    if not llm_usage.get("has_cache_telemetry", False):
         return
 
     finding = detect_below_min_tokens(
@@ -955,10 +959,18 @@ class LLMNode(Node):
             llm_usage = {
                 "model": usage_dict.get("model", exec_res.get("model", "unknown")),
                 "input_tokens": usage_dict.get("input_tokens", 0) or 0,
+                "uncached_input_tokens": usage_dict.get("uncached_input_tokens", 0) or 0,
                 "output_tokens": usage_dict.get("output_tokens", 0) or 0,
                 "total_tokens": usage_dict.get("total_tokens", 0) or 0,
                 "cache_creation_input_tokens": usage_dict.get("cache_creation_input_tokens", 0) or 0,
                 "cache_read_input_tokens": usage_dict.get("cache_read_input_tokens", 0) or 0,
+                # ``has_cache_telemetry`` distinguishes "provider reported zero
+                # cache tokens" from "provider didn't expose cache telemetry."
+                # Load-bearing for ``_emit_observed_below_min_cache_warning``:
+                # zero counts are only evidence the cache failed to fire when
+                # telemetry is actually present (otherwise we can't observe it).
+                "has_cache_telemetry": bool(usage_dict.get("has_cache_telemetry", False)),
+                "input_token_accounting": usage_dict.get("input_token_accounting", "total_includes_cache"),
                 "thinking_tokens": usage_dict.get("thinking_tokens", 0) or 0,
                 "thinking_budget": usage_dict.get("thinking_budget", 0) or 0,
                 # Task 159 C1.2: per-call list of cache chunks skipped due to

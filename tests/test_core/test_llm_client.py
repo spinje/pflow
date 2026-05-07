@@ -434,6 +434,9 @@ class TestCompleteUsageNormalization:
         assert response.usage["uncached_input_tokens"] == 55
         assert response.usage["cache_creation_input_tokens"] == 0
         assert response.usage["cache_read_input_tokens"] == 1345
+        # ``has_cache_telemetry`` is True because cache_read=1345 was reported
+        # by the provider — distinguishes "reported zero" from "didn't report."
+        assert response.usage["has_cache_telemetry"] is True
         assert response.usage["input_token_accounting"] == "total" + "_includes_cache"
         assert response.usage["cost_usd"] == 0.003
 
@@ -491,6 +494,13 @@ class TestCompleteUsageNormalization:
         response = complete(model="gpt-4o-mini", prompt="hi")
         assert response.usage["cache_creation_input_tokens"] == 0
         assert response.usage["cache_read_input_tokens"] == 0
+        # Provider returned no cache telemetry — ``has_cache_telemetry`` MUST
+        # be False so the runtime ``cache.below-min-tokens`` guard skips
+        # rather than treat ``0+0`` as evidence of below-threshold cache.
+        # Reviewer Finding 2 regression: pre-fix, the adapter normalized
+        # absent telemetry to 0 with no presence flag, causing observed-tier
+        # detection to false-positive on every cold OpenAI call.
+        assert response.usage["has_cache_telemetry"] is False
 
     @patch("litellm.completion")
     def test_cost_none_when_response_cost_missing(self, mock_completion):

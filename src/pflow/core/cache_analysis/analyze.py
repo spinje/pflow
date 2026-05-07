@@ -2668,6 +2668,41 @@ def _emit_padding_advisories(
     return compute_padding_advisories(candidates)
 
 
+def _is_cache_related_diagnostic(diag: Diagnostic) -> bool:
+    """Return True for diagnostics that ``analyze-cache`` should surface.
+
+    Two paths flow through ``validate_data_flow``:
+
+    1. **Catalog-IDed** cache findings (``cache.order-mismatch``,
+       ``cache.unused-chunk``, ``cache.invalid-on-non-llm``,
+       ``llm.thinking-temperature-mismatch``). These have ``diag.id`` set
+       to a key in ``CACHE_WARNING_CATALOG``.
+    2. **Un-IDed** cache reference / shape errors emitted directly via
+       ``Diagnostic(...)`` from ``data_flow.py``: duplicate ``prompt_cache``
+       entries, undeclared chunk references, ``${var}`` resolution failures
+       inside cache items, batch-scoped references inside ``## Cache``. Per
+       spec § "Stable Warning ID Catalog" these reuse the general validation
+       machinery and don't carry catalog IDs, but spec § "Validation
+       Location" explicitly requires them to surface in BOTH ``pflow run``
+       AND ``pflow analyze-cache``.
+
+    Detection for (2) leans on ``context.path``: every un-IDed cache emitter
+    in ``data_flow.py`` sets a path under ``cache.`` or containing
+    ``.prompt_cache``. Other ``validate_data_flow`` outputs (cycle detection,
+    undefined-node references, etc.) have different path shapes and are
+    correctly excluded.
+    """
+    from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
+
+    if diag.id and diag.id in CACHE_WARNING_CATALOG:
+        return True
+    context = diag.context or {}
+    path = context.get("path")
+    if not isinstance(path, str):
+        return False
+    return path.startswith("cache.") or ".prompt_cache" in path
+
+
 def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str | None) -> list[Diagnostic]:
     """Surface validator-shipped cache findings in analyze-cache output.
 
@@ -2684,13 +2719,10 @@ def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str
     validator may cache diagnostic instances across calls, so mutating
     ``diag.context`` would leak the workflow tag.
 
-    Filter is **catalog-membership**, not prefix match: the catalog historically
-    held only ``cache.*`` IDs but now also carries one ``llm.*`` entry
-    (``llm.thinking-temperature-mismatch``). Pinning to membership instead of
-    prefix prevents future namespace additions from silently being dropped here.
+    Filter contract: see ``_is_cache_related_diagnostic`` — passes both
+    catalog-IDed cache findings AND un-IDed cache reference errors that
+    spec § "Validation Location" requires both entry points to surface.
     """
-    from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
-
     try:
         diagnostics = validate_data_flow(workflow_ir, check_inputs=False, workflow_path=workflow_path)
     except Exception:
@@ -2698,7 +2730,7 @@ def _cache_validator_findings(workflow_ir: dict[str, Any], *, workflow_path: str
         return []
     enriched: list[Diagnostic] = []
     for diag in diagnostics:
-        if diag.id is None or diag.id not in CACHE_WARNING_CATALOG:
+        if not _is_cache_related_diagnostic(diag):
             continue
         existing = dict(diag.context or {})
         affected = existing.get("affected_workflow")

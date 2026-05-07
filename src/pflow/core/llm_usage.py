@@ -15,6 +15,12 @@ class NormalizedLiteLLMUsage:
     cache_creation_input_tokens: int
     cache_read_input_tokens: int
     input_token_accounting: InputTokenAccounting
+    # ``True`` iff the source provider returned at least one cache-token
+    # field. ``False`` means absent telemetry — distinct from "provider
+    # reported zero." Consumers that gate observed-tier cache analysis
+    # (e.g. ``cache.below-min-tokens`` runtime emission) MUST check this
+    # before treating zero counts as evidence the cache failed to fire.
+    has_cache_telemetry: bool
 
 
 def normalize_litellm_usage_tokens(
@@ -34,11 +40,15 @@ def normalize_litellm_usage_tokens(
       already total.
     - ``prompt_tokens < cache_creation + cache_read`` means prompt_tokens is
       uncached-only, so the cache split is added back.
+
+    Cache-telemetry presence is derived from whether either cache field came
+    in non-None — see ``has_cache_telemetry`` field.
     """
     prompt = _non_negative_int(prompt_tokens)
     creation = _non_negative_int(cache_creation_input_tokens)
     read = _non_negative_int(cache_read_input_tokens)
     cacheable = creation + read
+    has_cache_telemetry = cache_creation_input_tokens is not None or cache_read_input_tokens is not None
 
     if prompt >= cacheable:
         input_tokens = prompt
@@ -55,6 +65,7 @@ def normalize_litellm_usage_tokens(
         cache_creation_input_tokens=creation,
         cache_read_input_tokens=read,
         input_token_accounting=accounting,
+        has_cache_telemetry=has_cache_telemetry,
     )
 
 

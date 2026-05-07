@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from pflow.core.llm_client import AdapterResponse
+from pflow.core.llm_usage import normalize_litellm_usage_tokens
 
 # Shared default responses for known schemas — keyed by schema NAME (Pydantic
 # class __name__ or JSON Schema "title"). MockLLMClient reads from this table
@@ -120,8 +121,8 @@ class MockLLMClient:
         *,
         cost_usd: Optional[float] = None,
         warnings: list[dict[str, Any]] | None = None,
-        cache_creation_input_tokens: int = 0,
-        cache_read_input_tokens: int = 0,
+        cache_creation_input_tokens: Optional[int] = 0,
+        cache_read_input_tokens: Optional[int] = 0,
     ) -> None:
         """Configure a response for a (model, schema) pair.
 
@@ -143,12 +144,14 @@ class MockLLMClient:
                 matches production behavior for unknown-pricing models.
             warnings: Optional structured adapter warnings (each entry has
                 ``kind``, ``text``, and ``context``). Defaults to ``[]``.
-            cache_creation_input_tokens: Stage the cache-write token count
-                for the returned ``usage`` dict. Default ``0`` matches the
-                pre-Task-159 mock behavior. Used by C-phase rendering tests
-                + E.1 trace-format tests that assert on cache telemetry.
-            cache_read_input_tokens: Stage the cache-read token count for
-                the returned ``usage`` dict. Default ``0``.
+            cache_creation_input_tokens: Stage the cache-write token count.
+                ``int`` → telemetry present at that value. ``None`` → simulate
+                a provider that did not expose cache telemetry (e.g. cold
+                OpenAI). Default ``0`` matches pre-Task-159 mock behavior:
+                telemetry present, reporting zero. ``has_cache_telemetry`` is
+                derived from whether either cache token is non-None.
+            cache_read_input_tokens: Stage the cache-read token count. Same
+                shape as ``cache_creation_input_tokens``.
         """
         name = _schema_name(schema) or "text"
         key = f"{model}:{name}"
@@ -201,8 +204,12 @@ class MockLLMClient:
             return list(self._warnings[f"*:{name}"])
         return []
 
-    def _get_cache_creation(self, model: str, schema: Any) -> int:
-        """Resolve staged cache-write token count for a (model, schema) pair."""
+    def _get_cache_creation(self, model: str, schema: Any) -> Optional[int]:
+        """Resolve staged cache-write token count for a (model, schema) pair.
+
+        Returns ``None`` when the test staged absent telemetry; the mock
+        emits ``has_cache_telemetry=False`` in that case.
+        """
         name = _schema_name(schema) or "text"
         if f"{model}:{name}" in self._cache_creation_tokens:
             return self._cache_creation_tokens[f"{model}:{name}"]
@@ -210,8 +217,11 @@ class MockLLMClient:
             return self._cache_creation_tokens[f"*:{name}"]
         return 0
 
-    def _get_cache_read(self, model: str, schema: Any) -> int:
-        """Resolve staged cache-read token count for a (model, schema) pair."""
+    def _get_cache_read(self, model: str, schema: Any) -> Optional[int]:
+        """Resolve staged cache-read token count for a (model, schema) pair.
+
+        ``None`` semantic mirrors ``_get_cache_creation``.
+        """
         name = _schema_name(schema) or "text"
         if f"{model}:{name}" in self._cache_read_tokens:
             return self._cache_read_tokens[f"{model}:{name}"]
@@ -294,17 +304,31 @@ class MockLLMClient:
         # ``set_response(..., cost_usd=...)``. Mirrors production behavior
         # for unknown-pricing models (LiteLLM returns None there too).
         input_tokens = max(1, len(prompt.split()))
+        # Derive cache fields via the shared normalizer so the mock mirrors
+        # adapter semantics. Optional[int] preserves "telemetry absent" when
+        # tests stage ``cache_*_input_tokens=None`` — matches production
+        # providers that don't expose cache fields (e.g. cold OpenAI).
+        cache_creation_raw = self._get_cache_creation(model, schema)
+        cache_read_raw = self._get_cache_read(model, schema)
+        normalized = normalize_litellm_usage_tokens(
+            prompt_tokens=input_tokens,
+            cache_creation_input_tokens=cache_creation_raw,
+            cache_read_input_tokens=cache_read_raw,
+        )
         # Mirror the adapter's stable usage shape exactly. ``thinking_tokens``
         # / ``thinking_budget`` default to 0 (matching non-reasoning calls);
         # tests that need specific reasoning-token values can construct an
         # AdapterResponse directly via monkeypatch.
         usage = {
             "model": model,
-            "input_tokens": input_tokens,
+            "input_tokens": normalized.input_tokens,
+            "uncached_input_tokens": normalized.uncached_input_tokens,
             "output_tokens": 50,
-            "total_tokens": input_tokens + 50,
-            "cache_creation_input_tokens": self._get_cache_creation(model, schema),
-            "cache_read_input_tokens": self._get_cache_read(model, schema),
+            "total_tokens": normalized.input_tokens + 50,
+            "cache_creation_input_tokens": normalized.cache_creation_input_tokens,
+            "cache_read_input_tokens": normalized.cache_read_input_tokens,
+            "has_cache_telemetry": normalized.has_cache_telemetry,
+            "input_token_accounting": normalized.input_token_accounting,
             "thinking_tokens": 0,
             "thinking_budget": 0,
             "cost_usd": self._get_cost(model, schema),

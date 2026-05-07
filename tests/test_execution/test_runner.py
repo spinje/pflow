@@ -302,6 +302,64 @@ def test_emit_observed_below_min_cache_warning_skips_when_no_provider_telemetry(
     assert "__warnings__" not in shared
 
 
+def test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry() -> None:
+    """Reviewer Finding 2: when a provider returns usage but no cache telemetry
+    (e.g. cold OpenAI calls have no ``cache_creation_input_tokens`` /
+    ``cache_read_input_tokens`` fields), the runtime guard must skip rather
+    than treat ``0+0`` as evidence the cache failed.
+
+    Pre-fix: ``LLMNode.post()`` synthesized the cache keys defaulting to 0,
+    so the guard ``not in llm_usage`` check was structurally ineffective.
+    Fix: ``has_cache_telemetry`` boolean carries presence/absence through
+    the runtime → trace boundary; the guard checks it directly.
+
+    Mutation contract: revert the guard to the ``not in llm_usage`` check
+    OR set ``has_cache_telemetry=True`` in the fixture; this test fails
+    because ``cache.below-min-tokens`` is incorrectly emitted.
+    """
+    from types import MappingProxyType
+
+    from pflow.core.cache_render import CacheRenderContext
+    from pflow.nodes.llm.llm import _emit_observed_below_min_cache_warning
+
+    cache_ctx = CacheRenderContext(
+        cache_block=None,
+        subset=("small_doc",),
+        prewarm=False,
+        unresolved_batch_prompt=None,
+        batch_alias=None,
+    )
+    shared: dict[str, object] = {
+        "__pflow_cache_render__": MappingProxyType({"ask": cache_ctx}),
+        "_pflow_workflow_file": "/abs/x.pflow.md",
+    }
+
+    # Faithful "OpenAI cold call" shape: meaningful input_tokens, cache
+    # fields synthesized to 0 because the provider didn't expose them.
+    # ``has_cache_telemetry=False`` is the load-bearing absence signal.
+    _emit_observed_below_min_cache_warning(
+        shared=shared,
+        node_id="ask",
+        model="openai/gpt-4o",
+        llm_usage={
+            "model": "openai/gpt-4o",
+            "input_tokens": 5000,
+            "uncached_input_tokens": 5000,
+            "output_tokens": 200,
+            "total_tokens": 5200,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "has_cache_telemetry": False,
+            "input_token_accounting": "total_includes_cache",
+        },
+    )
+
+    assert "__warnings__" not in shared, (
+        "Provider returned no cache telemetry — observed-tier detection must skip "
+        "rather than emit a false-positive cache.below-min-tokens warning."
+    )
+
+
 def test_validator_called_exactly_once():
     """WorkflowValidator.validate must be called exactly once per runner.run().
 

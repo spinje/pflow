@@ -8790,3 +8790,263 @@ Files: `cli/commands/analyze_cache.py`, `core/cache_analysis/__init__.py`,
 - `test_plan_drift.py` (34/34) green throughout both rounds.
 - All ≥80 confidence findings either fixed (11) or actively deferred
   with rationale (3).
+
+## PR #378 external review pass — 3 critical fixes (2026-05-07)
+
+After the 7-agent specialized review wave above, an external reviewer
+landed `scratchpads/task159-pr-review-20260507.md` with 5 findings (2
+Critical, 2 Warning, 1 Suggestion). The 7-agent wave had MISSED 2 of the
+2 critical findings — both real correctness bugs the orchestrator's
+"already-found-and-fixed" exclusion list told the agents to skip. The
+external review re-found them by approaching the diff fresh without that
+exclusion.
+
+### Findings re-verified before fixing
+
+All 5 findings spot-checked against actual code before triage. 4 of 5
+hold up; 1 is already-filed (GH #359). Verification rubric: confirm with
+file:line evidence + mental reproduction.
+
+| # | Reviewer claim | Verified | Action |
+|---|---|---|---|
+| 1 | `analyze-cache` filters validator diagnostics by catalog membership; un-IDed cache errors silently dropped | ✅ Real | Fix |
+| 2 | `_emit_observed_below_min_cache_warning` guard structurally ineffective because `LLMNode.post()` always synthesizes cache keys at 0 | ✅ Real | Fix |
+| 3 | `LLMNode.post()` drops `uncached_input_tokens` and `input_token_accounting` from documented runtime contract | ✅ Real | Fix |
+| 4 | Analyzer imports LiteLLM without log suppression | ✅ Real but **already filed** as GH #359 | Defer |
+| 5 | User `system` placed before cache chunks reduces cross-call hit rate | ⚠️ Design question | Document, defer |
+
+### Why the 7-agent wave missed Findings 1–3
+
+The 7-agent orchestration provided each agent with an "already found and
+fixed" exclusion list to prevent re-litigating earlier-segment fixes.
+That list told `review-silent-failures`:
+
+> **The post-implementation guard at line 187 was a fix.**
+
+This was wrong. The guard is structurally ineffective because
+`LLMNode.post()` always synthesizes the cache keys (defaults 0), so the
+`not in llm_usage` check never fires. The exclusion list misled the
+agent. **Lesson**: when seeding "already-fixed" exclusions, verify the
+fix actually closes the bug before claiming it's done. A test that
+passes in isolation doesn't prove the production code path covers the
+scenario.
+
+### Fix 1 — analyze-cache un-IDed cache validation pass-through
+
+**Bug**: `_cache_validator_findings` filtered diagnostics by catalog
+membership (`diag.id in CACHE_WARNING_CATALOG`). Per spec § "Stable
+Warning ID Catalog", four cache validators emit un-IDed:
+`_make_duplicate_chunk_diagnostic`, `_make_undeclared_chunk_diagnostic`,
+`_make_chunk_resolution_diagnostic`, `_make_batch_scoped_rejection_diagnostic`.
+These reuse the general validation pipeline by design — but spec
+§ "Validation Location" requires both `pflow run` AND `pflow analyze-cache`
+to surface them. The catalog-membership filter dropped them silently.
+
+**Reviewer's reproduction**: workflow with `prompt_cache: [typo]` →
+`analyze()` reports only `cache.unused-chunk`; `blocking_errors` is
+empty. Pre-fix, agents got "all good" output for workflows pflow would
+reject at run-time.
+
+**Fix**: extracted `_is_cache_related_diagnostic(diag) -> bool` helper.
+Filter passes catalog-IDed diagnostics OR un-IDed diagnostics whose
+`context.path` starts with `cache.` or contains `.prompt_cache`. Other
+data-flow diagnostics (cycles, undefined nodes) have different path
+shapes and are correctly excluded.
+
+**Top-10% design choice**: extracted helper rather than inlining the
+predicate. Future refactor toward giving these errors catalog IDs (full
+"every error has a stable code" — rustc / mypy / ruff pattern) is
+incremental from this seam; the helper localizes the "what is cache-
+related" semantic in one place.
+
+### Fix 2 — `has_cache_telemetry` boolean threaded through adapter
+
+**Bug**: `normalize_litellm_usage_tokens` used `_non_negative_int` to
+default `None → 0` for cache fields. Then `LLMNode.post()` synthesized
+`cache_creation_input_tokens` and `cache_read_input_tokens` defaulting
+to 0 in `shared["llm_usage"]`. The runtime guard at
+`_emit_observed_below_min_cache_warning:187` checked
+`"cache_creation_input_tokens" not in llm_usage` — but the keys were
+always present, so the guard never fired. Detector then saw
+`observed_total = 0+0 = 0` and emitted false-positive
+`cache.below-min-tokens` for any provider (e.g. cold OpenAI) that
+didn't expose cache telemetry.
+
+**Reviewer's reproduction**: OpenAI-shaped response with 5,000 input
+tokens, no cache fields → false-positive warning saying cache was
+below the 1,024 minimum.
+
+**Fix shape considered**:
+- (a) Make `cache_creation_input_tokens` Optional[int] in `llm_usage`
+  dict — semantic change to a public-ish field; existing consumers
+  (cost computation, trace rendering, hashing) all expect int.
+- (b) Add explicit `has_cache_telemetry: bool` flag — additive,
+  preserves backward compat, top-10% data + metadata pattern from
+  protobuf / json-schema. **Chosen.**
+
+**Implementation**:
+1. `NormalizedLiteLLMUsage` adds `has_cache_telemetry: bool`. Derived
+   as `cache_creation_input_tokens is not None or cache_read_input_tokens is not None`.
+2. New `_opt_int(obj, attr) -> int | None` helper at `llm_client.py`
+   for the cache-telemetry seam — preserves Optional[int] where
+   `_safe_int` collapses None → 0. `_safe_int` kept for fields where
+   defaulting is correct (output_tokens, etc.).
+3. Adapter `_normalize` uses `_opt_int` for
+   `cache_creation_input_tokens`, `cache_read_input_tokens`, and the
+   Gemini/OpenAI fallback `prompt_tokens_details.cached_tokens`.
+4. Adapter usage dict emits `has_cache_telemetry: bool`.
+5. `LLMNode.post()` copies it through to `shared["llm_usage"]`.
+6. Guard at `_emit_observed_below_min_cache_warning` checks
+   `llm_usage.get("has_cache_telemetry", False)` instead of the
+   structurally-ineffective `not in` check.
+
+**Top-10% design choice**: Optional[int] preserved at adapter seam (one
+function: `_opt_int`); presence flag carries forward as boolean
+(simplest consumer-side dispatch). Mirrors how rust crates use
+`Option<u64>` at parsing boundaries and `bool` at decision boundaries.
+
+### Fix 3 — `uncached_input_tokens` + `input_token_accounting` flow through
+
+**Bug**: adapter at `llm_client.py:858-870` emits these fields; docs
+(`caching.md:208`, `template-variables.mdx:247-252`,
+`llm.mdx:53-58`, `cache_analysis/CLAUDE.md:26`) document them as
+`llm_usage` fields. But `LLMNode.post()` constructed a partial
+synthesized dict without copying them through. Trace events lacked
+the documented split.
+
+**Fix**: added both fields to the synthesized dict at `llm.py`
+(alongside `has_cache_telemetry` from Fix 2). Three lines.
+
+### Test infrastructure update
+
+`tests/shared/llm_mock.py::MockLLMClient` updated to mirror adapter
+shape exactly:
+
+- `set_response` accepts `cache_creation_input_tokens: Optional[int] = 0`
+  — None to simulate absent telemetry, int to stage values.
+- Mock now uses `normalize_litellm_usage_tokens` to derive `has_cache_telemetry`,
+  `uncached_input_tokens`, and `input_token_accounting` — eliminates a
+  drift class where the mock's usage dict diverged from production.
+
+Top-10% test pattern: shared normalization helper used by both mock and
+real adapter. The mock tracks the real shape automatically when the
+adapter changes.
+
+### Tests added (4 new) + updated (3)
+
+New regression tests:
+
+- `test_analyze_cache_surfaces_undeclared_prompt_cache_chunk_error`
+  (test_cache_analysis_per_id_emission.py) — Fix 1; mutation contract
+  documented.
+- `test_analyze_cache_surfaces_batch_scoped_reference_in_cache_block`
+  (test_cache_analysis_per_id_emission.py) — Fix 1; mutation contract.
+- `test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry`
+  (test_runner.py) — Fix 2; faithful "OpenAI cold call" shape with
+  ``has_cache_telemetry=False``. Mutation contract: setting True or
+  reverting guard fails the test.
+- `test_usage_normalized_fields_propagate_through_post`
+  (test_llm.py) — Fix 3; locks the documented runtime contract for
+  three normalized fields. Mutation contract: dropping any field from
+  the post() dict construction fails the test.
+
+Updated:
+
+- `test_anthropic_cache_fields` — asserts `has_cache_telemetry: True`
+  when provider reports.
+- `test_no_cache_tokens_zeroed` — asserts `has_cache_telemetry: False`
+  for cold OpenAI calls (Fix 2 regression gate at the adapter level).
+- `test_usage_data_stored_correctly` — full dict shape includes 3 new
+  fields with documented defaults.
+
+### Fixture fix surfaced as collateral
+
+`test_parent_cache_declaration_does_not_suppress_child_recommendation`
+fixture had `var: "${concept}"` which violates the parser invariant
+`name == var_expr` (parser stores bare names). Pre-fix this was masked
+because un-IDed validator diagnostics were filtered out; Fix 1 surfaces
+the violation. Updated to `var: "concept"` and added an explanatory
+comment + `inputs` declaration so the chunk resolves cleanly.
+
+### What I deferred and why
+
+- **Finding 4 (LiteLLM log suppression)** — already filed as GH #359
+  during Stage 2 cleanup. The 7-agent wave correctly identified it;
+  this external review re-found it. Defer per existing v1.x scope.
+- **Finding 5 (user system placed before cache chunks)** — design
+  question with tradeoffs:
+  - Current ordering (system first): Anthropic recommendation; system
+    becomes part of cache prefix; nodes with varying `system:` don't
+    share cache.
+  - Alternative (system after cache): enables cache sharing across
+    nodes with varying system but puts system content semantically
+    after context.
+  Reviewer correctly flags the tradeoff; existing test at
+  `test_user_system_prepended_without_marker` locks the current
+  behavior. Worth documenting in `pflow guide caching` so agents know
+  cross-node sharing requires uniform `system:`. v1.x design
+  discussion.
+
+### Tacit knowledge for next agent
+
+1. **`_safe_int` is wrong for fields where None vs 0 carries semantic.**
+   Use `_opt_int` (Optional[int]-preserving) at seams where consumers
+   need to distinguish "absent" from "zero." Cache telemetry is the
+   first such seam; future telemetry fields (e.g., model-specific
+   reasoning counts) may need the same treatment. Both helpers exist
+   side-by-side at `llm_client.py`; pick the right one based on whether
+   absence carries meaning.
+
+2. **Mock-as-adapter-mirror via shared normalization.** `MockLLMClient`
+   now calls `normalize_litellm_usage_tokens` directly. When you add a
+   new field to the normalizer, the mock picks it up automatically.
+   Eliminates the drift class where pre-fix the mock's usage dict
+   shape diverged from production (which would silently break
+   pitfall-#19-style tests).
+
+3. **Catalog membership vs path-based filter for cache validation.**
+   The current filter at `_cache_validator_findings` is hybrid: catalog
+   membership for IDed findings, path-prefix for un-IDed findings. A
+   future refactor giving every cache error a catalog ID would
+   simplify to pure catalog membership. Until that ships, the helper
+   `_is_cache_related_diagnostic` is the SSoT for "what counts as
+   cache-related"; extending the un-IDed validators (e.g., for new
+   reference-resolution shapes) means adding to that helper too.
+
+4. **Exclusion lists for review orchestration are dangerous when
+   wrong.** The 7-agent wave's exclusion list claimed Finding 2 was
+   already fixed. The external review didn't have that exclusion and
+   re-found it. Lesson: verify the fix actually closes the bug before
+   claiming it's done. "Test passes in isolation" ≠ "production code
+   path is covered."
+
+5. **Reviewer-found tests must be honest about reproduction conditions.**
+   Each new regression test documents the reviewer-reported scenario
+   as faithfully as possible (cold OpenAI shape, typo'd prompt_cache,
+   etc.) and includes a mutation contract that fails when the
+   production fix is reverted. This is the floor for "the fix is real,
+   not coincidental."
+
+### Verification
+
+- **6,342 tests passing** on default suite (`-m "not e2e"`) — +4 from
+  baseline 6,338 (4 new regression tests; 0 deletions).
+- `make check` clean: ruff + ruff-format + mypy + deptry.
+- `test_golden_baseline_hashes_match` (DD#19) green.
+- `test_plan_drift.py` 34/34 green.
+- End-to-end reproduction with reviewer's typo scenario confirms
+  blocking_errors now contains the previously-dropped error.
+- All 4 new regression tests have documented mutation contracts.
+
+### Open hedged claims
+
+- **NOT VERIFIED**: real-API false-positive scenario at `pflow run`
+  level. The new helper-level test exercises the guard logic directly
+  with a faithful "OpenAI cold call" usage shape. A real-API run with
+  RUN_LLM_TESTS=1 against OpenAI would confirm end-to-end, but the
+  unit-level test catches the regression class structurally.
+- **NOT VERIFIED**: Gemini fallback `prompt_tokens_details.cached_tokens=0`
+  scenario. With the new `_opt_int` helper, an explicit `cached_tokens=0`
+  produces `has_cache_telemetry=True` (presence with zero value);
+  testing this needs a Gemini-shaped fixture. Filed as a future
+  enhancement if Gemini's behavior surfaces in production.

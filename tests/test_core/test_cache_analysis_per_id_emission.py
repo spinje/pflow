@@ -607,12 +607,19 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
     """Parent ## Cache blocks are not inherited by sub-workflows."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
+        # Declare ``concept`` as a workflow input so the ## Cache chunk
+        # resolves cleanly. Without this, the un-IDed cache resolution
+        # validator would emit an additional diagnostic that analyze-cache
+        # now correctly surfaces (per spec § "Validation Location").
+        "inputs": {"concept": {"type": "string"}},
         "cache": {
             "ttl": "5m",
             "items": [
                 {
+                    # Parser invariant: ``name == var`` (both bare; no
+                    # ``${}`` wrapping). See ``markdown_parser._build_cache_dict``.
                     "name": "concept",
-                    "var": "${concept}",
+                    "var": "concept",
                     "prose_before": "The concept",
                     "_source_line": 1,
                 }
@@ -3286,3 +3293,89 @@ def test_opaque_prompt_silent_when_root_not_in_workflow() -> None:
     }
     result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
     assert "cache.opaque-prompt" not in {d.id for d in result.warnings}
+
+
+# ---------------------------------------------------------------------------
+# Reviewer-finding regressions (scratchpads/task159-pr-review-20260507.md)
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_cache_surfaces_undeclared_prompt_cache_chunk_error() -> None:
+    """Reviewer Finding 1: a typo in ``prompt_cache:`` referencing an
+    undeclared cache chunk must surface as a blocking error in
+    ``analyze-cache``, not be silently dropped.
+
+    Pre-fix the catalog-membership filter at ``_cache_validator_findings``
+    let only catalog-IDed diagnostics through. ``_make_undeclared_chunk_diagnostic``
+    is intentionally un-IDed (per spec § "Stable Warning ID Catalog") but
+    spec § "Validation Location" requires both ``pflow run`` AND
+    ``pflow analyze-cache`` to surface it. The new filter passes paths
+    matching ``cache.*`` or ``.prompt_cache``.
+
+    Mutation contract: revert ``_is_cache_related_diagnostic`` to the
+    catalog-only check at ``analyze.py``; this test fails because the
+    typo error is silently dropped.
+    """
+    workflow_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "cache": {
+            "ttl": "5m",
+            "items": [
+                {"name": "concept", "var": "concept", "prose_before": "The concept", "_source_line": 1},
+            ],
+        },
+        "nodes": [
+            {
+                "id": "use-it",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                # Intentional typo: ``conept`` vs declared ``concept``.
+                "prompt_cache": ["conept"],
+                "params": {"prompt": "Use the concept context."},
+            }
+        ],
+    }
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    error_msgs = [d.message for d in result.warnings if d.severity.value == "error"]
+    assert any("undeclared cache chunk 'conept'" in msg for msg in error_msgs), (
+        f"Undeclared chunk error should surface in analyze-cache output. Saw: {[d.id for d in result.warnings]}"
+    )
+
+
+def test_analyze_cache_surfaces_batch_scoped_reference_in_cache_block() -> None:
+    """Reviewer Finding 1: a batch-scoped ``${item.X}`` reference inside
+    ``## Cache`` must surface as a blocking error in ``analyze-cache``.
+
+    Mutation contract: revert ``_is_cache_related_diagnostic`` to catalog-only;
+    this test fails because the batch-scoped error is dropped.
+    """
+    workflow_ir = {
+        "inputs": {"items_list": {"type": "list"}},
+        "cache": {
+            "ttl": "5m",
+            # Hand-construct an item whose var is batch-scoped (``item.value``).
+            # The parser would reject this at parse-time, but this fixture
+            # bypasses the parser to drive the validator directly — same shape
+            # an in-memory IR construction or programmatic builder might
+            # produce. The downstream contract is: validate_data_flow rejects
+            # it, and analyze-cache surfaces the rejection.
+            "items": [
+                {"name": "item.value", "var": "item.value", "prose_before": "Item:", "_source_line": 1},
+            ],
+        },
+        "nodes": [
+            {
+                "id": "fan-out",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "batch": {"items": "${items_list}", "as": "item"},
+                "params": {"prompt": "Process ${item.value}"},
+            }
+        ],
+    }
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    error_msgs = [d.message for d in result.warnings if d.severity.value == "error"]
+    assert any("batch-scoped" in msg for msg in error_msgs), (
+        "Batch-scoped reference in ## Cache should surface as error. "
+        f"Saw: {[(d.id, d.severity.value, d.message[:60]) for d in result.warnings]}"
+    )

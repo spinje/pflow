@@ -803,13 +803,23 @@ def _normalize(
 
     usage_obj = raw.usage
 
-    cache_creation = _safe_int(getattr(usage_obj, "cache_creation_input_tokens", None))
-    cache_read = _safe_int(getattr(usage_obj, "cache_read_input_tokens", None))
-    if cache_read == 0:
-        # Gemini/OpenAI fallback: read from prompt_tokens_details.cached_tokens
+    # Cache fields preserved as ``int | None`` through normalization so we can
+    # distinguish "provider reported zero" from "provider didn't expose cache
+    # telemetry." Load-bearing for the runtime ``cache.below-min-tokens`` guard
+    # at ``LLMNode.post()``: zero counts only count as evidence the cache
+    # failed to fire when the provider actually reported them. ``_safe_int``
+    # collapses None → 0 and is wrong for this seam.
+    cache_creation = _opt_int(usage_obj, "cache_creation_input_tokens")
+    cache_read = _opt_int(usage_obj, "cache_read_input_tokens")
+    if not cache_read:
+        # Gemini/OpenAI fallback: read from prompt_tokens_details.cached_tokens.
+        # Triggers when Anthropic-style fields are absent (None) OR explicitly
+        # zero — both cases benefit from a check for the alternate field shape.
         details = getattr(usage_obj, "prompt_tokens_details", None)
         if details is not None:
-            cache_read = _safe_int(getattr(details, "cached_tokens", None))
+            fallback_read = _opt_int(details, "cached_tokens")
+            if fallback_read is not None:
+                cache_read = fallback_read
 
     prompt_tokens = _safe_int(getattr(usage_obj, "prompt_tokens", None))
     output_tokens = _safe_int(getattr(usage_obj, "completion_tokens", None))
@@ -863,6 +873,7 @@ def _normalize(
         "total_tokens": normalized_usage.input_tokens + output_tokens,
         "cache_creation_input_tokens": normalized_usage.cache_creation_input_tokens,
         "cache_read_input_tokens": normalized_usage.cache_read_input_tokens,
+        "has_cache_telemetry": normalized_usage.has_cache_telemetry,
         "input_token_accounting": normalized_usage.input_token_accounting,
         "thinking_tokens": thinking_tokens,
         "thinking_budget": thinking_budget,
@@ -1002,6 +1013,27 @@ def _safe_int(value: int | float | None) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _opt_int(obj: Any, attr: str) -> int | None:
+    """Read a token-count attribute as ``int | None``, preserving absence.
+
+    Returns ``None`` when the attribute is missing or set to ``None`` —
+    distinct from ``0`` which means "provider explicitly reported zero."
+    Used at the cache-telemetry seam (``cache_creation_input_tokens``,
+    ``cache_read_input_tokens``, ``prompt_tokens_details.cached_tokens``)
+    so downstream consumers can tell "didn't expose telemetry" from
+    "exposed telemetry that happens to be zero." Malformed values (non-int,
+    non-None) collapse to ``None`` for safe degradation — top-10% adapter
+    behavior is graceful tolerance of unexpected provider response shapes.
+    """
+    value = getattr(obj, attr, None)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _maybe_normalize_anthropic_1h_cost(
