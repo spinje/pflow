@@ -1,0 +1,132 @@
+---
+title: "Prompt caching"
+description: "Cut input cost on workflows that share context across LLM calls"
+icon: "database"
+---
+
+<Info>
+  **For the curious.** Your AI agent declares cache blocks when a workflow has multiple LLM calls sharing context. This explains what those declarations do and why they reduce cost.
+</Info>
+
+When a workflow chains many LLM calls that all reference the same context (a project brief, a long document, a fixed persona), the LLM provider re-tokenizes that context on every call. With provider-side prompt caching, that context gets tokenized once on the first call and read from a cached prefix on every subsequent call within the TTL window. Cached reads cost ~10% of normal input tokens on Anthropic and Gemini; OpenAI auto-caches at no extra rate.
+
+On a workflow with 15 sequential LLM calls sharing a 10k-token context, this typically cuts input cost 50-70% on the first run and 80%+ on reruns within the TTL.
+
+## Two cache layers
+
+pflow has two independent cache layers. Don't confuse them — they solve different problems.
+
+| Layer | What it is | How to opt out |
+|-------|------------|----------------|
+| **Memo cache** | pflow's local re-execution cache. Skips a node entirely if its inputs match a prior run. | `cache: false` per node, or `--no-cache` on `pflow run` |
+| **Provider prompt cache** | Anthropic / OpenAI / Gemini server-side caching of the system prompt prefix. Reduces input cost; the LLM still runs. | Don't declare `## Cache` / `prompt_cache:` |
+
+`--no-cache` only disables the memo layer. Provider prompt caching still fires when declared.
+
+## Declaring shared context
+
+The `## Cache` block sits alongside `## Inputs` and `## Steps` in a workflow file. It lists stable values that flow into multiple LLM calls — workflow inputs and upstream node outputs:
+
+````markdown
+## Cache
+
+- ttl: 5m
+
+```cache
+The project brief we are working from:
+
+${brief}
+
+The technical constraints:
+
+${constraints.response}
+```
+````
+
+Each chunk is one prose label followed by exactly one `${var}` reference. The prose travels into the cached system prefix verbatim — what you write is what the LLM sees as the cache label.
+
+LLM nodes opt in via `prompt_cache:`, listing chunks **in the same order** they appear in the `## Cache` block:
+
+````markdown
+### review
+
+Review the proposed solution.
+
+- type: llm
+- prompt_cache: [brief, constraints.response]
+- prompt: Review this approach: ${approach}
+````
+
+Out-of-order subsets are a hard error at validation time — providers cache by prefix, so order has to match. The error message shows the expected order so the fix is mechanical.
+
+## TTL
+
+| Value | Meaning | When to use |
+|-------|---------|-------------|
+| `5m` (default) | Provider's standard cache duration | Most workflows; matches typical run time |
+| `1h` | Anthropic 1-hour cache, Gemini 3600s, OpenAI 24h retention | Long-running workflows or reruns within an hour |
+
+`1h` writes cost roughly 2× the standard write rate on Anthropic, so it pays off when the cached prefix gets read at least 3 times within the hour.
+
+## Minimum tokens
+
+Provider caches only fire above a minimum token threshold:
+
+| Provider | Threshold |
+|----------|-----------|
+| Anthropic Sonnet 4.5, Opus 4.1, Sonnet 3.7 | 1024 |
+| Anthropic Sonnet 4.6, Haiku 3.5 | 2048 |
+| Anthropic Opus 4.5+, Haiku 4.5 | 4096 |
+| Gemini Flash | 1024 |
+| OpenAI auto-cache | 1024 |
+
+Below the threshold, the cache marker is silently no-op'd by the provider — no error, just no savings. `pflow analyze-cache` warns when a declared subset is below threshold and suggests including more chunks to cross it.
+
+## Batch prefix caching
+
+When a batch node fans out N parallel LLM calls that share a stable prefix (e.g., the same prompt template with `${item.X}` substituted), pflow can cache that prefix automatically. This requires `prewarm: true` on the batch node:
+
+````markdown
+### score-each
+
+Score each candidate against the rubric.
+
+- type: llm
+- prompt: ./score.prompt.md
+- batch:
+    items: ${candidates}
+    as: candidate
+    parallel: true
+    max_concurrent: 5
+- prewarm: true
+````
+
+With `prewarm: true`, pflow runs the first item synchronously to write the cache, then fans out the remaining N-1 calls in parallel as cache reads. Without `prewarm:`, all N calls write the cache simultaneously — paying the write cost N times for no read benefit.
+
+`pflow run --dry-run` and `pflow analyze-cache` recommend `prewarm: true` when the savings ratio crosses 5%. The decision is the agent's — `prewarm: true` adds one call's latency to the batch in exchange for ~5-10× cost reduction on the remaining items.
+
+## Sub-workflows
+
+Each `.pflow.md` file declares its own `## Cache` block scoped to its own inputs and step outputs. Sub-workflows do **not** inherit the parent's cache block — they declare independently so they can run standalone with caching.
+
+When a parent passes a value into a child workflow, both files can cache it independently. If the rendered prose labels are byte-identical across the boundary, the provider's cache fires across files (incidental, not orchestrated). `pflow analyze-cache` warns when prose labels diverge for the same logical value.
+
+## Discovering opportunities
+
+`pflow analyze-cache` is the entry point for finding savings:
+
+```bash
+pflow analyze-cache workflow.pflow.md
+```
+
+It identifies LLM calls that share context, projects savings, and emits a paste-ready `## Cache` block for greenfield workflows. See the [analyze-cache reference](/reference/cli/analyze-cache).
+
+`pflow run --dry-run` emits a one-line nudge when actionable opportunities exist — silent on optimal plans.
+
+## What changes when caching is declared
+
+- The system message your LLM call receives starts with the rendered cache content (prose + values), followed by your `prompt:`.
+- pflow's memo cache key includes the rendered cache content, so changing a cached chunk's value invalidates memo entries correctly.
+- Trace files record cache token counts (`cache_creation_input_tokens`, `cache_read_input_tokens`) so you can see actual vs predicted ratios via `pflow analyze-cache --from-trace`.
+
+The bytes sent to the LLM match what you wrote in the workflow file — pflow doesn't rewrite or restructure prompts. Caching is a metadata layer; the prompt content itself is unchanged.

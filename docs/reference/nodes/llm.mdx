@@ -21,6 +21,8 @@ The LLM node calls AI models using [LiteLLM](https://docs.litellm.ai/). Use it w
 | `max_tokens` | int | No | - | Maximum response tokens |
 | `images` | list | No | `[]` | Image URLs or file paths for vision models |
 | `output_schema` | dict | No | - | JSON Schema for structured output |
+| `prompt_cache` | list | No | `[]` | Names of `## Cache` chunks to include as a cached system prefix. See [Prompt caching](/how-it-works/prompt-caching) |
+| `prewarm` | bool | No | `false` | On batch nodes: run the first item synchronously to populate the provider cache, then fan out the rest as cache reads |
 
 ### Model resolution
 
