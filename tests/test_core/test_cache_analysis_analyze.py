@@ -1675,7 +1675,19 @@ def test_explicit_from_trace_bypasses_drift_check(tmp_path: Path) -> None:
     assert result.trace_path == str(trace_path)
 
 
-def test_autoload_silent_skip_no_notes_appended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_drift_rejected_trace_appends_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drift-rejected auto-loaded traces surface a notes entry explaining why
+    analyze-cache fell back to greenfield. Mirrors the partial-trace branch's
+    notes-entry pattern; agents reading the output can see that a stale trace
+    was rejected and how to override (``--from-trace <path>``).
+
+    Mutation contract: removing the notes.append in the drift-rejection branch
+    of ``analyze()`` causes ``drifted.notes == baseline.notes`` and the new
+    drift-note assertions both fail. Renaming the autoload-skip-silently
+    behavior here is the explicit contract change for #16; the prior
+    silent-skip variant of this test (test_autoload_silent_skip_no_notes_appended)
+    encoded the bug as the contract.
+    """
     builder = TraceFixtureBuilder()
     workflow_ir = {"nodes": [_llm_ir_node(model="anthropic/claude-haiku-4-5")]}
     drifted, _ = _autoload_analysis(
@@ -1687,7 +1699,14 @@ def test_autoload_silent_skip_no_notes_appended(tmp_path: Path, monkeypatch: pyt
     baseline = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
 
     assert drifted.trace_path is None
-    assert drifted.notes == baseline.notes
+    # Drift rejection adds at least one note above the baseline.
+    assert len(drifted.notes) > len(baseline.notes)
+    drift_notes = [n for n in drifted.notes if n not in baseline.notes]
+    assert len(drift_notes) == 1
+    note = drift_notes[0]
+    # WHAT: drift detected on auto-load; HOW: override via --from-trace.
+    assert "drift" in note.lower()
+    assert "--from-trace" in note
 
 
 def test_autoload_skips_unparseable_files_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

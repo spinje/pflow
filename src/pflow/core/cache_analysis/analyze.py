@@ -511,9 +511,17 @@ def analyze(
 
     trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
     # Auto-load only: if the workflow's current root-level LLM context drifted
-    # from the trace's recorded context, silently fall back to greenfield
-    # analysis. Explicit ``--from-trace`` bypasses this gate.
+    # from the trace's recorded context, fall back to greenfield analysis and
+    # surface a note so agents can see why the auto-loaded trace was rejected.
+    # Mirrors the partial-trace branch's notes-entry pattern below; honest-
+    # unmeasurable convention — drift IS the measurement, not silent skip.
+    # Explicit ``--from-trace`` bypasses this gate.
     if trace_path is None and trace_data is not None and not _trace_aligns_with_ir(trace_data, workflow_ir):
+        notes.append(
+            "Auto-loaded trace's root LLM context drifted from the current workflow "
+            "(renamed/added/removed root LLM nodes, or model swap); ignored. "
+            "Pass `--from-trace <path>` to use a specific trace anyway."
+        )
         trace_data = None
         used_trace_path = None
 
