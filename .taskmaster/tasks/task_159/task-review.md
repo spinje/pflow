@@ -294,7 +294,10 @@ See **Test Files** table above. The 6 most load-bearing regression gates are the
 - **`pflow save` round-trips `## Cache`** byte-for-byte. Existing memo cache entries written under the old (line-shift-corrupted) cache_key become unreachable; expire naturally via 24h TTL.
 - **`--no-cache` flag scope clarified**: disables pflow's local memo only. Does NOT disable LLM provider prompt caching. Documented in CLI help text + `pflow guide caching`.
 - **Trace filename schema bumped**: `workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json`. Existing pre-fix traces silently bypassed by autoload (no hash prefix). Acceptable per DD#34 ("auto-load is convenience; explicit loading is the contract").
-- **Path 1 boundary contract**: `ResolvedWorkflow.ir` is now fully file-resolved. Two other IR-load boundaries (`runtime/compilation/compiler.py:570-581`, `core/workflow/validator.py:784-789`) keep their resolution calls — different code paths (sub-workflow children loaded by executor, child IR validation recursion).
+- **Path 1 boundary contract**: `ResolvedWorkflow.ir` is now fully file-resolved. Three other `resolve_file_references` call sites are retained, each at a different IR-load or validation boundary — they are NOT redundant; each serves a distinct purpose:
+  - `runtime/compilation/compiler.py:570-581` — sub-workflow children loaded by `WorkflowExecutor`. Idempotent on already-resolved parent IR.
+  - `core/workflow/validator.py:784-789` — child IR loaded fresh from disk during sub-workflow validation recursion.
+  - `core/workflow/save_service.py:129` — split-IR pattern: deep-copies the workflow IR for content-aware validation while leaving the **original** IR with literal file paths intact for dependency bundling. Both shapes are needed downstream — validation reads the resolved copy; bundling persists the literal-path original.
 
 ## Future Considerations
 

@@ -185,9 +185,14 @@ def _emit_only_output(shared_storage: dict[str, Any], print_flag: bool) -> bool:
     key_found, value = find_only_output(shared_storage, only_node)
     if not key_found:
         if not print_flag:
+            # Surface concrete ``-o`` candidates so the agent's suggested next
+            # action is actionable — without enumeration the agent must either
+            # introspect the trace or guess key names.
+            available = _list_routable_keys_for_only_target(shared_storage)
+            keys_hint = f" Available shared-store keys: {', '.join(available)}." if available else ""
             click.echo(
                 f"cli: --only target '{only_node}' produced no output. "
-                "Pass -o <key> to select a specific shared-store key.",
+                f"Pass -o <key> to select a specific shared-store key.{keys_hint}",
                 err=True,
             )
         return False
@@ -199,6 +204,20 @@ def _emit_only_output(shared_storage: dict[str, Any], print_flag: bool) -> bool:
         )
     _output_with_header(value, print_flag)
     return True
+
+
+def _list_routable_keys_for_only_target(shared_storage: dict[str, Any]) -> list[str]:
+    """Return top-level shared-storage keys that ``-o <key>`` can select.
+
+    Used by the ``--only`` no-output error path so the agent sees concrete
+    ``-o`` candidates rather than abstract advice. Filters internal keys
+    (leading ``_``) since those are never user-routable. The ``-o`` flag
+    operates on the whole shared storage, not within a specific namespace —
+    so the candidates are top-level node-id keys, not sub-keys of the target.
+    Returns ``[]`` if no routable keys exist; caller decides how to render
+    absence.
+    """
+    return sorted(k for k in shared_storage if isinstance(k, str) and not k.startswith("_"))
 
 
 def _emit_auto_detected_output(

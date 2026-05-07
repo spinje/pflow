@@ -36,7 +36,9 @@ async def workflow_execute(
     4. Inline IR: {...} (for sandboxed agents or programmatic building)
 
     Built-in behaviors:
-    - Trace always saved to ~/.pflow/debug/workflow-trace-{name}-{timestamp}.json
+    - Trace always saved to ~/.pflow/debug/workflow-trace-{wf_hash}-{name}-{timestamp}.json
+      (wf_hash = first 8 hex chars of md5(workflow_path), enabling O(matches)
+      glob lookup by workflow rather than O(N) scan-and-parse).
     - Returns explicit errors with suggestions for fixing
 
     Before executing:

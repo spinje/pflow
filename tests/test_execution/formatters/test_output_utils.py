@@ -384,6 +384,9 @@ class TestAutoDetectionWarning:
 
         captured = capsys.readouterr()
         assert captured.out == ""
+        # Substring check — the post-fix message also enumerates concrete
+        # ``-o`` candidates from shared storage (covered by
+        # ``test_only_no_output_enumerates_available_keys``).
         assert (
             "cli: --only target 'fetch' produced no output. Pass -o <key> to select a specific shared-store key."
         ) in captured.err
@@ -400,3 +403,35 @@ class TestAutoDetectionWarning:
         captured = capsys.readouterr()
         assert "No outputs declared" not in captured.err
         assert "auto-detected" not in captured.err
+
+    def test_only_no_output_enumerates_available_keys(self, capsys):
+        """CORRECTNESS: --only miss surfaces routable ``-o`` candidates so the
+        agent's suggested next action is concretely actionable. Internal keys
+        (leading underscore, including ``__execution__``) are filtered.
+
+        Mutation contract: removing the enumeration in
+        ``_emit_only_output``'s no-output branch makes ``Available
+        shared-store keys:`` disappear from the error.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        # ``fetch`` namespace is missing → ``find_only_output`` returns None,
+        # firing the no-output path. Other top-level keys exist as `-o`
+        # candidates the agent can pivot to.
+        shared = {
+            "__execution__": {"only_node": "fetch"},
+            "result": "some value",
+            "extract": {"response": "extracted"},
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir={"nodes": []}, verbose=False)
+
+        captured = capsys.readouterr()
+        err = captured.err
+        # Suggestion + concrete candidates must both appear.
+        assert "produced no output" in err, err
+        assert "Available shared-store keys:" in err, err
+        # Routable top-level keys surfaced.
+        assert "result" in err
+        assert "extract" in err
+        # Internal keys filtered.
+        assert "__execution__" not in err

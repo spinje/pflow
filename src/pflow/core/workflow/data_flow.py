@@ -731,10 +731,15 @@ def _validate_cache_block(  # noqa: C901
         # Unused-chunk warning: declared but not referenced by any node's
         # prompt_cache. Excludes chunks belonging to nodes that were rejected
         # at STEP 1 — those errors take precedence, the unused warning would
-        # be noise.
-        for chunk_name in cache_item_names:
-            if chunk_name not in referenced_chunks:
-                diagnostics.append(_make_unused_chunk_diagnostic(chunk_name))
+        # be noise. Iterate the full ``cache_items`` (not just names) so we
+        # can thread ``_source_line`` through the producer — required by the
+        # catalog spec for ``cache.unused-chunk`` per warning_catalog.py.
+        for item in cache_items:
+            chunk_name = item.get("name", "")
+            if not chunk_name or chunk_name in referenced_chunks:
+                continue
+            chunk_line = item.get("_source_line")
+            diagnostics.append(_make_unused_chunk_diagnostic(chunk_name, chunk_line))
 
 
 def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fields: list[str]) -> Diagnostic:
@@ -1118,12 +1123,23 @@ def _validate_thinking_temperature_compatibility(
         )
 
 
-def _make_unused_chunk_diagnostic(chunk_name: str) -> Diagnostic:
+def _make_unused_chunk_diagnostic(chunk_name: str, source_line: int | None = None) -> Diagnostic:
     """Declared chunk that no node references via prompt_cache:.
 
     Catalog id ``cache.unused-chunk``, severity WARNING. Helps the author keep
-    the cache block lean and surfaces dead code (per spec).
+    the cache block lean and surfaces dead code (per spec). ``source_line``
+    is the chunk's line in the source file (from ``cache.items[i]["_source_line"]``)
+    — included in ``context`` per the catalog's ``required_context_keys`` so
+    agents can navigate to the offending chunk; ``None`` is tolerated for
+    programmatic IR construction paths that may not have line metadata.
     """
+    context: dict[str, Any] = {
+        "category": CACHE_WARNING_CATEGORY,
+        "chunk_name": chunk_name,
+        "path": f"cache.items[name={chunk_name}]",
+    }
+    if source_line is not None:
+        context["source_line"] = source_line
     return Diagnostic(
         severity=Severity.WARNING,
         source="validator",
@@ -1133,10 +1149,6 @@ def _make_unused_chunk_diagnostic(chunk_name: str) -> Diagnostic:
         suggestions=[
             f"Remove '{chunk_name}' from ## Cache, OR reference it from a node's `- prompt_cache: [{chunk_name}]`."
         ],
-        context={
-            "category": CACHE_WARNING_CATEGORY,
-            "chunk_name": chunk_name,
-            "path": f"cache.items[name={chunk_name}]",
-        },
+        context=context,
         see_also=["caching"],
     )

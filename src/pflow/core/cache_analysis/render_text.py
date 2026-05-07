@@ -743,22 +743,26 @@ def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
 
 
 def _format_threshold_line(threshold_info: Mapping[str, object]) -> str:
+    # Rendered as a `#` comment so agents copy-pasting the suggested block don't
+    # accidentally include a `- threshold:` line — pflow rejects it as an unknown
+    # node parameter. The leading `#` clearly signals "informational, not part of
+    # the paste-target."
     status = threshold_info.get("meets_threshold")
     total = threshold_info.get("total_tokens")
     min_tokens = threshold_info.get("min_tokens")
     model_label = threshold_info.get("model", "<unknown>")
     if status is True:
-        return f"  - threshold: {total} tokens / {min_tokens} ({model_label}) ✓"
+        return f"  # threshold: {total} tokens / {min_tokens} ({model_label}) ✓"
     if status is False:
         return (
-            f"  - threshold: {total} tokens / {min_tokens} ({model_label}) ⚠ BELOW THRESHOLD — "
+            f"  # threshold: {total} tokens / {min_tokens} ({model_label}) ⚠ BELOW THRESHOLD — "
             "cache will not fire as suggested"
         )
     if status is None and model_label == "<varies>":
-        return "  - threshold: varies per item (heterogeneous model)"
+        return "  # threshold: varies per item (heterogeneous model)"
     if status is None:
-        return "  - threshold: unable to estimate (no run data; first run will populate)"
-    return "  - threshold: <unavailable>"
+        return "  # threshold: unable to estimate (no run data; first run will populate)"
+    return "  # threshold: <unavailable>"
 
 
 def _render_cross_workflow(analysis: CacheAnalysis) -> str:
@@ -1007,9 +1011,13 @@ def _format_per_call_row(
 ) -> list[str]:
     lines: list[str] = []
     marker = f"(×{row.batch_size_estimated})" if row.is_batch and row.batch_size_estimated else ""
+    # Catalog warning IDs (e.g. ``dynamic-before-static``, ``padding-advisory``)
+    # render bare; the unexecuted-in-trace flag uses a bracketed prefix so agents
+    # grepping for catalog IDs don't conflate it with a warning. ``[unexecuted]``
+    # is a row state, not a warning — see "## Notes" section for context.
     inline_ids = warnings_by_node.get((row.workflow_path, row.node_path), [])
     if row.did_not_execute_in_trace:
-        inline_ids = [*inline_ids, "not-executed-in-trace"]
+        inline_ids = [*inline_ids, "[unexecuted]"]
     warning_marker = ", ".join(inline_ids)
     cacheable_str = f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
     ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
