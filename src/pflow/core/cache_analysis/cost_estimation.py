@@ -464,9 +464,14 @@ def _aggregate_with_cache_projection(
     """Compute first-run cost for rows with declared prompt-cache subsets."""
     if not priced_rows:
         return None
-    by_subset: dict[tuple[str | None, tuple[str, ...]], list[tuple[PerCallRow, ModelPricing, int]]] = {}
+    # Cohort key includes ``row.model`` because provider caches are model-keyed:
+    # two rows on different models with identical ``prompt_cache:`` are independent
+    # cache namespaces and BOTH pay the first-call write. Without ``row.model`` the
+    # second model would silently get ``cache_read_rate`` and over-count savings —
+    # the exact scenario ``cache.heterogeneous-models-fragment-cache`` warns about.
+    by_subset: dict[tuple[str | None, str, tuple[str, ...]], list[tuple[PerCallRow, ModelPricing, int]]] = {}
     for row, pricing, output_tokens in priced_rows:
-        subset = (row.workflow_path, tuple(row.declared_prompt_cache or ()))
+        subset = (row.workflow_path, row.model, tuple(row.declared_prompt_cache or ()))
         by_subset.setdefault(subset, []).append((row, pricing, output_tokens))
 
     total = 0.0
@@ -496,9 +501,12 @@ def _aggregate_first_run_savings(
 
     Greenfield-safe: doesn't depend on output tokens.
     """
-    by_subset: dict[tuple[str | None, tuple[str, ...]] | None, list[tuple[PerCallRow, ModelPricing]]] = {}
+    # Cohort key includes ``row.model`` for symmetry with ``_aggregate_with_cache_projection``
+    # — provider caches are model-keyed; both functions must group identically to preserve
+    # the ``no_cache - first_run_with_cache == savings_first_run_usd`` arithmetic identity.
+    by_subset: dict[tuple[str | None, str, tuple[str, ...]] | None, list[tuple[PerCallRow, ModelPricing]]] = {}
     for row, pricing, _output in priced_rows:
-        subset = (row.workflow_path, tuple(row.declared_prompt_cache)) if row.declared_prompt_cache else None
+        subset = (row.workflow_path, row.model, tuple(row.declared_prompt_cache)) if row.declared_prompt_cache else None
         by_subset.setdefault(subset, []).append((row, pricing))
 
     total_savings = 0.0

@@ -236,6 +236,177 @@ def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> Non
     assert scoped.first_run_with_cache_hypothetical_usd > single_scope.first_run_with_cache_hypothetical_usd
 
 
+def test_with_cache_projection_separates_cohorts_by_model() -> None:
+    """Defends: subset grouping must include ``row.model`` because provider caches
+    are model-keyed.
+
+    Two rows on different models (Sonnet + Haiku) sharing identical
+    ``prompt_cache:`` must pay TWO writes, not one write + one read. Pre-fix the
+    cohort key was ``(workflow_path, declared_prompt_cache)`` only — both rows
+    landed in the same cohort, the second model silently got ``cache_read_rate``,
+    and ``savings_first_run_usd`` over-counted in exactly the scenario
+    ``cache.heterogeneous-models-fragment-cache`` warns about.
+
+    Load-bearing contract: when models differ across rows, the mixed projection
+    MUST equal the sum of solo projections (no cross-model amortization).
+
+    Mutation contract: removing ``row.model`` from the cohort key in
+    ``cost_estimation.py::_aggregate_with_cache_projection`` would let the
+    second model's row apply at ``cache_read_rate`` instead of ``write_rate``,
+    breaking the additivity.
+    """
+    sonnet_pricing = get_model_pricing("anthropic/claude-sonnet-4-5")
+    haiku_pricing = get_model_pricing("anthropic/claude-haiku-4-5")
+    if sonnet_pricing is None or haiku_pricing is None:
+        pytest.skip("LiteLLM pricing data missing for one of the test models")
+
+    sonnet = _row(
+        node_path="sonnet-call",
+        model="anthropic/claude-sonnet-4-5",
+        input_tokens=10_000,
+        cacheable_tokens=8_000,
+        declared_prompt_cache=["x"],
+    )
+    haiku = _row(
+        node_path="haiku-call",
+        model="anthropic/claude-haiku-4-5",
+        input_tokens=10_000,
+        cacheable_tokens=8_000,
+        declared_prompt_cache=["x"],
+    )
+
+    sonnet_solo = compute_projections([sonnet], output_tokens_by_node={"sonnet-call": 500})
+    haiku_solo = compute_projections([haiku], output_tokens_by_node={"haiku-call": 500})
+    mixed = compute_projections(
+        [sonnet, haiku],
+        output_tokens_by_node={"sonnet-call": 500, "haiku-call": 500},
+    )
+
+    assert sonnet_solo.first_run_with_cache_hypothetical_usd is not None
+    assert haiku_solo.first_run_with_cache_hypothetical_usd is not None
+    assert mixed.first_run_with_cache_hypothetical_usd is not None
+    # Cross-model independence: mixed equals the sum of solo projections because
+    # each model gets its own cohort + own write. Pre-fix, the second model's
+    # row would land in the first model's cohort and silently apply
+    # cache_read_rate, making mixed strictly LESS than the sum.
+    assert mixed.first_run_with_cache_hypothetical_usd == pytest.approx(
+        sonnet_solo.first_run_with_cache_hypothetical_usd + haiku_solo.first_run_with_cache_hypothetical_usd,
+        rel=1e-9,
+    )
+
+
+def test_first_run_savings_separates_cohorts_by_model() -> None:
+    """Symmetric to ``test_with_cache_projection_separates_cohorts_by_model`` —
+    locks ``_aggregate_first_run_savings`` cohort key.
+
+    The two functions must change in lockstep to preserve the arithmetic
+    identity (see ``test_cohort_arithmetic_identity_preserved_across_models``).
+
+    Load-bearing contract: when models differ, mixed savings == sum of solo
+    savings (no cross-model amortization).
+
+    Mutation contract: dropping ``row.model`` from the cohort key in
+    ``_aggregate_first_run_savings`` lets the second model's cacheable tokens
+    apply at ``cache_read_rate`` instead of ``write_rate``, inflating
+    ``savings_first_run_usd``.
+    """
+    sonnet_pricing = get_model_pricing("anthropic/claude-sonnet-4-5")
+    haiku_pricing = get_model_pricing("anthropic/claude-haiku-4-5")
+    if sonnet_pricing is None or haiku_pricing is None:
+        pytest.skip("LiteLLM pricing data missing for one of the test models")
+
+    sonnet = _row(
+        node_path="sonnet-call",
+        model="anthropic/claude-sonnet-4-5",
+        input_tokens=10_000,
+        cacheable_tokens=8_000,
+        declared_prompt_cache=["x"],
+    )
+    haiku = _row(
+        node_path="haiku-call",
+        model="anthropic/claude-haiku-4-5",
+        input_tokens=10_000,
+        cacheable_tokens=8_000,
+        declared_prompt_cache=["x"],
+    )
+
+    sonnet_solo = compute_projections([sonnet], output_tokens_by_node={"sonnet-call": 500})
+    haiku_solo = compute_projections([haiku], output_tokens_by_node={"haiku-call": 500})
+    mixed = compute_projections(
+        [sonnet, haiku],
+        output_tokens_by_node={"sonnet-call": 500, "haiku-call": 500},
+    )
+
+    assert sonnet_solo.savings_first_run_usd is not None
+    assert haiku_solo.savings_first_run_usd is not None
+    assert mixed.savings_first_run_usd is not None
+    # Cross-model independence: solo savings on first-run are NEGATIVE for each
+    # model (single-call write costs more than the input rate it replaces — see
+    # ``test_single_call_first_run_savings_is_negative_below_break_even``).
+    # Mixed savings must equal the sum (no spurious amortization across models).
+    assert mixed.savings_first_run_usd == pytest.approx(
+        sonnet_solo.savings_first_run_usd + haiku_solo.savings_first_run_usd,
+        rel=1e-9,
+    )
+
+
+def test_cohort_arithmetic_identity_preserved_across_models() -> None:
+    """Locks the lockstep invariant: ``_aggregate_with_cache_projection`` and
+    ``_aggregate_first_run_savings`` MUST group identically.
+
+    Identity (input-side only — output cancels per the savings docstring):
+        no_cache_input - first_run_with_cache_input == savings_first_run
+
+    If only one of the two functions includes ``row.model`` in the cohort key,
+    the identity breaks and summary numbers diverge from each other. This test
+    fails loudly under that mutation.
+    """
+    sonnet_pricing = get_model_pricing("anthropic/claude-sonnet-4-5")
+    haiku_pricing = get_model_pricing("anthropic/claude-haiku-4-5")
+    if sonnet_pricing is None or haiku_pricing is None:
+        pytest.skip("LiteLLM pricing data missing for one of the test models")
+
+    rows = [
+        _row(
+            node_path="A",
+            model="anthropic/claude-sonnet-4-5",
+            input_tokens=10_000,
+            cacheable_tokens=8_000,
+            declared_prompt_cache=["x"],
+        ),
+        _row(
+            node_path="B",
+            model="anthropic/claude-haiku-4-5",
+            input_tokens=10_000,
+            cacheable_tokens=8_000,
+            declared_prompt_cache=["x"],
+        ),
+        _row(
+            node_path="C",
+            model="anthropic/claude-sonnet-4-5",
+            input_tokens=10_000,
+            cacheable_tokens=8_000,
+            declared_prompt_cache=["x"],
+        ),
+    ]
+    projections = compute_projections(
+        rows,
+        output_tokens_by_node={"A": 500, "B": 500, "C": 500},
+    )
+
+    # The lockstep invariant: output cost is the same in both projections
+    # (caching doesn't change output tokens or rate), so the difference between
+    # ``no_cache_hypothetical_usd`` and ``first_run_with_cache_hypothetical_usd``
+    # MUST equal ``savings_first_run_usd`` (which is input-only by construction).
+    # If only one of the two functions includes ``row.model`` in the cohort key,
+    # the cohort math diverges and this identity breaks.
+    assert projections.first_run_with_cache_hypothetical_usd is not None
+    assert projections.no_cache_hypothetical_usd is not None
+    assert projections.savings_first_run_usd is not None
+    input_side_delta = projections.no_cache_hypothetical_usd - projections.first_run_with_cache_hypothetical_usd
+    assert input_side_delta == pytest.approx(projections.savings_first_run_usd, rel=1e-9)
+
+
 def test_did_not_execute_rows_do_not_contribute_to_projection_costs() -> None:
     """Defends: phantom (did-not-execute) rows must be partitioned out
     before projection — otherwise they inflate ``no_cache_hypothetical``
