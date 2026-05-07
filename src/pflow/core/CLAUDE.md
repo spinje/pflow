@@ -278,6 +278,14 @@ Two-phase execution pattern for AI agents: (1) execute node → return structure
 
 Generates navigable markdown report directories from trace files. `generate_report(trace_path, output_path, only_node, total_nodes)` → `~/.pflow/reports/{name}/` with `summary.md` + per-node files (`01-node-id.md`). Batch/sub-workflow nodes get directories with nested files.
 
+**Snapshot contract**: a report directory is one coherent generated artifact for
+one trace. `generate_report()` renders into a temporary sibling directory,
+writes `.pflow-report.json`, then replaces the target directory as a unit. Do
+not append/update report files in place. Explicit output paths must be missing,
+empty, or already marked with `.pflow-report.json`; auto
+`~/.pflow/reports/{name}` paths are pflow-managed and may replace old unmarked
+directories for migration.
+
 **`--only` context**: When `only_node` and `total_nodes` are provided, summary shows `Nodes: N/M (--only 'X', K skipped)` instead of just `Nodes: N`. Only executed nodes get report files (skipped nodes aren't in the trace).
 
 **Pipeline table**: `_format_event_status()` shows `ok [cached]` for cached nodes, `**FAILED**` for errors, and `ok (N/M)` for batch nodes with item counts. The table is **per-invocation** — under loop recovery it shows both visits (visit 1 FAILED, visit 2 ok) even though the node's final aggregation state is success.

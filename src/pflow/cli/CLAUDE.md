@@ -235,7 +235,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 ## Trace, Report, and Signal Handling
 
 - Traces: `~/.pflow/debug/workflow-trace-{wf_hash}-{name}-{YYYYMMDD-HHMMSS}.json` — saved automatically (disable with `--no-trace`). The `wf_hash` is an 8-char md5 of the workflow path, used by `pflow analyze-cache` autoload to find traces for a given workflow without scanning the whole directory.
-- Reports: `--report` generates `~/.pflow/reports/{name}/` directory of markdown files (one per node + summary).
+- Reports: `--report` generates `~/.pflow/reports/{name}/` as a replaced snapshot with `.pflow-report.json`. Explicit `--report-dir` paths are preflighted before execution and must be empty or already marked as pflow report output.
 - Ctrl+C: exit code 130, no cleanup (relies on finally blocks)
 - SIGPIPE: set to SIG_IGN (prevents subprocess SIGPIPE from killing parent process). Both set in `main.py:_setup_signals()`.
 - Resource cleanup: Runner handles LLM interception cleanup in `_cleanup()`. CLI only cleans up temp files (stdin FIFO) in `execute_json_workflow`'s finally block.

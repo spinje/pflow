@@ -7,16 +7,23 @@ of markdown files — one file per node, with summaries at each level.
 import json
 import logging
 import re
+import shutil
 import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from pflow.core.exceptions import ReportGenerationError
 from pflow.runtime.workflow_trace import final_events_by_node
 
 logger = logging.getLogger(__name__)
 
 # Priority keys for extracting a label from a batch item's input data
 _LABEL_PRIORITY_KEYS = ("name", "title", "label")
+_REPORT_MARKER = ".pflow-report.json"
+_REPORT_MARKER_FORMAT = "pflow.report"
+_REPORT_MARKER_VERSION = 1
 
 
 def _safe_name(name: str) -> str:
@@ -92,6 +99,121 @@ def _item_filename(item: dict[str, Any], suffix: str = ".md") -> str:
     if label:
         return f"item-{idx}-{_slugify_label(label)}{suffix}"
     return f"item-{idx}{suffix}"
+
+
+def validate_report_output_dir(report_dir: str | Path, *, allow_unmarked_existing: bool = False) -> None:
+    """Raise if ``report_dir`` is not safe for report snapshot replacement."""
+    path = Path(report_dir)
+    if path.is_symlink():
+        raise ReportGenerationError(
+            f"Refusing to replace symlink report directory: {path}",
+            report_path=str(path),
+            suggestions=["Choose an empty directory or an existing pflow report directory."],
+            reason="symlink_target",
+        )
+    if path.exists() and not path.is_dir():
+        raise ReportGenerationError(
+            f"Report output path exists and is not a directory: {path}",
+            report_path=str(path),
+            suggestions=["Choose an empty directory or an existing pflow report directory."],
+            reason="not_directory",
+        )
+    try:
+        is_empty = not path.exists() or not any(path.iterdir())
+    except OSError as exc:
+        raise ReportGenerationError(
+            f"Failed to inspect report directory: {path}",
+            report_path=str(path),
+            suggestions=["Check directory permissions and try again."],
+            reason="inspect_failed",
+        ) from exc
+    if is_empty:
+        return
+
+    marker_path = path / _REPORT_MARKER
+    if marker_path.exists():
+        if _is_valid_report_marker(marker_path):
+            return
+        raise ReportGenerationError(
+            f"Refusing to replace report directory with invalid {_REPORT_MARKER}: {path}",
+            report_path=str(path),
+            suggestions=[
+                "Choose an empty directory.",
+                "Remove the invalid marker after verifying the directory is safe to replace.",
+            ],
+            reason="invalid_marker",
+        )
+
+    if allow_unmarked_existing:
+        return
+
+    raise ReportGenerationError(
+        f"Refusing to replace non-empty report directory without {_REPORT_MARKER}: {path}",
+        report_path=str(path),
+        suggestions=["Choose an empty directory or an existing pflow report directory."],
+        reason="unmarked_non_empty_directory",
+    )
+
+
+def _is_valid_report_marker(marker_path: Path) -> bool:
+    try:
+        data = json.loads(marker_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    return data.get("format") == _REPORT_MARKER_FORMAT and data.get("format_version") == _REPORT_MARKER_VERSION
+
+
+def _build_report_marker(trace: dict[str, Any], trace_path: Path) -> str:
+    data = {
+        "format": _REPORT_MARKER_FORMAT,
+        "format_version": _REPORT_MARKER_VERSION,
+        "workflow_name": str(trace.get("workflow_name", "workflow")),
+        "trace_path": str(trace_path),
+        "trace_format_version": str(trace.get("format_version", "unknown")),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
+def _render_report_snapshot(
+    trace: dict[str, Any],
+    trace_path: Path,
+    report_dir: Path,
+    *,
+    only_node: str | None,
+    total_nodes: int | None,
+) -> None:
+    summary = _build_summary(trace, source_path=str(trace_path), only_node=only_node, total_nodes=total_nodes)
+    (report_dir / "summary.md").write_text(summary)
+    (report_dir / _REPORT_MARKER).write_text(_build_report_marker(trace, trace_path))
+    _write_node_files(trace.get("nodes", []), report_dir, node_index=1)
+
+
+def _replace_report_dir(report_dir: Path, temp_dir: Path) -> None:
+    backup_dir = report_dir.with_name(f".{report_dir.name}.old-{uuid4().hex}")
+    try:
+        if report_dir.exists():
+            report_dir.rename(backup_dir)
+        temp_dir.rename(report_dir)
+    except OSError as exc:
+        if backup_dir.exists() and not report_dir.exists():
+            try:
+                backup_dir.rename(report_dir)
+            except OSError:
+                logger.exception("Failed to restore previous report directory %s", report_dir)
+        raise ReportGenerationError(
+            f"Failed to replace report directory: {report_dir}",
+            report_path=str(report_dir),
+            suggestions=["Check directory permissions and try again."],
+            reason="replace_failed",
+        ) from exc
+    if backup_dir.exists():
+        try:
+            shutil.rmtree(backup_dir)
+        except OSError:
+            logger.warning("Generated report %s, but failed to remove old backup %s", report_dir, backup_dir)
 
 
 def _find_notable_items(
@@ -456,21 +578,35 @@ def generate_report(
         return None
 
     # Determine output directory
+    is_auto_output = output_path is None or output_path == "auto"
     if output_path is None or output_path == "auto":
         name = _safe_name(str(trace.get("workflow_name", "workflow")))
         report_dir = Path.home() / ".pflow" / "reports" / name
     else:
         report_dir = Path(output_path)
 
-    report_dir.mkdir(parents=True, exist_ok=True)
+    validate_report_output_dir(report_dir, allow_unmarked_existing=is_auto_output)
 
-    # Generate summary.md (pass source path without mutating loaded trace)
-    summary = _build_summary(trace, source_path=str(trace_path), only_node=only_node, total_nodes=total_nodes)
-    (report_dir / "summary.md").write_text(summary)
-
-    # Generate per-node files
-    events = trace.get("nodes", [])
-    _write_node_files(events, report_dir, node_index=1)
+    try:
+        report_dir.parent.mkdir(parents=True, exist_ok=True)
+        temp_dir = report_dir.with_name(f".{report_dir.name}.tmp-{uuid4().hex}")
+        temp_dir.mkdir()
+        try:
+            _render_report_snapshot(trace, trace_path, temp_dir, only_node=only_node, total_nodes=total_nodes)
+            _replace_report_dir(report_dir, temp_dir)
+        except Exception:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
+            raise
+    except ReportGenerationError:
+        raise
+    except OSError as exc:
+        raise ReportGenerationError(
+            f"Failed to generate report directory: {report_dir}",
+            report_path=str(report_dir),
+            suggestions=["Check directory permissions and try again."],
+            reason="write_failed",
+        ) from exc
 
     return report_dir
 

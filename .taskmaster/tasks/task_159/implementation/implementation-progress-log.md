@@ -8307,3 +8307,16 @@ Key learnings:
   current patch because the immediate renderer ambiguity is fixed and the
   data-model rename is broader JSON/MCP schema churn best handled as a focused
   follow-up.
+
+## Stage 2 follow-up — Report directory snapshot replacement (2026-05-07)
+
+Implemented `scratchpads/task159-fix-briefs/08-report-directory-stale-pages.md`.
+Report directories are now coherent snapshots: pflow renders into a temporary
+sibling directory, writes `.pflow-report.json`, then replaces the target as a
+unit. Auto report dirs migrate old unmarked reports; explicit `--report-dir` /
+`pflow report -o` dirs must be empty or already marked as pflow report output.
+`pflow run --report-dir` preflights explicit dirs before workflow execution so
+unsafe report paths do not trigger side effects.
+
+Verification: focused report + CLI tests passed (`177 passed`), plus ruff,
+ruff format check, mypy on touched source, and `git diff --check`.

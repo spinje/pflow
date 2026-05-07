@@ -463,6 +463,10 @@ pflow report ~/.pflow/debug/workflow-trace-my-workflow-20260323-160000.json
 
 Reports include rendered prompts, responses, cost data, error summaries with fix suggestions, and anomaly warnings.
 
+Report output directories are replaced as generated snapshots. Custom report
+directories must be empty or already contain pflow's `.pflow-report.json`
+marker.
+
 Disable traces with `--no-trace` for faster execution (the `--report` flag overrides `--no-trace`).
 
 ## Visualize command

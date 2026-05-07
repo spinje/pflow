@@ -22,7 +22,7 @@ from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
-from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
+from pflow.core.exceptions import ReportGenerationError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
@@ -158,6 +158,8 @@ def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> No
                     _echo_trace(ctx, f"📋 Execution report: {report_dir}")
                     if only_node:
                         _echo_target_node_path(ctx, report_dir, workflow_trace.events, only_node)
+            except ReportGenerationError as report_err:
+                click.echo(f"Failed to generate report: {report_err}", err=True)
             except Exception as report_err:
                 logger.error("Failed to generate report: %s", report_err, exc_info=True)
 
@@ -581,6 +583,16 @@ def _validate_dry_run_flag_combination(
         )
 
 
+def _validate_report_dir_before_execution(report_dir: str | None) -> None:
+    """Refuse unsafe explicit report output before running workflow side effects."""
+    if report_dir is None:
+        return
+
+    from pflow.core.trace_report import validate_report_output_dir
+
+    validate_report_output_dir(report_dir, allow_unmarked_existing=False)
+
+
 def _validate_and_prepare_workflow_params(
     ctx: click.Context,
     workflow_ir: dict[str, Any],
@@ -866,6 +878,7 @@ def run(
             report_flag=report_flag,
             report_dir=report_dir,
         )
+        _validate_report_dir_before_execution(report_dir)
         ctx.obj["dry_run"] = dry_run
         ctx.obj["report"] = report_dir or ("auto" if report_enabled else None)
         ctx.obj["cache"] = cache

@@ -68,6 +68,11 @@ pflow report
 pflow report ~/.pflow/debug/workflow-trace-my-workflow-20260323-150000.json -o /tmp/old
 ```
 
+Report directories are generated snapshots. pflow replaces the whole directory
+when writing a report so old node pages cannot be mistaken for current-run
+evidence. Custom report directories must be empty or already contain
+`.pflow-report.json`, the marker pflow writes into report output.
+
 ### Comparing runs with git diff
 
 Write reports to a project-local folder. Stage the report, edit a prompt, re-run — `git diff` shows exactly what changed:

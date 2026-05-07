@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pflow.core.exceptions import ReportGenerationError
 from pflow.core.trace_report import (
     _build_batch_item_file,
     _build_batch_item_summary,
@@ -27,9 +28,11 @@ from pflow.core.trace_report import (
     _find_notable_items,
     _format_cost,
     _item_filename,
+    _replace_report_dir,
     _slugify_label,
     _suggest_template_fixes,
     generate_report,
+    validate_report_output_dir,
 )
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
@@ -100,6 +103,12 @@ class TestGenerateReport:
         assert report_dir is not None
         assert report_dir.is_dir()
         assert (report_dir / "summary.md").exists()
+        marker = json.loads((report_dir / ".pflow-report.json").read_text())
+        assert marker["format"] == "pflow.report"
+        assert marker["format_version"] == 1
+        assert marker["workflow_name"] == "test-workflow"
+        assert marker["trace_path"] == str(trace_file)
+        assert marker["trace_format_version"] == "2.0.0"
 
     def test_creates_per_node_files(self, tmp_path: Path) -> None:
         trace = _make_trace(
@@ -199,6 +208,262 @@ class TestGenerateReport:
 
         assert report_dir is not None
         assert report_dir == tmp_path / ".pflow" / "reports" / "test-workflow"
+
+    def test_regenerating_report_removes_stale_top_level_pages(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(
+            json.dumps(
+                _make_trace(
+                    nodes=[
+                        _make_event(node_id="fetch"),
+                        _make_event(node_id="transform"),
+                    ]
+                )
+            )
+        )
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="fetch")])))
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "02-transform.md").exists()
+
+        report_dir = generate_report(second_trace_file, str(report_path))
+
+        assert report_dir == report_path
+        assert (report_path / "01-fetch.md").exists()
+        assert not (report_path / "02-transform.md").exists()
+
+    def test_regenerating_report_removes_stale_nested_pages(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_batch = _make_event(
+            node_id="batch",
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "a",
+                    "success": True,
+                    "duration_ms": 50,
+                    "events": [
+                        _make_event(node_id="child-a"),
+                        _make_event(node_id="child-b"),
+                    ],
+                },
+                {
+                    "index": 1,
+                    "item": "b",
+                    "success": True,
+                    "duration_ms": 60,
+                    "events": [_make_event(node_id="child-c")],
+                },
+            ],
+        )
+        second_batch = _make_event(
+            node_id="batch",
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "a",
+                    "success": True,
+                    "duration_ms": 50,
+                    "events": [_make_event(node_id="child-a")],
+                },
+            ],
+        )
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(json.dumps(_make_trace(nodes=[first_batch])))
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[second_batch])))
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "01-batch" / "item-0-a" / "02-child-b.md").exists()
+        assert (report_path / "01-batch" / "item-1-b").exists()
+
+        generate_report(second_trace_file, str(report_path))
+
+        assert (report_path / "01-batch" / "item-0-a" / "01-child-a.md").exists()
+        assert not (report_path / "01-batch" / "item-0-a" / "02-child-b.md").exists()
+        assert not (report_path / "01-batch" / "item-1-b").exists()
+
+    def test_regenerating_report_handles_leaf_to_container_shape_change(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="process")])))
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(
+            json.dumps(
+                _make_trace(
+                    nodes=[
+                        _make_event(
+                            node_id="process",
+                            sub_workflow_events=[_make_event(node_id="inner")],
+                        )
+                    ]
+                )
+            )
+        )
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "01-process.md").exists()
+
+        generate_report(second_trace_file, str(report_path))
+
+        assert not (report_path / "01-process.md").exists()
+        assert (report_path / "01-process" / "01-inner.md").exists()
+
+    def test_regenerating_report_handles_container_to_leaf_shape_change(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(
+            json.dumps(
+                _make_trace(
+                    nodes=[
+                        _make_event(
+                            node_id="process",
+                            sub_workflow_events=[_make_event(node_id="inner")],
+                        )
+                    ]
+                )
+            )
+        )
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="process")])))
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "01-process").is_dir()
+
+        generate_report(second_trace_file, str(report_path))
+
+        assert not (report_path / "01-process").exists()
+        assert (report_path / "01-process.md").exists()
+
+    def test_explicit_non_empty_unmarked_directory_is_refused(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        report_path.mkdir()
+        existing = report_path / "notes.md"
+        existing.write_text("do not replace")
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+
+        with pytest.raises(ReportGenerationError, match="without \\.pflow-report\\.json"):
+            generate_report(trace_file, str(report_path))
+
+        assert existing.read_text() == "do not replace"
+        assert not (report_path / "summary.md").exists()
+
+    def test_explicit_invalid_marker_is_refused(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        report_path.mkdir()
+        (report_path / ".pflow-report.json").write_text("{not-json")
+        existing = report_path / "old.md"
+        existing.write_text("old")
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+
+        with pytest.raises(ReportGenerationError, match="invalid \\.pflow-report\\.json"):
+            generate_report(trace_file, str(report_path))
+
+        assert existing.read_text() == "old"
+        assert not (report_path / "summary.md").exists()
+
+    def test_auto_unmarked_existing_directory_is_replaced_for_migration(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        report_path = tmp_path / ".pflow" / "reports" / "test-workflow"
+        report_path.mkdir(parents=True)
+        (report_path / "stale.md").write_text("stale")
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="fresh")])))
+
+        report_dir = generate_report(trace_file, "auto")
+
+        assert report_dir == report_path
+        assert not (report_path / "stale.md").exists()
+        assert (report_path / ".pflow-report.json").exists()
+        assert (report_path / "01-fresh.md").exists()
+
+    def test_existing_target_file_is_refused(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        report_path.write_text("not a directory")
+
+        with pytest.raises(ReportGenerationError, match="not a directory"):
+            validate_report_output_dir(report_path, allow_unmarked_existing=False)
+
+    def test_existing_symlink_target_is_refused(self, tmp_path: Path) -> None:
+        target = tmp_path / "target"
+        target.mkdir()
+        report_path = tmp_path / "report-link"
+        report_path.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(ReportGenerationError, match="symlink"):
+            validate_report_output_dir(report_path, allow_unmarked_existing=False)
+
+    def test_render_failure_preserves_previous_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import pflow.core.trace_report as trace_report_module
+
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="old")])))
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="new")])))
+
+        generate_report(first_trace_file, str(report_path))
+        old_summary = (report_path / "summary.md").read_text()
+
+        def fail_write_node_files(
+            _events: list[dict[str, Any]],
+            _parent_dir: Path,
+            node_index: int,
+        ) -> int:
+            _ = node_index
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(trace_report_module, "_write_node_files", fail_write_node_files)
+
+        with pytest.raises(RuntimeError, match="render exploded"):
+            generate_report(second_trace_file, str(report_path))
+
+        assert (report_path / "summary.md").read_text() == old_summary
+        assert (report_path / "01-old.md").exists()
+        assert not (report_path / "01-new.md").exists()
+        assert not list(tmp_path.glob(".report.tmp-*"))
+
+    def test_replacement_failure_restores_previous_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        report_path = tmp_path / "report"
+        report_path.mkdir()
+        old_file = report_path / "old.md"
+        old_file.write_text("old")
+        temp_path = tmp_path / ".report.tmp-test"
+        temp_path.mkdir()
+        (temp_path / "new.md").write_text("new")
+
+        original_rename = Path.rename
+
+        def fail_second_rename(self: Path, target: str | Path) -> Path:
+            if self == temp_path and Path(target) == report_path:
+                raise OSError("second rename failed")
+            return original_rename(self, target)
+
+        monkeypatch.setattr(Path, "rename", fail_second_rename)
+
+        with pytest.raises(ReportGenerationError, match="Failed to replace report directory"):
+            _replace_report_dir(report_path, temp_path)
+
+        assert report_path.is_dir()
+        assert (report_path / "old.md").read_text() == "old"
+        assert not (report_path / "new.md").exists()
+        assert temp_path.exists()
 
 
 # --- _build_summary() ---

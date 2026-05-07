@@ -134,6 +134,39 @@ class WorkflowValidationError(PflowError):
         ]
 
 
+class ReportGenerationError(PflowError):
+    """Raised when pflow cannot safely generate a report directory."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        report_path: str | None = None,
+        suggestions: list[str] | None = None,
+        reason: str | None = None,
+    ) -> None:
+        self.report_path = report_path
+        self.suggestions = suggestions or []
+        self.reason = reason
+        super().__init__(message)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Report Generation Failed",
+                suggestions=self.suggestions or None,
+                source="report",
+                context={
+                    "category": "report_generation",
+                    "report_path": self.report_path,
+                    "reason": self.reason,
+                },
+            )
+        ]
+
+
 class LLMCallError(PflowError):
     """Raised by the LLM adapter for provider errors.
 
