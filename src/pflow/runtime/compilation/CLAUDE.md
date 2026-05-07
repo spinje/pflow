@@ -25,12 +25,13 @@ Also re-exported through `runtime/__init__.py`: `CompilationError`, `compile_wor
 ### `compile_workflow()` pipeline
 
 1. Parse IR (JSON string → dict, or pass through dict)
-2. **Resolve external file references** (`code: @./code.py` → file contents). Uses `_pflow_workflow_file` from `initial_params` for relative path resolution.
+2. **Resolve external file references** (`code: @./code.py` → file contents). Uses `_pflow_workflow_file` from `initial_params` for relative path resolution. Idempotent on already-resolved IR (parent-side resolution now happens at the `resolve_workflow` / `resolve_sub_workflow` boundary).
 3. `_prepare_compilation()` — validate structure, data flow, resolve inputs, validate outputs. Returns `(initial_params, warnings, resolved_defaults, env_param_names)`.
 4. `_instantiate_nodes_for_workflow()` — create bare nodes + `NodeConfig` per node
 5. `_wire_nodes()` — connect nodes via `>>` and `-` operators
 6. `_get_start_node()` — first node in IR, or explicit `start_node` field
-7. Build and return `CompiledWorkflow`
+7. `_build_cache_block(ir_dict)` — promotes the optional top-level `## Cache` section into a frozen `CacheBlockIR` on `CompiledWorkflow.cache_block`. None when the workflow declares no `## Cache`.
+8. Build and return `CompiledWorkflow`
 
 ### `_create_node_and_config()` — order matters
 
@@ -50,7 +51,8 @@ This is where bare nodes get created and configured. The step order is load-bear
 9. `split_params(params, expected_types)` → `(template_params, static_params)`
 10. `node.set_params(static_params)` — node gets ONLY static params at compile time
 11. Build `TemplateConfig` (if any templates) and `BatchConfig` (if batch)
-12. Build and return `NodeConfig`
+12. Extract per-node cache fields (LLM nodes only): `_extract_prompt_cache_items` reads top-level `prompt_cache:` into a tuple of chunk names (rejects non-list and `tuple("string")` silent-splat); `_extract_prewarm` reads top-level `prewarm:` strict-bool. Both feed `NodeConfig.prompt_cache_items` / `NodeConfig.prewarm` (defaults: empty tuple / False).
+13. Build and return `NodeConfig`
 
 ### Other functions
 

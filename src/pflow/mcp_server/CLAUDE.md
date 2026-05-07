@@ -8,7 +8,7 @@ Exposes pflow's workflow building and execution capabilities as MCP tools for AI
 
 ```
 ┌─────────────────────────────────────────┐
-│         MCP Tools (12 enabled)          │  ← FastMCP decorators, async wrappers
+│         MCP Tools (13 enabled)          │  ← FastMCP decorators, async wrappers
 │         asyncio.to_thread bridge        │
 ├─────────────────────────────────────────┤
 │      Services Layer (6 services)        │  ← Business logic, stateless pattern
@@ -64,7 +64,7 @@ src/pflow/mcp_server/
 
 Tool/resource registration happens at import time via decorators. `register_tools()` imports the modules to trigger this.
 
-## Tools (12 Enabled)
+## Tools (13 Enabled)
 
 All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — pflow is sync, MCP is async.
 
@@ -72,13 +72,14 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 - `workflow_discover(query)` — Find workflows via LLM matching. Pass full user request, not abbreviated.
 - `registry_discover(task)` — Find nodes via LLM selection. Pass full task description.
 
-**execution_tools.py** (6 tools):
+**execution_tools.py** (7 tools):
 - `workflow_execute(workflow, parameters)` — Execute with agent defaults (no repair, silent, traces saved)
 - `workflow_validate(workflow)` — Static validation without execution (10 checks including sub-workflow validation and cache lint)
 - `plan_workflow(workflow, parameters)` — Build execution plan JSON without side effects
 - `workflow_save(workflow, name, force)` — Save to library (accepts raw markdown or file path)
 - `registry_run(node_type, parameters)` — Test node to discover output structure + template paths
 - `read_fields(execution_id, field_paths)` — Read specific fields from cached `registry_run` execution
+- `analyze_cache(workflow, parameters)` — Static + trace-based cache plan analysis. Returns the same JSON shape as `pflow analyze-cache --format=json`. Auto-loads matching trace from `~/.pflow/debug/` when present.
 
 **registry_tools.py** (2 tools):
 - `registry_describe(nodes)` — Detailed specs using `build_component_context()`
