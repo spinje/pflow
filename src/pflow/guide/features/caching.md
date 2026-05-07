@@ -224,6 +224,12 @@ Matching prose labels, exact model, and prefix ordering can help incidental prov
 | `cache.cross-workflow-prose-mismatch` | info | same chunk identifier, different prose across files |
 | `cache.discrepancy` | info | `--from-trace` mode found predicted ≠ actual hit ratio |
 | `cache.prewarm-no-prefix` | info | `prewarm: true` declared but no static prefix exists |
+| `cache.consolidate-to-root-recommended` | info | sub-path cache chunks are below threshold but their root value would cache |
+| `cache.heterogeneous-models-fragment-cache` | warning | shared cached chunks are declared across multiple exact models |
+| `cache.first-call-write-penalty` | info | one exact-model call declares `prompt_cache:` with no later reads to amortize the write |
 | `cache.opaque-prompt` | info | LLM node's prompt is a single `${var}` ref to a `type: code` node — refactor inline for cache detection |
+| `cache.prompt-body-duplicates-cache` | error | prompt body repeats a value already supplied by `prompt_cache:` |
+| `cache.prompt-body-shadows-cache` | warning | prompt body overlaps a cached chunk by parent/sub-path |
+| `llm.thinking-temperature-mismatch` | error | Anthropic `reasoning_effort` is combined with `temperature` other than 1.0 |
 
 `cache.opportunities-available` is the dry-run nudge ID (separate from the catalog).
