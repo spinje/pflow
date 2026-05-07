@@ -304,7 +304,6 @@ def _display_execution_result(
 ) -> None:
     """Display execution result and set exit code."""
     from pflow.cli.error_output import output_error
-    from pflow.core.workflow.status import WorkflowStatus
 
     if result.success:
         _handle_workflow_success(
@@ -318,8 +317,6 @@ def _display_execution_result(
             metrics_collector=result.metrics,
             verbose=verbose,
         )
-        if result.status == WorkflowStatus.DEGRADED:
-            ctx.exit(2)
     else:
         _emit_failure_tag(ctx, result.metrics)
 

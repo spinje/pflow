@@ -113,6 +113,14 @@ Routing is TTY-agnostic: data always goes to stdout, diagnostics always go to st
 
 `--print` suppresses header, summary, and warnings on stderr. Data still goes to stdout.
 
+### Declared vs `--only` Output Contract
+
+Precedence is explicit and load-bearing:
+
+1. `-o/--output-key` wins in text and JSON.
+2. Full runs without `-o` use workflow-declared outputs first. Text mode streams one output (`stdout: true`, single output, or first-with-warning); JSON emits all declared outputs.
+3. `--only` runs without `-o` skip workflow-declared outputs and use `find_only_output(shared, only_node)`. Flat targets unwrap common result keys from `shared[target]`; dotted targets stream the root sub-workflow namespace. This prevents full-run outputs or unrelated root `result` keys from shadowing the node the user explicitly targeted.
+
 ### Output Auto-Detection (`find_auto_output`)
 
 Single unified implementation in `execution/formatters/output_utils.py`, used by both CLI text and JSON/MCP paths:
@@ -126,6 +134,10 @@ Single unified implementation in `execution/formatters/output_utils.py`, used by
 ### JSON/Text Duality
 
 Error output is unified: `output_error()` in `error_output.py` handles JSON/text branching for ALL error types. Success output still has parallel paths in `workflow_output.py`. `--output-format` controls stdout format only; stderr verbosity is controlled solely by `-p`.
+
+### Exit Codes
+
+Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runtime warnings. Failed workflows exit `1`; interrupted workflows exit `130`. Warning/degraded status remains visible through stderr, JSON, trace, and reports.
 
 ## Command Flags
 

@@ -289,6 +289,16 @@ pflow -p workflow.pflow.md | jq '.data'
 
 Suppresses the "Workflow output:" header, the execution summary, and stderr warnings. Data still goes to stdout (same as default mode). Useful for piping into tools that should only see the result.
 
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Workflow completed, including runs that completed with warnings (`status: "degraded"`) |
+| `1` | Workflow failed |
+| `130` | Workflow interrupted |
+
+Runtime warnings remain visible in stderr, JSON output, traces, and reports; they do not make a completed workflow a process failure.
+
 ## Validation mode
 
 Validate a workflow without running it:
@@ -395,6 +405,8 @@ The `--only` flag runs the workflow through the named node and stops. Upstream n
 ```bash
 pflow ./workflow.pflow.md --only process-data
 ```
+
+Without `-o`, `--only` streams the targeted node or sub-workflow result to stdout instead of the workflow's full-run outputs. Pass `-o <key>` when you need a specific named output.
 
 This is how agents iterate on a specific node without re-running the full workflow.
 

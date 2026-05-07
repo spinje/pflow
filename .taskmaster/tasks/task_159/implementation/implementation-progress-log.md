@@ -8132,3 +8132,58 @@ Key learnings:
 3. `cache_source` matters in report language. Memo and in-process hits are
    both zero-cost for the cached event, but only memo source cost is historical
    prior-run cost.
+
+## Stage 2 follow-up — CLI `--only` output and degraded exit contract (2026-05-07)
+
+Implemented the atomic CLI contract fix from the fresh-context plan.
+
+Behavior:
+
+- `-o/--output-key` remains highest precedence.
+- Text and JSON `--only` runs without `-o` now use target-scoped selection
+  through `find_only_output()`, so full-run declared outputs and unrelated root
+  `result` values cannot shadow the requested node.
+- Flat `--only` targets unwrap common result fields from the target namespace;
+  dotted targets return the root sub-workflow namespace, preserving the GH #344
+  batch/sub-workflow contract.
+- Default text mode now emits explicit `--only` routing notes for found/missing
+  target output. `-p --only` suppresses the routing note but keeps the existing
+  `Stopped after ... (--only)` mode line.
+- Successful `WorkflowStatus.DEGRADED` executions now exit 0. Failure remains
+  exit 1; interruption remains exit 130. Degraded status still appears in
+  stderr/JSON/trace/report channels.
+
+Files changed:
+
+- `src/pflow/execution/formatters/output_utils.py`
+- `src/pflow/cli/workflow_output.py`
+- `src/pflow/execution/formatters/success_formatter.py`
+- `src/pflow/cli/commands/run.py`
+- focused tests under `tests/test_execution/formatters/` and `tests/test_cli/`
+- internal contracts in CLI/formatter/engine `CLAUDE.md`
+- user-facing CLI docs, limited to behavior and exit-code contract only
+
+Deviation / adaptation:
+
+- Removed the older `preferred_key` responsibility from `find_auto_output()`
+  instead of layering the new selector beside it. Clear reason: the old knob
+  mixed full-run auto-detection with `--only` target routing, which is exactly
+  the ambiguity this fix is closing. Keeping it would leave two ways to express
+  target preference and make future formatter changes harder to reason about.
+- Kept implementation details out of `docs/reference/cli/index.mdx` after
+  review. Shared-store keys and selector mechanics are documented only in
+  internal guidance because MDX is user-facing.
+- Tightened tests after final review: replaced helper-only CLI overlap with a
+  real CLI regression that exercises parser -> runner -> engine output
+  population -> formatter routing, and moved JSON assertions to the public
+  `format_execution_success()` boundary. Clear reason: these are the seams
+  where the observed bugs actually happen.
+
+Key learnings:
+
+1. `--only` is not a variant of "no declared outputs"; it is an explicit
+   target-routing contract. Modeling it separately made the final code simpler.
+2. Runtime status and process exit code answer different questions. DEGRADED is
+   observability for completed execution, not process failure.
+3. User-facing docs should state behavior and control surfaces. Internal
+   mechanics belong in `CLAUDE.md` and tests.

@@ -427,6 +427,88 @@ class TestWorkflowOutputHandling:
         finally:
             Path(workflow_file).unlink()
 
+    def test_real_cli_only_node_uses_target_not_declared_outputs(self, tmp_path):
+        """Real CLI regression: --only must not stream full-run declared outputs.
+
+        This uses the parser, runner, engine output population, and CLI output
+        formatter together. The shadowing `result` output is intentionally
+        sourced from an upstream node that did execute; old flat --only routing
+        could stream that root declared output instead of the requested target.
+        """
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "first_declared": {"description": "Downstream result", "source": "${downstream.stdout}"},
+                "result": {"description": "Upstream shadow", "source": "${pre.stdout}"},
+            },
+            "nodes": [
+                {"id": "pre", "type": "shell", "cache": False, "params": {"command": "printf ROOT_SHADOW_VALUE"}},
+                {"id": "target", "type": "shell", "cache": False, "params": {"command": "printf TARGET_ONLY_VALUE"}},
+                {"id": "downstream", "type": "shell", "cache": False, "params": {"command": "printf DOWNSTREAM_VALUE"}},
+            ],
+            "edges": [],
+        }
+        workflow_file = tmp_path / "only-output-contract.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
+
+        result = runner.invoke(main, [str(workflow_file), "--only", "target"])
+
+        assert result.exit_code == 0, f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        assert "TARGET_ONLY_VALUE" in result.stdout
+        assert "ROOT_SHADOW_VALUE" not in result.stdout
+        assert "DOWNSTREAM_VALUE" not in result.stdout
+        assert "Streaming 'first_declared'" not in result.stderr
+        assert (
+            "cli: --only active — streaming auto-detected key 'stdout' from target 'target' to stdout."
+        ) in result.stderr
+
+        explicit = runner.invoke(main, ["-o", "result", str(workflow_file), "--only", "target"])
+
+        assert explicit.exit_code == 0, f"stdout: {explicit.stdout!r}\nstderr: {explicit.stderr!r}"
+        assert "ROOT_SHADOW_VALUE" in explicit.stdout
+        assert "TARGET_ONLY_VALUE" not in explicit.stdout
+        assert "--only active" not in explicit.stderr
+
+    def test_print_only_suppresses_routing_note_but_keeps_only_indicator(self, capsys):
+        """-p suppresses the routing note while preserving the --only mode line."""
+        from pflow.cli.workflow_output import _handle_text_output
+        from pflow.core.metrics import MetricsCollector
+
+        metrics = MetricsCollector()
+        metrics.record_workflow_start()
+        metrics.record_node_execution("upstream", 1.0)
+        metrics.record_workflow_end()
+
+        shared = {
+            "__execution__": {"only_node": "upstream"},
+            "upstream": {"stdout": "UPSTREAM_TARGET_OUTPUT"},
+        }
+        workflow_ir = {
+            "nodes": [
+                {"id": "upstream", "type": "shell", "params": {}},
+                {"id": "downstream", "type": "shell", "params": {}},
+            ],
+        }
+
+        assert (
+            _handle_text_output(
+                shared,
+                output_key=None,
+                workflow_ir=workflow_ir,
+                verbose=False,
+                print_flag=True,
+                metrics_collector=metrics,
+            )
+            is True
+        )
+
+        captured = capsys.readouterr()
+        assert "UPSTREAM_TARGET_OUTPUT" in captured.out
+        assert "--only active" not in captured.err
+        assert "⤷ Stopped after 'upstream' (--only)" in captured.err
+
     def test_multi_output_warning_suppressed_under_print_flag(
         self, mock_registry_instance, mock_compile, mock_validate_ir
     ):

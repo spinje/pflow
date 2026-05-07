@@ -8,6 +8,8 @@ identical results regardless of output format.
 
 from typing import Any
 
+OUTPUT_PRIORITY_KEYS = ["result", "response", "output", "text", "data", "stdout"]
+
 
 def _is_valid_output_value(value: Any) -> bool:
     """Check if a value is valid for output.
@@ -50,40 +52,24 @@ def _find_in_namespaces(shared_storage: dict[str, Any], key: str) -> Any:
 
 def find_auto_output(
     shared_storage: dict[str, Any],
-    preferred_key: str | None = None,
 ) -> tuple[str | None, Any]:
     """Find the auto-detectable output with the highest priority.
 
     Unified implementation used by both CLI text and JSON/MCP paths.
 
-    Priority order: ``preferred_key`` (when valid) > result > response > output >
-    text > data > stdout
+    Priority order: result > response > output > text > data > stdout
     Search order: root first, then namespaces (root is where declared outputs live)
     Validity filter: skips None and empty/whitespace strings
     Key filter: skips _ and __ prefixed keys
     Last-key fallback: if no priority key matches, takes the last valid non-internal key
 
-    ``preferred_key`` is an explicit hint from the caller — when the user ran
-    ``--only X.Y`` the caller can pass ``"X"`` so the target node's namespace
-    wins over priority-key matches elsewhere in shared. Without it, a resolved
-    declared output named ``result`` at root shadows the batch namespace the
-    user actually targeted (GH #344).
-
     Args:
         shared_storage: The shared storage dictionary
-        preferred_key: Optional explicit key to return first if present and valid
 
     Returns:
         Tuple of (key_found, value) or (None, None) if no output found
     """
-    if preferred_key and preferred_key in shared_storage:
-        value = shared_storage[preferred_key]
-        if _is_valid_output_value(value):
-            return preferred_key, value
-
-    priority_keys = ["result", "response", "output", "text", "data", "stdout"]
-
-    for key in priority_keys:
+    for key in OUTPUT_PRIORITY_KEYS:
         # Check root level first
         if key in shared_storage:
             value = shared_storage[key]
@@ -104,3 +90,46 @@ def find_auto_output(
             return key, value
 
     return None, None
+
+
+def find_only_output(shared_storage: dict[str, Any], only_node: str | None) -> tuple[str | None, Any]:
+    """Find the stdout value for an active ``--only`` run.
+
+    Unlike ``find_auto_output``, this selector is target-scoped: it never lets
+    root-level declared outputs or other node namespaces shadow the node the
+    user explicitly asked to inspect.
+
+    Flat target:
+    - ``--only fetch`` reads ``shared["fetch"]``.
+    - If that value is a dict, priority keys are unwrapped.
+    - If no priority key exists, the full target namespace is returned.
+
+    Dotted target:
+    - ``--only child.fetch`` returns ``shared["child"]``. The parent
+      namespace is the user-visible sub-workflow result boundary.
+    """
+    if not only_node:
+        return None, None
+
+    target_root = only_node.split(".", 1)[0]
+    if target_root not in shared_storage:
+        return None, None
+
+    target_value = shared_storage[target_root]
+    if not _is_valid_output_value(target_value):
+        return None, None
+
+    if "." in only_node:
+        return target_root, target_value
+
+    if not isinstance(target_value, dict):
+        return target_root, target_value
+
+    for key in OUTPUT_PRIORITY_KEYS:
+        if key not in target_value:
+            continue
+        value = target_value[key]
+        if _is_valid_output_value(value):
+            return key, value
+
+    return target_root, target_value

@@ -153,26 +153,15 @@ def _handle_text_output(
             if not print_flag:
                 click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
 
-    # Check workflow-declared outputs (resolvable outputs are populated by the
-    # engine even under --only; _try_declared_outputs handles partial availability)
+    # --only targets are explicit data-routing requests. Declared workflow
+    # outputs describe full runs, so they must not shadow the targeted node.
+    elif shared_storage.get("__execution__", {}).get("only_node"):
+        output_found = _emit_only_output(shared_storage, print_flag)
+
+    # Check workflow-declared outputs for full runs.
     elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
         if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag, print_flag):
             output_found = True
-        elif shared_storage.get("__execution__", {}).get("only_node"):
-            # --only left every declared output unresolved (the target is
-            # upstream of all output sources). Fall through to auto-detection
-            # so the user sees output from the node they actually targeted,
-            # rather than silent empty stdout. Pass the --only target as
-            # preferred_key so the target's namespace wins over unrelated
-            # resolved declared outputs at root (GH #344). No stderr note —
-            # the --only indicator line already established context; a second
-            # "declared outputs unresolvable" message is noise.
-            output_found = _emit_auto_detected_output(
-                shared_storage,
-                print_flag,
-                message_template=None,
-                preferred_key=_only_target_root(shared_storage),
-            )
 
     # Fall back to auto-detect from common keys (using unified function)
     else:
@@ -180,48 +169,51 @@ def _handle_text_output(
             shared_storage,
             print_flag,
             "cli: No outputs declared — showing auto-detected key '{key}'. Declare outputs for reliable results.",
-            preferred_key=_only_target_root(shared_storage),
         )
 
     return output_found
 
 
-def _only_target_root(shared_storage: dict[str, Any]) -> str | None:
-    """Return the root segment of a DOTTED ``--only`` path, or None.
+def _emit_only_output(shared_storage: dict[str, Any], print_flag: bool) -> bool:
+    """Emit target-scoped output for an active ``--only`` run."""
+    from pflow.execution.formatters.output_utils import find_only_output
 
-    ``--only X.Y.Z`` → ``"X"``. Flat ``--only X`` → None (priority-key unwrap
-    via ``find_auto_output`` gives cleaner scalar output for leaf nodes).
-    No ``--only`` → None.
-
-    Dotted ``--only`` targets a node INSIDE a sub-workflow. The parent-level
-    namespace (``X``) holds the batch results or sub-workflow output structure
-    — that's what the user wants to see, even when priority keys at root
-    would otherwise win (GH #344).
-    """
     only_node = shared_storage.get("__execution__", {}).get("only_node")
-    if not isinstance(only_node, str) or "." not in only_node:
-        return None
-    return only_node.split(".", 1)[0]
+    if not isinstance(only_node, str) or not only_node:
+        return False
+
+    key_found, value = find_only_output(shared_storage, only_node)
+    if not key_found:
+        if not print_flag:
+            click.echo(
+                f"cli: --only target '{only_node}' produced no output. "
+                "Pass -o <key> to select a specific shared-store key.",
+                err=True,
+            )
+        return False
+
+    if not print_flag:
+        click.echo(
+            f"cli: --only active — streaming auto-detected key '{key_found}' from target '{only_node}' to stdout.",
+            err=True,
+        )
+    _output_with_header(value, print_flag)
+    return True
 
 
 def _emit_auto_detected_output(
     shared_storage: dict[str, Any],
     print_flag: bool,
     message_template: str | None,
-    preferred_key: str | None = None,
 ) -> bool:
     """Auto-detect output from shared storage and emit it.
 
     ``message_template`` (optional) must contain ``{key}`` for the detected
-    key name. Pass ``None`` to suppress the stderr note entirely — used for
-    --only fallback where the --only indicator already establishes context.
-    ``preferred_key`` is forwarded to ``find_auto_output`` — when set and valid,
-    it wins over priority-key matches elsewhere in shared. Returns True if
-    output was emitted.
+    key name. Returns True if output was emitted.
     """
     from pflow.execution.formatters.output_utils import find_auto_output
 
-    key_found, value = find_auto_output(shared_storage, preferred_key=preferred_key)
+    key_found, value = find_auto_output(shared_storage)
     if not key_found:
         return False
     if message_template and not print_flag:

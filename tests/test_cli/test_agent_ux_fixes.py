@@ -2,7 +2,7 @@
 
 Fix 1: Shell stderr always visible (no verbose gate)
 Fix 2a: Trace file "degraded" status when warnings present
-Fix 2b: CLI exit code 2 for degraded workflows
+Fix 2b: CLI exit code 0 for degraded workflows
 Fix 3: Nested workflow child node ID in error message
 Fix 4: Error category uses _determine_error_category (not hardcoded)
 """
@@ -213,15 +213,15 @@ def test_trace_status_success_when_warnings_empty_list() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fix 2b: CLI exit code 2 for degraded workflows
+# Fix 2b: CLI exit code 0 for degraded workflows
 # ---------------------------------------------------------------------------
 
 
-def test_degraded_workflow_exits_with_code_2(tmp_path) -> None:
-    """A successful but degraded workflow should exit with code 2.
+def test_degraded_workflow_exits_with_code_0(tmp_path) -> None:
+    """A successful but degraded workflow should still exit with code 0.
 
-    This follows CLI conventions (0=success, 1=error, 2=degraded) similar to
-    rsync and xargs, giving agents a machine-readable signal for partial failure.
+    Warnings remain visible in status, stderr, JSON, traces, and reports. The
+    process exit code distinguishes completed execution from failed execution.
     """
     from click.testing import CliRunner
 
@@ -241,7 +241,7 @@ def test_degraded_workflow_exits_with_code_2(tmp_path) -> None:
     with patch("pflow.execution.runner.WorkflowRunner.run", return_value=degraded_result):
         result = runner.invoke(main, [str(wf_path)])
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
 
 
 def test_successful_workflow_does_not_exit_with_code_2(tmp_path) -> None:
@@ -265,6 +265,43 @@ def test_successful_workflow_does_not_exit_with_code_2(tmp_path) -> None:
         result = runner.invoke(main, [str(wf_path)])
 
     assert result.exit_code == 0
+
+
+def test_failed_workflow_exits_with_code_1(tmp_path) -> None:
+    """Failed execution remains non-zero after degraded success moves to exit 0."""
+    from click.testing import CliRunner
+
+    from pflow.cli.main import main
+    from tests.shared.markdown_utils import write_workflow_file
+
+    workflow = {
+        "nodes": [{"id": "n1", "type": "shell", "params": {"command": "exit 1"}}],
+        "edges": [],
+    }
+    wf_path = tmp_path / "test.pflow.md"
+    write_workflow_file(workflow, wf_path)
+
+    failed_result = ExecutionResult(
+        success=False,
+        status=WorkflowStatus.FAILED,
+        shared_after={},
+        diagnostics=[
+            Diagnostic(
+                severity=Severity.ERROR,
+                title="Execution Failed",
+                message="Shell command failed with exit code 1",
+                node_id="n1",
+                source="runtime",
+                context={"category": "execution_failure"},
+            )
+        ],
+    )
+
+    runner = CliRunner()
+    with patch("pflow.execution.runner.WorkflowRunner.run", return_value=failed_result):
+        result = runner.invoke(main, [str(wf_path)])
+
+    assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------
