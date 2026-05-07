@@ -67,6 +67,7 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "rerun_delta": _delta_to_dict(s.rerun_delta),
         "actual_vs_no_cache_delta": _delta_to_dict(s.actual_vs_no_cache_delta),
         "trace_coverage": s.trace_coverage,
+        "evidence_scope": s.evidence_scope,
         "trace_llm_nodes_static": s.trace_llm_nodes_static,
         "trace_llm_nodes_executed": s.trace_llm_nodes_executed,
         "trace_unexecuted_llm_nodes": list(s.trace_unexecuted_llm_nodes),
@@ -80,6 +81,7 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "total_input_tokens_estimated": s.total_input_tokens_estimated,
         "total_cacheable_tokens_estimated": s.total_cacheable_tokens_estimated,
         "models_in_use": list(s.models_in_use),
+        "observed_models_in_trace": list(s.observed_models_in_trace),
         "partial_cost_usd": s.partial_cost_usd,
         "unavailable_models": list(s.unavailable_models),
         "unavailable_models_by_workflow": {
@@ -209,6 +211,8 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "cost_usd": row.cost_usd,
         "cost_data_source": row.cost_data_source,
         "did_not_execute_in_trace": row.did_not_execute_in_trace,
+        "observed_models": list(row.observed_models),
+        "observed_call_count": row.observed_call_count,
         # Stage 0.3 (Task 159): per-call ``warnings`` array dropped — production
         # never populated it. JSON consumers needing per-row warning markers
         # filter ``warnings[]`` (top-level) by ``node_id``.

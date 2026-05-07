@@ -122,8 +122,16 @@ def _render_header(analysis: CacheAnalysis) -> str:
     lines = [
         f"# Cache Analysis: {analysis.workflow_path}",
         "",
-        f"  {_format_scale_line(s)}",
+        f"  Workflow: {_format_scale_line(s)}",
     ]
+    if s.evidence_scope == "partial_trace_executed_subset":
+        lines.append(
+            f"  Evidence: partial trace ({s.trace_llm_nodes_executed} of {s.trace_llm_nodes_static} LLM nodes executed)"
+        )
+    elif s.evidence_scope == "complete_trace":
+        lines.append(f"  Evidence: complete trace ({s.trace_llm_nodes_executed} LLM nodes executed)")
+    if s.observed_models_in_trace:
+        lines.append(f"  Observed models: {', '.join(s.observed_models_in_trace)}")
     sub_line = _format_sub_workflow_breakdown_line(analysis)
     if sub_line:
         lines.append(f"  {sub_line}")
@@ -266,6 +274,12 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     )
     no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    if s.evidence_scope == "partial_trace_executed_subset":
+        return [
+            f"  Actually paid (executed trace):       {actually_paid_str}",
+            f"  Cost without caching (executed):      {no_cache_str}",
+            f"  Cost on rerun (executed, within TTL): {rerun_str}",
+        ]
     return [
         f"  Actually paid (trace):       {actually_paid_str}",
         f"  Cost without caching:        {no_cache_str}",
@@ -323,36 +337,16 @@ def _all_cost_atoms_unavailable(s: AnalysisSummary) -> bool:
 
 def _render_summary(analysis: CacheAnalysis) -> str:
     s = analysis.summary
-    actionable_word = "opportunity" if s.actionable_opportunities == 1 else "opportunities"
     summary_lines = ["## Summary", ""]
+    if s.evidence_scope == "partial_trace_executed_subset":
+        summary_lines.append("  Trace-backed costs below cover executed nodes only.")
     summary_lines.extend(_render_cost_block(s))
 
     delta_lines = _render_summary_deltas(s)
     if delta_lines:
         summary_lines.extend(delta_lines)
 
-    if s.trace_coverage == "partial":
-        summary_lines.append(
-            f"  Trace coverage: partial ({s.trace_llm_nodes_executed} of "
-            f"{s.trace_llm_nodes_static} LLM nodes executed; unexecuted rows excluded)"
-        )
-
-    summary_lines.append("")
-    # Top-10% pattern (mypy / rustc / clippy / ruff): errors render
-    # categorically separate from opportunities. The data model already
-    # separates ``blocking_errors`` from ``actionable_opportunities``;
-    # the renderer matches. An agent skimming the count needs to see
-    # "blocking" categorically — lumping errors into "opportunities" hides
-    # them. Pre-existing semantic gap surfaced during Stage A/0/B/C
-    # verification on the brownfield smoke fixture.
-    if s.blocking_errors > 0:
-        error_word = "error" if s.blocking_errors == 1 else "errors"
-        summary_lines.append(f"  {s.blocking_errors} {error_word} blocking")
-    summary_lines.append(
-        f"  {s.actionable_opportunities} {actionable_word} "
-        f"({s.warnings_count} warning{'s' if s.warnings_count != 1 else ''}, "
-        f"{s.info_count} info)"
-    )
+    _append_summary_counts(summary_lines, s)
 
     if s.partial_cost_usd and s.unavailable_models:
         models_csv = _format_unavailable_models(analysis)
@@ -398,15 +392,36 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     return "\n".join(summary_lines)
 
 
+def _append_summary_counts(summary_lines: list[str], s: AnalysisSummary) -> None:
+    # Errors render categorically separate from opportunities; agents skimming
+    # counts need to see must-fix issues before optimization advice.
+    actionable_word = "opportunity" if s.actionable_opportunities == 1 else "opportunities"
+    summary_lines.append("")
+    if s.blocking_errors > 0:
+        error_word = "error" if s.blocking_errors == 1 else "errors"
+        summary_lines.append(f"  {s.blocking_errors} {error_word} blocking")
+    summary_lines.append(
+        f"  {s.actionable_opportunities} {actionable_word} "
+        f"({s.warnings_count} warning{'s' if s.warnings_count != 1 else ''}, "
+        f"{s.info_count} info)"
+    )
+    if s.evidence_scope == "partial_trace_executed_subset":
+        summary_lines.append("  Workflow-design recommendations suppressed for partial trace evidence.")
+
+
 def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
     lines: list[str] = []
     first = _format_delta(s.first_run_delta, label="on first run")
     rerun = _format_delta(s.rerun_delta, label="on rerun")
     actual = _format_delta(s.actual_vs_no_cache_delta, label="actual vs no-cache")
     if first:
-        lines.append(f"  First-run delta:            {first}")
+        label = (
+            "First-run delta (executed):" if s.evidence_scope == "partial_trace_executed_subset" else "First-run delta:"
+        )
+        lines.append(f"  {label:29s} {first}")
     if rerun:
-        lines.append(f"  Rerun delta:                {rerun}")
+        label = "Rerun delta (executed):" if s.evidence_scope == "partial_trace_executed_subset" else "Rerun delta:"
+        lines.append(f"  {label:29s} {rerun}")
     if actual:
         lines.append(f"  Actual trace delta:         {actual}")
     return lines
@@ -866,11 +881,16 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # otherwise nodes with cache_ratio ≥ 80% AND analytical warnings get silently
     # hidden from the default report — agents miss high-leverage recommendations.
     nodes_with_warnings = set(_warnings_by_row_key(analysis))
-    visible, hidden_count = _select_visible_rows(
-        real_data_rows,
-        all_rows=all_rows,
-        nodes_with_warnings=nodes_with_warnings,
-    )
+    partial_trace_default_view = analysis.summary.evidence_scope == "partial_trace_executed_subset" and not all_rows
+    if partial_trace_default_view:
+        visible = [row for row in real_data_rows if not row.did_not_execute_in_trace]
+        hidden_count = 0
+    else:
+        visible, hidden_count = _select_visible_rows(
+            real_data_rows,
+            all_rows=all_rows,
+            nodes_with_warnings=nodes_with_warnings,
+        )
     if not visible and hidden_count == 0:
         return ""
 
@@ -881,10 +901,18 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     warnings_by_node = _warnings_by_row_key(analysis)
 
     lines = ["## Per-call cache report"]
-    explainer = _per_call_scope_explainer(rows)
+    explainer = _per_call_scope_explainer(rows, analysis.summary.evidence_scope)
     if explainer:
         lines.append(f"  {explainer}")
-    if not all_rows and len(visible) < len(rows):
+    if partial_trace_default_view and len(visible) < len(rows):
+        hidden_unexecuted = len(rows) - len(visible)
+        hidden_word = "row" if hidden_unexecuted == 1 else "rows"
+        node_word = "node" if len(visible) == 1 else "nodes"
+        lines.append(
+            f"  Showing {len(visible)} executed LLM {node_word}; "
+            f"{hidden_unexecuted} unexecuted {hidden_word} hidden (--all-rows shows everything)."
+        )
+    elif not all_rows and len(visible) < len(rows):
         lines.append(
             f"  Showing {len(visible)} of {len(rows)} LLM nodes; all-clean rows hidden (--all-rows shows everything)."
         )
@@ -965,12 +993,16 @@ def _format_per_call_row(
     cacheable_str = f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
     ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
     model_display = "<varies>" if row.model_is_heterogeneous else row.model
+    observed = ""
+    if row.observed_models and (row.model_is_heterogeneous or len(row.observed_models) > 1):
+        observed = f" observed_models={','.join(row.observed_models)}"
+    calls = f" calls={row.observed_call_count}" if row.observed_call_count > 1 else ""
     lines.append(
         f"  {row.node_path:30s} {marker:<6} model={model_display:35s} "
         f"tokens={row.input_tokens_estimated:>5}  "
         f"cacheable={cacheable_str}  "
         f"ratio={ratio_str}  "
-        f"src={_data_source_display(row.data_source)}  {warning_marker}"
+        f"src={_data_source_display(row.data_source)}{calls}{observed}  {warning_marker}"
     )
     return lines
 
@@ -1010,7 +1042,7 @@ def _data_source_display(value: str) -> str:
     return _DATA_SOURCE_DISPLAY.get(value, value)
 
 
-def _per_call_scope_explainer(rows: list[PerCallRow]) -> str:
+def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "static_analysis") -> str:
     """Return a one-line explainer describing what ``ratio=`` means here.
 
     Two modes that survive the Option C row filter:
@@ -1020,6 +1052,8 @@ def _per_call_scope_explainer(rows: list[PerCallRow]) -> str:
     - **Post-run greenfield**: rows have memo/trace data; values are projected
       from real run history.
     """
+    if evidence_scope == "partial_trace_executed_subset":
+        return "Executed trace rows are evidence-only; unexecuted rows are marked when shown."
     is_steady_state = any(row.declared_prompt_cache is not None for row in rows)
     if is_steady_state:
         return "Actual cache ratios from declared `prompt_cache:` subsets."

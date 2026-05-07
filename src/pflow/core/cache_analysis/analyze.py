@@ -160,6 +160,11 @@ class PerCallRow:
     # This prevents erroring sub-workflows from fabricating recomputed costs
     # for LLM nodes that never actually ran.
     did_not_execute_in_trace: bool = False
+    # Concrete model set observed in trace LLM calls for this static row.
+    # Dynamic batches can execute many item-level calls under one node id; the
+    # row stays node-scoped while these fields preserve exact-model truth.
+    observed_models: tuple[str, ...] = ()
+    observed_call_count: int = 0
     # Stage 0.3 (Task 159): the inline ``warnings: tuple[str, ...]`` field was
     # vestigial — single production producer never populated it; renderer
     # fallbacks at ``render_text.py:497, 617`` and the JSON ``per_call.warnings``
@@ -286,6 +291,7 @@ class SubWorkflowRollup:
 class TraceExecutionIndex:
     costs_by_key: dict[tuple[str | None, str], tuple[float | None, str]]
     llm_calls_by_key: dict[tuple[str | None, str], dict[str, Any]]
+    llm_call_lists_by_key: dict[tuple[str | None, str], tuple[dict[str, Any], ...]]
     executed_keys: set[tuple[str | None, str]]
     workflows_with_trace: set[str | None]
     current_cost_by_workflow: dict[str | None, float | None]
@@ -365,6 +371,8 @@ class AnalysisSummary:
     partial_cost_usd: bool
     unavailable_models: tuple[str, ...]
     unavailable_models_by_workflow: dict[str | None, tuple[str, ...]] | None = None
+    evidence_scope: str = "static_analysis"
+    observed_models_in_trace: tuple[str, ...] = ()
     # Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
     # can't be priced as one model. ``models_in_use`` excludes them so the
     # literal ``${...}`` template doesn't leak into the rendered scale line;
@@ -515,6 +523,33 @@ def analyze(
         cw_result=cw_result,
         trace_index=trace_index,
     )
+    if trace_path is None and _trace_coverage_for_rows(per_call_rows, ctx)[0] == "partial":
+        notes.append("Auto-loaded trace was partial; ignored for workflow-wide cache analysis.")
+        trace_data = None
+        used_trace_path = None
+        trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
+        parameters_by_workflow = _build_parameters_by_workflow(
+            cw_result,
+            parameters or {},
+            lookup_path,
+            memo_cache=memo_cache,
+            trace_data=trace_data,
+            base_path=base_path,
+        )
+        ctx = AnalysisContext.build(
+            workflow_ir=workflow_ir,
+            parameters=parameters or {},
+            memo_cache=memo_cache,
+            trace_data=trace_data,
+            workflow_path=lookup_path,
+            base_path=base_path,
+            parameters_by_workflow=parameters_by_workflow,
+        )
+        per_call_rows, warnings = _build_per_call_rows_and_warnings(
+            ctx=ctx,
+            cw_result=cw_result,
+            trace_index=trace_index,
+        )
     # Root-only by design: suggested-block, padding, and consolidate advisories
     # edit the analyzed file's ## Cache block. Child workflow recommendations
     # are exposed through the per-call rollup plus renderer drill-in commands
@@ -573,6 +608,14 @@ def analyze(
                 cw_result=cw_result,
                 notes=notes,
             )
+        )
+
+    if _trace_coverage_for_rows(per_call_rows, ctx)[0] == "partial":
+        warnings = _warnings_for_partial_trace(warnings)
+        suggested_blocks = []
+        notes.append(
+            "Workflow-design recommendations suppressed because the trace is partial; "
+            "per-call rows show executed trace evidence only."
         )
 
     # --- Confidence aggregation (STRICT per DD#34) ---------------------------
@@ -907,13 +950,13 @@ def _build_trace_execution_index(
     inside :meth:`TraceTree.walk`.
     """
     if trace_data is None:
-        return TraceExecutionIndex({}, {}, set(), set(), {}, trace_loaded=False)
+        return TraceExecutionIndex({}, {}, {}, set(), set(), {}, trace_loaded=False)
     from pflow.core.trace_tree import TraceTree
 
     try:
         tree = TraceTree.from_dict(trace_data)
     except ValueError:
-        return TraceExecutionIndex({}, {}, set(), set(), {}, trace_loaded=False)
+        return TraceExecutionIndex({}, {}, {}, set(), set(), {}, trace_loaded=False)
 
     totals: dict[tuple[str | None, str], float] = {}
     workflow_totals: dict[str | None, float] = {}
@@ -921,6 +964,7 @@ def _build_trace_execution_index(
     found: set[tuple[str | None, str]] = set()
     partial: set[tuple[str | None, str]] = set()
     llm_calls_by_key: dict[tuple[str | None, str], dict[str, Any]] = {}
+    llm_call_lists_by_key: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
     executed_keys: set[tuple[str | None, str]] = set()
     workflows_with_trace: set[str | None] = set()
     for we in tree.walk(edges=edge_child_paths, workflow_path=root_workflow_path):
@@ -940,7 +984,8 @@ def _build_trace_execution_index(
         # run, which downstream tier-1 token readers (``_estimate_row_tokens``)
         # need to project costs for memo-hit-only traces. Current-cost
         # summation happens in the actual-cost pass below.
-        llm_calls_by_key.setdefault(key, dict(call))
+        llm_call_lists_by_key.setdefault(key, []).append(dict(call))
+    llm_calls_by_key = {key: _aggregate_trace_llm_calls(calls) for key, calls in llm_call_lists_by_key.items()}
     for leaf in tree.iter_actual_cost_events(edges=edge_child_paths, workflow_path=root_workflow_path):
         _record_trace_cost_leaf(
             leaf,
@@ -958,11 +1003,46 @@ def _build_trace_execution_index(
     return TraceExecutionIndex(
         costs_by_key=costs_by_key,
         llm_calls_by_key=llm_calls_by_key,
+        llm_call_lists_by_key={key: tuple(calls) for key, calls in llm_call_lists_by_key.items()},
         executed_keys=executed_keys,
         workflows_with_trace=workflows_with_trace,
         current_cost_by_workflow=cost_by_workflow,
         trace_loaded=True,
     )
+
+
+def _aggregate_trace_llm_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collapse multiple trace calls into row-level telemetry."""
+    if not calls:
+        return {}
+    aggregate = dict(calls[0])
+    int_fields = (
+        "input_tokens",
+        "output_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "thinking_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    )
+    for field_name in int_fields:
+        values = [call.get(field_name) for call in calls]
+        if any(value is not None for value in values):
+            aggregate[field_name] = sum(int(value or 0) for value in values)
+    cost_values = [call.get("cost_usd") for call in calls]
+    if any(value is not None for value in cost_values):
+        aggregate["cost_usd"] = sum(float(value or 0.0) for value in cost_values)
+    models = sorted({str(call.get("model")) for call in calls if call.get("model")})
+    aggregate["model"] = models[0] if len(models) == 1 else ""
+    skipped: list[str] = []
+    for call in calls:
+        chunks = call.get("cache_chunks_skipped") or []
+        if isinstance(chunks, list):
+            skipped.extend(str(chunk) for chunk in chunks)
+    if skipped:
+        aggregate["cache_chunks_skipped"] = sorted(set(skipped))
+    return aggregate
 
 
 def _record_trace_cost_leaf(
@@ -1163,6 +1243,7 @@ def _build_per_call_rows_and_warnings(
                 candidate_subset=candidate_subsets_by_node.get(node_id),
                 trace_cost=trace_index.costs_by_key.get((workflow_path, node_id)),
                 trace_llm_call=trace_index.llm_calls_by_key.get((workflow_path, node_id)),
+                trace_llm_calls=trace_index.llm_call_lists_by_key.get((workflow_path, node_id), ()),
                 did_not_execute_in_trace=(
                     trace_index.trace_loaded and (workflow_path, node_id) not in trace_index.executed_keys
                 ),
@@ -1208,6 +1289,7 @@ def _build_per_call_row(
     candidate_subset: list[str] | None = None,
     trace_cost: tuple[float | None, str] | None = None,
     trace_llm_call: dict[str, Any] | None = None,
+    trace_llm_calls: tuple[dict[str, Any], ...] = (),
     did_not_execute_in_trace: bool = False,
 ) -> PerCallRow:
     """Compose a single PerCallRow for an LLM node."""
@@ -1324,6 +1406,7 @@ def _build_per_call_row(
         int(trace_llm_call.get("cache_creation_input_tokens") or 0) if trace_llm_call is not None else None
     )
     trace_cache_read = int(trace_llm_call.get("cache_read_input_tokens") or 0) if trace_llm_call is not None else None
+    observed_models = tuple(sorted({str(call.get("model")) for call in trace_llm_calls if call.get("model")}))
 
     return PerCallRow(
         node_path=node_id,
@@ -1345,6 +1428,8 @@ def _build_per_call_row(
         cost_data_source=cost_source,
         workflow_path=workflow_path,
         did_not_execute_in_trace=did_not_execute_in_trace,
+        observed_models=observed_models,
+        observed_call_count=len(trace_llm_calls),
     )
 
 
@@ -3491,13 +3576,17 @@ def _build_summary(
     # rather than fabricated 0). Top-level summary still useful — agents
     # see the partial signal from steady-state / post-run rows.
     total_cacheable = sum(r.cacheable_tokens_estimated or 0 for r in rows)
+    trace_coverage, executed_count, unexecuted_nodes = _trace_coverage_for_rows(rows, ctx)
+    observed_models = tuple(sorted({model for row in rows for model in row.observed_models}))
     # Stage C.1: heterogeneous rows have ``model = ""`` AND
     # ``model_is_heterogeneous = True``. The ``if r.model`` truthy check below
     # already short-circuits empty strings — the explicit
     # ``not r.model_is_heterogeneous`` clause is defense-in-depth so future
     # contributors who change the empty-string convention don't silently leak
     # ``${item.model}`` literals back into the aggregate.
-    models = sorted({r.model for r in rows if r.model and not r.model_is_heterogeneous})
+    static_models = {r.model for r in rows if r.model and not r.model_is_heterogeneous}
+    model_set = static_models | (set(observed_models) if trace_coverage == "complete" else set())
+    models = sorted(model_set)
     heterogeneous_paths = tuple(sorted(r.node_path for r in rows if r.model_is_heterogeneous))
     blocking_errors = sum(1 for d in warnings if d.severity == Severity.ERROR)
     warnings_count = sum(1 for d in warnings if d.severity == Severity.WARNING)
@@ -3519,7 +3608,6 @@ def _build_summary(
     # incomplete (which can happen on EITHER stream independently).
     partial_cost_usd = actually_paid.tier == CostTier.TRACE_PARTIAL or projections.partial
 
-    trace_coverage, executed_count, unexecuted_nodes = _trace_coverage_for_rows(rows, ctx)
     no_cache_baseline = "no_cache_hypothetical_usd"
     first_run_delta = _cost_delta(
         baseline_value=projections.no_cache_hypothetical_usd,
@@ -3554,6 +3642,7 @@ def _build_summary(
         rerun_delta=rerun_delta,
         actual_vs_no_cache_delta=actual_vs_no_cache_delta,
         trace_coverage=trace_coverage,
+        evidence_scope=_evidence_scope_for_trace_coverage(trace_coverage),
         trace_llm_nodes_static=total_nodes,
         trace_llm_nodes_executed=executed_count,
         trace_unexecuted_llm_nodes=unexecuted_nodes,
@@ -3567,6 +3656,7 @@ def _build_summary(
         total_input_tokens_estimated=total_input,
         total_cacheable_tokens_estimated=total_cacheable,
         models_in_use=tuple(models),
+        observed_models_in_trace=observed_models,
         partial_cost_usd=partial_cost_usd,
         unavailable_models=projections.unavailable_models,
         unavailable_models_by_workflow=_unavailable_models_by_workflow(rows),
@@ -3591,6 +3681,19 @@ def _trace_coverage_for_rows(
     if unexecuted:
         return "partial", executed, unexecuted
     return "complete", executed, ()
+
+
+def _evidence_scope_for_trace_coverage(trace_coverage: str) -> str:
+    if trace_coverage == "partial":
+        return "partial_trace_executed_subset"
+    if trace_coverage == "complete":
+        return "complete_trace"
+    return "static_analysis"
+
+
+def _warnings_for_partial_trace(warnings: list[Diagnostic]) -> list[Diagnostic]:
+    """Keep validity errors, suppress optimization advice for partial traces."""
+    return [warning for warning in warnings if warning.severity == Severity.ERROR]
 
 
 def _cost_delta(

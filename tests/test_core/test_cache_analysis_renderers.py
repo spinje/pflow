@@ -554,6 +554,73 @@ def test_text_all_rows_flag_shows_everything() -> None:
     assert "Hidden:" not in text
 
 
+def test_text_partial_trace_labels_executed_scope() -> None:
+    row = PerCallRow(**{
+        **_row("ran", 90).__dict__,
+        "data_source": "trace",
+        "cost_usd": 0.001,
+        "cost_data_source": "trace",
+    })
+    skipped = PerCallRow(**{
+        **_row("skipped", 90).__dict__,
+        "did_not_execute_in_trace": True,
+        "data_source": "estimator",
+    })
+    base = _make_analysis(rows=[row, skipped], actually_paid=0.001, no_cache=0.01, rerun=0.002)
+    analysis = CacheAnalysis(**{
+        **base.__dict__,
+        "summary": AnalysisSummary(**{
+            **base.summary.__dict__,
+            "trace_coverage": "partial",
+            "evidence_scope": "partial_trace_executed_subset",
+            "trace_llm_nodes_static": 2,
+            "trace_llm_nodes_executed": 1,
+            "trace_unexecuted_llm_nodes": ("skipped",),
+        }),
+    })
+
+    text = render_text(analysis)
+
+    assert "Evidence: partial trace (1 of 2 LLM nodes executed)" in text
+    assert "Trace-backed costs below cover executed nodes only." in text
+    assert "Actually paid (executed trace):" in text
+    assert "Cost without caching (executed):" in text
+    assert "Cost on rerun (executed, within TTL):" in text
+    assert "Showing 1 executed LLM node; 1 unexecuted row hidden (--all-rows shows everything)." in text
+    assert "all-clean rows hidden" not in text
+    assert "Workflow-design recommendations suppressed for partial trace evidence." in text
+
+
+def test_json_partial_trace_exposes_evidence_scope_and_observed_models() -> None:
+    row = PerCallRow(**{
+        **_row("generate", 90).__dict__,
+        "model": "",
+        "model_is_heterogeneous": True,
+        "observed_models": ("gemini/a", "gemini/b"),
+        "observed_call_count": 2,
+    })
+    base = _make_analysis(rows=[row], actually_paid=0.001)
+    analysis = CacheAnalysis(**{
+        **base.__dict__,
+        "summary": AnalysisSummary(**{
+            **base.summary.__dict__,
+            "trace_coverage": "partial",
+            "evidence_scope": "partial_trace_executed_subset",
+            "observed_models_in_trace": ("gemini/a", "gemini/b"),
+            "trace_llm_nodes_static": 2,
+            "trace_llm_nodes_executed": 1,
+            "trace_unexecuted_llm_nodes": ("skipped",),
+        }),
+    })
+
+    payload = render_json(analysis)
+
+    assert payload["summary"]["evidence_scope"] == "partial_trace_executed_subset"
+    assert payload["summary"]["observed_models_in_trace"] == ["gemini/a", "gemini/b"]
+    assert payload["per_call"][0]["observed_models"] == ["gemini/a", "gemini/b"]
+    assert payload["per_call"][0]["observed_call_count"] == 2
+
+
 def test_text_rows_with_analysis_wide_warning_show_even_above_threshold() -> None:
     """Bug B regression — a row at ≥80% ratio with NO inline warnings but a
     matching ``analysis.warnings`` Diagnostic (the production shape; analytical

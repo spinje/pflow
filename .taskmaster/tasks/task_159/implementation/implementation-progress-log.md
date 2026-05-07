@@ -8041,3 +8041,54 @@ not part of the trace-cost change.
 Filed follow-up GitHub issue #376 for the related but separate child-rollup
 confidence gap: `sub_workflow_rollup.per_workflow[]` carries
 `actually_paid_usd` but not the child-scope `actually_paid_tier`.
+
+## Stage 2 follow-up — partial trace evidence scope + dynamic batch model truth (2026-05-07)
+
+Implemented the fix brief from
+`scratchpads/task159-fix-briefs/02-trace-evidence-scope-partial-and-dynamic-batch.md`.
+
+Behavior:
+
+- `analyze-cache --from-trace` on a partial trace now enters evidence-only
+  mode via `summary.evidence_scope = "partial_trace_executed_subset"`.
+- Partial traces keep per-call executed evidence and blocking errors, but
+  suppress workflow-design recommendations, suggested `## Cache` blocks, and
+  non-error optimization diagnostics.
+- Auto-loaded partial traces are ignored for workflow-wide analysis and fall
+  back to static/memo analysis with a note.
+- Text output labels partial trace scope before cost lines and renders executed
+  cost labels (`Actually paid (executed trace)`, `Cost without caching
+  (executed)`, `Cost on rerun (executed, within TTL)`).
+- Partial per-call output now says `Showing N executed LLM node(s); M
+  unexecuted row(s) hidden`, not `all-clean rows hidden`.
+- Dynamic batch trace indexing now retains all LLM calls per
+  `(workflow_path, node_id)`, exposes `per_call[].observed_models`,
+  `per_call[].observed_call_count`, and `summary.observed_models_in_trace`,
+  while keeping one `per_call` row per static LLM node.
+
+Files changed:
+
+- `src/pflow/core/cache_analysis/analyze.py`
+- `src/pflow/core/cache_analysis/render_json.py`
+- `src/pflow/core/cache_analysis/render_text.py`
+- `tests/test_core/test_cache_analysis_analyze.py`
+- `tests/test_core/test_cache_analysis_renderers.py`
+
+Verification:
+
+- Manual partial `--only answer-1` trace: rendered partial evidence scope,
+  executed-only cost labels, zero recommendations, and one executed row / five
+  unexecuted rows hidden.
+- Manual paid `chorus-chooser --only generate-chorus-options` trace: rendered
+  observed Gemini model set, `calls=8`, zero recommendations/suggested blocks,
+  and JSON `evidence_scope = partial_trace_executed_subset`.
+- Focused tests: 360 passed across cache-analysis analyzer/renderers/cost,
+  summarize, CLI analyze-cache, per-ID emission/coverage/warnings.
+- `ruff check`, `ruff format --check`, `mypy` on touched cache-analysis source,
+  and `git diff --check` passed.
+
+Key regression guard:
+
+- `test_partial_trace_suppresses_executed_subset_optimization_advice` proves
+  the same executed row emits `cache.first-call-write-penalty` under complete
+  trace coverage but is suppressed under partial trace evidence.

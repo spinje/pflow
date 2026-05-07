@@ -429,15 +429,177 @@ def test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_pat
     assert rows["ran"].did_not_execute_in_trace is False
     assert rows["skipped"].did_not_execute_in_trace is True
     assert result.summary.trace_coverage == "partial"
+    assert result.summary.evidence_scope == "partial_trace_executed_subset"
     assert result.summary.trace_llm_nodes_static == 2
     assert result.summary.trace_llm_nodes_executed == 1
     assert result.summary.trace_unexecuted_llm_nodes == ("skipped",)
     assert result.summary.actual_vs_no_cache_delta.kind == "unavailable"
     assert not any(d.node_id == "skipped" and d.id == "cache.below-min-tokens" for d in result.warnings)
+    assert result.warnings
+    assert all(d.severity == Severity.ERROR for d in result.warnings)
+    assert result.suggested_blocks == ()
     from pflow.core.cache_analysis.render_text import render_text
 
     text = render_text(result)
-    assert "Trace coverage: partial (1 of 2 LLM nodes executed; unexecuted rows excluded)" in text
+    assert "Evidence: partial trace (1 of 2 LLM nodes executed)" in text
+    assert "Trace-backed costs below cover executed nodes only." in text
+    assert "Workflow-design recommendations suppressed for partial trace evidence." in text
+
+
+def test_partial_trace_suppresses_executed_subset_optimization_advice(tmp_path: Path) -> None:
+    """Partial traces must not turn executed-subset findings into design advice."""
+    workflow_ir = {
+        "cache": {"items": [{"name": "ctx", "var": "ctx", "prose_before": "Context:"}]},
+        "inputs": {"ctx": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "ran",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["ctx"],
+                "params": {"prompt": "Answer the question."},
+            },
+            {
+                "id": "skipped",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["ctx"],
+                "params": {"prompt": "Answer another question."},
+            },
+        ],
+    }
+    trace_path = tmp_path / "partial-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "nodes": [
+                {
+                    "node_id": "ran",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "llm_call": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "input_tokens": 6_000,
+                        "output_tokens": 20,
+                        "cost_usd": 0.01,
+                        "cache_creation_input_tokens": 5_000,
+                        "cache_read_input_tokens": 0,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"ctx": "x" * 20_000},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    assert result.summary.evidence_scope == "partial_trace_executed_subset"
+    assert result.summary.actionable_opportunities == 0
+    assert result.warnings == ()
+    assert result.suggested_blocks == ()
+
+    complete_result = analyze(
+        {**workflow_ir, "nodes": [workflow_ir["nodes"][0]]},
+        parameters={"ctx": "x" * 20_000},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    assert complete_result.summary.evidence_scope == "complete_trace"
+    assert any(d.id == "cache.first-call-write-penalty" for d in complete_result.warnings)
+
+    from pflow.core.cache_analysis.render_json import render_json
+    from pflow.core.cache_analysis.render_text import render_text
+
+    payload = render_json(result)
+    assert payload["recommended_actions"] == []
+    assert payload["suggested_blocks"] == []
+    assert "## Recommended actions" not in render_text(result)
+
+
+def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> None:
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "${item.prompt}"},
+                "batch": {"items": "${items}"},
+            }
+        ]
+    }
+    trace_path = tmp_path / "batch-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "nodes": [
+                {
+                    "node_id": "generate",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "batch_items": [
+                        {
+                            "index": 0,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/gemini-2.5-flash-lite",
+                                "input_tokens": 100,
+                                "output_tokens": 10,
+                                "cost_usd": 0.01,
+                                "cache_creation_input_tokens": 3,
+                                "cache_read_input_tokens": 0,
+                            },
+                        },
+                        {
+                            "index": 1,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/gemini-3-flash-preview",
+                                "input_tokens": 200,
+                                "output_tokens": 20,
+                                "cost_usd": 0.02,
+                                "cache_creation_input_tokens": 0,
+                                "cache_read_input_tokens": 4,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"items": [{"model": "a", "prompt": "x"}, {"model": "b", "prompt": "y"}]},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = result.per_call[0]
+    assert row.model_is_heterogeneous is True
+    assert row.observed_call_count == 2
+    assert row.observed_models == ("gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview")
+    assert row.input_tokens_estimated == 300
+    assert row.output_tokens_estimated == 30
+    assert row.cache_creation_input_tokens == 3
+    assert row.cache_read_input_tokens == 4
+    assert row.cost_usd == pytest.approx(0.03)
+    assert result.summary.trace_coverage == "complete"
+    assert result.summary.observed_models_in_trace == row.observed_models
+    assert result.summary.models_in_use == row.observed_models
 
 
 def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
@@ -1035,9 +1197,11 @@ def test_autoload_returns_trace_when_models_and_node_ids_match(tmp_path: Path, m
     assert result.trace_path == str(trace_path)
 
 
-def test_autoload_proceeds_when_trace_has_no_root_llm_activity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_ignores_partial_trace_with_no_root_llm_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     builder = TraceFixtureBuilder()
-    result, trace_path = _autoload_analysis(
+    result, _trace_path = _autoload_analysis(
         tmp_path,
         monkeypatch,
         workflow_ir={"nodes": [_llm_ir_node()]},
@@ -1050,7 +1214,8 @@ def test_autoload_proceeds_when_trace_has_no_root_llm_activity(tmp_path: Path, m
             ),
         ],
     )
-    assert result.trace_path == str(trace_path)
+    assert result.trace_path is None
+    assert "Auto-loaded trace was partial; ignored for workflow-wide cache analysis." in result.notes
 
 
 def test_autoload_proceeds_when_ir_has_no_llm_nodes_and_trace_matches(
