@@ -588,7 +588,7 @@ def test_total_cost_cached_llm_event_without_call_is_zero_trace() -> None:
     builder = TraceFixtureBuilder()
     trace = builder.trace(
         workflow_path="parent.pflow.md",
-        nodes=[{**builder.cached_llm_event("draft"), "node_type": "LLMNode"}],
+        nodes=[{**builder.cached_llm_event_thin("draft"), "node_type": "LLMNode"}],
     )
     tree = TraceTree.from_dict(trace)
 

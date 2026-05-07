@@ -44,7 +44,16 @@ class TraceFixtureBuilder:
             event["llm_system"] = system
         return event
 
-    def cached_llm_event(self, node_id: str) -> dict[str, Any]:
+    def cached_llm_event_thin(self, node_id: str) -> dict[str, Any]:
+        """Bare-minimum cached LLM event — omits node_output / llm_call / node_params.
+
+        Use this ONLY when the test point IS the thin shape (e.g., asserting
+        that consumers handle missing-llm_call cached events without crashing).
+        For production-shape tests, use ``cached_llm_event_with_call`` — it
+        mirrors what ``apply_memo_hit`` + ``_augment_llm_usage_with_cache_metadata``
+        actually produce at runtime, and is covered by the parity test at
+        ``test_trace_tree.py::test_cached_llm_event_with_call_shape_matches``.
+        """
         return {
             "node_id": node_id,
             "node_type": "LLMNode",

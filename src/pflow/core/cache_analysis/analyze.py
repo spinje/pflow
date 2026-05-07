@@ -24,7 +24,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2908,12 +2908,21 @@ def _sub_workflow_cache_candidate(
 def _dedupe_sub_workflow_cache_candidates(
     candidates: list[_SubWorkflowCacheCandidate],
 ) -> list[_SubWorkflowCacheCandidate]:
-    """Return one deterministic candidate per child workflow + input."""
+    """Return one deterministic candidate per child workflow + input.
+
+    Tie-break: lex-smallest ``(parent_node_id, parent_workflow)`` wins.
+    Including ``parent_workflow`` in the tuple makes the order deterministic
+    even when two parents in different workflows share the same node id
+    (e.g., both named ``"main"``) and reach the same child + input — without
+    it, dict-insertion-order broke the deterministic claim.
+    """
     by_target: dict[tuple[str, str], _SubWorkflowCacheCandidate] = {}
     for candidate in candidates:
         key = (candidate.child_workflow, candidate.child_input_name)
         existing = by_target.get(key)
-        if existing is None or candidate.parent_node_id < existing.parent_node_id:
+        if existing is None or (
+            (candidate.parent_node_id, candidate.parent_workflow) < (existing.parent_node_id, existing.parent_workflow)
+        ):
             by_target[key] = candidate
 
     return [by_target[key] for key in sorted(by_target)]
@@ -2986,18 +2995,6 @@ def _items_by_name(items: tuple[dict[str, Any], ...]) -> dict[str, dict[str, Any
 # ---------------------------------------------------------------------------
 # Trace discrepancy detection
 # ---------------------------------------------------------------------------
-
-
-def _iter_llm_events(events: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any]]]:
-    """Walk trace events recursively, including cached events."""
-    from pflow.core.trace_tree import TraceTree
-
-    tree = TraceTree(events=tuple(events), format_version="2.1")
-    for leaf in tree.iter_llm_leaves(descend_cached_subtrees=True):
-        if leaf.tier == "sub_workflow_descendant":
-            yield leaf.event_node_id, dict(leaf.event)
-        else:
-            yield leaf.owner_node_id, dict(leaf.event)
 
 
 def _predict_cache_keys(

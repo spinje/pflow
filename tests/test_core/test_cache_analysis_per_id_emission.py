@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,25 @@ import pytest
 from pflow.core.cache_analysis.analyze import analyze
 from pflow.core.cache_analysis.cost_estimation import ModelPricing
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+
+def _iter_llm_events(events: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Walk trace events recursively, including cached events.
+
+    Test-only helper. Was previously at ``analyze.py:2991`` with no production
+    callers (documented in ``cache_analysis/CLAUDE.md`` as dead production
+    code after the per-call rendering migration to
+    ``TraceTree.iter_llm_leaves``). Relocated here in the post-review sweep
+    since the only consumers are the 2 structural tests in this file.
+    """
+    from pflow.core.trace_tree import TraceTree
+
+    tree = TraceTree(events=tuple(events), format_version="2.1")
+    for leaf in tree.iter_llm_leaves(descend_cached_subtrees=True):
+        if leaf.tier == "sub_workflow_descendant":
+            yield leaf.event_node_id, dict(leaf.event)
+        else:
+            yield leaf.owner_node_id, dict(leaf.event)
 
 
 def _word_count(_model: str | None, text: str | None, **_kwargs: Any) -> tuple[int, str]:
@@ -1723,8 +1743,6 @@ def test_iter_llm_events_includes_cached_events() -> None:
     exists separately from ``_collect_llm_calls_from_events`` (which skips
     cached for cost aggregation).
     """
-    from pflow.core.cache_analysis.analyze import _iter_llm_events
-
     events = [
         {
             "node_id": "memoized-llm",
@@ -1744,8 +1762,6 @@ def test_iter_llm_events_recurses_into_batch_items() -> None:
     discrepancy detection would skip every batched LLM call inside a
     batch sub-workflow.
     """
-    from pflow.core.cache_analysis.analyze import _iter_llm_events
-
     events = [
         {
             "node_id": "batch-parent",
@@ -1772,6 +1788,61 @@ def test_iter_llm_events_recurses_into_batch_items() -> None:
     assert "inner-llm" in yielded_node_ids
     # Defends: ``yield from _iter_llm_events(item.get("events", []))`` must
     # recurse into batch-item events; without it, ``inner-llm`` disappears.
+
+
+# ---------------------------------------------------------------------------
+# `_dedupe_sub_workflow_cache_candidates` — tie-break determinism
+# ---------------------------------------------------------------------------
+
+
+def test_dedupe_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow() -> None:
+    """When two parents in different workflows share the same parent_node_id
+    and reach the same (child_workflow, child_input_name), the tie-break must
+    be deterministic on the full ``(parent_node_id, parent_workflow)`` tuple
+    — NOT dict-insertion-order.
+
+    Mutation contract: removing ``parent_workflow`` from the comparison tuple
+    at ``analyze.py::_dedupe_sub_workflow_cache_candidates`` makes this test
+    insertion-order-dependent. With both candidates passed in either order,
+    the deterministic-by-tuple version always picks the lex-smaller
+    parent_workflow. The pre-fix code returned whichever was first seen.
+    """
+    from pflow.core.cache_analysis.analyze import (
+        _dedupe_sub_workflow_cache_candidates,
+        _SubWorkflowCacheCandidate,
+    )
+
+    candidate_a = _SubWorkflowCacheCandidate(
+        parent_workflow="alpha-parent.pflow.md",
+        parent_value_expr="${concept}",
+        parent_node_id="main",  # SAME id as candidate_b
+        line_in_parent=10,
+        child_workflow="child.pflow.md",
+        child_input_name="concept",
+        child_count=2,
+    )
+    candidate_b = _SubWorkflowCacheCandidate(
+        parent_workflow="zulu-parent.pflow.md",
+        parent_value_expr="${concept}",
+        parent_node_id="main",  # SAME id as candidate_a
+        line_in_parent=20,
+        child_workflow="child.pflow.md",
+        child_input_name="concept",
+        child_count=2,
+    )
+
+    # Either order in → same winner out (alpha-parent < zulu-parent lex).
+    forward = _dedupe_sub_workflow_cache_candidates([candidate_a, candidate_b])
+    reversed_ = _dedupe_sub_workflow_cache_candidates([candidate_b, candidate_a])
+
+    assert len(forward) == 1
+    assert len(reversed_) == 1
+    assert forward[0].parent_workflow == "alpha-parent.pflow.md"
+    assert reversed_[0].parent_workflow == "alpha-parent.pflow.md", (
+        "tie-break drift: dict-insertion-order won instead of lex-smallest "
+        "parent_workflow. Did the (parent_node_id, parent_workflow) tuple "
+        "comparison get reverted?"
+    )
 
 
 # ---------------------------------------------------------------------------

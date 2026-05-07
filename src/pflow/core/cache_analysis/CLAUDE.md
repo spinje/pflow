@@ -250,7 +250,6 @@ Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_
 ## Subtle quirks worth knowing
 
 - **`_workflow_short_name` is duplicated** in `analyze.py` and `render_text.py`. Both implement the same basename-strip-`.pflow.md` logic. The duplication is a known follow-up (task 160).
-- **`_iter_llm_events`** (in `analyze.py`) is consumed only by tests after the per-call rendering migration to `TraceTree.iter_llm_leaves`. Lives in production code but has no production caller.
 - **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
 - **Stable warning ID catalog has 20 entries** as of v1: 9 cache IDs from the original spec (the spec's 10th, `cache.opportunities-available`, is the dry-run nudge ID and lives outside the catalog) + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `cache.sub-workflow-cache-undeclared` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
 
