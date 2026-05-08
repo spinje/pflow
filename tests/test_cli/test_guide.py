@@ -431,6 +431,304 @@ def test_detect_returns_sorted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# detect_topics_from_ir — caching detection (F-03 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_caching_via_top_level_cache_block() -> None:
+    """Top-level ``## Cache`` block parses into ``ir["cache"]`` → caching topic."""
+    ir = {
+        "nodes": [{"id": "n", "type": "llm", "params": {}}],
+        "edges": [],
+        "cache": {"ttl": "5m", "items": [{"name": "doc", "var": "doc"}]},
+    }
+    assert "caching" in detect_topics_from_ir(ir)
+
+
+def test_detect_caching_via_prompt_cache() -> None:
+    """A node with ``prompt_cache: [...]`` → caching topic."""
+    ir = {
+        "nodes": [{"id": "n", "type": "llm", "params": {}, "prompt_cache": ["doc"]}],
+        "edges": [],
+    }
+    assert "caching" in detect_topics_from_ir(ir)
+
+
+def test_detect_caching_via_prewarm_true() -> None:
+    """A node with ``prewarm: true`` → caching topic."""
+    ir = {
+        "nodes": [{"id": "n", "type": "llm", "params": {}, "prewarm": True}],
+        "edges": [],
+    }
+    assert "caching" in detect_topics_from_ir(ir)
+
+
+def test_detect_caching_via_prewarm_false_still_fires() -> None:
+    """Presence not truthiness: ``prewarm: false`` is opt-OUT of the runtime
+    behavior but agent IS engaging with the feature; should still surface
+    the guide topic so they can read the docs that explain the opt-out."""
+    ir = {
+        "nodes": [{"id": "n", "type": "llm", "params": {}, "prewarm": False}],
+        "edges": [],
+    }
+    assert "caching" in detect_topics_from_ir(ir)
+
+
+def test_detect_no_caching_for_workflow_without_signals() -> None:
+    """Negative case: an LLM workflow with no cache signals → no caching topic."""
+    ir = {
+        "nodes": [{"id": "n", "type": "llm", "params": {"model": "x"}}],
+        "edges": [],
+    }
+    assert "caching" not in detect_topics_from_ir(ir)
+
+
+# ---------------------------------------------------------------------------
+# Sub-workflow recursion (F-03 Gap B)
+# ---------------------------------------------------------------------------
+
+
+def _write_pflow(path: Path, body: str) -> None:
+    path.write_text(body, encoding="utf-8")
+
+
+def test_compose_walks_into_sub_workflow_files_for_topics(tmp_path: Path) -> None:
+    """Parent workflow with a ``workflow:`` node pointing at a child that
+    declares caching → parent's ``pflow guide`` surfaces ``caching``."""
+    child = tmp_path / "child.pflow.md"
+    _write_pflow(
+        child,
+        """\
+# Child
+
+A child workflow that uses caching.
+
+## Inputs
+
+### doc
+
+A document.
+
+- type: string
+
+## Cache
+
+- ttl: 5m
+
+```cache
+[A document][${doc}]
+```
+
+## Steps
+
+### summarize
+
+Summarize the doc.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt: Summarize.
+- prompt_cache: [doc]
+""",
+    )
+    parent = tmp_path / "parent.pflow.md"
+    _write_pflow(
+        parent,
+        """\
+# Parent
+
+Dispatches to a child.
+
+## Steps
+
+### dispatch
+
+Run the child.
+
+- type: workflow
+- workflow: ./child.pflow.md
+""",
+    )
+    result = compose_guide([str(parent)])
+    assert "Caching" in result, "parent should surface caching topic from child sub-workflow"
+
+
+def test_compose_handles_cycle_with_warning(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """Two workflows that reference each other → no infinite recursion;
+    cycle warning emitted to stderr; topic detection completes."""
+    a = tmp_path / "a.pflow.md"
+    b = tmp_path / "b.pflow.md"
+    _write_pflow(
+        a,
+        """\
+# A
+
+A node that references B.
+
+## Steps
+
+### to-b
+
+Dispatch.
+
+- type: workflow
+- workflow: ./b.pflow.md
+""",
+    )
+    _write_pflow(
+        b,
+        """\
+# B
+
+A node that references A.
+
+## Steps
+
+### to-a
+
+Dispatch.
+
+- type: workflow
+- workflow: ./a.pflow.md
+""",
+    )
+    result = compose_guide([str(a)])
+    captured = capsys.readouterr()
+    assert "Sub-Workflow" in result
+    assert "cycle detected" in captured.err.lower()
+
+
+def test_compose_fails_soft_on_broken_sub_workflow(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """A parent that references a missing child file → stderr warning, but
+    the parent's own detected topics still flow through."""
+    parent = tmp_path / "parent.pflow.md"
+    _write_pflow(
+        parent,
+        """\
+# Parent
+
+Has a real LLM node and a reference to a missing child.
+
+## Steps
+
+### think
+
+Do something.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt: Hi.
+
+### dispatch
+
+Reference a child that doesn't exist.
+
+- type: workflow
+- workflow: ./does-not-exist.pflow.md
+""",
+    )
+    result = compose_guide([str(parent)])
+    captured = capsys.readouterr()
+    # Parent topic still surfaced
+    assert "LLM" in result
+    # Warning surfaced for the broken descendant
+    assert "skipped sub-workflow" in captured.err.lower()
+
+
+def test_compose_saved_workflow_walks_sub_workflows(tmp_path: Path, isolate_pflow_config: dict) -> None:
+    """The saved-workflow CLI form (`pflow guide my-saved-name`) must also
+    walk sub-workflows — F-03 reproduction explicitly covered the saved-name
+    invocation, so the fix has to handle both file-path and saved-name."""
+    workflows_path = Path(isolate_pflow_config["workflows_path"])
+    parent_dir = workflows_path / "parent-of-cache-tree"
+    parent_dir.mkdir(parents=True)
+
+    # Child sits inside the saved-workflow folder (bundled dependency)
+    _write_pflow(
+        parent_dir / "child.pflow.md",
+        """\
+# Child
+
+Caches a doc.
+
+## Inputs
+
+### doc
+
+A doc.
+
+- type: string
+
+## Cache
+
+- ttl: 5m
+
+```cache
+[A doc][${doc}]
+```
+
+## Steps
+
+### summarize
+
+Summarize.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt: Summarize.
+- prompt_cache: [doc]
+""",
+    )
+    _write_pflow(
+        parent_dir / "parent-of-cache-tree.pflow.md",
+        """\
+---
+name: parent-of-cache-tree
+---
+# Parent
+
+Dispatch to child.
+
+## Steps
+
+### dispatch
+
+Run child.
+
+- type: workflow
+- workflow: ./child.pflow.md
+""",
+    )
+
+    result = compose_guide(["parent-of-cache-tree"])
+    assert "Caching" in result, "saved-name CLI form should walk sub-workflows for caching"
+
+
+def test_compose_real_lyrics_generator_detects_caching() -> None:
+    """End-to-end mutation contract: the real Task 159 motivating workflow
+    tree (lyrics-generator → song-creator) MUST surface caching now.
+
+    This locks F-03's fix structurally: if a future change loses the
+    sub-workflow recursion, this test fails on a real-world fixture (not a
+    synthetic one that could drift in shape with the bug)."""
+    fixture = (
+        Path(__file__).parent.parent.parent
+        / ".taskmaster"
+        / "tasks"
+        / "task_159"
+        / "baseline"
+        / "_shared"
+        / "workflows"
+        / "lyrics-generator"
+        / "lyrics-generator.pflow.md"
+    )
+    if not fixture.exists():
+        pytest.skip(f"Baseline fixture not present at {fixture}")
+    result = compose_guide([str(fixture)])
+    assert "Caching" in result
+
+
+# ---------------------------------------------------------------------------
 # CLI integration
 # ---------------------------------------------------------------------------
 

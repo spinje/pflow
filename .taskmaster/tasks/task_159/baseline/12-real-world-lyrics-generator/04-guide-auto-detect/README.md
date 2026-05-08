@@ -1,32 +1,26 @@
-# 04 — `pflow guide` auto-detection on lyrics-generator (FINDING)
+# 04 — `pflow guide` auto-detection on lyrics-generator (F-03 RESOLVED)
 
 **Surface**: 12-real-world-lyrics-generator
 
 **Triggers**: `pflow guide <workflow-path>` should auto-detect topics
 relevant to the workflow tree.
 
-**Observed behavior** — manually verified during baseline construction:
+**Current behavior** — `pflow guide ./lyrics-generator.pflow.md` now
+includes the `caching` topic. Detection looks for `ir["cache"]`,
+`node["prompt_cache"]`, and `node["prewarm"]` on the parsed IR, AND walks
+into sub-workflow files via `resolve_sub_workflow` so a parent that
+dispatches to children with caching declarations still surfaces it.
 
-The lyrics-generator parent workflow uses cache heavily THROUGH SUB-WORKFLOWS
-(`song-creator.pflow.md` declares the `## Cache` block; the parent doesn't).
-`pflow guide ./lyrics-generator.pflow.md` does NOT include the `caching`
-topic in its output, even though 8 nodes across the tree use `prompt_cache:`.
+**F-03 fix landed**: `src/pflow/guide/__init__.py` — `detect_topics_from_ir`
+checks the three caching signals; `_topics_from_workflow_file` recurses
+through `workflow:` nodes via `_collect_topics`. Saved-name CLI form
+(`pflow guide my-saved-workflow`) routes through the same walker.
 
-`pflow guide ./song-creator/song-creator.pflow.md` (run directly on the
-sub-workflow that has `## Cache`) ALSO does not surface the caching topic.
-Only `batch`, `code`, `llm`, `sub-workflows` are detected.
-
-**This is a finding.** Documented as F-03 in FINDINGS.md.
-
-**Why this case matters**: agents working on a real cache-using workflow
-ask `pflow guide` for relevant docs. They don't get the caching guide. The
-auto-detect doesn't recurse into sub-workflows for topic detection AND
-doesn't trigger on the `## Cache` / `prompt_cache:` keywords inside the
-workflow body. Agents have to know to ask for `pflow guide caching`
-explicitly.
-
-**Mutation contract**: this case captures the *current* output. If a
-future change adds caching to the auto-detect, this case fails — we'd
-update the expected output and ship the fix. If a future change drops
-another detected topic that IS present, this case fails — preventing
-silent regression of `batch` / `llm` detection on workflows that use them.
+**Mutation contract**: this case now locks the FIXED behavior.
+- If a future change loses caching detection on the parent → case fails
+  (regression of F-03 fix).
+- If a future change loses sub-workflow recursion → case fails (caching
+  comes only from the song-creator child, which is reached only via
+  recursion).
+- If a future change drops another detected topic (batch / llm / etc.) →
+  case fails, preventing silent regression of unrelated detection paths.

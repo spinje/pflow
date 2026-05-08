@@ -9458,3 +9458,73 @@ Tacit knowledge for the next agent:
    list every unique line change across all drifted baselines, classify
    each as additive / cosmetic / behavioral, and verify any behavioral
    change is intended. Top-10% test discipline.
+
+## Baseline finding F-03 — `pflow guide` auto-detect now surfaces caching (2026-05-08)
+
+`pflow guide <workflow>` did not surface the `caching` topic for cache-using
+workflows. Two gaps: `detect_topics_from_ir` was blind to `ir["cache"]` /
+`node["prompt_cache"]` / `node["prewarm"]`, and `_topics_from_workflow_file`
+parsed only the root file (so cache-in-children trees like lyrics-generator →
+song-creator silently lost the topic). Saved-name CLI form was also bypassed.
+
+Behavior:
+
+- `detect_topics_from_ir` now adds `caching` when any of the three signals are
+  present (presence-not-truthiness so `prewarm: false` still surfaces the guide).
+- `_topics_from_workflow_file` walks the tree via new `_collect_topics` helper
+  using `resolve_sub_workflow`. Cycle protection via resolved-path set; broken
+  descendants and cycles emit a single stderr warning and skip (root parse
+  errors still raise `GuideError`).
+- Saved-name path routes through the same walker via
+  `WorkflowManager.get_path()`; the rich validation-error path is preserved
+  via `_try_get_saved_workflow_path` (replaces `_try_load_saved_workflow`).
+
+Files changed: `src/pflow/guide/__init__.py`, `src/pflow/guide/CLAUDE.md`,
+`tests/test_cli/test_guide.py` (10 new tests),
+`.taskmaster/tasks/task_159/baseline/12-real-world-lyrics-generator/04-guide-auto-detect/`
+(case regenerated; README updated to lock the fixed behavior),
+`.taskmaster/tasks/task_159/baseline/FINDINGS.md` (F-03 marked resolved).
+
+Deviations / adaptations:
+
+- Did not extract a `_FEATURE_DETECTORS` registry. Three detectors (batch,
+  branching, caching) is below the threshold where table-driven pays off;
+  inline `if` checks match the existing pattern and are simpler for a future
+  agent to extend. Rejected after explicit pushback on overengineering.
+- Did not extract a shared `walk_workflow_tree` primitive across the four
+  existing tree walkers (mermaid, cross_workflow, validator, runtime). Filed
+  as a separate refactor concern; folding it into this fix would expand scope
+  from one-bug-fix to a four-module refactor.
+- Did not add a depth limit. Path-set cycle detection terminates recursion
+  for real-world inputs; a depth cap would be belt-and-suspenders.
+
+Verification:
+
+- `tests/test_cli/test_guide.py`: 55/55 pass (45 existing + 10 new).
+- `tests/test_cli/`: 690/690 pass.
+- Baseline harness: 63/63 pass after regenerating case 04.
+- End-to-end: `pflow guide ./lyrics-generator/lyrics-generator.pflow.md` now
+  includes `# Prompt Caching` in its output (file-path form);
+  `pflow guide my-saved-tree` walks sub-workflows via the same code path
+  (saved-name form, covered by `test_compose_saved_workflow_walks_sub_workflows`).
+- `ruff check` and `mypy` clean on touched files.
+
+Key learnings:
+
+1. Three reviewers (review-plan, review-impact-completeness,
+   review-silent-failures) ran in parallel against the proposed plan before
+   any code was written. Two converged on the same critical defects (saved-
+   workflow bypass, root-vs-descendant error contract); the third surfaced
+   silent-failure edges (cycle skip, swallowed errors) that became one-line
+   stderr warnings. Pre-implementation review caught issues that would have
+   needed a follow-up commit otherwise.
+2. The user's pushback on a `_FEATURE_DETECTORS` registry was correct.
+   For N=3 detectors, table-driven is premature abstraction. Inline `if`
+   checks next to the existing batch/branching pattern are simpler and
+   match CLAUDE.md's "three similar lines is better than a premature
+   abstraction" rule.
+3. Warn-on-swallow at every fail-soft site (cycle, exception swallow on
+   resolve, exception swallow on parse) is simpler than the reviewer's
+   suggested "track skipped paths and surface a count" — single
+   `click.echo(..., err=True)` per swallow site, no tracking parameter
+   threaded through recursion.

@@ -69,32 +69,15 @@ when the target ID isn't yet hit.
 
 ---
 
-## F-03 — `pflow guide <workflow>` auto-detect misses `caching` topic on cache-using workflows
+## F-03 — `pflow guide <workflow>` auto-detect misses `caching` topic on cache-using workflows — **RESOLVED**
 
 **Case**: `12-real-world-lyrics-generator/04-guide-auto-detect/`
 
-**Observed**: running `pflow guide ./lyrics-generator/lyrics-generator.pflow.md`
-on a workflow tree where 8 nodes across the tree use `prompt_cache:` and
-sub-workflow song-creator declares a 5-chunk `## Cache` block. The
-auto-detected topics are: `Batch`, `Code`, `File`, `LLM`, `Sub-Workflows`,
-`To Uppercase`. **`Caching` is NOT detected.**
-
-**Verified directly on song-creator.pflow.md** (the file that DOES declare
-`## Cache`): same omission. Auto-detect doesn't fire on the `## Cache`
-keyword inside the workflow body.
-
-**Spec implication**: per Task 159, agents are supposed to learn about
-caching by `pflow guide caching`. The auto-detect surface (which the CLI
-help promotes as "auto-detects relevant topics") doesn't connect agents to
-that topic when their workflow uses it heavily.
-
-**Suggested fix**: extend the workflow scanner in `pflow guide`'s
-auto-detect path to look for `## Cache` blocks AND `prompt_cache:`
-keywords AND walk into sub-workflow files. The `caching` topic should
-surface for any workflow tree that contains those signals.
-
-**Severity guess**: medium — affects every agent who uses `pflow guide
-<workflow>` to onboard themselves to a cache-using project.
+**Status**: ✅ Fixed. `detect_topics_from_ir` now checks `ir["cache"]`,
+`node["prompt_cache"]`, and `node["prewarm"]`; `_topics_from_workflow_file`
+recurses through `workflow:` nodes via `_collect_topics`; saved-name CLI
+form routes through the same walker. Baseline case 04 regenerated and now
+locks the fixed behavior.
 
 ---
 

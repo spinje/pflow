@@ -44,10 +44,20 @@ The topic is automatically discoverable — `list_topics()` scans the filesystem
 
 ## Workflow-Scoped Auto-Detection
 
-`detect_topics_from_ir()` walks the IR to find relevant topics:
+`detect_topics_from_ir()` walks a single IR to find relevant topics:
 - Node `type` → topic (via `_NODE_TYPE_TO_TOPIC` for non-1:1 mappings, `mcp-*` prefix → `mcp`)
 - `node["batch"]` present → `batch`
+- `node["prompt_cache"]` or `node["prewarm"]` present (presence, not truthiness) → `caching`
+- Top-level `ir["cache"]` (parsed `## Cache` block) → `caching`
 - Edge with `action != "default"` → `branching`
+
+`_topics_from_workflow_file()` walks the workflow TREE: parses the root,
+runs `detect_topics_from_ir` on every reachable IR via `_collect_topics`
+recursing through `workflow:` nodes (uses `resolve_sub_workflow`). Cycle
+protection via resolved-path set; broken descendants and cycles emit a
+single stderr warning each and are skipped (root parse errors still raise
+`GuideError`). Saved-name CLI form (`pflow guide my-saved-workflow`) routes
+through the same walker via `WorkflowManager.get_path()`.
 
 ## Content Principles
 
