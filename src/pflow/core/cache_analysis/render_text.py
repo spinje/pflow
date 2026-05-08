@@ -1060,6 +1060,10 @@ def _format_per_call_row(
     if row.did_not_execute_in_trace:
         inline_ids = [*inline_ids, "[unexecuted]"]
     warning_marker = ", ".join(inline_ids)
+    # For opaque prompts without runtime/cacheable evidence, the token count is
+    # only the literal "${...}" template size, not a meaningful prompt size.
+    tokens_unmeasurable = "opaque-prompt" in inline_ids and row.cacheable_data_source == "unavailable"
+    tokens_str = "    ?" if tokens_unmeasurable else f"{row.input_tokens_estimated:>5}"
     cacheable_str = f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
     ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
     model_display = "<varies>" if row.model_is_heterogeneous else row.model
@@ -1069,7 +1073,7 @@ def _format_per_call_row(
     calls = f" calls={row.observed_call_count}" if row.observed_call_count > 1 else ""
     lines.append(
         f"  {row.node_path:30s} {marker:<6} model={model_display:35s} "
-        f"tokens={row.input_tokens_estimated:>5}  "
+        f"tokens={tokens_str}  "
         f"cacheable={cacheable_str}  "
         f"ratio={ratio_str}  "
         f"src={_data_source_display(row.data_source)}{calls}{observed}  {warning_marker}"

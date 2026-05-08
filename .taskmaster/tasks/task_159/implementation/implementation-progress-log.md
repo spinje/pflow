@@ -9571,3 +9571,54 @@ evidence reduces the analyzer's apparent knowledge. Ready as a single
 fix touching `analyze.py` (coverage classification, suppression filter)
 and `render_text.py` (per-call model, actual-savings delta) with one
 re-capture of case 05.
+
+## Baseline finding A-6 — opaque-prompt input tokens render as unmeasurable (2026-05-08)
+
+Implemented the A-6 renderer-only fix: `_format_per_call_row` now renders
+`tokens=    ?` when a row carries the inline `opaque-prompt` marker and
+`cacheable_data_source == "unavailable"`. The `PerCallRow.input_tokens_estimated`
+contract stays unchanged; JSON still emits the integer; sorting still uses the
+stored estimate. This keeps the data model stable while making the human text
+report honest when the count is only the literal `${...}` template tokenization.
+
+Tests added:
+
+- Positive regression: opaque prompt + unavailable cacheable source renders
+  `tokens=    ?` and not `tokens=    3`.
+- Negative regression: opaque prompt + memo-backed cacheable source keeps
+  `tokens=    3`, locking the AND condition so statically grounded or run-backed
+  rows are not over-suppressed.
+
+Adaptations:
+
+- Updated `_make_analysis` in the renderer tests to sum nullable
+  `cacheable_tokens_estimated` the same way production `_build_summary` does
+  (`None` contributes 0). Clear reason: the A-6 fixture is a valid public
+  dataclass shape and the test builder was stricter than production.
+- Target baseline verification surfaced two already-present worktree output
+  changes (`Per-child analyze-cache commands` heading and the trace-measured
+  batch note). Clear reason for not bundling them here: they are tied to
+  pre-existing source edits outside A-6, so the A-6 commit stages only the
+  opaque-token baseline deltas.
+
+Verification:
+
+- `tests/test_core/test_cache_analysis_renderers.py`: 85 passed.
+- Affected cache-analysis set (analyze, renderers, token estimation, per-ID
+  emission/coverage, analyze-cache CLI): 334 passed.
+- Baseline harness with sandbox `uv` shim: both requested lyrics-generator text
+  cases passed after recapture, 0 drift, 0 harness errors.
+- Sandbox-safe near-full suite: 6394 passed, 19 skipped with five Homebrew-`uv`
+  subprocess cases excluded for the documented sandbox panic class.
+- Full `ruff format --check`, `mypy`, `deptry src`, and `git diff --check` clean.
+  Full `ruff check` is not clean on this worktree due unrelated existing
+  RUF043/RUF059 findings outside the touched files; touched-file ruff check is
+  clean.
+
+Key learning:
+
+- The honest-unmeasurable convention needs to be keyed by the semantic warning
+  plus missing grounding evidence, not by `data_source == "heuristic"`. The
+  lyrics-generator `write-lyrics` rows show why: heuristic input-token estimates
+  can still be meaningful when the prompt is statically resolvable and only model
+  resolution is missing.

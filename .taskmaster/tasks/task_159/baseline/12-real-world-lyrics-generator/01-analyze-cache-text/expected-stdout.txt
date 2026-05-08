@@ -123,7 +123,7 @@
   easter-eggs                           model=                                    tokens= 1066  cacheable=    ?  ratio=  ?%  src=low
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
-  generate-chorus-options               model=<varies>                            tokens=    3  cacheable=    ?  ratio=  ?%  src=low  opaque-prompt
+  generate-chorus-options               model=<varies>                            tokens=    ?  cacheable=    ?  ratio=  ?%  src=low  opaque-prompt
 
 ## Sub-workflow drill-in
 

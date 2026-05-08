@@ -126,7 +126,7 @@ def _make_analysis(
             total_llm_invocations_estimated=total_invocations,
             dynamic_batch_node_count=dynamic_batch_count,
             total_input_tokens_estimated=sum(r.input_tokens_estimated for r in rows),
-            total_cacheable_tokens_estimated=sum(r.cacheable_tokens_estimated for r in rows),
+            total_cacheable_tokens_estimated=sum(r.cacheable_tokens_estimated or 0 for r in rows),
             models_in_use=tuple(sorted({r.model for r in rows if r.model})),
             partial_cost_usd=partial,
             unavailable_models=unavailable,
@@ -237,10 +237,10 @@ class TestMakeAnalysisShapeParity:
         def _at_default(summary: AnalysisSummary, field: dataclasses.Field[Any]) -> bool:
             value = getattr(summary, field.name)
             if field.default is not dataclasses.MISSING:
-                return value == field.default
+                return cast(bool, value == field.default)
             if field.default_factory is not dataclasses.MISSING:
                 factory = cast(Callable[[], object], field.default_factory)
-                return value == factory()
+                return cast(bool, value == factory())
             return False
 
         unrepresented = {
@@ -881,6 +881,54 @@ def test_text_all_rows_flag_shows_everything() -> None:
     assert "clean2" in text
     assert "dirty" in text
     assert "Hidden:" not in text
+
+
+def test_per_call_row_renders_tokens_unmeasurable_for_opaque_prompt_with_no_data() -> None:
+    row = PerCallRow(**{
+        **_row("generate-chorus-options", 50).__dict__,
+        "input_tokens_estimated": 3,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "data_source": "heuristic",
+        "declared_prompt_cache": ["prompt"],
+        "cacheable_data_source": "unavailable",
+    })
+    warning = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.opaque-prompt",
+        node_id="generate-chorus-options",
+        message="Opaque prompt.",
+    )
+
+    text = render_text(_make_analysis(rows=[row], warnings=[warning]))
+
+    assert "tokens=    ?" in text
+    assert "tokens=    3" not in text
+
+
+def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> None:
+    row = PerCallRow(**{
+        **_row("generate-chorus-options", 50).__dict__,
+        "input_tokens_estimated": 3,
+        "cacheable_tokens_estimated": 2,
+        "cache_ratio_pct": 67,
+        "data_source": "memo",
+        "declared_prompt_cache": ["prompt"],
+        "cacheable_data_source": "memo",
+    })
+    warning = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.opaque-prompt",
+        node_id="generate-chorus-options",
+        message="Opaque prompt.",
+    )
+
+    text = render_text(_make_analysis(rows=[row], warnings=[warning]))
+
+    assert "tokens=    3" in text
+    assert "tokens=    ?" not in text
 
 
 def test_text_partial_trace_labels_executed_scope() -> None:
