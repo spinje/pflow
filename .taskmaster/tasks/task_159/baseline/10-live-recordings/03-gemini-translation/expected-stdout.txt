@@ -1,0 +1,31 @@
+# Cache Analysis: <BASELINE_CASE_DIR>/workflow.pflow.md
+
+  Workflow: 2 LLM nodes using gemini/gemini-2.5-flash
+  Evidence: complete trace (2 LLM nodes executed)
+  Observed models: gemini/gemini-2.5-flash
+  Confidence: high_from_trace (2 of 2 nodes)
+
+## Summary
+
+  Actually paid (trace):       ~$0.0013 (trace)
+  Cost without caching:        ~$0.0046
+  Cost on rerun (within TTL):  ~$0.0013
+  First-run delta:              saves ~$0.0012/run on first run, 26% of baseline
+  Rerun delta:                  saves ~$0.0033/run on rerun, 71% of baseline
+  Actual trace delta:         saves ~$0.0033/run actual vs no-cache, 71% of baseline
+
+  0 opportunities (0 warnings, 0 info)
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+  Showing 0 of 2 LLM nodes; all-clean rows hidden (--all-rows shows everything).
+
+
+  Hidden: 2 nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows).
+
+## Notes
+
+  · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.
+  · Discrepancy detection: predicted-key matching unavailable (workflow has no run history). Observable-field attributions (TTL expiry, chunk skipped) still apply.
+  · Discrepancy detection: skipped attribution for 2 trace event(s) with no predicted cache_key and no observable signal. Per-node skip reasons (above, when present) explain why prediction was unavailable for the affected nodes; this count covers events whose nodes were not in the analyzed IR (typically batch sub-workflow per-item children with runtime-only context).
+  · Gemini telemetry note: LiteLLM's Vertex/Gemini translation surfaces explicit-cache reads via 'cache_read_input_tokens' (or 'prompt_tokens_details.cached_tokens'); 'cache_creation_input_tokens' is 0/absent even when caching is working. Verification path is reads on subsequent calls. Spike 1 disambiguator (progress log §36) confirmed the marker does real work — no caching fires without it.

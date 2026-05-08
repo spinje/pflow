@@ -1,0 +1,88 @@
+# Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
+
+  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes) (no model resolved — set settings.default_model)
+  Evidence: partial trace (18 of 25 LLM nodes executed)
+  Observed models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview
+  (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows: analyze-source, concept-chooser, enforce-diversity, fetch-source, chorus-chooser, review-accuracy, review-ai-tells, review-cliche, review-emotional-architecture, review-genre, review-imagery, review-narrative, review-rhyme, review-stranger-summary, song-creator)
+
+## Summary
+
+  Trace-backed costs below cover executed nodes only.
+  Actually paid (executed trace):       ~$2.31 (trace)
+  Cost without caching (executed):      unavailable
+  Cost on rerun (executed, within TTL): unavailable
+
+  0 opportunities (0 warnings, 0 info)
+  Workflow-design recommendations suppressed for partial trace evidence.
+
+## Blocking errors (must fix before save and run)
+
+  1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
+     fetch-youtube-mcp in fetch-source.pflow.md
+     In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
+
+## Per-call cache report
+  Executed trace rows are evidence-only; unexecuted rows are marked when shown.
+  Showing 18 executed LLM nodes; 7 unexecuted rows hidden (--all-rows shows everything).
+
+### lyrics-generator.pflow.md
+  curate-briefs                         model=                                    tokens=54752  cacheable=    ?  ratio=  ?%  src=high calls=4
+  evaluate-songs                        model=                                    tokens= 9090  cacheable=    ?  ratio=  ?%  src=high
+
+### analyze-source.pflow.md (called by analyze-sources)
+  analyze                        (×6)   model=                                    tokens= 6346  cacheable=    ?  ratio=  ?%  src=high calls=6
+
+### concept-chooser.pflow.md (called by choose-concepts)
+  generate-concepts              (×4)   model=                                    tokens=20666  cacheable=    ?  ratio=  ?%  src=high calls=4
+  select-concepts                       model=                                    tokens= 6168  cacheable=    ?  ratio=  ?%  src=high
+
+### enforce-diversity.pflow.md (called by enforce-diversity)
+  assign-diversity                      model=                                    tokens=12208  cacheable=    ?  ratio=  ?%  src=high
+
+### song-creator.pflow.md (called by create-songs)
+  creative-direction                    model=                                    tokens=40719  cacheable=36267  ratio= 89%  src=high calls=4
+  song-architecture                     model=                                    tokens=54716  cacheable=44168  ratio= 81%  src=high calls=4
+  easter-eggs                           model=                                    tokens=60425  cacheable=56785  ratio= 94%  src=high calls=4
+  write-lyrics                          model=                                    tokens=78866  cacheable=63009  ratio= 80%  src=high calls=4
+  rewrite-emotional                     model=                                    tokens=94100  cacheable=63009  ratio= 67%  src=high calls=4
+  rewrite-craft                         model=                                    tokens=84124  cacheable=56785  ratio= 68%  src=high calls=4
+  generate-suno-prompt                  model=                                    tokens=13776  cacheable= 7909  ratio= 57%  src=high calls=4
+
+### chorus-chooser.pflow.md (called by choose-chorus)
+  generate-chorus-options               model=<varies>                            tokens=266728  cacheable=    ?  ratio=  ?%  src=high calls=32 observed_models=gemini/gemini-2.5-flash-lite,gemini/gemini-3-flash-preview
+  score-choruses                        model=                                    tokens=158704  cacheable=    ?  ratio=  ?%  src=high calls=136
+  select-chorus                         model=                                    tokens=36289  cacheable=    ?  ratio=  ?%  src=high calls=4
+
+### review-stranger-summary.pflow.md (called by emotional-reviews)
+  review                                model=                                    tokens=77336  cacheable=    ?  ratio=  ?%  src=high calls=16
+
+### review-rhyme.pflow.md (called by craft-reviews)
+  review                                model=                                    tokens=114063  cacheable=    ?  ratio=  ?%  src=high calls=20
+
+## Sub-workflow drill-in
+
+  Sub-workflow opportunities don't surface here — run analyze-cache per child:
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/fetch-source/fetch-source.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+## Notes
+
+  · Workflow batch fetch-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${sources}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Workflow batch analyze-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${fetch-sources.results}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Workflow batch create-songs in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${zip-concepts-with-briefs.result}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Discrepancy detection: predicted-key matching unavailable (workflow has no run history). Observable-field attributions (TTL expiry, chunk skipped) still apply.
+  · Discrepancy detection: skipped attribution for 117 trace event(s) with no predicted cache_key and no observable signal. Per-node skip reasons (above, when present) explain why prediction was unavailable for the affected nodes; this count covers events whose nodes were not in the analyzed IR (typically batch sub-workflow per-item children with runtime-only context).
+  · Workflow-design recommendations suppressed because the trace is partial; per-call rows show executed trace evidence only.
