@@ -2348,13 +2348,13 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
     assert "### parent.pflow.md" in text
     assert "### child.pflow.md (called by call-child)" in text
     assert "(1 in parent.pflow.md, 1 in 1 sub-workflow: child)" in text
-    assert "## Sub-workflow drill-in" in text
+    assert "## Per-child analyze-cache commands" in text
     assert "pflow analyze-cache /abs/child.pflow.md" in text
 
 
 def test_render_text_drill_in_omitted_for_single_workflow() -> None:
     text = render_text(_make_analysis(rows=[_row("draft", 30)]), all_rows=True)
-    assert "## Sub-workflow drill-in" not in text
+    assert "## Per-child analyze-cache commands" not in text
     assert "(called by" not in text
 
 

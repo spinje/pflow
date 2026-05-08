@@ -120,7 +120,7 @@
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options               model=<varies>                            tokens=    ?  cacheable=    ?  ratio=  ?%  src=low  opaque-prompt
 
-## Sub-workflow drill-in
+## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
     pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md

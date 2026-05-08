@@ -385,7 +385,7 @@ def test_template_items_gap_note_uses_real_analyze_cache_cli_param_wording() -> 
 
     assert notes
     note = notes[0]
-    assert "actually_paid_usd is trace-driven" in note
+    assert "measured from trace events" in note
     assert "CLI parameter" in note
     assert "--inputs" not in note
     assert "current_cost" not in note

@@ -530,7 +530,7 @@ def test_analyze_cache_renders_grouped_per_call_table_with_drill_in() -> None:
     assert result.exit_code == 0, result.output
     assert "### parent.pflow.md" in result.output
     assert "### child.pflow.md (called by call-child)" in result.output
-    assert "## Sub-workflow drill-in" in result.output
+    assert "## Per-child analyze-cache commands" in result.output
     assert "pflow analyze-cache" in result.output
 
 

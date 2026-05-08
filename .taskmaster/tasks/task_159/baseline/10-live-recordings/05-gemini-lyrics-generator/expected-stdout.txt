@@ -58,7 +58,7 @@
 ### review-rhyme.pflow.md (called by craft-reviews)
   review                                model=                                    tokens=114063  cacheable=    ?  ratio=  ?%  src=high calls=20
 
-## Sub-workflow drill-in
+## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
     pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md
@@ -79,9 +79,9 @@
 
 ## Notes
 
-  · Workflow batch fetch-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${sources}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
-  · Workflow batch analyze-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${fetch-sources.results}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
-  · Workflow batch create-songs in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${zip-concepts-with-briefs.result}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Workflow batch fetch-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${sources}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Workflow batch analyze-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${fetch-sources.results}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Workflow batch create-songs in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${zip-concepts-with-briefs.result}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
   · Discrepancy detection: predicted-key matching unavailable (workflow has no run history). Observable-field attributions (TTL expiry, chunk skipped) still apply.
   · Discrepancy detection: skipped attribution for 117 trace event(s) with no predicted cache_key and no observable signal. Per-node skip reasons (above, when present) explain why prediction was unavailable for the affected nodes; this count covers events whose nodes were not in the analyzed IR (typically batch sub-workflow per-item children with runtime-only context).
   · Workflow-design recommendations suppressed because the trace is partial; per-call rows show executed trace evidence only.

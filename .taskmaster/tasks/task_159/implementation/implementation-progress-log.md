@@ -9622,3 +9622,18 @@ Key learning:
   lyrics-generator `write-lyrics` rows show why: heuristic input-token estimates
   can still be meaningful when the prompt is statically resolvable and only model
   resolution is missing.
+
+## Baseline polish — B-5, B-7, B-20 (2026-05-08)
+
+Three small UX fixes from the deferred B-section:
+
+- **B-5**: rename `## Sub-workflow drill-in` → `## Per-child analyze-cache commands`
+  (header named the verb; section content points OUT to per-child commands).
+- **B-7**: replace `actually_paid_usd is trace-driven and reflects actual execution`
+  (JSON field name in user prose) with `the displayed cost is measured from
+  trace events, not estimated`.
+- **B-20**: skip the post-preamble blank in per-call cache report when no
+  rows are visible — eliminates a 2-blank-line gap before the "Hidden:" line.
+
+B-8 deferred to avoid conflict with the in-flight A-6 implementation
+(both touch the `tokens=` column rendering).

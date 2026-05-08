@@ -982,7 +982,8 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
         lines.append(
             f"  Showing {len(visible)} of {len(rows)} LLM nodes; all-clean rows hidden (--all-rows shows everything)."
         )
-    lines.append("")
+    if visible:
+        lines.append("")
     _append_per_call_rows(lines, visible, warnings_by_node, analysis)
     if hidden_count > 0:
         lines.append("")
@@ -1086,7 +1087,7 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     if rollup is None:
         return ""
     lines = [
-        "## Sub-workflow drill-in",
+        "## Per-child analyze-cache commands",
         "",
         "  Sub-workflow opportunities don't surface here — run analyze-cache per child:",
     ]
