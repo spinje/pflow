@@ -227,9 +227,23 @@ Matching prose labels, exact model, and prefix ordering can help incidental prov
 | `cache.consolidate-to-root-recommended` | info | sub-path cache chunks are below threshold but their root value would cache |
 | `cache.heterogeneous-models-fragment-cache` | warning | shared cached chunks are declared across multiple exact models |
 | `cache.first-call-write-penalty` | info | one exact-model call declares `prompt_cache:` with no later reads to amortize the write |
+| `cache.system-prompts-fragment-cache` | warning | shared cached chunks declared across nodes with distinct `system:` instructions |
 | `cache.opaque-prompt` | info | LLM node's prompt is a single `${var}` ref to a `type: code` node — refactor inline for cache detection |
 | `cache.prompt-body-duplicates-cache` | error | prompt body repeats a value already supplied by `prompt_cache:` |
 | `cache.prompt-body-shadows-cache` | warning | prompt body overlaps a cached chunk by parent/sub-path |
 | `llm.thinking-temperature-mismatch` | error | Anthropic `reasoning_effort` is combined with `temperature` other than 1.0 |
 
 `cache.opportunities-available` is the dry-run nudge ID (separate from the catalog).
+
+### Cross-node cache sharing requires uniform `system:`
+
+Provider cache prefixes include the `system:` content. When two LLM nodes share
+`prompt_cache:` chunks but declare different `system:` instructions, each node
+creates its own cache namespace. Cross-node sharing does not fire. Each node
+still benefits from cross-invocation cache reads, such as parallel batch
+fan-out, but workflow-wide savings are lower than if `system:` were uniform.
+
+`pflow analyze-cache` surfaces this pattern as
+`cache.system-prompts-fragment-cache`. To unlock cross-node sharing, move
+role-specific text from `system:` into the `prompt:` body and keep `system:`
+uniform across nodes that share cache chunks.

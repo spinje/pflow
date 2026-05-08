@@ -9050,3 +9050,63 @@ comment + `inputs` declaration so the chunk resolves cleanly.
   produces `has_cache_telemetry=True` (presence with zero value);
   testing this needs a Gemini-shaped fixture. Filed as a future
   enhancement if Gemini's behavior surfaces in production.
+
+## PR #378 review-fix #5 — system-prompt cache fragmentation warning (2026-05-08)
+
+Implemented
+`.taskmaster/tasks/task_159/implementation/fix-plans/system-prompts-fragment-cache-warning-plan.md`.
+
+Behavior:
+
+- Added catalog ID `cache.system-prompts-fragment-cache` at priority 10.
+- Refactored model-fragmentation detection through shared
+  `_detect_cache_fragmentation_by(...)` + `_compute_fragmentation_costs(...)`.
+  `cache.first-call-write-penalty` remains in the model-specific wrapper.
+- Added root-scope system-fragmentation detection: LLM nodes sharing
+  `prompt_cache:` chunks but using different `params.system` values now emit
+  one workflow-scoped warning when the shared chunks are measurable, priced,
+  and above the model cache minimum.
+- System-fragmentation suppresses when a system group contains mixed models,
+  leaving `cache.heterogeneous-models-fragment-cache` as the actionable cause.
+- Updated catalog sync surfaces: warning catalog docstring, cache-analysis
+  CLAUDE.md, MCP analyze-cache docstring, `pflow guide caching`, and both
+  catalog context helpers.
+
+Tests added:
+
+- Five production-shaped system-fragmentation tests covering emission,
+  uniform-system suppression, no-overlap suppression, mixed-model deferral,
+  and declared-vs-absent system emission.
+- Production-path catalog coverage now drives
+  `cache.system-prompts-fragment-cache` through `analyze(...)`.
+
+Deviations / adaptations:
+
+- Replaced the plan's absent-system mutation-contract text. Clear reason:
+  the plan claimed returning `""` for absent would collapse `"X"` and absent
+  into the same bucket, but `bucket_key = key or ""` still leaves `"X"` in
+  its own bucket. The test kept the intended behavior and uses a real failure
+  mode: reading the wrong IR key such as `system_prompt`.
+- Added a production-driven coverage case in
+  `test_emitted_diagnostics_round_trip_for_real_producer_paths`. Clear reason:
+  the existing coverage test failed on the new real producer; adding only
+  `_kwargs_for` would leave the new detector outside the producer-path guard.
+- Split `_detect_cache_fragmentation_by` into row-filtering and grouping
+  helpers after `ruff` flagged C901. Clear reason: project policy prefers
+  decomposition over suppressing complexity, and the final code is simpler.
+- Manual smoke used 1500 repeated words instead of the plan's 500. Clear
+  reason: 500 words remained below Anthropic's 1024-token cache minimum, so
+  the threshold gate correctly emitted only `cache.below-min-tokens`.
+- Did not keep the scratch smoke workflow. Clear reason: it was a temporary
+  verification artifact, and leaving it would add repo noise without becoming
+  a maintained test fixture.
+
+Key learnings:
+
+1. System prompt fragmentation is the same structural detector as model
+   fragmentation once the pricing model is parameterized.
+2. Cache-fragmentation warnings should stay threshold-aware; otherwise they
+   compete with `cache.below-min-tokens` and overstate provider behavior.
+3. Producer-path coverage is a stronger guard than catalog construction alone:
+   every real warning ID needs both a minimal context fixture and an actual
+   emission path test.

@@ -261,7 +261,7 @@ def test_emit_observed_below_min_cache_warning_skips_when_no_provider_telemetry(
     ``shared["llm_usage"] = {}`` (line 977 / "adapter failed completely"),
     ``_emit_observed_below_min_cache_warning`` MUST skip rather than fabricate
     a "did not fire" observation. Mirrors the analyzer's honest-unmeasurable
-    convention used by ``_estimate_ref_tokens`` and ``_compute_model_group_costs``.
+    convention used by ``_estimate_ref_tokens`` and ``_compute_fragmentation_costs``.
 
     Tested directly at the helper level because the runtime pipeline always
     routes the missing-usage case through ``shared["llm_usage"] = {}`` —

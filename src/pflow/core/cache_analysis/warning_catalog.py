@@ -5,13 +5,15 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-20 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
+21 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
 temperature-mismatch`` (Stage 2 follow-up: catch Anthropic temperature=1.0 +
 extended thinking constraint at validate-time) + ``cache.heterogeneous-models-
 fragment-cache`` and ``cache.first-call-write-penalty`` (Stage 2 follow-up:
 detect exact-model cache namespace fragmentation and lone cache writes) +
+``cache.system-prompts-fragment-cache`` (Task 159 PR #378 review-fix #5:
+detect cross-node cache fragmentation caused by divergent ``system:`` strings) +
 ``cache.sub-workflow-cache-undeclared`` (Stage 2 follow-up: sub-workflows need
 their own cache declarations). The base 14 covers the 9 from
 spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2, dispatch
@@ -524,6 +526,39 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "declared chunks written {model_group_count}x, never shared"
         ),
     ),
+    "cache.system-prompts-fragment-cache": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=(
+            "Workflow declares cached chunks shared across {system_group_count} distinct "
+            "`system:` instructions. Provider cache prefixes include `system:` content, "
+            "so each unique system creates a separate cache namespace; bytes are written "
+            "{system_group_count}x instead of 1x.{savings_clause}\n"
+            "{system_groups_lines}"
+        ),
+        required_context_keys=(
+            ("system_group_count", int),
+            ("system_groups", list),
+            ("system_groups_lines", str),
+            ("shared_chunks", list),
+            ("affected_workflow", str),
+            ("savings_usd", float),
+            ("node_ids_csv", str),
+        ),
+        suggestions_template=(
+            "Consolidate role-specific text from `system:` into `prompt:` body, leaving "
+            "`system:` uniform across {node_ids_csv} so cross-node cache reads fire, OR",
+            "Accept per-node caching as the intended tradeoff: each node still benefits "
+            "from cross-invocation reads (e.g. across parallel batch fan-out).",
+        ),
+        path_template="workflows[path={affected_workflow}]",
+        nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template=(
+            "Cache fragmented across {system_group_count} `system:` prompts — "
+            "declared chunks written {system_group_count}x, never shared cross-node"
+        ),
+    ),
     "cache.first-call-write-penalty": CacheWarningSpec(
         severity=Severity.INFO,
         source="cache_analyzer",
@@ -712,6 +747,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.dynamic-before-static": 10,
     "cache.batch-prewarm-recommended": 10,
     "cache.heterogeneous-models-fragment-cache": 10,
+    "cache.system-prompts-fragment-cache": 10,
     # Tier 2 — discrepancy attribution (only fires with trace; usually high-value).
     "cache.discrepancy": 15,
     # Tier 3 — advisories grounded in current state.

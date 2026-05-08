@@ -422,7 +422,7 @@ async def analyze_cache(
     arrays are derived from ``warnings`` by ``Diagnostic.id``.
 
     **Closed catalog of warning IDs** that may appear in
-    ``warnings[].id`` (20 entries in v1 — 19 ``cache.*`` plus 1 ``llm.*``):
+    ``warnings[].id`` (21 entries in v1 — 20 ``cache.*`` plus 1 ``llm.*``):
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared
@@ -439,6 +439,7 @@ async def analyze_cache(
       - cache.consolidate-to-root-recommended
       - cache.heterogeneous-models-fragment-cache
       - cache.first-call-write-penalty
+      - cache.system-prompts-fragment-cache
       - cache.opaque-prompt
       - cache.prompt-body-duplicates-cache
       - cache.prompt-body-shadows-cache

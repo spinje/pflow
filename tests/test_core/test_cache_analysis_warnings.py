@@ -43,8 +43,8 @@ def test_catalog_count_constant_is_auto_derived() -> None:
     assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT
 
 
-def test_catalog_has_twenty_entries_v1() -> None:
-    """v1 currently ships with 20 entries (19 ``cache.*`` plus 1 ``llm.*``):
+def test_catalog_size_matches_v1_inventory() -> None:
+    """v1 currently ships with 21 entries (20 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -60,12 +60,14 @@ def test_catalog_has_twenty_entries_v1() -> None:
     - ``cache.heterogeneous-models-fragment-cache`` and
       ``cache.first-call-write-penalty`` (Task 159 Stage 2 follow-up:
       exact-model cache namespace fragmentation and lone cache writes)
+    - ``cache.system-prompts-fragment-cache`` (Task 159 PR #378 review-fix #5:
+      divergent ``system:`` strings fragment cross-node cache sharing)
     - ``cache.sub-workflow-cache-undeclared`` (Task 159 Stage 2 follow-up:
       child workflows need their own cache declarations)
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 20
+    assert len(CACHE_WARNING_CATALOG) == 21
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -638,6 +640,18 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "shared_chunks": ["context"],
             "affected_workflow": "x.pflow.md",
             "savings_usd": 0.001,
+        },
+        "cache.system-prompts-fragment-cache": {
+            "system_group_count": 2,
+            "system_groups": [
+                {"system_preview": "X", "node_ids": ["a"], "redundant_write_usd": 0.001},
+                {"system_preview": "Y", "node_ids": ["b"], "redundant_write_usd": 0.002},
+            ],
+            "system_groups_lines": "  - `X` -> 1 node(s): a\n  - `Y` -> 1 node(s): b",
+            "shared_chunks": ["context"],
+            "affected_workflow": "x.pflow.md",
+            "savings_usd": 0.001,
+            "node_ids_csv": "a, b",
         },
         "cache.first-call-write-penalty": {
             "node_id": "draft",

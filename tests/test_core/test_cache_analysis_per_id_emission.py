@@ -2790,8 +2790,9 @@ def test_fragmentation_silent_when_no_chunk_overlap(monkeypatch: pytest.MonkeyPa
     """Suppression: different models caching disjoint chunks do not fragment
     one cache opportunity; each model owns independent bytes.
 
-    Mutation test: group only by model and ignore ``_model_groups_with_shared_chunks``;
-    this test fails because disjoint chunks emit a false warning.
+    Mutation test: remove the inline ``_chunks_shared_with_other_group`` filter
+    inside ``_detect_cache_fragmentation_by``; this test fails because disjoint
+    chunks emit a false warning.
     """
     _patch_pricing(monkeypatch)
     workflow_ir = {
@@ -2893,7 +2894,7 @@ def test_fragmentation_skips_when_shared_chunk_tokens_unmeasurable(monkeypatch: 
     (memo miss in pure greenfield), skip the warning instead of summing the
     smallest row's total cacheable count and overstating savings.
 
-    Mutation test: revert ``_compute_model_group_costs`` to use
+    Mutation test: revert ``_compute_fragmentation_costs`` to use
     ``min(row.cacheable_tokens_estimated)`` per group; this test fails because
     rows have measurable cacheable tokens even when per-chunk estimation is
     blocked, so the old approximation would still emit.
@@ -3148,6 +3149,232 @@ def test_fragmentation_and_write_penalty_coemit_when_one_group_has_size_one(
     ids = {d.id for d in analysis.warnings}
     assert "cache.heterogeneous-models-fragment-cache" in ids
     assert "cache.first-call-write-penalty" in ids
+
+
+# ---------------------------------------------------------------------------
+# cache.system-prompts-fragment-cache — shared chunks across distinct system:
+# prompts
+#
+# Detector: ``_detect_system_cache_fragmentation`` in ``analyze.py``.
+# Generalized engine: ``_detect_cache_fragmentation_by``.
+# Sibling: ``cache.heterogeneous-models-fragment-cache``.
+# ---------------------------------------------------------------------------
+
+
+def test_system_fragmentation_fires_for_two_distinct_system_prompts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two LLM nodes share a cache chunk and model but declare different
+    ``system:`` instructions. The analyzer warns because cross-node cache
+    sharing requires uniform system content.
+
+    Mutation test: remove the ``len(fragmented_groups) < 2`` and
+    ``len(participating_groups) < 2`` guards in
+    ``_detect_cache_fragmentation_by``; degenerate cases can then emit as
+    fragmentation. This test pins the positive path, and the suppression
+    tests below pin the guards.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "You are a lyricist.", "prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "You are an emotional reviewer.", "prompt": "Review."},
+            },
+        ],
+    }
+
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+
+    found = [d for d in analysis.warnings if d.id == "cache.system-prompts-fragment-cache"]
+    assert found, f"system-fragmentation warning missing: ids={[d.id for d in analysis.warnings]}"
+    ctx = found[0].context
+    assert ctx is not None
+    assert ctx["system_group_count"] == 2
+    assert ctx["shared_chunks"] == ["context"]
+    assert {entry["system_preview"] for entry in ctx["system_groups"]} == {
+        "You are a lyricist.",
+        "You are an emotional reviewer.",
+    }
+    assert ctx["node_ids_csv"] == "draft, review"
+    assert ctx["savings_usd"] > 0
+
+
+def test_system_fragmentation_silent_when_uniform_system(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Identical ``system:`` strings form one bucket, so shared chunks are not
+    fragmented by system prompt.
+
+    Mutation test: change ``bucket_key = key or ""`` to a per-row value in
+    ``_detect_cache_fragmentation_by``; identical system strings split into
+    separate buckets and this test fails with a false warning.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "You are a lyricist.", "prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "You are a lyricist.", "prompt": "Review."},
+            },
+        ],
+    }
+
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+
+    assert "cache.system-prompts-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
+def test_system_fragmentation_silent_when_no_chunk_overlap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Distinct systems with disjoint cache chunks do not fragment one shared
+    cache opportunity.
+
+    Mutation test: remove the ``_chunks_shared_with_other_group`` predicate
+    inside ``_detect_cache_fragmentation_by``. Every group then looks
+    fragmented, so this test fails with a warning on disjoint chunks.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["a"],
+                "params": {"system": "You are a lyricist.", "prompt": "Draft."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["b"],
+                "params": {"system": "You are an emotional reviewer.", "prompt": "Review."},
+            },
+        ],
+    }
+
+    analysis = analyze(
+        workflow_ir,
+        parameters={"a": "alpha " * 200, "b": "bravo " * 200},
+        auto_load_trace=False,
+    )
+
+    assert "cache.system-prompts-fragment-cache" not in {d.id for d in analysis.warnings}
+
+
+def test_system_fragmentation_skips_when_groups_have_heterogeneous_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A system group with mixed exact models defers to model-fragmentation.
+
+    A and B share ``system: "X"`` but use different models; C has
+    ``system: "Y"``. Fixing system alone would not unlock sharing while the
+    model namespace still splits the cache.
+
+    Mutation test: change ``_homogeneous_model_for_system_group`` to return an
+    arbitrary model from the group. The system warning then fires in a workflow
+    whose dominant fragmentation cause is model namespace splitting.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "node-a",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "X", "prompt": "A."},
+            },
+            {
+                "id": "node-b",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "X", "prompt": "B."},
+            },
+            {
+                "id": "node-c",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "Y", "prompt": "C."},
+            },
+        ],
+    }
+
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.system-prompts-fragment-cache" not in ids
+    assert "cache.heterogeneous-models-fragment-cache" in ids
+
+
+def test_system_fragmentation_fires_when_one_node_has_no_system(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent ``system:`` and declared ``system:`` render different prefix
+    bytes, so they are separate cache namespaces.
+
+    Mutation test: make ``_system_fragmentation_key`` read the wrong IR key,
+    such as ``system_prompt``. Both rows then look absent and this warning
+    disappears.
+    """
+    _patch_pricing(monkeypatch)
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "with-system",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "X", "prompt": "A."},
+            },
+            {
+                "id": "without-system",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "B."},
+            },
+        ],
+    }
+
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+
+    assert "cache.system-prompts-fragment-cache" in {d.id for d in analysis.warnings}
 
 
 # ---------------------------------------------------------------------------

@@ -187,7 +187,7 @@ def _emit_observed_below_min_cache_warning(
     # keys (defaulting to 0); the presence flag carries the absence semantic
     # cleanly through the runtime → trace boundary. Mirrors the analyzer's
     # honest-unmeasurable convention used by ``_estimate_ref_tokens`` and
-    # ``_compute_model_group_costs``.
+    # ``_compute_fragmentation_costs``.
     if not llm_usage.get("has_cache_telemetry", False):
         return
 

@@ -194,6 +194,21 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "savings_usd": 0.001,
             },
         ),
+        "cache.system-prompts-fragment-cache": (
+            None,
+            {
+                "system_group_count": 2,
+                "system_groups": [
+                    {"system_preview": "X", "node_ids": ["a"], "redundant_write_usd": 0.001},
+                    {"system_preview": "Y", "node_ids": ["b"], "redundant_write_usd": 0.002},
+                ],
+                "system_groups_lines": "  - `X` -> 1 node(s): a\n  - `Y` -> 1 node(s): b",
+                "shared_chunks": ["context"],
+                "affected_workflow": "x.pflow.md",
+                "savings_usd": 0.001,
+                "node_ids_csv": "a, b",
+            },
+        ),
         "cache.first-call-write-penalty": (
             "draft",
             {
@@ -597,6 +612,36 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     payload = _round_trip(found[0])
     assert payload["context"]["model_groups"][0]["node_paths"]
     seen_ids.add("cache.heterogeneous-models-fragment-cache")
+
+    # cache.system-prompts-fragment-cache: two nodes share model and chunks but
+    # use distinct system prompts, so provider cache prefixes diverge.
+    system_fragment_ir: dict[str, Any] = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "You are a lyricist.", "prompt": "Draft from cached context."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"system": "You are an emotional reviewer.", "prompt": "Review cached context."},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(system_fragment_ir, parameters={"context": "stable " * 20})
+    found = [d for d in analysis.warnings if d.id == "cache.system-prompts-fragment-cache"]
+    assert found, f"analyze did not emit cache.system-prompts-fragment-cache: ids={[d.id for d in analysis.warnings]}"
+    payload = _round_trip(found[0])
+    assert payload["context"]["system_group_count"] == 2
+    seen_ids.add("cache.system-prompts-fragment-cache")
 
     # cache.first-call-write-penalty: only one node uses this exact model with
     # prompt_cache declared, so its cache write has no same-model read.
