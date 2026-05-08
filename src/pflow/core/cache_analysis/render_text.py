@@ -373,35 +373,56 @@ def _render_summary(analysis: CacheAnalysis) -> str:
             "  Absolute cost figures need a prior run. Run the workflow once, then "
             "re-run analyze-cache for real cost figures and cacheable projections."
         )
+        _append_suggested_run_command(summary_lines, s)
     elif _all_cost_atoms_unavailable(s) and not s.unavailable_models:
-        # All-unavailable case — surface explicit reason. The branch fires on
-        # four distinct sub-cases; conflating them produced the lyrics-generator
-        # bug where ``Cost data unavailable: workflow has no LLM nodes`` rendered
-        # above a per-call table listing 2 LLM nodes:
-        #   1. Zero LLM nodes total (rare; e.g. parent workflow that only
-        #      delegates to sub-workflows).
-        #   2. ALL LLM nodes are heterogeneous (``model: ${item.X}`` from
-        #      heterogeneous batch sub-workflows). The "set settings.default_model"
-        #      hint would be wrong here — model resolution isn't the problem;
-        #      pricing per-batch-item models can't be aggregated as one model.
-        #   3. LLM nodes exist but no model could be resolved (no per-node
-        #      ``model:``, ``get_default_workflow_model()`` returned None).
-        #   4. LLM nodes with priced models but no run history yet (greenfield
-        #      without shared context — no opportunity figure to show).
-        summary_lines.append("")
-        if s.total_llm_nodes_estimated == 0:
-            summary_lines.append("  Cost data unavailable: workflow has no LLM nodes.")
-        elif s.heterogeneous_model_node_count == s.total_llm_nodes_estimated:
-            # Stage C.1: gate ahead of the "no model resolved" branch.
-            summary_lines.append("  Cost data unavailable: all LLM nodes use models that vary per batch item.")
-        elif not s.models_in_use:
-            summary_lines.append(
-                "  Cost data unavailable: no model resolved for LLM nodes "
-                "(set settings.default_model or add per-node `- model:`)."
-            )
-        else:
-            summary_lines.append("  Cost data unavailable: run the workflow once for cost figures.")
+        _append_unavailable_cost_message(summary_lines, s)
     return "\n".join(summary_lines)
+
+
+def _append_suggested_run_command(summary_lines: list[str], s: AnalysisSummary) -> None:
+    """Emit the paste-ready ``Suggested:`` line when a runnable command exists.
+
+    Shared by the two unavailable-cost branches (priced-with-savings and
+    cost-data-unavailable-run-once) so both surface the same agent-actionable
+    next step. ``suggested_run_command`` is ``None`` for inline IR /
+    ``ir-hash:`` lookup keys.
+    """
+    if s.suggested_run_command:
+        summary_lines.append(f"  Suggested:  {s.suggested_run_command}")
+
+
+def _append_unavailable_cost_message(summary_lines: list[str], s: AnalysisSummary) -> None:
+    """Render the four "Cost data unavailable" sub-branches.
+
+    The branch fires on four distinct sub-cases; conflating them produced the
+    lyrics-generator bug where ``Cost data unavailable: workflow has no LLM
+    nodes`` rendered above a per-call table listing 2 LLM nodes:
+
+    1. Zero LLM nodes total (rare; e.g. parent workflow that only delegates
+       to sub-workflows).
+    2. ALL LLM nodes are heterogeneous (``model: ${item.X}`` from
+       heterogeneous batch sub-workflows). The "set settings.default_model"
+       hint would be wrong here — model resolution isn't the problem;
+       pricing per-batch-item models can't be aggregated as one model.
+    3. LLM nodes exist but no model could be resolved (no per-node
+       ``model:``, ``get_default_workflow_model()`` returned None).
+    4. LLM nodes with priced models but no run history yet (greenfield
+       without shared context — no opportunity figure to show).
+    """
+    summary_lines.append("")
+    if s.total_llm_nodes_estimated == 0:
+        summary_lines.append("  Cost data unavailable: workflow has no LLM nodes.")
+    elif s.heterogeneous_model_node_count == s.total_llm_nodes_estimated:
+        # Stage C.1: gate ahead of the "no model resolved" branch.
+        summary_lines.append("  Cost data unavailable: all LLM nodes use models that vary per batch item.")
+    elif not s.models_in_use:
+        summary_lines.append(
+            "  Cost data unavailable: no model resolved for LLM nodes "
+            "(set settings.default_model or add per-node `- model:`)."
+        )
+    else:
+        summary_lines.append("  Cost data unavailable: run the workflow once for cost figures.")
+        _append_suggested_run_command(summary_lines, s)
 
 
 def _append_summary_counts(summary_lines: list[str], s: AnalysisSummary) -> None:

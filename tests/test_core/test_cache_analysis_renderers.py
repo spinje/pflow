@@ -28,6 +28,7 @@ from pflow.core.cache_analysis.analyze import (
     SubWorkflowRollup,
     SubWorkflowRollupEntry,
     TraceUnexecutedLLMRow,
+    _format_workflow_run_command,
 )
 from pflow.core.cache_analysis.cost_estimation import CostTier
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -132,6 +133,11 @@ def _make_analysis(
             projection_exclusions=projection_exclusions,
             root_llm_node_count=root_count,
             sub_workflow_llm_node_count=sub_count,
+            # Mirrors production: the field is populated whenever the
+            # workflow has a non-inline path, regardless of cost-branch.
+            # Builder doesn't model declared inputs, so the command shape
+            # is the no-inputs variant.
+            suggested_run_command=_format_workflow_run_command(workflow_path, None),
         ),
         suggested_blocks=(),
         per_call=tuple(rows),
@@ -446,6 +452,28 @@ def test_json_round_trips_through_dumps_loads() -> None:
     assert round_tripped == result
 
 
+def test_json_summary_emits_suggested_run_command() -> None:
+    """JSON consumers (MCP, structured tools) get the same paste-ready
+    command the text renderer surfaces — typed string, not free-form text.
+
+    Mutation contract: removing ``"suggested_run_command": ...`` from
+    ``_summary_to_dict`` fails this test.
+    """
+    result = render_json(_make_analysis(workflow_path="/abs/x.pflow.md"))
+    assert result["summary"]["suggested_run_command"] == "pflow run /abs/x.pflow.md"
+
+
+def test_json_summary_suggested_run_command_null_for_inline_workflow() -> None:
+    """Inline IR has no runnable file path; JSON serializes ``null``.
+
+    Mutation contract: dropping the ``ir-hash:`` guard or the ``None``
+    return in ``_format_workflow_run_command`` fails this test.
+    """
+    # ir-hash: prefix mirrors the inline-IR lookup-key convention.
+    result = render_json(_make_analysis(workflow_path="ir-hash:abc123"))
+    assert result["summary"]["suggested_run_command"] is None
+
+
 def test_json_warnings_use_diagnostic_to_dict_shape() -> None:
     diag = Diagnostic(
         severity=Severity.WARNING,
@@ -526,6 +554,34 @@ def test_text_summary_greenfield_cost_note_drops_pflow_internals() -> None:
     # about pflow's two cache layers or trace format versioning to act.
     assert "memo cache" not in text
     assert "2.1.0 trace" not in text
+
+
+def test_text_summary_priced_with_savings_branch_emits_suggested_line() -> None:
+    """The priced-greenfield-with-savings branch (sibling of the
+    cost-data-unavailable branch) also surfaces the paste-ready
+    ``Suggested:`` line. Both branches share the same UX problem
+    ("run once, re-run analyze-cache") and agents benefit from the
+    exact command at either site.
+
+    Mutation contract: removing the ``if s.suggested_run_command``
+    block at the priced-with-savings branch in ``render_text.py`` fails
+    this test. The companion test above
+    (``test_text_summary_greenfield_cost_note_drops_pflow_internals``)
+    locks the upstream "Absolute cost figures need a prior run" message
+    that this branch precedes.
+    """
+    from pflow.core.cache_analysis.analyze import AnalysisSummary
+
+    base = _make_analysis(workflow_path="/abs/x.pflow.md")
+    summary = AnalysisSummary(**{
+        **base.summary.__dict__,
+        "first_run_delta": CostDelta(0.50, None, "savings", "no_cache", "first_run"),
+    })
+    analysis = CacheAnalysis(**{**base.__dict__, "summary": summary})
+    text = render_text(analysis)
+
+    assert "Absolute cost figures need a prior run." in text
+    assert "Suggested:  pflow run /abs/x.pflow.md" in text
 
 
 def test_text_summary_renders_blocking_errors_categorically() -> None:

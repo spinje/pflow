@@ -375,7 +375,8 @@
           "rerun_within_ttl_hypothetical_usd": null
         }
       ]
-    }
+    },
+    "suggested_run_command": "pflow run <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md sources=<value> output_base=<value>"
   },
   "blocking_errors": [
     {

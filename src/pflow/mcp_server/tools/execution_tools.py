@@ -407,6 +407,11 @@ async def analyze_cache(
         trace cost and projection cost cover different cohorts. Reasons include
         ``heterogeneous_model``, ``unresolved_model``, ``unpriced_model``, and
         ``missing_output_tokens``.
+      - ``suggested_run_command`` (string | null): paste-ready ``pflow run``
+        command derived from ``workflow_path`` + declared inputs (placeholder
+        values like ``article=<value>``). ``null`` for inline IR or
+        ``ir-hash:`` lookup keys. Surfaced on unavailable-cost branches so
+        agents see the exact command that lights up cost figures.
 
     Sub-workflow rollup entries carry the same four primitives at child
     scope.

@@ -38,6 +38,10 @@ Version history (``JSON_FORMAT_VERSION``):
   honest-unmeasurable contract. Field shape unchanged; only the value
   enum narrows. No production code branched on ``"estimator"`` for this
   field.
+- ``"4.1"`` — UX 8 fix (additive, same minor): ``summary.suggested_run_command``
+  added (``string | null``). Paste-ready ``pflow run`` command derived from
+  ``workflow_path`` + declared inputs, surfaced on unavailable-cost branches
+  in text output. ``null`` for inline IR / ``ir-hash:`` lookup keys.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning

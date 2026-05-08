@@ -1926,6 +1926,45 @@ def test_autoload_skips_traces_for_other_workflows(tmp_path: Path, monkeypatch: 
     assert result.trace_path is None
 
 
+def test_autoload_notes_unmatched_traces_when_others_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When auto-load finds no hash match but the debug dir holds unrelated
+    traces (typically because the workflow file was renamed/moved), the
+    analyzer surfaces a Notes line so the agent doesn't read the empty
+    result as 'no evidence exists'.
+
+    Mutation contract: removing the ``notes.append`` in ``_autoload_trace``
+    causes this test to fail. The companion test below
+    (``test_autoload_emits_no_notes_when_debug_dir_is_empty``) defends the
+    gate from being applied unconditionally."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+
+    _write_trace(debug_dir, workflow_path="/abs/other.pflow.md", format_version="2.1.0")
+
+    workflow_ir = {"nodes": []}
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path is None
+    assert any("Found other traces in ~/.pflow/debug/" in note for note in result.notes), result.notes
+
+
+def test_autoload_emits_no_notes_when_debug_dir_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The unmatched-trace Notes line must NOT fire when no traces exist at
+    all — that's a true greenfield, not a rename/move scenario.
+
+    Mutation contract: dropping the ``next(iter(...))`` guard in
+    ``_autoload_trace`` and emitting the note unconditionally fails this
+    test."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    (fake_home / ".pflow" / "debug").mkdir(parents=True)
+
+    workflow_ir = {"nodes": []}
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path is None
+    assert not any("Found other traces in ~/.pflow/debug/" in note for note in result.notes), result.notes
+
+
 def test_explicit_from_trace_missing_path_raises() -> None:
     workflow_ir = {"nodes": []}
     with pytest.raises(FileNotFoundError):
@@ -2525,6 +2564,79 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
     # "no model resolved" branches should be excluded.
     assert "workflow has no LLM nodes" not in rendered
     assert "no model resolved" not in rendered
+
+
+def test_suggested_run_command_populated_for_workflow_with_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``summary.suggested_run_command`` carries a paste-ready ``pflow run``
+    command derived from ``workflow_path`` + declared inputs.
+
+    Mutation contract: removing the ``suggested_run_command=`` kwarg in
+    ``analyze.py``'s ``replace(summary, ...)`` site fails this test.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(
+        analyze_module,
+        "get_default_workflow_model",
+        lambda: "anthropic/claude-sonnet-4-5",
+    )
+
+    workflow_ir = {
+        "inputs": {"article": {"type": "string"}, "topic": {"type": "string"}},
+        "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "hello"}}],
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    assert result.summary.suggested_run_command == ("pflow run /abs/x.pflow.md article=<value> topic=<value>")
+
+
+def test_suggested_run_command_is_none_for_inline_workflow() -> None:
+    """Inline IR (``workflow_path=None``) lacks a runnable file path; the
+    helper returns ``None`` and the renderer skips the ``Suggested:`` line.
+
+    Mutation contract: dropping the ``ir-hash:`` guard in
+    ``_format_workflow_run_command`` would emit ``pflow run ir-hash:<md5>``
+    which the user can't actually run; this test fails on that mutation.
+    """
+    workflow_ir = {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "hello"}}],
+    }
+    result = analyze(workflow_ir, workflow_path=None, auto_load_trace=False)
+    assert result.summary.suggested_run_command is None
+
+
+def test_render_text_emits_suggested_line_on_unavailable_cost_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end Pitfall #19 defense: text output includes the
+    ``Suggested:`` line right after ``Cost data unavailable: run the
+    workflow once for cost figures.`` so agents see the exact command.
+
+    Mutation contract: removing the renderer's ``if s.suggested_run_command``
+    branch fails this test.
+    """
+    import sys
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(
+        analyze_module,
+        "get_default_workflow_model",
+        lambda: "anthropic/claude-sonnet-4-5",
+    )
+    from pflow.core.cache_analysis.render_text import _render_summary
+
+    workflow_ir = {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "lonely call"}}],
+    }
+    result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+    rendered = _render_summary(result)
+    if "Cost data unavailable: run the workflow once" in rendered:
+        # We hit branch 4. Suggested line must follow.
+        assert "Suggested:  pflow run /abs/x.pflow.md article=<value>" in rendered
 
 
 # ---------------------------------------------------------------------------

@@ -86,7 +86,8 @@
     "heterogeneous_model_node_paths": [],
     "root_llm_node_count": 3,
     "sub_workflow_llm_node_count": 0,
-    "sub_workflow_rollup": null
+    "sub_workflow_rollup": null,
+    "suggested_run_command": "pflow run <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md article=<value>"
   },
   "blocking_errors": [],
   "recommended_actions": [],

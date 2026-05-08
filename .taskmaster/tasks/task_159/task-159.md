@@ -145,7 +145,7 @@ Related but explicitly out of scope:
 - Optional `- ttl: <duration>` parameter on the section (`5m` default; `1h` extended; reject other values in v1).
 - Contains a tagged `` ```cache `` code block; multiple cache code blocks in one section are a syntax error.
 - The `cache` code block content is a sequence of `[prose block][${var} reference]` pairs. Prose between variables, prose before the first variable, and the variable itself are rendered as a single content chunk.
-- **Exactly one `${var}` per chunk.** Two or more `${var}` in a chunk is a syntax error (prose should describe its value, not contain further template references).
+- **The chunker produces exactly one `${var}` per chunk by construction.** The parser splits at every `${var}` match, so `${a} prose ${b}` becomes two chunks: `a` (with whatever prose preceded it) and `b` (with `" prose "` as its prose-before). Authors who want a single chunk should use one `${var}` and let surrounding prose describe its value. Multiple intra-line vars produce small chunks that may individually fall below the provider min-cache threshold.
 - Each `${var}` must resolve to a valid workflow input or upstream step output in the containing workflow file (reference resolution, same rules as existing templates).
 - References that vary across calls referencing the same chunk are a syntax error. In practice this means batch-scoped references (`${item.X}` and any descendants) are rejected. Workflow inputs, step outputs (including aggregate batch outputs like `${batch-node.some_field}`), and indexed accesses that resolve to stable values are valid.
 - Empty cache block is a syntax error (must have ≥1 variable).

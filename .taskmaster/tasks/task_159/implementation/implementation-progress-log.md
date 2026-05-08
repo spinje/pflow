@@ -9242,3 +9242,219 @@ Key learnings:
    renderer may need, especially universal blocking errors.
 3. Baseline drift was useful here: it proved the machine-facing action schema
    and text suggestions changed exactly where the plan intended.
+
+## Baseline-findings sweep — Tier A bundle (2026-05-08)
+
+After the 63-case verification baseline at
+`.taskmaster/tasks/task_159/baseline/` surfaced a verification-specialist
+report (`scratchpads/task159-baseline-findings-report.md`) and 5 FINDINGS.md
+items, triaged the combined set into:
+
+- **Bucket 1** (silent correctness, real-money risk): Bug 1 + F-04. Closed
+  in prior commits — Bug 1 (`thinking_effort` silent drop) by review-fix #7
+  validator unification surfacing unknown LLM params with `Did you mean
+  'reasoning_effort'?`; F-04 (false-positive `cache.below-min-tokens` on
+  greenfield with node-output chunks) by review-fix #6 deleting the
+  cacheable Tier 3 heuristic.
+- **Bucket 2** (cheap, high agent-UX leverage): Tier A (this entry).
+- **Bucket 3** (file as v1.x): UX 2/5/6/7, F-02/F-05.
+
+Tier A bundled 4 issues into one cohesive change. Verified each finding
+against actual code via 4 parallel `pflow-codebase-searcher` agents before
+designing — caught that `_autoload_trace` already takes a `notes`
+parameter (currently `del`'d), that `_emit_error` already supports
+`suggestion=`, and that no precedent for paste-ready commands existed in
+the analyzer (which informed the structured-field choice for UX 8).
+
+Behavior:
+
+- **F-01** (spec-vs-impl mismatch): rewrote `task-159.md:147-148` to
+  describe the parser's actual one-var-per-chunk-by-construction behavior.
+  The promised "two vars in a chunk" syntax error was unreachable from any
+  `.pflow.md` source by construction — the chunker splits at every
+  `${var}` match. New spec wording matches the parser comment at
+  `markdown_parser.py:161-162` and tells authors what intra-line vars
+  actually produce. Spec-only; no code change.
+
+- **UX 3** (mutex error explanation): added `suggestion=` to the
+  `--from-trace`/`--no-trace-autoload` mutex error in
+  `cli/commands/analyze_cache.py:96-104`. Matches the existing
+  `trace-not-found` callsite pattern in the same file. Existing test's
+  loose `mutually exclusive` substring kept passing; tightened with a
+  positive substring assertion + mutation contract.
+
+- **Bug 3** (trace auto-load silent miss on path drift): when
+  `_autoload_trace` returns no hash-scoped match but `~/.pflow/debug/`
+  holds at least one trace file, append a Notes line. Removed the
+  `del notes` discard at line 801 (the parameter was already plumbed
+  end-to-end through `CacheAnalysis.notes` → `render_text._render_notes`).
+  Two new regression tests with explicit mutation contracts: positive
+  (note appears when unrelated trace exists) and negative (no note when
+  debug dir is empty — defends against the gate firing unconditionally).
+
+- **UX 8** (paste-ready run command): added
+  `AnalysisSummary.suggested_run_command: str | None`, helper
+  `_format_workflow_run_command(workflow_path, inputs)` near the summary
+  builder, populated in `analyze()` via `replace(summary, ...)`, rendered
+  in both text (`Suggested:  pflow run <path> input=<value> ...`) and
+  JSON. Returns `None` for inline IR / `ir-hash:` lookup keys (no file
+  to re-run). Three tests: direct field assertion, None-for-inline,
+  end-to-end text render. Two JSON renderer tests: field present with
+  value + null for inline. Updated `_make_analysis` test builder to
+  populate the field via the same helper so `TestMakeAnalysisShapeParity`
+  stays green without an allowlist exception. MCP `analyze_cache`
+  docstring extended with the new field's contract.
+
+JSON shape addition:
+
+- Treated as additive within `JSON_FORMAT_VERSION = "4.1"` (no version
+  bump). Pre-merge branch with no external consumers; the
+  1.0→1.1→2.0→2.1→4.0→4.1 sequence reflects within-branch staging, not
+  committed consumer surfaces. Version-history docstring in
+  `cache_analysis/__init__.py` extended with the additive note.
+
+Files changed:
+
+- `.taskmaster/tasks/task_159/task-159.md` (F-01 spec)
+- `src/pflow/cli/commands/analyze_cache.py` (UX 3)
+- `src/pflow/core/cache_analysis/analyze.py` (Bug 3 + UX 8 field, helper, populate)
+- `src/pflow/core/cache_analysis/render_text.py` (UX 8 text render)
+- `src/pflow/core/cache_analysis/render_json.py` (UX 8 JSON field)
+- `src/pflow/core/cache_analysis/__init__.py` (UX 8 version history)
+- `src/pflow/mcp_server/tools/execution_tools.py` (UX 8 MCP docstring)
+- `tests/test_cli/test_analyze_cache.py` (UX 3 test tightening)
+- `tests/test_core/test_cache_analysis_analyze.py` (Bug 3 + UX 8 tests)
+- `tests/test_core/test_cache_analysis_renderers.py` (UX 8 builder + JSON tests)
+
+Deviations / adaptations:
+
+- Pre-implementation verification surfaced the "Tier 3 heuristic deleted"
+  context: the JSON 4.1 version had been bumped just hours earlier, so
+  treating UX 8 as additive within the same minor was simpler than
+  bumping again. Discussed and chose no-bump per "all versions are made
+  in this branch" — pre-merge state means consumers don't exist yet.
+- UX 8's structured-field shape (vs renderer-side IR reach) chosen over
+  the smaller diff because JSON consumers (MCP, structured tools) deserve
+  parity with text consumers. Top-10% pattern: rustc / mypy / ruff all
+  surface "next action" hints as typed fields, not free-form text.
+- Three sibling "framed but not actionable" sites
+  (`render_text.py:373-374`, `analyze.py:621-625`,
+  `analyze.py:_no_paste_ready_block_note` 3 variants) deliberately left
+  unchanged. The mechanism is now in place — the field is always
+  populated when `workflow_path` resolves — so future polish of those
+  sites is a 2-line render change each. Scope-cut documented in the plan;
+  flagged in the closeout for user decision.
+- Helper placed near `_build_summary` rather than reusing
+  `cli/rerun_display.py:format_rerun_command`: the latter takes resolved
+  `params: dict[str, Any]` (rerun semantics), the former takes input
+  declarations (greenfield placeholder semantics). Sharing would force
+  one helper to handle both shapes; separate helpers keep each
+  single-purpose. If `cli/rerun_display.py` ever needs placeholder
+  formatting, refactor at that point.
+- Builder `_make_analysis` populated via the shared helper with
+  `inputs=None` rather than added to `_BUILDER_DOCUMENTED_DEFAULTS`. The
+  helper is pure (`workflow_path` + optional `inputs` → string) and the
+  builder always has `workflow_path`, so the simplest faithful behavior
+  is to call the helper. Avoids a Pitfall #19 allowlist exception.
+
+Verification:
+
+- Focused new tests: 8/8 passed (`-x --tb=short`).
+- Cache-analysis full suite (analyze + renderers + token-estimation +
+  per-id-emission + per-id-coverage + analyze-cache CLI): 331/331 passed.
+- Plumbing suites (prompt-cache hash gate, plan-drift, MCP server,
+  prompt-cache rendering): 213/213 passed.
+- Default non-e2e suite: 6404 passed, 10 skipped (+~6 from the
+  prior 6398 baseline; new tests added).
+- `make check`: ruff + ruff-format + mypy + deptry + uv-lock all clean.
+- Baseline harness: 44 cases drifted (expected — additive
+  `suggested_run_command` field + `Suggested:` text line). Regenerated;
+  re-verified 63/63 passed, 0 drifted, 0 harness errors.
+
+Strict-improvement audit on the 44 drifted baselines (per user request):
+
+- All baseline diffs reduce to: (a) additive JSON field (with trailing
+  comma reflow on the preceding line — pure cosmetic), (b) additive
+  text `Suggested:` line on the unavailable-cost branch, (c) ONE case
+  (`04-warning-catalog/20-llm.thinking-temperature-mismatch`) showing
+  upstream LiteLLM pricing-data accuracy gain (`claude-opus-4-7`
+  correctly classified as priced; `unpriced_model` →
+  `missing_output_tokens` reason). Nothing degraded anywhere.
+- The lyrics-generator real-world case (`12-...01-analyze-cache-text`)
+  hits the "no model resolved" sub-branch and correctly does NOT get a
+  `Suggested:` line — the actionable next step there is `set
+  settings.default_model`, not `pflow run`. Strict improvement: the
+  renderer correctly gates on the right sub-branch.
+
+Mutation contracts verified:
+
+- UX 3: dropping `suggestion=` kwarg in the mutex `_emit_error` call
+  fails `test_conflicting_flags_exits_nonzero`'s "drop --no-trace-autoload"
+  assertion.
+- Bug 3 positive: removing the `notes.append` in `_autoload_trace` fails
+  `test_autoload_notes_unmatched_traces_when_others_exist`.
+- Bug 3 negative: emitting the note unconditionally (dropping the
+  `next(iter(...))` guard) fails
+  `test_autoload_emits_no_notes_when_debug_dir_is_empty`.
+- UX 8 field population: removing the `suggested_run_command=` kwarg in
+  `analyze.py`'s `replace(summary, ...)` site fails
+  `test_suggested_run_command_populated_for_workflow_with_inputs`.
+- UX 8 inline guard: removing the `ir-hash:` guard in
+  `_format_workflow_run_command` fails
+  `test_suggested_run_command_is_none_for_inline_workflow` and
+  `test_json_summary_suggested_run_command_null_for_inline_workflow`.
+
+Tacit knowledge for the next agent:
+
+1. **Pre-implementation verification before designing.** The 4 parallel
+   `pflow-codebase-searcher` agents took ~5 min wall-clock and surfaced
+   key seams: `_autoload_trace`'s already-plumbed `notes` parameter,
+   `_emit_error`'s already-supported `suggestion=` kwarg, the absence of
+   any paste-ready-command precedent in the analyzer. Each verification
+   shaped the design choice — Bug 3 became "stop discarding the param"
+   (10 LOC) instead of "thread a new return value" (40 LOC); UX 8 became
+   "structured field with single helper" instead of "renderer reaches
+   into IR." The pattern: **verify the existing scaffolding before
+   designing the new shape** — top-10% codebases minimize new surface
+   area by reusing existing seams.
+
+2. **Pre-merge branch versioning discipline.** Within-branch
+   `JSON_FORMAT_VERSION` bumps reflect staging boundaries during
+   development, not consumer commitments. When adding fields to a
+   pre-merge format (no external users), additive changes within the
+   same minor are correct; bumping again would be staging-noise. The
+   "consumer rule: gate on `format_version.startswith('4.')`" still
+   holds because no consumer actually exists yet — the rule is for the
+   contract once shipped.
+
+3. **Sibling-site scope cuts are real architectural choices.**
+   `_no_paste_ready_block_note` (3 variants), `analyze.py:621-625`, and
+   `render_text.py:373-374` all have the same "framed but not
+   actionable" UX problem that UX 8 addressed. Solving them together
+   would have been mechanism-driven; solving UX 8 alone was
+   problem-driven (the user-reported finding was specifically the
+   "Cost data unavailable" branch). The mechanism (the field) is now in
+   place — extending to the siblings is a 2-line render change each
+   when the user decides. **Pattern**: build the mechanism for the
+   reported finding, then stop. Don't pre-emptively apply it to every
+   matching site.
+
+4. **Builder populated via shared helper > allowlist exception.** The
+   `_BUILDER_DOCUMENTED_DEFAULTS` allowlist is for fields where production
+   computes a value the builder can't model faithfully. When the
+   computation is pure (e.g., `_format_workflow_run_command(path,
+   inputs)`), populate the builder via the same helper. Keeps the
+   builder honest to production shape; avoids growing the allowlist for
+   easy cases. The allowlist should be reserved for genuinely-hard
+   cases like `evidence_scope` (depends on trace coverage) or
+   `unavailable_models_by_workflow` (depends on cross-workflow row
+   partitioning).
+
+5. **Strict-improvement audits are cheap and high-signal.** Running
+   `git diff HEAD` on baselines + grouping unique line changes
+   (additions vs deletions) caught one non-additive change in a single
+   case (`20-llm.thinking-temperature-mismatch`) that turned out to be
+   upstream LiteLLM pricing data rather than a bug. The audit pattern:
+   list every unique line change across all drifted baselines, classify
+   each as additive / cosmetic / behavioral, and verify any behavioral
+   change is intended. Top-10% test discipline.

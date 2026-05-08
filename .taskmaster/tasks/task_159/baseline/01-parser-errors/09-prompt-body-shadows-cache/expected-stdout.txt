@@ -10,6 +10,7 @@
   1 opportunity (1 warning, 0 info)
 
   Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
 
 ## Blocking errors (must fix before save and run)
 

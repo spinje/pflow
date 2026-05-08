@@ -432,6 +432,12 @@ class AnalysisSummary:
     sub_workflow_llm_node_count: int = 0
     sub_workflow_rollup: SubWorkflowRollup | None = None
     projection_exclusions: tuple[ProjectionExclusion, ...] = ()
+    # Paste-ready ``pflow run`` command derived from ``workflow_path`` and
+    # the workflow's declared inputs. Populated when the workflow has a
+    # resolvable file path (``None`` for inline IR or ``ir-hash:`` lookup
+    # keys). Renderers use it on unavailable-cost branches so agents see
+    # the exact command that lights up cost figures.
+    suggested_run_command: str | None = None
 
 
 @dataclass(frozen=True)
@@ -693,6 +699,7 @@ def analyze(
             ttl=_extract_cache_ttl(cache_block),
             notes=notes,
         ),
+        suggested_run_command=_format_workflow_run_command(workflow_path, workflow_ir.get("inputs")),
     )
 
     # Recommended actions are a renderer-side projection over ``warnings``
@@ -795,10 +802,11 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
     Per DD#34, auto-load is a convenience; explicit loading
     (``--from-trace <path>``) is the contract.
 
-    The ``notes`` parameter is preserved for future use (e.g., a Gemini
-    telemetry note appended by F2 callers).
+    When auto-load finds no match but other traces exist in the debug dir
+    (e.g. the workflow file was renamed/moved since traces were recorded),
+    appends a Notes line so the agent knows their evidence is unreachable
+    via auto-load and can pass ``--from-trace`` explicitly.
     """
-    del notes  # currently unused; preserved for caller contract symmetry
     if workflow_path is None:
         return None, None
     debug_dir = Path.home() / ".pflow" / "debug"
@@ -822,6 +830,17 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
             continue
         if str(data.get("format_version", "")).startswith("2."):
             return data, str(trace_file)
+
+    # No hash-scoped match. If the debug dir holds unrelated traces, surface
+    # that so the agent doesn't read greenfield output as "no evidence
+    # exists" when in fact a rename has hidden it from auto-load.
+    if next(iter(debug_dir.glob("workflow-trace-*.json")), None) is not None:
+        notes.append(
+            "Found other traces in ~/.pflow/debug/ but none matched this "
+            "workflow's path (the workflow file may have been renamed or "
+            "moved). Pass `--from-trace <path>` to use a specific trace, or "
+            "re-run the workflow to record a new one."
+        )
     return None, None
 
 
@@ -3818,6 +3837,28 @@ def _aggregate_confidence(
 # ---------------------------------------------------------------------------
 # Summary builder
 # ---------------------------------------------------------------------------
+
+
+def _format_workflow_run_command(workflow_path: str | None, inputs: Mapping[str, Any] | None) -> str | None:
+    """Compose a paste-ready ``pflow run`` command from a workflow file path
+    and its declared inputs.
+
+    Returns ``None`` when no runnable file path exists — inline IR
+    (``workflow_path is None``) and ``ir-hash:<md5>`` lookup keys both lack a
+    file the agent could re-run. Callers thread the result onto
+    :class:`AnalysisSummary` so renderers can surface the command on
+    unavailable-cost branches without reaching into the IR themselves.
+
+    Placeholder values (``<value>``) are intentional: greenfield analysis has
+    no resolved parameters yet, and showing defaults would imply they're
+    required. The agent fills in real values when running.
+    """
+    if workflow_path is None or workflow_path.startswith("ir-hash:"):
+        return None
+    parts = [f"pflow run {workflow_path}"]
+    for name in inputs or {}:
+        parts.append(f"{name}=<value>")
+    return " ".join(parts)
 
 
 def _build_summary(

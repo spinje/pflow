@@ -99,6 +99,7 @@ def analyze_cache(
             json_mode=json_mode,
             error_id="analyze-cache.flags-mutually-exclusive",
             message="--from-trace and --no-trace-autoload are mutually exclusive.",
+            suggestion="--from-trace already opts out of auto-load; drop --no-trace-autoload.",
             exit_code=2,
         )
         return

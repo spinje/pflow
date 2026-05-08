@@ -123,6 +123,10 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "root_llm_node_count": s.root_llm_node_count,
         "sub_workflow_llm_node_count": s.sub_workflow_llm_node_count,
         "sub_workflow_rollup": _sub_workflow_rollup_to_dict(s.sub_workflow_rollup),
+        # Paste-ready ``pflow run`` command for greenfield "run once" hints.
+        # ``null`` for inline IR or ``ir-hash:`` lookup keys (no file path
+        # the agent can re-run). See ``AnalysisSummary.suggested_run_command``.
+        "suggested_run_command": s.suggested_run_command,
     }
 
 

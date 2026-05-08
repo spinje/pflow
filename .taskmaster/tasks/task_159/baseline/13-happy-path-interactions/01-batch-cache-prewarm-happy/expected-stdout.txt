@@ -74,7 +74,8 @@
     "heterogeneous_model_node_paths": [],
     "root_llm_node_count": 1,
     "sub_workflow_llm_node_count": 0,
-    "sub_workflow_rollup": null
+    "sub_workflow_rollup": null,
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md context=<value> items=<value>"
   },
   "blocking_errors": [],
   "recommended_actions": [],

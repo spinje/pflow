@@ -97,7 +97,8 @@
           "rerun_within_ttl_hypothetical_usd": null
         }
       ]
-    }
+    },
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>"
   },
   "blocking_errors": [],
   "recommended_actions": [],

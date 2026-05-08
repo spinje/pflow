@@ -590,7 +590,11 @@ def test_conflicting_flags_exits_nonzero(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code != 0
-    assert "mutually exclusive" in result.output.lower() or "mutually exclusive" in result.stderr.lower()
+    combined = (result.output + result.stderr).lower()
+    assert "mutually exclusive" in combined
+    # Mutation contract: dropping the `suggestion=` kwarg in analyze_cache.py
+    # at the mutex emit site causes this assertion to fail.
+    assert "drop --no-trace-autoload" in combined
 
 
 def test_internal_analyzer_crash_exits_nonzero_no_silent_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
