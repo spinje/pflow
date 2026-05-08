@@ -9168,3 +9168,77 @@ Verification:
 - Mutation checks: restoring the deleted heuristic caused 10 targeted
   failures; removing the detector's `None` guard caused 2 detector failures.
 - Default non-e2e suite: 6,350 passed, 1 skipped.
+
+## PR #378 review-fix #7 — analyze-cache validator unification (2026-05-08)
+
+Implemented
+`.taskmaster/tasks/task_159/implementation/fix-plans/analyze-cache-validator-unification-plan.md`.
+
+Behavior:
+
+- Replaced analyzer-side `validate_data_flow()` delegation with
+  `_run_full_validation()`, which calls `WorkflowValidator.validate()` with
+  dummy input parameters, matching run / validate-only / save semantics.
+- `analyze-cache` now surfaces non-cache validator ERRORs such as unknown LLM
+  parameters in `warnings[]` and `blocking_errors[]`; JSON action rows now
+  preserve `message` and `suggestions`.
+- Cache-domain focus remains at the view/summary boundary:
+  `recommended_actions` filters non-cache advisory findings, and summary
+  opportunity counts are computed from cache-focused diagnostics only.
+- Child validation diagnostics now get `context.affected_workflow` stamped at
+  the `_validate_one_child_call` boundary, covering all child emission paths.
+- Updated internal docs, MCP tool guidance, tests, and the task-159 baseline
+  oracle for the broader diagnostic/action shape.
+
+Deviations / adaptations:
+
+- Kept `_warnings_for_partial_trace()` as "all ERRORs survive" instead of the
+  plan's cache-only ERROR filter. Clear reason: current renderers derive
+  `blocking_errors[]` from `analysis.warnings`; there is no separate
+  pre-filtered blocking-error list. Applying the plan literally would hide
+  non-cache validator errors on partial traces, contradicting the plan's
+  higher-level "ERRORs broaden universally" rule.
+- Updated more in-memory test fixtures than the plan predicted. Clear reason:
+  full validation correctly rejects hand-built IR missing `ir_version`, using
+  legacy `list` instead of canonical `array`, or placing LLM `model` outside
+  `params`. The final tests now use production-shaped IR rather than relying
+  on the deleted partial-validator path.
+- Regenerated 29 baseline outputs. Clear reason: the new public contract adds
+  `message` / `suggestions` to action rows and surfaces real non-cache
+  blocking errors in cases that were already structurally invalid.
+- Added two final high-value regression tests after reviewing test quality.
+  Clear reason: they protect actual integration bugs, not coverage numbers:
+  partial-trace suppression must not hide universal validator ERRORs, and
+  recursive validator diagnostics must carry the child workflow path in
+  `context.affected_workflow`.
+- Used a temporary workspace-local `uv` wrapper for the baseline harness only.
+  Clear reason: baseline case scripts hard-code `uv run pflow`, which panics
+  in this sandbox; the wrapper delegated only `uv run pflow` to `.venv/bin/pflow`
+  and was removed after verification.
+
+Verification:
+
+- Focused affected suites: `458 passed` across cache-analysis tests and
+  `tests/test_cli/test_analyze_cache.py`.
+- Baseline harness: initial run showed 29 intentional drifts; after
+  regeneration, `63 passed, 0 drifted, 0 harness errors`.
+- Manual smoke: `pflow analyze-cache` on a `thinking_effort` typo workflow now
+  renders the blocking error in text and JSON with
+  `Did you mean 'reasoning_effort'?`.
+- Sandbox-safe near-full suite passed with the known Homebrew-`uv` subprocess
+  failures excluded: `6372 passed, 19 skipped`.
+- `ruff check`, `ruff format --check`, `mypy` on touched source, and
+  `git diff --check` passed.
+- Full raw `deptry .` remains blocked by broad dependency findings across the
+  repository (notably package self-import / transitive-dependency reports), so
+  it was not a clean pass/fail signal for this patch.
+
+Key learnings:
+
+1. Validation unification forces test fixtures to be honest IR producers; the
+   old adapter let schema-invalid fixtures reach downstream cache assertions.
+2. `analysis.warnings` is still the single source of truth for derived views.
+   Any filtering step before return must preserve every diagnostic that a
+   renderer may need, especially universal blocking errors.
+3. Baseline drift was useful here: it proved the machine-facing action schema
+   and text suggestions changed exactly where the plan intended.

@@ -1138,9 +1138,9 @@ def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findi
     text = render_text(_make_analysis(warnings=warnings))
     # The headline is the rank-line title.
     assert "Shared context undeclared" in text
-    # Workflow-level finding gets the basename on its scope line, NOT the full path.
+    # Workflow-level finding gets the basename on its scope line. Suggestions
+    # may include the full path because they are paste-ready edit targets.
     assert "song-creator.pflow.md" in text
-    assert "/abs/path/" not in text  # Full path NOT surfaced; basename only.
     # Per-node finding renders the node_id on its scope line.
     assert "emotional-reviews" in text
     # The bracketed ID prefix is GONE from rank lines — top-10% codebases
@@ -1262,6 +1262,21 @@ def test_json_blocking_errors_array_present_and_excludes_warnings() -> None:
     assert [a["rank"] for a in result["blocking_errors"]] == [1]
 
 
+def test_json_blocking_errors_preserve_message_and_suggestions() -> None:
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            node_id="deep-think",
+            message="Unknown parameter 'thinking_effort' on node 'deep-think' (type: llm).",
+            suggestions=["Did you mean 'reasoning_effort'?"],
+        ),
+    ]
+    result = render_json(_make_analysis(warnings=warnings))
+    assert result["blocking_errors"][0]["message"] == warnings[0].message
+    assert result["blocking_errors"][0]["suggestions"] == ["Did you mean 'reasoning_effort'?"]
+
+
 def test_json_recommended_actions_excludes_errors_after_split() -> None:
     warnings = [
         Diagnostic(
@@ -1282,6 +1297,20 @@ def test_json_recommended_actions_excludes_errors_after_split() -> None:
     result = render_json(_make_analysis(warnings=warnings))
     assert [a["warning_id"] for a in result["recommended_actions"]] == ["cache.first-call-write-penalty"]
     assert [a["rank"] for a in result["recommended_actions"]] == [1]
+
+
+def test_text_blocking_errors_render_suggestions() -> None:
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            node_id="deep-think",
+            message="Unknown parameter 'thinking_effort' on node 'deep-think' (type: llm).",
+            suggestions=["Did you mean 'reasoning_effort'?"],
+        ),
+    ]
+    rendered = render_text(_make_analysis(warnings=warnings))
+    assert "Did you mean 'reasoning_effort'?" in rendered
 
 
 def test_text_recommended_actions_inline_label_passes_through() -> None:
@@ -1927,6 +1956,7 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
     from pflow.core.cache_analysis import analyze
 
     workflow_ir = {
+        "ir_version": "0.1.0",
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
         "cache": {
             "items": [
@@ -1938,9 +1968,11 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
             {
                 "id": "write-lyrics",
                 "type": "llm",
-                "model": "anthropic/claude-sonnet-4-5",
                 "prompt_cache": ["b", "a"],  # wrong order — fires cache.order-mismatch ERROR
-                "params": {"prompt": "${a} ${b}"},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "${a} ${b}",
+                },
             }
         ],
         "edges": [],

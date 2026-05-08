@@ -559,7 +559,7 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
     return _render_action_list(
         header="## Recommended actions (ordered by impact)",
         intro=(
-            "Each item below is one edit that unlocks LLM-provider caching.\n"
+            "Each item below is a cache-optimization opportunity for this workflow.\n"
             "Declared values are sent once and reused at 0.1× input cost."
         ),
         actions=actions,
@@ -618,11 +618,16 @@ def _render_action_list(
         # twice in narrow terminals.
         if action.message and action.message != action.headline:
             lines.extend(_indent_message(action.message, prefix="     "))
+        lines.extend(_format_action_suggestions(action))
         lines.append("")
     # Drop trailing blank.
     while lines and lines[-1] == "":
         lines.pop()
     return "\n".join(lines)
+
+
+def _format_action_suggestions(action: RecommendedAction) -> list[str]:
+    return [f"     → {suggestion}" for suggestion in action.suggestions]
 
 
 def _format_action_title(action: RecommendedAction, *, show_warning_id: bool) -> str:

@@ -415,14 +415,39 @@ async def analyze_cache(
     is unavailable when trace coverage is partial or when projection exclusions
     would make the actual-vs-projection comparison cross cohorts.
 
-    ``blocking_errors`` contains ERROR-severity findings. ``recommended_actions``
-    contains WARNING + INFO opportunities. Both are renderer-derived views
+    **Validator finding parity**: ``analyze_cache`` runs the same 10-step
+    ``WorkflowValidator`` pipeline as ``pflow run``, ``--validate-only``, and
+    ``pflow save``. ERROR findings appear in ``blocking_errors[]`` (ranked,
+    deduplicated, with ``message`` and ``suggestions`` preserved) and in
+    ``warnings[]`` with ``severity: "error"``.
+
+    New ERROR finding categories agents may now see in addition to the cache
+    catalog: IR schema errors, stdin/stdout cardinality violations, forward
+    references, execution-order cycles, unresolvable template variables,
+    unknown node types, unknown node parameters, and sub-workflow input
+    contract violations.
+
+    WARNING-severity findings: only cache-domain warnings flow into
+    ``recommended_actions[]``. Memoization-cache lint warnings and other
+    non-cache advisory findings remain in raw ``warnings[]`` but are filtered
+    out of provider prompt-cache recommendations.
+
+    **Sub-workflow provenance**: child-workflow findings have their message
+    prefixed with ``In step '<parent_step_id>' sub-workflow:`` per nesting
+    level. The leaf workflow path is in each diagnostic's
+    ``context.affected_workflow``. The ``node_id`` is the deepest nested node
+    id, or the parent step id for un-IDed validators bubbled up through
+    ``_add_child_provenance``.
+
+    ``blocking_errors`` and ``recommended_actions`` are renderer-derived views
     over ``warnings``; cross-workflow alignment IDs are filtered into
     ``cross_workflow.*`` only. ``cross_workflow.{rename, prose, value_flow}``
     arrays are derived from ``warnings`` by ``Diagnostic.id``.
 
-    **Closed catalog of warning IDs** that may appear in
-    ``warnings[].id`` (21 entries in v1 — 20 ``cache.*`` plus 1 ``llm.*``):
+    **``warnings[].id`` shape**: either one of these cache catalog entries or
+    ``None`` for un-IDed validator findings. Use ``severity`` for
+    blocking-vs-advisory dispatch; use cache catalog membership for
+    cache-vs-other dispatch.
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared

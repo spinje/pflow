@@ -19,12 +19,13 @@
 
 ## Recommended actions (ordered by impact)
 
-  Each item below is one edit that unlocks LLM-provider caching.
+  Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
 
   1. Unused cache chunk — remove `article` from ## Cache                 savings unavailable
      workflow.pflow.md
      Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.
+     → Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`.
 
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.

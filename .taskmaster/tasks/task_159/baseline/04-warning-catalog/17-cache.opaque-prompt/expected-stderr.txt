@@ -1,0 +1,2 @@
+WARNING: Found 1 unused inputs
+WARNING: Template validation found 2 errors

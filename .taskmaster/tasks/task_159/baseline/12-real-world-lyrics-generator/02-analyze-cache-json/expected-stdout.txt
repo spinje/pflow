@@ -377,21 +377,41 @@
       ]
     }
   },
-  "blocking_errors": [],
+  "blocking_errors": [
+    {
+      "rank": 1,
+      "warning_id": "",
+      "node_id": "fetch-youtube-mcp",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/fetch-source/fetch-source.pflow.md",
+      "message": "In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'",
+      "suggestions": []
+    }
+  ],
   "recommended_actions": [
     {
       "rank": 1,
       "warning_id": "cache.sub-workflow-cache-undeclared",
       "node_id": null,
       "estimated_savings_usd": null,
-      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there. Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
+      "suggestions": [
+        "In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
+        "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+      ]
     },
     {
       "rank": 2,
       "warning_id": "cache.opaque-prompt",
       "node_id": "generate-chorus-options",
       "estimated_savings_usd": null,
-      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+      "message": "generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.",
+      "suggestions": [
+        "Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.",
+        "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern."
+      ]
     }
   ],
   "suggested_blocks": [],
@@ -1452,6 +1472,22 @@
       "see_also": [
         "caching"
       ]
+    },
+    {
+      "severity": "error",
+      "message": "In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'",
+      "source": "validator",
+      "title": "Validation Error",
+      "node_id": "fetch-youtube-mcp",
+      "context": {
+        "category": "validation",
+        "path": "nodes[2].type",
+        "node_type": "mcp-klavis-youtube-get_youtube_video_transcript",
+        "similar_names": null,
+        "sub_workflow_step": "fetch-sources",
+        "sub_workflow_path": "./fetch-source/fetch-source.pflow.md",
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/fetch-source/fetch-source.pflow.md"
+      }
     },
     {
       "severity": "info",

@@ -83,7 +83,12 @@
       "warning_id": "cache.first-call-write-penalty",
       "node_id": "writer",
       "estimated_savings_usd": 0.008999999999999994,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "writer: only call to anthropic/claude-sonnet-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0090/run)",
+      "suggestions": [
+        "Remove `prompt_cache:` from writer (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-sonnet-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ]
     }
   ],
   "suggested_blocks": [],

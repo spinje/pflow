@@ -82,7 +82,9 @@
       "warning_id": "cache.order-mismatch",
       "node_id": "summarize",
       "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Node 'summarize' prompt_cache order doesn't match ## Cache declaration\n  expected:  [article, topic]\n  you wrote: [topic, article]\n  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order",
+      "suggestions": []
     }
   ],
   "recommended_actions": [],

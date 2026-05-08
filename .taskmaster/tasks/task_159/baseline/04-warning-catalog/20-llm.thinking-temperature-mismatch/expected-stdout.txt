@@ -88,7 +88,12 @@
       "warning_id": "llm.thinking-temperature-mismatch",
       "node_id": "deep-think",
       "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Node 'deep-think': temperature 0.3 conflicts with reasoning_effort 'high' on model anthropic/claude-opus-4-7 \u2014 Anthropic requires temperature=1.0 when extended thinking is enabled.",
+      "suggestions": [
+        "Set `temperature: 1.0` on `deep-think` (recommended for thinking-enabled calls), OR",
+        "Set `reasoning_effort: none` on `deep-think` to disable thinking and keep your declared temperature."
+      ]
     }
   ],
   "recommended_actions": [],

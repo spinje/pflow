@@ -95,7 +95,12 @@
       "warning_id": "cache.shared-context-undeclared",
       "node_id": null,
       "estimated_savings_usd": 0.0324,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Used by 3 LLM nodes. Chunks: article. (saves $0.03/run)",
+      "suggestions": [
+        "Paste the suggested ## Cache block (see 'Suggested ## Cache block' section) into <BASELINE_CASE_DIR>/workflow.pflow.md.",
+        "Per-node `prompt_cache:` assignments are listed in the same section."
+      ]
     }
   ],
   "suggested_blocks": [

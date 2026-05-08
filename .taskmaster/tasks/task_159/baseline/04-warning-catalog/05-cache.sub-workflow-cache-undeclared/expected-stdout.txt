@@ -106,7 +106,12 @@
       "warning_id": "cache.sub-workflow-cache-undeclared",
       "node_id": null,
       "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+      "message": "`article` flows into `child.pflow.md` as `article` and is used by 2 LLM nodes there. Add `article` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
+      "suggestions": [
+        "In <BASELINE_CASE_DIR>/sub/child.pflow.md, add a ## Cache chunk for `${article}`.",
+        "Add `article` to `prompt_cache:` on the child LLM nodes that reuse it."
+      ]
     }
   ],
   "suggested_blocks": [],

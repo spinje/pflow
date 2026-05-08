@@ -174,6 +174,8 @@ def _action_to_dict(action: RecommendedAction) -> dict[str, Any]:
         # parent and child workflows, so consumers dispatch on
         # ``(node_id, scope_workflow)`` when both are populated.
         "scope_workflow": action.scope_workflow,
+        "message": action.message,
+        "suggestions": list(action.suggestions),
     }
 
 

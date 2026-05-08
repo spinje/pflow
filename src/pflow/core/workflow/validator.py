@@ -6,6 +6,7 @@ ensuring consistency between production, tests, and any other consumers.
 
 import logging
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -15,6 +16,28 @@ from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
+
+
+def _stamp_affected_workflow(
+    diagnostics: list[Diagnostic],
+    workflow_path: str | None,
+) -> list[Diagnostic]:
+    """Stamp ``context['affected_workflow']`` when a child path is known.
+
+    The cache analyzer uses this field to scope child-workflow diagnostics.
+    Existing values win so recursive validation keeps the deepest workflow
+    path, matching ``_add_child_provenance``'s first-write-wins contract.
+    """
+    if not workflow_path:
+        return diagnostics
+    enriched: list[Diagnostic] = []
+    for diagnostic in diagnostics:
+        context = dict(diagnostic.context or {})
+        current = context.get("affected_workflow")
+        if not current or current == "<unknown>":
+            context["affected_workflow"] = workflow_path
+        enriched.append(replace(diagnostic, context=context))
+    return enriched
 
 
 def _add_child_provenance(
@@ -37,8 +60,6 @@ def _add_child_provenance(
     provenance fields aligned with ``node_id`` and ``context['path']``, which both
     point at the deepest level.
     """
-    from dataclasses import replace
-
     result: list[Diagnostic] = []
     for diagnostic in child_diagnostics:
         existing_context = diagnostic.context or {}
@@ -737,42 +758,40 @@ class WorkflowValidator:
         diagnostics.extend(load_errors)
         diagnostics.extend(_add_child_provenance(child_parser_warnings, node_id, ref_label))
 
-        if child_ir is None or "nodes" not in child_ir:
-            return diagnostics
+        if child_ir is not None and "nodes" in child_ir:
+            if not already_seen:
+                normalize_ir(child_ir)
+                file_ref_error = WorkflowValidator._resolve_child_file_refs(
+                    child_ir, child_path, ref_label, node_id, batch_item_index
+                )
+                if file_ref_error is not None:
+                    diagnostics.append(file_ref_error)
+                    return _stamp_affected_workflow(diagnostics, str(child_path) if child_path else None)
 
-        if not already_seen:
-            normalize_ir(child_ir)
-            file_ref_error = WorkflowValidator._resolve_child_file_refs(
-                child_ir, child_path, ref_label, node_id, batch_item_index
+            child_inputs = child_ir.get("inputs") or {}
+            inputs_item_idx = batch_item_index if inputs_from_item else None
+            diagnostics.extend(
+                WorkflowValidator._check_required_inputs(
+                    node_id, ref_label, effective_params, child_inputs, inputs_item_idx
+                )
             )
-            if file_ref_error is not None:
-                diagnostics.append(file_ref_error)
-                return diagnostics
 
-        child_inputs = child_ir.get("inputs") or {}
-        inputs_item_idx = batch_item_index if inputs_from_item else None
-        diagnostics.extend(
-            WorkflowValidator._check_required_inputs(
-                node_id, ref_label, effective_params, child_inputs, inputs_item_idx
-            )
-        )
+            if not already_seen:
+                dummy_params = generate_dummy_parameters(child_ir.get("inputs") or {})
+                if child_path:
+                    dummy_params["_pflow_workflow_file"] = str(child_path)
+                child_diagnostics = WorkflowValidator.validate(
+                    child_ir,
+                    extracted_params=dummy_params,
+                    registry=registry,
+                    skip_node_types=skip_node_types,
+                    workflow_file=child_path,
+                    _seen=seen,
+                    _ir_cache=ir_cache,
+                )
+                diagnostics.extend(_add_child_provenance(child_diagnostics, node_id, ref_label))
 
-        if not already_seen:
-            dummy_params = generate_dummy_parameters(child_ir.get("inputs") or {})
-            if child_path:
-                dummy_params["_pflow_workflow_file"] = str(child_path)
-            child_diagnostics = WorkflowValidator.validate(
-                child_ir,
-                extracted_params=dummy_params,
-                registry=registry,
-                skip_node_types=skip_node_types,
-                workflow_file=child_path,
-                _seen=seen,
-                _ir_cache=ir_cache,
-            )
-            diagnostics.extend(_add_child_provenance(child_diagnostics, node_id, ref_label))
-
-        return diagnostics
+        return _stamp_affected_workflow(diagnostics, str(child_path) if child_path else None)
 
     @staticmethod
     def _resolve_child_file_refs(

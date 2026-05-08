@@ -83,7 +83,11 @@
       "warning_id": "cache.unused-chunk",
       "node_id": null,
       "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Cache chunk 'topic' is declared in ## Cache but no node references it via prompt_cache:.",
+      "suggestions": [
+        "Remove 'topic' from ## Cache, OR reference it from a node's `- prompt_cache: [topic]`."
+      ]
     }
   ],
   "suggested_blocks": [],

@@ -11,18 +11,28 @@
 
   Cost data unavailable: no model resolved for LLM nodes (set settings.default_model or add per-node `- model:`).
 
+## Blocking errors (must fix before save and run)
+
+  1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
+     fetch-youtube-mcp in fetch-source.pflow.md
+     In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
+
 ## Recommended actions (ordered by impact)
 
-  Each item below is one edit that unlocks LLM-provider caching.
+  Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
 
   1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  savings unavailable
      chorus-chooser.pflow.md
      `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there. Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     → In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
+     → Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
 
   2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
      generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
+     → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
+     → See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern.
 
 ## Sub-workflow boundaries
 

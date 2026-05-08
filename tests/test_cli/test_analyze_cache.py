@@ -42,6 +42,7 @@ A minimal valid workflow.
 Echo a greeting.
 
 - type: shell
+- cache: false
 
 ```command
 echo hello

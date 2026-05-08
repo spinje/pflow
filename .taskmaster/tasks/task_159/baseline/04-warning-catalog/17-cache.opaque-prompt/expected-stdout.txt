@@ -76,14 +76,43 @@
     "sub_workflow_llm_node_count": 0,
     "sub_workflow_rollup": null
   },
-  "blocking_errors": [],
+  "blocking_errors": [
+    {
+      "rank": 1,
+      "warning_id": "",
+      "node_id": null,
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Declared input(s) never used as template variable: article",
+      "suggestions": [
+        "Remove unused declarations from '## Inputs' or reference them in a node parameter."
+      ]
+    },
+    {
+      "rank": 2,
+      "warning_id": "",
+      "node_id": "shape",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Code must declare result type annotation (result: <type> = ...) or next type annotation (next: str = ...) for routing",
+      "suggestions": [
+        "Add a result annotation at the top of the code block: result: <type> = ...",
+        "Or, to route to a downstream node, declare: next: str = \"<target-node-id>\""
+      ]
+    }
+  ],
   "recommended_actions": [
     {
       "rank": 1,
       "warning_id": "cache.opaque-prompt",
       "node_id": "summarize",
       "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "summarize: prompt is `${shape.result}`, assembled by `shape` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.",
+      "suggestions": [
+        "Inline the prompt template on `summarize`: replace `${shape.result}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.",
+        "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern."
+      ]
     }
   ],
   "suggested_blocks": [],
@@ -139,6 +168,47 @@
       },
       "see_also": [
         "caching"
+      ]
+    },
+    {
+      "severity": "error",
+      "message": "Declared input(s) never used as template variable: article",
+      "source": "validator",
+      "title": "Validation Error",
+      "suggestions": [
+        "Remove unused declarations from '## Inputs' or reference them in a node parameter."
+      ],
+      "context": {
+        "category": "validation",
+        "path": "inputs",
+        "unused_inputs": [
+          "article"
+        ],
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      }
+    },
+    {
+      "severity": "error",
+      "message": "Code must declare result type annotation (result: <type> = ...) or next type annotation (next: str = ...) for routing",
+      "source": "validator",
+      "title": "Validation Error",
+      "suggestions": [
+        "Add a result annotation at the top of the code block: result: <type> = ...",
+        "Or, to route to a downstream node, declare: next: str = \"<target-node-id>\""
+      ],
+      "node_id": "shape",
+      "context": {
+        "category": "validation",
+        "path": "nodes[id=shape].params.code",
+        "node_type": "code",
+        "missing": [
+          "result",
+          "next"
+        ],
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      },
+      "see_also": [
+        "code"
       ]
     }
   ],

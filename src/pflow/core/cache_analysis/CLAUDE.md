@@ -64,7 +64,7 @@ Refactor planned to split `analyze.py` into a thin orchestrator plus `stages/` a
 - **Discrepancy detection** (`_emit_discrepancy_diagnostics`, `_predict_cache_keys`): compile workflow + simulate planner + compare to trace.
 - **Summary builders**: aggregation glue scattered between the orchestrator and the per-call cluster.
 
-**`_cache_validator_findings` is NOT validation logic.** Despite the name, it's an adapter that calls `core/workflow/data_flow.py::validate_data_flow()`, filters to `cache.*` IDs, and enriches each diagnostic with `context["affected_workflow"]` for cross-workflow scoping. All cache validation lives in `data_flow.py::_validate_cache_block`. The adapter exists because (a) validator constructors are workflow-agnostic, (b) the analyzer needs to scope per-workflow when running cross-workflow analysis, and (c) `analyze-cache` should not crash on malformed IR (it swallows producer-bug exceptions; the validator path correctly raises).
+**`_run_full_validation` is the analyzer's validation seam.** It calls the same `WorkflowValidator.validate()` pipeline as run, validate-only, and save, then enriches root diagnostics with `context["affected_workflow"]` for cross-workflow scoping. Domain focus is preserved after validation: ERRORs surface universally, while advisory actions and headline counts filter to provider prompt-cache findings.
 
 ### context.py
 
@@ -206,6 +206,20 @@ There is no duplicate predictor. `create_planner_shared` was originally `_create
 
 ## Validator delegation
 
+`pflow analyze-cache` runs the same `WorkflowValidator.validate()` 10-step pipeline as `pflow run`, `--validate-only`, and `pflow save`. There is no separate cache-only validation subset.
+
+Domain focus is preserved at the renderer/aggregator boundary, not at the pipeline boundary:
+
+- ERRORs broaden universally: typos and broken structure block execution, so every CLI surface must show them. They surface through `blocking_errors[]`.
+- WARNINGs stay cache-scoped in action UX: `build_recommended_actions` filters warning/info findings to cache-related diagnostics only. Memoization-cache lint warnings and other non-cache advisory findings remain in raw `analysis.warnings` but not in "Recommended actions".
+- Derived counts stay cache-focused: `summary.actionable_opportunities`, `summary.blocking_errors`, `summary.warnings_count`, and `summary.info_count` are computed over the cache-focused subset because they drive provider prompt-cache nudges.
+
+`_run_full_validation` in `analyze.py` calls the unified validator with dummy-padded `extracted_params` (matching `runner.validate()` and `save_service`) and stamps `context["affected_workflow"]` on root-level diagnostics.
+
+Per-child scoping is handled by validator step 9 itself: `_stamp_affected_workflow` in `validator.py` enriches child diagnostics with `affected_workflow=child_path` at the `_validate_one_child_call` boundary, covering load errors, file ref errors, required-input errors, parser warnings, and recursive child diagnostics.
+
+Producer-bug exception contract: `_run_full_validation` wraps `WorkflowValidator.validate()` in `try/except Exception`. On exception, it logs at WARNING severity and surfaces a structured diagnostic so users see when validation crashed.
+
 Per DD#20 (task-159.md), all cache structural validation lives in `core/workflow/data_flow.py::_validate_cache_block`. The analyzer never re-implements:
 
 | Warning ID | Defined in | Severity |
@@ -217,9 +231,7 @@ Per DD#20 (task-159.md), all cache structural validation lives in `core/workflow
 | `cache.prompt-body-shadows-cache` | `data_flow.py::_validate_cache_block` (overlap check) | WARNING |
 | `llm.thinking-temperature-mismatch` | `data_flow.py::_validate_thinking_temperature_compatibility` | ERROR |
 
-Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_make_undeclared_chunk_diagnostic`, `_make_chunk_resolution_diagnostic`, `_make_batch_scoped_rejection_diagnostic`) that flow only through the run-time validation path. The analyzer filters by **catalog membership** (any ID present in `CACHE_WARNING_CATALOG`) and only surfaces ID-bearing diagnostics — historically this was a `cache.*` prefix match, switched to membership when `llm.thinking-temperature-mismatch` was added.
-
-**WorkflowValidator entry points** (`save_service`, `compile_validation`) and `analyze-cache` all call `validate_data_flow()`. The analyzer adds `affected_workflow` enrichment after-the-fact via `dataclasses.replace`.
+Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_make_undeclared_chunk_diagnostic`, `_make_chunk_resolution_diagnostic`, `_make_batch_scoped_rejection_diagnostic`) that surface as ERROR severity with `context.path` under `cache.` or `.prompt_cache`. The `_is_cache_focused` predicates in `analyze.py` and `view_helpers.py` treat those as cache-domain findings for aggregation and advisory filtering.
 
 ## External integration
 

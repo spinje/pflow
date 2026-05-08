@@ -607,6 +607,7 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
     """Parent ## Cache blocks are not inherited by sub-workflows."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
+        "ir_version": "0.1.0",
         # Declare ``concept`` as a workflow input so the ## Cache chunk
         # resolves cleanly. Without this, the un-IDed cache resolution
         # validator would emit an additional diagnostic that analyze-cache
@@ -629,9 +630,11 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
             {
                 "id": "use-it",
                 "type": "llm",
-                "model": "anthropic/claude-haiku-4-5",
                 "prompt_cache": ["concept"],
-                "params": {"prompt": "Use ${concept}"},
+                "params": {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "prompt": "Use ${concept}",
+                },
             },
             {
                 "id": "child-call",
@@ -641,18 +644,24 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
         ],
     }
     child_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"concept": {"type": "string"}},
         "nodes": [
             {
                 "id": "use-concept",
                 "type": "llm",
-                "model": "anthropic/claude-haiku-4-5",
-                "params": {"prompt": "Use ${concept}"},
+                "params": {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "prompt": "Use ${concept}",
+                },
             },
             {
                 "id": "review-concept",
                 "type": "llm",
-                "model": "anthropic/claude-haiku-4-5",
-                "params": {"prompt": "Review ${concept}"},
+                "params": {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "prompt": "Review ${concept}",
+                },
             },
         ],
     }
@@ -671,7 +680,7 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
     from pflow.core.cache_analysis.render_json import render_json
 
     payload = render_json(result)
-    warning = next(w for w in payload["warnings"] if w["id"] == "cache.sub-workflow-cache-undeclared")
+    warning = next(w for w in payload["warnings"] if w.get("id") == "cache.sub-workflow-cache-undeclared")
     assert warning["suggestions"][0] == "In /abs/child.pflow.md, add a ## Cache chunk for `${concept}`."
     assert warning["suggestions"][1] == "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
 
@@ -3532,18 +3541,19 @@ def test_analyze_cache_surfaces_undeclared_prompt_cache_chunk_error() -> None:
     undeclared cache chunk must surface as a blocking error in
     ``analyze-cache``, not be silently dropped.
 
-    Pre-fix the catalog-membership filter at ``_cache_validator_findings``
-    let only catalog-IDed diagnostics through. ``_make_undeclared_chunk_diagnostic``
+    Pre-fix the analyzer's validator adapter let only catalog-IDed diagnostics
+    through. ``_make_undeclared_chunk_diagnostic``
     is intentionally un-IDed (per spec § "Stable Warning ID Catalog") but
     spec § "Validation Location" requires both ``pflow run`` AND
     ``pflow analyze-cache`` to surface it. The new filter passes paths
     matching ``cache.*`` or ``.prompt_cache``.
 
-    Mutation contract: revert ``_is_cache_related_diagnostic`` to the
-    catalog-only check at ``analyze.py``; this test fails because the
-    typo error is silently dropped.
+    Mutation contract: reverting ``analyze.py::_run_full_validation`` to call
+    ``validate_data_flow`` with the cache-only filter makes this test fail
+    because the typo error is silently dropped.
     """
     workflow_ir = {
+        "ir_version": "0.1.0",
         "inputs": {"concept": {"type": "string"}},
         "cache": {
             "ttl": "5m",
@@ -3555,10 +3565,12 @@ def test_analyze_cache_surfaces_undeclared_prompt_cache_chunk_error() -> None:
             {
                 "id": "use-it",
                 "type": "llm",
-                "model": "anthropic/claude-haiku-4-5",
                 # Intentional typo: ``conept`` vs declared ``concept``.
                 "prompt_cache": ["conept"],
-                "params": {"prompt": "Use the concept context."},
+                "params": {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "prompt": "Use the concept context.",
+                },
             }
         ],
     }
@@ -3573,11 +3585,13 @@ def test_analyze_cache_surfaces_batch_scoped_reference_in_cache_block() -> None:
     """Reviewer Finding 1: a batch-scoped ``${item.X}`` reference inside
     ``## Cache`` must surface as a blocking error in ``analyze-cache``.
 
-    Mutation contract: revert ``_is_cache_related_diagnostic`` to catalog-only;
-    this test fails because the batch-scoped error is dropped.
+    Mutation contract: reverting ``analyze.py::_run_full_validation`` to call
+    ``validate_data_flow`` with the cache-only filter makes this test fail
+    because the batch-scoped error is dropped.
     """
     workflow_ir = {
-        "inputs": {"items_list": {"type": "list"}},
+        "ir_version": "0.1.0",
+        "inputs": {"items_list": {"type": "array"}},
         "cache": {
             "ttl": "5m",
             # Hand-construct an item whose var is batch-scoped (``item.value``).
@@ -3594,9 +3608,11 @@ def test_analyze_cache_surfaces_batch_scoped_reference_in_cache_block() -> None:
             {
                 "id": "fan-out",
                 "type": "llm",
-                "model": "anthropic/claude-haiku-4-5",
                 "batch": {"items": "${items_list}", "as": "item"},
-                "params": {"prompt": "Process ${item.value}"},
+                "params": {
+                    "model": "anthropic/claude-haiku-4-5",
+                    "prompt": "Process ${item.value}",
+                },
             }
         ],
     }

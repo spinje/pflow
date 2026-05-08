@@ -114,8 +114,9 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any], workflow_path: 
     via ``make_diagnostic`` (cache.invalid-on-non-llm, cache.prompt-body-*,
     llm.thinking-temperature-mismatch) carry the real path in
     ``context["affected_workflow"]`` rather than the ``"<unknown>"`` placeholder.
-    Mirrors the threading convention at every other ``validate_data_flow``
-    call site (validator.py:278, analyze.py:_cache_validator_findings).
+    Mirrors the threading convention at every other validation call site
+    (validator.py:278, analyze.py:_run_full_validation through the full
+    ``WorkflowValidator.validate`` pipeline).
 
     Args:
         ir_dict: The workflow IR dictionary

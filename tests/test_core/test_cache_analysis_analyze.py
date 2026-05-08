@@ -21,6 +21,8 @@ from pflow.core.cache_analysis.analyze import (
 )
 from pflow.core.cache_analysis.context import AnalysisContext
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.validation_utils import generate_dummy_parameters
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
@@ -253,10 +255,11 @@ def test_suggested_block_suppressed_when_any_assigned_node_below_threshold(
     assert any("at least one assigned LLM node is below the provider cache threshold" in note for note in result.notes)
 
 
-def test_analyze_cache_validator_findings_replace_unknown_scope() -> None:
+def test_analyze_cache_validation_replaces_unknown_scope() -> None:
     """Analyzer knows the workflow path and must not leak validator placeholders."""
     workflow_path = "/abs/order-mismatch.pflow.md"
     workflow_ir = {
+        "ir_version": "0.1.0",
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
         "cache": {
             "items": [
@@ -268,9 +271,11 @@ def test_analyze_cache_validator_findings_replace_unknown_scope() -> None:
             {
                 "id": "test-call",
                 "type": "llm",
-                "model": "anthropic/claude-sonnet-4-5",
                 "prompt_cache": ["b", "a"],
-                "params": {"prompt": "Summarize ${a} and ${b}."},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Summarize ${a} and ${b}.",
+                },
             }
         ],
     }
@@ -665,22 +670,27 @@ def test_partial_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
 def test_partial_trace_suppresses_executed_subset_optimization_advice(tmp_path: Path) -> None:
     """Partial traces must not turn executed-subset findings into design advice."""
     workflow_ir = {
+        "ir_version": "0.1.0",
         "cache": {"items": [{"name": "ctx", "var": "ctx", "prose_before": "Context:"}]},
         "inputs": {"ctx": {"type": "string"}},
         "nodes": [
             {
                 "id": "ran",
                 "type": "llm",
-                "model": "anthropic/claude-sonnet-4-5",
                 "prompt_cache": ["ctx"],
-                "params": {"prompt": "Answer the question."},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Answer the question.",
+                },
             },
             {
                 "id": "skipped",
                 "type": "llm",
-                "model": "anthropic/claude-sonnet-4-5",
                 "prompt_cache": ["ctx"],
-                "params": {"prompt": "Answer another question."},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Answer another question.",
+                },
             },
         ],
     }
@@ -1289,8 +1299,82 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
     assert sum_.warnings_count + sum_.info_count >= 1
 
 
+def test_partial_trace_preserves_non_cache_validator_errors(tmp_path: Path) -> None:
+    """Partial-trace filtering must not hide universal blocking errors.
+
+    This guards the interaction between the unified validator pipeline and the
+    partial-trace suppression pass. ``blocking_errors[]`` is derived from
+    ``analysis.warnings`` by renderers, so dropping non-cache ERRORs here would
+    make broken workflows look valid whenever the loaded trace is partial.
+    """
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "ran",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Executed call.",
+                },
+            },
+            {
+                "id": "skipped",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Skipped call.",
+                    "thinking_effort": "high",
+                },
+            },
+        ],
+    }
+    trace_path = tmp_path / "partial-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "nodes": [
+                {
+                    "node_id": "ran",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "llm_call": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cost_usd": 0.01,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    assert result.summary.evidence_scope == "partial_trace_executed_subset"
+    assert result.summary.actionable_opportunities == 0
+    unknown_param = [d for d in result.warnings if "thinking_effort" in d.message]
+    assert len(unknown_param) == 1
+    assert unknown_param[0].severity == Severity.ERROR
+
+    from pflow.core.cache_analysis.render_json import render_json
+
+    payload = render_json(result)
+    assert payload["blocking_errors"][0]["node_id"] == "skipped"
+    assert payload["blocking_errors"][0]["suggestions"] == ["Did you mean 'reasoning_effort'?"]
+
+
 def test_analyze_surfaces_cache_order_mismatch() -> None:
     workflow_ir = {
+        "ir_version": "0.1.0",
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
         "cache": {
             "items": [
@@ -1315,6 +1399,7 @@ def test_analyze_surfaces_cache_order_mismatch() -> None:
 
 def test_analyze_surfaces_cache_unused_chunk() -> None:
     workflow_ir = {
+        "ir_version": "0.1.0",
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
         "cache": {
             "items": [
@@ -1338,6 +1423,7 @@ def test_analyze_surfaces_cache_unused_chunk() -> None:
 
 def test_analyze_surfaces_cache_invalid_on_non_llm() -> None:
     workflow_ir = {
+        "ir_version": "0.1.0",
         "inputs": {"a": {"type": "string"}},
         "cache": {"items": [{"name": "a", "var": "a", "prose_before": "A:\n"}]},
         "nodes": [
@@ -1355,39 +1441,114 @@ def test_analyze_surfaces_cache_invalid_on_non_llm() -> None:
     assert diag.severity == Severity.ERROR
 
 
-def test_analyze_filters_non_cache_data_flow_diagnostics() -> None:
-    """Negative control for A.6: validate_data_flow's non-cache diagnostics
-    (here: a forward template reference to an undeclared node) MUST be
-    filtered out by ``_cache_validator_findings`` so analyze() doesn't surface
-    workflow-health concerns under the cache-analyzer label.
+def test_analyze_surfaces_non_cache_validator_diagnostics() -> None:
+    """Validator findings outside the cache catalog surface in analyze().
 
-    Defends: ``_cache_validator_findings`` filters on
-    ``d.id and d.id.startswith("cache.")``; without that filter, non-cache
-    diagnostics leak through and contaminate cache-analyzer output.
+    Mutation contract: restoring the old validate_data_flow-only cache filter
+    makes this fail because the unknown-param diagnostic disappears.
     """
-    from pflow.core.workflow.data_flow import validate_data_flow
-
-    # Forward-reference shape: shell node 'a' references 'b' which appears
-    # after it in document order. validate_data_flow(check_inputs=False)
-    # still emits this ERROR (it's an order-of-execution problem, not an
-    # input-dependent check), and the diagnostic has id=None — which is
-    # exactly what the cache-namespaced filter is designed to drop.
     workflow_ir = {
+        "ir_version": "0.1.0",
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "echo ${b.stdout}"}},
-            {"id": "b", "type": "shell", "params": {"command": "echo hi"}},
+            {
+                "id": "deep-think",
+                "type": "llm",
+                "params": {
+                    "prompt": "Think.",
+                    "model": "anthropic/claude-opus-4-7",
+                    "thinking_effort": "high",
+                },
+            }
         ],
         "edges": [],
     }
-    # Sanity-check the fixture: the validator MUST emit at least one
-    # non-cache diagnostic, otherwise the assertion below is vacuous.
-    raw = validate_data_flow(workflow_ir, check_inputs=False)
-    has_non_cache = any((d.id is None) or not d.id.startswith("cache.") for d in raw)
-    assert has_non_cache, "Test fixture must produce at least one non-cache diagnostic to be a valid negative control."
-
     result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
-    # The actual A.6 contract: analyze.warnings carries ONLY cache.* IDs.
-    assert all(d.id and d.id.startswith("cache.") for d in result.warnings)
+    unknown_param = [d for d in result.warnings if "thinking_effort" in d.message]
+    assert len(unknown_param) == 1, (
+        f"Expected unknown-param diagnostic; got: {[(d.severity, d.message) for d in result.warnings]}"
+    )
+    diag = unknown_param[0]
+    assert diag.severity == Severity.ERROR
+    assert any("reasoning_effort" in suggestion for suggestion in (diag.suggestions or [])), (
+        f"Expected reasoning_effort suggestion; got: {diag.suggestions}"
+    )
+
+
+def test_analyze_diagnostics_match_workflow_validator_for_thinking_effort() -> None:
+    """Architectural parity: analyzer includes validator ERROR diagnostics."""
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "deep-think",
+                "type": "llm",
+                "params": {
+                    "prompt": "Think.",
+                    "model": "anthropic/claude-opus-4-7",
+                    "thinking_effort": "high",
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    dummy = generate_dummy_parameters(workflow_ir.get("inputs") or {})
+    validator_diags = WorkflowValidator.validate(workflow_ir=workflow_ir, extracted_params=dummy)
+    validator_errors = {d.message for d in validator_diags if d.severity == Severity.ERROR}
+
+    analyzer_diags = analyze(workflow_ir, workflow_path="x", auto_load_trace=False).warnings
+    analyzer_errors = {d.message for d in analyzer_diags if d.severity == Severity.ERROR}
+
+    assert validator_errors.issubset(analyzer_errors), (
+        f"Validator ERRORs not in analyzer output. Missing: {validator_errors - analyzer_errors}"
+    )
+
+
+def test_analyze_child_validator_error_carries_child_affected_workflow(tmp_path: Path) -> None:
+    """Recursive validator findings must be scoped to the child workflow path."""
+    from tests.shared.markdown_utils import write_workflow_file
+
+    child_path = tmp_path / "child.pflow.md"
+    write_workflow_file(
+        {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "child-thinker",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-opus-4-7",
+                        "prompt": "Think in the child workflow.",
+                        "thinking_effort": "high",
+                    },
+                }
+            ],
+        },
+        child_path,
+        title="Child",
+    )
+    parent_path = tmp_path / "parent.pflow.md"
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {}},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path=str(parent_path), base_path=tmp_path, auto_load_trace=False)
+
+    child_errors = [d for d in result.warnings if "thinking_effort" in d.message]
+    assert len(child_errors) == 1
+    diag = child_errors[0]
+    assert diag.node_id == "child-thinker"
+    assert diag.context is not None
+    assert diag.context["affected_workflow"] == str(child_path)
+    assert diag.context["sub_workflow_step"] == "call-child"
+    assert diag.message.startswith("In step 'call-child' sub-workflow:")
 
 
 # ---------------------------------------------------------------------------
@@ -2156,6 +2317,24 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
     # Known priority wins over default.
     assert actions[0].warning_id == "cache.shared-context-undeclared"
     assert actions[1].warning_id == "cache.future-unknown-id"
+
+
+def test_recommended_actions_filter_non_cache_advisories_after_unification() -> None:
+    """Full validation can emit non-cache warnings; cache actions stay focused."""
+    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+
+    actions = build_recommended_actions([
+        Diagnostic(
+            severity=Severity.WARNING,
+            message="Static shell command should opt out of memoization cache.",
+            title="Cache Warning",
+            id=None,
+            source="validator",
+            context={"category": "cache_lint", "path": "nodes.echo.cache"},
+        ),
+        _make_diag("cache.shared-context-undeclared", Severity.INFO),
+    ])
+    assert [a.warning_id for a in actions] == ["cache.shared-context-undeclared"]
 
 
 def test_blocking_errors_filters_out_warnings_and_info() -> None:

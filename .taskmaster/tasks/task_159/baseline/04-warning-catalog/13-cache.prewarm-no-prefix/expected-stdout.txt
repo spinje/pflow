@@ -83,7 +83,11 @@
       "warning_id": "cache.prewarm-no-prefix",
       "node_id": "scoring",
       "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "scoring: prewarm: true declared but the prompt template has no static prefix before the first ${<batch_alias>.X} reference; auto-batch-prefix caching cannot fire (no shared bytes across items).",
+      "suggestions": [
+        "Move stable content (instructions, schema definitions, persona) BEFORE the first `${<batch_alias>.X}` reference in the prompt template, OR remove `- prewarm: true` from scoring since auto-batch-prefix caching has nothing to cache."
+      ]
     }
   ],
   "suggested_blocks": [],

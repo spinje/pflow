@@ -76,10 +76,13 @@ def build_blocking_errors(warnings: list[Diagnostic]) -> list[RecommendedAction]
 
 
 def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAction]:
-    """Project WARNING + INFO findings into a ranked action list.
+    """Project cache-domain WARNING + INFO findings into a ranked action list.
 
     Cross-workflow alignment findings (rename, prose-mismatch) are filtered
     out — they render in the "Sub-workflow boundaries" section instead.
+    Non-cache advisory diagnostics remain in ``analysis.warnings`` for raw
+    consumers, but they do not belong in analyze-cache's provider-cache action
+    list.
 
     Sort key dimensions (lexicographic, all ascending after negation/inversion):
 
@@ -93,8 +96,22 @@ def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAct
        priority tier.
     4. **Stable alphabetical** on ``d.id`` — deterministic tie-break.
     """
-    eligible = [d for d in warnings if d.severity != Severity.ERROR and not is_cross_workflow_alignment(d)]
+    eligible = [
+        d
+        for d in warnings
+        if d.severity != Severity.ERROR and not is_cross_workflow_alignment(d) and _is_cache_focused_for_advisory(d)
+    ]
     return _build_actions(eligible)
+
+
+def _is_cache_focused_for_advisory(diag: Diagnostic) -> bool:
+    """Whether an advisory diagnostic belongs to provider prompt-cache UX."""
+    if diag.id and diag.id.startswith("cache."):
+        return True
+    if diag.id == "llm.thinking-temperature-mismatch":
+        return True
+    path = (diag.context or {}).get("path")
+    return isinstance(path, str) and (path.startswith("cache.") or ".prompt_cache" in path)
 
 
 def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
@@ -147,6 +164,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
                 scope_workflow=scope_workflow,
                 message=d.message or "",
                 headline=headline,
+                suggestions=tuple(d.suggestions or ()),
             )
         )
     return actions

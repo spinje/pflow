@@ -90,21 +90,36 @@
       "warning_id": "cache.heterogeneous-models-fragment-cache",
       "node_id": null,
       "estimated_savings_usd": 0.0225,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Workflow declares cached chunks shared across 2 exact models (anthropic/claude-haiku-4-5, anthropic/claude-sonnet-4-5). Each model has a separate cache namespace; bytes are written 2x instead of 1x. (saves $0.02/run)\n  - anthropic/claude-haiku-4-5 (1 node): translate\n  - anthropic/claude-sonnet-4-5 (1 node): summarize",
+      "suggestions": [
+        "Consolidate to one exact model so all calls share one cache namespace, OR",
+        "Ensure each model has enough calls in the workflow to amortize its own cache write."
+      ]
     },
     {
       "rank": 2,
       "warning_id": "cache.first-call-write-penalty",
       "node_id": "summarize",
       "estimated_savings_usd": 0.004499999999999997,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "summarize: only call to anthropic/claude-sonnet-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0045/run)",
+      "suggestions": [
+        "Remove `prompt_cache:` from summarize (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-sonnet-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ]
     },
     {
       "rank": 3,
       "warning_id": "cache.first-call-write-penalty",
       "node_id": "translate",
       "estimated_savings_usd": 0.0015000000000000005,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "translate: only call to anthropic/claude-haiku-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0015/run)",
+      "suggestions": [
+        "Remove `prompt_cache:` from translate (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-haiku-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ]
     }
   ],
   "suggested_blocks": [],
