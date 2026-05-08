@@ -1,8 +1,8 @@
 # Baseline Findings — Task 159
 
 > Cases where the system's observed behavior differs from spec or where an
-> adversarial input *succeeded* when it should have been rejected. Each entry
-> is for Andreas to triage; the baseline captures current behavior either way.
+> adversarial input *succeeded* when it should have been rejected. All important
+> issues has allready been fixed. See implementation/implementation-progress-log.md
 
 ---
 

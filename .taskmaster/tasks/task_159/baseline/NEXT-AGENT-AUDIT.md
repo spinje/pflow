@@ -256,8 +256,7 @@ with too many findings?) or a regression?
 ## Process
 
 1. Read this file end-to-end first.
-2. Start `BASELINE-AUDIT.md` with the same frontmatter as
-   `FINDINGS.md`: per-finding sections with case path, what's wrong,
+2. Start `BASELINE-AUDIT.md`: per-finding sections with case path, what's wrong,
    what good UX would look like, severity guess.
 3. Audit Tier 1 cases first (lyrics-generator outputs).
 4. Audit Tier 2 cases (common-path agent UX).
@@ -290,8 +289,6 @@ You're done when:
 
 ## Reference
 
-- Existing findings (don't re-find these): `FINDINGS.md` (F-01 through
-  F-05).
 - The construction perspective: `PLAN.md`.
 - Real workflow under test: `_shared/workflows/lyrics-generator/`.
 - The 7 worked examples above are starting templates — you'll find

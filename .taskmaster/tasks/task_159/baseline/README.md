@@ -58,7 +58,7 @@ during baseline construction.
 baseline/
 ├── PLAN.md                         # full strategy
 ├── README.md                       # this file
-├── FINDINGS.md                     # verification-specialist findings
+├── FINDINGS.md                     # allready fixed previous findings
 ├── RECORDING.md                    # how to record live API cases
 ├── normalize.py                    # redaction script
 ├── run-case.sh                     # per-case runner (write/diff)
@@ -214,23 +214,6 @@ EOF
 # inspect expected-stdout.txt to verify
 ../../run-case.sh "$(pwd)" --diff   # should be clean
 ```
-
-## Found issues during baseline construction
-
-See [FINDINGS.md](./FINDINGS.md):
-- **F-01**: Parser silently splits two `${var}` on one line into two chunks
-  rather than rejecting per spec. Spec-vs-impl mismatch.
-- **F-02**: 5 catalog warning IDs need more elaborate fixtures than minimal
-  patterns. The case folders are populated; trigger conditions left as TODOs.
-- **F-03**: `pflow guide <workflow>` auto-detect misses `caching` topic on
-  cache-using workflows. Affects every agent onboarding to a cache-using
-  project.
-- **F-04**: `cache.below-min-tokens` false-positive on greenfield analysis
-  when chunks resolve to LLM responses (analyzer can't measure node-output
-  token sizes without run history). Wastes agent time before first run.
-- **F-05**: `pflow visualize` validates before rendering, blocking on
-  unrelated unknown-node-types (e.g., user-configured MCP servers in
-  sub-workflows). Workaround: visualize the LLM-only sub-workflow.
 
 ## Personal-eyes review note
 
