@@ -9707,3 +9707,32 @@ Verification:
   with "7 not reached for these inputs", suppression note removed.
 
 Closes L-10, L-11, L-12, L-1, L-2, A-3, B-18 from BASELINE-AUDIT Section F.
+
+## L-1/L-2/L-3/L-12 — effective trace model + actual savings projection (2026-05-09)
+
+Implemented `trace-mode-effective-model-and-actual-savings-plan.md`.
+
+- `PerCallRow.model` now resolves to the single trace-observed model when
+  available; multi-observed rows stay unpriced with `model=""` and render
+  `<varies>` without broadening `model_is_heterogeneous`.
+- Added `AnalysisSummary.ir_default_model` for JSON/MCP/text disclosure when
+  settings/default model differs from trace-observed models.
+- Trace-mode cost deltas now lead with `Actual savings (this run):`; truncated
+  traces compute this over the executed subset when pricing is otherwise
+  available.
+- Baseline audit found staged output changes are strict improvements:
+  additive JSON field, populated Gemini model columns, cost projections
+  changing from unavailable to partial-dollar figures, and actual-savings
+  headline replacing `Actual trace delta:`.
+
+Verification:
+
+- Focused new behavior: 15/15 passed.
+- Analyzer + renderer suites: 218 passed.
+- Adjacent cache-analysis/CLI/summarize suites: 115 passed.
+
+Deviation:
+
+- Baseline stderr normalization for LiteLLM sandbox timestamp noise was
+  intentionally not included in this commit; another agent was working in the
+  unstaged tree. This commit preserves only the staged output/code set.

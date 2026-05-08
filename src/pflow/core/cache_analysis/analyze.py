@@ -411,6 +411,9 @@ class AnalysisSummary:
     unavailable_models_by_workflow: dict[str | None, tuple[str, ...]] | None = None
     evidence_scope: str = "static_analysis"
     observed_models_in_trace: tuple[str, ...] = ()
+    # IR-resolved default model captured once per analysis run. Renderers use
+    # it to disclose when trace evidence shows a different model actually ran.
+    ir_default_model: str | None = None
     # Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
     # can't be priced as one model. ``models_in_use`` excludes them so the
     # literal ``${...}`` template doesn't leak into the rendered scale line;
@@ -518,6 +521,7 @@ def analyze(
         memo_cache = _default_memo_cache()
 
     trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
+    ir_default_model = get_default_workflow_model()
     # Auto-load only: if the workflow's current root-level LLM context drifted
     # from the trace's recorded context, fall back to greenfield analysis and
     # surface a note so agents can see why the auto-loaded trace was rejected.
@@ -694,6 +698,7 @@ def analyze(
         ttl=_extract_cache_ttl(cache_block),
         ctx=ctx,
         edge_child_paths=edge_child_paths,
+        ir_default_model=ir_default_model,
     )
     summary = replace(
         summary,
@@ -1376,25 +1381,20 @@ def _build_per_call_row(
     workflow_path = ctx.workflow_path
     memo_cache = ctx.memo_cache
     node_id = str(node.get("id", "?"))
-    # Effective model resolution mirrors compiler.py:281-285 — explicit per-node
-    # ``model:`` wins; absence falls back to ``get_default_workflow_model()``
-    # (settings.default_model → API-key auto-detect → None). Without this fallback
-    # the per-call table renders ``model=`` empty for nodes that inherit the
-    # default, ``models_in_use`` undercounts, and cost computation can never
-    # price these rows. Tests that need deterministic model values monkeypatch
-    # ``pflow.core.cache_analysis.analyze.get_default_workflow_model``.
-    #
-    # Stage C.1: when the explicit model is an unresolved ``${...}`` template
-    # (heterogeneous batch sub-workflow — model varies per item), neither the
-    # literal template nor the default-model fallback is honest. Mark the row
-    # as heterogeneous; ``model = ""`` so the existing ``if row.model`` checks
-    # in ``cost_estimation`` and ``_format_scale_line`` short-circuit, and
-    # rendering shows ``model=<varies>`` instead of the literal ``${item.model}``
-    # leaking through.
     explicit = node.get("params", {}).get("model") or node.get("model")
     model_is_heterogeneous = isinstance(explicit, str) and "${" in explicit
+    observed_models = tuple(sorted({str(call.get("model")) for call in trace_llm_calls if call.get("model")}))
+    # Effective model resolution. Trace truth wins when present and
+    # unambiguous, because pricing, tokenization, thresholds, and rendering
+    # all need the model that actually ran. IR-declared heterogeneous models
+    # stay heterogeneous; trace-only multi-observed rows remain unpriced and
+    # render as <varies> without broadening model_is_heterogeneous semantics.
     if model_is_heterogeneous:
         model = ""
+    elif len(observed_models) > 1:
+        model = ""
+    elif len(observed_models) == 1:
+        model = observed_models[0]
     elif explicit:
         model = str(explicit)
     else:
@@ -1486,7 +1486,6 @@ def _build_per_call_row(
         int(trace_llm_call.get("cache_creation_input_tokens") or 0) if trace_llm_call is not None else None
     )
     trace_cache_read = int(trace_llm_call.get("cache_read_input_tokens") or 0) if trace_llm_call is not None else None
-    observed_models = tuple(sorted({str(call.get("model")) for call in trace_llm_calls if call.get("model")}))
 
     return PerCallRow(
         node_path=node_id,
@@ -3875,6 +3874,7 @@ def _build_summary(
     ttl: str | None = None,
     ctx: AnalysisContext | None = None,
     edge_child_paths: dict[str, str] | None = None,
+    ir_default_model: str | None = None,
 ) -> AnalysisSummary:
     """Aggregate per-call rows + warning counts into the spec's summary block.
 
@@ -3922,7 +3922,7 @@ def _build_summary(
     # see the partial signal from steady-state / post-run rows.
     total_cacheable = sum(r.cacheable_tokens_estimated or 0 for r in rows)
     trace_coverage, executed_count, unexecuted_nodes = _trace_coverage_for_rows(rows, ctx)
-    observed_models = tuple(sorted({model for row in rows for model in row.observed_models}))
+    models_observed_in_trace = tuple(sorted({model for row in rows for model in row.observed_models}))
     # Stage C.1: heterogeneous rows have ``model = ""`` AND
     # ``model_is_heterogeneous = True``. The ``if r.model`` truthy check below
     # already short-circuits empty strings — the explicit
@@ -3930,7 +3930,7 @@ def _build_summary(
     # contributors who change the empty-string convention don't silently leak
     # ``${item.model}`` literals back into the aggregate.
     static_models = {r.model for r in rows if r.model and not r.model_is_heterogeneous}
-    model_set = static_models | (set(observed_models) if trace_coverage == "complete" else set())
+    model_set = static_models | (set(models_observed_in_trace) if trace_coverage == "complete" else set())
     models = sorted(model_set)
     heterogeneous_paths = tuple(sorted(r.node_path for r in rows if r.model_is_heterogeneous))
     cache_focused = [d for d in warnings if _is_cache_focused(d)]
@@ -3967,11 +3967,11 @@ def _build_summary(
         baseline=no_cache_baseline,
         compared_to="rerun_within_ttl_hypothetical_usd",
     )
-    if trace_coverage != "complete":
+    if trace_coverage == "none":
         actual_vs_no_cache_delta = _unavailable_delta(
             no_cache_baseline,
             "actually_paid_usd",
-            reason=("no_trace" if trace_coverage == "none" else "trace_coverage_truncated"),
+            reason="no_trace",
         )
     elif projections.absolute_exclusions:
         actual_vs_no_cache_delta = _unavailable_delta(
@@ -4011,7 +4011,8 @@ def _build_summary(
         total_input_tokens_estimated=total_input,
         total_cacheable_tokens_estimated=total_cacheable,
         models_in_use=tuple(models),
-        observed_models_in_trace=observed_models,
+        observed_models_in_trace=models_observed_in_trace,
+        ir_default_model=ir_default_model,
         partial_cost_usd=partial_cost_usd,
         unavailable_models=projections.unavailable_models,
         unavailable_models_by_workflow=_unavailable_models_by_workflow(rows),

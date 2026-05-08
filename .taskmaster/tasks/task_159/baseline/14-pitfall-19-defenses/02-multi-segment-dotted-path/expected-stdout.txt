@@ -58,6 +58,7 @@
     "models_in_use": [
       "anthropic/claude-sonnet-4-5"
     ],
+    "ir_default_model": null,
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
     "unavailable_models": [],

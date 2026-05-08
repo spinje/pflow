@@ -401,6 +401,9 @@ async def analyze_cache(
         is dynamic.
       - ``dynamic_batch_node_count`` (number): batch LLM nodes whose fanout
         count could not be estimated statically.
+      - ``ir_default_model`` (string | null): IR-resolved default model for
+        the analysis run. Compare with ``observed_models_in_trace`` to detect
+        settings/default-model divergence in trace mode.
       - ``projection_exclusions`` (array): LLM rows excluded from absolute
         hypothetical projections, with ``workflow_path``, ``node_path``,
         ``reason``, and optional ``actual_cost_usd``. When non-empty, actual
@@ -417,9 +420,8 @@ async def analyze_cache(
     scope.
 
     Delta objects include ``unavailable_reason``. ``actual_vs_no_cache_delta``
-    is unavailable when trace coverage is ``"none"`` / ``"truncated"`` or when
-    projection exclusions would make the actual-vs-projection comparison cross
-    cohorts.
+    is unavailable when trace coverage is ``"none"`` or when projection
+    exclusions would make the actual-vs-projection comparison cross cohorts.
 
     **Validator finding parity**: ``analyze_cache`` runs the same 10-step
     ``WorkflowValidator`` pipeline as ``pflow run``, ``--validate-only``, and
@@ -527,12 +529,10 @@ async def analyze_cache(
     annotation but don't trigger suppression.
 
     **summary.actual_vs_no_cache_delta.unavailable_reason** (string when
-    ``kind=="unavailable"``): ``"no_trace"`` (trace_coverage is ``"none"``),
-    ``"trace_coverage_truncated"`` (trace_coverage is ``"truncated"``), or
-    ``"projection_exclusions"`` (cohort filtered by unpriced models /
-    missing tokens). The two trace-related values are distinct so consumers
-    can dispatch on the underlying state without inferring from sibling
-    fields.
+    ``kind=="unavailable"``): ``"no_trace"`` (trace_coverage is ``"none"``)
+    or ``"projection_exclusions"`` (cohort filtered by unpriced models /
+    missing tokens). Truncated traces compute this delta over the executed
+    subset when pricing is otherwise available.
 
     **per_node_thresholds[node_id]** in ``suggested_blocks[]`` carries
     ``model: string | null`` and ``model_state: "resolved" |

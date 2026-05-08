@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
+
+import pytest
 
 from pflow.core.cache_analysis import (
     render_json,
@@ -48,6 +51,7 @@ def _make_analysis(
     projection_exclusions: tuple[ProjectionExclusion, ...] = (),
     actual_delta_unavailable_reason: str | None = None,
     workflow_path: str = "/abs/x.pflow.md",
+    ir_default_model: str | None = None,
 ) -> CacheAnalysis:
     """Construct a renderable analysis with atomic cost primitives.
 
@@ -128,6 +132,7 @@ def _make_analysis(
             total_input_tokens_estimated=sum(r.input_tokens_estimated for r in rows),
             total_cacheable_tokens_estimated=sum(r.cacheable_tokens_estimated or 0 for r in rows),
             models_in_use=tuple(sorted({r.model for r in rows if r.model})),
+            ir_default_model=ir_default_model,
             partial_cost_usd=partial,
             unavailable_models=unavailable,
             projection_exclusions=projection_exclusions,
@@ -232,6 +237,7 @@ class TestMakeAnalysisShapeParity:
             unavailable=("custom/model",),
             projection_exclusions=(_make_exclusion(),),
             actual_delta_unavailable_reason="trace_coverage_truncated",
+            ir_default_model="anthropic/claude-sonnet-4-5",
         )
 
         def _at_default(summary: AnalysisSummary, field: dataclasses.Field[Any]) -> bool:
@@ -402,6 +408,43 @@ def _test_delta(
     )
 
 
+def _trace_path(
+    tmp_path: Path,
+    *,
+    workflow_path: str,
+    nodes: list[dict[str, Any]],
+    name: str = "trace.json",
+    final_status: str | None = None,
+) -> Path:
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    return _write_trace(
+        tmp_path / name,
+        builder.trace(workflow_path=workflow_path, nodes=nodes, final_status=final_status),
+    )
+
+
+def _llm_event(
+    node_id: str,
+    *,
+    model: str,
+    input_tokens: int = 2000,
+    output_tokens: int = 100,
+    cost_usd: float = 0.001,
+) -> dict[str, Any]:
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    return builder.llm_event(
+        node_id,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+    )
+
+
 # ---------------------------------------------------------------------------
 # JSON renderer
 # ---------------------------------------------------------------------------
@@ -461,6 +504,34 @@ def test_json_summary_emits_suggested_run_command() -> None:
     """
     result = render_json(_make_analysis(workflow_path="/abs/x.pflow.md"))
     assert result["summary"]["suggested_run_command"] == "pflow run /abs/x.pflow.md"
+
+
+def test_json_summary_includes_ir_default_model_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    analysis = analyze(
+        {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
+        workflow_path="x",
+        auto_load_trace=False,
+    )
+
+    assert render_json(analysis)["summary"]["ir_default_model"] == "anthropic/claude-haiku-4-5"
+
+
+def test_json_summary_ir_default_model_null_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    analysis = analyze(
+        {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
+        workflow_path="x",
+        auto_load_trace=False,
+    )
+
+    assert render_json(analysis)["summary"]["ir_default_model"] is None
 
 
 def test_json_summary_suggested_run_command_null_for_inline_workflow() -> None:
@@ -1154,8 +1225,257 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
     assert "Actually paid (trace):       ~$0.05 (partial) (trace)" not in text
     assert "Cost without caching (projected subset):" in text
     assert "Cost on rerun (within TTL, projected subset):" in text
-    assert "Actual trace delta:         unavailable (projection excludes generate)" in text
-    assert "Actual trace delta:         adds" not in text
+    assert "Actual savings (this run):" in text
+    assert "unavailable (projection excludes generate)" in text
+    assert "Actual trace delta:" not in text
+
+
+def test_header_discloses_ir_default_when_overridden_by_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
+    analysis = analyze(
+        workflow_ir,
+        workflow_path="x",
+        trace_path=_trace_path(
+            tmp_path,
+            workflow_path="x",
+            nodes=[_llm_event("generate", model="gemini/gemini-2.5-flash")],
+        ),
+        auto_load_trace=False,
+    )
+
+    assert (
+        "IR/settings declares: anthropic/claude-haiku-4-5 (overridden by trace evidence)"
+        in render_text(analysis)
+    )
+
+
+def test_header_does_not_disclose_when_ir_matches_observed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
+    analysis = analyze(
+        workflow_ir,
+        workflow_path="x",
+        trace_path=_trace_path(
+            tmp_path,
+            workflow_path="x",
+            nodes=[_llm_event("generate", model="anthropic/claude-haiku-4-5")],
+        ),
+        auto_load_trace=False,
+    )
+
+    assert "IR/settings declares:" not in render_text(analysis)
+
+
+def test_header_does_not_disclose_when_no_observed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
+    analysis = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
+
+    assert "IR/settings declares:" not in render_text(analysis)
+
+
+def test_actual_savings_delta_first_in_trace_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
+    workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
+    analysis = analyze(
+        workflow_ir,
+        workflow_path="x",
+        trace_path=_trace_path(
+            tmp_path,
+            workflow_path="x",
+            nodes=[_llm_event("generate", model="anthropic/claude-sonnet-4-5")],
+        ),
+        auto_load_trace=False,
+    )
+
+    text = render_text(analysis)
+    assert "Actual savings (this run):" in text
+    lines = text.splitlines()
+    actual_idx = next(i for i, line in enumerate(lines) if "Actual savings (this run):" in line)
+    first_run_idx = next(i for i, line in enumerate(lines) if "First-run delta:" in line)
+    rerun_idx = next(i for i, line in enumerate(lines) if "Rerun delta:" in line)
+    assert actual_idx < first_run_idx < rerun_idx
+
+
+def test_actual_savings_label_replaces_actual_trace_delta_both_sites(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
+    priced = analyze(
+        {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
+        workflow_path="x",
+        trace_path=_trace_path(
+            tmp_path,
+            workflow_path="x",
+            nodes=[_llm_event("generate", model="anthropic/claude-sonnet-4-5")],
+            name="priced-trace.json",
+        ),
+        auto_load_trace=False,
+    )
+    unavailable_workflow = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "${item.prompt}"},
+                "batch": {"items": "${items}"},
+            }
+        ]
+    }
+    unavailable_trace = {
+        "format_version": "2.2.0",
+        "workflow_path": "x",
+        "final_status": "success",
+        "nodes": [
+            {
+                "node_id": "generate",
+                "node_type": "LLMNode",
+                "success": True,
+                "batch_items": [
+                    {
+                        "index": 0,
+                        "success": True,
+                        "llm_call": {
+                            "model": "gemini/gemini-2.5-flash",
+                            "input_tokens": 100,
+                            "output_tokens": 10,
+                            "cost_usd": 0.01,
+                        },
+                    },
+                    {
+                        "index": 1,
+                        "success": True,
+                        "llm_call": {
+                            "model": "anthropic/claude-haiku-4-5",
+                            "input_tokens": 100,
+                            "output_tokens": 10,
+                            "cost_usd": 0.01,
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    unavailable = analyze(
+        unavailable_workflow,
+        parameters={"items": [{"model": "a", "prompt": "a"}, {"model": "b", "prompt": "b"}]},
+        workflow_path="x",
+        trace_path=_write_trace(tmp_path / "unavailable-trace.json", unavailable_trace),
+        auto_load_trace=False,
+    )
+
+    priced_text = render_text(priced)
+    unavailable_text = render_text(unavailable)
+    assert "Actual trace delta:" not in priced_text
+    assert "Actual trace delta:" not in unavailable_text
+    assert "Actual savings (this run):" in priced_text
+    assert "Actual savings (this run):" in unavailable_text
+
+
+def test_actual_savings_label_unqualified_in_truncated_trace_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
+    workflow_ir = {
+        "nodes": [
+            {"id": "ran", "type": "llm", "params": {"prompt": "Hello"}},
+            {"id": "skipped", "type": "llm", "params": {"prompt": "Skipped"}},
+        ]
+    }
+    analysis = analyze(
+        workflow_ir,
+        workflow_path="x",
+        trace_path=_trace_path(
+            tmp_path,
+            workflow_path="x",
+            nodes=[_llm_event("ran", model="anthropic/claude-sonnet-4-5")],
+            name="truncated-priced-trace.json",
+            final_status="failed",
+        ),
+        auto_load_trace=False,
+    )
+
+    text = render_text(analysis)
+    assert "Actual savings (this run):" in text
+    assert "Actual savings (this run, executed):" not in text
+    assert "First-run delta (executed):" in text
+    assert "Rerun delta (executed):" in text
+
+
+def test_fragmentation_grouping_uses_effective_model_in_trace_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    big_context = "shared context " * 3000
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:"}]},
+        "nodes": [
+            {
+                "id": "a",
+                "type": "llm",
+                "prompt_cache": ["context"],
+                "params": {"model": "anthropic/claude-haiku-4-5", "prompt": "Use context."},
+            },
+            {
+                "id": "b",
+                "type": "llm",
+                "prompt_cache": ["context"],
+                "params": {"model": "anthropic/claude-haiku-4-5", "prompt": "Use context again."},
+            },
+        ],
+    }
+    analysis = analyze(
+        workflow_ir,
+        parameters={"context": big_context},
+        workflow_path="x",
+        trace_path=_trace_path(
+            tmp_path,
+            workflow_path="x",
+            nodes=[
+                _llm_event("a", model="anthropic/claude-haiku-4-5"),
+                _llm_event("b", model="gemini/gemini-2.5-flash"),
+            ],
+            name="fragmentation-trace.json",
+        ),
+        auto_load_trace=False,
+    )
+
+    assert any(warning.id == "cache.heterogeneous-models-fragment-cache" for warning in analysis.warnings)
 
 
 def test_text_rows_with_analysis_wide_warning_show_even_above_threshold() -> None:

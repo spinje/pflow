@@ -94,6 +94,7 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "total_input_tokens_estimated": s.total_input_tokens_estimated,
         "total_cacheable_tokens_estimated": s.total_cacheable_tokens_estimated,
         "models_in_use": list(s.models_in_use),
+        "ir_default_model": s.ir_default_model,
         "observed_models_in_trace": list(s.observed_models_in_trace),
         "partial_cost_usd": s.partial_cost_usd,
         "unavailable_models": list(s.unavailable_models),

@@ -42,6 +42,10 @@ Version history (``JSON_FORMAT_VERSION``):
   added (``string | null``). Paste-ready ``pflow run`` command derived from
   ``workflow_path`` + declared inputs, surfaced on unavailable-cost branches
   in text output. ``null`` for inline IR / ``ir-hash:`` lookup keys.
+- ``"4.1"`` — trace-mode model disclosure (additive, same minor):
+  ``summary.ir_default_model`` added (``string | null``). Captures the
+  IR-resolved default model so text/JSON consumers can compare declared
+  settings with ``summary.observed_models_in_trace``.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning

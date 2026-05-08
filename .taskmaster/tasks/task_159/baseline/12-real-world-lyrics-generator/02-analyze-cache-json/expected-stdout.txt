@@ -56,6 +56,7 @@
     "total_input_tokens_estimated": 38418,
     "total_cacheable_tokens_estimated": 0,
     "models_in_use": [],
+    "ir_default_model": null,
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
     "unavailable_models": [],

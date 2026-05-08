@@ -59,6 +59,7 @@
       "anthropic/claude-sonnet-4-5",
       "ollama/llama3.2:8b"
     ],
+    "ir_default_model": null,
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
     "unavailable_models": [

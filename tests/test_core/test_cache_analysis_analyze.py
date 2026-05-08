@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,41 @@ from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+
+def _write_trace_fixture(
+    tmp_path: Path,
+    *,
+    workflow_path: str,
+    nodes: list[dict[str, Any]],
+    name: str = "trace.json",
+    final_status: str | None = None,
+) -> Path:
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / name
+    trace_path.write_text(
+        json.dumps(builder.trace(workflow_path=workflow_path, nodes=nodes, final_status=final_status)),
+        encoding="utf-8",
+    )
+    return trace_path
+
+
+def _llm_trace_event(
+    node_id: str,
+    *,
+    model: str,
+    input_tokens: int = 1500,
+    output_tokens: int = 100,
+    cost_usd: float = 0.01,
+) -> dict[str, Any]:
+    builder = TraceFixtureBuilder()
+    return builder.llm_event(
+        node_id,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+    )
 
 # ---------------------------------------------------------------------------
 # Confidence aggregation — STRICT semantics per DD#34 line 634 verbatim
@@ -597,8 +633,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
     assert result.summary.trace_llm_nodes_static == 2
     assert result.summary.trace_llm_nodes_executed == 1
     assert result.summary.trace_unexecuted_llm_rows == (TraceUnexecutedLLMRow("x", "skipped"),)
-    assert result.summary.actual_vs_no_cache_delta.kind == "unavailable"
-    assert result.summary.actual_vs_no_cache_delta.unavailable_reason == "trace_coverage_truncated"
+    assert result.summary.actual_vs_no_cache_delta.kind != "unavailable"
     # Per-row suppression: skipped node produces no per-row warnings.
     assert not any(d.node_id == "skipped" and d.id == "cache.below-min-tokens" for d in result.warnings)
     # cache.first-call-write-penalty would not fire here (2 nodes, not 1), so
@@ -1187,8 +1222,271 @@ def test_complete_trace_with_heterogeneous_projection_exclusion_suppresses_actua
 
     text = render_text(result)
     assert "Cost without caching (projected subset):" in text
-    assert "Actual trace delta:         unavailable (projection excludes generate)" in text
-    assert "Actual trace delta:         adds" not in text
+    assert "Actual savings (this run):" in text
+    assert "unavailable (projection excludes generate)" in text
+    assert "Actual trace delta:" not in text
+
+
+def test_observed_model_replaces_ir_when_trace_consistent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"prompt": "Summarize the trace evidence."},
+            }
+        ]
+    }
+    assert workflow_ir["nodes"][0]["params"].get("model") is None
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path="x",
+        nodes=[_llm_trace_event("generate", model="gemini/gemini-2.5-flash")],
+    )
+
+    result = analyze(workflow_ir, workflow_path="x", trace_path=trace_path, auto_load_trace=False)
+
+    row = result.per_call[0]
+    assert row.model == "gemini/gemini-2.5-flash"
+    assert row.observed_models == ("gemini/gemini-2.5-flash",)
+
+
+def test_observed_model_overrides_ir_when_mismatched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"prompt": "Summarize the trace evidence."},
+            }
+        ]
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path="x",
+        nodes=[_llm_trace_event("generate", model="gemini/gemini-2.5-flash")],
+    )
+
+    result = analyze(workflow_ir, workflow_path="x", trace_path=trace_path, auto_load_trace=False)
+
+    assert result.per_call[0].model == "gemini/gemini-2.5-flash"
+    assert result.summary.ir_default_model == "anthropic/claude-haiku-4-5"
+
+
+def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
+    tmp_path: Path,
+) -> None:
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-haiku-4-5", "prompt": "${item.prompt}"},
+                "batch": {"items": "${items}"},
+            }
+        ]
+    }
+    trace_path = tmp_path / "multi-observed-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "generate",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "batch_items": [
+                        {
+                            "index": 0,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/a",
+                                "input_tokens": 100,
+                                "output_tokens": 10,
+                                "cost_usd": 0.01,
+                            },
+                        },
+                        {
+                            "index": 1,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/b",
+                                "input_tokens": 200,
+                                "output_tokens": 20,
+                                "cost_usd": 0.02,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"items": [{"prompt": "a"}, {"prompt": "b"}]},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+    )
+
+    row = result.per_call[0]
+    assert row.model == ""
+    assert row.model_is_heterogeneous is False
+    assert row.observed_models == ("gemini/a", "gemini/b")
+    from pflow.core.cache_analysis.render_text import render_text
+
+    assert "model varies per batch item" not in render_text(result)
+
+
+def test_greenfield_effective_model_path_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"prompt": "Summarize the static workflow."},
+            }
+        ]
+    }
+
+    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
+
+    row = result.per_call[0]
+    assert row.model == "anthropic/claude-haiku-4-5"
+    assert row.observed_models == ()
+    assert result.summary.ir_default_model == "anthropic/claude-haiku-4-5"
+    assert not any(exclusion.reason == "unresolved_model" for exclusion in result.summary.projection_exclusions)
+
+
+def test_l1_cost_projection_works_with_observed_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"prompt": "Summarize the trace evidence."},
+            }
+        ]
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path="x",
+        nodes=[_llm_trace_event("generate", model="gemini/gemini-2.5-flash", output_tokens=200)],
+    )
+
+    result = analyze(workflow_ir, workflow_path="x", trace_path=trace_path, auto_load_trace=False)
+
+    assert result.summary.no_cache_hypothetical_usd is not None
+    assert result.summary.actual_vs_no_cache_delta.kind != "unavailable"
+    assert result.per_call[0].cost_usd is not None
+
+
+def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "gemini/gemini-2.5-flash")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "explicit",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-haiku-4-5", "prompt": "A"},
+            },
+            {
+                "id": "defaulted",
+                "type": "llm",
+                "params": {"prompt": "B"},
+            },
+            {
+                "id": "heterogeneous",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "${item.prompt}"},
+                "batch": {"items": "${items}"},
+            },
+        ]
+    }
+    trace_path = tmp_path / "mixed-model-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "final_status": "success",
+            "nodes": [
+                _llm_trace_event("explicit", model="anthropic/claude-haiku-4-5"),
+                _llm_trace_event("defaulted", model="openai/gpt-4o-mini"),
+                {
+                    "node_id": "heterogeneous",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "batch_items": [
+                        {
+                            "index": 0,
+                            "success": True,
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 10,
+                                "cost_usd": 0.01,
+                            },
+                        },
+                        {
+                            "index": 1,
+                            "success": True,
+                            "llm_call": {
+                                "model": "openai/gpt-4o-mini",
+                                "input_tokens": 100,
+                                "output_tokens": 10,
+                                "cost_usd": 0.01,
+                            },
+                        },
+                    ],
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"items": [{"model": "a", "prompt": "a"}, {"model": "b", "prompt": "b"}]},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+    )
+
+    rows = {row.node_path: row for row in result.per_call}
+    assert rows["explicit"].model == "anthropic/claude-haiku-4-5"
+    assert rows["defaulted"].model == "openai/gpt-4o-mini"
+    assert rows["heterogeneous"].model == ""
+    assert rows["heterogeneous"].model_is_heterogeneous is True
+    from pflow.core.cache_analysis.render_text import render_text
+
+    assert "IR/settings declares: gemini/gemini-2.5-flash (overridden by trace evidence)" in render_text(result)
 
 
 def test_child_workflow_input_from_root_parameters_drives_cacheable_source(

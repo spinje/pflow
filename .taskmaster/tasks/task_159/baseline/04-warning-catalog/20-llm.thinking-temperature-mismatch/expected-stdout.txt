@@ -58,6 +58,7 @@
     "models_in_use": [
       "anthropic/claude-opus-4-7"
     ],
+    "ir_default_model": null,
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
     "unavailable_models": [],
