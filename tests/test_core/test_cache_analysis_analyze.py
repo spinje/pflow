@@ -404,15 +404,25 @@ def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
     }
 
 
-def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() -> None:
+def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection(tmp_path: Path) -> None:
     """Defends phantom-cost suppression for child workflows that error after an
     earlier LLM: static IR rows remain visible, but unexecuted LLMs do not
     fabricate recomputed projection dollars.
     """
+    from pflow.runtime.cache import MemoizationCache
+
     fixture_dir = Path("tests/fixtures/cache_analysis")
     parent_path = fixture_dir / "parent.pflow.md"
     trace_path = fixture_dir / "parent-child-erroring-trace.json"
     resolved = resolve_workflow(str(parent_path))
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="draft-key",
+        node_id="draft",
+        workflow_path=resolved.file_path,
+        action="default",
+        output={"response": "memo child brief " * 200},
+    )
 
     result = analyze(
         resolved.ir,
@@ -420,7 +430,7 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() 
         workflow_path=resolved.file_path,
         base_path=parent_path.parent,
         trace_path=trace_path,
-        memo_cache=None,
+        memo_cache=cache,
     )
 
     child_path = str((fixture_dir / "child.pflow.md").resolve())
@@ -430,8 +440,9 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection() 
     assert by_key[(child_path, "review")].cost_usd is None
 
     # The executed child row had trace cache evidence, so some rerun savings is
-    # present. The unexecuted review row has a declared cache too; without the
-    # did-not-execute skip it would add a second child-row savings contribution.
+    # present. The unexecuted review row has real memo-backed cacheable
+    # evidence too; without the did-not-execute skip it would add a second
+    # child-row savings contribution.
     executed_child = by_key[(child_path, "draft")]
     unexecuted_child = by_key[(child_path, "review")]
     assert result.summary.rerun_delta.kind == "savings"
@@ -1041,7 +1052,8 @@ def test_child_workflow_unresolved_input_remains_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Defends: unresolved child inputs (``${missing.output}``) must NOT be
-    coerced to a tokenizable literal; they fall back to estimator-partial.
+    coerced to cacheable token evidence. Input tokens still fall back to
+    estimator-partial because ``data_source`` is a separate metric.
     """
     import pflow.core.cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
@@ -1078,7 +1090,7 @@ def test_child_workflow_unresolved_input_remains_unavailable(
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
 
     row = next(row for row in result.per_call if row.workflow_path == str(child_path))
-    assert row.cacheable_data_source == "estimator"
+    assert row.cacheable_data_source == "unavailable"
     assert row.data_source == "estimator-partial"
 
 
@@ -1126,7 +1138,13 @@ def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
             }
         ],
     }
-    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False, memo_cache=None)
+    result = analyze(
+        workflow_ir,
+        parameters={"concept": long_repetitive},
+        workflow_path="x",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
     for row in result.per_call:
         assert row.cache_ratio_pct <= 100, f"row {row.node_path} has nonsense ratio {row.cache_ratio_pct}%"
         assert row.cacheable_tokens_estimated <= row.input_tokens_estimated, (
@@ -1248,6 +1266,7 @@ def test_total_input_tokens_trace_split_style_adds_cache_portions() -> None:
 def test_analyze_summary_counts_warnings_and_info() -> None:
     """Summary tracks blocking_errors / warnings_count / info_count separately."""
     workflow_ir = {
+        "inputs": {"concept": {"type": "string"}},
         "nodes": [
             {
                 "id": "step",
@@ -1258,8 +1277,9 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
         ],
         "cache": {"items": [{"name": "concept", "var": "concept", "prose_before": "P\n\n"}]},
     }
-    result = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
-    # cache.below-min-tokens fires (small prompt, anthropic min=1024).
+    result = analyze(workflow_ir, parameters={"concept": "hi"}, workflow_path="x", auto_load_trace=False)
+    # cache.below-min-tokens fires from parameters-tier evidence
+    # (small chunk, anthropic min=1024).
     # Tighter assertion: lock the specific id so a different warning firing
     # for the wrong reason fails the test (not just total count).
     assert any(w.id == "cache.below-min-tokens" for w in result.warnings), (
@@ -2560,9 +2580,10 @@ def test_brownfield_memo_populates_cacheable_via_memo_tier(
     was a static heuristic on the prompt template, ignoring memo data even
     when present. Post-fix Tier 2 fires.
 
-    Defends: reverting to a static heuristic drops cacheable to ~187
-    (heuristic value) and the source label to ``"estimator"`` instead
-    of ``"memo"``.
+    Defends: blocking the memo tier (e.g., short-circuiting Tier 2 with
+    an empty-model check or removing the chunks-resolve loop) drops
+    cacheable to ``None`` and the source label to ``"unavailable"`` —
+    no longer to a fabricated heuristic value, since Tier 3 is deleted.
     """
     from pflow.runtime.cache import MemoizationCache
 
@@ -2746,15 +2767,17 @@ def test_no_cache_trace_with_memo_projects_via_candidate(
     assert "context.response" in chunks_seen, f"expected 'context.response' in shared chunks; got {chunks_seen}"
 
 
-def test_heterogeneous_batch_with_declared_cache_uses_estimator_tier(
+def test_heterogeneous_batch_with_declared_cache_falls_through_to_unavailable(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Heterogeneous batch (``model: ${item.model}``) + declared
-    ``prompt_cache`` → Tier 2 short-circuits on empty model; Tier 3 fires.
+    ``prompt_cache`` → Tier 2 short-circuits on empty model; falls
+    through to honest unavailable.
 
-    Closes Case 8a end-to-end gap: unit test #8 covers the gate; this
-    verifies the full path through ``analyze()``.
+    Closes Case 8a end-to-end: unit test #5 covers the gate; this
+    verifies the full path through ``analyze()``. Post-F-04 fix: no
+    fabricated estimator number, no false-positive below-min warning.
     """
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
@@ -2783,10 +2806,11 @@ def test_heterogeneous_batch_with_declared_cache_uses_estimator_tier(
     assert len(analysis.per_call) == 1
     row = analysis.per_call[0]
     assert row.model_is_heterogeneous is True
-    assert row.cacheable_tokens_estimated is not None and row.cacheable_tokens_estimated > 0
-    assert row.cacheable_data_source == "estimator", (
-        f"heterogeneous declared row should fall through to estimator; got {row.cacheable_data_source!r}"
-    )
+    assert row.cacheable_tokens_estimated is None
+    assert row.cacheable_data_source == "unavailable"
+    # No false-positive below-min-tokens warning.
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    assert not below_min, f"unexpected warnings: {[w.id for w in analysis.warnings]}"
 
 
 def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
@@ -2922,47 +2946,196 @@ def test_per_call_row_carries_raw_cache_token_splits_from_trace(
     assert row.data_source == "trace"
 
 
-def test_below_min_tokens_still_fires_when_estimator_says_below_min(
+def test_below_min_tokens_fires_when_memo_data_shows_below_min(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Companion to the suppression test: when source is NOT trace,
-    the warning still fires correctly. Locks the inverse contract —
+    """When source is ``"memo"`` (not ``"trace"``) and tokens are below
+    threshold, the warning still fires. Locks the inverse contract:
     suppression is keyed on ``"trace"`` specifically, not on cacheable
     > 0 alone.
 
-    Defends: the suppression gate must be keyed on ``"trace"`` specifically;
-    any other tier name (``"memo"``, ``"estimator"``) would suppress the
-    warning for those sources too.
+    Defends: the suppression gate must be keyed on ``"trace"``; any
+    other tier name (``"memo"``, ``"parameters"``) would suppress the
+    warning for those sources too. Pitfall #19: drives via real
+    ``MemoizationCache.put`` not synthetic fixture.
     """
+    from pflow.runtime.cache import MemoizationCache
+
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    # Lock token counter to a deterministic small value below 1024 (sonnet
+    # min). Defends against tokenizer drift.
+    monkeypatch.setattr("litellm.token_counter", lambda model, text: 100)
+
+    workflow_path = "/abs/below_min_via_memo.pflow.md"
+    cache_db_path = tmp_path / ".pflow" / "cache" / "cache.db"
+    cache = MemoizationCache(db_path=cache_db_path)
+    # Note required positional: action="default" — MemoizationCache.put has
+    # no default for ``action``. Mirror the existing brownfield test pattern.
+    cache.put(
+        cache_key="seeded-context",
+        node_id="context",
+        workflow_path=workflow_path,
+        action="default",
+        output={"response": "tiny content"},
+    )
 
     workflow_ir = {
         "inputs": {},
         "cache": {
             "ttl": "5m",
-            "items": [{"name": "context", "var": "context", "prose_before": ""}],
+            "items": [{"name": "context", "var": "context.response", "prose_before": "Context:\n"}],
         },
         "nodes": [
             {
                 "id": "summarize",
                 "type": "llm",
-                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "tiny prompt"},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "${context.response}\n\nDo work.",
+                },
                 "prompt_cache": ["context"],
             }
         ],
         "edges": [],
     }
-    # No trace, no memo — Tier 3 estimator fires; tiny prompt → small
-    # cacheable < anthropic's 1024 min → warning SHOULD fire.
-    analysis = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
-    row = analysis.per_call[0]
-    assert row.cacheable_data_source == "estimator"
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
-    assert below_min, (
-        f"cache.below-min-tokens did NOT fire for estimator-tier row below min_tokens. "
-        f"Gate suppression mis-keyed. warnings: {[w.id for w in analysis.warnings]}"
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        auto_load_trace=False,
     )
+    row = analysis.per_call[0]
+    # Tighten: parameters tier is unreachable in this fixture (inputs={}),
+    # so the only legitimate value is "memo".
+    assert row.cacheable_data_source == "memo"
+    assert row.cacheable_tokens_estimated is not None
+    assert row.cacheable_tokens_estimated < 1024
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    assert len(below_min) == 1, (
+        f"cache.below-min-tokens should fire when memo says below threshold; got: {[w.id for w in analysis.warnings]}"
+    )
+
+
+def test_f04_greenfield_node_output_chunk_does_not_emit_false_below_min_warning(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-04 regression — the bug this PR fixes.
+
+    Pre-fix: a workflow where ``prompt_cache:`` references an upstream
+    node output (``${produce.response}``) AND no memo data exists would
+    fall through Tier 1 (no trace) → Tier 2 (no memo) → Tier 3 heuristic
+    → fabricated ~``len(prompt) * 75 // 400`` token count → false-positive
+    ``cache.below-min-tokens`` warning ("declared cache content is ~1
+    tokens, below ... minimum of 1024").
+
+    Post-fix: Tier 3 is deleted; the path lands at Tier 4 unavailable.
+    No warning fires; cacheable is ``None``; agent gets honest
+    unmeasurable signal.
+
+    Defends: re-introducing any heuristic on prompt body for declared
+    subsets would re-emit this false-positive.
+
+    This is a unit-level mirror of the ``baseline/14-pitfall-19-defenses
+    /01-dotted-path-chunk/`` reproduction case.
+    """
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_ir = {
+        "inputs": {"article": {"type": "string", "required": True}},
+        "cache": {
+            "ttl": "5m",
+            "items": [{"name": "produce.response", "var": "produce.response", "prose_before": ""}],
+        },
+        "nodes": [
+            {
+                "id": "produce",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Echo the article: ${article}",
+                },
+            },
+            {
+                "id": "consume",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Summarize.",
+                },
+                "prompt_cache": ["produce.response"],
+            },
+        ],
+        "edges": [],
+    }
+
+    analysis = analyze(workflow_ir, workflow_path="/abs/f04.pflow.md", auto_load_trace=False)
+
+    consume_row = next(r for r in analysis.per_call if r.node_path == "consume")
+    assert consume_row.cacheable_tokens_estimated is None
+    assert consume_row.cacheable_data_source == "unavailable"
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    assert not below_min, (
+        f"F-04 regression: cache.below-min-tokens fired on greenfield "
+        f"node-output chunk. Warnings: {[w.id for w in analysis.warnings]}"
+    )
+
+
+def test_partial_input_resolution_with_node_output_chunk_returns_unavailable(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed ## Cache: input-ref chunk + node-output-ref chunk. Only
+    the input-ref resolves (via parameters). Per the symmetric Tier 2
+    contract (any unresolvable chunk → unavailable), the cacheable
+    estimate must be ``None`` rather than a partial sum or fabricated
+    heuristic.
+
+    Defends: any future "partial-lower-bound" implementation that emits
+    a non-None cacheable for partial-resolution would silently change
+    the warning behavior. This locks the symmetric all-or-nothing
+    contract documented in ``estimate_cacheable_tokens``'s docstring
+    post-fix.
+    """
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+    workflow_ir = {
+        "inputs": {"concept": {"type": "string", "required": True}},
+        "cache": {
+            "ttl": "5m",
+            "items": [
+                {"name": "concept", "var": "concept", "prose_before": "Concept: "},
+                {"name": "upstream.response", "var": "upstream.response", "prose_before": "\nAnalysis: "},
+            ],
+        },
+        "nodes": [
+            {
+                "id": "upstream",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Analyze ${concept}"},
+            },
+            {
+                "id": "downstream",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize."},
+                "prompt_cache": ["concept", "upstream.response"],
+            },
+        ],
+        "edges": [],
+    }
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path="/abs/partial.pflow.md",
+        parameters={"concept": "demo"},
+        auto_load_trace=False,
+    )
+    downstream_row = next(r for r in analysis.per_call if r.node_path == "downstream")
+    assert downstream_row.cacheable_data_source == "unavailable"
+    assert downstream_row.cacheable_tokens_estimated is None
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    assert not below_min
 
 
 def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
@@ -3075,13 +3248,13 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
     )
 
 
-def test_declared_partial_memo_falls_through_to_estimator_end_to_end(
+def test_declared_partial_memo_falls_through_to_unavailable_end_to_end(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Declared subset of 2 chunks; memo populated for one only. End-to-end
-    fall-through to Tier 3 estimator (preserves ``cache.below-min-tokens``
-    fidelity for declared-but-incomplete-memo case).
+    fall-through to Tier 3 unavailable. Honest unmeasurable: the analyzer
+    cannot sum partial chunks without misrepresenting total cache content.
     """
     from pflow.runtime.cache import MemoizationCache
 
@@ -3125,10 +3298,10 @@ def test_declared_partial_memo_falls_through_to_estimator_end_to_end(
     analysis = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False)
     assert len(analysis.per_call) == 1
     row = analysis.per_call[0]
-    assert row.cacheable_data_source == "estimator", (
-        f"declared partial-memo should fall through to estimator; got {row.cacheable_data_source!r}"
+    assert row.cacheable_data_source == "unavailable", (
+        f"declared partial-memo should fall through to unavailable; got {row.cacheable_data_source!r}"
     )
-    assert row.cacheable_tokens_estimated is not None and row.cacheable_tokens_estimated > 0
+    assert row.cacheable_tokens_estimated is None
 
 
 # ---------------------------------------------------------------------------

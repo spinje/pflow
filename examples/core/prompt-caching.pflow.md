@@ -9,10 +9,10 @@ call writes it to the provider's prompt cache, the next two read it at
 * Run static analysis: `pflow analyze-cache examples/core/prompt-caching.pflow.md`
 * Reference: `pflow guide caching`
 
-> Greenfield `analyze-cache` will warn that the cached chunk is below the
-> provider's minimum token threshold — it can only estimate from the literal
-> `${extract.response}` reference until you run once. Run the workflow with
-> a real article, then re-run `analyze-cache` to see actual cache projections.
+> Greenfield `analyze-cache` reports cacheable tokens as unavailable for
+> chunks referencing upstream node outputs (here, `${extract.response}`).
+> Run the workflow once to populate the memo cache, then re-run
+> `analyze-cache` to see real cache projections.
 
 ## Inputs
 

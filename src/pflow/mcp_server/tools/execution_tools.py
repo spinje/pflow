@@ -456,7 +456,7 @@ async def analyze_cache(
 
     **per_call[].cacheable_data_source** is INDEPENDENT from ``data_source``
     and tracks the cacheable-tokens metric specifically. Values: ``trace``
-    / ``memo`` / ``parameters`` / ``estimator`` / ``unavailable``. The two
+    / ``memo`` / ``parameters`` / ``unavailable``. The two
     labels may legitimately diverge — e.g., trace fires for input but
     cacheable falls through to memo when ``cache_creation+cache_read==0``.
 

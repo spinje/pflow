@@ -19,9 +19,10 @@ chunk via `prompt_cache: [produce.response]`.
 
 **Expected**: `consume-1` and `consume-2` per_call rows show the chunk
 correctly attributed in `declared_prompt_cache: ["produce.response"]` and
-the cacheable_tokens > 0. If the proxy/dotted-path path silently drops
-the chunk, both rows would show `cacheable_tokens: 0` AND
-`cacheable_data_source: unavailable`.
+greenfield cacheable tokens as unavailable. The pre-F-04 `cacheable=1`
+value was incidental heuristic fallout, not the load-bearing assertion. If
+the proxy/dotted-path path silently drops the chunk, both rows would lose the
+declared chunk attribution.
 
 **Mutation contract**: revert `NamespacedSharedStore` to a non-`Mapping`
 class, OR change `TemplateResolver._get_dict_value` back to

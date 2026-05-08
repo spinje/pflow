@@ -1,5 +1,5 @@
 {
-  "format_version": "4.0",
+  "format_version": "4.1",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -47,14 +47,14 @@
     "trace_llm_nodes_executed": 0,
     "trace_unexecuted_llm_rows": [],
     "blocking_errors": 0,
-    "actionable_opportunities": 2,
-    "warnings_count": 2,
+    "actionable_opportunities": 1,
+    "warnings_count": 1,
     "info_count": 0,
     "total_llm_nodes_estimated": 1,
     "total_llm_invocations_estimated": 1,
     "dynamic_batch_node_count": 0,
     "total_input_tokens_estimated": 7,
-    "total_cacheable_tokens_estimated": 4,
+    "total_cacheable_tokens_estimated": 0,
     "models_in_use": [
       "anthropic/claude-haiku-4-5"
     ],
@@ -80,13 +80,6 @@
   "recommended_actions": [
     {
       "rank": 1,
-      "warning_id": "cache.below-min-tokens",
-      "node_id": "summarize",
-      "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
-    },
-    {
-      "rank": 2,
       "warning_id": "cache.unused-chunk",
       "node_id": null,
       "estimated_savings_usd": null,
@@ -104,12 +97,12 @@
       "input_tokens_estimated": 7,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
-      "cacheable_tokens_estimated": 4,
-      "cache_ratio_pct": 57,
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
       "data_source": "estimator-partial",
-      "cacheable_data_source": "estimator",
+      "cacheable_data_source": "unavailable",
       "declared_prompt_cache": [
         "article"
       ],
@@ -128,30 +121,6 @@
     "value_flow_opportunities": []
   },
   "warnings": [
-    {
-      "severity": "warning",
-      "message": "summarize: declared cache content is ~4 tokens, below anthropic/claude-haiku-4-5's minimum of 4096; cache_control markers will silently no-op at the provider",
-      "source": "cache_analyzer",
-      "id": "cache.below-min-tokens",
-      "title": "Cache Warning",
-      "suggestions": [
-        "Increase cache content above 4096 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from summarize since the cache won't fire as declared."
-      ],
-      "node_id": "summarize",
-      "context": {
-        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
-        "model": "anthropic/claude-haiku-4-5",
-        "min_tokens": 4096,
-        "evidence_kind": "predicted",
-        "cacheable_tokens": 4,
-        "provider_note": "cache_control markers will silently no-op at the provider",
-        "category": "cache_warning",
-        "path": "nodes[id=summarize].prompt_cache"
-      },
-      "see_also": [
-        "caching"
-      ]
-    },
     {
       "severity": "warning",
       "message": "Cache chunk 'topic' is declared in ## Cache but no node references it via prompt_cache:.",

@@ -1,5 +1,5 @@
 {
-  "format_version": "4.0",
+  "format_version": "4.1",
   "workflow_path": "<REPO_ROOT>/examples/core/prompt-caching.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -47,14 +47,14 @@
     "trace_llm_nodes_executed": 0,
     "trace_unexecuted_llm_rows": [],
     "blocking_errors": 0,
-    "actionable_opportunities": 3,
-    "warnings_count": 3,
+    "actionable_opportunities": 0,
+    "warnings_count": 0,
     "info_count": 0,
     "total_llm_nodes_estimated": 4,
     "total_llm_invocations_estimated": 4,
     "dynamic_batch_node_count": 0,
     "total_input_tokens_estimated": 68,
-    "total_cacheable_tokens_estimated": 34,
+    "total_cacheable_tokens_estimated": 0,
     "models_in_use": [
       "anthropic/claude-haiku-4-5"
     ],
@@ -95,29 +95,7 @@
     "sub_workflow_rollup": null
   },
   "blocking_errors": [],
-  "recommended_actions": [
-    {
-      "rank": 1,
-      "warning_id": "cache.below-min-tokens",
-      "node_id": "summarize",
-      "estimated_savings_usd": null,
-      "scope_workflow": "<REPO_ROOT>/examples/core/prompt-caching.pflow.md"
-    },
-    {
-      "rank": 2,
-      "warning_id": "cache.below-min-tokens",
-      "node_id": "translate",
-      "estimated_savings_usd": null,
-      "scope_workflow": "<REPO_ROOT>/examples/core/prompt-caching.pflow.md"
-    },
-    {
-      "rank": 3,
-      "warning_id": "cache.below-min-tokens",
-      "node_id": "tag",
-      "estimated_savings_usd": null,
-      "scope_workflow": "<REPO_ROOT>/examples/core/prompt-caching.pflow.md"
-    }
-  ],
+  "recommended_actions": [],
   "suggested_blocks": [],
   "per_call": [
     {
@@ -152,12 +130,12 @@
       "input_tokens_estimated": 14,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
-      "cacheable_tokens_estimated": 11,
-      "cache_ratio_pct": 79,
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
       "data_source": "estimator",
-      "cacheable_data_source": "estimator",
+      "cacheable_data_source": "unavailable",
       "declared_prompt_cache": [
         "extract.response"
       ],
@@ -177,12 +155,12 @@
       "input_tokens_estimated": 13,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
-      "cacheable_tokens_estimated": 12,
-      "cache_ratio_pct": 92,
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
       "data_source": "estimator",
-      "cacheable_data_source": "estimator",
+      "cacheable_data_source": "unavailable",
       "declared_prompt_cache": [
         "extract.response"
       ],
@@ -202,12 +180,12 @@
       "input_tokens_estimated": 12,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
-      "cacheable_tokens_estimated": 11,
-      "cache_ratio_pct": 92,
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
       "data_source": "estimator",
-      "cacheable_data_source": "estimator",
+      "cacheable_data_source": "unavailable",
       "declared_prompt_cache": [
         "extract.response"
       ],
@@ -225,80 +203,7 @@
     "prose_mismatches": [],
     "value_flow_opportunities": []
   },
-  "warnings": [
-    {
-      "severity": "warning",
-      "message": "summarize: declared cache content is ~11 tokens, below anthropic/claude-haiku-4-5's minimum of 4096; cache_control markers will silently no-op at the provider",
-      "source": "cache_analyzer",
-      "id": "cache.below-min-tokens",
-      "title": "Cache Warning",
-      "suggestions": [
-        "Increase cache content above 4096 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from summarize since the cache won't fire as declared."
-      ],
-      "node_id": "summarize",
-      "context": {
-        "affected_workflow": "<REPO_ROOT>/examples/core/prompt-caching.pflow.md",
-        "model": "anthropic/claude-haiku-4-5",
-        "min_tokens": 4096,
-        "evidence_kind": "predicted",
-        "cacheable_tokens": 11,
-        "provider_note": "cache_control markers will silently no-op at the provider",
-        "category": "cache_warning",
-        "path": "nodes[id=summarize].prompt_cache"
-      },
-      "see_also": [
-        "caching"
-      ]
-    },
-    {
-      "severity": "warning",
-      "message": "translate: declared cache content is ~12 tokens, below anthropic/claude-haiku-4-5's minimum of 4096; cache_control markers will silently no-op at the provider",
-      "source": "cache_analyzer",
-      "id": "cache.below-min-tokens",
-      "title": "Cache Warning",
-      "suggestions": [
-        "Increase cache content above 4096 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from translate since the cache won't fire as declared."
-      ],
-      "node_id": "translate",
-      "context": {
-        "affected_workflow": "<REPO_ROOT>/examples/core/prompt-caching.pflow.md",
-        "model": "anthropic/claude-haiku-4-5",
-        "min_tokens": 4096,
-        "evidence_kind": "predicted",
-        "cacheable_tokens": 12,
-        "provider_note": "cache_control markers will silently no-op at the provider",
-        "category": "cache_warning",
-        "path": "nodes[id=translate].prompt_cache"
-      },
-      "see_also": [
-        "caching"
-      ]
-    },
-    {
-      "severity": "warning",
-      "message": "tag: declared cache content is ~11 tokens, below anthropic/claude-haiku-4-5's minimum of 4096; cache_control markers will silently no-op at the provider",
-      "source": "cache_analyzer",
-      "id": "cache.below-min-tokens",
-      "title": "Cache Warning",
-      "suggestions": [
-        "Increase cache content above 4096 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from tag since the cache won't fire as declared."
-      ],
-      "node_id": "tag",
-      "context": {
-        "affected_workflow": "<REPO_ROOT>/examples/core/prompt-caching.pflow.md",
-        "model": "anthropic/claude-haiku-4-5",
-        "min_tokens": 4096,
-        "evidence_kind": "predicted",
-        "cacheable_tokens": 11,
-        "provider_note": "cache_control markers will silently no-op at the provider",
-        "category": "cache_warning",
-        "path": "nodes[id=tag].prompt_cache"
-      },
-      "see_also": [
-        "caching"
-      ]
-    }
-  ],
+  "warnings": [],
   "notes": [
     "Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x."
   ]

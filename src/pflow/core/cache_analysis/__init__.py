@@ -29,6 +29,15 @@ Version history (``JSON_FORMAT_VERSION``):
   ``rerun_within_ttl_hypothetical_usd`` and matching ``CostDelta`` fields.
   Each field carries ONE meaning; tier discriminators (``actually_paid_tier``,
   ``cost_data_source``) are independent of value presence.
+- ``"4.1"`` — F-04 fix: ``per_call[].cacheable_data_source`` enum narrowed
+  from 5 values to 4 — ``"estimator"`` is no longer emitted. Pre-fix, the
+  declared-subset Tier 3 heuristic at ``token_estimation.py:174-176`` would
+  fabricate a ``len(prompt) * 75 // 400`` token count when memo/parameters
+  couldn't resolve chunks; the value carried the ``"estimator"`` source
+  label. Post-fix, that path returns ``(None, "unavailable")`` per the
+  honest-unmeasurable contract. Field shape unchanged; only the value
+  enum narrows. No production code branched on ``"estimator"`` for this
+  field.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning
@@ -44,7 +53,7 @@ from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
 
-JSON_FORMAT_VERSION: Final[str] = "4.0"
+JSON_FORMAT_VERSION: Final[str] = "4.1"
 """Version string emitted as the first key by ``render_json``.
 
 Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.

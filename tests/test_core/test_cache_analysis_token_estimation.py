@@ -358,11 +358,13 @@ def test_cacheable_tier_1_trace_returns_creation_plus_read_with_asymmetric_value
 
 def test_cacheable_tier_1_falls_through_when_zero() -> None:
     """Declared + trace event with creation=0, read=0 (cache declared but
-    didn't fire — sub-threshold etc.) falls through. Source MUST NOT be
-    ``"trace"`` AND tokens MUST NOT be 0 (we want Tier 3's heuristic to fire
-    so ``cache.below-min-tokens`` warning still works).
+    didn't fire — sub-threshold etc.) falls through. With no memo data,
+    Tier 2 fails too → returns ``(None, "unavailable")``.
+
     Defends: the gate must require ``> 0``, not ``>= 0``; ``>= 0`` would
-    return ``(0, "trace")`` and both assertions catch it.
+    return ``(0, "trace")`` and contradict trace evidence.
+    Also defends: no fabricated heuristic when memo also absent —
+    honest unmeasurable propagates.
     """
     event = _cache_trace_event(creation=0, read=0)
     tokens, source = estimate_cacheable_tokens(
@@ -374,8 +376,8 @@ def test_cacheable_tier_1_falls_through_when_zero() -> None:
         workflow_path=None,
         prompt="x" * 1000,
     )
-    assert source != "trace"
-    assert tokens != 0
+    assert source == "unavailable"
+    assert tokens is None
 
 
 def test_cacheable_tier_2_memo_sums_resolved_chunk_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -406,12 +408,12 @@ def test_cacheable_tier_2_memo_sums_resolved_chunk_tokens(monkeypatch: pytest.Mo
     assert tokens == 300
 
 
-def test_cacheable_tier_2_for_declared_partial_memo_falls_through_to_estimator(
+def test_cacheable_tier_2_for_declared_partial_memo_falls_through_to_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Declared subset + partial memo (one chunk has no data) → falls
-    through to Tier 3 estimator (NOT to Tier 4 unavailable). Pinned to
-    estimator — preserves ``cache.below-min-tokens`` fidelity.
+    through to Tier 3 (unavailable). Honest unmeasurable: we can't
+    sum partial chunks without misrepresenting total cache content.
     """
 
     def _fake_estimate(ref: str, **_kw: Any) -> int | None:
@@ -431,17 +433,15 @@ def test_cacheable_tier_2_for_declared_partial_memo_falls_through_to_estimator(
         workflow_path=None,
         prompt="x" * 1000,
     )
-    assert source == "estimator"
-    assert tokens is not None
-    assert tokens > 0
+    assert source == "unavailable"
+    assert tokens is None
 
 
-def test_cacheable_tier_3_estimator_for_declared_no_history() -> None:
-    """Tier 3: declared subset + no trace + no memo + prompt populated.
-
-    Formula ``len(prompt) * 75 // 400`` intentionally locked here.
-    Refactoring the heuristic requires updating this value AND its
-    docstring rationale.
+def test_cacheable_tier_3_unavailable_for_declared_no_history() -> None:
+    """Tier 3: declared subset + no trace + no memo + no parameters →
+    ``(None, "unavailable")``. Honest unmeasurable — no fabricated
+    heuristic on prompt body (cache content is prepended, not a
+    subset of prompt body).
     """
     tokens, source = estimate_cacheable_tokens(
         declared_subset=["a"],
@@ -452,15 +452,14 @@ def test_cacheable_tier_3_estimator_for_declared_no_history() -> None:
         workflow_path=None,
         prompt="X" * 1000,
     )
-    assert source == "estimator"
-    assert tokens == 187  # len("X" * 1000) * 75 // 400
+    assert source == "unavailable"
+    assert tokens is None
 
 
-def test_cacheable_tier_3_skips_for_candidate_only() -> None:
-    """Candidate (no declared) + no memo → Tier 4 unavailable.
+def test_cacheable_unavailable_for_candidate_only_no_data() -> None:
+    """Candidate (no declared) + no memo → Tier 3 unavailable.
 
-    Defends: applying the heuristic to candidate-only would fabricate a
-    number; Tier 3 must require declared subset.
+    Defends: candidate-only path must not fabricate a number.
     """
     tokens, source = estimate_cacheable_tokens(
         declared_subset=None,
@@ -492,8 +491,8 @@ def test_cacheable_tier_4_returns_none_for_pure_greenfield() -> None:
 
 def test_cacheable_tier_2_short_circuits_when_model_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Heterogeneous batch (``model=""``) + declared + memo populated →
-    falls through to Tier 3 estimator. Verifies the gate
-    ``if chunks and memo_cache is not None and model:``.
+    Tier 2 short-circuits on empty model gate, falls through to Tier 3
+    (unavailable). Verifies the gate ``if chunks and ... and model:``.
     """
 
     def _fake_estimate(ref: str, **_kw: Any) -> int | None:
@@ -504,7 +503,7 @@ def test_cacheable_tier_2_short_circuits_when_model_empty(monkeypatch: pytest.Mo
         _fake_estimate,
     )
     memo = _FakeMemoCache({"some": "data"})
-    _tokens, source = estimate_cacheable_tokens(
+    tokens, source = estimate_cacheable_tokens(
         declared_subset=["a"],
         candidate_subset=None,
         trace_event=None,
@@ -513,7 +512,8 @@ def test_cacheable_tier_2_short_circuits_when_model_empty(monkeypatch: pytest.Mo
         workflow_path=None,
         prompt="X" * 1000,
     )
-    assert source == "estimator"  # Tier 3 fires; Tier 2 gated out by empty model
+    assert source == "unavailable"  # Tier 3 fires (was: estimator)
+    assert tokens is None
 
 
 def test_cacheable_tier_1_does_not_fire_without_declared() -> None:
@@ -538,12 +538,13 @@ def test_cacheable_tier_1_does_not_fire_without_declared() -> None:
     assert tokens is None
 
 
-def test_sum_resolved_chunk_tokens_returns_none_on_unmeasurable_chunk(
+def test_cacheable_tier_2_partial_memo_position_independent_falls_through_to_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """3 chunks, mid-list chunk (position 2) is None. Returns None even
-    though chunks 1 and 3 have data. Verifies the early-exit isn't
-    dependent on chunk position.
+    """3 chunks, mid-list chunk (position 2) is None. Returns ``(None,
+    "unavailable")`` even though chunks 1 and 3 have data. Verifies the
+    early-exit isn't dependent on chunk position, and that partial
+    resolution becomes honest unmeasurable rather than a fabricated sum.
     """
 
     def _fake_estimate(ref: str, **_kw: Any) -> int | None:
@@ -563,10 +564,8 @@ def test_sum_resolved_chunk_tokens_returns_none_on_unmeasurable_chunk(
         workflow_path=None,
         prompt="X" * 1000,
     )
-    # Declared falls through to Tier 3 when memo is partial.
-    assert source == "estimator"
-    assert tokens is not None
-    assert tokens > 0
+    assert source == "unavailable"
+    assert tokens is None
 
 
 def test_cacheable_tier_2_for_candidate_with_full_memo_fires(monkeypatch: pytest.MonkeyPatch) -> None:

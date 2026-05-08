@@ -9110,3 +9110,61 @@ Key learnings:
 3. Producer-path coverage is a stronger guard than catalog construction alone:
    every real warning ID needs both a minimal context fixture and an actual
    emission path test.
+
+## PR #378 review-fix #6 — delete cacheable Tier 3 heuristic (2026-05-08)
+
+Implemented
+`.taskmaster/tasks/task_159/implementation/fix-plans/delete-cacheable-tier3-heuristic-plan.md`.
+
+Behavior:
+
+- Deleted the declared-subset cacheable-token heuristic in
+  `estimate_cacheable_tokens`. Unresolved declared chunks now return
+  `(None, "unavailable")` instead of fabricating `len(prompt) * 75 // 400`
+  with `cacheable_data_source="estimator"`.
+- Narrowed the JSON contract: `JSON_FORMAT_VERSION` is now `4.1`, and
+  `per_call[].cacheable_data_source` no longer emits `"estimator"`.
+  `data_source` is unchanged; input-token estimation still uses
+  `"estimator"` / `"estimator-partial"` / `"heuristic"`.
+- Updated CLI/MCP/doc comments, the prompt-caching example, production-shaped
+  unit tests, and task-159 baseline fixtures. The below-min catalog fixture now
+  passes `article=hi` so the warning is backed by parameters-tier evidence.
+
+Deviations / adaptations:
+
+- Used the sandbox-safe virtualenv commands from `pflow-sandbox-testing`
+  instead of `uv run` / `make test`. Clear reason: `uv run` panics in this
+  sandbox. For baseline scripts that hard-code `uv run pflow`, used a
+  temporary `/private/tmp` wrapper plus `LITELLM_LOCAL_MODEL_COST_MAP=true`;
+  this preserved the harness while avoiding both the uv panic and network
+  model-price-map warnings.
+- The plan missed three analyzer tests that depended on the deleted heuristic.
+  Clear reason for updating them: full-file verification showed the dependency.
+  Two tests now use real parameters/memo evidence; one now asserts honest
+  unavailable rather than a fabricated warning.
+- The broad all-marker pytest run hit two e2e subprocess tests that invoke
+  Homebrew `uv` directly and panic under sandboxing. Clear reason for not
+  treating them as product failures: the default non-e2e suite passed, and the
+  failure mode is the known sandbox/uv class.
+- Full raw `ruff check .` surfaced unrelated pre-existing RUF findings in
+  untouched tests and auto-fixed one unrelated import because project ruff has
+  `fix = true`. Reverted that accidental import churn and verified ruff only
+  on the files touched by this fix. `mypy`, `deptry`, and `uv lock --locked`
+  were clean.
+
+Verification:
+
+- Baseline reproduction before fix: dotted-path case emitted two
+  `cache.below-min-tokens` warnings and cacheable values `[None, 1, 1]`.
+- Manual smoke after fix: dotted-path case emits no warnings and cacheable
+  values `[None, None, None]`; parameter-backed scratch workflow still emits
+  `cache.below-min-tokens` with `cacheable_data_source=["parameters"]`;
+  canonical prompt-caching example emits no below-min warnings.
+- Baseline harness: 63/63 passed after regeneration.
+- Targeted tests: `test_cache_analysis_token_estimation.py` 28/28,
+  `test_cache_analysis_analyze.py` 106/106, `test_analyze_cache.py` 20/20,
+  runtime below-min guard 3/3, per-id emission 79/79,
+  `test_below_min_tokens_detector.py` 11/11.
+- Mutation checks: restoring the deleted heuristic caused 10 targeted
+  failures; removing the detector's `None` guard caused 2 detector failures.
+- Default non-e2e suite: 6,350 passed, 1 skipped.

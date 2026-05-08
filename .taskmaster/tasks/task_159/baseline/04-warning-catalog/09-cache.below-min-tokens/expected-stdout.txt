@@ -1,5 +1,5 @@
 {
-  "format_version": "4.0",
+  "format_version": "4.1",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -53,7 +53,7 @@
     "total_llm_nodes_estimated": 1,
     "total_llm_invocations_estimated": 1,
     "dynamic_batch_node_count": 0,
-    "total_input_tokens_estimated": 4,
+    "total_input_tokens_estimated": 5,
     "total_cacheable_tokens_estimated": 1,
     "models_in_use": [
       "anthropic/claude-sonnet-4-5"
@@ -94,15 +94,15 @@
       "model": "anthropic/claude-sonnet-4-5",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 4,
+      "input_tokens_estimated": 5,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": 1,
-      "cache_ratio_pct": 25,
+      "cache_ratio_pct": 20,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
       "data_source": "estimator",
-      "cacheable_data_source": "estimator",
+      "cacheable_data_source": "parameters",
       "declared_prompt_cache": [
         "article"
       ],

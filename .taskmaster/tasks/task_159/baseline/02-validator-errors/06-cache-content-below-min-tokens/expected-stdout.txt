@@ -6,23 +6,14 @@
 
   Cost per run:                unavailable
 
-  1 opportunity (1 warning, 0 info)
+  0 opportunities (0 warnings, 0 info)
 
   Cost data unavailable: run the workflow once for cost figures.
-
-## Recommended actions (ordered by impact)
-
-  Each item below is one edit that unlocks LLM-provider caching.
-  Declared values are sent once and reused at 0.1× input cost.
-
-  1. Cache content below provider minimum on summarize                   savings unavailable
-     summarize
-     summarize: declared cache content is ~1 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider
 
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
 
-  summarize                             model=anthropic/claude-sonnet-4-5         tokens=    4  cacheable=    1  ratio= 25%  src=medium  below-min-tokens
+  summarize                             model=anthropic/claude-sonnet-4-5         tokens=    4  cacheable=    ?  ratio=  ?%  src=medium
 
 ## Notes
 

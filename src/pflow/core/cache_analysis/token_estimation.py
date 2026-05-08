@@ -20,16 +20,18 @@ cannot be predicted ahead of an LLM call.
 
 ``estimate_cacheable_tokens``:
 
-1. ``trace``      — from a 2.1.0 trace event's
-                    ``cache_creation_input_tokens + cache_read_input_tokens``.
-                    Falls through when both fields are 0 (cache declared but
-                    didn't fire — sub-threshold etc.).
-2. ``memo``       — sum of memo-resolved chunk token counts (declared OR
-                    candidate subsets). Partial memo data: declared subsets
-                    fall through to Tier 3; candidate-only returns Tier 4.
-3. ``estimator``  — heuristic on raw prompt template (declared subset only —
-                    preserves ``cache.below-min-tokens`` warning fidelity).
-4. ``unavailable`` — None propagation (Option C — honest unmeasurable).
+1. ``trace``       — from a 2.1.0 trace event's
+                     ``cache_creation_input_tokens + cache_read_input_tokens``.
+                     Falls through when both fields are 0 (cache declared but
+                     didn't fire — sub-threshold etc.).
+2. ``memo`` /
+   ``parameters``  — sum of resolved chunk token counts (declared OR
+                     candidate subsets). All chunks must resolve; partial
+                     resolution falls through to Tier 3.
+3. ``unavailable`` — None propagation (Option C — honest unmeasurable).
+                     Downstream ``cache.below-min-tokens`` naturally
+                     suppresses; runtime-tier observed warning still fires
+                     after first run.
 
 Lazy-imports LiteLLM (mirrors ``llm_client.py`` lazy-import contract) to keep
 the analyzer package import-cheap. Lazy-imports ``TemplateResolver`` inside
@@ -130,21 +132,31 @@ def estimate_cacheable_tokens(
 ) -> tuple[int | None, str]:
     """Return ``(cacheable_tokens, source)`` using highest-fidelity available data.
 
-    Sources: ``"trace"``, ``"memo"``, ``"estimator"``, ``"unavailable"``.
+    Sources: ``"trace"``, ``"memo"``, ``"parameters"``, ``"unavailable"``.
 
-    Asymmetric fall-through (load-bearing):
+    Tier order:
 
-    - For DECLARED subsets: partial memo data → falls through to Tier 3
-      (heuristic) to preserve ``cache.below-min-tokens`` warning fidelity.
-    - For CANDIDATE-only (greenfield projection): partial memo data →
-      returns ``(None, "unavailable")`` (Option C — honest unmeasurable).
+    - Tier 1 (``"trace"``): declared subset + trace event with
+      ``cache_creation+cache_read > 0``. Returns the sum.
+    - Tier 2 (``"memo"`` / ``"parameters"``): all chunks resolve to real
+      values via memo or workflow parameters. Returns the sum.
+    - Tier 3 (``"unavailable"``): nothing else is honestly measurable.
+      Returns ``(None, "unavailable")``.
 
     Tier 1 fall-through: when declared subset has trace_event with
     ``cache_creation+cache_read == 0`` (cache declared but didn't fire —
-    sub-threshold etc.), fall through to Tier 2/3. Downstream
-    ``cache.below-min-tokens`` warning is gated on ``cacheable_data_source !=
-    "trace"`` so it fires correctly for the fallthrough cases without
-    contradicting trace evidence when cache demonstrably worked.
+    sub-threshold etc.), fall through to Tier 2 to compute "what was
+    attempted." If Tier 2 also fails, returns unavailable.
+
+    Honest unmeasurable contract: the function never fabricates token
+    counts when chunks can't be resolved. Downstream
+    ``cache.below-min-tokens`` warnings naturally suppress (the detector
+    requires ``estimated_tokens > 0``). The runtime-tier observed
+    warning in ``LLMNode.post()`` catches the real failure case after
+    first run when the provider exposes cache telemetry (the runtime
+    path gates on ``llm_usage["has_cache_telemetry"]``; providers that
+    omit cache fields entirely — custom proxies, brand-new releases — do
+    not trigger the observed-tier warning either).
     """
     # Tier 1: trace ground truth — only meaningful for declared cache that fired.
     if declared_subset and trace_event is not None:
@@ -168,14 +180,10 @@ def estimate_cacheable_tokens(
             # cheap when ``ctx`` is provided — re-resolve via parameters only.
             label = _classify_resolution_source(chunks, ctx)
             return (total, label)
-        # Fall through to Tier 3 for declared (preserves below-min-tokens fidelity).
-        # For candidate-only, fall through to Tier 4 (Option C — honest unmeasurable).
+        # Fall through to Tier 3 (unavailable) — Option C honest unmeasurable.
+        # Both declared and candidate subsets share this fall-through.
 
-    # Tier 3: estimator (declared subset only — heuristic; preserves below-min-tokens).
-    if declared_subset:
-        return (max(0, len(prompt) * 75 // 400), "estimator")
-
-    # Tier 4: nothing to project — honest unavailable.
+    # Tier 3: nothing to project — honest unavailable.
     return (None, "unavailable")
 
 

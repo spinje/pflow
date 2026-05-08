@@ -129,9 +129,9 @@ class PerCallRow:
     # ``data_source`` (input) and ``output_data_source`` — the three metrics
     # may legitimately diverge (e.g., trace fires for input but cacheable
     # falls through to memo when ``cache_creation+cache_read == 0``).
-    # Sources: ``"trace"``, ``"memo"``, ``"parameters"``, ``"estimator"``,
-    # ``"unavailable"``. ``"parameters"`` is added by Track B (Phase B):
-    # workflow-input refs resolved via the agent's ``--inputs``.
+    # Sources: ``"trace"``, ``"memo"``, ``"parameters"``, ``"unavailable"``.
+    # ``"parameters"`` covers workflow-input refs resolved via positional
+    # ``key=value`` params.
     cacheable_data_source: str = "unavailable"
     # Raw per-call provider cache token splits from the trace event's
     # ``llm_call`` dict. ``None`` when no trace row matched; ``int`` (including
@@ -1404,7 +1404,7 @@ def _build_per_call_row(
     )
 
     # Tiered cacheable estimation (mirrors ``estimate_tokens`` /
-    # ``estimate_output_tokens``). Trace beats memo beats heuristic; honest
+    # ``estimate_output_tokens``). Trace beats memo/parameters; honest
     # ``None`` when nothing is projectable. ``declared_chunks`` (workflow-level
     # ## Cache items) is consumed elsewhere; here we pass declared_subset
     # (this node's ``prompt_cache:``) and candidate_subset (greenfield

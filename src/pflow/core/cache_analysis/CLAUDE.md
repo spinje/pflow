@@ -113,11 +113,9 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 **4-tier hierarchy with documented fall-through rules**: `trace → memo → estimator → heuristic`. The `estimator-partial` source is emitted when the prompt was partially-resolvable (some `${...}` refs missed); confidence aggregation treats it as estimator-tier (not heuristic) so a partially-resolved row doesn't classify the workflow as `low_no_data`.
 
-**Asymmetric fall-through for cacheable-token estimation**:
-- For DECLARED subsets: partial memo data → falls through to Tier 3 (heuristic) to preserve `cache.below-min-tokens` warning fidelity.
-- For CANDIDATE-only (greenfield projection): partial memo data → returns `(None, "unavailable")` (Option C — honest unmeasurable).
+**Symmetric fall-through for cacheable-token estimation**: when chunks can't be fully resolved (any chunk returns `None` from `_estimate_ref_tokens`), both DECLARED and CANDIDATE subsets return `(None, "unavailable")`. Honest unmeasurable. The previous declared-subset Tier 3 heuristic was deleted (F-04 fix) — it fabricated `len(prompt) * 75 // 400` token counts that didn't reflect actual cache content size and produced false-positive `cache.below-min-tokens` warnings.
 
-**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2/3. Downstream `cache.below-min-tokens` warning is emitted through `below_min_tokens_detector.py` in predicted mode and is suppressed when `cacheable_data_source == "trace"` so it doesn't contradict trace evidence when cache demonstrably worked.
+**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2 (memo/parameters) and then to unavailable if chunks still can't resolve. Downstream `cache.below-min-tokens` warning is emitted through `below_min_tokens_detector.py` in predicted mode only when there is real positive cacheable-token evidence, and is suppressed when `cacheable_data_source == "trace"` so it doesn't contradict trace evidence when cache demonstrably worked.
 
 **LiteLLM is lazy-imported** (mirrors the `llm_client.py` lazy-import pattern) to keep the analyzer package import-cheap.
 

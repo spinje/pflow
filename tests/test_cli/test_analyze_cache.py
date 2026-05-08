@@ -355,18 +355,20 @@ def test_analyze_cache_json_scopes_validator_findings_to_workflow_path(tmp_path:
 def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     tmp_path: Path,
 ) -> None:
-    """Per DD#36: analytical findings are advisory; ERROR severity findings
-    in `warnings[]` do NOT change exit code. Success → 0.
+    """Warnings (non-blocking) should not affect exit code.
 
-    The `_LLM_WORKFLOW` declares `prompt_cache: [topic]` referencing a small
-    string input — total cache content well below Anthropic's 1024-token
-    minimum, so `cache.below-min-tokens` MUST fire. If the warning stops
-    firing entirely (catalog regression / detection bypass), this test
-    surfaces the disappearance instead of silently passing on an empty list.
+    Post-F-04 fix: provides ``topic=hi`` as a positional param so the
+    warning fires from Tier 2 (parameters), not the deleted Tier 3
+    heuristic. ``"hi"`` tokenizes well below 1024 (sonnet min).
     """
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
     runner = CliRunner()
-    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
+    # CRITICAL: analyze-cache uses positional `key=value` params via
+    # @click.argument("params", nargs=-1) — there is no --inputs flag.
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "topic=hi", "--no-trace-autoload", "--format=json"],
+    )
     assert result.exit_code == 0
     payload = _json_payload(result.output)
     assert any(w["id"] == "cache.below-min-tokens" for w in payload["warnings"]), (

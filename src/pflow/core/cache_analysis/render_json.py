@@ -217,7 +217,7 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "cache_read_input_tokens": row.cache_read_input_tokens,
         "data_source": row.data_source,
         # Independent tier label for the cacheable metric. Sources:
-        # ``"trace"``, ``"memo"``, ``"estimator"``, ``"unavailable"``.
+        # ``"trace"``, ``"memo"``, ``"parameters"``, ``"unavailable"``.
         # Independent from ``data_source`` (input) — the two may legitimately
         # diverge (e.g., trace fires for input but cacheable falls through
         # to memo when ``cache_creation+cache_read == 0``).
