@@ -1,0 +1,268 @@
+{
+  "format_version": "4.0",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 1,
+    "heuristic": 0,
+    "total": 2
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "trace_coverage_partial"
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 2,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 2,
+    "warnings_count": 0,
+    "info_count": 2,
+    "total_llm_nodes_estimated": 2,
+    "total_llm_invocations_estimated": 2,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 12014,
+    "total_cacheable_tokens_estimated": 12000,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+        "node_path": "preprocess",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md",
+        "node_path": "summarize",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 0,
+    "sub_workflow_llm_node_count": 2,
+    "sub_workflow_rollup": {
+      "workflows_included": [
+        "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+        "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md"
+      ],
+      "max_depth_walked": 2,
+      "truncated": false,
+      "per_workflow": [
+        {
+          "workflow_path": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+          "called_by_node_id": "child",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md",
+          "called_by_node_id": "grandchild",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        }
+      ]
+    }
+  },
+  "blocking_errors": [],
+  "recommended_actions": [],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "preprocess",
+      "workflow_path": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6004,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "declared_prompt_cache": [
+        "article"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "summarize",
+      "workflow_path": "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6010,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator-partial",
+      "cacheable_data_source": "parameters",
+      "declared_prompt_cache": [
+        "article"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 3,
+    "rename_detections": [
+      {
+        "severity": "info",
+        "message": "<BASELINE_CASE_DIR>/level2/level2.pflow.md \u2192 <BASELINE_CASE_DIR>/level2/level3/level3.pflow.md: parent passes `preprocess.response` as input named `entities` (line 34); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+          "child_workflow": "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md",
+          "parent_value_expr": "preprocess.response",
+          "child_input_name": "entities",
+          "line_in_parent": 34,
+          "parent_node_id": "grandchild",
+          "category": "cache_advisory",
+          "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].nodes[id=grandchild].inputs[name=entities]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      }
+    ],
+    "prose_mismatches": [
+      {
+        "severity": "info",
+        "message": "<BASELINE_CASE_DIR>/level2/level2.pflow.md \u2192 <BASELINE_CASE_DIR>/level2/level3/level3.pflow.md: chunk `article` declared in both ## Cache blocks with different prose-before-${var}; cross-workflow byte-level cache hit will not fire",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-prose-mismatch",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Pick one prose label and use it in both files' ## Cache blocks for chunk `article`."
+        ],
+        "context": {
+          "parent_workflow": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+          "child_workflow": "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md",
+          "chunk_name": "article",
+          "parent_prose": "The article (level 2 cache):\n\n",
+          "child_prose": "The article (level 3 cache):\n\n",
+          "category": "cache_advisory",
+          "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].cache.items[name=article]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      }
+    ],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "info",
+      "message": "<BASELINE_CASE_DIR>/level2/level2.pflow.md \u2192 <BASELINE_CASE_DIR>/level2/level3/level3.pflow.md: parent passes `preprocess.response` as input named `entities` (line 34); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+        "child_workflow": "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md",
+        "parent_value_expr": "preprocess.response",
+        "child_input_name": "entities",
+        "line_in_parent": 34,
+        "parent_node_id": "grandchild",
+        "category": "cache_advisory",
+        "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].nodes[id=grandchild].inputs[name=entities]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<BASELINE_CASE_DIR>/level2/level2.pflow.md \u2192 <BASELINE_CASE_DIR>/level2/level3/level3.pflow.md: chunk `article` declared in both ## Cache blocks with different prose-before-${var}; cross-workflow byte-level cache hit will not fire",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-prose-mismatch",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Pick one prose label and use it in both files' ## Cache blocks for chunk `article`."
+      ],
+      "context": {
+        "parent_workflow": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
+        "child_workflow": "<BASELINE_CASE_DIR>/level2/level3/level3.pflow.md",
+        "chunk_name": "article",
+        "parent_prose": "The article (level 2 cache):\n\n",
+        "child_prose": "The article (level 3 cache):\n\n",
+        "category": "cache_advisory",
+        "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].cache.items[name=article]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    }
+  ],
+  "notes": []
+}

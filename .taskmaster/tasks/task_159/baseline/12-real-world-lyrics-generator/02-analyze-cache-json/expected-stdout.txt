@@ -1,0 +1,1881 @@
+{
+  "format_version": "4.0",
+  "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 0,
+    "heuristic": 25,
+    "total": 25
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "trace_coverage_partial"
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 25,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 19,
+    "warnings_count": 0,
+    "info_count": 19,
+    "total_llm_nodes_estimated": 25,
+    "total_llm_invocations_estimated": null,
+    "dynamic_batch_node_count": 3,
+    "total_input_tokens_estimated": 38418,
+    "total_cacheable_tokens_estimated": 11438,
+    "models_in_use": [],
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+        "node_path": "curate-briefs",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+        "node_path": "evaluate-songs",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md",
+        "node_path": "analyze",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+        "node_path": "generate-concepts",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+        "node_path": "select-concepts",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md",
+        "node_path": "assign-diversity",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "creative-direction",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "song-architecture",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "easter-eggs",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "write-lyrics",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "rewrite-emotional",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "rewrite-craft",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "generate-suno-prompt",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "node_path": "generate-chorus-options",
+        "reason": "heterogeneous_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "node_path": "score-choruses",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "node_path": "select-chorus",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+        "node_path": "review",
+        "reason": "unresolved_model",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 1,
+    "heterogeneous_model_node_paths": [
+      "generate-chorus-options"
+    ],
+    "root_llm_node_count": 2,
+    "sub_workflow_llm_node_count": 23,
+    "sub_workflow_rollup": {
+      "workflows_included": [
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/fetch-source/fetch-source.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+        "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md"
+      ],
+      "max_depth_walked": 15,
+      "truncated": false,
+      "per_workflow": [
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md",
+          "called_by_node_id": "analyze-sources",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+          "called_by_node_id": "choose-concepts",
+          "llm_node_count": 2,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md",
+          "called_by_node_id": "enforce-diversity",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/fetch-source/fetch-source.pflow.md",
+          "called_by_node_id": "fetch-sources",
+          "llm_node_count": 0,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "called_by_node_id": "choose-chorus",
+          "llm_node_count": 3,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+          "called_by_node_id": "craft-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+          "called_by_node_id": "craft-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+          "called_by_node_id": "craft-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+          "called_by_node_id": "emotional-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+          "called_by_node_id": "craft-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+          "called_by_node_id": "emotional-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+          "called_by_node_id": "emotional-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+          "called_by_node_id": "craft-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+          "called_by_node_id": "emotional-reviews",
+          "llm_node_count": 1,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        },
+        {
+          "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "called_by_node_id": "create-songs",
+          "llm_node_count": 7,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        }
+      ]
+    }
+  },
+  "blocking_errors": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.sub-workflow-cache-undeclared",
+      "node_id": null,
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.opaque-prompt",
+      "node_id": "generate-chorus-options",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "curate-briefs",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+      "model": "",
+      "is_batch": true,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 3869,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "evaluate-songs",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 782,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "analyze",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md",
+      "model": "",
+      "is_batch": true,
+      "batch_size_estimated": 6,
+      "input_tokens_estimated": 3,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "generate-concepts",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+      "model": "",
+      "is_batch": true,
+      "batch_size_estimated": 4,
+      "input_tokens_estimated": 3,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "select-concepts",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 826,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "assign-diversity",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1348,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "creative-direction",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1248,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 936,
+      "cache_ratio_pct": 75,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "concept",
+        "concept_brief"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "song-architecture",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2886,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 2164,
+      "cache_ratio_pct": 75,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "concept",
+        "concept_brief",
+        "creative-direction.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "easter-eggs",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1066,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 799,
+      "cache_ratio_pct": 75,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "concept",
+        "concept_brief",
+        "creative-direction.response",
+        "song-architecture.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "write-lyrics",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 3684,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 2763,
+      "cache_ratio_pct": 75,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "concept",
+        "concept_brief",
+        "creative-direction.response",
+        "song-architecture.response",
+        "easter-eggs.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "rewrite-emotional",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2575,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 1931,
+      "cache_ratio_pct": 75,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "concept",
+        "concept_brief",
+        "creative-direction.response",
+        "song-architecture.response",
+        "easter-eggs.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "rewrite-craft",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2454,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 1840,
+      "cache_ratio_pct": 75,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "concept",
+        "concept_brief",
+        "creative-direction.response",
+        "song-architecture.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "generate-suno-prompt",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1340,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 1005,
+      "cache_ratio_pct": 75,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "creative-direction.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "generate-chorus-options",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+      "model": "",
+      "is_batch": true,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 3,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": true,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "score-choruses",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+      "model": "",
+      "is_batch": true,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1076,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "select-chorus",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1209,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2020,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 838,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2129,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1376,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1389,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1312,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1240,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2606,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+      "model": "",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1136,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "heuristic",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 33,
+    "rename_detections": [
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 97); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 97,
+          "parent_node_id": "choose-chorus",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `song-architecture.response` as input named `architecture` (line 97); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "architecture",
+          "line_in_parent": 97,
+          "parent_node_id": "choose-chorus",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `concept_brief` as input named `creative_brief` (line 97); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "parent_value_expr": "concept_brief",
+          "child_input_name": "creative_brief",
+          "line_in_parent": 97,
+          "parent_node_id": "choose-chorus",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_brief]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 124,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 124); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 124,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 124,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 124,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 124,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 124,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+          "parent_value_expr": "write-lyrics.response",
+          "child_input_name": "lyrics",
+          "line_in_parent": 124,
+          "parent_node_id": "emotional-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 239,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 239,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 239,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 239,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 239,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+          "parent_value_expr": "song-architecture.response",
+          "child_input_name": "song_architecture",
+          "line_in_parent": 239,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      },
+      {
+        "severity": "info",
+        "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+        "source": "cache_analyzer",
+        "id": "cache.cross-workflow-rename-detected",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        ],
+        "context": {
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+          "parent_value_expr": "creative-direction.response",
+          "child_input_name": "creative_direction",
+          "line_in_parent": 239,
+          "parent_node_id": "craft-reviews",
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      }
+    ],
+    "prose_mismatches": [],
+    "value_flow_opportunities": [
+      {
+        "severity": "info",
+        "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there. Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
+        "source": "cache_analyzer",
+        "id": "cache.sub-workflow-cache-undeclared",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
+          "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+        ],
+        "context": {
+          "node_count": 2,
+          "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "savings_usd": null,
+          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+          "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+          "child_workflow_basename": "chorus-chooser.pflow.md",
+          "parent_value_expr": "concept",
+          "child_input_name": "concept",
+          "parent_node_id": "choose-chorus",
+          "line_in_parent": 97,
+          "category": "cache_advisory",
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
+        },
+        "see_also": [
+          "caching"
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "severity": "info",
+      "message": "generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.",
+      "source": "cache_analyzer",
+      "id": "cache.opaque-prompt",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.",
+        "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern."
+      ],
+      "node_id": "generate-chorus-options",
+      "context": {
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "var_ref": "item.prompt",
+        "upstream_node_id": "build-grouped-items",
+        "category": "cache_advisory",
+        "path": "nodes[id=generate-chorus-options].prompt"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 97); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 97,
+        "parent_node_id": "choose-chorus",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `song-architecture.response` as input named `architecture` (line 97); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "architecture",
+        "line_in_parent": 97,
+        "parent_node_id": "choose-chorus",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `concept_brief` as input named `creative_brief` (line 97); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "parent_value_expr": "concept_brief",
+        "child_input_name": "creative_brief",
+        "line_in_parent": 97,
+        "parent_node_id": "choose-chorus",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_brief]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 124,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 124); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 124,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 124,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 124,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 124,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 124,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
+        "parent_value_expr": "write-lyrics.response",
+        "child_input_name": "lyrics",
+        "line_in_parent": 124,
+        "parent_node_id": "emotional-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 239,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 239,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 239,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 239,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 239,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+        "parent_value_expr": "song-architecture.response",
+        "child_input_name": "song_architecture",
+        "line_in_parent": 239,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md \u2192 <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary",
+      "source": "cache_analyzer",
+      "id": "cache.cross-workflow-rename-detected",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+      ],
+      "context": {
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
+        "parent_value_expr": "creative-direction.response",
+        "child_input_name": "creative_direction",
+        "line_in_parent": 239,
+        "parent_node_id": "craft-reviews",
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there. Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
+      "source": "cache_analyzer",
+      "id": "cache.sub-workflow-cache-undeclared",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
+        "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+      ],
+      "context": {
+        "node_count": 2,
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "savings_usd": null,
+        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
+        "child_workflow_basename": "chorus-chooser.pflow.md",
+        "parent_value_expr": "concept",
+        "child_input_name": "concept",
+        "parent_node_id": "choose-chorus",
+        "line_in_parent": 97,
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
+      },
+      "see_also": [
+        "caching"
+      ]
+    }
+  ],
+  "notes": [
+    "Workflow batch fetch-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${sources}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.",
+    "Workflow batch analyze-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${fetch-sources.results}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.",
+    "Workflow batch create-songs in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${zip-concepts-with-briefs.result}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration."
+  ]
+}

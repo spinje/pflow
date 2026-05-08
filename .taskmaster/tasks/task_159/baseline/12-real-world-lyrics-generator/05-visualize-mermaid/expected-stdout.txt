@@ -1,0 +1,200 @@
+graph LR
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
+    subgraph workflow-inputs ["workflow inputs"]
+        input_concept[/"concept (object, required)"/]:::input
+        input_concept_brief[/"concept_brief (string, required)"/]:::input
+    end
+    style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    creative-direction(["creative-direction (llm)"]):::llm
+    song-architecture(["song-architecture (llm)"]):::llm
+    easter-eggs(["easter-eggs (llm)"]):::llm
+    subgraph choose-chorus-in ["choose-chorus inputs"]
+        choose-chorus__in_concept[/"concept (object)"/]:::input
+        choose-chorus__in_creative_direction[/"creative_direction (string)"/]:::input
+        choose-chorus__in_architecture[/"architecture (string)"/]:::input
+        choose-chorus__in_creative_brief[/"creative_brief (string)"/]:::input
+    end
+    style choose-chorus-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    choose-chorus__in_concept --> choose-chorus__build-grouped-items
+    choose-chorus__in_creative_direction --> choose-chorus__build-grouped-items
+    choose-chorus__in_architecture --> choose-chorus__build-grouped-items
+    choose-chorus__in_creative_brief --> choose-chorus__build-grouped-items
+    subgraph choose-chorus ["choose-chorus (workflow)"]
+        choose-chorus__build-grouped-items["build-grouped-items (code)"]:::code
+        choose-chorus__generate-chorus-options@{ shape: procs, label: "generate-chorus-options (llm)<br/> (parallel x|build-grouped-items|)" }
+        style choose-chorus__generate-chorus-options fill:#E8D5F5,stroke:#7B2D8E,color:#000
+        choose-chorus__extract-individual-choruses["extract-individual-choruses (code)"]:::code
+        choose-chorus__build-scoring-items["build-scoring-items (code)"]:::code
+        choose-chorus__score-choruses@{ shape: procs, label: "score-choruses (llm)<br/> (parallel x|build-scoring-items|)" }
+        style choose-chorus__score-choruses fill:#E8D5F5,stroke:#7B2D8E,color:#000
+        choose-chorus__rank-choruses["rank-choruses (code)"]:::code
+        choose-chorus__select-chorus(["select-chorus (llm)"]):::llm
+        choose-chorus__extract-winners["extract-winners (code)"]:::code
+        choose-chorus__build-grouped-items --> choose-chorus__generate-chorus-options
+        choose-chorus__generate-chorus-options --> choose-chorus__extract-individual-choruses
+        choose-chorus__extract-individual-choruses --> choose-chorus__build-scoring-items
+        choose-chorus__build-scoring-items --> choose-chorus__score-choruses
+        choose-chorus__score-choruses --> choose-chorus__rank-choruses
+        choose-chorus__rank-choruses --> choose-chorus__select-chorus
+        choose-chorus__select-chorus --> choose-chorus__extract-winners
+    end
+    style choose-chorus fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph choose-chorus-out ["choose-chorus outputs"]
+        choose-chorus__out_winning_chorus(["winning_chorus"]):::output
+        choose-chorus__out_runner_up_choruses(["runner_up_choruses"]):::output
+        choose-chorus__out_all_scored_text(["all_scored_text"]):::output
+        choose-chorus__out_selection_text(["selection_text"]):::output
+        choose-chorus__out_chorus_guide(["chorus_guide"]):::output
+        choose-chorus__out_total_generated(["total_generated"]):::output
+    end
+    style choose-chorus-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    choose-chorus__extract-winners --> choose-chorus__out_winning_chorus
+    choose-chorus__extract-winners --> choose-chorus__out_runner_up_choruses
+    choose-chorus__rank-choruses --> choose-chorus__out_all_scored_text
+    choose-chorus__select-chorus --> choose-chorus__out_selection_text
+    choose-chorus__extract-winners --> choose-chorus__out_chorus_guide
+    choose-chorus__rank-choruses --> choose-chorus__out_total_generated
+    creative-direction --> choose-chorus__in_creative_direction
+    song-architecture --> choose-chorus__in_architecture
+    write-lyrics(["write-lyrics (llm)"]):::llm
+    subgraph emotional-reviews ["emotional-reviews (parallel x4)"]
+        subgraph emotional-reviews__emotional-architecture ["emotional-architecture (workflow)"]
+        emotional-reviews__emotional-architecture__in_lyrics[/"lyrics (string)"/]:::input
+        emotional-reviews__emotional-architecture__in_concept_brief[/"concept_brief (string)"/]:::input
+        emotional-reviews__emotional-architecture__in_creative_direction[/"creative_direction (string)"/]:::input
+        emotional-reviews__emotional-architecture__in_lyrics --> emotional-reviews__emotional-architecture__review
+        emotional-reviews__emotional-architecture__in_concept_brief --> emotional-reviews__emotional-architecture__review
+        emotional-reviews__emotional-architecture__in_creative_direction --> emotional-reviews__emotional-architecture__review
+        emotional-reviews__emotional-architecture__review(["review (llm)"]):::llm
+        emotional-reviews__emotional-architecture__out_review_text(["review_text"]):::output
+        emotional-reviews__emotional-architecture__review --> emotional-reviews__emotional-architecture__out_review_text
+        end
+        style emotional-reviews__emotional-architecture fill:#808080,fill-opacity:0.14,stroke:#999
+        subgraph emotional-reviews__narrative ["narrative (workflow)"]
+        emotional-reviews__narrative__in_lyrics[/"lyrics (string)"/]:::input
+        emotional-reviews__narrative__in_song_architecture[/"song_architecture (string)"/]:::input
+        emotional-reviews__narrative__in_lyrics --> emotional-reviews__narrative__review
+        emotional-reviews__narrative__in_song_architecture --> emotional-reviews__narrative__review
+        emotional-reviews__narrative__review(["review (llm)"]):::llm
+        emotional-reviews__narrative__out_review_text(["review_text"]):::output
+        emotional-reviews__narrative__review --> emotional-reviews__narrative__out_review_text
+        end
+        style emotional-reviews__narrative fill:#808080,fill-opacity:0.14,stroke:#999
+        subgraph emotional-reviews__imagery ["imagery (workflow)"]
+        emotional-reviews__imagery__in_lyrics[/"lyrics (string)"/]:::input
+        emotional-reviews__imagery__in_song_architecture[/"song_architecture (string)"/]:::input
+        emotional-reviews__imagery__in_lyrics --> emotional-reviews__imagery__review
+        emotional-reviews__imagery__in_song_architecture --> emotional-reviews__imagery__review
+        emotional-reviews__imagery__review(["review (llm)"]):::llm
+        emotional-reviews__imagery__out_review_text(["review_text"]):::output
+        emotional-reviews__imagery__review --> emotional-reviews__imagery__out_review_text
+        end
+        style emotional-reviews__imagery fill:#808080,fill-opacity:0.14,stroke:#999
+        subgraph emotional-reviews__stranger-summary ["stranger-summary (workflow)"]
+        emotional-reviews__stranger-summary__in_lyrics[/"lyrics (string)"/]:::input
+        emotional-reviews__stranger-summary__in_lyrics --> emotional-reviews__stranger-summary__review
+        emotional-reviews__stranger-summary__review(["review (llm)"]):::llm
+        emotional-reviews__stranger-summary__out_review_text(["review_text"]):::output
+        emotional-reviews__stranger-summary__review --> emotional-reviews__stranger-summary__out_review_text
+        end
+        style emotional-reviews__stranger-summary fill:#808080,fill-opacity:0.14,stroke:#999
+    end
+    style emotional-reviews fill:#808080,fill-opacity:0.14,stroke:#999
+    format-emotional-reviews["format-emotional-reviews (code)"]:::code
+    rewrite-emotional(["rewrite-emotional (llm)"]):::llm
+    extract-emotional-lyrics["extract-emotional-lyrics (code)"]:::code
+    subgraph craft-reviews ["craft-reviews (parallel x5)"]
+        subgraph craft-reviews__ai-tells ["ai-tells (workflow)"]
+        craft-reviews__ai-tells__in_lyrics[/"lyrics (string)"/]:::input
+        craft-reviews__ai-tells__in_creative_direction[/"creative_direction (string)"/]:::input
+        craft-reviews__ai-tells__in_lyrics --> craft-reviews__ai-tells__review
+        craft-reviews__ai-tells__in_creative_direction --> craft-reviews__ai-tells__review
+        craft-reviews__ai-tells__review(["review (llm)"]):::llm
+        craft-reviews__ai-tells__out_review_text(["review_text"]):::output
+        craft-reviews__ai-tells__review --> craft-reviews__ai-tells__out_review_text
+        end
+        style craft-reviews__ai-tells fill:#808080,fill-opacity:0.14,stroke:#999
+        subgraph craft-reviews__cliche ["cliche (workflow)"]
+        craft-reviews__cliche__in_lyrics[/"lyrics (string)"/]:::input
+        craft-reviews__cliche__in_creative_direction[/"creative_direction (string)"/]:::input
+        craft-reviews__cliche__in_lyrics --> craft-reviews__cliche__review
+        craft-reviews__cliche__in_creative_direction --> craft-reviews__cliche__review
+        craft-reviews__cliche__review(["review (llm)"]):::llm
+        craft-reviews__cliche__out_review_text(["review_text"]):::output
+        craft-reviews__cliche__review --> craft-reviews__cliche__out_review_text
+        end
+        style craft-reviews__cliche fill:#808080,fill-opacity:0.14,stroke:#999
+        craft-reviews__dots@{ shape: procs, label: "... x5" }
+        style craft-reviews__dots fill:#FFF2CC,stroke:#D6B656,color:#000
+    end
+    style craft-reviews fill:#808080,fill-opacity:0.14,stroke:#999
+    format-craft-reviews["format-craft-reviews (code)"]:::code
+    rewrite-craft(["rewrite-craft (llm)"]):::llm
+    extract-lyrics["extract-lyrics (code)"]:::code
+    generate-suno-prompt(["generate-suno-prompt (llm)"]):::llm
+    input_concept --> choose-chorus__in_concept
+    input_concept_brief --> choose-chorus__in_creative_brief
+    subgraph workflow-outputs ["workflow outputs"]
+        out_finished_song(["finished_song"]):::output
+        out_emotional_rewrite_deliberation(["emotional_rewrite_deliberation"]):::output
+        out_revision_deliberation(["revision_deliberation"]):::output
+        out_creative_direction_text(["creative_direction_text"]):::output
+        out_song_architecture_text(["song_architecture_text"]):::output
+        out_easter_eggs_text(["easter_eggs_text"]):::output
+        out_draft_lyrics(["draft_lyrics"]):::output
+        out_emotional_reviews(["emotional_reviews"]):::output
+        out_craft_reviews(["craft_reviews"]):::output
+        out_chorus_options_text(["chorus_options_text"]):::output
+        out_chorus_selection_text(["chorus_selection_text"]):::output
+        out_winning_chorus(["winning_chorus"]):::output
+        out_suno_style_prompt(["suno_style_prompt"]):::output
+    end
+    style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    extract-lyrics --> out_finished_song
+    extract-emotional-lyrics --> out_emotional_rewrite_deliberation
+    extract-lyrics --> out_revision_deliberation
+    creative-direction --> out_creative_direction_text
+    song-architecture --> out_song_architecture_text
+    easter-eggs --> out_easter_eggs_text
+    write-lyrics --> out_draft_lyrics
+    format-emotional-reviews --> out_emotional_reviews
+    format-craft-reviews --> out_craft_reviews
+    choose-chorus__out_all_scored_text --> out_chorus_options_text
+    choose-chorus__out_selection_text --> out_chorus_selection_text
+    choose-chorus__out_winning_chorus --> out_winning_chorus
+    generate-suno-prompt --> out_suno_style_prompt
+    creative-direction --> song-architecture
+    song-architecture --> easter-eggs
+    choose-chorus__out_winning_chorus --> write-lyrics
+    choose-chorus__out_runner_up_choruses --> write-lyrics
+    choose-chorus__out_all_scored_text --> write-lyrics
+    choose-chorus__out_selection_text --> write-lyrics
+    choose-chorus__out_chorus_guide --> write-lyrics
+    choose-chorus__out_total_generated --> write-lyrics
+    write-lyrics --> emotional-reviews__emotional-architecture
+    write-lyrics --> emotional-reviews__narrative
+    write-lyrics --> emotional-reviews__imagery
+    write-lyrics --> emotional-reviews__stranger-summary
+    emotional-reviews__emotional-architecture__out_review_text --> format-emotional-reviews
+    emotional-reviews__narrative__out_review_text --> format-emotional-reviews
+    emotional-reviews__imagery__out_review_text --> format-emotional-reviews
+    emotional-reviews__stranger-summary__out_review_text --> format-emotional-reviews
+    format-emotional-reviews --> rewrite-emotional
+    rewrite-emotional --> extract-emotional-lyrics
+    extract-emotional-lyrics --> craft-reviews__ai-tells
+    extract-emotional-lyrics --> craft-reviews__cliche
+    extract-emotional-lyrics --> craft-reviews__dots
+    craft-reviews__ai-tells__out_review_text --> format-craft-reviews
+    craft-reviews__cliche__out_review_text --> format-craft-reviews
+    craft-reviews__dots --> format-craft-reviews
+    format-craft-reviews --> rewrite-craft
+    rewrite-craft --> extract-lyrics
+    extract-lyrics --> generate-suno-prompt

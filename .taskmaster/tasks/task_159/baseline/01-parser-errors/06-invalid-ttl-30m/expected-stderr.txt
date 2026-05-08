@@ -1,0 +1,6 @@
+Error: Parse Error
+
+Invalid '- ttl:' value '30m'. Must be '5m' or '1h'.
+  At: line 12
+
+  → Use '- ttl: 5m' (default 5-minute cache) or '- ttl: 1h' (extended 1-hour cache).

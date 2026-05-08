@@ -1,0 +1,6 @@
+Error: Parse Error
+
+Multiple 'cache' code blocks under '## Cache' are not allowed.
+  At: line 18
+
+  → Combine all values into a single ```cache block. Cache chunks are ordered by their position in this single block — multiple blocks would create ambiguous ordering and break per-node prompt_cache: declaration-order matching.

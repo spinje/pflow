@@ -1,0 +1,142 @@
+# Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
+
+  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes) (no model resolved — set settings.default_model)
+  (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows: analyze-source, concept-chooser, enforce-diversity, fetch-source, chorus-chooser, review-accuracy, review-ai-tells, review-cliche, review-emotional-architecture, review-genre, review-imagery, review-narrative, review-rhyme, review-stranger-summary, song-creator)
+
+## Summary
+
+  Cost per run:                unavailable
+
+  19 opportunities (0 warnings, 19 info)
+
+  Cost data unavailable: no model resolved for LLM nodes (set settings.default_model or add per-node `- model:`).
+
+## Recommended actions (ordered by impact)
+
+  Each item below is one edit that unlocks LLM-provider caching.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  savings unavailable
+     chorus-chooser.pflow.md
+     `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there. Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+
+  2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
+     generate-chorus-options in chorus-chooser.pflow.md
+     generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
+
+## Sub-workflow boundaries
+
+  Alignment between sub-workflows that share value names. Each finding
+  is a place where prose labels diverge or where a value gets renamed
+  across the boundary — fixing them lets cached bytes match across
+  sub-workflows. (Cross-boundary value-flow opportunities appear in
+  Recommended actions above.)
+
+  1. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
+     song-creator → chorus-chooser  (line 97)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 97); same logical value has two names across the boundary
+
+  2. Cross-workflow rename — `song-architecture.response` ↔ `architecture`
+     song-creator → chorus-chooser  (line 97)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `song-architecture.response` as input named `architecture` (line 97); same logical value has two names across the boundary
+
+  3. Cross-workflow rename — `concept_brief` ↔ `creative_brief`
+     song-creator → chorus-chooser  (line 97)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `concept_brief` as input named `creative_brief` (line 97); same logical value has two names across the boundary
+
+  4. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
+     song-creator → review-emotional-architecture  (line 124)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
+
+  5. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
+     song-creator → review-emotional-architecture  (line 124)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 124); same logical value has two names across the boundary
+
+  6. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
+     song-creator → review-narrative  (line 124)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
+
+  7. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
+     song-creator → review-narrative  (line 124)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary
+
+  8. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
+     song-creator → review-imagery  (line 124)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
+
+  9. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
+     song-creator → review-imagery  (line 124)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary
+
+  10. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
+     song-creator → review-stranger-summary  (line 124)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
+
+  11. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
+     song-creator → review-ai-tells  (line 239)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
+
+  12. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
+     song-creator → review-cliche  (line 239)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
+
+  13. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
+     song-creator → review-genre  (line 239)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
+
+  14. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
+     song-creator → review-genre  (line 239)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary
+
+  15. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
+     song-creator → review-accuracy  (line 239)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
+
+  16. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
+     song-creator → review-rhyme  (line 239)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary
+
+  17. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
+     song-creator → review-rhyme  (line 239)
+     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+  Showing 8 of 25 LLM nodes; all-clean rows hidden (--all-rows shows everything).
+
+### song-creator.pflow.md (called by create-songs)
+  write-lyrics                          model=                                    tokens= 3684  cacheable= 2763  ratio= 75%  src=low
+  song-architecture                     model=                                    tokens= 2886  cacheable= 2164  ratio= 75%  src=low
+  rewrite-emotional                     model=                                    tokens= 2575  cacheable= 1931  ratio= 75%  src=low
+  rewrite-craft                         model=                                    tokens= 2454  cacheable= 1840  ratio= 75%  src=low
+  generate-suno-prompt                  model=                                    tokens= 1340  cacheable= 1005  ratio= 75%  src=low
+  creative-direction                    model=                                    tokens= 1248  cacheable=  936  ratio= 75%  src=low
+  easter-eggs                           model=                                    tokens= 1066  cacheable=  799  ratio= 75%  src=low
+
+### chorus-chooser.pflow.md (called by choose-chorus)
+  generate-chorus-options               model=<varies>                            tokens=    3  cacheable=    ?  ratio=  ?%  src=low  opaque-prompt
+
+## Sub-workflow drill-in
+
+  Sub-workflow opportunities don't surface here — run analyze-cache per child:
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/fetch-source/fetch-source.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
+    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+
+## Notes
+
+  · Workflow batch fetch-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${sources}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Workflow batch analyze-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${fetch-sources.results}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · Workflow batch create-songs in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${zip-concepts-with-briefs.result}; sub-workflow rows for these runtime items are not in the per-call table. actually_paid_usd is trace-driven and reflects actual execution. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.

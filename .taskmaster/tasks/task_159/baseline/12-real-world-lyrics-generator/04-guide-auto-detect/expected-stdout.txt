@@ -1,0 +1,569 @@
+# Batch Processing
+
+**Use when**: Same operation on multiple items — "each", "for every", "in parallel", "N at a time". Add `batch` to any node:
+
+````markdown
+### process-each
+
+Analyze each file.
+
+- type: llm
+- prompt: "Analyze: ${item}"
+- batch:
+    items: ${source.files}
+
+### fetch-each
+
+Fetch each URL in parallel.
+
+- type: shell
+- batch:
+    items: ${urls}
+    parallel: true
+    max_concurrent: 40
+
+```shell command
+curl -s '${item}'
+```
+````
+
+Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Results: `${node.results}` (array in input order).
+
+**Options**:
+| Field | Default | Notes |
+|-------|---------|-------|
+| `items` | required | Template reference OR inline array (must resolve to JSON array, not newline-separated string) |
+| `as` | `"item"` | Custom name: `"file"` → `${file}` |
+| `parallel` | `false` | Concurrent execution |
+| `max_concurrent` | `10` | 1-100; use 30-50 for LLM APIs (rate limits) |
+| `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
+
+**Text lines → JSON array:**
+```shell
+your-command | jq -R -s 'split("\n") | map(select(. != ""))'
+```
+
+**All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
+Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`.
+
+**Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`. Note: index-based access (`results[N]`) requires `fail_fast` mode (the default). With `error_handling: continue`, use iteration (`items: ${node.results}`) instead.
+
+**Inline array pattern** (parallel independent operations):
+Batch is the way to run operations concurrently (conditional branching picks ONE path, not multiple).
+````markdown
+### multi-format
+
+Reformat the report in multiple styles concurrently.
+
+- type: llm
+- prompt: "Reformat as ${item.style}:\n${item.content}"
+
+```yaml batch
+items:
+  - style: executive-summary
+    content: ${report.result}
+  - style: technical-details
+    content: ${report.result}
+  - style: action-items
+    content: ${report.result}
+parallel: true
+```
+````
+**Completely different operations** (each item defines its own prompt and data):
+````markdown
+### parallel-tasks
+
+Run completely different operations in parallel.
+
+- type: llm
+- prompt: ${item.prompt}
+
+```yaml batch
+items:
+  - prompt: |
+      Summarize the following data in exactly 2 sentences.
+      Focus on key findings and actionable insights.
+
+      Data: ${data}
+  - prompt: "Extract action items from: ${data}"
+  - prompt: "Translate to Spanish: ${other-data}"
+parallel: true
+```
+````
+Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-tasks.results[0].item}` (original input)
+
+**Per-item configuration** — vary node params (model, temperature, reasoning_effort) per item:
+````markdown
+### compare-configs
+
+Compare quality across different settings.
+
+- type: llm
+- model: ${item.model}
+- reasoning_effort: ${item.effort}
+- prompt: "Analyze: ${item.data}"
+
+```yaml batch
+items:
+  - data: ${report}
+    model: anthropic/claude-opus-4-5
+    effort: high
+  - data: ${report}
+    model: openai/gpt-5.4
+    effort: medium
+parallel: true
+```
+````
+Any `${item.field}` template works in any param — not just prompt/command.
+
+**Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate (requires `fail_fast` — not supported with `error_handling: continue`):
+```
+${previous.results[${__index__}]}     # Access by position (fail_fast only)
+${previous.results[${item.idx}]}      # Access by item field (fail_fast only)
+```
+
+**Using results**:
+```markdown
+### report
+
+Summarizes the batch. Reads `success_count` and the results array from
+the upstream batched node — not a per-item response, since batch replaces
+the normal output shape.
+
+- type: llm
+- prompt: "Summary of ${process-each.success_count} items:\n${process-each.results}"
+```
+
+**Common mistake: missing explicit prompt wiring on batch LLM.** Batch items may have `prompt:` fields in the data, but the LLM node ignores them unless you wire it explicitly: `- prompt: ${item.prompt}`. Batch provides data; the node still needs explicit parameter references.
+
+---
+
+# Code Node
+
+**Use for**: Data transformation — filter, reshape, merge, compute, string parsing.
+
+**Not for extraction** — templates handle path traversal (`${node.result.data.field}`). Use code only when you need to compute or reshape.
+
+- Receives native objects from upstream nodes (no serialization needed)
+- Supports multiple inputs from different nodes
+- Type-annotated Python code for clarity and validation
+
+### Node Creation Patterns
+
+```markdown
+### filter-and-reshape
+
+Filter active items and reshape for downstream processing.
+Templates go in `inputs`, Python code in the code block.
+All inputs and result MUST have type annotations.
+
+- type: code
+- inputs:
+    items: ${fetch-with-auth.response.data.items}
+
+```python code
+items: list
+
+result: list = [
+    {'id': i['id'], 'name': i['name'], 'value': i['metrics']['value']}
+    for i in items
+    if i['status'] == 'active'
+]
+```
+
+### merge-data
+
+Merge and summarize data from two sources.
+Downstream nodes access fields: `${merge-data.result.summary}`, `${merge-data.result.count}`.
+
+- type: code
+- inputs:
+    api_data: ${fetch-with-auth.response.data.items}
+    db_records: ${query-db.result}
+
+```python code
+api_data: list
+db_records: list
+
+merged = api_data + db_records
+result: dict = {
+    'items': merged,
+    'count': len(merged),
+    'summary': f'{len(api_data)} from API, {len(db_records)} from DB'
+}
+```
+```
+
+### Code Node Rules
+
+**Code node rules:**
+- Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
+- All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
+- Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
+- Use `Any` as the type when you don't want type validation (see syntax table below — auto-injected, no import needed)
+- Single output via `result` variable — use dict for structured output
+- Downstream access: `${node.result}` or `${node.result.field}` for dict results
+
+## Validate-Time Type Checking
+
+Three code-node input errors are now caught at validate time (`pflow
+--validate-only`) instead of runtime:
+
+1. **Input bound, annotation missing** — `inputs: {x: ${ref}}` with no `x:
+   <type>` in code. The suggestion uses the upstream's declared type when
+   known (`Add an annotation (in params.code): x: str  (inferred from ...)`).
+2. **Annotation declared, no input bound** — opinionated one-fix-per-case:
+   `Remove the annotation 'y: list' — it is never read in the code` for dead
+   annotations, `Add 'y' to the inputs dict` when the name is read in the
+   body, `Rename the annotation to 'items'` when a fuzzy-matched input key
+   exists (typo case).
+3. **Type mismatch** — `x: dict` bound to `${upstream.result}` that declares
+   `list`:
+
+    ```text
+    Input 'x' expects dict but receives list from ${upstream.result}.
+
+    To fix this:
+      1. Change the type annotation (in params.code): x: list
+      2. Or change ${upstream.result} to return dict
+      3. Or accept any type (in params.code): x: Any
+    ```
+
+Suggestions include locality hints (`in params.code` vs `in params.inputs`) so
+agents know which section to edit. Upstream type is read from the registry
+interface for standard nodes and from the code-block `result:` annotation for
+upstream code nodes (including batch code nodes — enrichment flows through
+`results[0].result` access paths). Use `Any` when you want to accept any
+upstream type deliberately.
+
+### Type annotation syntax
+
+Type annotations in code blocks are Python. pflow follows modern Python style (PEP 585 + PEP 604):
+
+| For... | Write | Example |
+|---|---|---|
+| Any type (wildcard) | `Any` | `x: Any` |
+| Built-in scalars | `str`, `int`, `float`, `bool`, `bytes` | `x: str` |
+| List | `list[T]` | `x: list[str]` |
+| Dict | `dict[K, V]` | `x: dict[str, int]` |
+| Tuple | `tuple[T, ...]` | `x: tuple[int, str]` |
+| Set | `set[T]` | `x: set[str]` |
+| Union | `A \| B` (pipe syntax) | `x: int \| str` |
+| Optional | `Optional[T]` or `T \| None` | `x: str \| None` |
+
+**Auto-injected** (no import needed): `Any`, `Optional`, and the `typing` module.
+
+**Requires** `from typing import X` at the top of your code block: `Literal`, `TypeVar`, `Callable`, `Final`, `ClassVar`, `Iterable`, `Iterator`, `Sequence`, `Mapping`.
+
+**Not allowed**: `List[T]`, `Dict[K, V]`, `Union[A, B]`, and other uppercase typing-module generics — use the modern lowercase / pipe forms above. pflow's NameError suggestions point at the canonical replacement.
+
+Only the outer type is enforced at prep time (e.g. `list[dict]` checks `isinstance(x, list)` but not element types).
+
+---
+
+### Parameters
+
+- `code: str` - Python code to execute (required, must contain type annotations)
+- `inputs: dict` - Variable name to value mapping (optional)
+- `timeout: int` - Execution timeout in seconds (optional)
+- `requires: list` - Package dependencies for documentation (optional)
+
+### Outputs
+
+- `result: any` - Value of result variable after execution
+- `stdout: str` - Captured print() output
+- `stderr: str` - Captured stderr output
+- `error: str` - Error message if execution failed
+
+---
+
+# File Node
+
+**Use for**: Reading and writing files. Known interface — no probing needed.
+
+### Node Creation Patterns
+
+```markdown
+### read-config
+
+Read configuration from disk.
+
+- type: read-file
+- file_path: ${config_path}
+```
+
+```markdown
+### deliver
+
+Write the final report to disk.
+
+- type: write-file
+- file_path: ${output_path}
+- content: ${format-for-delivery.response}
+```
+
+---
+
+### read-file
+Read content from a file.
+
+**Parameters**:
+- `file_path: str` - Path to the file to read
+- `encoding: str` - File encoding (optional)
+
+**Outputs**:
+- `content: str` - File contents (with line numbers for text, base64-encoded for binary)
+- `content_is_binary: bool` - True if content is binary data
+- `file_path: str` - Path that was read
+- `error: str` - Error message if operation failed
+
+### write-file
+Write content to a file with automatic directory creation.
+
+**Parameters**:
+- `content: str` - Content to write to the file (text or base64-encoded binary)
+- `content_is_binary: bool` - True if content is base64-encoded binary (optional)
+- `file_path: str` - Path to the file to write
+- `encoding: str` - File encoding (optional)
+- `append: bool` - Append to file instead of overwriting (default: false)
+
+**Outputs**:
+- `written: bool` - True if write succeeded
+- `error: str` - Error message if operation failed
+
+---
+
+# LLM Node
+
+**Use for**: Tasks requiring judgment — summarizing, interpreting, deciding what matters. Costs tokens per workflow execution.
+
+**Don't use LLM for**: Extracting fields from structured data (`${node.result.data.field}` does this for free), transforming/filtering data (use `code` node), or formatting with a fixed structure (use `code` node).
+
+**The test**: Can you write a deterministic algorithm for it? YES → `code` node. NO → LLM.
+
+Use `output_schema` for structured responses (guarantees valid JSON via constrained decoding).
+
+**Debugging prompts**: Run with `--report` to see every LLM node's rendered prompt (templates resolved) alongside the actual response, token count, and cost. Ask the user if they want reports in the project (`--report-dir ./report/`) — useful for reviewing LLM responses together or tracking them in git.
+
+**Iterating cheaply**: Use `--only <node>` to re-run a single LLM node (upstream cached, downstream skipped). Saves time and tokens when tuning prompts in multi-node workflows.
+
+### Node Creation Pattern
+
+`````markdown
+### structured-analysis
+
+Analyze data with specific criteria.
+
+- type: llm
+- temperature: 0.7
+- model: openai/gpt-4
+
+```yaml output_schema
+type: object
+properties:
+  findings:
+    type: array
+    items:
+      type: string
+  risk_level:
+    type: string
+  recommendation:
+    type: string
+required:
+  - findings
+  - risk_level
+  - recommendation
+```
+
+```prompt
+Analyze this data according to these criteria:
+
+Data:
+${filter-and-reshape.result}
+
+Criteria:
+1. Identify patterns
+2. Find anomalies
+3. Suggest improvements
+```
+`````
+
+---
+
+### Parameters
+
+- `prompt: str` - Text prompt to send to model
+- `system: str` - System prompt (optional)
+- `images: list[str]` - Image URLs or file paths (optional)
+- `output_schema: dict` - JSON Schema for structured output (optional)
+- `reasoning_effort: str` - Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
+- `reasoning_max_tokens: int` - Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
+- `model_options: dict` - Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
+- `model: str` - Model to use (optional - always use smart default unless user requests specific model)
+- `temperature: float` - Sampling temperature (default: 1.0)
+- `max_tokens: int` - Max response tokens (optional)
+- `timeout: int` - Execution timeout in seconds for LLM API call (default: 120)
+
+### Outputs
+
+- `response: str|dict` - Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
+- `error: str` - Error message if LLM call or JSON parsing failed
+- `prompt: str` - Rendered prompt actually sent to the model (populated for tracing/audit, including per-item batch traces)
+- `llm_usage: dict` - Token usage metrics (empty dict {} if unavailable)
+
+---
+
+# Sub-Workflows
+
+**Use when**: Reusable sub-tasks across workflows, or decomposing complex workflows — "reuse this", "same validation as X".
+
+- Child inputs are passed via the top-level `inputs:` dict on the workflow node
+- Child workflow must declare `## Inputs` (for required params) and `## Outputs` (for exposed results)
+- `workflow:` accepts a file path (`./child.pflow.md`), a saved workflow name (`my-saved-workflow`), or a template that resolves to one at runtime (see Dynamic Child Selection below)
+- Nesting depth limited to 10 levels (configurable via `max_depth` param)
+- Parent→child boundary is strict — every key in `inputs:` must be declared on the child's `## Inputs`; typos are rejected at parse time
+
+### When to Use Sub-Workflows
+
+- Common sub-tasks are reused across multiple parent workflows
+- A complex workflow benefits from decomposition into self-contained phases
+- A sub-task needs to be executable both standalone AND as part of a parent
+- You want to test sub-workflows independently but run them together as a unit
+
+**Example**: "Fetch data, validate it (reusable), transform it, validate output (same validation reused)"
+→ Validation is a NESTED `workflow` node, called twice in the parent
+
+### Pattern: Sub-Workflow Composition
+
+**Child workflow** (`to-uppercase.pflow.md`):
+````markdown
+# To Uppercase
+
+Convert text to uppercase.
+
+## Inputs
+
+### text
+
+The text to convert.
+
+- type: string
+
+## Outputs
+
+### result
+
+The uppercased text.
+
+- source: ${transform.stdout}
+
+## Steps
+
+### transform
+
+Uppercase via `tr`.
+
+- type: shell
+- command: echo "${text}" | tr '[:lower:]' '[:upper:]'
+````
+
+**Parent workflow** calling the child:
+````markdown
+## Steps
+
+### process_title
+
+Convert the title to uppercase using the shared sub-workflow.
+
+- type: workflow
+- workflow: ./to-uppercase.pflow.md
+- inputs:
+    text: ${title}
+
+### process_body
+
+Convert the body to uppercase using the shared sub-workflow.
+
+- type: workflow
+- workflow: ./to-uppercase.pflow.md
+- inputs:
+    text: ${body}
+
+### combine
+
+Combine the processed title and body into a single output.
+
+- type: shell
+- command: printf "Title: %s\nBody: %s" "${process_title.result}" "${process_body.result}"
+````
+
+### Dynamic Child Selection (Template References)
+
+`workflow:` can be a template (`${var}`) that resolves at runtime — from CLI input, an upstream node's output, or a batch item field. The child is loaded and validated when the parent node executes, not at parent-parse time.
+
+**Use when**: the same parent node needs to dispatch to different children per batch item or per run.
+
+**Example** — fan out over three review aspects, each specifying which child workflow to run:
+
+`````markdown
+### reviews
+
+Review the combined analysis from three critical perspectives. Each batch item picks which child workflow to run.
+
+- type: workflow
+- workflow: ${item.workflow}
+- inputs:
+    summary: ${combine.result}
+    aspect: ${item.aspect}
+
+```yaml batch
+items:
+  - aspect: accuracy
+    workflow: ./review-aspect.pflow.md
+  - aspect: completeness
+    workflow: ./review-aspect.pflow.md
+  - aspect: clarity
+    workflow: ./review-aspect.pflow.md
+parallel: true
+```
+`````
+
+**Trade-off**: invalid children surface as runtime compile errors, not at `--validate-only`. Prefer the static-path form when the child is known at authoring time; reserve the template form for genuine runtime dispatch.
+
+### Pattern: Heterogeneous Batch over Sub-Workflows
+
+Parallel fan-out over N *different* child workflows, each with its own inputs.
+Per-item `inputs: ${item.inputs}` lets each child receive exactly the values it declares.
+
+````markdown
+### reviews
+
+Parallel review fan-out — each item names a different child and supplies
+that child's exact inputs.
+
+- type: workflow
+- workflow: ${item.workflow}
+- inputs: ${item.inputs}
+
+```yaml batch
+items:
+  - workflow: ./reviews/review-narrative.pflow.md
+    inputs:
+      lyrics: ${write-lyrics.response}
+      song_architecture: ${song-architecture.response}
+  - workflow: ./reviews/review-imagery.pflow.md
+    inputs:
+      lyrics: ${write-lyrics.response}
+      creative_direction: ${creative-direction.response}
+  - workflow: ./reviews/review-emotional.pflow.md
+    inputs:
+      lyrics: ${write-lyrics.response}
+      concept_brief: ${concept_brief}
+parallel: true
+```
+````
+
+Each child declares only the inputs it uses; nothing is "extra" from any
+child's perspective. Reading one item tells you exactly what that child
+receives. Typos in any item's `inputs:` fail at parse time with a fuzzy
+suggestion — there's no silent drop.

@@ -1,0 +1,243 @@
+{
+  "format_version": "4.0",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 3,
+    "heuristic": 0,
+    "total": 3
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "trace_coverage_partial"
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 3,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 2,
+    "warnings_count": 2,
+    "info_count": 0,
+    "total_llm_nodes_estimated": 3,
+    "total_llm_invocations_estimated": 3,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 6010,
+    "total_cacheable_tokens_estimated": 2,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "produce",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "consume-1",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "consume-2",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 3,
+    "sub_workflow_llm_node_count": 0,
+    "sub_workflow_rollup": null
+  },
+  "blocking_errors": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.below-min-tokens",
+      "node_id": "consume-1",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.below-min-tokens",
+      "node_id": "consume-2",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "produce",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6004,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": null,
+      "cache_ratio_pct": null,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "unavailable",
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "consume-1",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 4,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 1,
+      "cache_ratio_pct": 25,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "produce.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "consume-2",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 2,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 1,
+      "cache_ratio_pct": 50,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "estimator",
+      "declared_prompt_cache": [
+        "produce.response"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 0,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "warning",
+      "message": "consume-1: declared cache content is ~1 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
+      "source": "cache_analyzer",
+      "id": "cache.below-min-tokens",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from consume-1 since the cache won't fire as declared."
+      ],
+      "node_id": "consume-1",
+      "context": {
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "model": "anthropic/claude-sonnet-4-5",
+        "min_tokens": 1024,
+        "evidence_kind": "predicted",
+        "cacheable_tokens": 1,
+        "provider_note": "cache_control markers will silently no-op at the provider",
+        "category": "cache_warning",
+        "path": "nodes[id=consume-1].prompt_cache"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "warning",
+      "message": "consume-2: declared cache content is ~1 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
+      "source": "cache_analyzer",
+      "id": "cache.below-min-tokens",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from consume-2 since the cache won't fire as declared."
+      ],
+      "node_id": "consume-2",
+      "context": {
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "model": "anthropic/claude-sonnet-4-5",
+        "min_tokens": 1024,
+        "evidence_kind": "predicted",
+        "cacheable_tokens": 1,
+        "provider_note": "cache_control markers will silently no-op at the provider",
+        "category": "cache_warning",
+        "path": "nodes[id=consume-2].prompt_cache"
+      },
+      "see_also": [
+        "caching"
+      ]
+    }
+  ],
+  "notes": [
+    "Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x."
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "format_version": "4.0",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 0,
+    "heuristic": 0,
+    "total": 0
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "trace_coverage_partial"
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 0,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 1,
+    "actionable_opportunities": 1,
+    "warnings_count": 1,
+    "info_count": 0,
+    "total_llm_nodes_estimated": 0,
+    "total_llm_invocations_estimated": 0,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 0,
+    "total_cacheable_tokens_estimated": 0,
+    "models_in_use": [],
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 0,
+    "sub_workflow_llm_node_count": 0,
+    "sub_workflow_rollup": null
+  },
+  "blocking_errors": [
+    {
+      "rank": 1,
+      "warning_id": "cache.invalid-on-non-llm",
+      "node_id": "echo",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+    }
+  ],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.unused-chunk",
+      "node_id": null,
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [],
+  "cross_workflow": {
+    "boundaries_analyzed": 0,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "error",
+      "message": "Node 'echo' is type: shell but declares prompt_cache \u2014 this field is only valid on type: llm nodes.",
+      "source": "validator",
+      "id": "cache.invalid-on-non-llm",
+      "title": "Cache Failure",
+      "suggestions": [
+        "Remove the invalid declaration (prompt_cache) from echo, OR move the LLM logic into a type: llm node."
+      ],
+      "node_id": "echo",
+      "context": {
+        "category": "cache_failure",
+        "invalid_fields": [
+          "prompt_cache"
+        ],
+        "invalid_fields_csv": "prompt_cache",
+        "is_or_are": "is",
+        "plural_s": "",
+        "node_type": "shell",
+        "path": "nodes[id=echo]",
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      },
+      "see_also": [
+        "caching"
+      ]
+    },
+    {
+      "severity": "warning",
+      "message": "Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.",
+      "source": "validator",
+      "id": "cache.unused-chunk",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`."
+      ],
+      "context": {
+        "category": "cache_warning",
+        "chunk_name": "article",
+        "path": "cache.items[name=article]",
+        "source_line": 17,
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      },
+      "see_also": [
+        "caching"
+      ]
+    }
+  ],
+  "notes": [
+    "Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x."
+  ]
+}

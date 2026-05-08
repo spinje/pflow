@@ -1,0 +1,152 @@
+{
+  "format_version": "4.0",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 2,
+    "heuristic": 0,
+    "total": 2
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "trace_coverage_partial"
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 2,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 0,
+    "warnings_count": 0,
+    "info_count": 0,
+    "total_llm_nodes_estimated": 2,
+    "total_llm_invocations_estimated": 2,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 24007,
+    "total_cacheable_tokens_estimated": 24000,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "producer",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "consumer",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 2,
+    "sub_workflow_llm_node_count": 0,
+    "sub_workflow_rollup": null
+  },
+  "blocking_errors": [],
+  "recommended_actions": [],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "producer",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 18003,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 18000,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "declared_prompt_cache": [
+        "a",
+        "b",
+        "c"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "consumer",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6004,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "declared_prompt_cache": [
+        "c"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 0,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [],
+  "notes": [
+    "Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x."
+  ]
+}
