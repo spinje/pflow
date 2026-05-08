@@ -19,7 +19,6 @@
 
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
-     In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
 
 ## Per-call cache report
   Executed trace rows are evidence-only; unexecuted rows are marked when shown.

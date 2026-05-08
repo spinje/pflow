@@ -634,10 +634,12 @@ def _render_action_list(
             # would render indistinguishable from per-node ones (the GH #2
             # surface). Basename keeps the line short.
             lines.append(f"     {_short_workflow_label(action.scope_workflow)}")
-        # Reason paragraph — only rendered when distinct from the headline.
-        # Skipping when message ≡ headline avoids duplicating the same prose
-        # twice in narrow terminals.
-        if action.message and action.message != action.headline:
+        # Reason paragraph — only rendered when distinct from the rendered
+        # title. When `headline` is None (un-catalog-IDed errors), the title
+        # falls back to `message` via `_format_action_title`; checking against
+        # `title` (not `headline`) closes the dedup gap that doubled blocking-
+        # error lines.
+        if action.message and action.message != title:
             lines.extend(_indent_message(action.message, prefix="     "))
         lines.extend(_format_action_suggestions(action))
         lines.append("")

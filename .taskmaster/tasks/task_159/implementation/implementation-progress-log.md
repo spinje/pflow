@@ -9528,3 +9528,46 @@ Key learnings:
    suggested "track skipped paths and surface a count" — single
    `click.echo(..., err=True)` per swallow site, no tracking parameter
    threaded through recursion.
+
+## Baseline triage — Tier 1 quick-wins shipped (2026-05-08)
+
+Triaged the 48 baseline-audit findings against source. Removed 2 from
+`BASELINE-AUDIT.md` as noise (L-9 pure-duplicate of A-1; A-4 self-
+downgraded by author). Section F rewritten as source-verified triage
+outcome, with 8 merge-block bugs identified (A-1, A-6, B-17, L-1, L-2,
+L-3, L-10, L-11, L-12).
+
+Shipped 3 Tier 1 quick-wins (independent, low-risk, no architectural
+change):
+
+- **A-1** — `render_text.py:_render_action_list` dedup gap. The check
+  `action.message != action.headline` failed for un-catalog-IDed
+  errors because `headline=None` and the title fell back to message,
+  so `None != message` was always True and the body re-rendered.
+  Switched to comparing against the rendered `title` (computed once
+  via `_format_action_title`). Closes a 3-baseline regression
+  (validator-08, lyrics-generator static, lyrics-generator trace).
+
+- **B-17** — `_GEMINI_TELEMETRY_NOTE` referenced internal task-management
+  documentation (`progress log §36`). Replaced with a self-contained
+  sentence; agent-facing output should never link to internal artifacts.
+
+- **B-12 + B-13** — `pflow guide caching` content corrections. Replaced
+  incomplete inline Anthropic min-tokens summary (3 tiers, 3 models)
+  with full table from `MODEL_CAPABILITIES` (3 tiers, 11 models +
+  fallback). Replaced fictional `~/.pflow/debug/trace.json` example
+  with auto-load + actual hash-keyed schema explanation.
+
+Verification:
+
+- 6,374 tests pass on default suite (`-m "not e2e"`).
+- 65/65 baseline cases pass after re-capture of 5 affected cases.
+- `make check` clean.
+
+Merge-block list shrunk 8 → 5. Remaining merge-block items are all in
+the L-cluster (L-1, L-2, L-3, L-10, L-11, L-12) — the architectural
+"trace mode hides static findings" coordinated batch where adding trace
+evidence reduces the analyzer's apparent knowledge. Ready as a single
+fix touching `analyze.py` (coverage classification, suppression filter)
+and `render_text.py` (per-call model, actual-savings delta) with one
+re-capture of case 05.

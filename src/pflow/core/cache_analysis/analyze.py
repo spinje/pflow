@@ -4135,8 +4135,8 @@ _GEMINI_TELEMETRY_NOTE = (
     "explicit-cache reads via 'cache_read_input_tokens' (or "
     "'prompt_tokens_details.cached_tokens'); 'cache_creation_input_tokens' is "
     "0/absent even when caching is working. Verification path is reads on "
-    "subsequent calls. Spike 1 disambiguator (progress log §36) confirmed the "
-    "marker does real work — no caching fires without it."
+    "subsequent calls — explicit cache markers are required for caching to "
+    "fire on Gemini."
 )
 
 

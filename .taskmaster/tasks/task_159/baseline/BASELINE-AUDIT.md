@@ -33,10 +33,9 @@ agents hit on first install but experienced agents do not**.
 
 | Finding | Live status |
 |---|---|
-| **A-1** doubled blocking-error message | **CONFIRMED LIVE** in validator-08 |
+| **A-1** doubled blocking-error message | **CONFIRMED LIVE** in validator-08; source-verified at `render_text.py:640-642` (triage 2026-05-08) |
 | **A-2** float precision artifacts | confirmed via JSON re-read |
-| **A-3** `unavailable_reason: trace_coverage_partial` when `trace_coverage: none` | **DOWNGRADED** — see below |
-| **A-4** `info_count: 19` includes 17 cross-workflow renames | **DOWNGRADED** — see below |
+| **A-3** `unavailable_reason: trace_coverage_partial` when `trace_coverage: none` | confirmed at `analyze.py:3963-3968` (universal "not complete" tag); JSON-only, deferred |
 | **A-5** `unavailable_models` redundancy | confirmed |
 | **B-1** `model=` empty everywhere | **NARROWED** — only in clean envs (fresh agents); experienced agents see resolved models. Still a valid first-time-agent UX issue. |
 | **B-2 through B-8** (lyrics-generator UX) | **CONFIRMED LIVE** — every finding reproduces in the user's actual env |
@@ -50,20 +49,18 @@ agents hit on first install but experienced agents do not**.
 | **C-8** per-call header math when 0 visible | confirmed |
 | **C-9** `evidence_kind` opaque | confirmed |
 
-**A-3 downgrade**: `"trace_coverage_partial"` may be intentional
-union-vocabulary meaning "trace coverage is anything less than
-complete" (covering both `none` and `partial`). Without reading the
-producer code I can't tell if it's a bug or a deliberate vocabulary
-choice. **Re-classifying as section D wart pending producer-code
-verification.**
+**A-3 status (post-triage 2026-05-08)**: source-verified at
+`analyze.py:3963-3968` — `unavailable_reason="trace_coverage_partial"`
+fires whenever `trace_coverage != "complete"`, including when it's
+`"none"`. This is intentional union-vocabulary (universal "not complete"
+tag) but the label names only one of the two states it covers. Real
+JSON-shape wart; deferred per text-priority directive.
 
-**A-4 downgrade**: The count is technically correct (19
-info-severity diagnostics = 2 recommended actions + 17 cross-workflow
-renames). The `_CROSS_WORKFLOW_ALIGNMENT_IDS` filter in
-`view_helpers.py` deliberately routes renames to a separate section.
-This is a UX wart (count doesn't visibly map to one section), not a
-correctness bug. **Re-classifying as wart in section B (the
-mismatch is a Tier 1 lyrics-generator UX issue).**
+**A-4 removed**: count is technically correct (19 info-severity
+diagnostics = 2 recommended actions + 17 cross-workflow renames). The
+`_CROSS_WORKFLOW_ALIGNMENT_IDS` filter in `view_helpers.py` routes
+renames to a separate section by design. Self-downgraded by author and
+removed from this file 2026-05-08 as noise.
 
 ### New findings discovered live
 
@@ -178,31 +175,6 @@ common-path, then JSON/lower-priority).
 - **Suggestion**: when `trace_coverage == "none"`, set
   `unavailable_reason` to `"no_trace"` (or null with a different
   contract). The two fields must agree.
-
-### A-4 — `cache.shared-context-undeclared` is in `info_count`, but renames are NOT in any count
-
-- **Severity**: `bug`
-- **Triage**: `bug` — the summary counter contradicts the rendered
-  content; locking it traps the inconsistency.
-- **What**: lyrics-generator case 01 says `19 opportunities (0 warnings,
-  19 info)`. `recommended_actions` has 2 entries. `Sub-workflow boundaries`
-  has 17 entries. So 19 = 2 + 17. But `info_count: 19` includes the 17
-  cross-workflow renames in the count, which the **renderer renders
-  in a separate section** (`Sub-workflow boundaries`, not `Recommended
-  actions`). An agent who reads the count and looks for 19 actionable
-  items in Recommended actions sees 2 and assumes the count is wrong.
-- **Repro**: `12-real-world-lyrics-generator/01-analyze-cache-text/expected-stdout.txt:10`,
-  same file lines 22-35 (Recommended actions, 2 entries) vs 37-111
-  (Sub-workflow boundaries, 17 entries).
-- **Impact**: Agent counts of "what to fix" diverge from the rendered
-  sections. Trust in the analyzer drops.
-- **Suggestion**: either (a) split the summary counter into
-  `actionable_opportunities: 2, sub_workflow_boundary_findings: 17`
-  with both summed into a unified `total_findings: 19`, or (b) keep
-  `info_count: 19` as-is but render the count breakdown in the
-  Summary section: `19 opportunities (0 warnings, 19 info — 2 actions
-  + 17 sub-workflow boundaries)`. Same number reaches the eye paired
-  with where to find the 17.
 
 ### A-6 — `tokens=` column shows estimated number for opaque prompts (false confidence — same pattern as closed F-04)
 
@@ -1346,23 +1318,6 @@ common-path, then JSON/lower-priority).
   `observed_models=` enumeration). Treat the IR-declared model as
   fallback only.
 
-### L-9 — A-1 (blocking-error duplicate message) confirmed at scale
-
-- **Severity**: `bug` (correctness)
-- **Triage**: `bug`. Same as A-1 — captured AGAIN in this case.
-- **What**: Captured baseline lines 20-22:
-  ```
-  1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-...'
-     fetch-youtube-mcp in fetch-source.pflow.md
-     In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-...'
-  ```
-  Same `<message>` → `<location>` → `<message-again>` pattern as
-  the lyrics-generator static case (12-01) and validator-08.
-- **Repro**: fixed reproduction; A-1 already covers this. The
-  finding is now locked in 3 baseline cases.
-- **Impact**: same as A-1. Reinforces priority of A-1 fix —
-  multiple regression gates lock the bug.
-
 ## L-meta. Trace recording — practical lessons
 
 - **Cost**: $2.31 (Gemini-flash) for end-to-end on lyrics-generator.
@@ -1415,95 +1370,135 @@ regress them.
 
 ---
 
-## F. Triage notes for the user (post-live-verification)
+## F. Triage outcome (verified against source 2026-05-08)
 
-**To fix BEFORE Task 160 starts** (real bugs locked as expected
-behavior — refactoring against the locked output would preserve the
-bug; live-verified):
+> Source-verified by triage agent. Each merge-block finding is grounded
+> at a specific file:line in `src/pflow/core/cache_analysis/`. Findings
+> classified noise (pure duplicates, self-downgraded) have been removed
+> from this file (L-9, A-4).
 
-- **A-1** — duplicate blocking-error message rendering. Live-confirmed
-  in validator-08 AND lyrics-generator trace (L-9 dupes A-1). Three
-  baseline cases lock the bug.
-- **A-6** (new) — `tokens=` column shows estimated number for opaque
-  prompts. Same false-confidence pattern as F-04 (closed for
-  `cacheable`). Honest-unmeasurable convention should extend.
-- **B-17** (new from live trace) — `(progress log §36)` reference
-  leaks into agent-facing analyzer Notes. Internal task-management
-  doc reference; agents have no access. Replace with self-contained
-  sentence.
-- **L-1** (CRITICAL — new from lyrics-generator trace) — Trace mode
-  discards observed_models when `default_model` not configured. Cost
-  projections render as `unavailable` even though trace has rich
-  cost data. Affects fresh-agent code path (the most common
-  first-time experience).
-- **L-2** (CRITICAL — live-env only) — Per-call rows show
-  IR-declared model instead of trace's observed model. Cost analysis
-  based on rendering can be wrong by 10× when IR and trace use
-  different providers. Not in captured fixture (clean-env shows
-  blank model) but reproducible live with `default_model` set.
-- **L-3** (live-env only) — "First-run delta: 1%" rendered while
-  `actually_paid_usd` vs `cost_without_caching` shows 49% savings.
-  Add a primary "actual savings" delta line for trace mode.
-- **L-10** (CRITICAL ARCHITECTURAL — Andreas surfaced this) — Trace
-  mode suppresses static findings (19 opportunities → 0; 17 cross-
-  workflow boundaries → hidden). Adding evidence reduces apparent
-  knowledge. The suppression gate is too coarse: cross-workflow
-  walker output and other IR-derived findings should NEVER be
-  suppressed by trace coverage status.
-- **L-11** — "Partial trace" misframes expected conditional
-  dispatch as incomplete. Workflow completed successfully end-to-
-  end with 253 LLM calls; 7 IR nodes were conditional branches
-  not taken for the raw-text input. The "partial" classification
-  triggers L-10's suppression cascade.
-- **L-12** — Per-call model column rendering doesn't read
-  `event.llm_call.model` from trace. Sharper framing of L-1 + L-2:
-  the data is in the trace; just not used for per-call rendering.
+### MERGE-BLOCK — fix before Task 160 starts (8 findings)
 
-**Doc correctness bugs** (not in captured baselines so don't gate
-Task 160; but agents reading the guide get wrong info):
+**Coordinated batch — single fix, single re-capture of `10-live-recordings/05-gemini-lyrics-generator`**:
 
-- **B-12** — `pflow guide caching` Anthropic min-tokens summary
-  omits 5+ models (Sonnet 4, Sonnet 3.7, Opus 4, Opus 4.1 in 1024
-  tier; Opus 4.5/4.6/4.7 in 4096 tier). One-time content fix; should
-  be done before merge if the guide is in v1 scope.
+- **L-11** — `_trace_coverage_for_rows` (`analyze.py:4019-4039`) returns
+  `"partial"` whenever any static row has `did_not_execute_in_trace`.
+  No distinction between "trace truncated" / "conditional branch not
+  taken" / "node never reachable for this input." Fix: split coverage
+  into orthogonal axes (final_status × trace_truncation × reachability)
+  so a successfully-completed workflow with conditional dispatch is not
+  classified as `partial`.
+- **L-10** — `_warnings_for_partial_trace` (`analyze.py:4048-4050`)
+  filters to `Severity.ERROR` only, dropping every IR-derived info
+  finding. Fix: filter only trace-derived findings (cache.discrepancy
+  and cost projections); IR-derived findings (cross-workflow renames,
+  shared-context-undeclared, etc.) must always pass through. The
+  current behavior is "more evidence → less knowledge" — the opposite
+  of the analyzer's contract.
+- **L-12 / L-2 / L-1** — `render_text.py:1063-1066`: per-call model
+  column uses `row.model` (IR-declared) and only shows `observed_models`
+  when `model_is_heterogeneous OR len(observed_models) > 1`. Single-
+  model rows render the IR's model even when the trace shows a different
+  one. Fix: in trace mode, prefer `observed_models[0]` for the per-call
+  column; fall back to `row.model` only when no observed. Same fix
+  resolves L-1 (cost projection should use observed_models when IR
+  resolution failed).
+- **L-3** — Add a primary "Actual savings (trace vs no-cache)" delta
+  line in trace mode. The data is in `actually_paid_usd` and
+  `cost_without_caching` — currently the rendered delta is the
+  hypothetical first-run/rerun pair, which can show "1%" while the
+  actual savings are 49%.
 
-**Defer** (UX warts; fixing them is improvement, not regression):
+**Independent fixes**:
 
-- All **B-** findings (lyrics-generator + workflow-header UX). Highest
-  agent-UX impact among the warts since lyrics-generator is the
-  load-bearing real-world case.
-- **C-1, C-3, C-4, C-5, C-6, C-7, C-8, C-9** (common-path agent UX).
-- **C-2** (no workflow path in errors) — narrowed; defer.
-- **A-2** float precision, **A-5** redundant fields (cosmetic).
+- **A-1** — `render_text.py:640-642` dedup check `action.message !=
+  action.headline` doesn't account for the headline-fallback at line
+  658 (`title = action.headline or action.message or action.warning_id`).
+  When `headline` is None, the title falls back to `message`, then the
+  body re-renders the message because `None != message`. Locked in 3
+  baseline cases (validator-08, lyrics-generator-static, lyrics-
+  generator-trace). Fix: skip the body when message equals the rendered
+  title, not just when message equals headline.
+- **A-6** — Apply the F-04 honest-unmeasurable convention to the
+  `tokens=` column. When `cacheable_data_source == "unavailable"` AND
+  the row is `opaque-prompt`, render `tokens= ?`. Same shape as the
+  existing `cacheable= ?` and `ratio= ?%` rendering.
+- **B-17** — Replace the `(progress log §36)` literal in the Gemini
+  telemetry note with a self-contained sentence. Internal task-doc
+  references should never appear in agent-facing output.
 
-**JSON-only findings** (per user's text-priority directive — defer):
+### MERGE-BLOCK doc-correctness fix (1 item)
 
-- All **D-** findings.
+- **B-12 + B-13** — `pflow guide caching` content corrections, batch
+  as one PR:
+  - B-12: replace inline Anthropic min-tokens summary at `caching.md:204`
+    with either a generated table from `MODEL_CAPABILITIES` or a complete
+    enumeration. Currently omits 5+ registered models per tier (Sonnet 4,
+    Sonnet 3.7, Opus 4, Opus 4.1 in 1024-tier; Opus 4.5/4.6/4.7 in
+    4096-tier).
+  - B-13: replace stale `~/.pflow/debug/trace.json` example at
+    `caching.md:71` with the actual hash-keyed schema, or recommend the
+    auto-load path first.
 
-**Pending producer-code verification**:
+### DEFER to v1.x (35 findings, kept in this file)
 
-- **A-3** — could be intentional union vocabulary or a real bug.
-  10-minute task: read `cost_estimation.py` to see if
-  `unavailable_reason="trace_coverage_partial"` is the universal
-  "trace not full" tag or whether it should be one of several values.
+All **B-** findings except B-17 / B-12 / B-13 — lyrics-generator UX
+warts (path repetition, rendering density, vocabulary inconsistency).
+Highest leverage for agent UX polish.
 
-**Resolved during live verification (no longer findings)**:
+All **C-** findings — common-path agent UX: bracketed catalog ID
+inconsistency, missing workflow path, see-also coverage gaps, magic-
+string vocab. Worth normalizing alongside Task 160's renderer
+restructure.
 
-- A-4 — was overcalled as a bug; the count is correct, the issue is
-  rendered-structure mismatch. Folded into B-section thinking; if
-  Andreas wants this fixed, the suggestion (split count breakdown in
-  Summary) still applies.
+**A-2, A-3, A-5** — JSON-shape warts (float precision, semantic
+inconsistency on `unavailable_reason`, redundant `unavailable_models`
+field). User-deprioritized; defer with the rest of D-section.
 
-**Confirmation needed from Andreas**:
+All **D-** findings — JSON shape; user-deprioritized.
 
-- **A-1**: is the doubled blocking-error message intended (e.g.,
-  "title=short summary; body=full message; here they coincide")? If
-  yes, downgrade to wart and make the title shorter for short-message
-  cases.
-- **B-9**: is surfacing non-cache validator errors under
-  `## Blocking errors` in `analyze-cache` output the right design?
-  The validator-unification fix made this happen; the question is
-  whether a renamed/split section header would help agents.
+**L-4, L-5, L-6, L-7, L-8** — discrepancy-note duplication, missing
+output token column, thousands-separator formatting, trace-fixture
+size. None lock incorrect behavior into baselines.
+
+### Removed as noise (not in this file anymore)
+
+- **L-9** — pure duplicate of A-1. The mutation contract is already
+  carried by A-1 across 3 baseline cases; a separate finding entry
+  added no information.
+- **A-4** — author downgraded in-line during live verification ("count
+  is correct, the issue is rendered-structure mismatch"). Folded into
+  B-section thinking; keeping as a separate "A-class bug" was
+  misleading.
+
+### Open questions for confirmation
+
+- **A-1 design intent**: is the doubled blocking-error message
+  intended (title=short summary, body=detailed message — they coincide
+  here because un-IDed validator errors have no headline)? If yes,
+  downgrade to wart and shorten the title for short-message cases.
+- **B-9 design intent**: is surfacing non-cache validator errors under
+  `## Blocking errors` in `analyze-cache` the right design? The
+  validator-unification fix made this happen; question is whether a
+  renamed/split section header would help agents triage.
+
+### Recommended fix order
+
+1. **L-10 + L-11 + L-12 + L-1 + L-2 + L-3 batch** — single coordinated
+   fix touching `analyze.py` (L-11 coverage classification, L-10
+   suppression filter) and `render_text.py` (L-12/L-2 per-call model,
+   L-3 actual-savings delta). Single re-capture of case 05.
+2. **A-1** — isolated render_text.py fix; re-capture validator-08 +
+   lyrics-generator static + lyrics-generator trace.
+3. **A-6** — render_text.py rendering rule for opaque-prompt tokens
+   column; re-capture lyrics-generator static + song-creator cases.
+4. **B-17** — single literal-string edit in cost_estimation.py or
+   wherever the Gemini telemetry note is composed; re-capture case 03.
+5. **B-12 + B-13** — doc PR; no baseline impact.
+
+Estimated: 4-6 hours of focused implementation including baseline
+re-captures and verification. The L-batch is the single highest-impact
+piece; everything else is independent and lower-risk.
 
 ---
 
@@ -1536,8 +1531,9 @@ Task 160; but agents reading the guide get wrong info):
   fired (likely implicit caching from prior runs). Confidence:
   `high_from_trace`, 71% rerun savings.
 - Real-world trace capture (surface 10 case 05 —
-  `live-gemini-lyrics-generator`): 9 findings (Section L: L-1
-  through L-9). Recording: $2.31, 9:40 wall clock, 253 LLM calls,
+  `live-gemini-lyrics-generator`): 8 retained findings (L-1 through
+  L-8, L-10, L-11, L-12; L-9 removed as pure dupe of A-1).
+  Recording: $2.31, 9:40 wall clock, 253 LLM calls,
   3 distinct Gemini models, 4 songs generated. Trace trimmed
   53MB → 12MB for committable size. Surfaced 3 critical bugs
   (L-1 trace discards observed_models, L-2 wrong model in per-call
@@ -1548,31 +1544,38 @@ Task 160; but agents reading the guide get wrong info):
   (C-1 through C-9).
 - Tier 3 (JSON shape): spot-read, 3 findings (D-1, D-2, D-3) —
   deferred per user's text-priority directive.
-- Bugs surfaced across all tiers: 14 findings (A-1, A-2, A-3, A-5,
-  A-6, B-12 doc bug, B-17 dead-link bug, L-1, L-2, L-3, L-9, L-10,
-  L-11, L-12) after A-4 was reclassified.
-- Total: **48 findings** (12 added during real-trace lyrics-generator
-  recording — including 3 surfaced by Andreas in post-recording
-  review, 5 added during gemini smoke recording, 4 added from guide
-  content audit, 3 added during initial live verification, 1
-  reclassified out of bug status, 25 from initial review).
+- Bugs surfaced across all tiers after triage cleanup (A-1, A-2, A-3,
+  A-5, A-6, B-12 doc bug, B-17 dead-link bug, L-1, L-2, L-3, L-10,
+  L-11, L-12). A-4 and L-9 removed as noise (see Section F).
+- Findings by section after cleanup: A=5, B=20, C=9, D=3, L=11 — total
+  **48 retained** (L-9 removed as pure dupe of A-1; A-4 removed as
+  self-downgraded; some original counts in earlier prose were
+  approximate).
 
-Bug-class to fix before Task 160: **9 code bugs** (A-1, A-6, B-17,
-L-1, L-2, L-3, L-10, L-11, L-12). L-10 is the most consequential —
-it's the architectural defect where adding trace evidence reduces
-the analyzer's apparent knowledge. L-11 + L-12 are the proximate
-causes of L-1 and L-10's incorrect behavior.
+Bug-class to fix before Task 160 — **8 code bugs**, source-verified
+during triage (A-1, A-6, B-17, L-1, L-2, L-3, L-10, L-11, L-12 — L-12
+counted with L-1/L-2 as the same root). L-10 is the most consequential:
+the architectural defect where adding trace evidence reduces the
+analyzer's apparent knowledge. L-11 is the proximate cause that
+triggers L-10's suppression cascade for normal conditional-dispatch
+workflows.
 
-Plus **1 doc bug** (B-12) that doesn't gate Task 160 but should be
-fixed before merge if `pflow guide caching` is in v1 scope.
+Plus **1 doc bug** (B-12, batched with B-13 stale example) that
+should be fixed before merge if `pflow guide caching` is in v1 scope.
 
-The audit took ~2.5 hours of reading + writing + live verification.
-Tier 1 captures (lyrics-generator) were the highest-yield by far
-(11 findings from 152 lines of output). Live verification was
-essential — it confirmed several findings, surfaced 3 new ones (A-6,
-B-9, B-10, B-11), and forced narrowing of others (B-1, C-2,
-A-3, A-4).
+**Source verification by triage agent (2026-05-08)**:
+- L-10: confirmed at `analyze.py:4048-4050` — `_warnings_for_partial_trace`
+  filters to ERROR severity only.
+- L-11: confirmed at `analyze.py:4019-4039` — `_trace_coverage_for_rows`
+  returns "partial" if any node has `did_not_execute_in_trace`.
+- L-12 / L-2: confirmed at `render_text.py:1063-1066` — single-observed-
+  model rows render the IR's model.
+- A-1: confirmed at `render_text.py:640-642 + 658` — title falls back
+  to message when no headline, then dedup misses.
+- A-3: confirmed at `analyze.py:3963-3968` — `unavailable_reason="trace_coverage_partial"`
+  fires whenever `trace_coverage != "complete"`, including when it's
+  "none". Real but JSON-only; deferred per text-priority directive.
 
-**Confidence**: high on B-section and C-section findings (live
-verified). Medium on A-1, A-2, A-5, A-6 (verifiable but not
-producer-code-verified). Low on A-3 pending producer-code read.
+**Confidence**: high on all merge-block findings (source-verified).
+High on B-section / C-section findings (live verified). Medium on
+remaining A-section warts (deferred to v1.x).

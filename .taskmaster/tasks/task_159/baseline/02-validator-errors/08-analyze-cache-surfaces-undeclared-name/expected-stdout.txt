@@ -16,7 +16,6 @@
 
   1. Node 'summarize' references undeclared cache chunk 'typo' in prompt_cache:.
      summarize
-     Node 'summarize' references undeclared cache chunk 'typo' in prompt_cache:.
 
 ## Recommended actions (ordered by impact)
 

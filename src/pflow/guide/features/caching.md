@@ -66,10 +66,13 @@ The `## Cache` block declares stable context shared across LLM calls. Each `prom
 Run `pflow analyze-cache` to find cache opportunities, predict savings, and check declarations:
 
 ```bash
-pflow analyze-cache workflow.pflow.md
+pflow analyze-cache workflow.pflow.md                    # auto-loads most recent matching trace
 pflow analyze-cache workflow.pflow.md --format=json
-pflow analyze-cache workflow.pflow.md --from-trace ~/.pflow/debug/trace.json
+pflow analyze-cache workflow.pflow.md --no-trace-autoload # skip auto-load; static analysis only
+pflow analyze-cache workflow.pflow.md --from-trace <path> # explicit trace (any path)
 ```
+
+Trace files live at `~/.pflow/debug/workflow-trace-<hash>-<name>-<timestamp>.json`; auto-load matches by workflow path, so the explicit `--from-trace` form is only needed when pointing at a trace from another workflow or location.
 
 Outputs include: per-node cache ratio, recommended actions, suggested ## Cache block (greenfield), warnings about misordered declarations, padding advisories.
 
@@ -201,7 +204,15 @@ Matching prose labels, exact model, and prefix ordering can help incidental prov
 
 ## Provider-Specific Notes
 
-- **Anthropic**: per-model minimum cache size (1024 tokens for Sonnet 4.5; 2048 for Sonnet 4.6 / Haiku 3.5; 4096 for Opus 4.5+, Haiku 4.5). Cache writes 1.25× (5-min) or 2× (1h); reads 0.1×.
+- **Anthropic**: per-model minimum cache size; rendered cache content below the threshold silently no-ops at the provider, so pflow emits `cache.below-min-tokens`. Thresholds (canonical source: `src/pflow/core/llm_capabilities.py`):
+
+  | Threshold | Models |
+  |---|---|
+  | 1024 tokens | Sonnet 4.5, Sonnet 4, Sonnet 3.7, Opus 4, Opus 4.1 |
+  | 2048 tokens | Sonnet 4.6, Haiku 3.5 |
+  | 4096 tokens | Opus 4.5, Opus 4.6, Opus 4.7, Haiku 4.5 |
+
+  Unknown models fall back to a 4096-token conservative floor. Cache writes cost 1.25× base (5-min TTL) or 2× base (1h TTL); reads cost 0.1× base.
 - **OpenAI**: automatic at ≥1024 tokens. Markers are no-ops; `prompt_cache_key` (auto-emitted) improves hit rate on parallel batches. `prompt_cache_retention: "24h"` is set on `- ttl: 1h` workflows.
 - **Gemini**: explicit caching via LiteLLM's `cachedContents`. Telemetry caveat — `cache_creation_input_tokens` is 0/absent even when caching is working; verify via `cache_read_input_tokens` on subsequent calls.
 
