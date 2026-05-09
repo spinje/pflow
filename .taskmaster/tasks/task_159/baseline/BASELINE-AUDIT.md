@@ -1,5 +1,30 @@
 # Baseline Audit — Task 159
 
+> **DEPRECATED 2026-05-09. Read `POLISH-PLAN.md` in this directory instead.**
+>
+> This file is the historical record of how Task 159's polish queue was
+> assembled. After source-grounded investigation of the post-merge-block
+> output, the open findings + new findings + complexity estimates were
+> consolidated into `POLISH-PLAN.md`, which is the forward plan for any
+> agent picking up polish work.
+>
+> Reasons this file is deprecated:
+> - Many findings here are now shipped (see merge-block list in the
+>   progress log; see Section F of this file for what was closed).
+> - Several findings I marked here as merge-block were source-verified
+>   into smaller fixes than originally framed (e.g. N-7 reframed from
+>   "analyzer doesn't detect" to "analyzer detects but doesn't project
+>   impact").
+> - New findings (N-1 through N-10) surfaced from a fresh-eyes read of
+>   the post-fix output that aren't in this file.
+> - The triage in Section F here is superseded by the structured fix
+>   queue in POLISH-PLAN.md, which has source-verified file:line
+>   evidence and pre-flight risk callouts.
+>
+> Keep this file for historical traceability. Don't act on it directly.
+>
+> ---
+>
 > Findings from auditing the 63 captured outputs at
 > `.taskmaster/tasks/task_159/baseline/` from the **AI-agent-user perspective**:
 > *if I were debugging my workflow and got this output, would it tell me
