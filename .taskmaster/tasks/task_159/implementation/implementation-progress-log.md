@@ -10027,3 +10027,44 @@ render_json.py, __init__.py}`, `src/pflow/mcp_server/tools/execution_tools.py`
   green on the lyrics-generator real-trace fixture.
 
 Closes N-1 + N-4 from POLISH-PLAN.md Cluster B.
+
+## 2026-05-09 — Task 159 — Cluster A: parent-grouped cross-workflow boundaries
+
+Restructured `## Sub-workflow boundaries` in `pflow analyze-cache` from a
+numbered list of N findings (~75 lines on lyrics-generator) to a parent-grouped
+fix-at-source layout (~22 lines). Renames source-dedup by
+`(parent_workflow, parent_value_expr, child_input_name)`; each unique rename
+lists its consumer `(child, line)` pairs, ordered by consumer count DESC.
+Prose-mismatches get a parallel parent-grouped sub-section after renames.
+
+Renderer-only fix in `render_text.py`. JSON, catalog, walker, and data model
+untouched (verified pre-design). 65/65 baselines pass; 3 real-world cases
+regenerated (75 insertions / 219 deletions).
+
+Critical findings (load-bearing for any future cross-workflow renderer work):
+
+1. **The plan's "two-pass grouping" couldn't be derived from real data.**
+   Source-dedup THEN boundary-grouping (the POLISH-PLAN's stated algorithm)
+   produces nothing useful when source renames have differing consumer sets,
+   which is the realistic case (lyrics-generator's 5 unique source renames
+   each cover different child sets). Single-axis source-dedup with
+   consumer-list rollup is the cleaner mental model and matches the user-
+   chosen "fix at source once" framing. Walked the actual `CrossWorkflowEdge`
+   data before coding to confirm.
+
+2. **`_CROSS_WORKFLOW_ALIGNMENT_IDS` is 2 IDs with DIFFERENT context
+   schemas.** `cache.cross-workflow-rename-detected` has 5 grouping keys
+   including `line_in_parent`; `cache.cross-workflow-prose-mismatch` is
+   keyed by `chunk_name` with no line. Cluster A grouping applies only to
+   renames; prose-mismatches need their own sub-section with their own
+   layout. The plan implied uniform handling — easy regression risk for
+   any future agent extending this section.
+
+3. **Static-batch fan-out vs dynamic-batch is invisible to the renderer.**
+   Lyrics-generator's "7 children at line 124" pattern is one static batch
+   fanning out (children share parent's `_source_line`); dynamic batches
+   (`items: ${...}`) yield 1 walker edge total. Both flow through the same
+   source-dedup key without special-casing — no batch-aware code needed in
+   the renderer.
+
+Closes B-2 + N-8 from POLISH-PLAN.md Cluster A.

@@ -900,97 +900,170 @@ def _label_for_model_state(model_state: object) -> str:
 def _render_cross_workflow(analysis: CacheAnalysis) -> str:
     """Render the "Sub-workflow boundaries" section.
 
-    Stage 0 (Task 159): findings are derived from ``analysis.warnings`` by
-    filtering on ``Diagnostic.id`` (no longer pre-stored on
-    ``CacheAnalysis.cross_workflow``). Each cross-workflow alignment finding
-    renders here EXCLUSIVELY — value-flow opportunities surface in
-    Recommended actions only (per Stage B Option d Mix; the
-    ``view_helpers._CROSS_WORKFLOW_ALIGNMENT_IDS`` filter keeps each finding
-    visible in exactly one section).
+    Renames are source-deduped: each unique
+    ``(parent_workflow, parent_value_expr, child_input_name)`` triple becomes
+    one entry that lists its consumer children. Multiple consumers of the
+    same logical rename (e.g. one parent value passed to N batch children
+    under the same input name) collapse to a single "fix at source"
+    recommendation. Prose-mismatches stay 1-per-finding (different schema —
+    keyed by ``chunk_name``); they render in a parent-grouped sub-section
+    after the renames.
 
-    Stage-1 final UX pass: numbered findings using the same headline + scope +
-    reason shape as Recommended actions, dropping the ``[cache.X]`` footer.
-    The section header tells the agent the category; the per-finding
-    headline + reason paragraph carries the discriminator without an ID
-    lookup. Section structure (parent → child header + line number) provides
-    the boundary scope; the catalog's ``headline_template`` provides the
-    action.
+    Cross-boundary value-flow opportunities surface in Recommended actions
+    only (filtered by ``view_helpers._CROSS_WORKFLOW_ALIGNMENT_IDS``).
     """
-    # Filter analysis.warnings by Diagnostic.id to recover the two alignment
-    # categories. Child cache-declaration findings render in Recommended
-    # actions, which is the agent's primary action list.
     rename_detections = [d for d in analysis.warnings if d.id == "cache.cross-workflow-rename-detected"]
     prose_mismatches = [d for d in analysis.warnings if d.id == "cache.cross-workflow-prose-mismatch"]
     if not (rename_detections or prose_mismatches):
         return ""
-    # Stage B.3 (Task 159): section narrows to alignment-only — rename +
-    # prose-mismatch findings (inherently boundary-shaped, not aggregable).
-    # Child cache-declaration opportunities are emitted in Recommended actions
-    # above. The cross-reference signposts where related findings live so an
-    # agent skimming this section knows.
+
     lines = [
         "## Sub-workflow boundaries",
         "",
-        "  Alignment between sub-workflows that share value names. Each finding",
-        "  is a place where prose labels diverge or where a value gets renamed",
-        "  across the boundary — fixing them lets cached bytes match across",
-        "  sub-workflows. (Cross-boundary value-flow opportunities appear in",
-        "  Recommended actions above.)",
-        "",
+        "  Prompt-cache hits need byte-exact matches across boundaries. Each",
+        "  finding below is a name or prose mismatch between a parent workflow",
+        "  and its child sub-workflow that blocks one. Fix at the source once",
+        "  to align every listed consumer.",
     ]
-    rank = 1
-    for diag in rename_detections:
-        lines.extend(_format_boundary_finding(diag, rank, scope_kind="rename"))
-        lines.append("")
-        rank += 1
-    for diag in prose_mismatches:
-        lines.extend(_format_boundary_finding(diag, rank, scope_kind="prose_mismatch"))
-        lines.append("")
-        rank += 1
-    # Drop trailing blank line.
-    while lines and lines[-1] == "":
-        lines.pop()
+
+    parents = sorted(
+        _collect_parent_paths(rename_detections, prose_mismatches),
+        key=_workflow_short_name,
+    )
+    for parent_path in parents:
+        parent_short = _workflow_short_name(parent_path)
+        parent_renames = [d for d in rename_detections if (d.context or {}).get("parent_workflow") == parent_path]
+        parent_prose = [d for d in prose_mismatches if (d.context or {}).get("parent_workflow") == parent_path]
+        if parent_renames:
+            lines.append("")
+            lines.append(f"  In {parent_short}:")
+            lines.extend(_render_renames_for_parent(parent_renames))
+        if parent_prose:
+            lines.append("")
+            lines.append(f"  Prose mismatches in {parent_short}:")
+            lines.extend(_render_prose_mismatches_for_parent(parent_prose))
+
     return "\n".join(lines)
 
 
-def _format_boundary_finding(diag: Diagnostic, rank: int, *, scope_kind: str) -> list[str]:
-    """Format one cross-workflow finding as headline + scope + reason.
+def _collect_parent_paths(*diag_lists: list[Diagnostic]) -> set[str]:
+    out: set[str] = set()
+    for diags in diag_lists:
+        for d in diags:
+            parent = (d.context or {}).get("parent_workflow")
+            if isinstance(parent, str) and parent:
+                out.add(parent)
+    return out
 
-    Layout mirrors Recommended actions:
-      <rank>. <headline>
-         <scope: parent → child  (via <node>, line N)>
-         <reason paragraph from diag.message>
 
-    No ``[id]`` footer. The catalog's ``headline_template`` carries the
-    action; ``diag.message`` carries the descriptive reason.
+def _render_renames_for_parent(diags: list[Diagnostic]) -> list[str]:
+    """Render the renames sub-block for one parent workflow.
+
+    Renames source-dedup by ``(parent_value_expr, child_input_name)``. Within
+    the parent, sort by consumer count DESC (highest fan-out first), tiebreak
+    alphabetical on source expression — surfaces the "biggest fix" first.
     """
-    ctx = diag.context or {}
-    parent = _workflow_short_name(str(ctx.get("parent_workflow", ctx.get("affected_workflow", ""))))
-    child = _workflow_short_name(str(ctx.get("child_workflow", "")))
+    groups: dict[tuple[str, str], list[tuple[str, int]]] = {}
+    for diag in diags:
+        ctx = diag.context or {}
+        source_expr = str(ctx.get("parent_value_expr", ""))
+        child_input = str(ctx.get("child_input_name", ""))
+        child_wf = str(ctx.get("child_workflow", ""))
+        try:
+            line = int(ctx.get("line_in_parent", 0))
+        except (TypeError, ValueError):
+            line = 0
+        groups.setdefault((source_expr, child_input), []).append((child_wf, line))
 
-    # Scope formatting depends on which finding type — different context keys
-    # are populated for each. Value-flow has a parent_node_id (via <node>);
-    # rename has line_in_parent (line N); prose-mismatch has neither.
-    if scope_kind == "value_flow":
-        via = diag.node_id or ctx.get("parent_node_id") or "?"
-        scope = f"{parent} → {child}  (via {via})"
-    elif scope_kind == "rename":
-        line = ctx.get("line_in_parent", "?")
-        scope = f"{parent} → {child}  (line {line})"
-    else:  # prose_mismatch
-        scope = f"{parent} → {child}"
+    sorted_keys = sorted(groups.keys(), key=lambda k: (-len(groups[k]), k[0]))
 
-    # Catalog-as-SSoT (see warning_catalog.resolve_headline_for) — works for
-    # both make_diagnostic-emitted and directly-constructed Diagnostics.
-    from .warning_catalog import resolve_headline_for
+    out: list[str] = []
+    for key in sorted_keys:
+        source_expr, child_input = key
+        out.append("")
+        out.append(f"    `{source_expr}` → `{child_input}`")
+        out.extend(_format_consumer_summary(groups[key]))
+    return out
 
-    headline = resolve_headline_for(diag)
-    title = headline or diag.message or (diag.id or "")
 
-    out = [f"  {rank}. {title}"]
-    out.append(f"     {scope}")
-    if diag.message and diag.message != headline:
-        out.extend(_indent_message(diag.message, prefix="     "))
+def _format_consumer_summary(consumers: list[tuple[str, int]]) -> list[str]:
+    """Format the "used by ..." block under a source-rename arrow line.
+
+    Three modes:
+      1 consumer:        ``used by chorus-chooser (line 97)``
+      same line for all: ``used by N children at line L:`` + names
+      multiple lines:    ``used by N children at lines L1, L2:`` + names
+    """
+    if len(consumers) == 1:
+        child_wf, line = consumers[0]
+        return [f"        used by {_workflow_short_name(child_wf)} (line {line})"]
+
+    seen: set[str] = set()
+    ordered_names: list[str] = []
+    for child_wf, _line in consumers:
+        name = _workflow_short_name(child_wf)
+        if name not in seen:
+            seen.add(name)
+            ordered_names.append(name)
+
+    distinct_lines = sorted({line for _, line in consumers})
+    if len(distinct_lines) == 1:
+        line_clause = f"line {distinct_lines[0]}"
+    else:
+        line_clause = "lines " + ", ".join(str(L) for L in distinct_lines)
+    header = f"        used by {len(ordered_names)} children at {line_clause}:"
+    return [header, *_wrap_csv(ordered_names, indent="        ", max_width=72)]
+
+
+def _wrap_csv(items: list[str], *, indent: str, max_width: int) -> list[str]:
+    """Wrap a comma-separated list so each line stays within ``max_width``.
+
+    Items render as ``a, b, c`` with no trailing comma. Each continuation
+    line carries the same ``indent`` as the first.
+    """
+    if not items:
+        return []
+    lines: list[str] = []
+    current = indent
+    for i, item in enumerate(items):
+        suffix = "," if i < len(items) - 1 else ""
+        chunk = item + suffix
+        if current == indent:
+            current = indent + chunk
+        elif len(current) + 1 + len(chunk) > max_width:
+            lines.append(current)
+            current = indent + chunk
+        else:
+            current = current + " " + chunk
+    if current != indent:
+        lines.append(current)
+    return lines
+
+
+def _render_prose_mismatches_for_parent(diags: list[Diagnostic]) -> list[str]:
+    """Render the prose-mismatch sub-block for one parent workflow.
+
+    Each prose-mismatch is keyed by ``(child_workflow, chunk_name)`` (no
+    line number on this finding type). Sorted by child basename then chunk.
+    """
+    sorted_diags = sorted(
+        diags,
+        key=lambda d: (
+            _workflow_short_name(str((d.context or {}).get("child_workflow", ""))),
+            str((d.context or {}).get("chunk_name", "")),
+        ),
+    )
+    out: list[str] = []
+    for diag in sorted_diags:
+        ctx = diag.context or {}
+        child_short = _workflow_short_name(str(ctx.get("child_workflow", "")))
+        chunk = str(ctx.get("chunk_name", ""))
+        parent_prose = str(ctx.get("parent_prose", ""))
+        child_prose = str(ctx.get("child_prose", ""))
+        out.append("")
+        out.append(f"    {child_short}, chunk `{chunk}`:")
+        out.append(f'        parent prose: "{parent_prose}"')
+        out.append(f'        child prose:  "{child_prose}"')
     return out
 
 

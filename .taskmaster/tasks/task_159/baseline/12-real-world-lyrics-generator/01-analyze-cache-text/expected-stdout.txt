@@ -35,79 +35,32 @@
 
 ## Sub-workflow boundaries
 
-  Alignment between sub-workflows that share value names. Each finding
-  is a place where prose labels diverge or where a value gets renamed
-  across the boundary — fixing them lets cached bytes match across
-  sub-workflows. (Cross-boundary value-flow opportunities appear in
-  Recommended actions above.)
+  Prompt-cache hits need byte-exact matches across boundaries. Each
+  finding below is a name or prose mismatch between a parent workflow
+  and its child sub-workflow that blocks one. Fix at the source once
+  to align every listed consumer.
 
-  1. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
-     song-creator → chorus-chooser  (line 97)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 97); same logical value has two names across the boundary
+  In song-creator:
 
-  2. Cross-workflow rename — `song-architecture.response` ↔ `architecture`
-     song-creator → chorus-chooser  (line 97)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `song-architecture.response` as input named `architecture` (line 97); same logical value has two names across the boundary
+    `creative-direction.response` → `creative_direction`
+        used by 7 children at lines 97, 124, 239:
+        chorus-chooser, review-emotional-architecture, review-ai-tells,
+        review-cliche, review-genre, review-accuracy, review-rhyme
 
-  3. Cross-workflow rename — `concept_brief` ↔ `creative_brief`
-     song-creator → chorus-chooser  (line 97)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md: parent passes `concept_brief` as input named `creative_brief` (line 97); same logical value has two names across the boundary
+    `song-architecture.response` → `song_architecture`
+        used by 4 children at lines 124, 239:
+        review-narrative, review-imagery, review-genre, review-rhyme
 
-  4. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
-     song-creator → review-emotional-architecture  (line 124)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
+    `write-lyrics.response` → `lyrics`
+        used by 4 children at line 124:
+        review-emotional-architecture, review-narrative, review-imagery,
+        review-stranger-summary
 
-  5. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
-     song-creator → review-emotional-architecture  (line 124)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 124); same logical value has two names across the boundary
+    `concept_brief` → `creative_brief`
+        used by chorus-chooser (line 97)
 
-  6. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
-     song-creator → review-narrative  (line 124)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
-
-  7. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
-     song-creator → review-narrative  (line 124)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary
-
-  8. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
-     song-creator → review-imagery  (line 124)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
-
-  9. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
-     song-creator → review-imagery  (line 124)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 124); same logical value has two names across the boundary
-
-  10. Cross-workflow rename — `write-lyrics.response` ↔ `lyrics`
-     song-creator → review-stranger-summary  (line 124)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md: parent passes `write-lyrics.response` as input named `lyrics` (line 124); same logical value has two names across the boundary
-
-  11. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
-     song-creator → review-ai-tells  (line 239)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
-
-  12. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
-     song-creator → review-cliche  (line 239)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
-
-  13. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
-     song-creator → review-genre  (line 239)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
-
-  14. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
-     song-creator → review-genre  (line 239)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary
-
-  15. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
-     song-creator → review-accuracy  (line 239)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
-
-  16. Cross-workflow rename — `song-architecture.response` ↔ `song_architecture`
-     song-creator → review-rhyme  (line 239)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `song-architecture.response` as input named `song_architecture` (line 239); same logical value has two names across the boundary
-
-  17. Cross-workflow rename — `creative-direction.response` ↔ `creative_direction`
-     song-creator → review-rhyme  (line 239)
-     <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md → <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md: parent passes `creative-direction.response` as input named `creative_direction` (line 239); same logical value has two names across the boundary
+    `song-architecture.response` → `architecture`
+        used by chorus-chooser (line 97)
 
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.

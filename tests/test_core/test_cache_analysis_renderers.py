@@ -2316,19 +2316,12 @@ def test_text_sub_workflow_cache_finding_emits_child_action_line() -> None:
 
 
 def test_text_cross_workflow_rename_finding_full_format() -> None:
-    """Stage-1 final UX pass: rename findings render as headline + scope + reason.
+    """Single-rename single-consumer renders as a parent-grouped entry.
 
-    Layout: rank line is the catalog headline (e.g. ``Cross-workflow rename
-    — `concept_brief` ↔ `creative_brief```), scope line is ``parent → child
-     (line N)``, reason paragraph is the descriptive message body.
-
-    Pre-fix: 4-line block with bullet ``→ Rename`` action + ``[cache.X]``
-    footer. Post-fix: catalog-driven headline + scope + reason. Same
-    Diagnostic data, restructured presentation.
-
-    Mutation test: revert ``_format_boundary_finding`` to drop the headline
-    source; this test fails because the discriminator-bearing rename arrow
-    (``↔``) disappears from the rank line.
+    Layout: parent header (``In <parent>:``) + arrow line
+    (`` `expr` → `name` ``) + consumer line (``used by <child> (line N)``).
+    No bracketed catalog ID, no global rank numbering — structural grouping
+    carries the hierarchy.
     """
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
@@ -2342,35 +2335,22 @@ def test_text_cross_workflow_rename_finding_full_format() -> None:
         parent_node_id="parent-step",
     )
     text = render_text(_make_analysis(warnings=[diag]))
-    # Headline rank line carries the rename arrow + both names.
-    assert "Cross-workflow rename" in text
-    assert "`concept_brief`" in text
-    assert "`creative_brief`" in text
-    # Scope line: parent → child  (line N).
-    assert "song-creator → chorus-chooser" in text
-    assert "(line 42)" in text
-    # Stage-1 UX pass: bullet ``→ Rename`` action and ``[cache.X]`` footer
-    # are gone — the headline carries the action and section context disambiguates.
-    assert "→ Rename" not in text
+    # Parent-grouped header anchors the section by source workflow.
+    assert "In song-creator:" in text
+    # Arrow line carries source expr and child input name as the discriminator.
+    assert "`concept_brief` → `creative_brief`" in text
+    # Consumer line names the child and the call-site line.
+    assert "used by chorus-chooser (line 42)" in text
+    # The bracketed catalog ID is not exposed.
     assert "[cache.cross-workflow-rename-detected]" not in text
 
 
 def test_text_cross_workflow_prose_mismatch_finding_full_format() -> None:
-    """Stage-1 final UX pass: prose-mismatch findings render as headline +
-    scope + reason.
+    """Prose-mismatches render in their own parent-grouped sub-section after
+    the rename block (different schema — keyed by ``chunk_name``, no line).
 
-    Layout: rank line is the catalog headline (``Cross-workflow prose
-    mismatch — align `concept` in both ## Cache blocks``), scope line is
-    ``parent → child`` (no ``(line N)`` for prose mismatches), reason
-    paragraph is the descriptive message body.
-
-    Pre-fix: 4-line block with ``Chunk `X```, ``→ Pick one prose label``
-    action + ``[cache.X]`` footer. Post-fix: catalog-driven headline +
-    scope + reason.
-
-    Mutation test: revert ``_format_boundary_finding`` to drop the headline
-    source; this test fails because the discriminator (chunk_name in the
-    headline) disappears from the rank line.
+    Layout: ``Prose mismatches in <parent>:`` header + per-finding entry with
+    child basename + chunk name + the two prose values labeled.
     """
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
@@ -2384,15 +2364,108 @@ def test_text_cross_workflow_prose_mismatch_finding_full_format() -> None:
         child_prose="Different prose",
     )
     text = render_text(_make_analysis(warnings=[diag]))
-    # Headline rank line carries the discriminator-bearing chunk name.
-    assert "Cross-workflow prose mismatch" in text
-    assert "`concept`" in text
-    # Scope line: parent → child (no `(line N)` for prose mismatch).
-    assert "song-creator → chorus-chooser" in text
-    # Stage-1 UX pass: ``→ Pick one prose label`` bullet + ``[cache.X]``
-    # footer are gone — the headline carries the action.
-    assert "→ Pick one prose label" not in text
+    # Sub-section header anchors the prose-mismatches under their parent.
+    assert "Prose mismatches in song-creator:" in text
+    # Entry shows child + chunk + both prose values labeled.
+    assert "chorus-chooser, chunk `concept`:" in text
+    assert 'parent prose: "Parent prose"' in text
+    assert 'child prose:  "Different prose"' in text
+    # The bracketed catalog ID is not exposed.
     assert "[cache.cross-workflow-prose-mismatch]" not in text
+
+
+def test_text_cross_workflow_renames_dedup_by_source() -> None:
+    """N children consuming the same logical rename collapse to ONE entry
+    listing all consumers (the "fix at source once" framing for N-8).
+
+    Construction: 7 rename diagnostics that share
+    ``(parent_workflow, parent_value_expr, child_input_name)`` and differ
+    only in ``child_workflow`` / ``line_in_parent`` — what the analyzer
+    emits when one parent batch fans the same renamed input out to N
+    children.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    children = [
+        ("/abs/chorus-chooser.pflow.md", 97),
+        ("/abs/review-emotional-architecture.pflow.md", 124),
+        ("/abs/review-ai-tells.pflow.md", 239),
+        ("/abs/review-cliche.pflow.md", 239),
+        ("/abs/review-genre.pflow.md", 239),
+        ("/abs/review-accuracy.pflow.md", 239),
+        ("/abs/review-rhyme.pflow.md", 239),
+    ]
+    diags = [
+        make_diagnostic(
+            "cache.cross-workflow-rename-detected",
+            parent_workflow="/abs/song-creator.pflow.md",
+            child_workflow=child_path,
+            parent_value_expr="creative-direction.response",
+            child_input_name="creative_direction",
+            line_in_parent=line,
+            parent_node_id="parent-step",
+        )
+        for child_path, line in children
+    ]
+    text = render_text(_make_analysis(warnings=diags))
+
+    # Single source-rename arrow line — not 7 of them.
+    assert text.count("`creative-direction.response` → `creative_direction`") == 1, (
+        f"expected source-deduped to one arrow line; got {text}"
+    )
+    # Consumer summary shows all N children and all distinct lines.
+    assert "used by 7 children at lines 97, 124, 239:" in text
+    for child_basename in (
+        "chorus-chooser",
+        "review-emotional-architecture",
+        "review-ai-tells",
+        "review-cliche",
+        "review-genre",
+        "review-accuracy",
+        "review-rhyme",
+    ):
+        assert child_basename in text
+
+
+def test_text_cross_workflow_renames_grouped_by_parent_with_consumer_lines() -> None:
+    """Multiple distinct renames at the same boundary render as separate
+    arrow lines under one parent header (each with its own consumer line).
+
+    Construction: 3 different
+    ``(parent_value_expr, child_input_name)`` pairs at the same
+    ``(parent_workflow, child_workflow, line_in_parent)`` — the multi-rename
+    case (B-2): three input renames on one workflow node call.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    pairs = [
+        ("creative-direction.response", "creative_direction"),
+        ("song-architecture.response", "architecture"),
+        ("concept_brief", "creative_brief"),
+    ]
+    diags = [
+        make_diagnostic(
+            "cache.cross-workflow-rename-detected",
+            parent_workflow="/abs/song-creator.pflow.md",
+            child_workflow="/abs/chorus-chooser.pflow.md",
+            parent_value_expr=expr,
+            child_input_name=name,
+            line_in_parent=97,
+            parent_node_id="parent-step",
+        )
+        for expr, name in pairs
+    ]
+    text = render_text(_make_analysis(warnings=diags))
+
+    # All 3 distinct arrow lines render under the single parent header.
+    assert "In song-creator:" in text
+    for expr, name in pairs:
+        assert f"`{expr}` → `{name}`" in text
+    # Each rename has its own single-consumer line.
+    assert text.count("used by chorus-chooser (line 97)") == 3
+    # No global ranking numbers (numbered list dropped in favor of grouping).
+    assert "1. " not in text
+    assert "2. " not in text
 
 
 # ---------------------------------------------------------------------------
