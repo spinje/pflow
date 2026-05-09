@@ -340,7 +340,234 @@ def test_sub_workflow_cache_undeclared_emits_for_reused_child_input(monkeypatch:
     assert diag.context["child_input_name"] == "direction"
     assert diag.context["node_count"] == 2
     assert diag.context["affected_workflow"] == "<inline>"
+    # N-7 (Cluster C): the message body names the affected child LLM nodes
+    # inline so agents can connect rec → impact without scanning the per-call
+    # table. Mutation contract: drop the CSV append from the catalog template
+    # OR clear ``child_node_ids`` on the candidate, this fails.
+    assert diag.context["child_node_ids_csv"] == "`use-input`, `review-input`"
+    assert "(`use-input`, `review-input`)" in diag.message
     assert "sub-workflows do not inherit" in diag.message
+    # N-7 honest-unmeasurable: no memo, no trace, model unpriced. ``savings_usd``
+    # MUST be None — never fabricate. Mutation contract: change
+    # ``_project_sub_workflow_cache_savings`` to return ``0.0`` instead of None
+    # when grounding is missing → this fails.
+    assert diag.context["savings_usd"] is None
+
+
+def test_sub_workflow_cache_undeclared_savings_populated_from_memo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N-7 (Cluster C): when the parent's value lives in memo and the affected
+    child rows are priced, ``savings_usd`` projects a positive figure.
+
+    Mutation contract: revert ``_project_sub_workflow_cache_savings`` to always
+    return None → this fails.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    # The autouse ``deterministic_tokens`` fixture patches ``_input_rate`` to
+    # always return None for determinism — override locally to exercise the
+    # priced path. Mirrors the pattern at line 178 etc.
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${creative.direction}"}},
+            },
+        ]
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    # Seed memo for the parent's flowing value. The ref ``creative.direction``
+    # roots on node id ``creative``; the analyzer's memo lookup retrieves the
+    # full output dict and applies the dotted-path tail.
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="creative-key",
+        node_id="creative",
+        workflow_path="parent.pflow.md",
+        action="default",
+        output={"direction": "shared concept content " * 200},
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=cache)
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is not None
+    assert diag.context["savings_usd"] > 0.0
+
+
+def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N-7 (Cluster C): when memo is empty but trace recorded the parent's
+    output, the analyzer falls back to trace data for the token estimate. This
+    closes the first-encounter case (agent runs ``pflow analyze-cache --from-trace``
+    without prior ``pflow run`` to populate memo).
+
+    Mutation contract: drop the trace fallback in ``_estimate_parent_value_tokens``
+    → this fails (savings drops to None because memo is empty).
+    """
+    # See sibling test for the rationale on overriding the autouse fixture.
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${creative.direction}"}},
+            },
+        ]
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    # Synthetic trace with the parent's recorded ``node_output`` for ``creative``
+    # under the parent workflow path. The analyzer's trace-fallback walker
+    # filters on ``(workflow_path, node_id)`` to find this event.
+    import json as _json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        trace_path = Path(tmpdir) / "trace.json"
+        trace_path.write_text(
+            _json.dumps({
+                "format_version": "2.2.0",
+                "workflow_path": "parent.pflow.md",
+                "final_status": "success",
+                "nodes": [
+                    {
+                        "node_id": "creative",
+                        "node_type": "LLMNode",
+                        "node_output": {"direction": "shared concept content " * 200},
+                        "duration_ms": 100,
+                        "success": True,
+                        "cached": False,
+                    },
+                    {
+                        "node_id": "child-call",
+                        "node_type": "WorkflowNode",
+                        "duration_ms": 200,
+                        "success": True,
+                        "cached": False,
+                        "sub_workflow_events": [],
+                    },
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        result = analyze(
+            parent_ir,
+            workflow_path="parent.pflow.md",
+            auto_load_trace=False,
+            memo_cache=None,
+            trace_path=trace_path,
+        )
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is not None
+    assert diag.context["savings_usd"] > 0.0
+
+
+def test_sub_workflow_cache_undeclared_savings_none_when_unpriced_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N-7 honest-unmeasurable: even with memo populated, an unpriced model
+    means we can't compute savings. Returns None — never fabricate.
+
+    The autouse ``deterministic_tokens`` fixture patches ``_input_rate`` to
+    always return None, simulating an unpriced model regardless of the
+    declared name. The mutation contract: drop the ``if rate is None: return
+    None`` guard in ``_estimate_token_savings_usd`` → this fails.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${creative.direction}"}},
+            },
+        ]
+    }
+    # ``mock-fake-model`` is intentionally absent from LiteLLM's pricing table.
+    child_ir = {
+        "nodes": [
+            {"id": "draft", "type": "llm", "model": "mock-fake-model", "params": {"prompt": "Draft ${concept}"}},
+            {"id": "review", "type": "llm", "model": "mock-fake-model", "params": {"prompt": "Review ${concept}"}},
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="creative-key",
+        node_id="creative",
+        workflow_path="parent.pflow.md",
+        action="default",
+        output={"direction": "shared concept content " * 200},
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=cache)
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is None
 
 
 def test_sub_workflow_cache_undeclared_suppresses_when_no_llm_consumers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1763,6 +1990,7 @@ def test_dedupe_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow() ->
         child_workflow="child.pflow.md",
         child_input_name="concept",
         child_count=2,
+        child_node_ids=("a", "b"),
     )
     candidate_b = _SubWorkflowCacheCandidate(
         parent_workflow="zulu-parent.pflow.md",
@@ -1772,6 +2000,7 @@ def test_dedupe_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow() ->
         child_workflow="child.pflow.md",
         child_input_name="concept",
         child_count=2,
+        child_node_ids=("a", "b"),
     )
 
     # Either order in → same winner out (alpha-parent < zulu-parent lex).

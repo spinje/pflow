@@ -2240,6 +2240,7 @@ def _make_sub_workflow_cache_diag(
         child_input_name=child_input_name,
         parent_node_id=node_id,
         line_in_parent=0,
+        child_node_ids_csv="`child-llm-a`, `child-llm-b`",
     )
 
 

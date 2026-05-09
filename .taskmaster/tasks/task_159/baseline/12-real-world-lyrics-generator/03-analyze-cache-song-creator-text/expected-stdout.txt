@@ -18,7 +18,7 @@
 
   1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  savings unavailable
      chorus-chooser.pflow.md
-     `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there. Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      → In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
      → Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
 

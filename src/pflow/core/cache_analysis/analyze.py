@@ -679,7 +679,12 @@ def analyze(
     # Stage 0: walker now returns (graph_info, findings). Findings flow into
     # ``warnings`` (single source of truth); renderers categorize at output
     # time by filtering on ``Diagnostic.id``.
-    cross_findings, cross_diagnostics = _build_cross_workflow_findings(cw_result=cw_result, notes=notes)
+    cross_findings, cross_diagnostics = _build_cross_workflow_findings(
+        cw_result=cw_result,
+        notes=notes,
+        per_call_rows=per_call_rows,
+        ctx=ctx,
+    )
     warnings.extend(cross_diagnostics)
     if trace_data is not None:
         warnings.extend(
@@ -3049,6 +3054,8 @@ def _build_cross_workflow_findings(
     *,
     cw_result: Any,
     notes: list[str],
+    per_call_rows: list[PerCallRow],
+    ctx: AnalysisContext,
 ) -> tuple[CrossWorkflowFindings, list[Diagnostic]]:
     """Run the F1.3 walker and emit rename / prose-mismatch / value-flow diagnostics.
 
@@ -3106,7 +3113,15 @@ def _build_cross_workflow_findings(
         if candidate is not None:
             sub_workflow_cache_candidates.append(candidate)
 
-    sub_workflow_cache_diags = _emit_sub_workflow_cache_findings(sub_workflow_cache_candidates)
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow] = {
+        (row.workflow_path, row.node_path): row for row in per_call_rows
+    }
+    sub_workflow_cache_diags = _emit_sub_workflow_cache_findings(
+        sub_workflow_cache_candidates,
+        rows_by_node_path=rows_by_node_path,
+        ctx=ctx,
+        cw_result=cw_result,
+    )
 
     findings: list[Diagnostic] = [*rename_diags, *prose_mismatches, *sub_workflow_cache_diags]
     return (CrossWorkflowFindings(boundaries_analyzed=len(edges)), findings)
@@ -3154,6 +3169,7 @@ class _SubWorkflowCacheCandidate:
     child_workflow: str
     child_input_name: str
     child_count: int
+    child_node_ids: tuple[str, ...]
 
 
 def _sub_workflow_cache_candidate(
@@ -3179,11 +3195,11 @@ def _sub_workflow_cache_candidate(
     if edge.child_input_name in child_declared:
         return None
 
-    child_count = _count_llm_nodes_referencing_path(
+    child_node_ids = _collect_llm_nodes_referencing_path(
         irs_by_workflow.get(edge.child_workflow, {}),
         edge.child_input_name,
     )
-    if child_count < 2:
+    if len(child_node_ids) < 2:
         return None
 
     return _SubWorkflowCacheCandidate(
@@ -3193,7 +3209,8 @@ def _sub_workflow_cache_candidate(
         line_in_parent=edge.line_in_parent,
         child_workflow=edge.child_workflow,
         child_input_name=edge.child_input_name,
-        child_count=child_count,
+        child_count=len(child_node_ids),
+        child_node_ids=tuple(child_node_ids),
     )
 
 
@@ -3220,21 +3237,222 @@ def _dedupe_sub_workflow_cache_candidates(
     return [by_target[key] for key in sorted(by_target)]
 
 
+def _resolve_value_in_workflow_memo(
+    ref: str,
+    *,
+    workflow_path: str,
+    ctx: AnalysisContext,
+) -> Any | None:
+    """Resolve ``ref`` against memo cache scoped to a specific workflow path.
+
+    Cross-workflow analog to ``AnalysisContext._resolve_from_memo`` (which
+    keys on ``self.workflow_path``). For sub-workflow boundary findings the
+    parent value lives in the parent workflow, not the root.
+    """
+    if ctx.memo_cache is None:
+        return None
+    root = TemplateResolver.extract_root_node_id(ref)
+    if not root:
+        return None
+    try:
+        latest = ctx.memo_cache.get_latest_for_node(root, workflow_path=workflow_path)
+    except Exception:
+        logger.debug("memo_cache.get_latest_for_node failed for %s in %s", ref, workflow_path, exc_info=True)
+        return None
+    if latest is None:
+        return None
+    output, _created_at = latest
+    if not isinstance(output, dict):
+        return None
+    try:
+        resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
+    except Exception:
+        logger.debug("memo resolve failed for %s in %s", ref, workflow_path, exc_info=True)
+        return None
+    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
+        return None
+    return _normalize_empty(resolved)
+
+
+def _trace_node_output_for(
+    node_id: str,
+    *,
+    workflow_path: str,
+    ctx: AnalysisContext,
+    cw_result: Any,
+) -> dict[str, Any] | None:
+    """Latest event output for ``(workflow_path, node_id)`` from trace.
+
+    Last match wins (loop-recovery semantics — ``workflow_trace.py`` uses the
+    final event per node id as the canonical "current state"). Prefers
+    ``event["node_output"]`` (full namespaced dict — supports dotted paths)
+    over ``event["llm_response"]`` (literal string for ``${node.response}``
+    refs on LLM nodes that didn't write a structured output).
+    """
+    if ctx.trace is None:
+        return None
+    edges = _edge_child_paths(cw_result)
+    output: dict[str, Any] | None = None
+    for we in ctx.trace.walk(edges=edges, workflow_path=ctx.workflow_path):
+        if we.workflow_path != workflow_path or we.event.get("node_id") != node_id:
+            continue
+        event_output = we.event.get("node_output")
+        if isinstance(event_output, Mapping):
+            output = dict(event_output)
+            continue
+        llm_response = we.event.get("llm_response")
+        if isinstance(llm_response, str):
+            output = {"response": llm_response}
+    return output
+
+
+def _resolve_value_in_workflow_trace(
+    ref: str,
+    *,
+    workflow_path: str,
+    ctx: AnalysisContext,
+    cw_result: Any,
+) -> Any | None:
+    """Resolve ``ref`` against trace data scoped to ``workflow_path``.
+
+    Walker attribution: ``TraceTree.walk(edges=...)`` threads workflow_path
+    via the cross-workflow edge map for sub-workflows / batch items; we
+    filter on ``we.workflow_path == workflow_path AND we.event['node_id']
+    == root`` to find the parent's event.
+    """
+    root = TemplateResolver.extract_root_node_id(ref)
+    if not root:
+        return None
+    output = _trace_node_output_for(root, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
+    if output is None:
+        return None
+    try:
+        resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
+    except Exception:
+        logger.debug("trace resolve failed for %s in %s", ref, workflow_path, exc_info=True)
+        return None
+    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
+        return None
+    return _normalize_empty(resolved)
+
+
+def _estimate_parent_value_tokens(
+    ref: str,
+    *,
+    workflow_path: str,
+    model: str,
+    ctx: AnalysisContext,
+    cw_result: Any,
+) -> int | None:
+    """Tokens for the parent value flowing across a sub-workflow boundary.
+
+    Tier 1: memo cache (cross-workflow scoped).
+    Tier 2: trace data fallback — agents who ran the workflow once but lack
+    persisted memo (e.g., the baseline harness) still get a real number.
+    Tier 3: ``None`` (honest unmeasurable — never fabricate).
+
+    Coalesce expressions (``${a ?? b}``) are not handled — too ambiguous
+    which operand sourced the value at runtime; returning None keeps the
+    rest of the projection honest.
+    """
+    if "??" in ref:
+        return None
+    value = _resolve_value_in_workflow_memo(ref, workflow_path=workflow_path, ctx=ctx)
+    if value is None:
+        value = _resolve_value_in_workflow_trace(ref, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
+    if value is None:
+        return None
+    return estimate_tokens(model, deterministic_serialize(value))[0]
+
+
+def _project_sub_workflow_cache_savings(
+    candidate: _SubWorkflowCacheCandidate,
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
+    ctx: AnalysisContext,
+    cw_result: Any,
+) -> float | None:
+    """Sum projected per-run cache-read savings across the affected child nodes.
+
+    Returns None when:
+    - any affected child row is missing from per-call data
+    - any affected row's model is unpriced
+    - the parent's flowing value is unmeasurable (memo + trace both empty)
+
+    The renderer's ``_format_savings_usd`` tri-state handles sub-cent
+    rendering — this helper does not apply its own threshold.
+    """
+    if not candidate.child_node_ids:
+        return None
+    first_row = rows_by_node_path.get((candidate.child_workflow, candidate.child_node_ids[0]))
+    if first_row is None or not first_row.model:
+        return None
+    tokens = _estimate_parent_value_tokens(
+        candidate.parent_value_expr,
+        workflow_path=candidate.parent_workflow,
+        model=first_row.model,
+        ctx=ctx,
+        cw_result=cw_result,
+    )
+    if tokens is None:
+        return None
+    total = 0.0
+    for node_id in candidate.child_node_ids:
+        row = rows_by_node_path.get((candidate.child_workflow, node_id))
+        if row is None or not row.model:
+            return None
+        calls = row.observed_call_count or 1
+        savings = _estimate_token_savings_usd(row.model, tokens, calls)
+        if savings is None:
+            return None
+        total += savings
+    return total
+
+
+def _format_child_node_ids_csv(node_ids: tuple[str, ...], *, max_inline: int = 4) -> str:
+    """Backtick-quoted comma-separated list with ``+N more`` truncation.
+
+    Mirrors ``warning_catalog._format_chunks_short`` but lives here because
+    the helper is only used by the sub-workflow cache emit site. ``max_inline``
+    defaults to 4 — node identifiers are usually short enough that 4 inline
+    reads cleanly without overwhelming the recommendation body.
+    """
+    if not node_ids:
+        return ""
+    ids = list(node_ids)
+    if len(ids) <= max_inline:
+        return ", ".join(f"`{n}`" for n in ids)
+    head = ", ".join(f"`{n}`" for n in ids[:max_inline])
+    return f"{head} +{len(ids) - max_inline} more"
+
+
 def _emit_sub_workflow_cache_findings(
     candidates: list[_SubWorkflowCacheCandidate],
+    *,
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
+    ctx: AnalysisContext,
+    cw_result: Any,
 ) -> list[Diagnostic]:
-    """Emit child-scoped diagnostics for missing sub-workflow cache declarations."""
+    """Emit child-scoped diagnostics for missing sub-workflow cache declarations.
+
+    Per-recommendation savings are projected via
+    ``_project_sub_workflow_cache_savings`` (tokens × calls × rate × 0.9
+    summed across affected child LLM nodes; None when grounding is missing).
+    The ``child_node_ids_csv`` field names the affected nodes inline so
+    agents can connect the recommendation to the per-call table without
+    cross-referencing manually.
+    """
     diagnostics: list[Diagnostic] = []
     for candidate in _dedupe_sub_workflow_cache_candidates(candidates):
         child_basename = (
             candidate.child_workflow.rsplit("/", 1)[-1] if "/" in candidate.child_workflow else candidate.child_workflow
         )
+        savings_usd = _project_sub_workflow_cache_savings(candidate, rows_by_node_path, ctx, cw_result)
         diagnostics.append(
             make_diagnostic(
                 "cache.sub-workflow-cache-undeclared",
                 node_count=candidate.child_count,
                 affected_workflow=candidate.child_workflow,
-                savings_usd=None,
+                savings_usd=savings_usd,
                 parent_workflow=candidate.parent_workflow,
                 child_workflow=candidate.child_workflow,
                 child_workflow_basename=child_basename,
@@ -3242,42 +3460,52 @@ def _emit_sub_workflow_cache_findings(
                 child_input_name=candidate.child_input_name,
                 parent_node_id=candidate.parent_node_id,
                 line_in_parent=candidate.line_in_parent,
+                child_node_ids_csv=_format_child_node_ids_csv(candidate.child_node_ids),
             )
         )
     return diagnostics
 
 
-def _count_llm_nodes_referencing_path(ir: dict[str, Any], template_path: str) -> int:
-    """Count LLM nodes whose ``params.prompt`` references ``${template_path}``.
+def _collect_llm_nodes_referencing_path(ir: dict[str, Any], template_path: str) -> list[str]:
+    """LLM node ids whose ``params.prompt`` references ``${template_path}``.
 
-    Uses the template-pattern walker to handle both bare references
-    (``${X}``) and dotted-path references (``${X.field}``, ``${X[0]}``).
-    For coalesce expressions (``${a ?? b}``), each operand is checked
-    independently — symmetric with ``_dynamic_before_static_warnings``.
+    Source-order; each LLM node listed at most once. Uses the template-pattern
+    walker to handle both bare references (``${X}``) and dotted-path references
+    (``${X.field}``, ``${X[0]}``). For coalesce expressions (``${a ?? b}``),
+    each operand is checked independently — symmetric with
+    ``_dynamic_before_static_warnings``.
+
+    Callers compute count via ``len(...)`` when they need the count. The list
+    flows through ``_SubWorkflowCacheCandidate.child_node_ids`` so the
+    ``cache.sub-workflow-cache-undeclared`` recommendation can both name the
+    affected nodes inline and project per-node cache-read savings.
     """
+    ids: list[str] = []
     if not isinstance(ir, dict):
-        return 0
+        return ids
     nodes = ir.get("nodes")
     if not isinstance(nodes, list):
-        return 0
-    count = 0
+        return ids
     for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "llm":
             continue
         prompt = node.get("params", {}).get("prompt", "")
         if not isinstance(prompt, str):
             continue
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not node_id or node_id in ids:
+            continue
         for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
             for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
                 # Match exact path OR dotted-prefix (``${creative.direction}``
                 # references the ``creative`` chunk identifier when keyed by root).
                 if operand == template_path or operand.startswith(f"{template_path}."):
-                    count += 1
+                    ids.append(node_id)
                     break
             else:
                 continue
-            break  # each LLM node counted at most once
-    return count
+            break  # each LLM node listed at most once
+    return ids
 
 
 def _items_by_name(items: tuple[dict[str, Any], ...]) -> dict[str, dict[str, Any]]:

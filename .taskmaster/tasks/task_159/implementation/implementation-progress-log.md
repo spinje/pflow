@@ -10162,3 +10162,68 @@ files. 6 baselines drifted, all strict improvements.
   qualifier) when no cache-domain ERRORs are present.
 
 Closes L-5 + N-10 + B-3 + B-4 from POLISH-PLAN.md Tier 1.
+
+## 2026-05-09 — Task 159 — Cluster C (N-7): sub-workflow recommendation impact
+
+`cache.sub-workflow-cache-undeclared` now names the affected child LLM
+nodes inline (`(`score-choruses`, `select-chorus`)`) and projects a
+`savings_usd` figure when the parent value resolves through memo or
+trace. The renderer's existing tri-state flips `"savings unavailable"`
+→ `"saves ~$X.XX/run"` automatically; `(ordered by impact)` qualifier
+auto-fires once any recommendation carries positive savings.
+
+Token estimation: `_estimate_parent_value_tokens` tries memo first
+(cross-workflow scoped via new `_resolve_value_in_workflow_memo`
+mirroring `AnalysisContext._resolve_from_memo` but parameterized on
+workflow_path), falls back to trace via new `_trace_node_output_for`
+walking `tree.walk(edges=..., workflow_path=ctx.workflow_path)` and
+filtering on `(workflow_path, node_id)`. Last match wins (loop-recovery
+semantics). Coalesce refs (`${a ?? b}`) return None — too ambiguous
+to disambiguate operands at projection time.
+
+Walker upstream: `_count_llm_nodes_referencing_path` →
+`_collect_llm_nodes_referencing_path` (returns `list[str]`; callers
+compute count via `len`). `_SubWorkflowCacheCandidate` gains
+`child_node_ids: tuple[str, ...]`. `_build_cross_workflow_findings`
+takes `per_call_rows + ctx`, builds `rows_by_node_path` keyed by
+`(workflow_path, node_id)`, threads to emit. Catalog template appends
+`({child_node_ids_csv})` after the count.
+
+### Honest unmeasurable on lyrics-generator
+
+The canonical lyrics-generator capture's savings stay `unavailable`
+because `concept` enters song-creator as a **workflow-input
+passthrough**, not a node output — neither memo (only stores node
+outputs) nor `_trace_node_output_for` (looks for events with
+`node_id == root`) finds it. The named-consumer-nodes part DOES fire
+for this case (one line changed: the affected nodes appear inline).
+The dollar tag would fire for any boundary where the parent value
+roots on a node — verified end-to-end by
+`test_sub_workflow_cache_undeclared_savings_populated_from_memo`
+and `..._from_trace`. The input-passthrough fallback (read
+`event.node_params.inputs[child_input_name]` from the parent
+workflow-node event) is a future ~30 LOC follow-up; deliberately
+deferred — honest unmeasurable is the load-bearing convention.
+
+### Tests + verification
+
+4 new per-id-emission tests with verified mutation contracts:
+- `..._emits_for_reused_child_input` extended with CSV + savings None
+  assertions.
+- `..._savings_populated_from_memo` (memo populated → savings > 0).
+- `..._savings_populated_from_trace` (trace fallback when memo empty).
+- `..._savings_none_when_unpriced_model` (autouse `_input_rate=None`
+  fixture covers; mutation: drop the rate-None guard fails).
+
+Synthetic-fixture helpers updated to set `child_node_ids_csv`:
+`_make_sub_workflow_cache_diag` (renderers), `_kwargs_for` (per-id
+coverage), direct `make_diagnostic` call + `_minimal_context_kwargs`
+(warnings).
+
+`tests/test_core/test_sub_workflow_resolver.py` — caller renamed +
+`assert consumers == 1` → `assert len(consumers) == 1`.
+
+6,425 tests pass (+4). `make check` clean. 65/65 baselines pass; 5
+regenerated (3 text + 2 JSON) as strict-improvement diffs.
+
+Closes N-7 from POLISH-PLAN.md Cluster C.

@@ -300,13 +300,13 @@ def test_resolve_sub_workflow_cross_workflow_walker_sees_resolved_prompts(tmp_pa
 
     Production-shape regression gate that the existing synthetic-IR walker
     tests can't catch. Pre-fix, the cross-workflow walker stored unresolved
-    child IRs in ``irs_by_workflow``; ``_count_llm_nodes_referencing_path``
+    child IRs in ``irs_by_workflow``; ``_collect_llm_nodes_referencing_path``
     saw the file-path string instead of the prompt content; cross-boundary
     findings to file-ref children silently dropped to zero on every
     real-world workflow that follows the documented external-prompt-file
     pattern.
     """
-    from pflow.core.cache_analysis.analyze import _count_llm_nodes_referencing_path
+    from pflow.core.cache_analysis.analyze import _collect_llm_nodes_referencing_path
     from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.execution.workflow_resolver import resolve_workflow
 
@@ -378,10 +378,10 @@ Invokes the child sub-workflow.
     assert len(result.edges) == 1
     edge = result.edges[0]
     child_ir = result.irs_by_workflow.get(edge.child_workflow, {})
-    consumers = _count_llm_nodes_referencing_path(child_ir, edge.child_input_name)
-    assert consumers == 1, (
+    consumers = _collect_llm_nodes_referencing_path(child_ir, edge.child_input_name)
+    assert len(consumers) == 1, (
         "Cross-workflow walker child IR is not file-resolved. "
-        "_count_llm_nodes_referencing_path returned 0 because the LLM "
+        "_collect_llm_nodes_referencing_path returned 0 because the LLM "
         "node's prompt is still the literal './child.prompt.md' string "
         "instead of the inlined content with its ${shared_value} reference. "
         "This regression silently dropped every cross-boundary finding on "

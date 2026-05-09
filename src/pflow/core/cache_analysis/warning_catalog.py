@@ -134,9 +134,9 @@ _UNUSED_CHUNK_MESSAGE = (
 _SHARED_CONTEXT_WORKFLOW_TEMPLATE = "Used by {node_count} LLM nodes. Chunks: {shared_chunks_csv}.{savings_clause}"
 _SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = (
     "`{parent_value_expr}` flows into `{child_workflow_basename}` as "
-    "`{child_input_name}` and is used by {node_count} LLM nodes there. Add "
-    "`{child_input_name}` to that sub-workflow's ## Cache; sub-workflows do "
-    "not inherit the parent cache block."
+    "`{child_input_name}` and is used by {node_count} LLM nodes there "
+    "({child_node_ids_csv}). Add `{child_input_name}` to that sub-workflow's "
+    "## Cache; sub-workflows do not inherit the parent cache block."
 )
 
 
@@ -260,6 +260,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("node_count", int),
             ("affected_workflow", str),
             ("savings_usd", float),
+            ("child_node_ids_csv", str),
         ),
         suggestions_template=(
             "In {child_workflow}, add a ## Cache chunk for `${{{child_input_name}}}`.",
