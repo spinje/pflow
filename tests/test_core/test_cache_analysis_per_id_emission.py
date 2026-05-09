@@ -676,6 +676,218 @@ def test_sub_workflow_cache_undeclared_savings_none_when_unpriced_model(
     assert diag.context["savings_usd"] is None
 
 
+def test_sub_workflow_cache_undeclared_below_threshold_warns_and_drops_savings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the parent value's tokens are definitively below the child model's
+    minimum cache threshold, declaring the chunk as-recommended wouldn't
+    activate caching. The diagnostic surfaces a body-prose warning AND drops
+    ``savings_usd`` to None — declaring the chunk alone is a dead-end action;
+    the agent needs to declare AND increase content.
+
+    Mutation contract: drop the threshold check in ``_below_threshold_clause``
+    (e.g., return ``""`` unconditionally) → this fails (clause becomes empty,
+    savings populates instead of None).
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    # Override the autouse ``deterministic_tokens`` fixture: it patches
+    # ``_input_rate`` to None (we need priced path so the threshold guard is
+    # the SOLE reason savings is None) and ``get_min_cache_tokens`` to 10
+    # (we need a value larger than the fixture's tokenized size so 200 tokens
+    # are below threshold).
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${creative.direction}"}},
+            },
+        ]
+    }
+    # ``"shared " * 200`` → 200 tokens under the autouse word-count tokenizer.
+    # With the threshold raised to 1000 above, 200 < 1000 → below-threshold
+    # path fires.
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="creative-key",
+        node_id="creative",
+        workflow_path="parent.pflow.md",
+        action="default",
+        output={"direction": "shared " * 200},
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=cache)
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    # Savings dropped because caching won't fire as-stated — content is below threshold.
+    assert diag.context["savings_usd"] is None
+    # Warning clause names the model and threshold so the agent knows the gap to close.
+    clause = diag.context["below_threshold_clause"]
+    assert clause != ""
+    assert "below" in clause
+    assert "minimum" in clause
+    assert "gemini/gemini-2.5-flash" in clause
+    assert "1,000" in clause
+    # Rendered message includes the warning so text consumers see it.
+    assert "below" in diag.message
+    assert "minimum" in diag.message
+
+
+def test_sub_workflow_cache_undeclared_above_threshold_keeps_savings_and_no_clause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Companion to the below-threshold test: when content clears the model's
+    minimum cache threshold, savings populates and the warning clause stays
+    empty. This locks the threshold check's positive branch.
+
+    Mutation contract: invert the threshold comparison (``tokens < threshold``
+    → ``tokens >= threshold``) → this fails (clause becomes non-empty,
+    savings drops to None).
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${creative.direction}"}},
+            },
+        ]
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="creative-key",
+        node_id="creative",
+        workflow_path="parent.pflow.md",
+        action="default",
+        # ~600 word-tokens under the autouse tokenizer; default autouse
+        # threshold (10) is well below this so the threshold check passes.
+        output={"direction": "shared concept content " * 200},
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=cache)
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is not None
+    assert diag.context["savings_usd"] > 0.0
+    assert diag.context["below_threshold_clause"] == ""
+    # No warning prose leaked into the rendered message.
+    assert "below" not in diag.message
+    assert "minimum" not in diag.message
+
+
+def test_sub_workflow_cache_undeclared_unmeasurable_keeps_clause_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the parent value is unmeasurable (memo + trace + invocation site
+    all empty), preserve the existing ``"savings unavailable"`` rendering —
+    don't attach a threshold warning we can't substantiate. Honest unmeasurable:
+    only emit the warning when there is positive evidence the cache won't fire.
+
+    Mutation contract: emit the threshold clause unconditionally (drop the
+    ``tokens is None`` guard in ``_below_threshold_clause``) → this fails (the
+    empty-clause assertion below trips).
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${creative.direction}"}},
+            },
+        ]
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    # No memo, no trace, no parent invocation site → tokens is None.
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is None
+    assert diag.context["below_threshold_clause"] == ""
+    # Existing rendering preserved: the body message has no threshold warning.
+    assert "below" not in diag.message
+    assert "minimum" not in diag.message
+
+
 def test_sub_workflow_cache_undeclared_suppresses_when_no_llm_consumers(monkeypatch: pytest.MonkeyPatch) -> None:
     """No child LLM consumers means no child-cache recommendation."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")

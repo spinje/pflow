@@ -10304,3 +10304,24 @@ baseline `10-live-recordings/05-gemini-lyrics-generator` regenerated.
 6,427 tests pass (+1). `make check` clean on touched files. 65/65 baselines.
 
 Closes N-7 input-passthrough follow-up.
+
+## 2026-05-09 — Task 159 — Cluster C threshold gate on `cache.sub-workflow-cache-undeclared`
+
+When the parent value's estimated tokens are below the child model's minimum
+cache threshold, the recommendation now drops `savings_usd` to None and appends
+a `Note:` line naming model + threshold + token gap. Asymmetric with greenfield
+(which suppresses): cross-boundary keeps the recommendation visible because the
+agent needs to know about the boundary even when caching wouldn't fire as-stated.
+Heterogeneous-children case samples first child's model (mirrors
+`_consolidate_to_root_advisories`).
+
+Catalog gains additive `below_threshold_clause: str` context key. Helper
+`_below_threshold_clause` + threshold gate in `_emit_sub_workflow_cache_findings`;
+`_project_sub_workflow_cache_savings` returns `(savings, tokens, model)` so the
+emit site gates without recomputing.
+
+Files: `analyze.py`, `warning_catalog.py`, `cache_analysis/CLAUDE.md`, 4 test
+files (+3 emission tests with mutation contracts; synthetic-fixture helpers
+updated). 2 baselines regenerated (additive JSON field, strict improvement).
+
+6,434 tests pass. `make check` clean. 65/65 baselines.

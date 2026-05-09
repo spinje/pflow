@@ -137,6 +137,7 @@ _SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = (
     "`{child_input_name}` and is used by {node_count} LLM nodes there "
     "({child_node_ids_csv}). Add `{child_input_name}` to that sub-workflow's "
     "## Cache; sub-workflows do not inherit the parent cache block."
+    "{below_threshold_clause}"
 )
 
 
@@ -261,6 +262,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("affected_workflow", str),
             ("savings_usd", float),
             ("child_node_ids_csv", str),
+            ("below_threshold_clause", str),
         ),
         suggestions_template=(
             "In {child_workflow}, add a ## Cache chunk for `${{{child_input_name}}}`.",

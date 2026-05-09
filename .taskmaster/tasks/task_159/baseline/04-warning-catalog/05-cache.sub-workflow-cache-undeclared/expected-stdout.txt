@@ -196,6 +196,7 @@
           "parent_node_id": "child",
           "line_in_parent": 14,
           "child_node_ids_csv": "`summarize`, `translate`",
+          "below_threshold_clause": "",
           "category": "cache_advisory",
           "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md].inputs[name=article]"
         },
@@ -228,6 +229,7 @@
         "parent_node_id": "child",
         "line_in_parent": 14,
         "child_node_ids_csv": "`summarize`, `translate`",
+        "below_threshold_clause": "",
         "category": "cache_advisory",
         "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md].inputs[name=article]"
       },

@@ -505,6 +505,7 @@ def test_sub_workflow_cache_suggestions_use_exact_pflow_syntax() -> None:
         affected_workflow="child.pflow.md",
         savings_usd=None,
         child_node_ids_csv="`child-llm-a`, `child-llm-b`",
+        below_threshold_clause="",
     )
 
     assert diag.suggestions is not None
@@ -544,6 +545,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "affected_workflow": "child.pflow.md",
             "savings_usd": None,
             "child_node_ids_csv": "`child-llm-a`, `child-llm-b`",
+            "below_threshold_clause": "",
         },
         "cache.batch-prewarm-recommended": {
             "node_id": "score",

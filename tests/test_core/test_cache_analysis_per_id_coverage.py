@@ -72,6 +72,7 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "child.pflow.md",
                 "savings_usd": None,
                 "child_node_ids_csv": "`child-llm-a`, `child-llm-b`",
+                "below_threshold_clause": "",
             },
         ),
         "cache.batch-prewarm-recommended": (

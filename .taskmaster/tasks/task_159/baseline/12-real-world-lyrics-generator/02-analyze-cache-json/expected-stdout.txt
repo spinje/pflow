@@ -1448,6 +1448,7 @@
           "parent_node_id": "choose-chorus",
           "line_in_parent": 97,
           "child_node_ids_csv": "`score-choruses`, `select-chorus`",
+          "below_threshold_clause": "",
           "category": "cache_advisory",
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
         },
@@ -1909,6 +1910,7 @@
         "parent_node_id": "choose-chorus",
         "line_in_parent": 97,
         "child_node_ids_csv": "`score-choruses`, `select-chorus`",
+        "below_threshold_clause": "",
         "category": "cache_advisory",
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
       },

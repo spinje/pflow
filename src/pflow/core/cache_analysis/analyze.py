@@ -3433,41 +3433,86 @@ def _project_sub_workflow_cache_savings(
     rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
     ctx: AnalysisContext,
     cw_result: Any,
-) -> float | None:
-    """Sum projected per-run cache-read savings across the affected child nodes.
+) -> tuple[float | None, int | None, str | None]:
+    """Project per-run cache-read savings and surface the inputs that drove it.
 
-    Returns None when:
-    - any affected child row is missing from per-call data
-    - any affected row's model is unpriced
-    - the parent's flowing value is unmeasurable (memo + trace both empty)
+    Returns ``(savings_usd, tokens_estimated, threshold_model)``. The threshold
+    model is the first child row's model — used by the emit site to compare
+    ``tokens_estimated`` against the provider's minimum-cache threshold.
+
+    Each tuple slot is ``None`` when its grounding is missing:
+
+    - ``savings_usd``: any affected child row missing from per-call data, any
+      affected row's model unpriced, or ``tokens_estimated is None``.
+    - ``tokens_estimated``: the parent's flowing value is unmeasurable
+      (memo, trace, and parent invocation site all empty).
+    - ``threshold_model``: no child rows or the first child row has no model.
+
+    Slots are populated independently so the caller can distinguish
+    "unmeasurable tokens" from "tokens known but pricing unavailable" — the
+    latter still allows a threshold check.
 
     The renderer's ``_format_savings_usd`` tri-state handles sub-cent
     rendering — this helper does not apply its own threshold.
     """
     if not candidate.child_node_ids:
-        return None
+        return (None, None, None)
     first_row = rows_by_node_path.get((candidate.child_workflow, candidate.child_node_ids[0]))
     if first_row is None or not first_row.model:
-        return None
+        return (None, None, None)
+    threshold_model = first_row.model
     tokens = _estimate_parent_value_tokens(
         candidate,
-        model=first_row.model,
+        model=threshold_model,
         ctx=ctx,
         cw_result=cw_result,
     )
     if tokens is None:
-        return None
+        return (None, None, threshold_model)
     total = 0.0
     for node_id in candidate.child_node_ids:
         row = rows_by_node_path.get((candidate.child_workflow, node_id))
         if row is None or not row.model:
-            return None
+            return (None, tokens, threshold_model)
         calls = row.observed_call_count or 1
         savings = _estimate_token_savings_usd(row.model, tokens, calls)
         if savings is None:
-            return None
+            return (None, tokens, threshold_model)
         total += savings
-    return total
+    return (total, tokens, threshold_model)
+
+
+def _below_threshold_clause(tokens: int | None, model: str | None) -> str:
+    """Return a body-prose note when content is definitively below the model's
+    minimum cache threshold; empty string otherwise.
+
+    Returns ``""`` for unmeasurable cases (``tokens is None``) — the existing
+    ``"savings unavailable"`` rendering already signals "we couldn't verify";
+    only attach the warning when there is positive evidence the cache won't
+    fire as-declared. Mirrors the ``below_min_tokens_detector`` predicate
+    (declared cache below provider minimum), applied predictively at the
+    cross-boundary recommendation site so agents don't follow a recommendation
+    that wouldn't activate caching as-stated.
+
+    Heterogeneous-children limitation: callers pass a single model
+    (``threshold_model`` from ``_project_sub_workflow_cache_savings``, which
+    samples ``candidate.child_node_ids[0]``). When children use different
+    models within one sub-workflow, only the first child's threshold is
+    consulted. Mirrors the existing single-model sampling in
+    ``_consolidate_to_root_advisories`` (greenfield path). Defer per-child
+    threshold loop to v1.x if real workflows hit heterogeneous models with
+    threshold-spanning content.
+    """
+    if tokens is None or not model:
+        return ""
+    threshold = get_min_cache_tokens(model)
+    if tokens >= threshold:
+        return ""
+    return (
+        f"\nNote: ~{tokens:,} tokens estimated, below {model}'s "
+        f"{threshold:,}-token minimum — caching won't fire until rendered "
+        f"content reaches {threshold:,} tokens."
+    )
 
 
 def _format_child_node_ids_csv(node_ids: tuple[str, ...], *, max_inline: int = 4) -> str:
@@ -3502,13 +3547,25 @@ def _emit_sub_workflow_cache_findings(
     The ``child_node_ids_csv`` field names the affected nodes inline so
     agents can connect the recommendation to the per-call table without
     cross-referencing manually.
+
+    When the parent value's estimated tokens are definitively below the child
+    model's minimum cache threshold, ``below_threshold_clause`` carries a
+    body-prose warning AND ``savings_usd`` is forced to ``None`` — declaring
+    the chunk as-recommended wouldn't activate caching, so the dollar tag
+    would be a lie. Honest unmeasurable convention: surface the evidence,
+    drop the savings number.
     """
     diagnostics: list[Diagnostic] = []
     for candidate in _dedupe_sub_workflow_cache_candidates(candidates):
         child_basename = (
             candidate.child_workflow.rsplit("/", 1)[-1] if "/" in candidate.child_workflow else candidate.child_workflow
         )
-        savings_usd = _project_sub_workflow_cache_savings(candidate, rows_by_node_path, ctx, cw_result)
+        savings_usd, tokens, threshold_model = _project_sub_workflow_cache_savings(
+            candidate, rows_by_node_path, ctx, cw_result
+        )
+        below_threshold_clause = _below_threshold_clause(tokens, threshold_model)
+        if below_threshold_clause:
+            savings_usd = None
         diagnostics.append(
             make_diagnostic(
                 "cache.sub-workflow-cache-undeclared",
@@ -3523,6 +3580,7 @@ def _emit_sub_workflow_cache_findings(
                 parent_node_id=candidate.parent_node_id,
                 line_in_parent=candidate.line_in_parent,
                 child_node_ids_csv=_format_child_node_ids_csv(candidate.child_node_ids),
+                below_threshold_clause=below_threshold_clause,
             )
         )
     return diagnostics
