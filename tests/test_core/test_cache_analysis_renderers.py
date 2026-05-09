@@ -1212,13 +1212,16 @@ def test_json_summary_exposes_projection_exclusions_and_delta_reason(tmp_path: P
 
 
 def test_text_summary_explains_projection_excluded_actual_delta() -> None:
-    """Renderer falls back to ``unavailable (projection excludes ...)`` when
-    at least one exclusion lacks ``actual_cost_usd``.
+    """Renderer surfaces the ``Excluded from analysis`` line and bare
+    ``unavailable`` savings when an exclusion lacks ``actual_cost_usd``.
 
     Production hits this state when an excluded row's ``cost_usd`` is None —
     typically an ``unpriced_model`` exclusion where LiteLLM didn't recognize
     the model so the trace event also lacks a cost figure. Without a number
-    to subtract, the priced-cohort math is genuinely incomparable.
+    to subtract, the priced-cohort math is genuinely incomparable, but the
+    agent still needs to know which node and why — the explicit excluded
+    line carries that context (without the dollar figure since none is
+    available).
     """
     exclusion = ProjectionExclusion(
         workflow_path="/abs/x.pflow.md",
@@ -1238,11 +1241,83 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
 
     assert "Actually paid (trace):       ~$0.05 (trace)" in text
     assert "Actually paid (trace):       ~$0.05 (partial) (trace)" not in text
-    assert "Cost without caching (projected subset):" in text
-    assert "Cost on rerun (within TTL, projected subset):" in text
-    assert "Actual savings (this run):" in text
-    assert "unavailable (projection excludes generate)" in text
+    # Excluded node + reason render even without a dollar figure (cost is None).
+    assert "Excluded from analysis:      generate: no pricing data for model" in text
+    # Cohort qualifiers on no-cache/rerun labels are gone — the explicit
+    # excluded line above establishes which nodes are out of the cohort.
+    assert "Cost without caching:" in text
+    assert "Cost without caching (projected subset):" not in text
+    assert "Cost on rerun (within TTL):" in text
+    assert "Cost on rerun (within TTL, projected subset):" not in text
+    # Savings line is bare ``unavailable`` — the excluded line above explains why.
+    assert "Actual savings (this run):    unavailable" in text
+    assert "unavailable (projection excludes" not in text
     assert "Actual trace delta:" not in text
+
+
+def test_excluded_from_analysis_line_renders_dollar_amount_and_reason() -> None:
+    """When projection_exclusions carries trace-recorded costs, the renderer
+    emits an explicit ``Excluded from analysis: ~$X (node: reason)`` line in
+    the cost block. This line is what makes the savings math visually
+    compose: ``actually_paid - excluded`` is the cohort the savings figure
+    is computed against.
+
+    Mutation contract: drop the new ``_format_excluded_from_analysis_line``
+    emission in ``_render_trace_cost_lines`` → the line disappears from
+    text → both substring assertions fail.
+    """
+    exclusion = ProjectionExclusion(
+        workflow_path="/abs/x.pflow.md",
+        node_path="generate-chorus-options",
+        reason="heterogeneous_model",
+        actual_cost_usd=0.27,
+    )
+    analysis = _make_analysis(
+        actually_paid=2.31,
+        no_cache=2.53,
+        partial=True,
+        projection_exclusions=(exclusion,),
+    )
+
+    text = render_text(analysis)
+    assert "Excluded from analysis:      ~$0.27 (generate-chorus-options: model varies per call)" in text
+    # When NO exclusions, the line MUST NOT render — would be analyst-noise
+    # on the common case.
+    clean_analysis = _make_analysis(actually_paid=2.31, no_cache=2.53)
+    clean_text = render_text(clean_analysis)
+    assert "Excluded from analysis:" not in clean_text
+
+
+def test_excluded_from_analysis_line_aggregates_multiple_exclusions() -> None:
+    """Multi-exclusion case: dollar amounts sum, node:reason pairs join with
+    ``, `` so a fresh agent reading the line sees the full breakdown.
+
+    Mutation contract: change the reason-label map or the join separator
+    → the assertion's exact substring fails.
+    """
+    exclusions = (
+        ProjectionExclusion(
+            workflow_path="/abs/x.pflow.md",
+            node_path="alpha",
+            reason="heterogeneous_model",
+            actual_cost_usd=0.10,
+        ),
+        ProjectionExclusion(
+            workflow_path="/abs/x.pflow.md",
+            node_path="beta",
+            reason="unpriced_model",
+            actual_cost_usd=0.05,
+        ),
+    )
+    analysis = _make_analysis(
+        actually_paid=1.00,
+        no_cache=1.20,
+        partial=True,
+        projection_exclusions=exclusions,
+    )
+
+    text = render_text(analysis)
+    assert "Excluded from analysis:      ~$0.15 (alpha: model varies per call, beta: no pricing data for model)" in text
 
 
 def test_header_discloses_ir_default_when_overridden_by_trace(
@@ -1591,8 +1666,16 @@ def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp
     assert delta.excluded_nodes == ()  # not populated when fallback fires
 
     text = render_text(analysis)
-    assert "Actual savings (this run):" in text
-    assert "unavailable (projection excludes generate)" in text
+    # Savings line is bare ``unavailable`` — the explicit ``Excluded from
+    # analysis`` line in the cost block above carries the node + reason
+    # context, so the savings line doesn't need to repeat it.
+    assert "Actual savings (this run):    unavailable" in text
+    assert "unavailable (projection excludes" not in text
+    # Excluded node + reason render in the cost block (no $ since trace
+    # has cost on the heterogeneous row but the row is the only one in the
+    # cohort, so $0.01 is shown if present).
+    assert "Excluded from analysis:" in text
+    assert "generate: model varies per call" in text
 
 
 def test_format_delta_translates_baseline_identifier_to_human_phrase() -> None:
@@ -1647,13 +1730,19 @@ def test_format_delta_translates_baseline_identifier_to_human_phrase() -> None:
     assert "20% of baseline" in rendered
 
 
-def test_format_delta_emits_excluded_nodes_qualifier() -> None:
-    """N-1 renderer half: the ``excluded_nodes`` field on ``CostDelta``
-    surfaces inline as ``(excludes node1, node2)`` between the comparison
-    label and the percentage. Empty tuple → no qualifier.
+def test_format_delta_does_not_inline_excluded_nodes_qualifier() -> None:
+    """``_format_delta`` does NOT inline ``(excludes node1, node2)`` next to
+    the savings amount, even when ``CostDelta.excluded_nodes`` is populated.
+    The cohort context is established once via the ``Excluded from analysis``
+    line in the cost block above (rendered by
+    ``_format_excluded_from_analysis_line``); duplicating it on the savings
+    line would be analyst-speak the agent has to translate twice.
 
-    Mutation contract: drop the ``excluded_nodes`` formatting in
-    ``_format_delta`` → the ``(excludes ...)`` substring disappears.
+    The ``excluded_nodes`` data field is preserved for JSON consumers
+    (``render_json.py``) — only the text rendering is simplified.
+
+    Mutation contract: re-add the ``excluded_nodes`` formatting to
+    ``_format_delta`` → the ``(excludes`` substring reappears.
     """
     from pflow.core.cache_analysis.analyze import CostDelta
     from pflow.core.cache_analysis.render_text import _format_delta
@@ -1667,19 +1756,7 @@ def test_format_delta_emits_excluded_nodes_qualifier() -> None:
         excluded_nodes=("generate-chorus-options", "score-choruses"),
     )
     rendered = _format_delta(with_excludes, label="vs no-cache")
-    assert (
-        rendered
-        == "saves ~$0.49/run vs no-cache (excludes generate-chorus-options, score-choruses), 19% of no-cache cost"
-    )
-
-    without_excludes = CostDelta(
-        amount_usd=0.10,
-        pct_of_baseline=5,
-        kind="savings",
-        baseline="no_cache_hypothetical_usd",
-        compared_to="actually_paid_usd",
-    )
-    rendered = _format_delta(without_excludes, label="on rerun")
+    assert rendered == "saves ~$0.49/run vs no-cache, 19% of no-cache cost"
     assert "(excludes" not in rendered
 
 

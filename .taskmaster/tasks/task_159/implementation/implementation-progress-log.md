@@ -10325,3 +10325,29 @@ files (+3 emission tests with mutation contracts; synthetic-fixture helpers
 updated). 2 baselines regenerated (additive JSON field, strict improvement).
 
 6,434 tests pass. `make check` clean. 65/65 baselines.
+
+## 2026-05-09 — Task 159 — cohort coherence in `## Summary` cost block
+
+Lyrics-generator rendered `Actually paid (trace): $2.31` (whole workflow)
+alongside `Cost without caching (projected subset): $2.53` and `saves $0.49`
+(both priced-subset). A fresh agent doing `$2.53 − $2.31 = $0.22` couldn't
+reconcile with the stated `$0.49` — the $0.27 of excluded
+`generate-chorus-options` was hidden inside the paid total.
+
+Renderer-only fix in `_render_trace_cost_lines`: new
+`Excluded from analysis: ~$0.27 (generate-chorus-options: model varies per call)`
+line surfaces the gap when `projection_exclusions` is non-empty. Drops the
+`(projected subset)` qualifiers from no-cache/rerun labels and the inline
+`(excludes ...)` clause from `_format_delta` — cohort context lives in one
+plain-English line. JSON unchanged (`CostDelta.excluded_nodes` still emitted).
+
+Helper renders without a dollar figure when no excluded row carries trace
+cost (greenfield + unpriced-without-trace), preserving node + reason context.
+4-entry reason map with raw fallback. Truncated-trace and greenfield-with-cache
+modes deferred (no `actually_paid` to mismatch with there).
+
+Files: `render_text.py`, 2 test files (2 new helper tests, 1 E2E text-assert
+migration, 1 negative-gate repurposed), 1 baseline regenerated. Mutation
+contract verified by stash-and-fail.
+
+6,436 tests pass. `make check` clean. 65/65 baselines.

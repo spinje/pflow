@@ -1240,9 +1240,17 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     ]
 
     text = render_text(result)
-    assert "Cost without caching (projected subset):" in text
+    # Cohort qualifiers on no-cache/rerun labels are gone — the explicit
+    # ``Excluded from analysis`` line establishes which nodes are out
+    # of the projection cohort.
+    assert "Cost without caching:" in text
+    assert "Cost without caching (projected subset):" not in text
+    assert "Excluded from analysis:" in text
+    assert "generate: model varies per call" in text
     assert "Actual savings (this run):" in text
-    assert "(excludes generate)" in text
+    # The savings line no longer inlines (excludes ...); the cohort context
+    # is in the ``Excluded from analysis`` line above.
+    assert "(excludes generate)" not in text
     assert "unavailable (projection excludes generate)" not in text
     assert "Actual trace delta:" not in text
 

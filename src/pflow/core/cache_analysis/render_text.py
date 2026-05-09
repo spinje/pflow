@@ -47,6 +47,17 @@ from .analyze import AnalysisSummary, CacheAnalysis, CostDelta, PerCallRow, Reco
 
 _HIDDEN_RATIO_THRESHOLD = 80
 
+# Plain-English labels for ``ProjectionExclusion.reason``. Surfaced inline
+# in the Summary block's "Excluded from analysis" line so a fresh agent
+# reading the output can see WHY a node was excluded without learning
+# the analyzer's internal vocabulary.
+_EXCLUSION_REASON_LABELS: dict[str, str] = {
+    "heterogeneous_model": "model varies per call",
+    "unresolved_model": "model not resolved",
+    "unpriced_model": "no pricing data for model",
+    "missing_output_tokens": "output token count not in trace",
+}
+
 
 def render_text(analysis: CacheAnalysis, *, all_rows: bool = False) -> str:
     """Render the analyzer result as markdown-formatted text."""
@@ -296,15 +307,46 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
             f"  Cost without caching (executed):      {no_cache_str}",
             f"  Cost on rerun (executed, within TTL): {rerun_str}",
         ]
-    no_cache_label = "Cost without caching (projected subset)" if s.projection_exclusions else "Cost without caching"
-    rerun_label = (
-        "Cost on rerun (within TTL, projected subset)" if s.projection_exclusions else "Cost on rerun (within TTL)"
+    lines = [f"  Actually paid (trace):       {actually_paid_str}"]
+    excluded_line = _format_excluded_from_analysis_line(s)
+    if excluded_line is not None:
+        lines.append(excluded_line)
+    lines.append(f"  Cost without caching:        {no_cache_str}")
+    lines.append(f"  Cost on rerun (within TTL):  {rerun_str}")
+    return lines
+
+
+def _format_excluded_from_analysis_line(s: AnalysisSummary) -> str | None:
+    """Render the ``Excluded from analysis: ~$X (node: reason, ...)`` line.
+
+    Surfaces nodes that contributed to ``actually_paid_usd`` but were dropped
+    from the projection cohort (heterogeneous models, unpriced, etc.). With
+    this line visible, a fresh agent doing ``actually_paid - excluded``
+    arrives at the cohort the savings are measured over without needing
+    analyzer-internal vocabulary.
+
+    The ``~$X`` total is shown when at least one excluded row carries a
+    trace-recorded cost; if every exclusion's ``actual_cost_usd`` is ``None``
+    (e.g. greenfield mode, or an ``unpriced_model`` exclusion whose trace
+    event also lacks a cost), the dollar figure is omitted but the node
+    list and reason still render so the agent knows WHY the projection
+    cohort excludes them.
+
+    Returns ``None`` only when there are no exclusions at all.
+    """
+    if not s.projection_exclusions:
+        return None
+    sorted_exclusions = sorted(
+        s.projection_exclusions,
+        key=lambda e: (e.workflow_path or "", e.node_path),
     )
-    return [
-        f"  Actually paid (trace):       {actually_paid_str}",
-        f"  {no_cache_label}:        {no_cache_str}",
-        f"  {rerun_label}:  {rerun_str}",
-    ]
+    parts = [f"{e.node_path}: {_EXCLUSION_REASON_LABELS.get(e.reason, e.reason)}" for e in sorted_exclusions]
+    explanation = ", ".join(parts)
+    excluded_total = sum((e.actual_cost_usd or 0.0) for e in s.projection_exclusions)
+    if excluded_total > 0:
+        amount = _format_dollar_amount(excluded_total)
+        return f"  Excluded from analysis:      {amount} ({explanation})"
+    return f"  Excluded from analysis:      {explanation}"
 
 
 def _render_greenfield_with_cache_lines(s: AnalysisSummary) -> list[str]:
@@ -481,14 +523,10 @@ def _render_trace_deltas(s: AnalysisSummary) -> list[str]:
     if actual:
         lines.append(f"  {actual_label:29s} {actual}")
     elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:
-        paths = ", ".join(
-            exclusion.node_path
-            for exclusion in sorted(
-                s.projection_exclusions,
-                key=lambda exclusion: (exclusion.workflow_path or "", exclusion.node_path),
-            )
-        )
-        lines.append(f"  {actual_label:29s} unavailable (projection excludes {paths})")
+        # Excluded nodes are surfaced via the ``Excluded from analysis`` line
+        # in the cost block above; here we just signal that savings can't be
+        # computed for the remaining cohort.
+        lines.append(f"  {actual_label:29s} unavailable")
     rerun = _format_delta(s.rerun_delta, label="on rerun")
     if rerun:
         lines.append(f"  {'Rerun delta (projected):':29s} {rerun}")
@@ -519,12 +557,15 @@ def _format_delta(delta: CostDelta, *, label: str) -> str:
     if delta.amount_usd is None:
         return ""
     amount = _format_dollar_amount(delta.amount_usd)
-    excludes = f" (excludes {', '.join(delta.excluded_nodes)})" if delta.excluded_nodes else ""
     baseline_label = _BASELINE_LABELS.get(delta.baseline, "baseline")
     pct = f", {delta.pct_of_baseline}% of {baseline_label}" if delta.pct_of_baseline is not None else ""
+    # Note: ``delta.excluded_nodes`` is preserved on the dataclass and emitted
+    # in JSON output (``render_json.py``). The text renderer surfaces excluded
+    # nodes via the ``Excluded from analysis`` line in the cost block instead
+    # so the cohort is established once, near the dollar figures it explains.
     if delta.kind == "savings":
-        return f"saves {amount}/run {label}{excludes}{pct}"
-    return f"adds {amount} {label}{excludes}{pct}"
+        return f"saves {amount}/run {label}{pct}"
+    return f"adds {amount} {label}{pct}"
 
 
 def _format_unavailable_models(analysis: CacheAnalysis) -> str:
