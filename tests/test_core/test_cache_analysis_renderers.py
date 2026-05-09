@@ -119,6 +119,7 @@ def _make_analysis(
             rerun_delta=rerun_delta,
             actual_vs_no_cache_delta=actual_delta,
             trace_coverage="complete" if actually_paid is not None else "none",
+            evidence_scope="complete_trace" if actually_paid is not None else "static_analysis",
             trace_llm_nodes_static=len(rows),
             trace_llm_nodes_executed=len(rows) if actually_paid is not None else 0,
             trace_unexecuted_llm_rows=(),
@@ -160,7 +161,6 @@ def _make_analysis(
 # add it here after migrating any tests that assert on the field. See Pitfall
 # #19 in tests/CLAUDE.md and TestMakeAnalysisShapeParity below.
 _BUILDER_DOCUMENTED_DEFAULTS: frozenset[str] = frozenset({
-    "evidence_scope",
     "observed_models_in_trace",
     "unavailable_models_by_workflow",
     "heterogeneous_model_node_count",
@@ -1250,10 +1250,7 @@ def test_header_discloses_ir_default_when_overridden_by_trace(
         auto_load_trace=False,
     )
 
-    assert (
-        "IR/settings declares: anthropic/claude-haiku-4-5 (overridden by trace evidence)"
-        in render_text(analysis)
-    )
+    assert "IR/settings declares: anthropic/claude-haiku-4-5 (overridden by trace evidence)" in render_text(analysis)
 
 
 def test_header_does_not_disclose_when_ir_matches_observed(
@@ -1312,11 +1309,19 @@ def test_actual_savings_delta_first_in_trace_mode(
 
     text = render_text(analysis)
     assert "Actual savings (this run):" in text
+    assert "First-run delta" not in text
+    # The row label "Actual savings (this run):" already says "actual";
+    # the inner _format_delta label was simplified from "actual vs no-cache"
+    # to "vs no-cache" so the rendered value reads as "saves $X/run vs
+    # no-cache, Y% of baseline" rather than the doubled-"actual" form.
+    # Mutation contract: revert _format_delta label arg back to
+    # "actual vs no-cache" → this assertion fails.
+    assert "actual vs no-cache" not in text
+    assert "vs no-cache" in text
     lines = text.splitlines()
     actual_idx = next(i for i, line in enumerate(lines) if "Actual savings (this run):" in line)
-    first_run_idx = next(i for i, line in enumerate(lines) if "First-run delta:" in line)
-    rerun_idx = next(i for i, line in enumerate(lines) if "Rerun delta:" in line)
-    assert actual_idx < first_run_idx < rerun_idx
+    rerun_idx = next(i for i, line in enumerate(lines) if "Rerun delta (projected):" in line)
+    assert actual_idx < rerun_idx
 
 
 def test_actual_savings_label_replaces_actual_trace_delta_both_sites(
@@ -1398,10 +1403,16 @@ def test_actual_savings_label_replaces_actual_trace_delta_both_sites(
     assert "Actual savings (this run):" in unavailable_text
 
 
-def test_actual_savings_label_unqualified_in_truncated_trace_mode(
+def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Truncated trace mode (Option B): first-run delta is dropped, rerun
+    uses ``(projected)`` suffix (not ``(executed)``), and the actual savings
+    label stays unqualified — no ``(executed)`` decoration. The actual
+    savings line itself still renders because L-12 work computes the delta
+    over the executed subset when pricing is otherwise available.
+    """
     from pflow.core.cache_analysis.analyze import analyze
 
     analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
@@ -1426,10 +1437,77 @@ def test_actual_savings_label_unqualified_in_truncated_trace_mode(
     )
 
     text = render_text(analysis)
+    # Truncated trace mode (final_status=failed) still computes the
+    # actual-vs-no-cache delta over the executed subset when pricing is
+    # otherwise available — no projection_exclusions, so the delta is
+    # priced and the line renders. The label stays unqualified —
+    # "(executed)" is not appended.
     assert "Actual savings (this run):" in text
     assert "Actual savings (this run, executed):" not in text
-    assert "First-run delta (executed):" in text
-    assert "Rerun delta (executed):" in text
+    # Option B: First-run delta is dropped from trace mode (any coverage).
+    assert "First-run delta" not in text
+    # Rerun delta carries the (projected) suffix in trace mode; the
+    # legacy (executed) qualifier was retired alongside Option B since
+    # the truncated suppression note already conveys executed-subset
+    # context.
+    assert "Rerun delta (projected):" in text
+    assert "Rerun delta (executed):" not in text
+
+
+def test_first_run_delta_present_in_greenfield_mode() -> None:
+    """Greenfield mode (no trace data) renders First-run + Rerun deltas as
+    projections. The Actual savings line is suppressed because there's no
+    ``actually_paid_usd`` to compare against. Mutation contract: route
+    greenfield through ``_render_trace_deltas`` and this fails (no first-run
+    line) or ``_render_greenfield_deltas`` swaps the labels.
+    """
+    analysis = _make_analysis(
+        no_cache=0.10,
+        first_run_with_cache=0.09,
+        rerun=0.04,
+    )
+
+    text = render_text(analysis)
+    assert "First-run delta:" in text
+    assert "Rerun delta:" in text
+    assert "Actual savings" not in text
+    assert "(projected)" not in text  # greenfield labels stay unqualified
+
+
+def test_rerun_delta_carries_projected_suffix_only_in_trace_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``(projected)`` suffix on Rerun delta is the trace-mode signal
+    that the line is a hypothetical, not a measurement. Greenfield mode
+    omits the suffix because both deltas are projections by construction
+    and the suffix would be redundant. Mutation contract: drop the suffix
+    from ``_render_trace_deltas`` → trace assertion fails. Add the suffix
+    to ``_render_greenfield_deltas`` → greenfield assertion fails.
+    """
+    from pflow.core.cache_analysis.analyze import analyze
+
+    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
+    workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
+    trace_analysis = analyze(
+        workflow_ir,
+        workflow_path="x",
+        trace_path=_trace_path(
+            tmp_path,
+            workflow_path="x",
+            nodes=[_llm_event("generate", model="anthropic/claude-sonnet-4-5")],
+            name="trace-mode-trace.json",
+        ),
+        auto_load_trace=False,
+    )
+    greenfield_analysis = _make_analysis(no_cache=0.10, first_run_with_cache=0.09, rerun=0.04)
+
+    trace_lines = render_text(trace_analysis).splitlines()
+    greenfield_lines = render_text(greenfield_analysis).splitlines()
+    assert any(line.strip().startswith("Rerun delta (projected):") for line in trace_lines)
+    assert any(line.strip().startswith("Rerun delta:") for line in greenfield_lines)
+    assert not any(line.strip().startswith("Rerun delta (projected):") for line in greenfield_lines)
 
 
 def test_fragmentation_grouping_uses_effective_model_in_trace_mode(

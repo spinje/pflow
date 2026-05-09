@@ -1389,9 +1389,7 @@ def _build_per_call_row(
     # all need the model that actually ran. IR-declared heterogeneous models
     # stay heterogeneous; trace-only multi-observed rows remain unpriced and
     # render as <varies> without broadening model_is_heterogeneous semantics.
-    if model_is_heterogeneous:
-        model = ""
-    elif len(observed_models) > 1:
+    if model_is_heterogeneous or len(observed_models) > 1:
         model = ""
     elif len(observed_models) == 1:
         model = observed_models[0]

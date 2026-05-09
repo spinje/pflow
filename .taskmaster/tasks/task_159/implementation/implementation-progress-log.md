@@ -9736,3 +9736,116 @@ Deviation:
 - Baseline stderr normalization for LiteLLM sandbox timestamp noise was
   intentionally not included in this commit; another agent was working in the
   unstaged tree. This commit preserves only the staged output/code set.
+
+## L-3 follow-up — Option B (drop first-run delta in trace mode) (2026-05-09)
+
+The previous L-1/L-2/L-3/L-12 entry above implemented Option A: trace-mode
+deltas reordered with `Actual savings (this run):` leading, but `First-run
+delta:` and `Rerun delta:` still rendered. That left the audit's L-3 concern
+half-solved — the small first-run-with-cache projection (1% on lyrics-
+generator) still visually competed with the much larger actual savings (49%)
+because memo cache hits and provider implicit caching aren't modeled in the
+projection.
+
+Per user decision (Option B): drop the first-run delta line entirely in
+trace mode. The first-run-with-cache hypothetical is structurally
+dominated by `actually_paid_usd` once trace data exists; agents asking
+"what would a cold first run cost?" can read the projection from JSON
+(`summary.first_run_delta`) — it stays in the data model.
+
+Behavior:
+
+- `_render_summary_deltas` split into a 4-line dispatch on `evidence_scope`
+  (not on `actually_paid_usd is not None` — searcher #2 caught the
+  all-unpriced-trace edge case where the latter would mis-route) plus two
+  named helpers `_render_trace_deltas` and `_render_greenfield_deltas`.
+- Trace mode renders 0-2 lines: `Actual savings (this run):` (or
+  `unavailable (projection excludes …)` for the projection_exclusions
+  branch) + `Rerun delta (projected):`. The `(projected)` suffix on rerun
+  signals "this is a model, not a measurement" right at the line.
+- Greenfield mode renders 0-2 lines: `First-run delta:` + `Rerun delta:`.
+  Both are projections by construction; the structural absence of an
+  actual-savings line carries that signal — the `(projected)` suffix is
+  redundant in greenfield and is not appended.
+- The `(executed)` qualifier on truncated-mode rerun was retired. Per
+  L-10/L-11, truncated mode is `final_status="failed"` only and emits the
+  suppression note `"Cost-projection findings suppressed because the trace
+  is truncated (workflow did not finish)."` That note carries the
+  executed-subset context; double-qualifying with `(executed, projected)`
+  added words without information.
+- `_format_delta` label argument for the actual delta changed from
+  `"actual vs no-cache"` to `"vs no-cache"`. The row label
+  "Actual savings (this run):" already says "actual"; the inner doubled
+  word was a Stage A artifact.
+- Dead branch `if not in_trace_mode and actual_line:` removed — the
+  `actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions"`
+  state only fires when `trace_coverage == "complete"` (per analyze.py:3970-
+  3988), so the branch was unreachable from production `analyze()` and only
+  reachable from synthetic tests via `_make_analysis(actually_paid=None,
+  actual_delta_unavailable_reason="projection_exclusions")`. Pitfall #19
+  cleanup.
+
+Tests:
+
+- 2 new regression tests with verified mutation contracts:
+  - `test_first_run_delta_present_in_greenfield_mode` — greenfield renders
+    First-run + Rerun; no Actual savings line, no `(projected)` suffixes.
+    Mutation contract: route greenfield through `_render_trace_deltas`
+    → fails.
+  - `test_rerun_delta_carries_projected_suffix_only_in_trace_mode` —
+    trace mode emits `Rerun delta (projected):`; greenfield emits
+    `Rerun delta:` (no suffix). Mutation contract: drop the suffix from
+    `_render_trace_deltas` → fails.
+- Existing test `test_actual_savings_delta_first_in_trace_mode` updated
+  to drop the first-run-idx ordering assertion and added `assert "actual
+  vs no-cache" not in text` to lock the doubled-word fix. Mutation
+  contract: revert `_format_delta` label → fails.
+- Existing test `test_actual_savings_label_unqualified_in_truncated_trace_mode`
+  renamed to `test_truncated_trace_drops_first_run_and_uses_projected_suffix`
+  (the rename describes what the test now actually verifies under Option
+  B). Body updated: `First-run delta` not in truncated text;
+  `Rerun delta (projected):` present, `Rerun delta (executed):` absent;
+  Actual savings line still renders because L-12 work made the
+  truncated delta priced over the executed subset.
+
+Pitfall #19 follow-up:
+
+- `_make_analysis` test builder updated to set `evidence_scope` based on
+  `actually_paid` (`"complete_trace"` if set, `"static_analysis"` otherwise).
+  Removed `"evidence_scope"` from `_BUILDER_DOCUMENTED_DEFAULTS`.
+  Searcher #2 had specifically warned this was a builder-vs-production
+  drift; under the new dispatch (which gates on `evidence_scope`),
+  the previous default `"static_analysis"` would have routed synthetic
+  trace-mode tests into the greenfield branch.
+  `TestMakeAnalysisShapeParity` continues to pass — its assertion is
+  about production overwriting defaults, not what the builder defaults
+  to.
+
+Coordination:
+
+- The L-1/L-2/L-3/L-12 commit (above) was Option A; this entry is the
+  Option B conversion. Commit ordering between this and the parallel
+  agent's L-12/L-2/L-1 per-call-row work in `_format_per_call_row`
+  (lines 1109+ of render_text.py) is mechanical — different lines, no
+  conflict in the file. Their staged baselines already reflect the
+  Option B output (the per-call row work re-captured anticipating the
+  same final shape).
+- Lint warning SIM108 at `render_text.py:1109-1112` is in the parallel
+  agent's per-call-row code (`if/else` for `model_display`); not
+  touched in this commit.
+
+Verification:
+
+- Targeted suites (cache-analysis renderers + analyze + summarize +
+  per-id emission/coverage): 315 passed.
+- Default suite (`-m "not e2e"`): 6,396 passed.
+- Baseline harness: 65/65 pass (no drift; the parallel agent's L-12/L-2/L-1
+  work had already regenerated the 3 affected baselines).
+- Manual smoke on lyrics-generator trace fixture: trace mode shows
+  `Actual savings (this run):` + `Rerun delta (projected):`, no first-run
+  line. Greenfield invocation (no trace) shows `First-run delta:` +
+  `Rerun delta:`, no actual-savings line, no `(projected)` suffix.
+- Mutation contracts: 3 verified by reverting production code and
+  observing the matching test fail.
+
+Closes L-3 from BASELINE-AUDIT Section F.

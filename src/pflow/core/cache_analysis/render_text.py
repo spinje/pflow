@@ -147,11 +147,7 @@ def _render_header(analysis: CacheAnalysis) -> str:
             lines.append(f"  Evidence: complete trace ({s.trace_llm_nodes_executed} LLM nodes executed)")
     if s.observed_models_in_trace:
         lines.append(f"  Observed models: {', '.join(s.observed_models_in_trace)}")
-    if (
-        s.observed_models_in_trace
-        and s.ir_default_model
-        and s.ir_default_model not in s.observed_models_in_trace
-    ):
+    if s.observed_models_in_trace and s.ir_default_model and s.ir_default_model not in s.observed_models_in_trace:
         lines.append(f"  IR/settings declares: {s.ir_default_model} (overridden by trace evidence)")
     sub_line = _format_sub_workflow_breakdown_line(analysis)
     if sub_line:
@@ -466,15 +462,26 @@ def _append_summary_counts(summary_lines: list[str], s: AnalysisSummary) -> None
 
 
 def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
+    """Render savings deltas for the Summary block.
+
+    Trace mode shows the measured savings as the headline plus the
+    steady-state rerun projection. The first-run-with-cache projection is
+    suppressed when actual data exists: the projection models neither memo
+    cache hits nor provider implicit caching, so it can be off by an order
+    of magnitude and visually compete with the actual figure (BASELINE-AUDIT
+    L-3). Greenfield mode only has projections, so both are rendered.
+    """
+    if s.evidence_scope in {"complete_trace", "truncated_trace_executed_subset"}:
+        return _render_trace_deltas(s)
+    return _render_greenfield_deltas(s)
+
+
+def _render_trace_deltas(s: AnalysisSummary) -> list[str]:
     lines: list[str] = []
-    in_trace_mode = s.evidence_scope in {"complete_trace", "truncated_trace_executed_subset"}
-    first = _format_delta(s.first_run_delta, label="on first run")
-    rerun = _format_delta(s.rerun_delta, label="on rerun")
-    actual = _format_delta(s.actual_vs_no_cache_delta, label="actual vs no-cache")
+    actual = _format_delta(s.actual_vs_no_cache_delta, label="vs no-cache")
     actual_label = "Actual savings (this run):"
-    actual_line: str | None = None
     if actual:
-        actual_line = f"  {actual_label:29s} {actual}"
+        lines.append(f"  {actual_label:29s} {actual}")
     elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:
         paths = ", ".join(
             exclusion.node_path
@@ -483,21 +490,21 @@ def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
                 key=lambda exclusion: (exclusion.workflow_path or "", exclusion.node_path),
             )
         )
-        actual_line = f"  {actual_label:29s} unavailable (projection excludes {paths})"
-    if in_trace_mode and actual_line:
-        lines.append(actual_line)
-    if first:
-        label = (
-            "First-run delta (executed):"
-            if s.evidence_scope == "truncated_trace_executed_subset"
-            else "First-run delta:"
-        )
-        lines.append(f"  {label:29s} {first}")
+        lines.append(f"  {actual_label:29s} unavailable (projection excludes {paths})")
+    rerun = _format_delta(s.rerun_delta, label="on rerun")
     if rerun:
-        label = "Rerun delta (executed):" if s.evidence_scope == "truncated_trace_executed_subset" else "Rerun delta:"
-        lines.append(f"  {label:29s} {rerun}")
-    if not in_trace_mode and actual_line:
-        lines.append(actual_line)
+        lines.append(f"  {'Rerun delta (projected):':29s} {rerun}")
+    return lines
+
+
+def _render_greenfield_deltas(s: AnalysisSummary) -> list[str]:
+    lines: list[str] = []
+    first = _format_delta(s.first_run_delta, label="on first run")
+    if first:
+        lines.append(f"  {'First-run delta:':29s} {first}")
+    rerun = _format_delta(s.rerun_delta, label="on rerun")
+    if rerun:
+        lines.append(f"  {'Rerun delta:':29s} {rerun}")
     return lines
 
 
@@ -1099,10 +1106,7 @@ def _format_per_call_row(
     tokens_str = "    ?" if tokens_unmeasurable else f"{row.input_tokens_estimated:>5}"
     cacheable_str = f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
     ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
-    if row.model_is_heterogeneous or len(row.observed_models) > 1:
-        model_display = "<varies>"
-    else:
-        model_display = row.model
+    model_display = "<varies>" if row.model_is_heterogeneous or len(row.observed_models) > 1 else row.model
     observed = ""
     if row.observed_models and (row.model_is_heterogeneous or len(row.observed_models) > 1):
         observed = f" observed_models={','.join(row.observed_models)}"

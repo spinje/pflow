@@ -1402,12 +1402,20 @@ regress them.
   one. Fix: in trace mode, prefer `observed_models[0]` for the per-call
   column; fall back to `row.model` only when no observed. Same fix
   resolves L-1 (cost projection should use observed_models when IR
-  resolution failed).
+  resolution failed). **Resolved 2026-05-09 alongside L-10/L-11
+  (commit `de93c66e`); effective-model substitution now happens at row
+  construction time per `cache_analysis/CLAUDE.md`.**
 - **L-3** — Add a primary "Actual savings (trace vs no-cache)" delta
   line in trace mode. The data is in `actually_paid_usd` and
   `cost_without_caching` — currently the rendered delta is the
   hypothetical first-run/rerun pair, which can show "1%" while the
-  actual savings are 49%.
+  actual savings are 49%. **Resolved 2026-05-09 by Option B refactor
+  (`render_text.py::_render_summary_deltas`): trace mode now renders
+  `Actual savings (this run):` + `Rerun delta (projected):` only;
+  first-run delta is suppressed in trace mode because it competed
+  with the actual figure when memo cache or provider implicit caching
+  diverged from the projection. Greenfield mode renders First-run +
+  Rerun deltas unchanged. JSON shape unchanged.**
 
 **Independent fixes**:
 

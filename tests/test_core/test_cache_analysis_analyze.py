@@ -62,6 +62,7 @@ def _llm_trace_event(
         cost_usd=cost_usd,
     )
 
+
 # ---------------------------------------------------------------------------
 # Confidence aggregation — STRICT semantics per DD#34 line 634 verbatim
 # ---------------------------------------------------------------------------
