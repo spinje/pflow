@@ -1,7 +1,8 @@
 # Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
 
   Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes) (no model resolved — set settings.default_model)
-  (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows: analyze-source, concept-chooser, enforce-diversity, fetch-source, chorus-chooser, review-accuracy, review-ai-tells, review-cliche, review-emotional-architecture, review-genre, review-imagery, review-narrative, review-rhyme, review-stranger-summary, song-creator)
+  Heterogeneous: generate-chorus-options (model varies per batch item)
+  (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows)
 
 ## Summary
 

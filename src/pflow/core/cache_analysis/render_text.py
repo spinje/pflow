@@ -105,29 +105,34 @@ _HETEROGENEOUS_MODEL_TAG = "model varies per batch item"
 def _render_header(analysis: CacheAnalysis) -> str:
     """Render workflow path + scale, plus confidence WHEN it carries signal.
 
-    CP5 #6: scale line lists the actual model names instead of just a count.
-    Pre-fix "X LLM calls · Y models in use" required agents to scan the
-    per-call table to learn which models. Post-fix:
-      - 0 LLM nodes → "0 LLM nodes"
-      - 1 model resolved → "7 LLM nodes using anthropic/claude-sonnet-4-5"
-      - 2+ models → "7 LLM nodes using 2 models: anthropic/..., gemini/..."
-      - LLM nodes but no model resolved → "7 LLM nodes (no model resolved)"
+    Header shape — one concept per line so an agent can scan without
+    parsing a single multi-fact run-on. ``_format_scale_line`` returns
+    1-3 lines composing the workflow shape (count + invocation status +
+    optional Models line + optional Heterogeneous line); ``_render_header``
+    then appends Evidence, IR/settings divergence, sub-workflow breakdown,
+    and confidence.
 
-    CP4 #6+#13: ``Confidence: low_no_data`` was a noisy redundant signal —
-    the cost-section's call-to-action ("run the workflow once for cost
-    figures") tells the agent the same thing actionably. Suppressing the
-    header line for the low-confidence case keeps the output tight.
-    ``medium_from_memo`` / ``high_from_trace`` labels stay because they
-    carry coverage info (e.g. "3 of 7 nodes have prior run data") that
-    helps agents reason about how much to trust the per-call numbers.
+    Scale-line shapes (single-model stays inline; 2+ models break out):
+      - 0 LLM nodes → ``0 LLM nodes``
+      - 1 model    → ``7 LLM nodes using anthropic/claude-sonnet-4-5``
+      - 2+ models  → ``7 LLM nodes`` + ``Models: anthropic/..., gemini/...``
+      - No model   → ``7 LLM nodes (no model resolved — set settings.default_model)``
+      - Any heterogeneous batch sub-workflow appends a ``Heterogeneous:`` line.
+
+    ``Confidence: low_no_data`` is suppressed (the cost-section's
+    call-to-action surfaces the same signal actionably). ``medium_from_memo``
+    / ``high_from_trace`` stay — they carry coverage info that helps agents
+    reason about how much to trust per-call numbers.
     """
     s = analysis.summary
     coverage = analysis.estimate_confidence_coverage
     label = analysis.estimate_confidence
+    scale_lines = _format_scale_line(s)
     lines = [
         f"# Cache Analysis: {analysis.workflow_path}",
         "",
-        f"  Workflow: {_format_scale_line(s)}",
+        f"  Workflow: {scale_lines[0]}",
+        *(f"  {extra}" for extra in scale_lines[1:]),
     ]
     if s.evidence_scope == "truncated_trace_executed_subset":
         lines.append(
@@ -150,8 +155,6 @@ def _render_header(analysis: CacheAnalysis) -> str:
             )
         else:
             lines.append(f"  Evidence: complete trace ({s.trace_llm_nodes_executed} LLM nodes executed)")
-    if s.observed_models_in_trace:
-        lines.append(f"  Observed models: {', '.join(s.observed_models_in_trace)}")
     if s.observed_models_in_trace and s.ir_default_model and s.ir_default_model not in s.observed_models_in_trace:
         lines.append(f"  IR/settings declares: {s.ir_default_model} (overridden by trace evidence)")
     sub_line = _format_sub_workflow_breakdown_line(analysis)
@@ -169,65 +172,72 @@ def _render_header(analysis: CacheAnalysis) -> str:
 
 
 def _format_sub_workflow_breakdown_line(analysis: CacheAnalysis) -> str | None:
+    """Return the per-workflow LLM-node breakdown parenthetical.
+
+    Names of the child workflows aren't enumerated — they appear in
+    ``## Per-call cache report`` headings and ``## Per-child analyze-cache
+    commands`` block, so a CSV here is filler.
+    """
     rollup = analysis.summary.sub_workflow_rollup
     if rollup is None:
         return None
     s = analysis.summary
-    child_names = [_workflow_short_name(entry.workflow_path) for entry in rollup.per_workflow]
-    workflow_word = "sub-workflow" if len(child_names) == 1 else "sub-workflows"
+    child_count = len(rollup.per_workflow)
+    workflow_word = "sub-workflow" if child_count == 1 else "sub-workflows"
     return (
         f"({s.root_llm_node_count} in {_workflow_filename(analysis.workflow_path)}, "
-        f"{s.sub_workflow_llm_node_count} in {len(child_names)} {workflow_word}: "
-        f"{', '.join(child_names)})"
+        f"{s.sub_workflow_llm_node_count} in {child_count} {workflow_word})"
     )
 
 
-def _format_scale_line(s: AnalysisSummary) -> str:
-    """Render the scale line with model names listed instead of just a count.
+def _format_scale_line(s: AnalysisSummary) -> list[str]:
+    """Render the workflow header lines describing scale, models, and heterogeneity.
 
-    Renders as ``"N LLM nodes ..."`` (the "calls" wording was misleading —
-    the count IS nodes, invocations per run depend on batch sizes).
-
-    Stage C.1: heterogeneous batch sub-workflows (``model: ${item.model}``)
-    are excluded from ``models_in_use`` upstream so the literal template
-    string doesn't leak into the rendered list. This function appends a
-    "+ N nodes with model varying per batch item (names...)" suffix when
-    such nodes exist — naming them so the agent doesn't have to scan the
-    per-call table to find which nodes vary.
+    Returns 1-3 lines (no leading indent — caller adds it). Each line
+    carries one concept so an agent can scan the header without parsing
+    a single 5-fact run-on. Single-model workflows keep ``using X``
+    inline; 2+ models break out to a dedicated ``Models:`` line; any
+    heterogeneous batch (``model: ${item.model}``) breaks out to a
+    ``Heterogeneous:`` line so it's findable everywhere.
     """
     node_count = s.total_llm_nodes_estimated
     nodes_word = "node" if node_count == 1 else "nodes"
     if node_count == 0:
-        return "0 LLM nodes"
-    hetero_count = len(s.heterogeneous_model_node_paths)
-    homogeneous_count = node_count - hetero_count
-    hetero_suffix = _format_heterogeneous_suffix(s.heterogeneous_model_node_paths)
+        return ["0 LLM nodes"]
+
     invocation_suffix = _format_invocation_suffix(s)
+    hetero_count = len(s.heterogeneous_model_node_paths)
 
-    if homogeneous_count == 0 and hetero_count > 0:
+    if hetero_count == node_count:
         # All-heterogeneous workflow — no homogeneous models to list.
-        hetero_word = "node" if hetero_count == 1 else "nodes"
-        names_csv = ", ".join(s.heterogeneous_model_node_paths)
-        if hetero_count == 1:
-            return (
-                f"{node_count} LLM {nodes_word}{invocation_suffix} "
-                f"({s.heterogeneous_model_node_paths[0]}: {_HETEROGENEOUS_MODEL_TAG})"
-            )
-        return (
-            f"{node_count} LLM {nodes_word}{invocation_suffix} with {_HETEROGENEOUS_MODEL_TAG} "
-            f"({hetero_count} {hetero_word}: {names_csv})"
-        )
-
-    if not s.models_in_use:
-        return f"{node_count} LLM {nodes_word}{invocation_suffix} (no model resolved — set settings.default_model)"
-    if len(s.models_in_use) == 1:
-        base = f"{node_count} LLM {nodes_word}{invocation_suffix} using {s.models_in_use[0]}"
+        primary = f"{node_count} LLM {nodes_word}{invocation_suffix}"
+    elif not s.models_in_use:
+        primary = f"{node_count} LLM {nodes_word}{invocation_suffix} (no model resolved — set settings.default_model)"
+    elif len(s.models_in_use) == 1:
+        primary = f"{node_count} LLM {nodes_word}{invocation_suffix} using {s.models_in_use[0]}"
     else:
-        base = (
-            f"{node_count} LLM {nodes_word}{invocation_suffix} "
-            f"using {len(s.models_in_use)} models: {', '.join(s.models_in_use)}"
-        )
-    return f"{base}{hetero_suffix}"
+        primary = f"{node_count} LLM {nodes_word}{invocation_suffix}"
+
+    lines = [primary]
+    if len(s.models_in_use) >= 2:
+        lines.append(f"Models: {', '.join(s.models_in_use)}")
+
+    hetero_line = _format_heterogeneous_line(s.heterogeneous_model_node_paths)
+    if hetero_line:
+        lines.append(hetero_line)
+    return lines
+
+
+def _format_heterogeneous_line(paths: tuple[str, ...]) -> str | None:
+    """Return the ``Heterogeneous:`` header line, or None when no
+    heterogeneous batch sub-workflows exist.
+
+    A single ``', '.join`` covers 1-vs-N — the comma-separated names
+    speak for themselves; no pluralization branching needed.
+    """
+    if not paths:
+        return None
+    return f"Heterogeneous: {', '.join(paths)} ({_HETEROGENEOUS_MODEL_TAG})"
 
 
 def _format_invocation_suffix(s: AnalysisSummary) -> str:
@@ -240,26 +250,6 @@ def _format_invocation_suffix(s: AnalysisSummary) -> str:
         return ""
     word = "node" if dynamic_count == 1 else "nodes"
     return f", invocation count unavailable ({dynamic_count} dynamic batch {word})"
-
-
-def _format_heterogeneous_suffix(heterogeneous_node_paths: tuple[str, ...]) -> str:
-    """Compose the "; plus N nodes ..." suffix appended to the scale line.
-
-    Empty tuple → empty string. Single node → name it inline. Multiple →
-    count + parenthesized csv (so agents can grep the rendered output for a
-    specific node name without scanning the per-call table).
-
-    B-11: separator is ``; plus `` (not bare ``+``) so the suffix doesn't
-    parse as "model X PLUS model Y" when concatenated to the model list.
-    """
-    count = len(heterogeneous_node_paths)
-    if count == 0:
-        return ""
-    names_csv = ", ".join(heterogeneous_node_paths)
-    if count == 1:
-        return f"; plus {heterogeneous_node_paths[0]} ({_HETEROGENEOUS_MODEL_TAG})"
-    word = "node" if count == 1 else "nodes"
-    return f"; plus {count} {word} with {_HETEROGENEOUS_MODEL_TAG} ({names_csv})"
 
 
 def _render_cost_block(s: AnalysisSummary) -> list[str]:

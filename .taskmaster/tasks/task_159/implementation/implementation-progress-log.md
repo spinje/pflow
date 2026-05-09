@@ -10227,3 +10227,46 @@ coverage), direct `make_diagnostic` call + `_minimal_context_kwargs`
 regenerated (3 text + 2 JSON) as strict-improvement diffs.
 
 Closes N-7 from POLISH-PLAN.md Cluster C.
+
+## 2026-05-09 — Task 159 — Cluster D Header (N-2 + N-3 + N-9)
+
+Restructured the analyze-cache header for AI-agent readability. The
+39-word run-on scale line splits into 3 cohesive lines (`Workflow:`
+node count + invocation status; `Models:` for 2+ models; `Heterogeneous:`
+for batch sub-workflows declaring `model: ${item.model}`). The
+duplicate `Observed models:` line is dropped (`models_in_use` is a
+superset of `observed_models_in_trace` in complete trace mode). The
+sub-workflow breakdown line drops its trailing 15-name CSV — the
+names already appear in `## Per-call cache report` headings and
+`## Per-child analyze-cache commands`.
+
+Single-model workflows keep `using X` inline (pragmatic density). The
+all-heterogeneous case renders `Workflow: N LLM nodes` + `Heterogeneous:
+...` (was previously inline-parenthesized). New `_format_heterogeneous_line`
+collapses the 1-vs-N branches via plain `', '.join` — `_format_heterogeneous_suffix`
+deleted.
+
+Latent bug fixed as bonus: static-mode workflows on the no-model-resolved
+branch previously suppressed the heterogeneous suffix entirely. Case
+`12-real-world-lyrics-generator/01-analyze-cache-text` now correctly
+surfaces `Heterogeneous: generate-chorus-options (model varies per
+batch item)` even though no homogeneous models are resolved.
+
+Files: `src/pflow/core/cache_analysis/render_text.py` (+50 / −65 LOC,
+net −15 simpler than before), `tests/test_core/test_cache_analysis_renderers.py`
+(3 helper-direct tests migrated to end-to-end render assertions per
+Pitfall #19; 2 N-9 CSV literal updates; 1 multi-model test rewritten
+for new shape; 1 new N-2 regression test asserts `"Observed models:"
+not in text` even with `observed_models_in_trace` populated).
+
+Mutation contracts verified for all four production changes:
+- Break the `Heterogeneous:` label → multi-node hetero test fails.
+- Break the `Models:` label → multi-model test fails.
+- Re-add the `Observed models:` emission → N-2 negative assertion fails.
+- Re-add the trailing CSV → both N-9 literal substring tests fail.
+
+6,430 tests pass (+4). `make check` clean. 65/65 baselines pass; 5
+regenerated as strict-improvement diffs (gemini-lyrics-generator hits
+all four patterns; the others are subset hits).
+
+Closes N-2 + N-3 + N-9 from POLISH-PLAN.md Cluster D.

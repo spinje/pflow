@@ -2551,17 +2551,53 @@ def test_text_header_lists_models_when_one_resolved() -> None:
 
 
 def test_text_header_lists_models_when_two_resolved() -> None:
-    """CP5 #6 — when 2+ models, header lists them comma-separated.
+    """Cluster D N-3 — 2+ models break out to a dedicated ``Models:`` header
+    line. The scale line carries node count + invocation status only; the
+    "using N models:" inline form is gone. Single source of truth for the
+    model list in the header.
 
-    Mutation test: revert to count-only rendering; this test fails because
-    individual model names disappear from the header.
+    Mutation contract: revert ``_format_scale_line`` to inline "using N
+    models:" form — this test fails because "Models: " line is missing
+    AND model names appear on the scale line.
     """
     row_a = PerCallRow(**{**_row("a", 50).__dict__, "model": "anthropic/claude-sonnet-4-5"})
     row_b = PerCallRow(**{**_row("b", 50).__dict__, "model": "gemini/gemini-3.1-pro-preview"})
     text = render_text(_make_analysis(rows=[row_a, row_b]))
-    assert "2 models:" in text
+    # Positive — models break out to their own line.
+    assert "  Models: anthropic/claude-sonnet-4-5, gemini/gemini-3.1-pro-preview" in text
+    # Negative — the old inline "using N models:" form must NOT appear.
+    assert "using 2 models:" not in text
+    # Defense — the scale line itself doesn't carry model names.
+    scale_line = next(line for line in text.splitlines() if line.startswith("  Workflow:"))
+    assert "anthropic/" not in scale_line
+    assert "gemini/" not in scale_line
+
+
+def test_text_header_drops_observed_models_line_when_trace_loaded() -> None:
+    """Cluster D N-2 — the standalone ``Observed models:`` header line is
+    dropped. ``models_in_use`` (rendered on the scale or ``Models:`` line)
+    is a superset of ``observed_models_in_trace`` in complete trace mode,
+    so the second line was a strict duplicate.
+
+    Mutation contract: re-add ``lines.append(f"  Observed models: ...")``
+    in ``_render_header``; this test fails because the line reappears.
+    """
+    base = _make_analysis(
+        rows=[_row("n1", 50)],  # model=anthropic/claude-sonnet-4-5 via _row
+        actually_paid=0.10,
+    )
+    # Override observed_models_in_trace to simulate trace-mode population
+    # (the synthetic builder defaults this field to () per Pitfall #19).
+    summary_with_observed = dataclasses.replace(
+        base.summary,
+        observed_models_in_trace=("anthropic/claude-sonnet-4-5",),
+    )
+    analysis = dataclasses.replace(base, summary=summary_with_observed)
+    text = render_text(analysis)
+    # Negative — the standalone "Observed models:" line must NOT appear.
+    assert "Observed models:" not in text
+    # Positive — the model still surfaces via the scale line.
     assert "anthropic/claude-sonnet-4-5" in text
-    assert "gemini/gemini-3.1-pro-preview" in text
 
 
 def test_text_header_shows_static_batch_invocations() -> None:
@@ -3236,7 +3272,7 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
 
     assert "### parent.pflow.md" in text
     assert "### child.pflow.md (called by call-child)" in text
-    assert "(1 in parent.pflow.md, 1 in 1 sub-workflow: child)" in text
+    assert "(1 in parent.pflow.md, 1 in 1 sub-workflow)" in text
     assert "## Per-child analyze-cache commands" in text
     # B-3: paste-ready block uses ``cd <parent-dir>`` + relative child paths.
     assert "    cd /abs" in text
@@ -3475,7 +3511,7 @@ def test_json_emits_root_and_sub_workflow_llm_node_counts() -> None:
 
     # Text renderer reads from the same fields — single source of truth.
     text = render_text(analysis, all_rows=True)
-    assert "(1 in parent-3deep.pflow.md, 2 in 2 sub-workflows: child-3deep, grandchild)" in text
+    assert "(1 in parent-3deep.pflow.md, 2 in 2 sub-workflows)" in text
 
 
 # ----------------------------------------------------------------------
@@ -3840,35 +3876,66 @@ def test_recommended_actions_keeps_ordered_by_impact_when_priced() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_heterogeneous_suffix_uses_semicolon_plus_separator_single_node() -> None:
-    """B-11: " + " parses as "model X PLUS model Y" when concatenated to the
-    model list. "; plus " disambiguates: list of models, then explicit
-    additional clause for variance.
+def _analysis_with_heterogeneous_paths(rows: list[PerCallRow], paths: tuple[str, ...]) -> CacheAnalysis:
+    """Override ``heterogeneous_model_node_paths`` on a synthetic analysis.
 
-    Mutation contract: revert to ' + ' → assertion fails.
+    The synthetic ``_make_analysis`` builder defaults this field to () per
+    Pitfall #19 (production code overwrites it). Tests that exercise the
+    "Heterogeneous:" header line populate it explicitly via this helper.
     """
-    from pflow.core.cache_analysis.render_text import _format_heterogeneous_suffix
-
-    suffix = _format_heterogeneous_suffix(("generate-chorus-options",))
-    assert suffix == "; plus generate-chorus-options (model varies per batch item)"
-    # Negative — the bare " + " separator must NOT appear.
-    assert not suffix.startswith(" +")
-
-
-def test_heterogeneous_suffix_uses_semicolon_plus_separator_multi_node() -> None:
-    """B-11: same separator change for the multi-node case."""
-    from pflow.core.cache_analysis.render_text import _format_heterogeneous_suffix
-
-    suffix = _format_heterogeneous_suffix(("a", "b", "c"))
-    assert suffix.startswith("; plus 3 nodes with model varies per batch item")
-    assert "(a, b, c)" in suffix
+    base = _make_analysis(rows=rows)
+    summary = dataclasses.replace(
+        base.summary,
+        heterogeneous_model_node_paths=paths,
+        heterogeneous_model_node_count=len(paths),
+    )
+    return dataclasses.replace(base, summary=summary)
 
 
-def test_heterogeneous_suffix_empty_returns_empty_string() -> None:
-    """B-11 edge case: empty input still produces empty output (not '; plus')."""
-    from pflow.core.cache_analysis.render_text import _format_heterogeneous_suffix
+def test_heterogeneous_renders_on_dedicated_line_single_node() -> None:
+    """Cluster D N-3: heterogeneous batch sub-workflows render on their own
+    ``Heterogeneous:`` header line — not appended to the scale line as a
+    "; plus ..." suffix. Always-on-its-own-line keeps the heterogeneous
+    concept findable everywhere.
 
-    assert _format_heterogeneous_suffix(()) == ""
+    Mutation contract: revert ``_format_heterogeneous_line`` to inline
+    suffix concatenation → "Heterogeneous:" disappears from output.
+    """
+    row = PerCallRow(**{**_row("generate-chorus-options", 50).__dict__, "model_is_heterogeneous": True, "model": ""})
+    analysis = _analysis_with_heterogeneous_paths([row], ("generate-chorus-options",))
+    text = render_text(analysis)
+    assert "  Heterogeneous: generate-chorus-options (model varies per batch item)" in text
+    # Negative — the old "; plus ..." suffix shape must NOT appear.
+    assert "; plus " not in text
+
+
+def test_heterogeneous_renders_on_dedicated_line_multi_node() -> None:
+    """Cluster D N-3: multi-node case renders all heterogeneous nodes on
+    one ``Heterogeneous:`` line via plain ``', '.join`` — no separate
+    "1 vs N" code path or "with N nodes" prose.
+
+    Mutation contract: re-introduce a count word (e.g., "with 3 nodes
+    with") → assertion fails.
+    """
+    rows = [
+        PerCallRow(**{**_row(name, 50).__dict__, "model_is_heterogeneous": True, "model": ""})
+        for name in ("a", "b", "c")
+    ]
+    analysis = _analysis_with_heterogeneous_paths(rows, ("a", "b", "c"))
+    text = render_text(analysis)
+    assert "  Heterogeneous: a, b, c (model varies per batch item)" in text
+    # Negative — the older count-word prose must NOT appear.
+    assert "with 3 nodes with" not in text
+    assert "; plus 3 nodes" not in text
+
+
+def test_no_heterogeneous_line_when_no_heterogeneous_nodes() -> None:
+    """Cluster D N-3 edge case: the ``Heterogeneous:`` line is suppressed
+    entirely when no heterogeneous batch sub-workflow exists — the empty
+    case must NOT render an empty stub line.
+    """
+    text = render_text(_make_analysis(rows=[_row("homogeneous-node", 50)]))
+    assert "Heterogeneous:" not in text
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,10 @@
 # Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
 
-  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes) using 3 models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview; plus generate-chorus-options (model varies per batch item)
+  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes)
+  Models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview
+  Heterogeneous: generate-chorus-options (model varies per batch item)
   Evidence: complete trace (18 of 25 LLM nodes executed; 7 not reached for these inputs)
-  Observed models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview
-  (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows: analyze-source, concept-chooser, enforce-diversity, fetch-source, chorus-chooser, review-accuracy, review-ai-tells, review-cliche, review-emotional-architecture, review-genre, review-imagery, review-narrative, review-rhyme, review-stranger-summary, song-creator)
+  (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows)
 
 ## Summary
 
