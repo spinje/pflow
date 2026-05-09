@@ -124,12 +124,27 @@ def _render_header(analysis: CacheAnalysis) -> str:
         "",
         f"  Workflow: {_format_scale_line(s)}",
     ]
-    if s.evidence_scope == "partial_trace_executed_subset":
+    if s.evidence_scope == "truncated_trace_executed_subset":
         lines.append(
-            f"  Evidence: partial trace ({s.trace_llm_nodes_executed} of {s.trace_llm_nodes_static} LLM nodes executed)"
+            f"  Evidence: trace truncated ({s.trace_llm_nodes_executed} of {s.trace_llm_nodes_static} LLM nodes executed)"
         )
     elif s.evidence_scope == "complete_trace":
-        lines.append(f"  Evidence: complete trace ({s.trace_llm_nodes_executed} LLM nodes executed)")
+        # Case A: workflow finished but some static nodes didn't execute
+        # (conditional dispatch, e.g. classify→one-of-N branches). Tell
+        # agents the trace IS complete and why per-call may show more rows
+        # than the executed count.
+        # ``max(0, ...)`` guards against future shape changes where
+        # executed count could exceed static (e.g., loop recovery counted
+        # per-visit while static is per-node) — current code maintains
+        # static >= executed but the guard is cheap defense.
+        unreached = max(0, s.trace_llm_nodes_static - s.trace_llm_nodes_executed)
+        if unreached > 0:
+            lines.append(
+                f"  Evidence: complete trace ({s.trace_llm_nodes_executed} of {s.trace_llm_nodes_static} "
+                f"LLM nodes executed; {unreached} not reached for these inputs)"
+            )
+        else:
+            lines.append(f"  Evidence: complete trace ({s.trace_llm_nodes_executed} LLM nodes executed)")
     if s.observed_models_in_trace:
         lines.append(f"  Observed models: {', '.join(s.observed_models_in_trace)}")
     sub_line = _format_sub_workflow_breakdown_line(analysis)
@@ -275,7 +290,7 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     )
     no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
-    if s.evidence_scope == "partial_trace_executed_subset":
+    if s.evidence_scope == "truncated_trace_executed_subset":
         return [
             f"  Actually paid (executed trace):       {actually_paid_str}",
             f"  Cost without caching (executed):      {no_cache_str}",
@@ -350,7 +365,7 @@ def _all_cost_atoms_unavailable(s: AnalysisSummary) -> bool:
 def _render_summary(analysis: CacheAnalysis) -> str:
     s = analysis.summary
     summary_lines = ["## Summary", ""]
-    if s.evidence_scope == "partial_trace_executed_subset":
+    if s.evidence_scope == "truncated_trace_executed_subset":
         summary_lines.append("  Trace-backed costs below cover executed nodes only.")
     summary_lines.extend(_render_cost_block(s))
 
@@ -438,8 +453,10 @@ def _append_summary_counts(summary_lines: list[str], s: AnalysisSummary) -> None
         f"({s.warnings_count} warning{'s' if s.warnings_count != 1 else ''}, "
         f"{s.info_count} info)"
     )
-    if s.evidence_scope == "partial_trace_executed_subset":
-        summary_lines.append("  Workflow-design recommendations suppressed for partial trace evidence.")
+    if s.evidence_scope == "truncated_trace_executed_subset":
+        summary_lines.append(
+            "  Cost-projection findings suppressed because the trace is truncated (workflow did not finish)."
+        )
 
 
 def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
@@ -449,11 +466,13 @@ def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
     actual = _format_delta(s.actual_vs_no_cache_delta, label="actual vs no-cache")
     if first:
         label = (
-            "First-run delta (executed):" if s.evidence_scope == "partial_trace_executed_subset" else "First-run delta:"
+            "First-run delta (executed):"
+            if s.evidence_scope == "truncated_trace_executed_subset"
+            else "First-run delta:"
         )
         lines.append(f"  {label:29s} {first}")
     if rerun:
-        label = "Rerun delta (executed):" if s.evidence_scope == "partial_trace_executed_subset" else "Rerun delta:"
+        label = "Rerun delta (executed):" if s.evidence_scope == "truncated_trace_executed_subset" else "Rerun delta:"
         lines.append(f"  {label:29s} {rerun}")
     if actual:
         lines.append(f"  Actual trace delta:         {actual}")
@@ -947,8 +966,8 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # otherwise nodes with cache_ratio ≥ 80% AND analytical warnings get silently
     # hidden from the default report — agents miss high-leverage recommendations.
     nodes_with_warnings = set(_warnings_by_row_key(analysis))
-    partial_trace_default_view = analysis.summary.evidence_scope == "partial_trace_executed_subset" and not all_rows
-    if partial_trace_default_view:
+    truncated_trace_default_view = analysis.summary.evidence_scope == "truncated_trace_executed_subset" and not all_rows
+    if truncated_trace_default_view:
         visible = [row for row in real_data_rows if not row.did_not_execute_in_trace]
         hidden_count = 0
     else:
@@ -970,7 +989,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     explainer = _per_call_scope_explainer(rows, analysis.summary.evidence_scope)
     if explainer:
         lines.append(f"  {explainer}")
-    if partial_trace_default_view and len(visible) < len(rows):
+    if truncated_trace_default_view and len(visible) < len(rows):
         hidden_unexecuted = len(rows) - len(visible)
         hidden_word = "row" if hidden_unexecuted == 1 else "rows"
         node_word = "node" if len(visible) == 1 else "nodes"
@@ -1127,7 +1146,7 @@ def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "sta
     - **Post-run greenfield**: rows have memo/trace data; values are projected
       from real run history.
     """
-    if evidence_scope == "partial_trace_executed_subset":
+    if evidence_scope == "truncated_trace_executed_subset":
         return "Executed trace rows are evidence-only; unexecuted rows are marked when shown."
     is_steady_state = any(row.declared_prompt_cache is not None for row in rows)
     if is_steady_state:

@@ -417,8 +417,9 @@ async def analyze_cache(
     scope.
 
     Delta objects include ``unavailable_reason``. ``actual_vs_no_cache_delta``
-    is unavailable when trace coverage is partial or when projection exclusions
-    would make the actual-vs-projection comparison cross cohorts.
+    is unavailable when trace coverage is ``"none"`` / ``"truncated"`` or when
+    projection exclusions would make the actual-vs-projection comparison cross
+    cohorts.
 
     **Validator finding parity**: ``analyze_cache`` runs the same 10-step
     ``WorkflowValidator`` pipeline as ``pflow run``, ``--validate-only``, and
@@ -494,19 +495,44 @@ async def analyze_cache(
     declares the LLM node but the loaded trace did not record an execution
     for it. Distinguishes "static analysis row" from "trace evidence row";
     agents should treat fields like ``cost_usd`` as projections (not
-    actuals) when this is True.
+    actuals) when this is True. Note: under
+    ``trace_coverage="complete"``, this can still be True for nodes that
+    were conditional dispatches not taken for the run's inputs — the trace
+    is complete but the workflow had branches that didn't fire.
+
+    **summary.trace_unexecuted_llm_rows** (array): structured list of
+    ``{workflow_path, node_path}`` for every static row with
+    ``did_not_execute_in_trace=True``. Populated under both ``"truncated"``
+    AND ``"complete"`` trace_coverage — the latter case represents
+    conditional-dispatch nodes (e.g., classify→one-of-N branches) where
+    the unreached branches surface here for header annotation
+    (``"X of Y LLM nodes executed; Z not reached for these inputs"``).
 
     **summary.evidence_scope** (string): ``"static_analysis"`` /
-    ``"complete_trace"`` / ``"partial_trace_executed_subset"``. Indicates
+    ``"complete_trace"`` / ``"truncated_trace_executed_subset"``. Indicates
     how broadly the trace covers the IR. Under
-    ``"partial_trace_executed_subset"``, workflow-design recommendations are
-    suppressed and per-call output is scoped to executed rows; agents should
-    not act on absent recommendations as if the analysis were exhaustive.
+    ``"truncated_trace_executed_subset"``, cost-projection findings (e.g.
+    ``cache.first-call-write-penalty``) are suppressed because the cohort is
+    incomplete; IR-derived findings (cross-workflow renames,
+    shared-context-undeclared, etc.) flow regardless of trace coverage
+    because they describe workflow structure, not execution evidence.
 
     **summary.trace_coverage** (string): ``"none"`` / ``"complete"`` /
-    ``"partial"``. The static-vs-execution coverage discriminator that
-    drives ``evidence_scope`` and the per-row ``did_not_execute_in_trace``
-    flag.
+    ``"truncated"``. The static-vs-execution coverage discriminator.
+    ``"truncated"`` requires the trace's ``final_status`` to be ``"failed"``
+    AND some static rows to be unexecuted — workflow died mid-run. A
+    successful run that skipped conditional branches (one of N classify
+    paths) classifies as ``"complete"`` regardless of unexecuted rows;
+    those rows surface in ``trace_unexecuted_llm_rows`` for header
+    annotation but don't trigger suppression.
+
+    **summary.actual_vs_no_cache_delta.unavailable_reason** (string when
+    ``kind=="unavailable"``): ``"no_trace"`` (trace_coverage is ``"none"``),
+    ``"trace_coverage_truncated"`` (trace_coverage is ``"truncated"``), or
+    ``"projection_exclusions"`` (cohort filtered by unpriced models /
+    missing tokens). The two trace-related values are distinct so consumers
+    can dispatch on the underlying state without inferring from sibling
+    fields.
 
     **per_node_thresholds[node_id]** in ``suggested_blocks[]`` carries
     ``model: string | null`` and ``model_state: "resolved" |

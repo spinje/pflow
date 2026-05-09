@@ -521,7 +521,7 @@ def analyze(
     # Auto-load only: if the workflow's current root-level LLM context drifted
     # from the trace's recorded context, fall back to greenfield analysis and
     # surface a note so agents can see why the auto-loaded trace was rejected.
-    # Mirrors the partial-trace branch's notes-entry pattern below; honest-
+    # Mirrors the misalignment-fallback notes-entry pattern below; honest-
     # unmeasurable convention — drift IS the measurement, not silent skip.
     # Explicit ``--from-trace`` bypasses this gate.
     if trace_path is None and trace_data is not None and not _trace_aligns_with_ir(trace_data, workflow_ir):
@@ -576,8 +576,14 @@ def analyze(
         cw_result=cw_result,
         trace_index=trace_index,
     )
-    if trace_path is None and _trace_coverage_for_rows(per_call_rows, ctx)[0] == "partial":
-        notes.append("Auto-loaded trace was partial; ignored for workflow-wide cache analysis.")
+    # Auto-load misalignment fallback: when the auto-loaded trace doesn't
+    # cover all root LLM nodes in the IR, fall back to greenfield. This is
+    # ORTHOGONAL to ``trace_coverage`` — a trace from a different parameter
+    # set (different conditional branches taken) classifies as "complete"
+    # under the final_status discriminator but is misaligned for THIS analysis
+    # call. Explicit ``--from-trace`` bypasses this gate (agent's choice).
+    if trace_path is None and any(row.did_not_execute_in_trace for row in per_call_rows):
+        notes.append("Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis.")
         trace_data = None
         used_trace_path = None
         trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
@@ -671,12 +677,12 @@ def analyze(
             )
         )
 
-    if _trace_coverage_for_rows(per_call_rows, ctx)[0] == "partial":
-        warnings = _warnings_for_partial_trace(warnings)
+    if _trace_coverage_for_rows(per_call_rows, ctx)[0] == "truncated":
+        warnings = _filter_trace_dependent_warnings(warnings)
         suggested_blocks = []
         notes.append(
-            "Workflow-design recommendations suppressed because the trace is partial; "
-            "per-call rows show executed trace evidence only."
+            "Cost-projection findings suppressed because the trace is truncated "
+            "(workflow did not finish); per-call rows show executed trace evidence only."
         )
 
     # --- Confidence aggregation (STRICT per DD#34) ---------------------------
@@ -3307,7 +3313,8 @@ def _predict_cache_keys(
     notes: list[str] = []
     if ctx.memo_cache is None:
         notes.append(
-            "Discrepancy detection: predicted-key matching unavailable (workflow has no run history). "
+            "Discrepancy detection: predicted-key matching unavailable (memo cache empty — "
+            "predicted-key matching needs prior memo cache entries to compare against). "
             "Observable-field attributions (TTL expiry, chunk skipped) still apply."
         )
         return {}, notes
@@ -3964,7 +3971,7 @@ def _build_summary(
         actual_vs_no_cache_delta = _unavailable_delta(
             no_cache_baseline,
             "actually_paid_usd",
-            reason="trace_coverage_partial",
+            reason=("no_trace" if trace_coverage == "none" else "trace_coverage_truncated"),
         )
     elif projections.absolute_exclusions:
         actual_vs_no_cache_delta = _unavailable_delta(
@@ -4020,7 +4027,21 @@ def _trace_coverage_for_rows(
     rows: list[PerCallRow],
     ctx: AnalysisContext | None,
 ) -> tuple[str, int, tuple[TraceUnexecutedLLMRow, ...]]:
-    """Classify trace coverage over the static LLM rows."""
+    """Classify trace coverage over the static LLM rows.
+
+    Returns ``"truncated"`` only when the trace's ``final_status`` is
+    ``"failed"`` AND some static rows didn't execute (workflow died mid-run,
+    cost-projection cohort genuinely incomplete). Returns ``"complete"``
+    otherwise — including the case where ``final_status`` is success but
+    some rows didn't execute, which is normal conditional dispatch
+    (a router routes inputs to one of N branches; only one fires).
+
+    The ``final_status`` field is written by
+    ``runtime/workflow_trace.py::WorkflowTraceCollector`` from per-node
+    final-event success/failure (see ``_determine_trace_status``).
+    Defensively defaults to ``"success"`` when missing (legacy 2.0.0
+    fixtures, hand-built test traces).
+    """
     if ctx is None or ctx.trace_data is None:
         return "none", 0, ()
     unexecuted = tuple(
@@ -4033,22 +4054,41 @@ def _trace_coverage_for_rows(
     executed = len(rows) - len(unexecuted)
     if not rows:
         return "complete", 0, ()
-    if unexecuted:
-        return "partial", executed, unexecuted
-    return "complete", executed, ()
+    final_status = str(ctx.trace_data.get("final_status") or "success")
+    if unexecuted and final_status == "failed":
+        return "truncated", executed, unexecuted
+    return "complete", executed, unexecuted
 
 
 def _evidence_scope_for_trace_coverage(trace_coverage: str) -> str:
-    if trace_coverage == "partial":
-        return "partial_trace_executed_subset"
+    if trace_coverage == "truncated":
+        return "truncated_trace_executed_subset"
     if trace_coverage == "complete":
         return "complete_trace"
     return "static_analysis"
 
 
-def _warnings_for_partial_trace(warnings: list[Diagnostic]) -> list[Diagnostic]:
-    """Keep validity errors, suppress optimization advice for partial traces."""
-    return [warning for warning in warnings if warning.severity == Severity.ERROR]
+def _filter_trace_dependent_warnings(warnings: list[Diagnostic]) -> list[Diagnostic]:
+    """Drop diagnostics whose catalog spec opts in via ``requires_complete_trace``.
+
+    Applied only when ``trace_coverage == "truncated"`` (workflow died mid-run,
+    so cost-projection cohorts are misleading). IR-derived findings (the
+    default) flow regardless because they describe workflow structure, not
+    execution evidence — the contract documented at
+    ``cache_analysis/CLAUDE.md`` § "Trace coverage is first-class".
+
+    Lookup mirrors ``resolve_headline_for`` (warning_catalog.py:1236-1238) —
+    catalog SSoT consulted by ID at runtime.
+    """
+    return [
+        warning
+        for warning in warnings
+        if not (
+            warning.id
+            and warning.id in CACHE_WARNING_CATALOG
+            and CACHE_WARNING_CATALOG[warning.id].requires_complete_trace
+        )
+    ]
 
 
 def _cost_delta(

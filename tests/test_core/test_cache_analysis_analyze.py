@@ -525,7 +525,16 @@ def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics(tmp_path:
     assert "aggregate_savings_rerun_usd" not in summary
 
 
-def test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_path: Path) -> None:
+def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_path: Path) -> None:
+    """Truncated coverage (final_status=failed + unexecuted) classifies correctly,
+    suppresses per-row warnings on unexecuted rows, and filters cost-projection
+    findings while letting IR-derived findings flow.
+
+    Mutation contract: revert ``_trace_coverage_for_rows`` to ignore final_status
+    → trace_coverage stays "truncated" but the rest of the test still passes;
+    revert ``_filter_trace_dependent_warnings`` to severity-based filtering →
+    fewer warnings flow than expected (legacy behavior was ERROR-only).
+    """
     workflow_ir = {
         "cache": {"items": [{"name": "ctx", "var": "ctx", "prose_before": ""}]},
         "inputs": {"ctx": {"type": "string"}},
@@ -546,11 +555,13 @@ def test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_pat
             },
         ],
     }
-    trace_path = tmp_path / "partial-trace.json"
+    trace_path = tmp_path / "truncated-trace.json"
     trace_path.write_text(
         json.dumps({
             "format_version": "2.2.0",
             "workflow_path": "x",
+            # final_status="failed" + unexecuted rows = truncated coverage
+            "final_status": "failed",
             "nodes": [
                 {
                     "node_id": "ran",
@@ -581,25 +592,27 @@ def test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_pat
     rows = {row.node_path: row for row in result.per_call}
     assert rows["ran"].did_not_execute_in_trace is False
     assert rows["skipped"].did_not_execute_in_trace is True
-    assert result.summary.trace_coverage == "partial"
-    assert result.summary.evidence_scope == "partial_trace_executed_subset"
+    assert result.summary.trace_coverage == "truncated"
+    assert result.summary.evidence_scope == "truncated_trace_executed_subset"
     assert result.summary.trace_llm_nodes_static == 2
     assert result.summary.trace_llm_nodes_executed == 1
     assert result.summary.trace_unexecuted_llm_rows == (TraceUnexecutedLLMRow("x", "skipped"),)
     assert result.summary.actual_vs_no_cache_delta.kind == "unavailable"
+    assert result.summary.actual_vs_no_cache_delta.unavailable_reason == "trace_coverage_truncated"
+    # Per-row suppression: skipped node produces no per-row warnings.
     assert not any(d.node_id == "skipped" and d.id == "cache.below-min-tokens" for d in result.warnings)
-    assert result.warnings
-    assert all(d.severity == Severity.ERROR for d in result.warnings)
+    # cache.first-call-write-penalty would not fire here (2 nodes, not 1), so
+    # we don't assert its absence; the dedicated truncated-filter test owns that.
     assert result.suggested_blocks == ()
     from pflow.core.cache_analysis.render_text import render_text
 
     text = render_text(result)
-    assert "Evidence: partial trace (1 of 2 LLM nodes executed)" in text
+    assert "Evidence: trace truncated (1 of 2 LLM nodes executed)" in text
     assert "Trace-backed costs below cover executed nodes only." in text
-    assert "Workflow-design recommendations suppressed for partial trace evidence." in text
+    assert "Cost-projection findings suppressed because the trace is truncated" in text
 
 
-def test_partial_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
+def test_truncated_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
     rows = [
         PerCallRow(
             node_path="ran",
@@ -646,6 +659,8 @@ def test_partial_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
         trace_data={
             "format_version": "2.2.0",
             "workflow_path": "/abs/parent.pflow.md",
+            # Truncated coverage requires final_status=failed under new logic.
+            "final_status": "failed",
             "nodes": [
                 {
                     "node_id": "ran",
@@ -657,7 +672,7 @@ def test_partial_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
 
     summary = _build_summary(rows, warnings=[], ctx=ctx)
 
-    assert summary.trace_coverage == "partial"
+    assert summary.trace_coverage == "truncated"
     assert summary.trace_llm_nodes_static == 3
     assert summary.trace_llm_nodes_executed == 1
     assert summary.trace_unexecuted_llm_rows == (
@@ -667,8 +682,14 @@ def test_partial_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
     assert [row.node_path for row in summary.trace_unexecuted_llm_rows] == ["review", "review"]
 
 
-def test_partial_trace_suppresses_executed_subset_optimization_advice(tmp_path: Path) -> None:
-    """Partial traces must not turn executed-subset findings into design advice."""
+def test_truncated_trace_filters_cost_projection_findings(tmp_path: Path) -> None:
+    """Truncated traces (final_status=failed) filter cost-projection findings
+    like ``cache.first-call-write-penalty`` whose cost cohort is incomplete.
+
+    Mutation contract: remove ``requires_complete_trace=True`` from
+    ``cache.first-call-write-penalty`` in the catalog → this test fails
+    because the penalty leaks through on truncated coverage.
+    """
     workflow_ir = {
         "ir_version": "0.1.0",
         "cache": {"items": [{"name": "ctx", "var": "ctx", "prose_before": "Context:"}]},
@@ -694,11 +715,13 @@ def test_partial_trace_suppresses_executed_subset_optimization_advice(tmp_path: 
             },
         ],
     }
-    trace_path = tmp_path / "partial-trace.json"
+    trace_path = tmp_path / "truncated-trace.json"
     trace_path.write_text(
         json.dumps({
             "format_version": "2.2.0",
             "workflow_path": "x",
+            # final_status=failed is what makes this truncated under the new logic.
+            "final_status": "failed",
             "nodes": [
                 {
                     "node_id": "ran",
@@ -727,11 +750,16 @@ def test_partial_trace_suppresses_executed_subset_optimization_advice(tmp_path: 
         memo_cache=None,
     )
 
-    assert result.summary.evidence_scope == "partial_trace_executed_subset"
-    assert result.summary.actionable_opportunities == 0
-    assert result.warnings == ()
+    assert result.summary.evidence_scope == "truncated_trace_executed_subset"
+    # cache.first-call-write-penalty is filtered on truncated traces because
+    # the cohort is incomplete (the comparison "first-call premium vs amortized
+    # reads" loses its denominator).
+    assert not any(d.id == "cache.first-call-write-penalty" for d in result.warnings)
     assert result.suggested_blocks == ()
 
+    # On complete coverage (single-node workflow → no unexecuted rows), the
+    # penalty fires normally — this is the same fixture, restricted to the
+    # node that did execute.
     complete_result = analyze(
         {**workflow_ir, "nodes": [workflow_ir["nodes"][0]]},
         parameters={"ctx": "x" * 20_000},
@@ -747,9 +775,236 @@ def test_partial_trace_suppresses_executed_subset_optimization_advice(tmp_path: 
     from pflow.core.cache_analysis.render_text import render_text
 
     payload = render_json(result)
-    assert payload["recommended_actions"] == []
+    # Cost-projection actions filtered, but IR-derived findings (if any) flow.
+    # ``cache.first-call-write-penalty`` is the only finding the fixture
+    # produces and it's correctly filtered.
+    assert all(
+        action.get("warning_id") != "cache.first-call-write-penalty" for action in payload["recommended_actions"]
+    )
     assert payload["suggested_blocks"] == []
-    assert "## Recommended actions" not in render_text(result)
+    text = render_text(result)
+    assert "cache.first-call-write-penalty" not in text
+
+
+# ---------------------------------------------------------------------------
+# L-10 + L-11 fix — trace coverage discriminator + catalog-driven filter
+# ---------------------------------------------------------------------------
+
+
+def test_complete_trace_with_conditional_dispatch_keeps_ir_findings(tmp_path: Path) -> None:
+    """Case A: workflow finished successfully but a conditional branch wasn't
+    taken (one of N classify-routed paths). Trace classifies as ``complete``,
+    NOT ``truncated``, and IR-derived findings flow normally.
+
+    Mutation contract: revert ``_trace_coverage_for_rows`` to ignore
+    ``final_status`` (re-treat any unexecuted as ``truncated``) → this test
+    fails because evidence_scope becomes ``truncated_trace_executed_subset``.
+    """
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"context": {"type": "string"}},
+        "nodes": [
+            # Two LLM nodes that share `${context}` — triggers
+            # cache.shared-context-undeclared (an IR-derived finding).
+            {
+                "id": "ran",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Use ${context} to answer.",
+                },
+            },
+            {
+                "id": "skipped",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Also use ${context} to summarize.",
+                },
+            },
+        ],
+    }
+    trace_path = tmp_path / "complete-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            # Workflow finished successfully — the unexecuted "skipped" node
+            # is conditional dispatch (branch not taken for these inputs),
+            # NOT trace truncation.
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "ran",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "llm_call": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cost_usd": 0.01,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"context": "x" * 20_000},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    # Coverage classifies as complete despite unexecuted rows.
+    assert result.summary.trace_coverage == "complete"
+    assert result.summary.evidence_scope == "complete_trace"
+    assert result.summary.trace_llm_nodes_static == 2
+    assert result.summary.trace_llm_nodes_executed == 1
+    # Unexecuted rows are still tracked (renderer uses them for the
+    # "Z not reached for these inputs" header annotation).
+    assert result.summary.trace_unexecuted_llm_rows == (TraceUnexecutedLLMRow("x", "skipped"),)
+    # IR-derived finding flows: shared-context-undeclared comes from
+    # template-reference walking, not trace evidence.
+    warning_ids = {d.id for d in result.warnings}
+    assert "cache.shared-context-undeclared" in warning_ids, (
+        f"Expected cache.shared-context-undeclared (IR-derived) to flow on complete trace; got: {sorted(warning_ids)}"
+    )
+
+    # Header rendering: complete + unexecuted should show "X of Y; Z not reached".
+    from pflow.core.cache_analysis.render_text import render_text
+
+    text = render_text(result)
+    assert "Evidence: complete trace (1 of 2 LLM nodes executed; 1 not reached for these inputs)" in text
+    # Suppression note must NOT appear on complete coverage.
+    assert "Cost-projection findings suppressed" not in text
+
+
+def test_truncated_trace_filters_first_call_write_penalty_only(tmp_path: Path) -> None:
+    """Case C: workflow died mid-run. ``cache.first-call-write-penalty`` is
+    filtered (cost-projection cohort incomplete). IR-derived findings still
+    flow.
+
+    Mutation contract: remove ``requires_complete_trace=True`` from
+    ``cache.first-call-write-penalty`` in the catalog → this test fails
+    because the penalty leaks through on truncated coverage.
+    """
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:"}]},
+        "nodes": [
+            {
+                "id": "single-llm",
+                "type": "llm",
+                "prompt_cache": ["context"],
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Answer using context.",
+                },
+            },
+            {
+                "id": "did-not-run",
+                "type": "llm",
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Use ${context}.",
+                },
+            },
+        ],
+    }
+    trace_path = tmp_path / "truncated-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            # final_status=failed + unexecuted = truncated.
+            "final_status": "failed",
+            "nodes": [
+                {
+                    "node_id": "single-llm",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "llm_call": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "input_tokens": 6_000,
+                        "output_tokens": 20,
+                        "cost_usd": 0.01,
+                        "cache_creation_input_tokens": 5_000,
+                        "cache_read_input_tokens": 0,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"context": "x" * 20_000},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    assert result.summary.trace_coverage == "truncated"
+    # Cost-projection finding filtered (catalog flag).
+    warning_ids = [d.id for d in result.warnings]
+    assert "cache.first-call-write-penalty" not in warning_ids
+
+
+def test_filter_consults_catalog_flag_not_severity() -> None:
+    """``_filter_trace_dependent_warnings`` filters by catalog flag, not
+    severity. This is the corrected discriminator (the old severity-based
+    filter dropped 17 of 21 catalog warnings whenever truncation fired).
+
+    Mutation contract: replace the catalog-flag check with a severity check
+    (``warning.severity == Severity.ERROR``) → this test fails because
+    INFO-severity IR-derived findings get dropped.
+    """
+    from pflow.core.cache_analysis.analyze import _filter_trace_dependent_warnings
+
+    flagged = Diagnostic(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        id="cache.first-call-write-penalty",  # has requires_complete_trace=True
+        node_id="x",
+        message="cost-projection finding",
+    )
+    unflagged_info = Diagnostic(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        id="cache.cross-workflow-rename-detected",  # IR-derived; no flag
+        node_id="x",
+        message="rename finding",
+    )
+    unflagged_warning = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.below-min-tokens",  # IR-derived; no flag
+        node_id="x",
+        message="below-min finding",
+    )
+    error_no_id = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        message="un-IDed validator error",  # no id → no catalog lookup → flows
+    )
+
+    filtered = _filter_trace_dependent_warnings([flagged, unflagged_info, unflagged_warning, error_no_id])
+
+    filtered_ids = [d.id for d in filtered]
+    # Cost-projection finding dropped.
+    assert "cache.first-call-write-penalty" not in filtered_ids
+    # IR-derived findings flow regardless of severity.
+    assert "cache.cross-workflow-rename-detected" in filtered_ids
+    assert "cache.below-min-tokens" in filtered_ids
+    # Diagnostics with no id (un-catalog'd) flow — no catalog lookup possible.
+    assert error_no_id in filtered
 
 
 def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> None:
@@ -1299,13 +1554,13 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
     assert sum_.warnings_count + sum_.info_count >= 1
 
 
-def test_partial_trace_preserves_non_cache_validator_errors(tmp_path: Path) -> None:
-    """Partial-trace filtering must not hide universal blocking errors.
+def test_truncated_trace_preserves_non_cache_validator_errors(tmp_path: Path) -> None:
+    """Truncated-trace filtering must not hide universal blocking errors.
 
     This guards the interaction between the unified validator pipeline and the
-    partial-trace suppression pass. ``blocking_errors[]`` is derived from
+    truncated-trace suppression pass. ``blocking_errors[]`` is derived from
     ``analysis.warnings`` by renderers, so dropping non-cache ERRORs here would
-    make broken workflows look valid whenever the loaded trace is partial.
+    make broken workflows look valid whenever the loaded trace is truncated.
     """
     workflow_ir = {
         "ir_version": "0.1.0",
@@ -1329,11 +1584,13 @@ def test_partial_trace_preserves_non_cache_validator_errors(tmp_path: Path) -> N
             },
         ],
     }
-    trace_path = tmp_path / "partial-trace.json"
+    trace_path = tmp_path / "truncated-trace.json"
     trace_path.write_text(
         json.dumps({
             "format_version": "2.2.0",
             "workflow_path": "x",
+            # Truncated coverage: workflow died, only one of two nodes ran.
+            "final_status": "failed",
             "nodes": [
                 {
                     "node_id": "ran",
@@ -1359,8 +1616,7 @@ def test_partial_trace_preserves_non_cache_validator_errors(tmp_path: Path) -> N
         memo_cache=None,
     )
 
-    assert result.summary.evidence_scope == "partial_trace_executed_subset"
-    assert result.summary.actionable_opportunities == 0
+    assert result.summary.evidence_scope == "truncated_trace_executed_subset"
     unknown_param = [d for d in result.warnings if "thinking_effort" in d.message]
     assert len(unknown_param) == 1
     assert unknown_param[0].severity == Severity.ERROR
@@ -1691,9 +1947,15 @@ def test_autoload_returns_trace_when_models_and_node_ids_match(tmp_path: Path, m
     assert result.trace_path == str(trace_path)
 
 
-def test_autoload_ignores_partial_trace_with_no_root_llm_activity(
+def test_autoload_ignores_misaligned_trace_with_no_root_llm_activity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """When auto-loaded trace has ShellNode + sub-workflow LLM events but no
+    matching root LLM events for the IR, autoload skips the trace and falls
+    back to greenfield. The misalignment is independent of trace_coverage —
+    a successful run from a different conditional branch can still be
+    misaligned for THIS analysis call's IR.
+    """
     builder = TraceFixtureBuilder()
     result, _trace_path = _autoload_analysis(
         tmp_path,
@@ -1709,7 +1971,9 @@ def test_autoload_ignores_partial_trace_with_no_root_llm_activity(
         ],
     )
     assert result.trace_path is None
-    assert "Auto-loaded trace was partial; ignored for workflow-wide cache analysis." in result.notes
+    assert (
+        "Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis." in result.notes
+    )
 
 
 def test_autoload_proceeds_when_ir_has_no_llm_nodes_and_trace_matches(
@@ -1858,7 +2122,7 @@ def test_explicit_from_trace_bypasses_drift_check(tmp_path: Path) -> None:
 
 def test_autoload_drift_rejected_trace_appends_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Drift-rejected auto-loaded traces surface a notes entry explaining why
-    analyze-cache fell back to greenfield. Mirrors the partial-trace branch's
+    analyze-cache fell back to greenfield. Mirrors the misalignment-fallback
     notes-entry pattern; agents reading the output can see that a stale trace
     was rejected and how to override (``--from-trace <path>``).
 

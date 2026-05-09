@@ -90,6 +90,12 @@ class CacheWarningSpec:
     # entries pointing elsewhere (e.g. the ``llm.*`` thinking-temperature
     # check) override.
     see_also: tuple[str, ...] = ("caching",)
+    # Findings whose reliability requires a complete trace. When the analyzer
+    # classifies trace coverage as ``"truncated"`` (workflow died mid-run),
+    # diagnostics with this flag are filtered. IR-derived findings (the
+    # default) flow regardless of trace coverage because they describe
+    # workflow structure, not execution evidence.
+    requires_complete_trace: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +587,10 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="nodes[id={node_id}].prompt_cache",
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template="Single-call cache write penalty on {node_id} ({model})",
+        # Cost-projection cohort becomes misleading when calls are missing
+        # from a truncated trace: the "first-call premium vs amortized
+        # reads" comparison loses its denominator.
+        requires_complete_trace=True,
     ),
     "cache.opaque-prompt": CacheWarningSpec(
         severity=Severity.INFO,

@@ -9637,3 +9637,73 @@ Three small UX fixes from the deferred B-section:
 
 B-8 deferred to avoid conflict with the in-flight A-6 implementation
 (both touch the `tokens=` column rendering).
+
+## L-10 + L-11 + L-1/L-2/L-12 — trace-mode evidence regression fix (2026-05-09)
+
+The architectural defect from BASELINE-AUDIT Section L: trace mode dropped 17 of
+21 catalog warnings whenever any IR node didn't execute, because
+`_warnings_for_partial_trace` filtered by `Severity.ERROR` and any unexecuted row
+forced `trace_coverage="partial"`. Lyrics-generator demonstrated the cost: 19
+opportunities → 0 when trace was added.
+
+Fix shape (Option E from triage — catalog-driven flag + `final_status`
+discriminator):
+
+- Added `requires_complete_trace: bool = False` to `CacheWarningSpec`. Flagged
+  `cache.first-call-write-penalty=True` (cost-projection cohort becomes
+  misleading when calls are missing). `cache.discrepancy` self-gates on
+  `trace_data is not None`; doesn't need the flag.
+- Replaced `_trace_coverage_for_rows` body to read `trace["final_status"]`.
+  Returns `"truncated"` only when `final_status=="failed"` AND some rows
+  unexecuted. Successful runs with conditional-dispatch unreached classify as
+  `"complete"` with `trace_unexecuted_llm_rows` populated for header annotation.
+- Replaced `_warnings_for_partial_trace` (severity filter) with
+  `_filter_trace_dependent_warnings` (catalog-flag filter). Mirrors
+  `resolve_headline_for` lookup pattern.
+- Renamed `"partial"` → `"truncated"` in `trace_coverage` /
+  `evidence_scope` / `unavailable_reason` values. Differentiated
+  `unavailable_reason="no_trace"` (trace_coverage=none) vs
+  `"trace_coverage_truncated"` (trace_coverage=truncated) — closes A-3 as a
+  side effect.
+- Auto-load misalignment heuristic kept independent of trace_coverage
+  (analyze.py:585). Step-1 alignment check (`_trace_aligns_with_ir`) catches
+  case-A traces; step-2 only sees traces with no root LLM events at all.
+- Header rendering: case-A workflows now show `Evidence: complete trace
+  (X of Y LLM nodes executed; Z not reached for these inputs)`.
+
+L-1 / L-2 close as side effects: `trace_coverage="complete"` now lets
+`observed_models` flow into `models_in_use` (analyze.py:3926). Lyrics-generator
+header changes from "no model resolved" to "using 3 models: gemini/...".
+
+Tests:
+
+- 5 existing tests rewritten — added `final_status: "failed"` to fixtures,
+  removed the smoking-gun `all severity == ERROR` assertion at the
+  `test_partial_trace_marks_unexecuted_rows_and_suppresses_row_warnings:592`
+  site (the assertion encoded the L-10 bug).
+- 3 new regression tests with verified mutation contracts:
+  `test_complete_trace_with_conditional_dispatch_keeps_ir_findings`,
+  `test_truncated_trace_filters_first_call_write_penalty_only`,
+  `test_filter_consults_catalog_flag_not_severity`. Each mutation verified by
+  reverting the corresponding production code; matching test fails, then
+  reverting the revert restores green.
+
+Polish round (post-implementation audit): renamed
+`partial_trace_default_view` → `truncated_trace_default_view` in render_text.py.
+Cleaned stale "partial-trace branch" comments in analyze.py and tests. Renamed
+test fixture `partial-trace.json` → `truncated-trace.json`. Updated MCP
+docstring to document `trace_unexecuted_llm_rows` populated under both
+truncated AND complete (case-A) coverage. Added `max(0, ...)` underflow guard
+on the `unreached` computation. B-18 prose fix folded in: discrepancy note
+"workflow has no run history" → "memo cache empty — predicted-key matching
+needs prior memo cache entries to compare against".
+
+Verification:
+
+- `make test`: 6,379 passed, 1 skipped.
+- `make check`: ruff + ruff-format + mypy + deptry clean.
+- Baseline harness: 35 expected drifts post-fix. After regenerate, 65/65 pass.
+  Lyrics-generator case-05 now shows `19 opportunities` (was 0), case-A header
+  with "7 not reached for these inputs", suppression note removed.
+
+Closes L-10, L-11, L-12, L-1, L-2, A-3, B-18 from BASELINE-AUDIT Section F.

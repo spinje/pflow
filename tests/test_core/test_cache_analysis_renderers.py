@@ -231,7 +231,7 @@ class TestMakeAnalysisShapeParity:
             partial=True,
             unavailable=("custom/model",),
             projection_exclusions=(_make_exclusion(),),
-            actual_delta_unavailable_reason="trace_coverage_partial",
+            actual_delta_unavailable_reason="trace_coverage_truncated",
         )
 
         def _at_default(summary: AnalysisSummary, field: dataclasses.Field[Any]) -> bool:
@@ -931,7 +931,7 @@ def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> No
     assert "tokens=    ?" not in text
 
 
-def test_text_partial_trace_labels_executed_scope() -> None:
+def test_text_truncated_trace_labels_executed_scope() -> None:
     row = PerCallRow(**{
         **_row("ran", 90).__dict__,
         "data_source": "trace",
@@ -948,8 +948,8 @@ def test_text_partial_trace_labels_executed_scope() -> None:
         **base.__dict__,
         "summary": AnalysisSummary(**{
             **base.summary.__dict__,
-            "trace_coverage": "partial",
-            "evidence_scope": "partial_trace_executed_subset",
+            "trace_coverage": "truncated",
+            "evidence_scope": "truncated_trace_executed_subset",
             "trace_llm_nodes_static": 2,
             "trace_llm_nodes_executed": 1,
             "trace_unexecuted_llm_rows": (TraceUnexecutedLLMRow("/abs/x.pflow.md", "skipped"),),
@@ -958,17 +958,17 @@ def test_text_partial_trace_labels_executed_scope() -> None:
 
     text = render_text(analysis)
 
-    assert "Evidence: partial trace (1 of 2 LLM nodes executed)" in text
+    assert "Evidence: trace truncated (1 of 2 LLM nodes executed)" in text
     assert "Trace-backed costs below cover executed nodes only." in text
     assert "Actually paid (executed trace):" in text
     assert "Cost without caching (executed):" in text
     assert "Cost on rerun (executed, within TTL):" in text
     assert "Showing 1 executed LLM node; 1 unexecuted row hidden (--all-rows shows everything)." in text
     assert "all-clean rows hidden" not in text
-    assert "Workflow-design recommendations suppressed for partial trace evidence." in text
+    assert "Cost-projection findings suppressed because the trace is truncated" in text
 
 
-def test_json_partial_trace_exposes_evidence_scope_and_observed_models(tmp_path: Path) -> None:
+def test_json_truncated_trace_exposes_evidence_scope_and_observed_models(tmp_path: Path) -> None:
     from pflow.core.cache_analysis.analyze import analyze
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
@@ -997,6 +997,8 @@ def test_json_partial_trace_exposes_evidence_scope_and_observed_models(tmp_path:
     trace_data = {
         "format_version": "2.2.0",
         "workflow_path": wf_path,
+        # Truncated coverage: workflow died before "review" ran.
+        "final_status": "failed",
         "nodes": [
             builder.batch_event(
                 "generate",
@@ -1033,14 +1035,14 @@ def test_json_partial_trace_exposes_evidence_scope_and_observed_models(tmp_path:
         workflow_ir,
         parameters={"topic": "x"},
         workflow_path=wf_path,
-        trace_path=_write_trace(tmp_path / "partial-trace.json", trace_data),
+        trace_path=_write_trace(tmp_path / "truncated-trace.json", trace_data),
         auto_load_trace=False,
         memo_cache=None,
     )
 
     payload = render_json(analysis)
 
-    assert payload["summary"]["evidence_scope"] == "partial_trace_executed_subset"
+    assert payload["summary"]["evidence_scope"] == "truncated_trace_executed_subset"
     assert payload["summary"]["observed_models_in_trace"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_models"] == ["gemini/a", "gemini/b"]
     assert payload["per_call"][0]["observed_call_count"] == 2
