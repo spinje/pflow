@@ -38,6 +38,7 @@ CP4 changes (#16, #9, #7, #6+#13 — agent UX cleanup):
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Mapping
 
 from pflow.core.diagnostic import Diagnostic
@@ -57,7 +58,7 @@ def render_text(analysis: CacheAnalysis, *, all_rows: bool = False) -> str:
     if errors:
         lines.append(errors)
 
-    other_errors = _render_other_blocking_errors(analysis)
+    other_errors = _render_other_blocking_errors(analysis, cache_blocking_present=bool(errors))
     if other_errors:
         lines.append(other_errors)
 
@@ -630,21 +631,27 @@ def _render_blocking_errors(analysis: CacheAnalysis) -> str:
     )
 
 
-def _render_other_blocking_errors(analysis: CacheAnalysis) -> str:
+def _render_other_blocking_errors(analysis: CacheAnalysis, *, cache_blocking_present: bool) -> str:
     """Render non-cache must-fix findings (B-9 fix).
 
     Workflow-blocking errors tangential to prompt caching (unknown node types,
     schema violations, LLM param errors). Renders AFTER cache-domain blocking
     errors so caching work surfaces first; agents skimming for caching
     fixes don't conflate env-config issues with caching findings.
+
+    The ``Other`` qualifier is purely relational — it only reads as
+    standalone-coherent when a sibling ``## Cache blocking errors`` section
+    renders alongside. When cache-domain errors are absent, drop the qualifier
+    and emit ``## Blocking errors`` so the heading reads complete on its own.
     """
     from .view_helpers import build_other_blocking_errors
 
     actions = build_other_blocking_errors(list(analysis.warnings))
     if not actions:
         return ""
+    header = "## Other blocking errors (surfaced for awareness)" if cache_blocking_present else "## Blocking errors"
     return _render_action_list(
-        header="## Other blocking errors (surfaced for awareness)",
+        header=header,
         intro="",
         actions=actions,
         workflow_path=analysis.workflow_path,
@@ -1250,6 +1257,17 @@ def _format_per_call_row(
 
 
 def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
+    """Emit a paste-ready block of per-child ``pflow analyze-cache`` commands.
+
+    B-3: 15 absolute paths × ~200 chars each was the loudest noise block in
+    real-world output. Compress by emitting one ``cd <parent-dir>`` line then
+    relative child paths — children of a workflow naturally live under or
+    near the parent's directory, so the relpath form is short and the block
+    stays paste-runnable line-by-line.
+
+    Falls back to absolute paths when the workflow_path has no directory
+    component (bare filename or ``ir-hash:`` synthetic key for inline IR).
+    """
     rollup = analysis.summary.sub_workflow_rollup
     if rollup is None:
         return ""
@@ -1258,8 +1276,14 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
         "",
         "  Sub-workflow opportunities don't surface here — run analyze-cache per child:",
     ]
-    for entry in rollup.per_workflow:
-        lines.append(f"    pflow analyze-cache {entry.workflow_path}")
+    parent_dir = os.path.dirname(analysis.workflow_path)
+    if parent_dir:
+        lines.append(f"    cd {parent_dir}")
+        for entry in rollup.per_workflow:
+            lines.append(f"    pflow analyze-cache {os.path.relpath(entry.workflow_path, parent_dir)}")
+    else:
+        for entry in rollup.per_workflow:
+            lines.append(f"    pflow analyze-cache {entry.workflow_path}")
     return "\n".join(lines)
 
 

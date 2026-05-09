@@ -11,7 +11,7 @@
 
   Cost data unavailable: no model resolved for LLM nodes (set settings.default_model or add per-node `- model:`).
 
-## Other blocking errors (surfaced for awareness)
+## Blocking errors
 
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
@@ -81,24 +81,23 @@
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/fetch-source/fetch-source.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
-    pflow analyze-cache <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+    cd <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator
+    pflow analyze-cache analyze-source/analyze-source.pflow.md
+    pflow analyze-cache concept-chooser/concept-chooser.pflow.md
+    pflow analyze-cache enforce-diversity/enforce-diversity.pflow.md
+    pflow analyze-cache fetch-source/fetch-source.pflow.md
+    pflow analyze-cache song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache song-creator/reviews/review-stranger-summary.pflow.md
+    pflow analyze-cache song-creator/song-creator.pflow.md
 
 ## Notes
 
-  · Workflow batch fetch-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${sources}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
-  · Workflow batch analyze-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${fetch-sources.results}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
-  · Workflow batch create-songs in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${zip-concepts-with-briefs.result}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.
+  · 3 dynamic batches not in per-call table: `fetch-sources` (items: `${sources}`), `analyze-sources` (items: `${fetch-sources.results}`), `create-songs` (items: `${zip-concepts-with-briefs.result}`). Batch items are computed at runtime, so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static items to list them. (Cost shown is measured from the trace, not estimated.)

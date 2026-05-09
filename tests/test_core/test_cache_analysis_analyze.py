@@ -4859,3 +4859,140 @@ def test_predict_cache_keys_aggregates_skip_notes_via_production_path() -> None:
     assert "skipped for /abs/sub-a.pflow.md" not in aggregated
     assert "skipped for /abs/sub-b.pflow.md" not in aggregated
     assert "skipped for /abs/sub-c.pflow.md" not in aggregated
+
+
+# ---------------------------------------------------------------------------
+# B-4 — dynamic-batch note collapse
+# ---------------------------------------------------------------------------
+
+
+def test_dynamic_batches_note_single_keeps_legacy_phrasing() -> None:
+    """B-4: single dynamic batch keeps the original per-batch phrasing for
+    continuity with pre-B-4 baselines and the existing walker substring test.
+
+    Mutation contract: drop the ``len(batches) == 1`` branch → this test
+    fails (renders the multi-summary phrasing for one batch).
+    """
+    from pflow.core.cache_analysis.analyze import _format_dynamic_batches_note
+    from pflow.core.cache_analysis.cross_workflow import DynamicBatchInfo
+
+    note = _format_dynamic_batches_note((
+        DynamicBatchInfo(
+            node_id="fetch-sources", parent_workflow="/abs/parent.pflow.md", items_expression="${sources}"
+        ),
+    ))
+    assert note is not None
+    assert "Workflow batch fetch-sources" in note
+    assert "uses items: ${sources}" in note
+    assert "measured from trace events" in note
+    assert "CLI parameter" in note
+    # Multi-summary phrasing must NOT appear for one batch.
+    assert "dynamic batches not in per-call table" not in note
+
+
+def test_dynamic_batches_note_multi_collapses_to_summary() -> None:
+    """B-4: multiple dynamic batches collapse to ONE summary listing each
+    batch's id + items expression once. The lyrics-generator workflow had 3
+    such batches; pre-B-4 rendering blew ~500 chars of repeated prose into
+    ``## Notes``.
+
+    Mutation contract: emit one note per batch (revert _format helper to
+    return per-batch strings) → this test fails because the listing
+    enumeration disappears.
+    """
+    from pflow.core.cache_analysis.analyze import _format_dynamic_batches_note
+    from pflow.core.cache_analysis.cross_workflow import DynamicBatchInfo
+
+    batches = (
+        DynamicBatchInfo(
+            node_id="fetch-sources", parent_workflow="/abs/parent.pflow.md", items_expression="${sources}"
+        ),
+        DynamicBatchInfo(
+            node_id="analyze-sources",
+            parent_workflow="/abs/parent.pflow.md",
+            items_expression="${fetch-sources.results}",
+        ),
+        DynamicBatchInfo(
+            node_id="create-songs",
+            parent_workflow="/abs/parent.pflow.md",
+            items_expression="${zip-concepts-with-briefs.result}",
+        ),
+    )
+    note = _format_dynamic_batches_note(batches)
+    assert note is not None
+    assert "3 dynamic batches not in per-call table" in note
+    # All three batch ids + items expressions appear once each.
+    assert "`fetch-sources` (items: `${sources}`)" in note
+    assert "`analyze-sources` (items: `${fetch-sources.results}`)" in note
+    assert "`create-songs` (items: `${zip-concepts-with-briefs.result}`)" in note
+    # Action surface preserved.
+    assert "CLI parameter" in note
+    assert "inline static items" in note
+    assert "measured from the trace, not estimated" in note
+
+
+def test_dynamic_batches_note_returns_none_for_empty_input() -> None:
+    """B-4: empty input → no note. The analyzer suppresses the append when
+    the helper returns ``None`` so workflows without runtime batches don't
+    pick up an empty Note line.
+    """
+    from pflow.core.cache_analysis.analyze import _format_dynamic_batches_note
+
+    assert _format_dynamic_batches_note(()) is None
+
+
+def test_analyze_aggregates_dynamic_batches_into_one_note_via_production_path(tmp_path: Path) -> None:
+    """B-4 PRODUCTION-SHAPE integration test (Pitfall #19 defense).
+
+    Helper-level tests above verify ``_format_dynamic_batches_note`` in
+    isolation, but they don't catch a regression where production code
+    bypasses the helper and reverts to per-batch note emission. This test
+    drives ``analyze()`` end-to-end with a 3-batch workflow IR and asserts
+    exactly ONE matching Note reaches ``result.notes``.
+
+    Mutation contract: revert the walker's ``_maybe_record_dynamic_batch``
+    to append per-batch prose to ``notes`` and skip the analyzer-side
+    aggregation → this test fails because ``result.notes`` carries 3
+    "Workflow batch" lines instead of 1 "3 dynamic batches" summary.
+    """
+    # Three sibling batch nodes, each with a runtime-template ``items`` expr.
+    # Children are inline workflows so the walker doesn't try to resolve
+    # external files.
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "fetch-sources",
+                "type": "workflow",
+                "params": {"workflow": {"nodes": []}, "inputs": {}},
+                "batch": {"items": "${sources}", "as": "item"},
+                "_source_line": 10,
+            },
+            {
+                "id": "analyze-sources",
+                "type": "workflow",
+                "params": {"workflow": {"nodes": []}, "inputs": {}},
+                "batch": {"items": "${fetch-sources.results}", "as": "item"},
+                "_source_line": 20,
+            },
+            {
+                "id": "create-songs",
+                "type": "workflow",
+                "params": {"workflow": {"nodes": []}, "inputs": {}},
+                "batch": {"items": "${zip-concepts-with-briefs.result}", "as": "item"},
+                "_source_line": 30,
+            },
+        ]
+    }
+    result = analyze(workflow_ir, workflow_path=str(tmp_path / "parent.pflow.md"), memo_cache=None)
+
+    batch_notes = [n for n in result.notes if "dynamic batches" in n or "Workflow batch" in n]
+    assert len(batch_notes) == 1, f"Expected 1 aggregated note, got {len(batch_notes)}:\n" + "\n".join(
+        f"  - {n}" for n in batch_notes
+    )
+    aggregated = batch_notes[0]
+    assert "3 dynamic batches" in aggregated
+    assert "fetch-sources" in aggregated
+    assert "analyze-sources" in aggregated
+    assert "create-songs" in aggregated
+    # Negative — pre-B-4 per-batch wording must NOT appear in multi-batch case.
+    assert "Workflow batch fetch-sources in" not in aggregated

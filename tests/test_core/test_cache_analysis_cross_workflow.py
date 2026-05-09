@@ -18,6 +18,7 @@ import pytest
 from pflow.core.cache_analysis.cross_workflow import (
     CrossWorkflowEdge,
     CrossWorkflowResult,
+    DynamicBatchInfo,
     walk_cross_workflow,
 )
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
@@ -366,16 +367,20 @@ def test_inputs_with_non_template_values_still_yield_edge() -> None:
         assert edges[0].child_input_name == "x"
 
 
-def test_template_items_gap_note_uses_real_analyze_cache_cli_param_wording() -> None:
-    """Runtime batch enumeration note must not suggest a nonexistent
-    ``analyze-cache --inputs`` flag; workflow inputs are positional
-    ``key=value`` params on the CLI.
+def test_walker_records_template_items_batches_as_typed_entries() -> None:
+    """B-4: walker is a data primitive. Template-items batches are recorded
+    as typed ``DynamicBatchInfo`` on ``cw_result.dynamic_batches`` instead
+    of prose appended to ``notes``. The analyzer formats the user-facing
+    note from these typed entries (one aggregated Note across all batches).
+
+    Mutation contract: append the prose to ``notes`` inside the walker;
+    this test fails because ``dynamic_batches`` is empty.
     """
     child_ir = {"inputs": {"x": {"type": "string"}}, "nodes": []}
     root_ir = {"nodes": [_batch_workflow_node("children", "./child.pflow.md", {"x": "${item.x}"})]}
     resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/child.pflow.md"))})
     notes: list[str] = []
-    walk_cross_workflow(
+    result = walk_cross_workflow(
         root_ir,
         base_path=Path("/abs"),
         resolve_child=resolver,
@@ -383,12 +388,18 @@ def test_template_items_gap_note_uses_real_analyze_cache_cli_param_wording() -> 
         notes=notes,
     )
 
-    assert notes
-    note = notes[0]
-    assert "measured from trace events" in note
-    assert "CLI parameter" in note
-    assert "--inputs" not in note
-    assert "current_cost" not in note
+    # Walker no longer emits prose to ``notes`` for template-items batches —
+    # the analyzer aggregates and formats one Note from typed entries.
+    assert not any("Workflow batch" in n for n in notes)
+    # Typed entry recorded with the batch's identity + parent + items expr.
+    # The ``_batch_workflow_node`` helper sets ``batch.items: "${things}"``.
+    assert result.dynamic_batches == (
+        DynamicBatchInfo(
+            node_id="children",
+            parent_workflow="/abs/parent.pflow.md",
+            items_expression="${things}",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

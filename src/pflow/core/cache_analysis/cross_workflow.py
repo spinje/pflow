@@ -116,6 +116,23 @@ def _value_tail(expr: str) -> str:
 
 
 @dataclass(frozen=True)
+class DynamicBatchInfo:
+    """One template-items batch encountered during the walk.
+
+    A workflow-type node with ``batch.items: "${...}"`` (runtime template
+    rather than an inline static list) can't have its per-item children
+    enumerated statically. The walker records each such occurrence as a
+    typed entry; the analyzer formats them into ONE aggregated Note after
+    the walk completes (B-4) — keeping the walker as a data primitive and
+    the user-facing prose in the rendering layer.
+    """
+
+    node_id: str
+    parent_workflow: str
+    items_expression: str
+
+
+@dataclass(frozen=True)
 class CrossWorkflowResult:
     """Cross-workflow walk output.
 
@@ -124,11 +141,16 @@ class CrossWorkflowResult:
     ``child_workflow``). ``irs_by_workflow`` exposes each visited workflow's
     full IR so consumers can count LLM nodes that reference a given value
     (Bug E fix — B.3 cross-workflow value-flow needs an accurate ``node_count``).
+
+    ``dynamic_batches`` carries every template-items batch encountered during
+    the walk so the analyzer can emit ONE aggregated Note instead of N
+    near-identical paragraphs (B-4).
     """
 
     edges: tuple[CrossWorkflowEdge, ...]
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]]
     irs_by_workflow: dict[str, dict[str, Any]]
+    dynamic_batches: tuple[DynamicBatchInfo, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +200,7 @@ def walk_cross_workflow(
     edges: list[CrossWorkflowEdge] = []
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]] = {}
     irs_by_workflow: dict[str, dict[str, Any]] = {}
+    dynamic_batches: list[DynamicBatchInfo] = []
     parent_label = root_workflow_path or "<root>"
     cache_items_by_workflow[parent_label] = _cache_items(root_ir)
     irs_by_workflow[parent_label] = root_ir
@@ -193,11 +216,13 @@ def walk_cross_workflow(
         notes=notes,
         cache_items_by_workflow=cache_items_by_workflow,
         irs_by_workflow=irs_by_workflow,
+        dynamic_batches=dynamic_batches,
     )
     return CrossWorkflowResult(
         edges=tuple(edges),
         cache_items_by_workflow=cache_items_by_workflow,
         irs_by_workflow=irs_by_workflow,
+        dynamic_batches=tuple(dynamic_batches),
     )
 
 
@@ -214,6 +239,7 @@ def _walk_one_level(
     notes: list[str] | None,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
     irs_by_workflow: dict[str, dict[str, Any]],
+    dynamic_batches: list[DynamicBatchInfo],
 ) -> None:
     """Visit every ``type: workflow`` node in ``ir`` and recurse."""
     if depth >= max_depth:
@@ -230,7 +256,7 @@ def _walk_one_level(
     for node in ir.get("nodes", []):
         if not isinstance(node, dict) or node.get("type") != "workflow":
             continue
-        _maybe_note_template_items_gap(node, parent_label, notes)
+        _maybe_record_dynamic_batch(node, parent_label, dynamic_batches)
         params = node.get("params") or {}
         if not isinstance(params, dict):
             continue
@@ -250,13 +276,21 @@ def _walk_one_level(
                 notes=notes,
                 cache_items_by_workflow=cache_items_by_workflow,
                 irs_by_workflow=irs_by_workflow,
+                dynamic_batches=dynamic_batches,
             )
 
 
-def _maybe_note_template_items_gap(node: dict[str, Any], parent_label: str, notes: list[str] | None) -> None:
-    """Surface static-enumeration gaps for template-items workflow batches."""
-    if notes is None:
-        return
+def _maybe_record_dynamic_batch(
+    node: dict[str, Any], parent_label: str, dynamic_batches: list[DynamicBatchInfo]
+) -> None:
+    """Record one entry per template-items workflow batch encountered.
+
+    The walker is a data primitive (per ``cache_analysis/CLAUDE.md``); it
+    collects facts and the analyzer formats user-facing prose. Recording
+    typed entries here lets the analyzer emit ONE aggregated Note across all
+    runtime batches in the workflow tree — replacing the per-batch prose
+    paragraphs that flooded ``## Notes`` (B-4).
+    """
     batch = node.get("batch")
     if not isinstance(batch, dict) or isinstance(batch.get("items"), list):
         return
@@ -264,14 +298,9 @@ def _maybe_note_template_items_gap(node: dict[str, Any], parent_label: str, note
     if not isinstance(items, str) or "${" not in items:
         return
     node_id = str(node.get("id", "?"))
-    message = (
-        f"Workflow batch {node_id} in {parent_label} uses items: {items}; sub-workflow rows for these runtime "
-        "items are not in the per-call table. The displayed cost is measured from trace events, not estimated. "
-        "Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child "
-        "enumeration."
-    )
-    if message not in notes:
-        notes.append(message)
+    entry = DynamicBatchInfo(node_id=node_id, parent_workflow=parent_label, items_expression=items)
+    if entry not in dynamic_batches:
+        dynamic_batches.append(entry)
 
 
 def _enumerate_calls(node: dict[str, Any], params: dict[str, Any]) -> Any:
@@ -300,6 +329,7 @@ def _process_one_call(
     notes: list[str] | None,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
     irs_by_workflow: dict[str, dict[str, Any]],
+    dynamic_batches: list[DynamicBatchInfo],
 ) -> None:
     """Resolve one child call and emit edges + recurse."""
     result = resolver(params, base_path)
@@ -364,6 +394,7 @@ def _process_one_call(
             notes=notes,
             cache_items_by_workflow=cache_items_by_workflow,
             irs_by_workflow=irs_by_workflow,
+            dynamic_batches=dynamic_batches,
         )
     finally:
         if child_path_str:
@@ -413,4 +444,4 @@ def _extract_template_inner(value: Any) -> str | None:
     return inner or None
 
 
-__all__ = ["CrossWorkflowEdge", "CrossWorkflowResult", "walk_cross_workflow"]
+__all__ = ["CrossWorkflowEdge", "CrossWorkflowResult", "DynamicBatchInfo", "walk_cross_workflow"]

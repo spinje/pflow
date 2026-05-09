@@ -25,4 +25,3 @@
 
   · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.
   · Discrepancy detection: predicted-key matching unavailable (memo cache empty — predicted-key matching needs prior memo cache entries to compare against). Observable-field attributions (TTL expiry, chunk skipped) still apply.
-  · Discrepancy detection: skipped attribution for 2 trace event(s) with no predicted cache_key and no observable signal. Per-node skip reasons (above, when present) explain why prediction was unavailable for the affected nodes; this count covers events whose nodes were not in the analyzed IR (typically batch sub-workflow per-item children with runtime-only context).

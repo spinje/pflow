@@ -2760,8 +2760,12 @@ def test_text_other_blocking_errors_section_omitted_when_only_cache_errors() -> 
 
 
 def test_text_cache_blocking_errors_section_omitted_when_only_other_errors() -> None:
-    """Symmetric: when all blocking errors are non-cache, only the Other
-    section renders. The Cache section stays hidden.
+    """Symmetric: when all blocking errors are non-cache, only the
+    blocking-errors section renders. The Cache section stays hidden.
+
+    N-10: when no cache-domain blocking errors render alongside, drop the
+    ``Other`` qualifier — it reads as orphan ("other than what?") with no
+    sibling section. Bare ``## Blocking errors`` reads as standalone.
 
     Mutation contract: drop the ``and _is_cache_focused_for_advisory(d)``
     clause in ``build_blocking_errors`` — the non-cache error leaks into
@@ -2777,8 +2781,38 @@ def test_text_cache_blocking_errors_section_omitted_when_only_other_errors() -> 
         ),
     ]
     text = render_text(_analysis_with_warnings(warnings))
-    assert "## Other blocking errors (surfaced for awareness)" in text
+    assert "## Blocking errors" in text
+    assert "## Other blocking errors" not in text
     assert "## Cache blocking errors" not in text
+
+
+def test_text_other_blocking_errors_section_keeps_qualifier_when_both_render() -> None:
+    """When BOTH cache-domain and non-cache blocking errors render, the
+    ``Other`` qualifier carries useful relational info (it's "other" relative
+    to the cache section above). Keep it in that case.
+
+    Mutation contract: emit ``## Blocking errors`` even when cache-domain
+    is present; this test fails because the ``Other`` qualifier disappears.
+    """
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id="cache.order-mismatch",
+            node_id="bad-node",
+            message="Order mismatch in cache",
+        ),
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id=None,
+            node_id="missing-mcp",
+            message="Unknown node type: 'mcp-klavis-youtube-foo'",
+        ),
+    ]
+    text = render_text(_analysis_with_warnings(warnings))
+    assert "## Cache blocking errors (must fix before save and run)" in text
+    assert "## Other blocking errors (surfaced for awareness)" in text
 
 
 def test_json_other_blocking_errors_array_excludes_cache_errors() -> None:
@@ -3203,13 +3237,57 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
     assert "### child.pflow.md (called by call-child)" in text
     assert "(1 in parent.pflow.md, 1 in 1 sub-workflow: child)" in text
     assert "## Per-child analyze-cache commands" in text
-    assert "pflow analyze-cache /abs/child.pflow.md" in text
+    # B-3: paste-ready block uses ``cd <parent-dir>`` + relative child paths.
+    assert "    cd /abs" in text
+    assert "pflow analyze-cache child.pflow.md" in text
+    # The full-absolute legacy form must NOT appear — that was the noisy
+    # shape this fix replaces.
+    assert "pflow analyze-cache /abs/child.pflow.md" not in text
 
 
 def test_render_text_drill_in_omitted_for_single_workflow() -> None:
     text = render_text(_make_analysis(rows=[_row("draft", 30)]), all_rows=True)
     assert "## Per-child analyze-cache commands" not in text
     assert "(called by" not in text
+
+
+def test_render_text_drill_in_uses_relpath_for_subdirectory_children() -> None:
+    """B-3: when children live in subdirectories of the parent, relative
+    paths preserve the directory structure under one ``cd`` line.
+
+    Mutation contract: emit absolute paths in the loop; this test fails
+    because the relpath form (``sub/child.pflow.md``) is missing and the
+    absolute form (``/abs/parent/sub/child.pflow.md``) appears.
+    """
+    rows = [
+        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent/parent.pflow.md"}),
+        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/parent/sub/child.pflow.md"}),
+    ]
+    base = _make_analysis(rows=rows, workflow_path="/abs/parent/parent.pflow.md")
+    rollup = SubWorkflowRollup(
+        workflows_included=("/abs/parent/sub/child.pflow.md",),
+        max_depth_walked=1,
+        truncated=False,
+        per_workflow=(
+            SubWorkflowRollupEntry(
+                workflow_path="/abs/parent/sub/child.pflow.md",
+                called_by_node_id="call-child",
+                llm_node_count=1,
+                actually_paid_usd=0.07,
+                no_cache_hypothetical_usd=0.10,
+                first_run_with_cache_hypothetical_usd=0.09,
+                rerun_within_ttl_hypothetical_usd=0.05,
+            ),
+        ),
+    )
+    analysis = CacheAnalysis(**{
+        **base.__dict__,
+        "summary": AnalysisSummary(**{**base.summary.__dict__, "sub_workflow_rollup": rollup}),
+    })
+    text = render_text(analysis, all_rows=True)
+    assert "    cd /abs/parent" in text
+    assert "pflow analyze-cache sub/child.pflow.md" in text
+    assert "/abs/parent/sub/child.pflow.md" not in text
 
 
 def test_render_text_unpriced_model_includes_child_workflow_attribution() -> None:

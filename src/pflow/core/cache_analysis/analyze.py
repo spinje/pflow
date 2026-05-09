@@ -68,7 +68,7 @@ from .below_min_tokens_detector import (
     detect as detect_below_min_tokens,
 )
 from .context import AnalysisContext, _normalize_empty
-from .cross_workflow import walk_cross_workflow
+from .cross_workflow import DynamicBatchInfo, walk_cross_workflow
 from .padding_advisor import PaddingCandidate, compute_padding_advisories
 from .token_estimation import (
     _estimate_ref_tokens,
@@ -552,6 +552,9 @@ def analyze(
         root_workflow_path=lookup_path,
         notes=notes,
     )
+    dynamic_batch_note = _format_dynamic_batches_note(cw_result.dynamic_batches)
+    if dynamic_batch_note is not None:
+        notes.append(dynamic_batch_note)
     edge_child_paths = _edge_child_paths(cw_result)
     trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
     parameters_by_workflow = _build_parameters_by_workflow(
@@ -3344,6 +3347,38 @@ def _predict_cache_keys(
     return predicted_keys, notes
 
 
+def _format_dynamic_batches_note(batches: tuple[DynamicBatchInfo, ...]) -> str | None:
+    """Aggregate runtime-template batches into ONE Note (B-4).
+
+    Workflow-type nodes whose ``batch.items`` is a ``${...}`` template can't
+    have their per-item children enumerated statically. Pre-B-4 rendering
+    emitted ~150 chars of near-identical prose per occurrence — lyrics-
+    generator's 3 batches blew up to ~500 chars of repeated content in
+    ``## Notes``. The aggregated form lists each batch's ``node_id`` +
+    ``items_expression`` once and shares the explanatory prose.
+
+    Single-batch case keeps the original phrasing for continuity with
+    pre-B-4 baselines and the existing substring-only test
+    (``test_template_items_gap_note_uses_real_analyze_cache_cli_param_wording``).
+    """
+    if not batches:
+        return None
+    if len(batches) == 1:
+        b = batches[0]
+        return (
+            f"Workflow batch {b.node_id} in {b.parent_workflow} uses items: {b.items_expression}; sub-workflow "
+            "rows for these runtime items are not in the per-call table. The displayed cost is measured from "
+            "trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch "
+            "items, to enable static child enumeration."
+        )
+    listing = ", ".join(f"`{b.node_id}` (items: `{b.items_expression}`)" for b in batches)
+    return (
+        f"{len(batches)} dynamic batches not in per-call table: {listing}. Batch items are computed at runtime, "
+        "so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static "
+        "items to list them. (Cost shown is measured from the trace, not estimated.)"
+    )
+
+
 def _format_skipped_workflows_note(paths: list[str]) -> str:
     """Aggregate per-sub-workflow skip notes into one summary (L-4).
 
@@ -3601,7 +3636,6 @@ def _emit_discrepancy_diagnostics(
     notes.extend(predict_notes)
 
     diagnostics: list[Diagnostic] = []
-    silent_skip_no_predicted_key = 0
     from pflow.core.trace_tree import TraceTree
 
     edge_child_paths = _edge_child_paths(cw_result)
@@ -3638,12 +3672,11 @@ def _emit_discrepancy_diagnostics(
 
         if predicted_key is None and not (chunks_skipped or (cache_age_sec is not None and float(cache_age_sec) > 300)):
             # Cache engaged but we have no predicted_key AND no observable
-            # signal. Per-node skip notes from ``_predict_cache_keys`` already
-            # explain WHY prediction was unavailable for nodes in the analyzed
-            # IR; this counter covers events whose nodes aren't in the IR
-            # (typically batch sub-workflow per-item children with runtime-only
-            # ``${item.X}`` context — the node identity exists only at runtime).
-            silent_skip_no_predicted_key += 1
+            # signal. Skip — per-node skip notes from ``_predict_cache_keys``
+            # already explain why prediction was unavailable for nodes in the
+            # analyzed IR; events outside the IR (typically batch sub-workflow
+            # per-item children with runtime-only context) are surfaced via
+            # the per-child analyze-cache commands section.
             continue
         if predicted_key is not None and abs(predicted_pct - actual_pct) < 5:
             continue
@@ -3683,15 +3716,6 @@ def _emit_discrepancy_diagnostics(
                 actual_cache_key=actual_key,
                 **context_extra,
             )
-        )
-    if silent_skip_no_predicted_key > 0:
-        notes.append(
-            f"Discrepancy detection: skipped attribution for {silent_skip_no_predicted_key} "
-            "trace event(s) with no predicted cache_key and no observable signal. "
-            "Per-node skip reasons (above, when present) explain why prediction was "
-            "unavailable for the affected nodes; this count covers events whose nodes "
-            "were not in the analyzed IR (typically batch sub-workflow per-item children "
-            "with runtime-only context)."
         )
     return _aggregate_and_cap_discrepancies(diagnostics, max_total=20, notes=notes)
 

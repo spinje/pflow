@@ -10068,3 +10068,97 @@ Critical findings (load-bearing for any future cross-workflow renderer work):
    the renderer.
 
 Closes B-2 + N-8 from POLISH-PLAN.md Cluster A.
+
+## 2026-05-09 — Task 159 — Tier 1 polish bundle (L-5, N-10, B-3, B-4)
+
+Bundled four agent-UX fixes after a fresh-eyes read of the post-Cluster-A/B
+output. Each touches a different section; total +35 LOC across 3 source
+files. 6 baselines drifted, all strict improvements.
+
+- **L-5** (drop): the `Discrepancy detection: skipped attribution for N
+  trace event(s)…` Note was internal accounting (predicted_key,
+  observable signal, IR-resolvable node — all leaks of analyzer
+  internals). Per-call header `Showing N of M LLM nodes` is the coverage
+  signal; per-child commands point to where to look. Removed counter +
+  conditional notes.append; deleted 2 mutation-guard tests for
+  removed logic.
+
+- **N-10** (`render_text.py`): when only the non-cache blocking-errors
+  list renders, the orphan `## Other blocking errors (surfaced for
+  awareness)` qualifier reads as "other than what?". Pass
+  `cache_blocking_present: bool` from the orchestrator into
+  `_render_other_blocking_errors`; emit bare `## Blocking errors` when
+  the cache section isn't present. Updated 1 strict-literal test and
+  added 1 both-sections regression test (no baseline currently exercises
+  both-render path).
+
+- **B-3** (`render_text.py`): `## Per-child analyze-cache commands`
+  emitted N absolute paths × ~200 chars each (15 on lyrics-generator).
+  Replaced with `cd <dirname(workflow_path)>` + `os.path.relpath` per
+  child. Considered `os.path.commonpath` + threshold heuristic;
+  rejected — parent's directory IS the natural project root for sub-
+  workflows, so dirname is always the right cd target. Falls back to
+  absolute paths only when `parent_dir` is empty (bare filename or
+  `ir-hash:`).
+
+- **B-4** (`cross_workflow.py` + `analyze.py`): runtime-template batches
+  (`batch.items: ${...}`) emitted N near-identical paragraphs in
+  `## Notes` — the lyrics-generator's 3 batches blew ~500 chars of
+  duplicated prose. Walker is documented as a data primitive; pre-fix
+  it leaked prose into `notes`. Added typed `DynamicBatchInfo` entry to
+  `CrossWorkflowResult.dynamic_batches`; `_maybe_record_dynamic_batch`
+  appends typed entries (no prose). New `_format_dynamic_batches_note`
+  in analyze.py emits ONE aggregated Note from the typed list. Singular
+  case keeps the original per-batch wording for backward compat with
+  existing substring tests; multi case lists each batch's
+  `(node_id, items_expression)` once and shares the explanatory prose.
+
+### Critical learnings
+
+1. **Plan locus drift across recent commits.** POLISH-PLAN.md cited line
+   numbers were stale by ~80 lines for B-3 and pointed at the wrong
+   file for B-4 (`analyze.py` vs the actual `cross_workflow.py`).
+   Source-grounding via parallel `pflow-codebase-searcher` agents
+   before coding caught both before they ate implementation time.
+   Pattern: **verify file/line claims in any plan that's older than a
+   few commits** — renderer files churn faster than docs.
+
+2. **L-5's "117 of 253 events" framing was structurally wrong.** The
+   POLISH-PLAN proposal would have surfaced "117 of N events" as a
+   coverage statement, but the 117 counter excludes events that fail
+   the engagement gate at `analyze.py:3628`, and the 253 total is not
+   captured anywhere on `CacheAnalysis`. Investigating the helper
+   surface revealed that the count itself is internal accounting the
+   agent can't act on — the per-child commands section already points
+   at where to look. Drop beat promote.
+
+3. **Walker-as-data-primitive is a documented invariant.** Per
+   `cache_analysis/CLAUDE.md`: "this is a WALKER, not an analytical
+   stage." B-4 brought the dynamic-batch emission path into compliance
+   with that invariant. The post-pass-scan alternative (~10 LOC vs
+   ~25) introduced a string-coupling between walker prose and
+   analyze.py scan — fragile under future wording drift, exactly the
+   surface that bites AI agents extending the code.
+
+4. **B-3 simplification: parent-dir > commonpath.** Initial design
+   reached for `os.path.commonpath` + a "skip optimization if too short"
+   heuristic. Refactored to `os.path.dirname(analysis.workflow_path)`
+   as the cd target — sub-workflow paths naturally compose from the
+   parent's directory, so the deepest natural common prefix is just
+   the parent's dir. ~12 LOC, no heuristic, no fallback decision tree.
+   Top-10% pattern: setup snippets in `cargo new`, `npm init`, `git
+   clone` use `cd <project-root>` + relative commands.
+
+### Verification
+
+- `make test`: 6,426 passed, 1 skipped (no regressions).
+- `make check`: ruff + ruff-format + mypy + deptry clean.
+- 65/65 baselines pass; 6 regenerated as strict-improvement diffs (4
+  hit by ≥2 fixes, 2 hit by L-5 only).
+- Manual smoke on lyrics-generator: per-child block compresses 15
+  absolute paths to 1 cd + 15 relpath lines; Notes section drops the
+  3 near-identical batch paragraphs and the buried 117-events note;
+  blocking errors render as `## Blocking errors` (no orphan "Other"
+  qualifier) when no cache-domain ERRORs are present.
+
+Closes L-5 + N-10 + B-3 + B-4 from POLISH-PLAN.md Tier 1.

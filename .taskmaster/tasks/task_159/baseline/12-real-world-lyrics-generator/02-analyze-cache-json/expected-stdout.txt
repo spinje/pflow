@@ -1916,8 +1916,6 @@
     }
   ],
   "notes": [
-    "Workflow batch fetch-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${sources}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.",
-    "Workflow batch analyze-sources in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${fetch-sources.results}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration.",
-    "Workflow batch create-songs in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md uses items: ${zip-concepts-with-briefs.result}; sub-workflow rows for these runtime items are not in the per-call table. The displayed cost is measured from trace events, not estimated. Pass the resolved list as a CLI parameter, or use inline static batch items, to enable static child enumeration."
+    "3 dynamic batches not in per-call table: `fetch-sources` (items: `${sources}`), `analyze-sources` (items: `${fetch-sources.results}`), `create-songs` (items: `${zip-concepts-with-briefs.result}`). Batch items are computed at runtime, so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static items to list them. (Cost shown is measured from the trace, not estimated.)"
   ]
 }
