@@ -13,6 +13,28 @@ from pflow.core.cache_analysis.summarize import summarize, summarize_from_analys
 from pflow.core.diagnostic import Severity
 
 
+def _build_actionable_warnings(n: int) -> tuple:
+    """Construct ``n`` distinct recommended-action diagnostics.
+
+    Drives the dry-run nudge through ``count_rendered_findings`` (which reads
+    ``analysis.warnings`` directly post-A-4) so the synthetic ``actionable``
+    counter and the live diagnostic list agree. Pitfall #19: counter-only
+    fixtures bypass the real code path.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    return tuple(
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=[f"chunk-{i}"],
+            affected_workflow=f"/abs/wf-{i}.pflow.md",
+            savings_usd=None,
+        )
+        for i in range(n)
+    )
+
+
 def _analysis_with(
     actionable: int,
     current: float | None = None,
@@ -69,7 +91,7 @@ def _analysis_with(
         suggested_blocks=(),
         per_call=(),
         cross_workflow=CrossWorkflowFindings(0),
-        warnings=(),
+        warnings=_build_actionable_warnings(actionable),
         notes=(),
     )
 
@@ -113,6 +135,48 @@ def test_context_carries_opportunity_count_and_savings() -> None:
     assert diag.context["opportunity_count"] == 4
     assert diag.context["estimated_savings_usd"] == pytest_approx(1.34)
     assert diag.context["estimated_savings_pct"] == 61
+
+
+def test_dry_run_nudge_uses_rendered_count_after_rename_collapse() -> None:
+    """A-4 follow-up: nudge surfaces the rendered count (post-Cluster-A
+    collapse), not the raw diagnostic count, so ``pflow run --dry-run`` and
+    ``pflow analyze-cache`` agree on how many things the agent will see.
+
+    Construction: 5 raw rename diagnostics that share
+    ``(parent_workflow, parent_value_expr, child_input_name)`` — the fan-out
+    case that collapses to 1 grouped entry. Pre-A-4 the nudge would have
+    said ``5 design opportunities``; post-A-4 it must say ``1``.
+
+    Mutation contract: revert ``summarize_from_analysis`` to read
+    ``analysis.summary.actionable_opportunities``; this test fails because
+    the message would render ``5 design opportunities`` (raw count).
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    rename_diags = tuple(
+        make_diagnostic(
+            "cache.cross-workflow-rename-detected",
+            parent_workflow="/abs/parent.pflow.md",
+            child_workflow=f"/abs/child-{i}.pflow.md",
+            parent_value_expr="creative-direction.response",
+            child_input_name="creative_direction",
+            line_in_parent=124,
+            parent_node_id="parent-step",
+        )
+        for i in range(5)
+    )
+    analysis = _analysis_with(actionable=0, current=2.0, optimized=1.5)
+    # Replace the synthetic warnings with the real rename diagnostics.
+    from dataclasses import replace as _replace
+
+    analysis = _replace(analysis, warnings=rename_diags)
+    diag = summarize_from_analysis(analysis)
+
+    assert diag is not None
+    assert "1 design opportunity available" in diag.message
+    assert "5 design opportunities" not in diag.message
+    assert diag.context is not None
+    assert diag.context["opportunity_count"] == 1
 
 
 def test_summarize_from_workflow_ir_returns_none_on_optimal() -> None:

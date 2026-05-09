@@ -10429,3 +10429,47 @@ Verification:
   Changed-file ruff/format, full mypy, deptry, and `git diff --check` passed.
   Full `ruff check` still has unrelated pre-existing RUF043/RUF059 findings
   outside touched files.
+
+## 2026-05-09 — Task 159 — A-4 section-mapped headline + section header counts
+
+Replaced the misleading severity-keyed headline (``19 opportunities (0 warnings,
+19 info)`` for lyrics-generator) with section-mapped counts that match what
+the agent actually sees post-Cluster-A grouping:
+
+- Summary headline: ``2 recommended actions + 5 cross-workflow boundary findings``
+  (suppressed entirely when both are zero — old code unconditionally emitted
+  ``0 opportunities (0 warnings, 0 info)``).
+- ``## Recommended actions (N, ordered by impact)`` / ``## Recommended actions (N)``
+  inline counts; B-6 ``ordered by impact`` gating preserved.
+- ``## Sub-workflow boundaries (M, covering K underlying renames)`` —
+  rollup suffix only when grouping actually collapsed renames (``K > M_renames``);
+  prose-mismatches contribute to M but not K (1-per-finding, no collapse).
+
+Cross-surface follow-up: dry-run nudge (``summarize.summarize_from_analysis``)
+now uses the same rendered count via new ``view_helpers.count_rendered_findings``
+so ``pflow run --dry-run`` and ``pflow analyze-cache`` agree on how many things
+the agent will see (lyrics-generator: nudge said ``19 design opportunities``,
+analyzer said ``2 + 5 = 7`` — now both 7). Raw ``actionable_opportunities``
+preserved on ``AnalysisSummary`` for JSON consumers.
+
+Files: ``src/pflow/core/cache_analysis/{render_text,view_helpers,summarize}.py``;
+``tests/test_core/test_cache_analysis_{renderers,summarize}.py``;
+16 baselines regenerated (strict improvements, net −20 lines).
+
+``_group_renames_by_parent`` lifted from ``render_text.py`` →
+``view_helpers.group_renames_by_parent`` so the dry-run nudge and any future
+surface can derive the same rendered count without re-walking. ``count_rendered_findings``
+is the single SSoT for ``(rec_count, bnd_count)``.
+
+Tests: 9 new mutation-contract tests (section-mapped counts present /
+suppressed / blocking-only; rollup suffix gating across no-collapse,
+collapse, prose-only, mixed; recommended-actions header count w/ and w/o
+savings; singular boundary form; dry-run nudge uses post-collapse count).
+3 existing assertions migrated; 1 synthetic fixture (Pitfall #19 cleanup)
+updated to construct real diagnostics so ``count_rendered_findings``
+sees production-shape input.
+
+6,449 tests pass (+11 net). ``make check`` clean. 65/65 baselines pass.
+
+Closes A-4 from POLISH-PLAN.md Cluster E (cluster fully closed: A-4 +
+N-10 + L-5 + B-3 + B-4 all shipped).

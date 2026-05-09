@@ -6,12 +6,12 @@
 
   Cost per run:                unavailable
 
-  1 opportunity (1 warning, 0 info)
+  1 recommended action
 
   Cost data unavailable: run the workflow once for cost figures.
   Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
 
-## Recommended actions
+## Recommended actions (1)
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.

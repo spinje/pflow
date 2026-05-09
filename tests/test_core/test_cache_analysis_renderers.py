@@ -657,16 +657,13 @@ def test_text_summary_priced_with_savings_branch_emits_suggested_line() -> None:
 
 def test_text_summary_renders_blocking_errors_categorically() -> None:
     """Top-10% pattern (mypy / rustc / clippy / ruff): errors render
-    categorically separate from opportunities. The data model already
-    separates ``blocking_errors`` from ``actionable_opportunities``;
-    the renderer must match. An agent skimming the count needs to see
-    "blocking" categorically — lumping errors into the opportunity count
-    hides them.
+    categorically separate from opportunities. ``blocking_errors`` lands
+    on its own line so an agent skimming counts sees structural blockers
+    before optimization advice.
 
     Mutation test: drop the ``if s.blocking_errors > 0`` block in
-    ``_render_summary``; this test fails because "1 error blocking" no
-    longer appears, and an agent could read "2 opportunities" and miss
-    the structural blocker.
+    ``_append_summary_counts``; this test fails because "1 error blocking"
+    no longer appears.
     """
     from pflow.core.cache_analysis.analyze import AnalysisSummary
     from pflow.core.diagnostic import Diagnostic, Severity
@@ -675,9 +672,6 @@ def test_text_summary_renders_blocking_errors_categorically() -> None:
     summary = AnalysisSummary(**{
         **base.summary.__dict__,
         "blocking_errors": 1,
-        "actionable_opportunities": 2,
-        "warnings_count": 2,
-        "info_count": 0,
     })
     err = Diagnostic(
         severity=Severity.ERROR,
@@ -690,17 +684,8 @@ def test_text_summary_renders_blocking_errors_categorically() -> None:
     analysis = CacheAnalysis(**{**base.__dict__, "summary": summary, "warnings": (err,)})
     text = render_text(analysis)
 
-    # Blocking-errors line surfaces categorically.
-    assert "1 error blocking" in text, (
-        "Summary should render '1 error blocking' on its own line when "
-        "blocking_errors > 0. Without this, agents skimming the count see "
-        "'2 opportunities' and miss the ERROR-severity finding entirely."
-    )
+    assert "1 error blocking" in text
     assert "## Cache blocking errors (must fix before save and run)" in text
-    # Opportunity line still present, distinct from the error line.
-    assert "2 opportunities (2 warnings, 0 info)" in text
-    # The blocking line precedes the opportunity line (errors first).
-    assert text.index("1 error blocking") < text.index("2 opportunities")
 
 
 def test_text_summary_omits_blocking_line_when_no_errors() -> None:
@@ -716,15 +701,11 @@ def test_text_summary_omits_blocking_line_when_no_errors() -> None:
     summary = AnalysisSummary(**{
         **base.summary.__dict__,
         "blocking_errors": 0,
-        "actionable_opportunities": 1,
-        "warnings_count": 0,
-        "info_count": 1,
     })
     analysis = CacheAnalysis(**{**base.__dict__, "summary": summary})
     text = render_text(analysis)
 
     assert "blocking" not in text
-    assert "1 opportunity (0 warnings, 1 info)" in text
 
 
 def test_text_renders_suggested_block_placeholder_verbatim() -> None:
@@ -4025,7 +4006,331 @@ def test_recommended_actions_keeps_ordered_by_impact_when_priced() -> None:
         ),
     ]
     text = render_text(_make_analysis(warnings=warnings))
-    assert "## Recommended actions (ordered by impact)" in text
+    assert "## Recommended actions" in text
+    assert "ordered by impact)" in text
+
+
+# ---------------------------------------------------------------------------
+# A-4: section-mapped headline counts + inline section header counts
+# ---------------------------------------------------------------------------
+
+
+def _rename_diag(*, source: str, target: str, parent: str, child: str, line: int):
+    """Build a single ``cache.cross-workflow-rename-detected`` diagnostic."""
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    return make_diagnostic(
+        "cache.cross-workflow-rename-detected",
+        parent_workflow=parent,
+        child_workflow=child,
+        parent_value_expr=source,
+        child_input_name=target,
+        line_in_parent=line,
+        parent_node_id="parent-step",
+    )
+
+
+def _prose_mismatch_diag(*, parent: str, child: str, chunk: str):
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    return make_diagnostic(
+        "cache.cross-workflow-prose-mismatch",
+        node_id=None,
+        parent_workflow=parent,
+        child_workflow=child,
+        chunk_name=chunk,
+        parent_prose="Parent prose",
+        child_prose="Child prose",
+    )
+
+
+def test_summary_renders_section_mapped_counts_when_both_present() -> None:
+    """Headline groups by section so the count maps to what the agent will see.
+
+    Mutation contract: hardcode the headline back to the legacy
+    ``N opportunities (X warnings, Y info)`` shape; this test fails because
+    "recommended action" / "cross-workflow boundary finding" no longer
+    appear and the agent can't anchor to either downstream section.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warnings = [
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/path/song-creator.pflow.md",
+            savings_usd=0.05,
+        ),
+        _rename_diag(
+            source="concept_brief",
+            target="creative_brief",
+            parent="/abs/song-creator.pflow.md",
+            child="/abs/chorus-chooser.pflow.md",
+            line=42,
+        ),
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
+
+    # Headline groups by section.
+    assert "1 recommended action + 1 cross-workflow boundary finding" in text
+    # Severity-keyed legacy shape gone.
+    assert "opportunities (" not in text
+    assert " info)" not in text
+    # Section-anchor counts surface in each header.
+    assert "## Recommended actions (1, ordered by impact)" in text
+    assert "## Sub-workflow boundaries (1)" in text
+
+
+def test_summary_suppresses_count_line_on_clean_workflow() -> None:
+    """No findings, no blocking, no truncation note → no count line at all.
+
+    The legacy renderer always emitted ``0 opportunities (0 warnings, 0 info)``
+    even when there was nothing to surface; that line is pure noise.
+
+    Mutation contract: re-add an unconditional ``opportunities`` line; this
+    test fails because the substring leaks back in on clean workflows.
+    """
+    text = render_text(_make_analysis())
+
+    assert "recommended action" not in text
+    assert "cross-workflow boundary finding" not in text
+    assert "opportunities" not in text
+
+
+def test_summary_renders_blocking_only_when_no_opportunities() -> None:
+    """Blocking-errors line stands on its own when no recs / boundaries fire.
+
+    Mutation contract: drop the ``has_opportunities`` gate (always emit the
+    count line); this test fails because ``0 recommended actions`` would
+    leak under the blocking line.
+    """
+    from pflow.core.cache_analysis.analyze import AnalysisSummary
+    from pflow.core.diagnostic import Diagnostic, Severity
+
+    base = _make_analysis()
+    summary = AnalysisSummary(**{**base.summary.__dict__, "blocking_errors": 1})
+    err = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Cache Failure",
+        node_id="bad-call",
+        message="Order mismatch",
+        id="cache.order-mismatch",
+    )
+    analysis = CacheAnalysis(**{**base.__dict__, "summary": summary, "warnings": (err,)})
+    text = render_text(analysis)
+
+    assert "1 error blocking" in text
+    # No count line — only the blocking line should appear in the count block.
+    assert "recommended action" not in text
+    assert "cross-workflow boundary finding" not in text
+
+
+def test_section_header_drops_rollup_when_no_collapse() -> None:
+    """Rollup suffix only fires when grouping reduced the count.
+
+    Three distinct renames (each with a unique source) → grouped == raw
+    so the agent doesn't need ``covering N underlying renames`` (it'd say
+    ``covering 3 underlying renames`` for a section already showing 3
+    entries — pure noise).
+
+    Mutation contract: render the rollup unconditionally; this test fails
+    because ``covering`` leaks into the no-collapse case.
+    """
+    diags = [
+        _rename_diag(
+            source=src,
+            target=tgt,
+            parent="/abs/song-creator.pflow.md",
+            child="/abs/chorus-chooser.pflow.md",
+            line=97,
+        )
+        for src, tgt in (
+            ("creative-direction.response", "creative_direction"),
+            ("song-architecture.response", "architecture"),
+            ("concept_brief", "creative_brief"),
+        )
+    ]
+    text = render_text(_make_analysis(warnings=diags))
+
+    assert "## Sub-workflow boundaries (3)" in text
+    # Rollup detail must NOT render; bracketed search prevents matching
+    # an unrelated "covering" elsewhere in the output.
+    assert "## Sub-workflow boundaries (3, covering" not in text
+
+
+def test_section_header_includes_rollup_when_renames_collapse() -> None:
+    """Rollup surfaces collapse work: 7 raw renames into 1 grouped entry.
+
+    Mutation contract: drop the rollup branch; this test fails because the
+    ``covering 7 underlying renames`` qualifier disappears.
+    """
+    children = [
+        ("/abs/chorus-chooser.pflow.md", 97),
+        ("/abs/review-emotional-architecture.pflow.md", 124),
+        ("/abs/review-ai-tells.pflow.md", 239),
+        ("/abs/review-cliche.pflow.md", 239),
+        ("/abs/review-genre.pflow.md", 239),
+        ("/abs/review-accuracy.pflow.md", 239),
+        ("/abs/review-rhyme.pflow.md", 239),
+    ]
+    diags = [
+        _rename_diag(
+            source="creative-direction.response",
+            target="creative_direction",
+            parent="/abs/song-creator.pflow.md",
+            child=child_path,
+            line=line,
+        )
+        for child_path, line in children
+    ]
+    text = render_text(_make_analysis(warnings=diags))
+
+    assert "## Sub-workflow boundaries (1, covering 7 underlying renames)" in text
+
+
+def test_section_header_drops_rollup_for_prose_mismatch_only() -> None:
+    """Prose-mismatches don't collapse (1-per-finding) — section header
+    shows the rendered count only, no rollup.
+
+    Mutation contract: include prose-mismatches in the rollup count K; this
+    test fails because ``covering`` leaks in even when no rename collapse
+    happened.
+    """
+    diags = [
+        _prose_mismatch_diag(
+            parent="/abs/song-creator.pflow.md",
+            child=f"/abs/{child_name}.pflow.md",
+            chunk="concept",
+        )
+        for child_name in ("chorus-chooser", "review-emotional-architecture")
+    ]
+    text = render_text(_make_analysis(warnings=diags))
+
+    assert "## Sub-workflow boundaries (2)" in text
+    assert "covering" not in text
+
+
+def test_section_header_rollup_in_mixed_renames_and_prose() -> None:
+    """Mixed case: rollup wording stays anchored to 'underlying renames' even
+    when prose-mismatches are present (prose entries don't collapse — they
+    contribute to the rendered count M but never to K).
+
+    Construction: 17 raw renames collapsing to 5 source-deduped groups plus
+    2 prose-mismatches → header ``(7, covering 17 underlying renames)``.
+
+    Mutation contract: include prose count in K (raw_rename_count); this
+    test fails because the header would say ``covering 19 underlying renames``.
+    """
+    children = [
+        ("/abs/chorus-chooser.pflow.md", 97),
+        ("/abs/review-emotional-architecture.pflow.md", 124),
+        ("/abs/review-ai-tells.pflow.md", 239),
+        ("/abs/review-cliche.pflow.md", 239),
+        ("/abs/review-genre.pflow.md", 239),
+        ("/abs/review-accuracy.pflow.md", 239),
+        ("/abs/review-rhyme.pflow.md", 239),
+        ("/abs/review-narrative.pflow.md", 124),
+        ("/abs/review-imagery.pflow.md", 124),
+        ("/abs/review-stranger.pflow.md", 124),
+    ]
+    rename_diags = [
+        _rename_diag(
+            source="creative-direction.response",
+            target="creative_direction",
+            parent="/abs/song-creator.pflow.md",
+            child=child_path,
+            line=line,
+        )
+        for child_path, line in children
+    ]
+    # Add 7 more renames sharing the same source to push raw count to 17 and
+    # keep the group count at 1 (single (source, target) pair).
+    for child_path, line in children[:7]:
+        rename_diags.append(
+            _rename_diag(
+                source="creative-direction.response",
+                target="creative_direction",
+                parent="/abs/song-creator.pflow.md",
+                child=child_path,
+                line=line,
+            )
+        )
+    prose_diags = [
+        _prose_mismatch_diag(
+            parent="/abs/song-creator.pflow.md",
+            child=f"/abs/{child}.pflow.md",
+            chunk="concept",
+        )
+        for child in ("review-narrative", "review-imagery")
+    ]
+    text = render_text(_make_analysis(warnings=rename_diags + prose_diags))
+
+    # Rendered count = 1 grouped rename + 2 prose = 3 entries
+    # (the multiple-children-with-same-source still group to 1 since key is
+    # (source_expr, child_input)). Raw renames = 17.
+    assert "## Sub-workflow boundaries (3, covering 17 underlying renames)" in text
+    # Wording stays anchored to renames; prose count not folded into K.
+    assert "covering 19" not in text
+    assert "underlying entries" not in text
+
+
+def test_summary_singular_form_for_one_boundary_finding() -> None:
+    """Singular ``1 cross-workflow boundary finding`` renders when only one
+    rendered entry exists (1 rename, no prose, no recs).
+
+    Mutation contract: drop the singular branch in ``_append_summary_counts``;
+    this test fails because the headline would emit
+    ``1 cross-workflow boundary findings`` (plural) for the single-entry case.
+    """
+    diag = _rename_diag(
+        source="concept_brief",
+        target="creative_brief",
+        parent="/abs/song-creator.pflow.md",
+        child="/abs/chorus-chooser.pflow.md",
+        line=42,
+    )
+    text = render_text(_make_analysis(warnings=[diag]))
+
+    assert "1 cross-workflow boundary finding" in text
+    assert "1 cross-workflow boundary findings" not in text
+
+
+def test_recommended_actions_header_includes_count() -> None:
+    """Section header always carries an inline count when it renders.
+
+    Mutation contract: drop ``count`` from either branch in
+    ``_render_recommended_actions``; this test fails on the relevant case.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    # No-savings branch: ``(N)`` only.
+    no_savings = [
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/path/song-creator.pflow.md",
+            savings_usd=None,
+        ),
+    ]
+    text = render_text(_make_analysis(warnings=no_savings))
+    assert "## Recommended actions (1)" in text
+    assert "(1, ordered by impact)" not in text
+
+    # With-savings branch: ``(N, ordered by impact)``.
+    with_savings = [
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/path/song-creator.pflow.md",
+            savings_usd=0.05,
+        ),
+    ]
+    text = render_text(_make_analysis(warnings=with_savings))
+    assert "## Recommended actions (1, ordered by impact)" in text
 
 
 # ---------------------------------------------------------------------------

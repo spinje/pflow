@@ -200,9 +200,61 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
     return actions
 
 
+# ---------------------------------------------------------------------------
+# Cross-workflow rename grouping (used by both renderer and dry-run nudge)
+# ---------------------------------------------------------------------------
+
+
+def group_renames_by_parent(
+    rename_detections: list[Diagnostic],
+) -> dict[str, dict[tuple[str, str], list[tuple[str, int]]]]:
+    """Source-dedup renames into ``parent → (source_expr, child_input) → consumers``.
+
+    Single-pass grouping that mirrors what ``## Sub-workflow boundaries``
+    renders. Lives here (not in ``render_text``) so the dry-run nudge and
+    other downstream surfaces can derive the same rendered count without
+    re-walking diagnostic context.
+    """
+    by_parent: dict[str, dict[tuple[str, str], list[tuple[str, int]]]] = {}
+    for diag in rename_detections:
+        ctx = diag.context or {}
+        parent = str(ctx.get("parent_workflow", ""))
+        source_expr = str(ctx.get("parent_value_expr", ""))
+        child_input = str(ctx.get("child_input_name", ""))
+        child_wf = str(ctx.get("child_workflow", ""))
+        try:
+            line = int(ctx.get("line_in_parent", 0))
+        except (TypeError, ValueError):
+            line = 0
+        groups = by_parent.setdefault(parent, {})
+        groups.setdefault((source_expr, child_input), []).append((child_wf, line))
+    return by_parent
+
+
+def count_rendered_findings(warnings: list[Diagnostic]) -> tuple[int, int]:
+    """Return ``(recommended_action_count, cross_workflow_boundary_count)``.
+
+    Section-mapped counts that surface in ``pflow analyze-cache`` text output
+    after Cluster A's parent-grouped collapse for renames. Use these on any
+    surface (dry-run nudge, MCP, downstream tooling) that wants the
+    user-facing count rather than ``actionable_opportunities`` (raw
+    diagnostic count, pre-collapse — exposed in JSON for machine consumers).
+
+    For lyrics-generator: raw ``actionable_opportunities=19``; this returns
+    ``(2, 5) → 7`` rendered entries.
+    """
+    rec_count = len(build_recommended_actions(list(warnings)))
+    rename_detections = [d for d in warnings if d.id == "cache.cross-workflow-rename-detected"]
+    prose_mismatches = [d for d in warnings if d.id == "cache.cross-workflow-prose-mismatch"]
+    grouped_rename_count = sum(len(g) for g in group_renames_by_parent(rename_detections).values())
+    return (rec_count, grouped_rename_count + len(prose_mismatches))
+
+
 __all__ = [
     "build_blocking_errors",
     "build_other_blocking_errors",
     "build_recommended_actions",
+    "count_rendered_findings",
+    "group_renames_by_parent",
     "is_cross_workflow_alignment",
 ]

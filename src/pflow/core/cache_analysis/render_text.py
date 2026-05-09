@@ -422,7 +422,7 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     if delta_lines:
         summary_lines.extend(delta_lines)
 
-    _append_summary_counts(summary_lines, s)
+    _append_summary_counts(summary_lines, analysis)
 
     if s.partial_cost_usd and s.unavailable_models:
         models_csv = _format_unavailable_models(analysis)
@@ -489,20 +489,37 @@ def _append_unavailable_cost_message(summary_lines: list[str], s: AnalysisSummar
         _append_suggested_run_command(summary_lines, s)
 
 
-def _append_summary_counts(summary_lines: list[str], s: AnalysisSummary) -> None:
-    # Errors render categorically separate from opportunities; agents skimming
-    # counts need to see must-fix issues before optimization advice.
-    actionable_word = "opportunity" if s.actionable_opportunities == 1 else "opportunities"
-    summary_lines.append("")
-    if s.blocking_errors > 0:
+def _append_summary_counts(summary_lines: list[str], analysis: CacheAnalysis) -> None:
+    # Counts are section-mapped (not severity-keyed): the headline must
+    # match what `## Recommended actions` and `## Sub-workflow boundaries`
+    # actually render so an agent skimming the summary doesn't hunt for
+    # entries that don't exist. Severity counts stay in JSON
+    # (``warnings_count``/``info_count`` on AnalysisSummary) for machine
+    # consumers.
+    from .view_helpers import count_rendered_findings
+
+    s = analysis.summary
+    rec_count, bnd_count = count_rendered_findings(list(analysis.warnings))
+
+    has_blocking = s.blocking_errors > 0
+    has_opportunities = rec_count > 0 or bnd_count > 0
+    has_truncation_note = s.evidence_scope == "truncated_trace_executed_subset"
+
+    if has_blocking or has_opportunities or has_truncation_note:
+        summary_lines.append("")
+    if has_blocking:
         error_word = "error" if s.blocking_errors == 1 else "errors"
         summary_lines.append(f"  {s.blocking_errors} {error_word} blocking")
-    summary_lines.append(
-        f"  {s.actionable_opportunities} {actionable_word} "
-        f"({s.warnings_count} warning{'s' if s.warnings_count != 1 else ''}, "
-        f"{s.info_count} info)"
-    )
-    if s.evidence_scope == "truncated_trace_executed_subset":
+    if has_opportunities:
+        parts: list[str] = []
+        if rec_count > 0:
+            word = "recommended action" if rec_count == 1 else "recommended actions"
+            parts.append(f"{rec_count} {word}")
+        if bnd_count > 0:
+            word = "cross-workflow boundary finding" if bnd_count == 1 else "cross-workflow boundary findings"
+            parts.append(f"{bnd_count} {word}")
+        summary_lines.append(f"  {' + '.join(parts)}")
+    if has_truncation_note:
         summary_lines.append(
             "  Cost-projection findings suppressed because the trace is truncated (workflow did not finish)."
         )
@@ -701,7 +718,11 @@ def _render_other_blocking_errors(analysis: CacheAnalysis, *, cache_blocking_pre
 def _render_recommended_actions(analysis: CacheAnalysis) -> str:
     """Render optimization findings as action headline + scope + reason.
 
-    B-6: header claim ``(ordered by impact)`` only holds when at least one
+    A-4: header carries the inline rendered count — ``(N, ordered by impact)``
+    or ``(N)`` — so the agent can cross-anchor against the headline summary
+    while skim-reading.
+
+    B-6: ``(ordered by impact)`` qualifier only holds when at least one
     action has a positive savings figure. Greenfield without resolved
     models (and trace-mode workflows where every projection is unavailable)
     drop the qualifier — there's no impact to order by.
@@ -712,7 +733,11 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
     if not actions:
         return ""
     has_orderable_savings = any(a.estimated_savings_usd is not None and a.estimated_savings_usd > 0 for a in actions)
-    header = "## Recommended actions (ordered by impact)" if has_orderable_savings else "## Recommended actions"
+    count = len(actions)
+    if has_orderable_savings:
+        header = f"## Recommended actions ({count}, ordered by impact)"
+    else:
+        header = f"## Recommended actions ({count})"
     return _render_action_list(
         header=header,
         intro=(
@@ -957,13 +982,27 @@ def _render_cross_workflow(analysis: CacheAnalysis) -> str:
     Cross-boundary value-flow opportunities surface in Recommended actions
     only (filtered by ``view_helpers._CROSS_WORKFLOW_ALIGNMENT_IDS``).
     """
+    from .view_helpers import group_renames_by_parent
+
     rename_detections = [d for d in analysis.warnings if d.id == "cache.cross-workflow-rename-detected"]
     prose_mismatches = [d for d in analysis.warnings if d.id == "cache.cross-workflow-prose-mismatch"]
     if not (rename_detections or prose_mismatches):
         return ""
 
+    rename_groups_by_parent = group_renames_by_parent(rename_detections)
+    grouped_rename_count = sum(len(g) for g in rename_groups_by_parent.values())
+    raw_rename_count = len(rename_detections)
+    rendered_count = grouped_rename_count + len(prose_mismatches)
+    # Rollup suffix only when grouping actually collapsed something. If every
+    # rename had a unique source the rollup adds noise (K==M); same for
+    # prose-mismatches alone (no collapse semantics).
+    if raw_rename_count > grouped_rename_count:
+        header = f"## Sub-workflow boundaries ({rendered_count}, covering {raw_rename_count} underlying renames)"
+    else:
+        header = f"## Sub-workflow boundaries ({rendered_count})"
+
     lines = [
-        "## Sub-workflow boundaries",
+        header,
         "",
         "  Prompt-cache hits need byte-exact matches across boundaries. Each",
         "  finding below is a name or prose mismatch between a parent workflow",
@@ -977,12 +1016,12 @@ def _render_cross_workflow(analysis: CacheAnalysis) -> str:
     )
     for parent_path in parents:
         parent_short = _workflow_short_name(parent_path)
-        parent_renames = [d for d in rename_detections if (d.context or {}).get("parent_workflow") == parent_path]
+        parent_rename_groups = rename_groups_by_parent.get(parent_path, {})
         parent_prose = [d for d in prose_mismatches if (d.context or {}).get("parent_workflow") == parent_path]
-        if parent_renames:
+        if parent_rename_groups:
             lines.append("")
             lines.append(f"  In {parent_short}:")
-            lines.extend(_render_renames_for_parent(parent_renames))
+            lines.extend(_render_renames_for_parent(parent_rename_groups))
         if parent_prose:
             lines.append("")
             lines.append(f"  Prose mismatches in {parent_short}:")
@@ -1001,25 +1040,16 @@ def _collect_parent_paths(*diag_lists: list[Diagnostic]) -> set[str]:
     return out
 
 
-def _render_renames_for_parent(diags: list[Diagnostic]) -> list[str]:
+def _render_renames_for_parent(
+    groups: dict[tuple[str, str], list[tuple[str, int]]],
+) -> list[str]:
     """Render the renames sub-block for one parent workflow.
 
-    Renames source-dedup by ``(parent_value_expr, child_input_name)``. Within
-    the parent, sort by consumer count DESC (highest fan-out first), tiebreak
-    alphabetical on source expression — surfaces the "biggest fix" first.
+    Takes a pre-grouped dict (from ``_group_renames_by_parent``) so the count
+    is derivable up-front for the section header. Within the parent, sort by
+    consumer count DESC (highest fan-out first), tiebreak alphabetical on
+    source expression — surfaces the "biggest fix" first.
     """
-    groups: dict[tuple[str, str], list[tuple[str, int]]] = {}
-    for diag in diags:
-        ctx = diag.context or {}
-        source_expr = str(ctx.get("parent_value_expr", ""))
-        child_input = str(ctx.get("child_input_name", ""))
-        child_wf = str(ctx.get("child_workflow", ""))
-        try:
-            line = int(ctx.get("line_in_parent", 0))
-        except (TypeError, ValueError):
-            line = 0
-        groups.setdefault((source_expr, child_input), []).append((child_wf, line))
-
     sorted_keys = sorted(groups.keys(), key=lambda k: (-len(groups[k]), k[0]))
 
     out: list[str] = []

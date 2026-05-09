@@ -15,14 +15,14 @@
   Actual savings (this run):    saves ~$0.49/run vs no-cache, 19% of no-cache cost
   Rerun delta (projected):      saves ~$0.09/run on rerun, 3% of no-cache cost
 
-  19 opportunities (0 warnings, 19 info)
+  2 recommended actions + 5 cross-workflow boundary findings
 
 ## Blocking errors
 
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
 
-## Recommended actions (ordered by impact)
+## Recommended actions (2, ordered by impact)
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
@@ -39,7 +39,7 @@
      → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
      → See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern.
 
-## Sub-workflow boundaries
+## Sub-workflow boundaries (5, covering 17 underlying renames)
 
   Prompt-cache hits need byte-exact matches across boundaries. Each
   finding below is a name or prose mismatch between a parent workflow

@@ -6,8 +6,6 @@
 
   Cost per run:                unavailable
 
-  0 opportunities (0 warnings, 0 info)
-
   Cost data unavailable: run the workflow once for cost figures.
   Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
 
