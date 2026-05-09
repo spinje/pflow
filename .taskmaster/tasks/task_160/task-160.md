@@ -139,6 +139,14 @@ The mechanical work is described file-by-file in `research/end-state-architectur
 
 This task is structural only — zero behavior change is the bar. Anything that looks like a behavior bug discovered along the way is a separate ticket.
 
+### Adjacent work to consider after this lands
+
+GH **#381** (C-1 from Task 159 baseline audit) — assign catalog IDs to parser and un-IDed validator errors so analyze-cache renders consistent `[cache.X]` ID prefixes across all error sources. Currently mixed: cache-domain errors with catalog IDs render `Error: Cache Failure [cache.order-mismatch]`; parser errors and un-IDed validator emitters in `core/workflow/data_flow.py` render plain `Error: Parse Error` / `Error: Validation Error`.
+
+This is **NOT in scope for this task** (it's a behavior change requiring DD#29 design review). But once Task 160's stages/ split lands, the migration is mechanically simpler — every emitter in `data_flow.py` can be threaded through `make_diagnostic(warning_id, ...)` without navigating the 3,293-LOC `analyze.py`. Task 160 also surfaces `_is_cache_related_diagnostic` as the path-based bridge predicate; once C-1 lands, the hybrid filter collapses to pure catalog-membership.
+
+Consider planning C-1 as a follow-up to Task 160 rather than a parallel effort.
+
 ## Verification
 
 - All requirements above hold.

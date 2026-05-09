@@ -706,6 +706,7 @@ common-path, then JSON/lower-priority).
 
 ### C-1 — Bracketed catalog ID is inconsistent across error sources
 
+- **Status**: filed as GH #381 (2026-05-09); referenced from `.taskmaster/tasks/task_160/task-160.md` "Adjacent work" section. Defer to v1.x.
 - **Severity**: `UX`
 - **Triage**: `wart` — agent-greppability gap.
 - **What**: Cache validator errors with catalog IDs render as
@@ -1173,6 +1174,7 @@ common-path, then JSON/lower-priority).
 
 ### L-8 — Trace size: 53MB raw → 12MB trimmed (committable but heavy)
 
+- **Status**: filed as GH #382 (2026-05-09). Defer to v1.x; natural fit for Task 133 (Unified Per-Node Storage for Trace and Cache).
 - **Severity**: `UX` (regression-oracle workflow)
 - **Triage**: `wart`. Discovered during fixture preparation.
 - **What**: A real lyrics-generator trace is 53MB. Most of that is
