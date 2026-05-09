@@ -12,12 +12,12 @@
   Cost data unavailable: run the workflow once for cost figures.
   Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
 
-## Blocking errors (must fix before save and run)
+## Cache blocking errors (must fix before save and run)
 
   1. Node 'summarize' references undeclared cache chunk 'typo' in prompt_cache:.
      summarize
 
-## Recommended actions (ordered by impact)
+## Recommended actions
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
@@ -30,7 +30,7 @@
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
 
-  summarize                             model=anthropic/claude-haiku-4-5          tokens=    7  cacheable=    ?  ratio=  ?%  src=estimator-partial
+  summarize                             model=anthropic/claude-haiku-4-5          tokens=      7  cacheable=      ?  ratio=  ?%  src=estimator-partial
 
 ## Notes
 

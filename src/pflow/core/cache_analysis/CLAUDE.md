@@ -147,7 +147,7 @@ Both are projections of `CacheAnalysis` — read-only, no mutation. `render_text
 
 ### view_helpers.py
 
-Renderer-side projections. Three exports: `build_blocking_errors(warnings) → list[RecommendedAction]`, `build_recommended_actions(warnings) → list[RecommendedAction]`, and `is_cross_workflow_alignment(diag) → bool`.
+Renderer-side projections. Four exports: `build_blocking_errors(warnings) → list[RecommendedAction]` (cache-domain ERRORs only), `build_other_blocking_errors(warnings) → list[RecommendedAction]` (non-cache ERRORs — workflow-blocking issues tangential to caching), `build_recommended_actions(warnings) → list[RecommendedAction]`, and `is_cross_workflow_alignment(diag) → bool`.
 
 **Lazy import inside the helper** is a documented circular-import workaround: `RecommendedAction` is defined in `analyze.py` but built here from a list of `Diagnostic`s. Top-level import would cycle.
 
@@ -212,9 +212,9 @@ There is no duplicate predictor. `create_planner_shared` was originally `_create
 
 Domain focus is preserved at the renderer/aggregator boundary, not at the pipeline boundary:
 
-- ERRORs broaden universally: typos and broken structure block execution, so every CLI surface must show them. They surface through `blocking_errors[]`.
+- ERRORs broaden universally at the pipeline boundary: typos and broken structure block execution, so every CLI surface must show them. Domain focus is preserved at the renderer/aggregator boundary by splitting blocking errors into cache-domain (`blocking_errors[]`, rendered under `## Cache blocking errors`) and other (`other_blocking_errors[]`, rendered under `## Other blocking errors (surfaced for awareness)`). Cache-domain matches the `_is_cache_focused_for_advisory` predicate (id startswith `cache.`, `llm.thinking-temperature-mismatch`, or context.path under `cache.`/`prompt_cache`).
 - WARNINGs stay cache-scoped in action UX: `build_recommended_actions` filters warning/info findings to cache-related diagnostics only. Memoization-cache lint warnings and other non-cache advisory findings remain in raw `analysis.warnings` but not in "Recommended actions".
-- Derived counts stay cache-focused: `summary.actionable_opportunities`, `summary.blocking_errors`, `summary.warnings_count`, and `summary.info_count` are computed over the cache-focused subset because they drive provider prompt-cache nudges.
+- Derived counts stay cache-focused: `summary.actionable_opportunities`, `summary.blocking_errors`, `summary.warnings_count`, and `summary.info_count` are computed over the cache-focused subset because they drive provider prompt-cache nudges. `len(blocking_errors[])` matches `summary.blocking_errors` after the B-9 split.
 
 `_run_full_validation` in `analyze.py` calls the unified validator with dummy-padded `extracted_params` (matching `runner.validate()` and `save_service`) and stamps `context["affected_workflow"]` on root-level diagnostics.
 

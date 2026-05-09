@@ -62,16 +62,46 @@ def is_cross_workflow_alignment(diag: Diagnostic) -> bool:
 
 
 def build_blocking_errors(warnings: list[Diagnostic]) -> list[RecommendedAction]:
-    """Project ERROR-severity findings into a ranked action list.
+    """Project cache-domain ERROR-severity findings into a ranked action list.
 
     Cross-workflow alignment findings (rename, prose-mismatch) are filtered
     out — they render in the "Sub-workflow boundaries" section instead.
+
+    Restricting to cache-domain (id startswith ``cache.``,
+    ``llm.thinking-temperature-mismatch``, or ``context.path`` under
+    ``cache.``/``prompt_cache``) aligns this view with
+    ``AnalysisSummary.blocking_errors`` count. Non-cache validator errors
+    surface via ``build_other_blocking_errors`` so agents distinguish caching
+    work from env-config issues (B-9 fix).
 
     Ranking reuses the same core key as recommended actions. The severity
     dimension is degenerate inside this bucket because every eligible finding
     is an ERROR, so priority then savings then stable ID decide ties.
     """
-    eligible = [d for d in warnings if d.severity == Severity.ERROR and not is_cross_workflow_alignment(d)]
+    eligible = [
+        d
+        for d in warnings
+        if d.severity == Severity.ERROR and not is_cross_workflow_alignment(d) and _is_cache_focused_for_advisory(d)
+    ]
+    return _build_actions(eligible)
+
+
+def build_other_blocking_errors(warnings: list[Diagnostic]) -> list[RecommendedAction]:
+    """Project non-cache ERROR-severity findings into a ranked action list.
+
+    Workflow-blocking errors tangential to prompt caching (unknown node types,
+    schema violations, LLM param errors). Surfaced under ``## Other blocking
+    errors`` so agents can fix env-config issues without conflating them with
+    caching work (B-9 fix).
+
+    Cross-workflow alignment findings (rename, prose-mismatch) are filtered
+    out — they render in the "Sub-workflow boundaries" section instead.
+    """
+    eligible = [
+        d
+        for d in warnings
+        if d.severity == Severity.ERROR and not is_cross_workflow_alignment(d) and not _is_cache_focused_for_advisory(d)
+    ]
     return _build_actions(eligible)
 
 
@@ -172,6 +202,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
 
 __all__ = [
     "build_blocking_errors",
+    "build_other_blocking_errors",
     "build_recommended_actions",
     "is_cross_workflow_alignment",
 ]

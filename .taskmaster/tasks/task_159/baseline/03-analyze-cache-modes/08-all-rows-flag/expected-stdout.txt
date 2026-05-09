@@ -14,9 +14,9 @@
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
 
-  summarize                             model=anthropic/claude-haiku-4-5          tokens=   14  cacheable=    ?  ratio=  ?%  src=medium
-  translate                             model=anthropic/claude-haiku-4-5          tokens=   13  cacheable=    ?  ratio=  ?%  src=medium
-  tag                                   model=anthropic/claude-haiku-4-5          tokens=   12  cacheable=    ?  ratio=  ?%  src=medium
+  summarize                             model=anthropic/claude-haiku-4-5          tokens=     14  cacheable=      ?  ratio=  ?%  src=medium
+  translate                             model=anthropic/claude-haiku-4-5          tokens=     13  cacheable=      ?  ratio=  ?%  src=medium
+  tag                                   model=anthropic/claude-haiku-4-5          tokens=     12  cacheable=      ?  ratio=  ?%  src=medium
 
 ## Notes
 

@@ -1,13 +1,17 @@
 """JSON rendering for ``pflow analyze-cache --format=json`` and the MCP tool.
 
 Current shape: ``warnings`` is the raw diagnostic list; ``blocking_errors``,
-``recommended_actions``, and ``cross_workflow`` are derived views over it.
-Text mode hides empty sections, while JSON always emits empty arrays so agents
-can treat absence as a positive signal.
+``other_blocking_errors``, ``recommended_actions``, and ``cross_workflow`` are
+derived views over it. Text mode hides empty sections, while JSON always emits
+empty arrays so agents can treat absence as a positive signal.
 
 Empty-array contract: ``cross_workflow.*`` arrays are always present (empty
-when no findings). ``blocking_errors`` and ``recommended_actions`` follow the
-same contract.
+when no findings). ``blocking_errors``, ``other_blocking_errors``, and
+``recommended_actions`` follow the same contract.
+
+Domain split (B-9 fix): ``blocking_errors[]`` carries cache-domain ERRORs only
+(matches ``summary.blocking_errors`` count). Non-cache validator ERRORs go to
+``other_blocking_errors[]``.
 """
 
 from __future__ import annotations
@@ -26,18 +30,23 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
     :meth:`Diagnostic.to_dict` for warnings so agents see the same shape they
     get from any other pflow diagnostic surface.
 
-    ``blocking_errors`` and ``recommended_actions`` are computed on demand
-    from ``analysis.warnings`` via ``view_helpers``; cross-workflow alignment
-    findings (rename, prose-mismatch) are excluded from both ranked lists and
-    surfaced under ``cross_workflow.*``.
+    ``blocking_errors``, ``other_blocking_errors``, and ``recommended_actions``
+    are computed on demand from ``analysis.warnings`` via ``view_helpers``;
+    cross-workflow alignment findings (rename, prose-mismatch) are excluded
+    from both ranked lists and surfaced under ``cross_workflow.*``.
+
+    B-9 split: ``blocking_errors[]`` carries cache-domain ERRORs (matches
+    ``summary.blocking_errors`` count); non-cache validator ERRORs go to
+    ``other_blocking_errors[]``.
     """
     # Local import: ``JSON_FORMAT_VERSION`` lives at the package root for
     # consumer-side reachability; importing here avoids a circular ref between
     # ``__init__.py`` and the renderers.
     from . import JSON_FORMAT_VERSION
-    from .view_helpers import build_blocking_errors, build_recommended_actions
+    from .view_helpers import build_blocking_errors, build_other_blocking_errors, build_recommended_actions
 
     blocking = build_blocking_errors(list(analysis.warnings))
+    other_blocking = build_other_blocking_errors(list(analysis.warnings))
     actions = build_recommended_actions(list(analysis.warnings))
     return {
         # First key — agents version-gate via ``startswith(MAJOR + ".")`` per
@@ -50,6 +59,7 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
         "trace_path": analysis.trace_path,
         "summary": _summary_to_dict(analysis),
         "blocking_errors": [_action_to_dict(a) for a in blocking],
+        "other_blocking_errors": [_action_to_dict(a) for a in other_blocking],
         "recommended_actions": [_action_to_dict(a) for a in actions],
         "suggested_blocks": [_block_to_dict(b) for b in analysis.suggested_blocks],
         "per_call": [_per_call_to_dict(r) for r in analysis.per_call],

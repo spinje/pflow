@@ -9849,3 +9849,88 @@ Verification:
   observing the matching test fail.
 
 Closes L-3 from BASELINE-AUDIT Section F.
+
+---
+
+## 2026-05-09 — Task 159 — B-9 split blocking errors by cache-domain
+
+Behavior change: `pflow analyze-cache` now renders blocking errors in two
+sections instead of one. Cache-domain ERRORs (id startswith `cache.`,
+`llm.thinking-temperature-mismatch`, or context.path under
+`cache.`/`prompt_cache`) render under `## Cache blocking errors (must fix
+before save and run)`. Non-cache validator ERRORs (unknown node types,
+schema errors, LLM param errors) render under `## Other blocking errors
+(surfaced for awareness)`. Cache section renders first; both sections hide
+when their respective lists are empty.
+
+JSON output gains `other_blocking_errors[]` (always present, empty when no
+findings). `blocking_errors[]` now matches `summary.blocking_errors` count
+(was previously a superset that included non-cache errors).
+
+Baseline cases re-captured: 39 cases regenerated, all 65 pass post-fix.
+Affected text cases lost the `## Blocking errors` header; cache-domain
+ones gained `## Cache blocking errors`; the lyrics-generator + gemini
+recordings switched to `## Other blocking errors` because the only
+blocking finding was a non-cache MCP node-type error. JSON cases gained
+the additive `other_blocking_errors` array. (The same regenerate pass
+also captured the parallel agent's B-6 / B-8 + L-7 column-width work
+running on this branch — those changes are NOT mine, but the regenerate
+captured them concurrently; verify.sh shows 65/65 green afterward.)
+
+Deviations from prompt:
+
+- Did NOT bump `JSON_FORMAT_VERSION` from "4.1" → "4.2" per user
+  direction ("you dont have to bump the json version, all bumps are
+  made in this branch anyway"). Added a minor-additive 4.1 history
+  entry instead, framed under the existing 4.1 row pattern.
+
+Open questions: none.
+
+Closes B-9 from BASELINE-AUDIT.md.
+
+## 2026-05-09 — Task 159 — bonus polish batch (B-6, B-8, B-11, L-4, L-7)
+
+Five deferred audit findings shipped together as the post-merge-block
+polish round. All single-render-format changes; no architectural shift.
+
+- **B-6**: `_render_recommended_actions` drops `(ordered by impact)`
+  qualifier when no action has positive savings (`render_text.py`).
+- **B-11**: `_format_heterogeneous_suffix` uses `; plus ` separator
+  instead of bare `+` so the suffix doesn't parse as "model X PLUS
+  model Y" (`render_text.py`).
+- **B-8 + L-7**: per-call tokens/cacheable columns widened from `:>5`
+  → `:>7,` (thousands separator + 7-char alignment for 6-digit values
+  up to 999,999) (`render_text.py`).
+- **L-4**: `_predict_one_workflow` collects skipped sub-workflow paths
+  into a list; `_predict_cache_keys` emits ONE aggregated note via new
+  `_format_skipped_workflows_note` helper. Lyrics-generator's 15
+  near-identical "predicted-key matching skipped" notes (~4KB of
+  repeated prose) collapse to one summary line (`analyze.py`).
+
+Tests: 12 new unit + integration tests. Each fix has a verified
+mutation contract — production code reverted, target test fails with a
+clear diagnostic, then restored. Single-workflow L-4 keeps legacy
+phrasing for backward-compat with the existing
+`test_discrepancy_skips_predicted_key_match_when_compile_fails_no_inputs`
+substring assertion.
+
+Self-review caught one Pitfall #19: my initial L-4 helper-only tests
+passed even when production code reverted to per-workflow note
+emission. Added `test_predict_cache_keys_aggregates_skip_notes_via_production_path`
+which drives `_predict_cache_keys()` end-to-end with a 3-sub-workflow
+synthetic `cw_result`, asserting `len(skip_notes) == 1`. Mutation
+contract verified.
+
+Doc fix: `docs/reference/cli/analyze-cache.mdx` table row for
+`Recommended actions` updated to reflect the now-conditional ordering
+claim.
+
+Verification:
+
+- `make check` clean (ruff + ruff-format + mypy + deptry).
+- `make test`: 6,415 passed, 1 skipped (was 6,404; +11 new tests).
+- 65/65 baseline cases pass; 46 baselines drift in expected classes
+  (B-6 header, B-11 separator, B-8+L-7 columns, plus pre-existing
+  drifts from the L-batch and B-9 split).
+
+Closes B-6, B-8, B-11, L-4, L-7 from BASELINE-AUDIT.md.

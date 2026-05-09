@@ -376,9 +376,9 @@ async def analyze_cache(
 
     Top-level keys: ``format_version``, ``workflow_path``, ``analyzed_at``,
     ``estimate_confidence``, ``estimate_confidence_coverage``, ``trace_path``,
-    ``summary``, ``blocking_errors``, ``recommended_actions``,
-    ``suggested_blocks``, ``per_call``, ``cross_workflow``, ``warnings``,
-    ``notes``.
+    ``summary``, ``blocking_errors``, ``other_blocking_errors``,
+    ``recommended_actions``, ``suggested_blocks``, ``per_call``,
+    ``cross_workflow``, ``warnings``, ``notes``.
 
     **Cost-field shape**: ``summary`` carries five atomic cost primitives,
     each with ONE meaning (independent of greenfield/trace context):
@@ -425,15 +425,25 @@ async def analyze_cache(
 
     **Validator finding parity**: ``analyze_cache`` runs the same 10-step
     ``WorkflowValidator`` pipeline as ``pflow run``, ``--validate-only``, and
-    ``pflow save``. ERROR findings appear in ``blocking_errors[]`` (ranked,
-    deduplicated, with ``message`` and ``suggestions`` preserved) and in
-    ``warnings[]`` with ``severity: "error"``.
+    ``pflow save``. ERROR findings split by cache-domain across
+    ``blocking_errors[]`` (cache-related — id startswith ``cache.``,
+    ``llm.thinking-temperature-mismatch``, or context.path under
+    ``cache.``/``prompt_cache``) and ``other_blocking_errors[]`` (everything
+    else: schema errors, unknown node types, etc.). Both lists are ranked and
+    deduplicated, with ``message`` and ``suggestions`` preserved. All ERRORs
+    also appear in ``warnings[]`` with ``severity: "error"``.
+
+    ``len(blocking_errors)`` matches ``summary.blocking_errors`` (the cache-
+    focused headline count). ``other_blocking_errors[]`` is surfaced for
+    awareness so agents can see env-config issues without conflating them
+    with caching work.
 
     New ERROR finding categories agents may now see in addition to the cache
     catalog: IR schema errors, stdin/stdout cardinality violations, forward
     references, execution-order cycles, unresolvable template variables,
     unknown node types, unknown node parameters, and sub-workflow input
-    contract violations.
+    contract violations. These non-cache categories surface in
+    ``other_blocking_errors[]``.
 
     WARNING-severity findings: only cache-domain warnings flow into
     ``recommended_actions[]``. Memoization-cache lint warnings and other
@@ -447,10 +457,11 @@ async def analyze_cache(
     id, or the parent step id for un-IDed validators bubbled up through
     ``_add_child_provenance``.
 
-    ``blocking_errors`` and ``recommended_actions`` are renderer-derived views
-    over ``warnings``; cross-workflow alignment IDs are filtered into
-    ``cross_workflow.*`` only. ``cross_workflow.{rename, prose, value_flow}``
-    arrays are derived from ``warnings`` by ``Diagnostic.id``.
+    ``blocking_errors``, ``other_blocking_errors``, and ``recommended_actions``
+    are renderer-derived views over ``warnings``; cross-workflow alignment
+    IDs are filtered into ``cross_workflow.*`` only.
+    ``cross_workflow.{rename, prose, value_flow}`` arrays are derived from
+    ``warnings`` by ``Diagnostic.id``.
 
     **``warnings[].id`` shape**: either one of these cache catalog entries or
     ``None`` for un-IDed validator findings. Use ``severity`` for

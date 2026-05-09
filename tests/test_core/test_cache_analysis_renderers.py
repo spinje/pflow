@@ -696,7 +696,7 @@ def test_text_summary_renders_blocking_errors_categorically() -> None:
         "blocking_errors > 0. Without this, agents skimming the count see "
         "'2 opportunities' and miss the ERROR-severity finding entirely."
     )
-    assert "## Blocking errors (must fix before save and run)" in text
+    assert "## Cache blocking errors (must fix before save and run)" in text
     # Opportunity line still present, distinct from the error line.
     assert "2 opportunities (2 warnings, 0 info)" in text
     # The blocking line precedes the opportunity line (errors first).
@@ -974,8 +974,9 @@ def test_per_call_row_renders_tokens_unmeasurable_for_opaque_prompt_with_no_data
 
     text = render_text(_make_analysis(rows=[row], warnings=[warning]))
 
-    assert "tokens=    ?" in text
-    assert "tokens=    3" not in text
+    # B-8 + L-7: column widened from 5 to 7 chars; padding for "?" updated.
+    assert "tokens=      ?" in text
+    assert "tokens=      3" not in text
 
 
 def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> None:
@@ -998,8 +999,9 @@ def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> No
 
     text = render_text(_make_analysis(rows=[row], warnings=[warning]))
 
-    assert "tokens=    3" in text
-    assert "tokens=    ?" not in text
+    # B-8 + L-7: 7-char column padding (3 → "      3").
+    assert "tokens=      3" in text
+    assert "tokens=      ?" not in text
 
 
 def test_text_truncated_trace_labels_executed_scope() -> None:
@@ -1767,10 +1769,12 @@ def test_json_blocking_errors_array_present_and_excludes_warnings() -> None:
 
 
 def test_json_blocking_errors_preserve_message_and_suggestions() -> None:
+    """Cache-domain ERRORs preserve message + suggestions in JSON output."""
     warnings = [
         Diagnostic(
             severity=Severity.ERROR,
             source="validator",
+            id="llm.thinking-temperature-mismatch",
             node_id="deep-think",
             message="Unknown parameter 'thinking_effort' on node 'deep-think' (type: llm).",
             suggestions=["Did you mean 'reasoning_effort'?"],
@@ -1779,6 +1783,29 @@ def test_json_blocking_errors_preserve_message_and_suggestions() -> None:
     result = render_json(_make_analysis(warnings=warnings))
     assert result["blocking_errors"][0]["message"] == warnings[0].message
     assert result["blocking_errors"][0]["suggestions"] == ["Did you mean 'reasoning_effort'?"]
+
+
+def test_json_other_blocking_errors_preserve_message_and_suggestions() -> None:
+    """Non-cache ERRORs preserve message + suggestions in
+    ``other_blocking_errors[]`` (B-9 split parity for the new array).
+
+    Mutation contract: stop projecting suggestions in ``_action_to_dict`` —
+    this test fails because ``suggestions`` becomes empty.
+    """
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id=None,
+            node_id="deep-think",
+            message="Unknown parameter 'thinking_effort' on node 'deep-think' (type: llm).",
+            suggestions=["Did you mean 'reasoning_effort'?"],
+        ),
+    ]
+    result = render_json(_make_analysis(warnings=warnings))
+    assert result["blocking_errors"] == []
+    assert result["other_blocking_errors"][0]["message"] == warnings[0].message
+    assert result["other_blocking_errors"][0]["suggestions"] == ["Did you mean 'reasoning_effort'?"]
 
 
 def test_json_recommended_actions_excludes_errors_after_split() -> None:
@@ -2365,8 +2392,8 @@ def test_text_blocking_errors_section_appears_between_summary_and_recommended_ac
         ),
     ]
     text = render_text(_analysis_with_warnings(warnings))
-    assert text.index("## Summary") < text.index("## Blocking errors")
-    assert text.index("## Blocking errors") < text.index("## Recommended actions")
+    assert text.index("## Summary") < text.index("## Cache blocking errors")
+    assert text.index("## Cache blocking errors") < text.index("## Recommended actions")
 
 
 def test_text_blocking_errors_section_omitted_when_no_errors() -> None:
@@ -2380,7 +2407,8 @@ def test_text_blocking_errors_section_omitted_when_no_errors() -> None:
         )
     ]
     text = render_text(_analysis_with_warnings(warnings))
-    assert "## Blocking errors" not in text
+    assert "## Cache blocking errors" not in text
+    assert "## Other blocking errors" not in text
     assert "## Recommended actions" in text
 
 
@@ -2394,11 +2422,170 @@ def test_text_blocking_errors_does_not_render_savings_column() -> None:
         context={"savings_usd": 2.0},
     )
     text = render_text(_analysis_with_warnings([warning]))
-    blocking = _section(text, "## Blocking errors")
+    blocking = _section(text, "## Cache blocking errors")
     assert "Order mismatch" in blocking
     assert "cache.order-mismatch" in blocking
     assert "-$2.00/run" not in blocking
     assert "savings unavailable" not in blocking
+
+
+def test_text_other_blocking_errors_section_renders_when_non_cache_errors_present() -> None:
+    """B-9 split: cache-domain ERRORs render under ``## Cache blocking
+    errors``; non-cache validator ERRORs (e.g. unknown node type, schema
+    errors) render under ``## Other blocking errors (surfaced for
+    awareness)``. Agents distinguish caching work from env-config issues.
+
+    Mutation contract: drop the ``not _is_cache_focused_for_advisory(d)``
+    clause from ``build_other_blocking_errors`` — both errors render in
+    Other and the cache-domain partition collapses; this test fails because
+    the cache error appears in BOTH sections.
+    """
+    cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id="cache.order-mismatch",
+        node_id="bad-node",
+        message="Order mismatch in cache",
+    )
+    non_cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id=None,
+        node_id="missing-mcp",
+        message="Unknown node type: 'mcp-klavis-youtube-foo'",
+        context={"category": "node_type_error"},
+    )
+    text = render_text(_analysis_with_warnings([cache_error, non_cache_error]))
+
+    assert "## Cache blocking errors (must fix before save and run)" in text
+    assert "## Other blocking errors (surfaced for awareness)" in text
+
+    cache_section = _section(text, "## Cache blocking errors")
+    other_section = _section(text, "## Other blocking errors")
+
+    # Cache error in cache section, NOT in other section.
+    assert "Order mismatch in cache" in cache_section
+    assert "Order mismatch in cache" not in other_section
+    # Non-cache error in other section, NOT in cache section.
+    assert "Unknown node type" in other_section
+    assert "Unknown node type" not in cache_section
+
+
+def test_text_other_blocking_errors_section_omitted_when_only_cache_errors() -> None:
+    """When all blocking errors are cache-domain, only the cache section
+    renders. The Other section stays hidden — empty section would be noise.
+
+    Mutation contract: render the Other section unconditionally; this test
+    fails because the empty header appears.
+    """
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id="cache.order-mismatch",
+            node_id="bad-node",
+            message="Order mismatch",
+        ),
+    ]
+    text = render_text(_analysis_with_warnings(warnings))
+    assert "## Cache blocking errors (must fix before save and run)" in text
+    assert "## Other blocking errors" not in text
+
+
+def test_text_cache_blocking_errors_section_omitted_when_only_other_errors() -> None:
+    """Symmetric: when all blocking errors are non-cache, only the Other
+    section renders. The Cache section stays hidden.
+
+    Mutation contract: drop the ``and _is_cache_focused_for_advisory(d)``
+    clause in ``build_blocking_errors`` — the non-cache error leaks into
+    the Cache section; this test fails because both sections appear.
+    """
+    warnings = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            id=None,
+            node_id="missing-mcp",
+            message="Unknown node type: 'mcp-klavis-youtube-foo'",
+        ),
+    ]
+    text = render_text(_analysis_with_warnings(warnings))
+    assert "## Other blocking errors (surfaced for awareness)" in text
+    assert "## Cache blocking errors" not in text
+
+
+def test_json_other_blocking_errors_array_excludes_cache_errors() -> None:
+    """JSON parity for the B-9 split. ``blocking_errors[]`` carries cache-
+    domain ERRORs only; ``other_blocking_errors[]`` carries the rest. Both
+    arrays always present (empty-array contract).
+
+    Mutation contract: drop the ``and _is_cache_focused_for_advisory(d)``
+    clause in ``build_blocking_errors`` — non-cache error appears in both
+    arrays; this test fails because ``blocking_errors`` count grows.
+    """
+    cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id="cache.order-mismatch",
+        node_id="bad-node",
+        message="Order mismatch",
+    )
+    non_cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id=None,
+        node_id="missing-mcp",
+        message="Unknown node type: 'mcp-klavis-youtube-foo'",
+    )
+    result = render_json(_make_analysis(warnings=[cache_error, non_cache_error]))
+
+    assert [a["warning_id"] for a in result["blocking_errors"]] == ["cache.order-mismatch"]
+    other_ids = [a.get("warning_id") for a in result["other_blocking_errors"]]
+    other_messages = [a.get("message") for a in result["other_blocking_errors"]]
+    # Non-cache error has id=None — surfaces by message.
+    assert any("Unknown node type" in (m or "") for m in other_messages)
+    assert "cache.order-mismatch" not in other_ids
+
+
+def test_json_blocking_errors_count_matches_summary_blocking_errors() -> None:
+    """B-9 alignment: ``len(blocking_errors[])`` matches
+    ``summary.blocking_errors`` (the cache-focused headline count).
+
+    Pre-fix, ``blocking_errors[]`` was a superset that included non-cache
+    validator errors, while the summary count was already cache-focused —
+    so ``len(blocking_errors)`` could exceed ``summary.blocking_errors``.
+
+    Mutation contract: drop the ``and _is_cache_focused_for_advisory(d)``
+    clause in ``build_blocking_errors`` — the array gains the non-cache
+    error and the lengths diverge.
+    """
+    cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id="cache.order-mismatch",
+        node_id="bad-node",
+        message="Order mismatch",
+    )
+    non_cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id=None,
+        node_id="missing-mcp",
+        message="Unknown node type",
+    )
+    # _make_analysis computes summary.blocking_errors over the *raw* warning
+    # ERROR count (not the cache-domain subset) — that's a builder quirk we
+    # can't change without ripping through the test surface. Use a fixture
+    # with cache-only ERRORs so the builder's count is by construction the
+    # cache-focused count.
+    result = render_json(_make_analysis(warnings=[cache_error]))
+    assert len(result["blocking_errors"]) == result["summary"]["blocking_errors"]
+
+    # Same fixture with an additional non-cache ERROR: blocking_errors[]
+    # MUST stay at 1 (cache-focused), even though raw ERROR count is 2.
+    result = render_json(_make_analysis(warnings=[cache_error, non_cache_error]))
+    assert len(result["blocking_errors"]) == 1
+    assert len(result["other_blocking_errors"]) == 1
 
 
 def test_text_does_NOT_render_all_warnings_section() -> None:
@@ -2483,7 +2670,7 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
     }
     analysis = analyze(workflow_ir, auto_load_trace=False)
     text = render_text(analysis)
-    assert "## Blocking errors (must fix before save and run)" in text
+    assert "## Cache blocking errors (must fix before save and run)" in text
     # Stage-1 final UX pass: ``[cache.order-mismatch]`` brackets are gone,
     # while the diagnostic ID remains visible in a quieter inline form.
     # The load-bearing brownfield contract: the ERROR-severity diagnostic
@@ -2498,7 +2685,7 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
     # - The fix lines from the message body are visible
     # - Brackets are gone (the visual coding regression we deliberately
     #   removed in this UX pass)
-    blocking = _section(text, "## Blocking errors")
+    blocking = _section(text, "## Cache blocking errors")
     assert "write-lyrics" in blocking
     assert "cache.order-mismatch" in blocking
     assert "expected:" in blocking  # one of the message body's fix lines
@@ -3251,3 +3438,145 @@ def test_render_json_per_call_cache_tokens_null_on_greenfield() -> None:
 
     assert row_dict["cache_creation_input_tokens"] is None
     assert row_dict["cache_read_input_tokens"] is None
+
+
+# ---------------------------------------------------------------------------
+# B-6: conditional "ordered by impact" header
+# ---------------------------------------------------------------------------
+
+
+def test_recommended_actions_drops_ordered_by_impact_when_no_savings() -> None:
+    """B-6: header must not claim ordering when no action has positive savings.
+
+    Greenfield-without-resolved-models (every savings_usd=None) used to render
+    "## Recommended actions (ordered by impact)" — agents reading "ordered"
+    next to "savings unavailable" lose trust in the ranking. Mutation contract:
+    hardcode header to the qualified form → this test fails.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warnings = [
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/path/song-creator.pflow.md",
+            savings_usd=None,
+        ),
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
+    assert "## Recommended actions" in text
+    assert "(ordered by impact)" not in text
+
+
+def test_recommended_actions_keeps_ordered_by_impact_when_priced() -> None:
+    """B-6 negative: header retains qualifier when at least one action has savings.
+
+    Mutation contract: hardcode header to unqualified → this test fails.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warnings = [
+        make_diagnostic(
+            "cache.shared-context-undeclared",
+            node_count=2,
+            shared_chunks=["concept"],
+            affected_workflow="/abs/path/song-creator.pflow.md",
+            savings_usd=0.05,
+        ),
+    ]
+    text = render_text(_make_analysis(warnings=warnings))
+    assert "## Recommended actions (ordered by impact)" in text
+
+
+# ---------------------------------------------------------------------------
+# B-11: heterogeneous suffix uses "; plus" separator
+# ---------------------------------------------------------------------------
+
+
+def test_heterogeneous_suffix_uses_semicolon_plus_separator_single_node() -> None:
+    """B-11: " + " parses as "model X PLUS model Y" when concatenated to the
+    model list. "; plus " disambiguates: list of models, then explicit
+    additional clause for variance.
+
+    Mutation contract: revert to ' + ' → assertion fails.
+    """
+    from pflow.core.cache_analysis.render_text import _format_heterogeneous_suffix
+
+    suffix = _format_heterogeneous_suffix(("generate-chorus-options",))
+    assert suffix == "; plus generate-chorus-options (model varies per batch item)"
+    # Negative — the bare " + " separator must NOT appear.
+    assert not suffix.startswith(" +")
+
+
+def test_heterogeneous_suffix_uses_semicolon_plus_separator_multi_node() -> None:
+    """B-11: same separator change for the multi-node case."""
+    from pflow.core.cache_analysis.render_text import _format_heterogeneous_suffix
+
+    suffix = _format_heterogeneous_suffix(("a", "b", "c"))
+    assert suffix.startswith("; plus 3 nodes with model varies per batch item")
+    assert "(a, b, c)" in suffix
+
+
+def test_heterogeneous_suffix_empty_returns_empty_string() -> None:
+    """B-11 edge case: empty input still produces empty output (not '; plus')."""
+    from pflow.core.cache_analysis.render_text import _format_heterogeneous_suffix
+
+    assert _format_heterogeneous_suffix(()) == ""
+
+
+# ---------------------------------------------------------------------------
+# B-8 + L-7: tokens column thousands separator + 7-char width
+# ---------------------------------------------------------------------------
+
+
+def test_per_call_row_tokens_use_thousands_separator() -> None:
+    """B-8 + L-7: 6-digit token counts render with comma separator and align
+    in a stable 7-char column.
+
+    Lyrics-generator showed `tokens=266728` (raw 6-digit) blowing past the
+    pre-fix 5-char column. Fix: `:>7,` covers up to 999,999 with comma.
+
+    Mutation contract: drop ',' from format spec → assertion fails.
+    """
+    # all_rows=True so the 80%-ratio row isn't hidden by the default filter.
+    row = PerCallRow(**{**_row("write-lyrics", 80).__dict__, "input_tokens_estimated": 266_728})
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    assert "tokens=266,728" in text
+    # Negative — raw integer must NOT appear.
+    assert "tokens=266728" not in text
+
+
+def test_per_call_row_cacheable_tokens_use_thousands_separator() -> None:
+    """B-8 + L-7: cacheable column gets the same treatment as tokens column."""
+    row = PerCallRow(**{
+        **_row("write-lyrics", 80).__dict__,
+        "input_tokens_estimated": 266_728,
+        "cacheable_tokens_estimated": 213_382,
+    })
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    assert "cacheable=213,382" in text
+
+
+def test_per_call_row_unmeasurable_cacheable_uses_seven_char_padding() -> None:
+    """B-8 + L-7: ``cacheable=      ?`` (6 spaces + ?) is 7 chars wide so it
+    column-aligns with measured values that use the 7-char ``:>7,`` format.
+
+    Targeting cacheable= rather than tokens= here because cacheable's
+    unmeasurable branch is data-driven (``cacheable_tokens_estimated is None``)
+    while the tokens= unmeasurable branch is gated on inline-warning
+    propagation (``"opaque-prompt" in inline_ids``) which is a per-call
+    rendering concern unrelated to the column width.
+
+    Mutation contract: revert ``"      ?"`` to the 5-char ``"    ?"`` →
+    assertion fails.
+    """
+    row = PerCallRow(**{
+        **_row("greenfield", 50).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+    })
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    assert "cacheable=      ?" in text
+    # Negative — the old 5-char padding must NOT appear in this row.
+    assert "cacheable=    ?  " not in text

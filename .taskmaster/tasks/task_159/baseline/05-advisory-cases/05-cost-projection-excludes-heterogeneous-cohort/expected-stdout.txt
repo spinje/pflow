@@ -92,6 +92,7 @@
     "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>"
   },
   "blocking_errors": [],
+  "other_blocking_errors": [],
   "recommended_actions": [
     {
       "rank": 1,

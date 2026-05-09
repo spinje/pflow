@@ -78,7 +78,8 @@
     "sub_workflow_rollup": null,
     "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>"
   },
-  "blocking_errors": [
+  "blocking_errors": [],
+  "other_blocking_errors": [
     {
       "rank": 1,
       "warning_id": "",

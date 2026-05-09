@@ -46,6 +46,13 @@ Version history (``JSON_FORMAT_VERSION``):
   ``summary.ir_default_model`` added (``string | null``). Captures the
   IR-resolved default model so text/JSON consumers can compare declared
   settings with ``summary.observed_models_in_trace``.
+- ``"4.1"`` — B-9 split (additive, same minor): cache-domain ERRORs stay in
+  ``blocking_errors[]`` (now matches ``summary.blocking_errors`` count);
+  non-cache validator errors (unknown node types, schema errors) move to a
+  new ``other_blocking_errors[]`` array. Both arrays always present.
+  Cache-domain match: id startswith ``cache.``,
+  ``llm.thinking-temperature-mismatch``, or context.path under
+  ``cache.``/``prompt_cache``.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning

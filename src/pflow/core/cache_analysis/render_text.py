@@ -57,6 +57,10 @@ def render_text(analysis: CacheAnalysis, *, all_rows: bool = False) -> str:
     if errors:
         lines.append(errors)
 
+    other_errors = _render_other_blocking_errors(analysis)
+    if other_errors:
+        lines.append(other_errors)
+
     actions = _render_recommended_actions(analysis)
     if actions:
         lines.append(actions)
@@ -238,20 +242,23 @@ def _format_invocation_suffix(s: AnalysisSummary) -> str:
 
 
 def _format_heterogeneous_suffix(heterogeneous_node_paths: tuple[str, ...]) -> str:
-    """Compose the "+ N nodes ..." suffix appended to the scale line.
+    """Compose the "; plus N nodes ..." suffix appended to the scale line.
 
     Empty tuple → empty string. Single node → name it inline. Multiple →
     count + parenthesized csv (so agents can grep the rendered output for a
     specific node name without scanning the per-call table).
+
+    B-11: separator is ``; plus `` (not bare ``+``) so the suffix doesn't
+    parse as "model X PLUS model Y" when concatenated to the model list.
     """
     count = len(heterogeneous_node_paths)
     if count == 0:
         return ""
     names_csv = ", ".join(heterogeneous_node_paths)
     if count == 1:
-        return f" + {heterogeneous_node_paths[0]} ({_HETEROGENEOUS_MODEL_TAG})"
+        return f"; plus {heterogeneous_node_paths[0]} ({_HETEROGENEOUS_MODEL_TAG})"
     word = "node" if count == 1 else "nodes"
-    return f" + {count} {word} with {_HETEROGENEOUS_MODEL_TAG} ({names_csv})"
+    return f"; plus {count} {word} with {_HETEROGENEOUS_MODEL_TAG} ({names_csv})"
 
 
 def _render_cost_block(s: AnalysisSummary) -> list[str]:
@@ -593,14 +600,44 @@ def _format_dollar_amount(value: float) -> str:
 
 
 def _render_blocking_errors(analysis: CacheAnalysis) -> str:
-    """Render must-fix findings separately from optimization opportunities."""
+    """Render must-fix cache-domain findings separately from optimization opportunities.
+
+    B-9 split: cache-domain ERRORs (cache.*, llm.thinking-temperature-mismatch,
+    or context.path under cache./prompt_cache) render here under
+    ``## Cache blocking errors``. Non-cache validator ERRORs surface via
+    ``_render_other_blocking_errors`` so agents distinguish caching work from
+    env-config issues.
+    """
     from .view_helpers import build_blocking_errors
 
     actions = build_blocking_errors(list(analysis.warnings))
     if not actions:
         return ""
     return _render_action_list(
-        header="## Blocking errors (must fix before save and run)",
+        header="## Cache blocking errors (must fix before save and run)",
+        intro="",
+        actions=actions,
+        workflow_path=analysis.workflow_path,
+        show_savings=False,
+        show_warning_id=True,
+    )
+
+
+def _render_other_blocking_errors(analysis: CacheAnalysis) -> str:
+    """Render non-cache must-fix findings (B-9 fix).
+
+    Workflow-blocking errors tangential to prompt caching (unknown node types,
+    schema violations, LLM param errors). Renders AFTER cache-domain blocking
+    errors so caching work surfaces first; agents skimming for caching
+    fixes don't conflate env-config issues with caching findings.
+    """
+    from .view_helpers import build_other_blocking_errors
+
+    actions = build_other_blocking_errors(list(analysis.warnings))
+    if not actions:
+        return ""
+    return _render_action_list(
+        header="## Other blocking errors (surfaced for awareness)",
         intro="",
         actions=actions,
         workflow_path=analysis.workflow_path,
@@ -610,14 +647,22 @@ def _render_blocking_errors(analysis: CacheAnalysis) -> str:
 
 
 def _render_recommended_actions(analysis: CacheAnalysis) -> str:
-    """Render optimization findings as action headline + scope + reason."""
+    """Render optimization findings as action headline + scope + reason.
+
+    B-6: header claim ``(ordered by impact)`` only holds when at least one
+    action has a positive savings figure. Greenfield without resolved
+    models (and trace-mode workflows where every projection is unavailable)
+    drop the qualifier — there's no impact to order by.
+    """
     from .view_helpers import build_recommended_actions
 
     actions = build_recommended_actions(list(analysis.warnings))
     if not actions:
         return ""
+    has_orderable_savings = any(a.estimated_savings_usd is not None and a.estimated_savings_usd > 0 for a in actions)
+    header = "## Recommended actions (ordered by impact)" if has_orderable_savings else "## Recommended actions"
     return _render_action_list(
-        header="## Recommended actions (ordered by impact)",
+        header=header,
         intro=(
             "Each item below is a cache-optimization opportunity for this workflow.\n"
             "Declared values are sent once and reused at 0.1× input cost."
@@ -1103,8 +1148,11 @@ def _format_per_call_row(
     # For opaque prompts without runtime/cacheable evidence, the token count is
     # only the literal "${...}" template size, not a meaningful prompt size.
     tokens_unmeasurable = "opaque-prompt" in inline_ids and row.cacheable_data_source == "unavailable"
-    tokens_str = "    ?" if tokens_unmeasurable else f"{row.input_tokens_estimated:>5}"
-    cacheable_str = f"{row.cacheable_tokens_estimated:>5}" if row.cacheable_tokens_estimated is not None else "    ?"
+    # B-8 + L-7: 7-char width with thousands separator covers up to 999,999
+    # tokens (typical production max). Beyond that, mild misalignment; chosen
+    # over a wider column that adds visual noise to every typical row.
+    tokens_str = "      ?" if tokens_unmeasurable else f"{row.input_tokens_estimated:>7,}"
+    cacheable_str = f"{row.cacheable_tokens_estimated:>7,}" if row.cacheable_tokens_estimated is not None else "      ?"
     ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
     model_display = "<varies>" if row.model_is_heterogeneous or len(row.observed_models) > 1 else row.model
     observed = ""

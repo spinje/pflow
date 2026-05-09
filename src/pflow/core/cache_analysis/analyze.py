@@ -3323,6 +3323,7 @@ def _predict_cache_keys(
         irs_by_workflow = {ctx.workflow_path: dict(ctx.workflow_ir)}
 
     predicted_keys: dict[tuple[str | None, str], str] = {}
+    skipped_input_workflows: list[str] = []
     for workflow_path, ir in irs_by_workflow.items():
         _predict_one_workflow(
             workflow_path=workflow_path,
@@ -3330,8 +3331,36 @@ def _predict_cache_keys(
             ctx=ctx,
             predicted_keys=predicted_keys,
             notes=notes,
+            skipped_input_workflows=skipped_input_workflows,
         )
+    if skipped_input_workflows:
+        notes.append(_format_skipped_workflows_note(skipped_input_workflows))
     return predicted_keys, notes
+
+
+def _format_skipped_workflows_note(paths: list[str]) -> str:
+    """Aggregate per-sub-workflow skip notes into one summary (L-4).
+
+    Single-workflow case keeps the original phrasing for continuity with
+    pre-L-4 baselines. Multi-workflow case lists up to 5 basenames; overflow
+    as ``+N more``. Real lyrics-generator runs emit 15 of these — the
+    pre-L-4 rendering blew ~4KB of repeated prose into the Notes section.
+    """
+    if len(paths) == 1:
+        return (
+            f"Discrepancy detection: predicted-key matching skipped for "
+            f"{paths[0]} — workflow declares inputs that weren't supplied or "
+            "resolvable. Observable-field attributions still apply."
+        )
+    shown = [Path(p).name if p and p != "<root>" else "<root>" for p in paths[:5]]
+    suffix = "" if len(paths) <= 5 else f" + {len(paths) - 5} more"
+    return (
+        f"Discrepancy detection: predicted-key matching skipped for "
+        f"{len(paths)} sub-workflows ({', '.join(shown)}{suffix}) — they "
+        "declare inputs that weren't supplied or resolvable. Pass concrete "
+        "`<input>=<value>` parameters to enable per-workflow predicted-key "
+        "matching. Observable-field attributions still apply."
+    )
 
 
 def _predict_one_workflow(
@@ -3341,14 +3370,15 @@ def _predict_one_workflow(
     ctx: AnalysisContext,
     predicted_keys: dict[tuple[str | None, str], str],
     notes: list[str],
+    skipped_input_workflows: list[str],
 ) -> None:
     """Compute predictions for every LLM node in one workflow IR.
 
-    Mutates ``predicted_keys`` and ``notes`` in place. Extracted from
-    ``_predict_cache_keys`` to keep that function under the cyclomatic-complexity
-    budget; the per-workflow body has its own classification branches
-    (input-gate, no-LLM-shortcut, scaffold build, per-node loop) that
-    naturally cluster together.
+    Mutates ``predicted_keys``, ``notes``, and ``skipped_input_workflows``
+    in place. Extracted from ``_predict_cache_keys`` to keep that function
+    under the cyclomatic-complexity budget; the per-workflow body has its
+    own classification branches (input-gate, no-LLM-shortcut, scaffold
+    build, per-node loop) that naturally cluster together.
     """
     params = ctx.parameters_for_workflow(workflow_path)
     # Per-workflow input check: if THIS workflow declares inputs but no
@@ -3356,12 +3386,10 @@ def _predict_one_workflow(
     # trace's run-time values. Honest fallback is observable-only
     # attribution. (The legacy implementation only checked the root
     # workflow; child workflows silently degraded to defaults.)
+    # L-4: aggregate per-workflow skips into one summary note at the
+    # caller level, instead of emitting one note per sub-workflow.
     if not params and isinstance(ir.get("inputs"), dict) and ir["inputs"]:
-        notes.append(
-            f"Discrepancy detection: predicted-key matching skipped for "
-            f"{workflow_path or '<root>'} — workflow declares inputs that weren't "
-            "supplied or resolvable. Observable-field attributions still apply."
-        )
+        skipped_input_workflows.append(workflow_path or "<root>")
         return
     if not any(_is_llm_node(node) for node in ir.get("nodes", [])):
         return

@@ -1857,9 +1857,14 @@ def test_truncated_trace_preserves_non_cache_validator_errors(tmp_path: Path) ->
     """Truncated-trace filtering must not hide universal blocking errors.
 
     This guards the interaction between the unified validator pipeline and the
-    truncated-trace suppression pass. ``blocking_errors[]`` is derived from
-    ``analysis.warnings`` by renderers, so dropping non-cache ERRORs here would
-    make broken workflows look valid whenever the loaded trace is truncated.
+    truncated-trace suppression pass. ``other_blocking_errors[]`` is derived
+    from ``analysis.warnings`` by renderers, so dropping non-cache ERRORs here
+    would make broken workflows look valid whenever the loaded trace is
+    truncated.
+
+    Post B-9 split: non-cache validator errors surface in
+    ``other_blocking_errors[]`` (cache-domain ERRORs go to
+    ``blocking_errors[]``).
     """
     workflow_ir = {
         "ir_version": "0.1.0",
@@ -1923,8 +1928,11 @@ def test_truncated_trace_preserves_non_cache_validator_errors(tmp_path: Path) ->
     from pflow.core.cache_analysis.render_json import render_json
 
     payload = render_json(result)
-    assert payload["blocking_errors"][0]["node_id"] == "skipped"
-    assert payload["blocking_errors"][0]["suggestions"] == ["Did you mean 'reasoning_effort'?"]
+    # Unknown LLM param is a non-cache validator error → other_blocking_errors[]
+    # post B-9 split. Cache-domain blocking_errors[] stays empty here.
+    assert payload["blocking_errors"] == []
+    assert payload["other_blocking_errors"][0]["node_id"] == "skipped"
+    assert payload["other_blocking_errors"][0]["suggestions"] == ["Did you mean 'reasoning_effort'?"]
 
 
 def test_analyze_surfaces_cache_order_mismatch() -> None:
@@ -2961,6 +2969,66 @@ def test_blocking_errors_rank_starts_at_one_independent_of_recommended_actions()
     recommended = build_recommended_actions(warnings)
     assert blocking[0].rank == 1
     assert recommended[0].rank == 1
+
+
+def test_build_blocking_errors_filters_non_cache_errors() -> None:
+    """B-9 split: cache-domain ERRORs only.
+
+    ``build_blocking_errors`` filters by the same ``_is_cache_focused_for_advisory``
+    predicate as ``build_recommended_actions`` so headline count alignment
+    holds (``len(blocking_errors)`` matches ``summary.blocking_errors``).
+    Non-cache ERRORs (validator unknown-node-type, schema errors) flow to
+    ``build_other_blocking_errors`` instead.
+
+    Mutation contract: drop the ``and _is_cache_focused_for_advisory(d)``
+    clause from ``build_blocking_errors`` — the non-cache ERROR leaks back
+    into the cache-domain list; this test fails.
+    """
+    from pflow.core.cache_analysis.view_helpers import build_blocking_errors
+
+    non_cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id=None,
+        node_id="missing-mcp",
+        message="Unknown node type: 'mcp-klavis-youtube-foo'",
+        context={"category": "node_type_error"},
+    )
+    actions = build_blocking_errors([
+        _make_diag("cache.order-mismatch", Severity.ERROR),
+        non_cache_error,
+    ])
+    assert [a.warning_id for a in actions] == ["cache.order-mismatch"]
+
+
+def test_build_other_blocking_errors_filters_cache_errors() -> None:
+    """B-9 split: non-cache ERRORs only.
+
+    ``build_other_blocking_errors`` is the dual of ``build_blocking_errors``
+    — cache-domain ERRORs are excluded so each finding lands in exactly one
+    section.
+
+    Mutation contract: drop the ``and not _is_cache_focused_for_advisory(d)``
+    clause from ``build_other_blocking_errors`` — the cache ERROR leaks
+    into the Other list; this test fails.
+    """
+    from pflow.core.cache_analysis.view_helpers import build_other_blocking_errors
+
+    non_cache_error = Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        id=None,
+        node_id="missing-mcp",
+        message="Unknown node type: 'mcp-klavis-youtube-foo'",
+    )
+    actions = build_other_blocking_errors([
+        _make_diag("cache.order-mismatch", Severity.ERROR),
+        non_cache_error,
+    ])
+    # Only the non-cache error survives.
+    assert len(actions) == 1
+    assert actions[0].message == "Unknown node type: 'mcp-klavis-youtube-foo'"
+    assert actions[0].warning_id == ""
 
 
 # ---------------------------------------------------------------------------
@@ -4643,3 +4711,132 @@ def test_memo_hit_trace_recovers_input_and_output_tokens_via_index(
     assert row.cost_data_source == "trace"
     assert result.summary.actually_paid_usd == 0.0
     assert str(result.summary.actually_paid_tier) == "trace"
+
+
+# ---------------------------------------------------------------------------
+# L-4: collapse near-identical predicted-key skip notes
+# ---------------------------------------------------------------------------
+
+
+def test_skipped_workflows_note_single_keeps_legacy_phrasing() -> None:
+    """L-4: single-workflow skip case keeps the original one-line phrasing for
+    continuity with pre-L-4 baselines and the existing per-id-emission test
+    that asserts ``"weren't supplied"`` substring matches.
+
+    Mutation contract: drop the ``len(paths) == 1`` branch → this test fails
+    (renders the multi-summary phrasing for one workflow).
+    """
+    from pflow.core.cache_analysis.analyze import _format_skipped_workflows_note
+
+    note = _format_skipped_workflows_note(["song-creator.pflow.md"])
+    assert "predicted-key matching skipped for song-creator.pflow.md" in note
+    assert "weren't supplied or resolvable" in note
+    # Must NOT use the multi-summary phrasing.
+    assert "sub-workflows" not in note
+
+
+def test_skipped_workflows_note_multi_collapses_to_summary() -> None:
+    """L-4: 3+ skipped sub-workflows collapse to ONE summary note instead of
+    N near-identical lines (the lyrics-generator case emitted 15).
+
+    Mutation contract: revert _predict_one_workflow to call ``notes.append``
+    directly → 3 separate lines instead of one summary; this test fails.
+    """
+    from pflow.core.cache_analysis.analyze import _format_skipped_workflows_note
+
+    paths = [
+        "/abs/song-creator/review-rhyme.pflow.md",
+        "/abs/song-creator/review-imagery.pflow.md",
+        "/abs/song-creator/review-narrative.pflow.md",
+    ]
+    note = _format_skipped_workflows_note(paths)
+    assert "skipped for 3 sub-workflows" in note
+    # Basenames listed inline, full paths NOT (they blow past terminal width).
+    assert "review-rhyme.pflow.md" in note
+    assert "review-imagery.pflow.md" in note
+    assert "review-narrative.pflow.md" in note
+    assert "/abs/song-creator/" not in note
+    # Actionable suggestion (pass concrete inputs) appears.
+    assert "Pass concrete" in note
+    assert "<input>=<value>" in note
+    # Observable-fields fallback still applies.
+    assert "Observable-field attributions still apply" in note
+
+
+def test_skipped_workflows_note_multi_truncates_at_five_with_overflow_marker() -> None:
+    """L-4: more than 5 skipped workflows show ``+N more`` suffix to keep the
+    note bounded.
+    """
+    from pflow.core.cache_analysis.analyze import _format_skipped_workflows_note
+
+    paths = [f"/abs/wf-{i}.pflow.md" for i in range(8)]
+    note = _format_skipped_workflows_note(paths)
+    assert "skipped for 8 sub-workflows" in note
+    # First 5 listed, +3 overflow.
+    assert "wf-0.pflow.md" in note
+    assert "wf-4.pflow.md" in note
+    assert "+ 3 more" in note
+    # 6th onwards NOT listed by basename.
+    assert "wf-5.pflow.md" not in note
+    assert "wf-6.pflow.md" not in note
+    assert "wf-7.pflow.md" not in note
+
+
+def test_predict_cache_keys_aggregates_skip_notes_via_production_path() -> None:
+    """L-4 PRODUCTION-SHAPE integration test (Pitfall #19 defense).
+
+    Helper-level tests above verify ``_format_skipped_workflows_note``
+    in isolation, but they don't catch a regression where production code
+    bypasses the helper and reverts to per-workflow note emission. This
+    test drives ``_predict_cache_keys`` end-to-end with a multi-sub-workflow
+    ``cw_result`` and asserts the aggregated form reaches ``result.notes``.
+
+    Mutation contract: replace ``skipped_input_workflows.append(...)``
+    in ``_predict_one_workflow`` with the original per-workflow
+    ``notes.append(...)`` call → this test fails because ``notes`` carries
+    3 separate "predicted-key matching skipped" lines instead of 1
+    aggregated summary.
+    """
+    from types import SimpleNamespace
+
+    from pflow.core.cache_analysis.analyze import _predict_cache_keys
+
+    # 3 sub-workflows each declaring inputs but with no params resolved.
+    irs = {
+        "/abs/sub-a.pflow.md": {"inputs": {"x": {"type": "string"}}, "nodes": []},
+        "/abs/sub-b.pflow.md": {"inputs": {"y": {"type": "string"}}, "nodes": []},
+        "/abs/sub-c.pflow.md": {"inputs": {"z": {"type": "string"}}, "nodes": []},
+    }
+    cw_result = SimpleNamespace(irs_by_workflow=irs)
+
+    class _MemoStub:
+        """Non-None memo bypasses the early "memo cache empty" notes branch."""
+
+    ctx = AnalysisContext.build(
+        workflow_ir={"nodes": []},
+        parameters={},
+        memo_cache=_MemoStub(),
+        workflow_path="/abs/parent.pflow.md",
+        parameters_by_workflow={
+            "/abs/sub-a.pflow.md": {},
+            "/abs/sub-b.pflow.md": {},
+            "/abs/sub-c.pflow.md": {},
+        },
+    )
+
+    _, notes = _predict_cache_keys(cw_result, ctx)
+
+    skip_notes = [n for n in notes if "predicted-key matching skipped" in n]
+    # Pre-L-4: 3 per-workflow notes. Post-L-4: 1 aggregated summary.
+    assert len(skip_notes) == 1, f"Expected 1 aggregated note, got {len(skip_notes)}:\n" + "\n".join(
+        f"  - {n}" for n in skip_notes
+    )
+    aggregated = skip_notes[0]
+    assert "3 sub-workflows" in aggregated
+    assert "sub-a.pflow.md" in aggregated
+    assert "sub-b.pflow.md" in aggregated
+    assert "sub-c.pflow.md" in aggregated
+    # Negative — single-workflow legacy phrasing must NOT appear when 3 skipped.
+    assert "skipped for /abs/sub-a.pflow.md" not in aggregated
+    assert "skipped for /abs/sub-b.pflow.md" not in aggregated
+    assert "skipped for /abs/sub-c.pflow.md" not in aggregated

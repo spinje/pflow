@@ -12,7 +12,7 @@
   Cost data unavailable: run the workflow once for cost figures.
   Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
 
-## Blocking errors (must fix before save and run)
+## Cache blocking errors (must fix before save and run)
 
   1. Prompt body duplicates cached chunks on summarize (`cache.prompt-body-duplicates-cache`)
      summarize
@@ -20,7 +20,7 @@
        - cached `${article}` AND inline `${article}`
      → Remove the listed `${...}` references from the prompt body — the cached chunks already supply these values via the system prompt.
 
-## Recommended actions (ordered by impact)
+## Recommended actions
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
@@ -33,7 +33,7 @@
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
 
-  summarize                             model=anthropic/claude-haiku-4-5          tokens=   12  cacheable=    1  ratio=  8%  src=medium  below-min-tokens, prompt-body-duplicates-cache
+  summarize                             model=anthropic/claude-haiku-4-5          tokens=     12  cacheable=      1  ratio=  8%  src=medium  below-min-tokens, prompt-body-duplicates-cache
 
 ## Notes
 

@@ -11,12 +11,12 @@
 
   Cost data unavailable: no model resolved for LLM nodes (set settings.default_model or add per-node `- model:`).
 
-## Blocking errors (must fix before save and run)
+## Other blocking errors (surfaced for awareness)
 
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
 
-## Recommended actions (ordered by impact)
+## Recommended actions
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
@@ -114,16 +114,16 @@
   Showing 8 of 25 LLM nodes; all-clean rows hidden (--all-rows shows everything).
 
 ### song-creator.pflow.md (called by create-songs)
-  write-lyrics                          model=                                    tokens= 3684  cacheable=    ?  ratio=  ?%  src=low
-  song-architecture                     model=                                    tokens= 2886  cacheable=    ?  ratio=  ?%  src=low
-  rewrite-emotional                     model=                                    tokens= 2575  cacheable=    ?  ratio=  ?%  src=low
-  rewrite-craft                         model=                                    tokens= 2454  cacheable=    ?  ratio=  ?%  src=low
-  generate-suno-prompt                  model=                                    tokens= 1340  cacheable=    ?  ratio=  ?%  src=low
-  creative-direction                    model=                                    tokens= 1248  cacheable=    ?  ratio=  ?%  src=low
-  easter-eggs                           model=                                    tokens= 1066  cacheable=    ?  ratio=  ?%  src=low
+  write-lyrics                          model=                                    tokens=  3,684  cacheable=      ?  ratio=  ?%  src=low
+  song-architecture                     model=                                    tokens=  2,886  cacheable=      ?  ratio=  ?%  src=low
+  rewrite-emotional                     model=                                    tokens=  2,575  cacheable=      ?  ratio=  ?%  src=low
+  rewrite-craft                         model=                                    tokens=  2,454  cacheable=      ?  ratio=  ?%  src=low
+  generate-suno-prompt                  model=                                    tokens=  1,340  cacheable=      ?  ratio=  ?%  src=low
+  creative-direction                    model=                                    tokens=  1,248  cacheable=      ?  ratio=  ?%  src=low
+  easter-eggs                           model=                                    tokens=  1,066  cacheable=      ?  ratio=  ?%  src=low
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
-  generate-chorus-options               model=<varies>                            tokens=    ?  cacheable=    ?  ratio=  ?%  src=low  opaque-prompt
+  generate-chorus-options               model=<varies>                            tokens=      ?  cacheable=      ?  ratio=  ?%  src=low  opaque-prompt
 
 ## Per-child analyze-cache commands
 
