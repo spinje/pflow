@@ -518,6 +518,112 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
     assert diag.context["savings_usd"] > 0.0
 
 
+def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_node_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N-7 follow-up: when the parent value is a workflow-input passthrough
+    (e.g. ``${concept}`` where ``concept`` is the parent's own workflow
+    input rather than a node output), neither memo nor the by-node-id trace
+    walker finds the value — there is no node in the parent that produces
+    ``concept``. The resolved value is recorded on the parent's workflow-node
+    event under ``node_params['inputs'][child_input_name]`` (engine flow:
+    ``node.params = merged_params`` after ``resolve_templates``, then
+    ``record_trace(node.params)``). This closes the lyrics-generator canonical
+    case where ``concept`` flows parent → child → grandchild as an input.
+
+    Mutation contract: drop the third tier in ``_estimate_parent_value_tokens``
+    (the ``_resolve_input_at_workflow_node_invocation`` call) → this fails
+    (savings drops to None because no node id ``concept`` exists for Tier 2 to
+    walk to, and no memo is provided).
+    """
+    # See sibling test for the rationale on overriding the autouse fixture.
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            },
+        ],
+        # Declare ``concept`` as a workflow input so the parent_value_expr
+        # ``concept`` doesn't accidentally root on a same-named node.
+        "inputs": {"concept": {"type": "string"}},
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    # Synthetic trace shaped like a real workflow-input passthrough:
+    # the parent has a child-call workflow node whose ``node_params['inputs']``
+    # carries the resolved value for ``concept``. Crucially, NO event for a
+    # node id ``concept`` exists — that's the whole point: input passthrough
+    # means the value isn't a node output, so Tier 2 cannot find it.
+    import json as _json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        trace_path = Path(tmpdir) / "trace.json"
+        trace_path.write_text(
+            _json.dumps({
+                "format_version": "2.2.0",
+                "workflow_path": "parent.pflow.md",
+                "final_status": "success",
+                "nodes": [
+                    {
+                        "node_id": "child-call",
+                        "node_type": "WorkflowExecutor",
+                        "duration_ms": 100,
+                        "success": True,
+                        "cached": False,
+                        # Engine records ``node.params`` post-template-resolution.
+                        # The resolved value of ${concept} lives here, keyed by
+                        # the child input name (``concept``).
+                        "node_params": {
+                            "workflow": "./child.pflow.md",
+                            "inputs": {"concept": "shared concept content " * 200},
+                        },
+                        "sub_workflow_events": [],
+                    },
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        result = analyze(
+            parent_ir,
+            workflow_path="parent.pflow.md",
+            auto_load_trace=False,
+            memo_cache=None,
+            trace_path=trace_path,
+        )
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is not None
+    assert diag.context["savings_usd"] > 0.0
+
+
 def test_sub_workflow_cache_undeclared_savings_none_when_unpriced_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

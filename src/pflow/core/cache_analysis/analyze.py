@@ -3336,30 +3336,93 @@ def _resolve_value_in_workflow_trace(
     return _normalize_empty(resolved)
 
 
-def _estimate_parent_value_tokens(
-    ref: str,
+def _resolve_input_at_workflow_node_invocation(
     *,
-    workflow_path: str,
+    parent_node_id: str,
+    parent_workflow: str,
+    child_input_name: str,
+    ctx: AnalysisContext,
+    cw_result: Any,
+) -> Any | None:
+    """Read the resolved input value from the parent's workflow-node trace event.
+
+    Closes the input-passthrough gap left by ``_resolve_value_in_workflow_trace``:
+    when the parent passes a workflow-input value (e.g. ``${concept}`` where
+    ``concept`` is the parent's own input parameter, not a node output), the
+    by-node-id walker finds nothing because no node in the parent produces
+    ``concept``. The resolved value still exists, recorded on the parent's
+    workflow-node event under ``node_params['inputs'][child_input_name]``.
+
+    The engine populates ``node_params`` with template-resolved values prior to
+    invoking the child workflow (``runtime/engine/engine.py``: ``node.params =
+    merged_params`` after ``resolve_templates``, then ``record_trace(node.params)``).
+    Reading that mapping by ``child_input_name`` is robust against complex template
+    expressions and is unaffected by the size-trimming applied to
+    ``template_resolutions`` in long-running real-world fixtures.
+
+    Last match wins (loop-recovery semantics — mirrors ``_trace_node_output_for``).
+    Returns ``None`` if the trace is missing, the parent event has no
+    ``node_params['inputs']`` mapping, or the keyed value isn't present.
+    """
+    if ctx.trace is None:
+        return None
+    edges = _edge_child_paths(cw_result)
+    resolved_value: Any = None
+    for we in ctx.trace.walk(edges=edges, workflow_path=ctx.workflow_path):
+        if we.workflow_path != parent_workflow:
+            continue
+        if we.event.get("node_id") != parent_node_id:
+            continue
+        params = we.event.get("node_params")
+        if not isinstance(params, Mapping):
+            continue
+        inputs = params.get("inputs")
+        if not isinstance(inputs, Mapping):
+            continue
+        candidate_value = inputs.get(child_input_name)
+        if candidate_value is None:
+            continue
+        resolved_value = candidate_value
+    return _normalize_empty(resolved_value) if resolved_value is not None else None
+
+
+def _estimate_parent_value_tokens(
+    candidate: _SubWorkflowCacheCandidate,
+    *,
     model: str,
     ctx: AnalysisContext,
     cw_result: Any,
 ) -> int | None:
     """Tokens for the parent value flowing across a sub-workflow boundary.
 
-    Tier 1: memo cache (cross-workflow scoped).
-    Tier 2: trace data fallback — agents who ran the workflow once but lack
-    persisted memo (e.g., the baseline harness) still get a real number.
-    Tier 3: ``None`` (honest unmeasurable — never fabricate).
+    Tier 1: memo cache (cross-workflow scoped, by ``parent_value_expr`` root).
+    Tier 2: trace by node_id — for node-output-rooted refs (e.g. ``${creative.direction}``)
+    where ``creative`` is a node id in the parent workflow.
+    Tier 3: parent workflow-node ``node_params['inputs'][child_input_name]`` —
+    closes the input-passthrough case (e.g. ``${concept}`` where ``concept`` is
+    the parent's own workflow input). Reads from the runtime invocation site
+    rather than reconstructing via the upstream node lookup.
+    Tier 4: ``None`` (honest unmeasurable — never fabricate).
 
     Coalesce expressions (``${a ?? b}``) are not handled — too ambiguous
     which operand sourced the value at runtime; returning None keeps the
     rest of the projection honest.
     """
+    ref = candidate.parent_value_expr
     if "??" in ref:
         return None
+    workflow_path = candidate.parent_workflow
     value = _resolve_value_in_workflow_memo(ref, workflow_path=workflow_path, ctx=ctx)
     if value is None:
         value = _resolve_value_in_workflow_trace(ref, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
+    if value is None:
+        value = _resolve_input_at_workflow_node_invocation(
+            parent_node_id=candidate.parent_node_id,
+            parent_workflow=workflow_path,
+            child_input_name=candidate.child_input_name,
+            ctx=ctx,
+            cw_result=cw_result,
+        )
     if value is None:
         return None
     return estimate_tokens(model, deterministic_serialize(value))[0]
@@ -3387,8 +3450,7 @@ def _project_sub_workflow_cache_savings(
     if first_row is None or not first_row.model:
         return None
     tokens = _estimate_parent_value_tokens(
-        candidate.parent_value_expr,
-        workflow_path=candidate.parent_workflow,
+        candidate,
         model=first_row.model,
         ctx=ctx,
         cw_result=cw_result,

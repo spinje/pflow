@@ -21,12 +21,12 @@
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
 
-## Recommended actions
+## Recommended actions (ordered by impact)
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
 
-  1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  savings unavailable
+  1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  saves ~$0.20/run
      chorus-chooser.pflow.md
      `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      → In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.

@@ -10270,3 +10270,37 @@ regenerated as strict-improvement diffs (gemini-lyrics-generator hits
 all four patterns; the others are subset hits).
 
 Closes N-2 + N-3 + N-9 from POLISH-PLAN.md Cluster D.
+
+## 2026-05-09 — Task 159 — Cluster C N-7 follow-up: input-passthrough fallback
+
+Adds Tier 3 to `_estimate_parent_value_tokens`: when memo and trace-by-node-id
+both miss (the input-passthrough case where the parent value is the parent's
+own workflow input, not a node output), read the resolved value from the
+parent's workflow-node trace event under `node_params['inputs'][child_input_name]`.
+
+Closes the lyrics-generator canonical case: Recommendation #1 flips from
+`savings unavailable` → `saves ~$0.20/run`; the `(ordered by impact)` qualifier
+auto-flips on for the `## Recommended actions` header.
+
+Deviation from the handoff plan: the plan proposed reading from
+`event['template_resolutions']`, claiming `node_params` is pre-resolution.
+Verified against `engine.py:651` (`node.params = merged_params` after
+`resolve_templates`, then `record_trace(node.params)`) and against the
+real lyrics-generator trace fixture: `node_params` is post-resolution, and
+`template_resolutions` is **stripped for size** in long-running fixtures
+(literal `<trimmed-for-fixture: template_resolutions stripped>`). Reading
+`node_params['inputs'][child_input_name]` is robust against trimming, robust
+against complex template expressions, and works directly on the canonical
+fixture without rebuild.
+
+Files: `src/pflow/core/cache_analysis/analyze.py` (+50 LOC: new helper
+`_resolve_input_at_workflow_node_invocation`, `_estimate_parent_value_tokens`
+signature changed to take the candidate, single caller updated),
+`tests/test_core/test_cache_analysis_per_id_emission.py` (+1 production-shape
+test with verified mutation contract: dropping the new tier causes only the
+new test to fail, three sibling Cluster-C tests stay green),
+baseline `10-live-recordings/05-gemini-lyrics-generator` regenerated.
+
+6,427 tests pass (+1). `make check` clean on touched files. 65/65 baselines.
+
+Closes N-7 input-passthrough follow-up.
