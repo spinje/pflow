@@ -10,8 +10,8 @@
   Actually paid (trace):       ~$0.0013 (trace)
   Cost without caching:        ~$0.0046
   Cost on rerun (within TTL):  ~$0.0013
-  Actual savings (this run):    saves ~$0.0033/run vs no-cache, 71% of baseline
-  Rerun delta (projected):      saves ~$0.0033/run on rerun, 71% of baseline
+  Actual savings (this run):    saves ~$0.0033/run vs no-cache, 71% of no-cache cost
+  Rerun delta (projected):      saves ~$0.0033/run on rerun, 71% of no-cache cost
 
   0 opportunities (0 warnings, 0 info)
 

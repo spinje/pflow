@@ -333,6 +333,11 @@ class CostDelta:
 
     ``amount_usd`` is a non-negative magnitude. Direction lives in ``kind`` so
     renderers cannot accidentally describe a write premium as negative savings.
+
+    ``excluded_nodes`` carries the node paths whose cost was subtracted from
+    the cohort before computing this delta — populated when the comparison
+    is honest only on a subset of rows (e.g. heterogeneous batches whose
+    per-item models can't be priced as one). Empty for whole-cohort deltas.
     """
 
     amount_usd: float | None
@@ -341,6 +346,7 @@ class CostDelta:
     baseline: str
     compared_to: str
     unavailable_reason: str | None = None
+    excluded_nodes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -4000,11 +4006,40 @@ def _build_summary(
             reason="no_trace",
         )
     elif projections.absolute_exclusions:
-        actual_vs_no_cache_delta = _unavailable_delta(
-            no_cache_baseline,
-            "actually_paid_usd",
-            reason="projection_exclusions",
-        )
+        # Projection cohort excludes some rows (heterogeneous batch, unpriced
+        # model, etc.). Compute savings on the priced subset when total paid
+        # is known and the projection cohort has at least one priced row to
+        # compare against; otherwise the comparison stays genuinely
+        # unavailable (renderer's elif branch surfaces the exclusion list).
+        # Each excluded row's cost was already attributed to actually_paid
+        # under the same coercion rule as ``row.cost_usd`` (trace_tree treats
+        # unpriced events as 0.0 in both totals), so the subtraction is
+        # internally consistent. Per-exclusion None values are coerced to 0.0.
+        excluded = projections.absolute_exclusions
+        no_cache = projections.no_cache_hypothetical_usd
+        if actually_paid.total_usd is not None and no_cache is not None and no_cache > 0:
+            excluded_total = sum((e.actual_cost_usd or 0.0) for e in excluded)
+            actually_paid_subset = actually_paid.total_usd - excluded_total
+            excluded_paths = tuple(
+                e.node_path
+                for e in sorted(
+                    excluded,
+                    key=lambda x: (x.workflow_path or "", x.node_path),
+                )
+            )
+            actual_vs_no_cache_delta = _cost_delta(
+                baseline_value=no_cache,
+                compared_value=actually_paid_subset,
+                baseline=no_cache_baseline,
+                compared_to="actually_paid_priced_cohort_usd",
+                excluded_nodes=excluded_paths,
+            )
+        else:
+            actual_vs_no_cache_delta = _unavailable_delta(
+                no_cache_baseline,
+                "actually_paid_usd",
+                reason="projection_exclusions",
+            )
     else:
         actual_vs_no_cache_delta = _cost_delta(
             baseline_value=projections.no_cache_hypothetical_usd,
@@ -4124,6 +4159,7 @@ def _cost_delta(
     compared_value: float | None,
     baseline: str,
     compared_to: str,
+    excluded_nodes: tuple[str, ...] = (),
 ) -> CostDelta:
     if baseline_value is None or compared_value is None or baseline_value <= 0:
         return _unavailable_delta(baseline, compared_to)
@@ -4135,6 +4171,7 @@ def _cost_delta(
             kind="break_even",
             baseline=baseline,
             compared_to=compared_to,
+            excluded_nodes=excluded_nodes,
         )
     return CostDelta(
         amount_usd=abs(delta),
@@ -4142,6 +4179,7 @@ def _cost_delta(
         kind="savings" if delta > 0 else "cost_increase",
         baseline=baseline,
         compared_to=compared_to,
+        excluded_nodes=excluded_nodes,
     )
 
 

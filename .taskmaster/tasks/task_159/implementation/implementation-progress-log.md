@@ -9934,3 +9934,96 @@ Verification:
   drifts from the L-batch and B-9 split).
 
 Closes B-6, B-8, B-11, L-4, L-7 from BASELINE-AUDIT.md.
+
+## 2026-05-09 — Task 159 — Cluster B: cost-savings honesty (N-1 + N-4)
+
+Lyrics-generator's `Actual savings (this run): unavailable (projection
+excludes generate-chorus-options)` (paid $2.31, no-cache $2.53, but
+"unavailable") now reads `saves ~$0.49/run vs no-cache (excludes
+generate-chorus-options), 19% of no-cache cost`. N-4 companion: every
+`% of baseline` → `% of no-cache cost` so the percentage anchors to the
+visible "Cost without caching" line above.
+
+`CostDelta` gains `excluded_nodes`. `analyze.py` short-circuit becomes
+3-state (no_trace / no priced cohort / priced subset). New JSON
+`compared_to: "actually_paid_priced_cohort_usd"` distinguishes whole-
+cohort vs priced-subset deltas. `_BASELINE_LABELS` translates the typed
+baseline identifier in `_format_delta`.
+
+Files: `src/pflow/core/cache_analysis/{analyze.py, render_text.py,
+render_json.py, __init__.py}`, `src/pflow/mcp_server/tools/execution_tools.py`
+(docstring parity), tests (4 migrated, 5 new), 37 baselines regenerated.
+
+### Critical learnings
+
+1. **Cost contract empirically verified, not just code-traced.** A
+   pre-flight spike (`scratchpads/task-159-cluster-b/preflight_spike.py`)
+   loads the lyrics-generator trace fixture and asserts
+   `Σ row.cost_usd == actually_paid.total_usd` to sub-femto precision.
+   Every priced trace leaf is keyed exactly once via
+   `_record_trace_cost_leaf`'s `(workflow_path, owner_or_event_node_id)`
+   rule, so the parent row never leaks descendant cost into its own
+   `cost_usd`. If a future change breaks this contract (someone changes
+   leaf attribution), the priced-cohort subtraction overstates savings
+   by exactly the leaked amount. Regression assertion added to
+   `test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actual_delta`.
+
+2. **`actual_cost_usd is None` is rare in production.** trace_tree
+   coerces unpriced events to 0.0 with `tier="trace_partial"`, so even
+   unpriced-LiteLLM rows get `cost_usd=0.0`, not None. The defensive
+   `all(e.actual_cost_usd is not None ...)` gate I initially added was
+   dead code; the real gates are `actually_paid.total_usd is not None`
+   (no trace) and `no_cache_hypothetical_usd > 0` (no priced survivors).
+
+3. **Pitfall #19 strikes again.** Synthetic-builder test at
+   `renderers.py:1209` (`_make_analysis(actual_delta_unavailable_reason
+   ="projection_exclusions", actual_cost_usd=0.03)`) bypasses `analyze()`
+   and would silently pass even after the fix made that exact state
+   unreachable in production. Migrated to `actual_cost_usd=None`
+   (realistic still-unavailable scenario via the rare-but-possible
+   path); added an end-to-end test for the all-rows-excluded production
+   path. **Pattern**: when a fix makes a previously-blocked state
+   reachable in production, every synthetic test that hardcodes the
+   blocked state needs review — they go from "regression gate" to
+   "stale assertion that locks in the wrong shape."
+
+### Non-obvious findings
+
+4. **Two rendering paths for the exclusion list, intentionally.**
+   `_format_delta` returns `""` for `kind="unavailable"`, so the
+   existing `unavailable (projection excludes ...)` line was built
+   inline in `_render_trace_deltas`, NOT via `_format_delta`. The new
+   priced-cohort `(excludes ...)` qualifier had to be added to
+   `_format_delta` AND the existing inline fallback site stays. Keep
+   them in sync — the inline fallback fires when `actually_paid` or
+   `no_cache_hypothetical_usd` is None / ≤0; `_format_delta` handles
+   the priced path.
+
+5. **Renderer fallback requires explicit `reason=`.** When priced-
+   cohort math is incomputable, the analyze.py fallback MUST set
+   `_unavailable_delta(reason="projection_exclusions")`. Without it,
+   `_cost_delta`'s `baseline_value <= 0` guard returns unavailable
+   with `unavailable_reason=None`, the renderer's elif branch
+   (`unavailable_reason == "projection_exclusions"`) doesn't match,
+   and the entire `Actual savings (this run):` line disappears from
+   rendered text. Caught by an existing test
+   (`test_actual_savings_label_replaces_actual_trace_delta_both_sites`)
+   when its all-rows-heterogeneous fixture started failing on the
+   first cut.
+
+6. **`% of baseline` was emitted at one site** (`render_text.py:526`)
+   but `delta.baseline` was never consulted. 3-line lookup map fix.
+   Caught on a fresh-eyes read of real output, NOT by code review or
+   tests. Test `test_baseline_labels_map_covers_every_producer_value`
+   enumerates the production producer surface and locks the map in
+   lockstep so future producers adding new `baseline=` values can't
+   silently regress rendered text back to "of baseline".
+
+### Verification
+
+- 6,419 tests pass (+4 new). `make check` clean.
+- 65/65 baselines pass; 37 regenerated as strict-improvement diffs.
+- Pre-flight contract test (`Σ row.cost_usd == actually_paid.total_usd`)
+  green on the lyrics-generator real-trace fixture.
+
+Closes N-1 + N-4 from POLISH-PLAN.md Cluster B.

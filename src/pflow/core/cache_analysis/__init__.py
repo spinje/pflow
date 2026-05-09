@@ -53,6 +53,15 @@ Version history (``JSON_FORMAT_VERSION``):
   Cache-domain match: id startswith ``cache.``,
   ``llm.thinking-temperature-mismatch``, or context.path under
   ``cache.``/``prompt_cache``.
+- ``"4.1"`` — N-1 priced-cohort delta (additive, same minor): every
+  ``CostDelta`` JSON object gains ``excluded_nodes: list[str]`` (empty by
+  default). Populated on ``actual_vs_no_cache_delta`` when projection
+  exclusions exist but a priced subset is available — total paid minus the
+  excluded rows' costs is compared against the no-cache projection.
+  ``compared_to`` switches from ``"actually_paid_usd"`` to
+  ``"actually_paid_priced_cohort_usd"`` to disambiguate. Pre-fix,
+  ``actual_vs_no_cache_delta.kind`` was ``"unavailable"`` whenever any
+  exclusion existed even when math was possible.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning

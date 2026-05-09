@@ -1200,18 +1200,31 @@ def test_json_summary_exposes_projection_exclusions_and_delta_reason(tmp_path: P
     assert any(exclusion["reason"] == "heterogeneous_model" for exclusion in exclusions)
     assert any(exclusion["node_path"] == "generate" for exclusion in exclusions)
     delta = payload["summary"]["actual_vs_no_cache_delta"]
-    assert delta["kind"] == "unavailable"
-    assert delta["unavailable_reason"] == "projection_exclusions"
+    # Priced-cohort path: total_paid - excluded.actual_cost_usd is computed
+    # because every exclusion has a trace-recorded cost. The renderer surfaces
+    # the excluded nodes so JSON consumers can show what was left out.
+    assert delta["kind"] != "unavailable"
+    assert delta["unavailable_reason"] is None
+    assert delta["compared_to"] == "actually_paid_priced_cohort_usd"
+    assert delta["excluded_nodes"] == ["generate"]
     assert payload["summary"]["heterogeneous_model_node_count"] >= 1
     assert "generate" in payload["summary"]["heterogeneous_model_node_paths"]
 
 
 def test_text_summary_explains_projection_excluded_actual_delta() -> None:
+    """Renderer falls back to ``unavailable (projection excludes ...)`` when
+    at least one exclusion lacks ``actual_cost_usd``.
+
+    Production hits this state when an excluded row's ``cost_usd`` is None —
+    typically an ``unpriced_model`` exclusion where LiteLLM didn't recognize
+    the model so the trace event also lacks a cost figure. Without a number
+    to subtract, the priced-cohort math is genuinely incomparable.
+    """
     exclusion = ProjectionExclusion(
         workflow_path="/abs/x.pflow.md",
         node_path="generate",
-        reason="heterogeneous_model",
-        actual_cost_usd=0.03,
+        reason="unpriced_model",
+        actual_cost_usd=None,
     )
     analysis = _make_analysis(
         actually_paid=0.05,
@@ -1510,6 +1523,187 @@ def test_rerun_delta_carries_projected_suffix_only_in_trace_mode(
     assert any(line.strip().startswith("Rerun delta (projected):") for line in trace_lines)
     assert any(line.strip().startswith("Rerun delta:") for line in greenfield_lines)
     assert not any(line.strip().startswith("Rerun delta (projected):") for line in greenfield_lines)
+
+
+def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp_path: Path) -> None:
+    """When every row is excluded from the projection cohort (so
+    ``no_cache_hypothetical_usd`` is None / 0), the priced-cohort math has
+    no comparison baseline and the delta stays unavailable. Renderer
+    surfaces ``unavailable (projection excludes ...)`` so the agent still
+    sees what was left out.
+
+    Mutation contract: drop the ``no_cache > 0`` gate in ``analyze.py`` →
+    ``_cost_delta`` returns unavailable without a reason → renderer's
+    elif branch doesn't fire → the ``Actual savings (this run):`` label
+    disappears from text → assertion fails.
+    """
+    from pflow.core.cache_analysis.analyze import analyze
+
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "llm",
+                "params": {"model": "${item.model}", "prompt": "${item.prompt}"},
+                "batch": {"items": "${items}"},
+            }
+        ]
+    }
+    trace_data = {
+        "format_version": "2.2.0",
+        "workflow_path": "x",
+        "final_status": "success",
+        "nodes": [
+            {
+                "node_id": "generate",
+                "node_type": "LLMNode",
+                "success": True,
+                "batch_items": [
+                    {
+                        "index": 0,
+                        "success": True,
+                        "llm_call": {
+                            "model": "gemini/gemini-2.5-flash",
+                            "input_tokens": 100,
+                            "output_tokens": 10,
+                            "cost_usd": 0.01,
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+    analysis = analyze(
+        workflow_ir,
+        parameters={"items": [{"model": "a", "prompt": "x"}]},
+        workflow_path="x",
+        trace_path=_write_trace(tmp_path / "all-excluded-trace.json", trace_data),
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    # All rows are heterogeneous-excluded, so no_cache_hypothetical_usd is
+    # None (no priced cohort to compare against).
+    assert analysis.summary.no_cache_hypothetical_usd is None
+    delta = analysis.summary.actual_vs_no_cache_delta
+    assert delta.kind == "unavailable"
+    assert delta.unavailable_reason == "projection_exclusions"
+    assert delta.excluded_nodes == ()  # not populated when fallback fires
+
+    text = render_text(analysis)
+    assert "Actual savings (this run):" in text
+    assert "unavailable (projection excludes generate)" in text
+
+
+def test_format_delta_translates_baseline_identifier_to_human_phrase() -> None:
+    """N-4: ``Y% of baseline`` is meaningless without naming the baseline.
+
+    The typed ``CostDelta.baseline`` field carries
+    ``"no_cache_hypothetical_usd"``; the text renderer translates it via
+    ``_BASELINE_LABELS`` to ``"no-cache cost"`` so the percentage is
+    anchored to the ``Cost without caching`` line above it. Unknown
+    identifiers fall back to ``baseline`` (won't crash if a future producer
+    adds a new value before the map is updated).
+
+    Mutation contract: drop the ``_BASELINE_LABELS`` lookup → ``of baseline``
+    reappears, this test fails on the explicit ``not in`` assertion.
+    """
+    from pflow.core.cache_analysis.analyze import CostDelta
+    from pflow.core.cache_analysis.render_text import _format_delta
+
+    savings = CostDelta(
+        amount_usd=0.10,
+        pct_of_baseline=20,
+        kind="savings",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_usd",
+    )
+    rendered = _format_delta(savings, label="vs no-cache")
+    assert "20% of no-cache cost" in rendered
+    assert "of baseline" not in rendered
+
+    # Cost increases route through the same translation.
+    cost_increase = CostDelta(
+        amount_usd=0.05,
+        pct_of_baseline=10,
+        kind="cost_increase",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_priced_cohort_usd",
+    )
+    rendered = _format_delta(cost_increase, label="vs no-cache")
+    assert "10% of no-cache cost" in rendered
+    assert "of baseline" not in rendered
+
+    # Unknown baseline identifiers fall back to "baseline" (defense against
+    # future producer adding a new value without updating the map).
+    unknown = CostDelta(
+        amount_usd=0.10,
+        pct_of_baseline=20,
+        kind="savings",
+        baseline="future_unknown_baseline_usd",
+        compared_to="actually_paid_usd",
+    )
+    rendered = _format_delta(unknown, label="vs no-cache")
+    assert "20% of baseline" in rendered
+
+
+def test_format_delta_emits_excluded_nodes_qualifier() -> None:
+    """N-1 renderer half: the ``excluded_nodes`` field on ``CostDelta``
+    surfaces inline as ``(excludes node1, node2)`` between the comparison
+    label and the percentage. Empty tuple → no qualifier.
+
+    Mutation contract: drop the ``excluded_nodes`` formatting in
+    ``_format_delta`` → the ``(excludes ...)`` substring disappears.
+    """
+    from pflow.core.cache_analysis.analyze import CostDelta
+    from pflow.core.cache_analysis.render_text import _format_delta
+
+    with_excludes = CostDelta(
+        amount_usd=0.49,
+        pct_of_baseline=19,
+        kind="savings",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_priced_cohort_usd",
+        excluded_nodes=("generate-chorus-options", "score-choruses"),
+    )
+    rendered = _format_delta(with_excludes, label="vs no-cache")
+    assert (
+        rendered
+        == "saves ~$0.49/run vs no-cache (excludes generate-chorus-options, score-choruses), 19% of no-cache cost"
+    )
+
+    without_excludes = CostDelta(
+        amount_usd=0.10,
+        pct_of_baseline=5,
+        kind="savings",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_usd",
+    )
+    rendered = _format_delta(without_excludes, label="on rerun")
+    assert "(excludes" not in rendered
+
+
+def test_baseline_labels_map_covers_every_producer_value() -> None:
+    """Every ``CostDelta.baseline`` value emitted by ``analyze.py`` must be
+    in ``_BASELINE_LABELS``; otherwise the renderer falls back to the
+    uninformative ``"of baseline"`` phrase a future fresh agent can't
+    interpret. This test enumerates the production producer surface and
+    locks the map in lockstep.
+
+    Today there is exactly ONE producer value
+    (``"no_cache_hypothetical_usd"``); if a new value is added without
+    updating ``_BASELINE_LABELS``, this test fires.
+    """
+    from pflow.core.cache_analysis.render_text import _BASELINE_LABELS
+
+    producer_values = {
+        "no_cache_hypothetical_usd",
+    }
+    missing = producer_values - _BASELINE_LABELS.keys()
+    assert not missing, (
+        f"Producer adds baseline values without _BASELINE_LABELS entry: {missing}. "
+        f"Add to render_text.py::_BASELINE_LABELS so rendered text reads correctly."
+    )
 
 
 def test_fragmentation_grouping_uses_effective_model_in_trace_mode(

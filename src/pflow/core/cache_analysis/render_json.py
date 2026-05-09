@@ -149,6 +149,7 @@ def _delta_to_dict(delta: CostDelta) -> dict[str, Any]:
         "baseline": delta.baseline,
         "compared_to": delta.compared_to,
         "unavailable_reason": delta.unavailable_reason,
+        "excluded_nodes": list(delta.excluded_nodes),
     }
 
 

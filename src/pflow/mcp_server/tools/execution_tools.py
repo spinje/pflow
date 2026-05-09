@@ -419,9 +419,16 @@ async def analyze_cache(
     Sub-workflow rollup entries carry the same four primitives at child
     scope.
 
-    Delta objects include ``unavailable_reason``. ``actual_vs_no_cache_delta``
-    is unavailable when trace coverage is ``"none"`` or when projection
-    exclusions would make the actual-vs-projection comparison cross cohorts.
+    Delta objects include ``unavailable_reason`` and ``excluded_nodes``.
+    ``actual_vs_no_cache_delta`` is unavailable when trace coverage is
+    ``"none"`` or when no priced rows remain to compare against (every row
+    in the cohort was excluded — heterogeneous batch, unpriced model, etc.).
+    When projection exclusions exist but at least one priced row survives,
+    the delta is computed on the priced subset and ``excluded_nodes`` lists
+    the node paths whose cost was subtracted from total paid before the
+    comparison; ``compared_to`` becomes ``"actually_paid_priced_cohort_usd"``
+    so JSON consumers can distinguish whole-cohort deltas from priced-subset
+    deltas.
 
     **Validator finding parity**: ``analyze_cache`` runs the same 10-step
     ``WorkflowValidator`` pipeline as ``pflow run``, ``--validate-only``, and

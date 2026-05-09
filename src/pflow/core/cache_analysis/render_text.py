@@ -515,6 +515,11 @@ def _render_greenfield_deltas(s: AnalysisSummary) -> list[str]:
     return lines
 
 
+_BASELINE_LABELS: dict[str, str] = {
+    "no_cache_hypothetical_usd": "no-cache cost",
+}
+
+
 def _format_delta(delta: CostDelta, *, label: str) -> str:
     if delta.kind == "unavailable":
         return ""
@@ -523,10 +528,12 @@ def _format_delta(delta: CostDelta, *, label: str) -> str:
     if delta.amount_usd is None:
         return ""
     amount = _format_dollar_amount(delta.amount_usd)
-    pct = f", {delta.pct_of_baseline}% of baseline" if delta.pct_of_baseline is not None else ""
+    excludes = f" (excludes {', '.join(delta.excluded_nodes)})" if delta.excluded_nodes else ""
+    baseline_label = _BASELINE_LABELS.get(delta.baseline, "baseline")
+    pct = f", {delta.pct_of_baseline}% of {baseline_label}" if delta.pct_of_baseline is not None else ""
     if delta.kind == "savings":
-        return f"saves {amount}/run {label}{pct}"
-    return f"adds {amount} {label}{pct}"
+        return f"saves {amount}/run {label}{excludes}{pct}"
+    return f"adds {amount} {label}{excludes}{pct}"
 
 
 def _format_unavailable_models(analysis: CacheAnalysis) -> str:

@@ -23,7 +23,8 @@
       "kind": "unavailable",
       "baseline": "no_cache_hypothetical_usd",
       "compared_to": "first_run_with_cache_hypothetical_usd",
-      "unavailable_reason": null
+      "unavailable_reason": null,
+      "excluded_nodes": []
     },
     "rerun_delta": {
       "amount_usd": null,
@@ -31,7 +32,8 @@
       "kind": "unavailable",
       "baseline": "no_cache_hypothetical_usd",
       "compared_to": "rerun_within_ttl_hypothetical_usd",
-      "unavailable_reason": null
+      "unavailable_reason": null,
+      "excluded_nodes": []
     },
     "actual_vs_no_cache_delta": {
       "amount_usd": null,
@@ -39,7 +41,8 @@
       "kind": "unavailable",
       "baseline": "no_cache_hypothetical_usd",
       "compared_to": "actually_paid_usd",
-      "unavailable_reason": "no_trace"
+      "unavailable_reason": "no_trace",
+      "excluded_nodes": []
     },
     "trace_coverage": "none",
     "evidence_scope": "static_analysis",

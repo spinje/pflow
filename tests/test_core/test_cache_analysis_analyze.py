@@ -1119,8 +1119,14 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
     assert result.summary.models_in_use == row.observed_models
 
 
-def test_complete_trace_with_heterogeneous_projection_exclusion_suppresses_actual_delta(tmp_path: Path) -> None:
-    """Actual-vs-no-cache requires actual and projection to cover the same rows."""
+def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actual_delta(tmp_path: Path) -> None:
+    """Heterogeneous exclusions don't kill the actual-vs-no-cache delta.
+
+    When every excluded row carries a trace-recorded ``actual_cost_usd``, the
+    delta is computed on the priced-cohort subset (total paid minus the
+    excluded rows' costs) and tagged with ``excluded_nodes`` so the text /
+    JSON renderers can disclose what was left out.
+    """
     workflow_ir = {
         "nodes": [
             {
@@ -1198,20 +1204,32 @@ def test_complete_trace_with_heterogeneous_projection_exclusion_suppresses_actua
     assert result.summary.trace_coverage == "complete"
     assert result.summary.actually_paid_usd == pytest.approx(0.08)
     assert result.summary.no_cache_hypothetical_usd is not None
+    # Cost contract (load-bearing for N-1's `total_paid - Σ excluded.actual_cost_usd`
+    # subtraction): every priced trace leaf is keyed exactly once across rows,
+    # so summing row.cost_usd matches actually_paid.total_usd within float
+    # precision. If batch parent rows ever leak descendant cost into their own
+    # cost_usd, this assertion fires and the priced-cohort math overstates.
+    sum_row_cost = sum((r.cost_usd or 0.0) for r in result.per_call)
+    assert sum_row_cost == pytest.approx(result.summary.actually_paid_usd)
     assert heterogeneous_row.model_is_heterogeneous is True
     assert heterogeneous_row.observed_call_count == 2
     assert heterogeneous_row.observed_models == ("gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview")
-    assert result.summary.actual_vs_no_cache_delta.kind == "unavailable"
-    assert result.summary.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions"
+    delta = result.summary.actual_vs_no_cache_delta
+    assert delta.kind != "unavailable"
+    assert delta.unavailable_reason is None
+    assert delta.compared_to == "actually_paid_priced_cohort_usd"
+    assert delta.excluded_nodes == ("generate",)
     assert result.summary.projection_exclusions[0].node_path == "generate"
     assert result.summary.projection_exclusions[0].reason == "heterogeneous_model"
+    assert result.summary.projection_exclusions[0].actual_cost_usd == pytest.approx(0.03)
 
     from pflow.core.cache_analysis.render_json import render_json
     from pflow.core.cache_analysis.render_text import render_text
 
     payload = render_json(result)
-    assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] == "unavailable"
-    assert payload["summary"]["actual_vs_no_cache_delta"]["unavailable_reason"] == "projection_exclusions"
+    assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] != "unavailable"
+    assert payload["summary"]["actual_vs_no_cache_delta"]["compared_to"] == "actually_paid_priced_cohort_usd"
+    assert payload["summary"]["actual_vs_no_cache_delta"]["excluded_nodes"] == ["generate"]
     assert payload["summary"]["projection_exclusions"] == [
         {
             "workflow_path": "x",
@@ -1224,7 +1242,8 @@ def test_complete_trace_with_heterogeneous_projection_exclusion_suppresses_actua
     text = render_text(result)
     assert "Cost without caching (projected subset):" in text
     assert "Actual savings (this run):" in text
-    assert "unavailable (projection excludes generate)" in text
+    assert "(excludes generate)" in text
+    assert "unavailable (projection excludes generate)" not in text
     assert "Actual trace delta:" not in text
 
 
