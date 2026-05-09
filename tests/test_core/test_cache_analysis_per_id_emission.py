@@ -676,6 +676,212 @@ def test_sub_workflow_cache_undeclared_savings_none_when_unpriced_model(
     assert diag.context["savings_usd"] is None
 
 
+def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_parameters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 0: current workflow parameters estimate sub-workflow boundary tokens.
+
+    No trace or memo entry is needed. Mutation contract: drop the
+    ``_resolve_value_in_workflow_parameters`` call from
+    ``_estimate_parent_value_tokens`` and this falls back to unavailable
+    savings.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            },
+        ],
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"concept": "shared concept content " * 200},
+        auto_load_trace=False,
+        memo_cache=MemoizationCache(db_path=tmp_path / "cache.db"),
+    )
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is not None
+    assert diag.context["savings_usd"] > 0.0
+    assert diag.context["below_threshold_clause"] == ""
+
+
+def test_sub_workflow_cache_undeclared_parameters_win_over_memo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current parameters must beat stale memo for the same input root."""
+    from pflow.runtime.cache import MemoizationCache
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            },
+        ],
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="concept-key",
+        node_id="concept",
+        workflow_path="parent.pflow.md",
+        action="default",
+        output={"response": "short"},
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"concept": "long current content " * 500},
+        auto_load_trace=False,
+        memo_cache=cache,
+    )
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    # The short memo value would produce a tiny figure. This locks the tier
+    # order to "parameters before memo" without depending on exact pricing
+    # implementation details beyond the local _input_rate patch.
+    assert diag.context["savings_usd"] is not None
+    assert diag.context["savings_usd"] > 1000.0
+
+
+def test_sub_workflow_cache_undeclared_savings_populated_via_walker_propagated_parameters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 0 uses walker-propagated parameters for non-root boundaries."""
+    from pflow.runtime.cache import MemoizationCache
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    root_ir = {
+        "inputs": {"shared": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-middle",
+                "type": "workflow",
+                "params": {"workflow": "./middle.pflow.md", "inputs": {"shared": "${shared}"}},
+            },
+        ],
+    }
+    middle_ir = {
+        "inputs": {"shared": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-leaf",
+                "type": "workflow",
+                "params": {"workflow": "./leaf.pflow.md", "inputs": {"shared": "${shared}"}},
+            },
+        ],
+    }
+    leaf_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${shared}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${shared}"},
+            },
+        ],
+    }
+
+    def fake_resolve(params: dict[str, Any], _base_path: Path | None) -> SubWorkflowResult:
+        workflow = params.get("workflow")
+        if workflow == "./middle.pflow.md":
+            return SubWorkflowResult(middle_ir, Path("/abs/middle.pflow.md"), ())
+        if workflow == "./leaf.pflow.md":
+            return SubWorkflowResult(leaf_ir, Path("/abs/leaf.pflow.md"), ())
+        raise AssertionError(f"unexpected workflow path {workflow!r}")
+
+    monkeypatch.setattr(cross_module, "resolve_sub_workflow", fake_resolve)
+
+    result = analyze(
+        root_ir,
+        workflow_path="root.pflow.md",
+        parameters={"shared": "propagated shared content " * 200},
+        auto_load_trace=False,
+        memo_cache=MemoizationCache(db_path=tmp_path / "cache.db"),
+    )
+    matching = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert len(matching) == 1
+    diag = matching[0]
+    assert diag.context is not None
+    assert diag.context["parent_workflow"] == "/abs/middle.pflow.md"
+    assert diag.context["child_workflow"] == "/abs/leaf.pflow.md"
+    assert diag.context["savings_usd"] is not None
+    assert diag.context["savings_usd"] > 0.0
+
+
 def test_sub_workflow_cache_undeclared_below_threshold_warns_and_drops_savings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

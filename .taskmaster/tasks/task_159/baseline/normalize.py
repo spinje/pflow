@@ -23,6 +23,17 @@ def _abspath_pattern(env_var: str) -> str | None:
     return re.escape(val)
 
 
+def _strip_litellm_cost_map_warnings(text: str) -> str:
+    """Remove dependency-network noise from baseline stderr.
+
+    LiteLLM may try to refresh its remote model-cost map before falling back to
+    the bundled local copy. Network availability and the emitted timestamp vary
+    by sandbox run, while pflow's rendered analysis is unchanged.
+    """
+    marker = "LiteLLM: Failed to fetch remote model cost map"
+    return "\n".join(line for line in text.split("\n") if marker not in line)
+
+
 def apply_rules(text: str) -> str:
     home = _abspath_pattern("BASELINE_HOME")
     case_dir = _abspath_pattern("BASELINE_CASE_DIR")
@@ -95,6 +106,7 @@ def apply_rules(text: str) -> str:
         "(partial — <N> of <M> nodes use unpriced models)",
         text,
     )
+    text = _strip_litellm_cost_map_warnings(text)
 
     # Strip per-line trailing whitespace so pre-commit's
     # trailing-whitespace hook (run by `make check`) doesn't fight us

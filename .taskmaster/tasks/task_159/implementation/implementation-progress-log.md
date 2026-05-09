@@ -10389,3 +10389,43 @@ Tests: 1 assertion update (`test_text_summary_explains_projection_excluded_actua
 regenerated as strict-improvement diffs (net −77 lines, mostly from the
 Suggested-blocks notes vanishing — when it was the only note, the whole
 `## Notes` section drops with it).
+
+## 2026-05-09 — Task 159 — Tier 0 CLI parameter resolution for sub-workflow savings
+
+Implemented `tier-0-cli-parameter-resolution-plan.md`: `_estimate_parent_value_tokens`
+now resolves `candidate.parent_value_expr` from workflow-scoped parameters before
+memo/trace/invocation fallbacks. The helper reads `ctx.parameters_for_workflow`,
+so root CLI params and walker-propagated nested params share one scope primitive;
+no root-only guard was added. This preserves the existing "current parameters win
+over stale memo" convention from `AnalysisContext.resolve_ref_value`.
+
+Tests added in `test_cache_analysis_per_id_emission.py`:
+- root boundary savings from current `parameters` with empty memo;
+- current parameters win over a shorter stale memo value;
+- nested boundary savings from walker-propagated params, locking the no-scope-guard
+  behavior.
+
+Baseline / harness changes:
+- `04-warning-catalog/05-cache.sub-workflow-cache-undeclared` JSON now populates
+  `savings_usd` / `estimated_savings_usd` from the CLI `article` sample.
+- Added baseline normalization for LiteLLM remote cost-map warning lines. Clear
+  reason: full baseline verification was otherwise dominated by stochastic
+  dependency stderr timestamps/no-warning presence, not pflow behavior.
+- Regenerated `04-warning-catalog/20-llm.thinking-temperature-mismatch` after the
+  full baseline harness exposed an existing LiteLLM pricing-data drift. Clear
+  reason: unrelated to Tier 0, but full baseline verification must compare
+  against current deterministic analyzer output.
+
+Verification:
+- Focused sub-workflow tests: 16 passed.
+- Cache-analysis suite: 513 passed.
+- Manual first-contact smoke: small CLI input emits a below-threshold note; larger
+  CLI input emits `saves ~$0.02/run` without running the workflow first.
+- Baseline harness: 65/65 passed.
+- Sandbox near-full suite: 6459 passed, 19 skipped after excluding five
+  `/opt/homebrew/bin/uv` subprocess panic cases (three documented in the skill,
+  plus two same-class `pflow save` subprocess tests).
+- `uv lock --locked` passed with `UV_CACHE_DIR=/private/tmp/pflow-uv-cache`.
+  Changed-file ruff/format, full mypy, deptry, and `git diff --check` passed.
+  Full `ruff check` still has unrelated pre-existing RUF043/RUF059 findings
+  outside touched files.

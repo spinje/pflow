@@ -111,7 +111,7 @@
       "rank": 1,
       "warning_id": "cache.sub-workflow-cache-undeclared",
       "node_id": null,
-      "estimated_savings_usd": null,
+      "estimated_savings_usd": 0.008645400000000001,
       "scope_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
       "message": "`article` flows into `child.pflow.md` as `article` and is used by 2 LLM nodes there (`summarize`, `translate`). Add `article` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
       "suggestions": [
@@ -187,7 +187,7 @@
         "context": {
           "node_count": 2,
           "affected_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
-          "savings_usd": null,
+          "savings_usd": 0.008645400000000001,
           "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
           "child_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
           "child_workflow_basename": "child.pflow.md",
@@ -220,7 +220,7 @@
       "context": {
         "node_count": 2,
         "affected_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
-        "savings_usd": null,
+        "savings_usd": 0.008645400000000001,
         "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "child_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
         "child_workflow_basename": "child.pflow.md",

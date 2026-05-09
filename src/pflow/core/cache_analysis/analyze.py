@@ -3275,6 +3275,43 @@ def _resolve_value_in_workflow_memo(
     return _normalize_empty(resolved)
 
 
+def _resolve_value_in_workflow_parameters(
+    ref: str,
+    *,
+    workflow_path: str,
+    ctx: AnalysisContext,
+) -> Any | None:
+    """Resolve ``ref`` against workflow-scoped parameters (Tier 0).
+
+    Cross-workflow analog to ``AnalysisContext._resolve_from_parameters``.
+    For sub-workflow boundary findings the parent value lives in the parent
+    workflow, not necessarily the analyzed root.
+
+    Reads from ``ctx.parameters_for_workflow(workflow_path)``. For the analyzed
+    root that is the caller's current parameters; for nested children that is
+    the walker-resolved parameter dict from ``_build_parameters_by_workflow``.
+    Both are honest signals because the walker resolves parent ``inputs:``
+    expressions through the same template resolver used elsewhere in analysis.
+
+    Placement before memo mirrors ``AnalysisContext.resolve_ref_value``:
+    current parameters win over historical memo values from prior runs.
+    """
+    params = ctx.parameters_for_workflow(workflow_path)
+    if not params:
+        return None
+    root = TemplateResolver.extract_root_node_id(ref)
+    if not root or root not in params:
+        return None
+    try:
+        resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: params[root]})
+    except Exception:
+        logger.debug("parameters resolve failed for %s in %s", ref, workflow_path, exc_info=True)
+        return None
+    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
+        return None
+    return _normalize_empty(resolved)
+
+
 def _trace_node_output_for(
     node_id: str,
     *,
@@ -3396,6 +3433,9 @@ def _estimate_parent_value_tokens(
 ) -> int | None:
     """Tokens for the parent value flowing across a sub-workflow boundary.
 
+    Tier 0: workflow parameters (caller-provided for the analyzed root, or
+    walker-propagated values for nested children). Mirrors the "parameters win
+    over memo" convention so current inputs beat stale memo from prior runs.
     Tier 1: memo cache (cross-workflow scoped, by ``parent_value_expr`` root).
     Tier 2: trace by node_id — for node-output-rooted refs (e.g. ``${creative.direction}``)
     where ``creative`` is a node id in the parent workflow.
@@ -3413,7 +3453,9 @@ def _estimate_parent_value_tokens(
     if "??" in ref:
         return None
     workflow_path = candidate.parent_workflow
-    value = _resolve_value_in_workflow_memo(ref, workflow_path=workflow_path, ctx=ctx)
+    value = _resolve_value_in_workflow_parameters(ref, workflow_path=workflow_path, ctx=ctx)
+    if value is None:
+        value = _resolve_value_in_workflow_memo(ref, workflow_path=workflow_path, ctx=ctx)
     if value is None:
         value = _resolve_value_in_workflow_trace(ref, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
     if value is None:

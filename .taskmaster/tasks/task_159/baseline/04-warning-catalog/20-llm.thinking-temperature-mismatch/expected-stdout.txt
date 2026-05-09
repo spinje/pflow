@@ -64,13 +64,19 @@
     "ir_default_model": null,
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
-    "unavailable_models": [],
-    "unavailable_models_by_workflow": {},
+    "unavailable_models": [
+      "anthropic/claude-opus-4-7"
+    ],
+    "unavailable_models_by_workflow": {
+      "<BASELINE_CASE_DIR>/workflow.pflow.md": [
+        "anthropic/claude-opus-4-7"
+      ]
+    },
     "projection_exclusions": [
       {
         "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "node_path": "deep-think",
-        "reason": "missing_output_tokens",
+        "reason": "unpriced_model",
         "actual_cost_usd": null
       }
     ],
