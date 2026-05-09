@@ -193,7 +193,5 @@
       ]
     }
   ],
-  "notes": [
-    "Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x."
-  ]
+  "notes": []
 }

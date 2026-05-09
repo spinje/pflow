@@ -6,7 +6,7 @@
 
 ## Summary
 
-  Actually paid (trace):       ~$0.0013 (trace)
+  Actually paid:               ~$0.0013 (trace)
   Cost without caching:        ~$0.0046
   Cost on rerun (within TTL):  ~$0.0013
   Actual savings (this run):    saves ~$0.0033/run vs no-cache, 71% of no-cache cost
@@ -22,6 +22,5 @@
 
 ## Notes
 
-  · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.
   · Discrepancy detection: predicted-key matching unavailable (memo cache empty — predicted-key matching needs prior memo cache entries to compare against). Observable-field attributions (TTL expiry, chunk skipped) still apply.
   · Gemini telemetry note: LiteLLM's Vertex/Gemini translation surfaces explicit-cache reads via 'cache_read_input_tokens' (or 'prompt_tokens_details.cached_tokens'); 'cache_creation_input_tokens' is 0/absent even when caching is working. Verification path is reads on subsequent calls — explicit cache markers are required for caching to fire on Gemini.

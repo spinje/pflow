@@ -10351,3 +10351,41 @@ migration, 1 negative-gate repurposed), 1 baseline regenerated. Mutation
 contract verified by stash-and-fail.
 
 6,436 tests pass. `make check` clean. 65/65 baselines.
+
+## 2026-05-09 — Task 159 — Tier 0 quick-win bundle (4 fixes)
+
+Four small renderer/note fixes bundled after a fresh-eyes read of the
+post-Cluster-C/D output (lyrics-generator trace + song-creator static):
+
+- **`model=` empty → `model=<unresolved>`** (`render_text.py:_format_per_call_row`):
+  static-mode workflows without a resolved model rendered eight rows of
+  `model=` followed by 35 chars of whitespace, reading as a broken column.
+  Sentinel mirrors the header's "no model resolved" wording.
+- **Drop Suggested-blocks declared-cache Note** (`analyze.py:_skip_suggested_blocks_for_declared_cache`):
+  `· Suggested-blocks: workflow already declares ## Cache; steady-state
+  (partial-block) suggestions deferred to v1.x.` was internal-jargon
+  roadmap leak with no agent action. Silence over noise; the True/False
+  short-circuit gating the function exists for is unchanged.
+- **Promote no-model-resolved to its own `Models:` line**
+  (`render_text.py:_format_scale_line`): the inline parenthetical
+  `(no model resolved — set settings.default_model)` glommed onto the
+  count line, breaking the line-symmetry Cluster D Header established
+  for multi-model workflows. Now: bare count line + dedicated `Models:
+  not resolved (...)` line, parallel to the multi-model `Models: A, B, C`
+  case.
+- **Drop duplicate `(trace)` from Actually paid label**
+  (`render_text.py:_render_trace_cost_lines`): `Actually paid (trace):
+  ~$2.31 (trace)` had `(trace)` on both label and value; value's tier
+  annotation already carries the signal. Truncated branch keeps
+  `(executed trace)` because "executed" is the unique signal there.
+
+Tests: 1 assertion update (`test_text_summary_explains_projection_excluded_actual_delta`),
+1 existing test rewritten for new shape (`test_text_header_handles_no_model_resolved`),
+2 new mutation-contract tests
+(`test_per_call_row_renders_unresolved_when_model_empty`,
+`test_declared_cache_workflow_does_not_emit_suggested_blocks_note`).
+
+6,438 tests pass (+2 net). `make check` clean. 65/65 baselines pass; 34
+regenerated as strict-improvement diffs (net −77 lines, mostly from the
+Suggested-blocks notes vanishing — when it was the only note, the whole
+`## Notes` section drops with it).

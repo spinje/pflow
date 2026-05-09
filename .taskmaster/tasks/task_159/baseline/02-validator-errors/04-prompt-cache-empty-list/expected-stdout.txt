@@ -23,5 +23,4 @@
 
 ## Notes
 
-  · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.
   · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.

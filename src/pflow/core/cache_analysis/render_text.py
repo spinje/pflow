@@ -127,7 +127,7 @@ def _render_header(analysis: CacheAnalysis) -> str:
       - 0 LLM nodes → ``0 LLM nodes``
       - 1 model    → ``7 LLM nodes using anthropic/claude-sonnet-4-5``
       - 2+ models  → ``7 LLM nodes`` + ``Models: anthropic/..., gemini/...``
-      - No model   → ``7 LLM nodes (no model resolved — set settings.default_model)``
+      - No model   → ``7 LLM nodes`` + ``Models: not resolved (set settings.default_model)``
       - Any heterogeneous batch sub-workflow appends a ``Heterogeneous:`` line.
 
     ``Confidence: low_no_data`` is suppressed (the cost-section's
@@ -222,16 +222,19 @@ def _format_scale_line(s: AnalysisSummary) -> list[str]:
     if hetero_count == node_count:
         # All-heterogeneous workflow — no homogeneous models to list.
         primary = f"{node_count} LLM {nodes_word}{invocation_suffix}"
-    elif not s.models_in_use:
-        primary = f"{node_count} LLM {nodes_word}{invocation_suffix} (no model resolved — set settings.default_model)"
     elif len(s.models_in_use) == 1:
         primary = f"{node_count} LLM {nodes_word}{invocation_suffix} using {s.models_in_use[0]}"
     else:
+        # 2+ models OR no model resolved (with at least one non-heterogeneous
+        # node). Both cases break out to a dedicated ``Models:`` line below
+        # so the header reads consistently across cases.
         primary = f"{node_count} LLM {nodes_word}{invocation_suffix}"
 
     lines = [primary]
     if len(s.models_in_use) >= 2:
         lines.append(f"Models: {', '.join(s.models_in_use)}")
+    elif not s.models_in_use and hetero_count != node_count:
+        lines.append("Models: not resolved (set settings.default_model)")
 
     hetero_line = _format_heterogeneous_line(s.heterogeneous_model_node_paths)
     if hetero_line:
@@ -307,7 +310,11 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
             f"  Cost without caching (executed):      {no_cache_str}",
             f"  Cost on rerun (executed, within TTL): {rerun_str}",
         ]
-    lines = [f"  Actually paid (trace):       {actually_paid_str}"]
+    # Label is bare ``Actually paid:`` — the value already carries the tier
+    # annotation ``(trace)`` or ``(trace_partial)`` via ``_format_cost``, so
+    # repeating ``(trace)`` on the label is redundant. Truncated branch above
+    # keeps ``(executed trace)`` because "executed" carries unique signal.
+    lines = [f"  Actually paid:               {actually_paid_str}"]
     excluded_line = _format_excluded_from_analysis_line(s)
     if excluded_line is not None:
         lines.append(excluded_line)
@@ -1272,7 +1279,16 @@ def _format_per_call_row(
     tokens_str = "      ?" if tokens_unmeasurable else f"{row.input_tokens_estimated:>7,}"
     cacheable_str = f"{row.cacheable_tokens_estimated:>7,}" if row.cacheable_tokens_estimated is not None else "      ?"
     ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
-    model_display = "<varies>" if row.model_is_heterogeneous or len(row.observed_models) > 1 else row.model
+    if row.model_is_heterogeneous or len(row.observed_models) > 1:
+        model_display = "<varies>"
+    elif row.model:
+        model_display = row.model
+    else:
+        # Empty model: pricing/capabilities couldn't be resolved (no
+        # ``settings.default_model``, no per-node ``- model:``). Sentinel
+        # mirrors the header's "no model resolved" wording so agents see the
+        # same vocabulary across header and per-call rows.
+        model_display = "<unresolved>"
     observed = ""
     if row.observed_models and (row.model_is_heterogeneous or len(row.observed_models) > 1):
         observed = f" observed_models={','.join(row.observed_models)}"

@@ -15,7 +15,3 @@
   Actual cache ratios from declared `prompt_cache:` subsets.
 
   summarize                             model=anthropic/claude-sonnet-4-5         tokens=      4  cacheable=      ?  ratio=  ?%  src=medium
-
-## Notes
-
-  · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.

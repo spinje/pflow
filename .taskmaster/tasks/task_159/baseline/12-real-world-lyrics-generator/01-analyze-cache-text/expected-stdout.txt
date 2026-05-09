@@ -1,6 +1,7 @@
 # Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
 
-  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes) (no model resolved — set settings.default_model)
+  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes)
+  Models: not resolved (set settings.default_model)
   Heterogeneous: generate-chorus-options (model varies per batch item)
   (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows)
 
@@ -68,13 +69,13 @@
   Showing 8 of 25 LLM nodes; all-clean rows hidden (--all-rows shows everything).
 
 ### song-creator.pflow.md (called by create-songs)
-  write-lyrics                          model=                                    tokens=  3,684  cacheable=      ?  ratio=  ?%  src=low
-  song-architecture                     model=                                    tokens=  2,886  cacheable=      ?  ratio=  ?%  src=low
-  rewrite-emotional                     model=                                    tokens=  2,575  cacheable=      ?  ratio=  ?%  src=low
-  rewrite-craft                         model=                                    tokens=  2,454  cacheable=      ?  ratio=  ?%  src=low
-  generate-suno-prompt                  model=                                    tokens=  1,340  cacheable=      ?  ratio=  ?%  src=low
-  creative-direction                    model=                                    tokens=  1,248  cacheable=      ?  ratio=  ?%  src=low
-  easter-eggs                           model=                                    tokens=  1,066  cacheable=      ?  ratio=  ?%  src=low
+  write-lyrics                          model=<unresolved>                        tokens=  3,684  cacheable=      ?  ratio=  ?%  src=low
+  song-architecture                     model=<unresolved>                        tokens=  2,886  cacheable=      ?  ratio=  ?%  src=low
+  rewrite-emotional                     model=<unresolved>                        tokens=  2,575  cacheable=      ?  ratio=  ?%  src=low
+  rewrite-craft                         model=<unresolved>                        tokens=  2,454  cacheable=      ?  ratio=  ?%  src=low
+  generate-suno-prompt                  model=<unresolved>                        tokens=  1,340  cacheable=      ?  ratio=  ?%  src=low
+  creative-direction                    model=<unresolved>                        tokens=  1,248  cacheable=      ?  ratio=  ?%  src=low
+  easter-eggs                           model=<unresolved>                        tokens=  1,066  cacheable=      ?  ratio=  ?%  src=low
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options               model=<varies>                            tokens=      ?  cacheable=      ?  ratio=  ?%  src=low  opaque-prompt

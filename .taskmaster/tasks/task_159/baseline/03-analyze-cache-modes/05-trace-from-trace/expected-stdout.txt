@@ -6,7 +6,7 @@
 
 ## Summary
 
-  Actually paid (trace):       ~$0.0087 (trace)
+  Actually paid:               ~$0.0087 (trace)
   Cost without caching:        ~$0.01
   Cost on rerun (within TTL):  ~$0.0031
   Actual savings (this run):    saves ~$0.0031/run vs no-cache, 26% of no-cache cost
@@ -22,5 +22,4 @@
 
 ## Notes
 
-  · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.
   · Discrepancy detection: predicted-key matching unavailable (memo cache empty — predicted-key matching needs prior memo cache entries to compare against). Observable-field attributions (TTL expiry, chunk skipped) still apply.

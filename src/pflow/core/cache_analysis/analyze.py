@@ -2127,13 +2127,14 @@ def _build_suggested_chunks_and_assignments(
 
 
 def _skip_suggested_blocks_for_declared_cache(workflow_ir: dict[str, Any], notes: list[str]) -> bool:
-    if not _cache_item_names(workflow_ir):
-        return False
-    notes.append(
-        "Suggested-blocks: workflow already declares ## Cache; steady-state "
-        "(partial-block) suggestions deferred to v1.x."
-    )
-    return True
+    # The previous "Suggested-blocks: workflow already declares ## Cache;
+    # steady-state (partial-block) suggestions deferred to v1.x." Note was
+    # internal-jargon roadmap leak ("Suggested-blocks", "partial-block",
+    # "v1.x"). Workflows with a declared ## Cache simply don't get block
+    # suggestions; that's neutral state, not actionable signal. Silence
+    # over noise.
+    del notes  # Reserved for future agent-facing signal at this gate.
+    return bool(_cache_item_names(workflow_ir))
 
 
 def _suggested_block_non_actionable_note(

@@ -8,7 +8,7 @@
 
 ## Summary
 
-  Actually paid (trace):       ~$2.31 (trace)
+  Actually paid:               ~$2.31 (trace)
   Excluded from analysis:      ~$0.27 (generate-chorus-options: model varies per call)
   Cost without caching:        ~$2.53 (partial)
   Cost on rerun (within TTL):  ~$2.45 (partial)

@@ -31,7 +31,3 @@
 
   answer-a                              model=anthropic/claude-sonnet-4-5         tokens=     16  cacheable=      1  ratio=  6%  src=estimator-partial  below-min-tokens
   answer-b                              model=anthropic/claude-sonnet-4-5         tokens=     16  cacheable=      1  ratio=  6%  src=estimator-partial  below-min-tokens
-
-## Notes
-
-  · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.

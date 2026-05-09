@@ -34,7 +34,3 @@
   Actual cache ratios from declared `prompt_cache:` subsets.
 
   summarize                             model=anthropic/claude-haiku-4-5          tokens=     12  cacheable=      1  ratio=  8%  src=medium  below-min-tokens, prompt-body-duplicates-cache
-
-## Notes
-
-  · Suggested-blocks: workflow already declares ## Cache; steady-state (partial-block) suggestions deferred to v1.x.

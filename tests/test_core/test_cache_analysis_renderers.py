@@ -1239,8 +1239,13 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
 
     text = render_text(analysis)
 
-    assert "Actually paid (trace):       ~$0.05 (trace)" in text
-    assert "Actually paid (trace):       ~$0.05 (partial) (trace)" not in text
+    assert "Actually paid:               ~$0.05 (trace)" in text
+    assert "Actually paid:               ~$0.05 (partial) (trace)" not in text
+    # Label is bare ``Actually paid:`` — the value's tier annotation
+    # (``(trace)`` / ``(trace_partial)``) carries the tier signal; ``(trace)``
+    # on the label too would be redundant. Truncated branch keeps
+    # ``(executed trace)`` because "executed" is the unique signal there.
+    assert "Actually paid (trace):" not in text
     # Excluded node + reason render even without a dollar figure (cost is None).
     assert "Excluded from analysis:      generate: no pricing data for model" in text
     # Cohort qualifiers on no-cache/rerun labels are gone — the explicit
@@ -2691,16 +2696,40 @@ def test_text_header_shows_dynamic_batch_invocation_unknown() -> None:
 
 
 def test_text_header_handles_no_model_resolved() -> None:
-    """CP5 #6 — when LLM nodes exist but no model resolves, surface the
-    actionable hint inline with the count.
+    """When LLM nodes exist but no model resolves, the header promotes the
+    actionable hint to its own ``Models:`` line — symmetric with the
+    multi-model case (which also breaks out to ``Models: A, B, C``).
 
-    Mutation test: drop the empty-models branch from ``_format_scale_line``;
-    this test fails because the hint text doesn't appear.
+    Mutation test: drop the ``elif not s.models_in_use and ...`` branch from
+    ``_format_scale_line``; this test fails because the ``Models: not
+    resolved`` line doesn't appear.
     """
     row = PerCallRow(**{**_row("n1", 50).__dict__, "model": ""})
     text = render_text(_make_analysis(rows=[row]))
-    assert "1 LLM node (no model resolved" in text
-    assert "settings.default_model" in text
+    # Primary line is bare (no inline parenthetical).
+    assert "Workflow: 1 LLM node\n" in text
+    # The actionable hint lives on its own ``Models:`` line.
+    assert "Models: not resolved (set settings.default_model)" in text
+    # Old shape (parenthetical glommed onto the count line) must not return.
+    assert "1 LLM node (no model resolved" not in text
+
+
+def test_per_call_row_renders_unresolved_when_model_empty() -> None:
+    """When a per-call row's model can't be resolved (empty string from the
+    analyzer), the renderer surfaces ``model=<unresolved>`` instead of an
+    empty value with padding. Mirrors the header's "no model resolved"
+    vocabulary so agents see the same signal at both layers.
+
+    Mutation test: revert the empty-string branch in ``_format_per_call_row``
+    (drop the ``<unresolved>`` else-clause); this test fails because the
+    row renders ``model=`` followed by 35 chars of whitespace instead.
+    """
+    row = PerCallRow(**{**_row("n1", 50).__dict__, "model": ""})
+    text = render_text(_make_analysis(rows=[row]))
+    assert "model=<unresolved>" in text
+    # Defense against a quietly-emptied column: the literal "model=    "
+    # followed by tokens= would mean nothing rendered for the model field.
+    assert "model=                " not in text
 
 
 def test_text_header_handles_zero_llm_nodes() -> None:
@@ -3630,6 +3659,56 @@ def test_suggested_block_carries_prompt_body_cleanup_for_greenfield() -> None:
         "node-a": ["concept"],
         "node-b": ["concept"],
     }
+
+
+def test_declared_cache_workflow_does_not_emit_suggested_blocks_note() -> None:
+    """When a workflow already declares ``## Cache``, the analyzer used to
+    emit a Note reading ``Suggested-blocks: workflow already declares
+    ## Cache; steady-state (partial-block) suggestions deferred to v1.x.``
+    That string leaks analyzer-internal vocabulary (``Suggested-blocks``,
+    ``partial-block``, ``v1.x``) into agent-facing output without giving
+    the agent any actionable signal. Workflows with a declared ``## Cache``
+    block simply skip suggestion emission — neutral state, not Notes
+    content.
+
+    Mutation test: re-add the ``notes.append("Suggested-blocks: workflow
+    already declares ## Cache; ...")`` line in
+    ``_skip_suggested_blocks_for_declared_cache``; this test fails because
+    the literal returns to the rendered Notes section.
+    """
+    from pflow.core.cache_analysis.analyze import analyze
+
+    workflow_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "cache": {
+            "items": [{"name": "concept", "var": "concept", "prose_before": "Concept:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "node-a",
+                "type": "llm",
+                "prompt_cache": ["concept"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "About ${concept}: ..."},
+            },
+            {
+                "id": "node-b",
+                "type": "llm",
+                "prompt_cache": ["concept"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "More on ${concept}: ..."},
+            },
+        ],
+    }
+    result = analyze(workflow_ir, parameters={"concept": "x"}, workflow_path="/abs/x.pflow.md")
+    text = render_text(result)
+
+    assert "Suggested-blocks:" not in text
+    assert "partial-block" not in text
+    assert "deferred to v1.x" not in text
+    # Defense: the workflow still skips suggestion emission. If a future
+    # change re-enables suggestions for declared-cache workflows, the
+    # test above would still pass — assert the documented short-circuit
+    # behavior holds.
+    assert not result.suggested_blocks
 
 
 def test_suggested_block_skips_prompt_body_cleanup_when_cache_already_declared() -> None:
