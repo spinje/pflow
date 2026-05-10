@@ -302,8 +302,17 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         s.unavailable_models,
         tier_annotation=tier,
     )
-    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
-    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    # ``(partial)`` on the no_cache / rerun projections is redundant when a
+    # structural signal already names the cohort gap: ``Excluded from analysis:``
+    # (complete-trace mode) names the excluded rows in plain English, and the
+    # ``(executed)`` label suffix (truncated branch) signals "executed subset
+    # only". Suppress the parenthetical in those cases — keep it only for the
+    # rare edge where ``partial_cost_usd`` is set without either signal.
+    projection_partial_marker = (
+        s.partial_cost_usd and not s.projection_exclusions and s.evidence_scope != "truncated_trace_executed_subset"
+    )
+    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models)
+    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, projection_partial_marker, s.unavailable_models)
     if s.evidence_scope == "truncated_trace_executed_subset":
         return [
             f"  Actually paid (executed trace):       {actually_paid_str}",
@@ -358,9 +367,15 @@ def _format_excluded_from_analysis_line(s: AnalysisSummary) -> str | None:
 
 def _render_greenfield_with_cache_lines(s: AnalysisSummary) -> list[str]:
     """Cost lines for greenfield workflows that declare ``prompt_cache:``."""
-    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
-    first_run_str = _format_cost(s.first_run_with_cache_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
-    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, s.partial_cost_usd, s.unavailable_models)
+    # ``(partial)`` on the projection lines is redundant when the
+    # ``(projected subset)`` label suffix (added below for the
+    # ``projection_exclusions`` case) already carries the cohort signal.
+    projection_partial_marker = s.partial_cost_usd and not s.projection_exclusions
+    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models)
+    first_run_str = _format_cost(
+        s.first_run_with_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models
+    )
+    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, projection_partial_marker, s.unavailable_models)
     no_cache_label = "Cost without caching (projected subset)" if s.projection_exclusions else "Cost without caching"
     first_run_label = (
         "Cost on first run (cache, projected subset)" if s.projection_exclusions else "Cost on first run (cache)"
@@ -1198,9 +1213,9 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     warnings_by_node = _warnings_by_row_key(analysis)
 
     lines = ["## Per-call cache report"]
-    explainer = _per_call_scope_explainer(rows, analysis.summary.evidence_scope)
-    if explainer:
-        lines.append(f"  {explainer}")
+    explainer_lines = _per_call_scope_explainer(rows, analysis.summary.evidence_scope)
+    for explainer_line in explainer_lines:
+        lines.append(f"  {explainer_line}")
     if truncated_trace_default_view and len(visible) < len(rows):
         hidden_unexecuted = len(rows) - len(visible)
         hidden_word = "row" if hidden_unexecuted == 1 else "rows"
@@ -1271,7 +1286,15 @@ def _append_per_call_rows(
     warnings_by_node: dict[tuple[str | None, str], list[str]],
     analysis: CacheAnalysis | None = None,
 ) -> None:
-    widths = _compute_per_call_column_widths(visible, warnings_by_node)
+    # In static-analysis mode (no trace evidence) every row's
+    # ``observed_call_count`` is 0 by construction. Rendering ``0`` in the
+    # ``calls`` column reads as "this node never runs" — a misleading signal
+    # for a workflow analyzed standalone (see ``## Per-child analyze-cache
+    # commands``, which instructs agents to run the analyzer on sub-workflows
+    # directly). Render ``—`` instead so the column means "no execution
+    # evidence" consistent with the ``cached_now`` column's ``—`` semantics.
+    static_mode = analysis is not None and analysis.summary.evidence_scope == "static_analysis"
+    widths = _compute_per_call_column_widths(visible, warnings_by_node, static_mode=static_mode)
     header = _format_table_row(
         ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"],
         widths,
@@ -1290,7 +1313,7 @@ def _append_per_call_rows(
         if multiple_workflows:
             lines.append(f"### {_format_workflow_group_heading(workflow_path, analysis)}")
         for row in group_rows:
-            lines.append(_format_per_call_row(row, warnings_by_node, widths))
+            lines.append(_format_per_call_row(row, warnings_by_node, widths, static_mode=static_mode))
         if multiple_workflows:
             lines.append("")
     if multiple_workflows and lines and lines[-1] == "":
@@ -1324,18 +1347,22 @@ def _format_per_call_row(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
     widths: tuple[int, ...],
+    *,
+    static_mode: bool = False,
 ) -> str:
-    return _format_table_row(_per_call_cells(row, warnings_by_node), widths)
+    return _format_table_row(_per_call_cells(row, warnings_by_node, static_mode=static_mode), widths)
 
 
 def _compute_per_call_column_widths(
     rows: list[PerCallRow],
     warnings_by_node: dict[tuple[str | None, str], list[str]],
+    *,
+    static_mode: bool = False,
 ) -> tuple[int, ...]:
     headers = ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"]
     widths = [len(header) for header in headers]
     for row in rows:
-        for index, cell in enumerate(_per_call_cells(row, warnings_by_node)):
+        for index, cell in enumerate(_per_call_cells(row, warnings_by_node, static_mode=static_mode)):
             widths[index] = max(widths[index], len(cell))
     return tuple(widths)
 
@@ -1370,6 +1397,8 @@ def _structured_columns_width(widths: tuple[int, ...]) -> int:
 def _per_call_cells(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
+    *,
+    static_mode: bool = False,
 ) -> list[str]:
     inline_warnings = warnings_by_node.get((row.workflow_path, row.node_path), [])
     return [
@@ -1379,7 +1408,7 @@ def _per_call_cells(
         _cell_cached_now(row),
         _cell_could_cache(row),
         _cell_ratio(row),
-        _cell_calls(row),
+        _cell_calls(row, static_mode=static_mode),
         _cell_notes(row, inline_warnings),
     ]
 
@@ -1428,7 +1457,15 @@ def _cell_ratio(row: PerCallRow) -> str:
     return f"{row.cache_ratio_pct}%" if row.cache_ratio_pct is not None else "?%"
 
 
-def _cell_calls(row: PerCallRow) -> str:
+def _cell_calls(row: PerCallRow, *, static_mode: bool = False) -> str:
+    # Static-analysis mode means no trace evidence is available, so every
+    # row's ``observed_call_count`` is 0 by construction. Render ``—``
+    # instead of ``0`` so the column reads as "no execution evidence"
+    # rather than the misleading "this node never runs". In trace mode,
+    # ``observed_call_count == 0`` is a real signal (conditional branch
+    # not taken) and must render as ``0``.
+    if static_mode:
+        return "—"
     return str(row.observed_call_count)
 
 
@@ -1486,8 +1523,8 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     return "\n".join(lines)
 
 
-def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "static_analysis") -> str:
-    """Return a compact explainer describing what the per-call columns mean.
+def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "static_analysis") -> list[str]:
+    """Return multi-line explainer describing what the per-call columns mean.
 
     Two modes that survive the Option C row filter:
 
@@ -1495,18 +1532,29 @@ def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "sta
       Values reflect declared subsets.
     - **Post-run greenfield**: rows have memo/trace data; values are projected
       from real run history.
+
+    Returned as ``list[str]`` so the caller can emit one indented line per
+    bullet — the prior single-line form packed four facts into a 60-word
+    run-on that agents skimmed past. The prior form also carried a
+    "divide by calls for per-call values" hint that became wrong after
+    static-list batch trace rows were normalized to per-call units; the
+    blanket advice is dropped here rather than caveated, since column-by-
+    column meaning is the agent-actionable signal.
     """
     if evidence_scope == "truncated_trace_executed_subset":
-        return "Executed trace rows are evidence-only; unexecuted rows are marked when shown."
+        return ["Executed trace rows are evidence-only; unexecuted rows are marked when shown."]
     is_steady_state = any(row.declared_prompt_cache is not None for row in rows)
-    column_notes = (
-        "cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you "
-        "declare/extend prompt_cache:. — means the column does not apply to this row's tier. "
-        "Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values)."
+    lead = (
+        "Actual cache ratios from declared `prompt_cache:` subsets."
+        if is_steady_state
+        else "Projected cache ratios from prior run data."
     )
-    if is_steady_state:
-        return f"Actual cache ratios from declared `prompt_cache:` subsets. {column_notes}"
-    return f"Projected cache ratios from prior run data. {column_notes}"
+    return [
+        lead,
+        "  · cached_now: tokens that went through cache this run.",
+        "  · could_cache: tokens that could be cached if you declare/extend prompt_cache:.",
+        "  · — means the column does not apply to this row's tier.",
+    ]
 
 
 def _per_call_confidence_footer(rows: list[PerCallRow]) -> str | None:

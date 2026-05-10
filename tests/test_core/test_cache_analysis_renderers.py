@@ -1314,6 +1314,227 @@ def test_excluded_from_analysis_line_aggregates_multiple_exclusions() -> None:
     assert "Excluded from analysis:      ~$0.15 (alpha: model varies per call, beta: no pricing data for model)" in text
 
 
+def test_trace_mode_drops_partial_qualifier_when_excluded_line_renders() -> None:
+    """Fix A: ``(partial)`` on no-cache / rerun projection lines is redundant
+    when the ``Excluded from analysis:`` line above already names the cohort
+    gap in plain English. A fresh agent reading the cost block sees the
+    paid amount, the excluded line, and the projection lines without the
+    parenthetical noise that previously read as "this number might be wrong".
+
+    Mutation contract: revert ``projection_partial_marker`` in
+    ``_render_trace_cost_lines`` back to ``s.partial_cost_usd`` → both
+    ``not in text`` substring assertions fail.
+    """
+    exclusion = ProjectionExclusion(
+        workflow_path="/abs/x.pflow.md",
+        node_path="generate",
+        reason="heterogeneous_model",
+        actual_cost_usd=0.27,
+    )
+    analysis = _make_analysis(
+        actually_paid=2.31,
+        no_cache=2.16,
+        rerun=2.07,
+        partial=True,
+        projection_exclusions=(exclusion,),
+    )
+
+    text = render_text(analysis)
+
+    # Excluded line carries the cohort signal in plain English.
+    assert "Excluded from analysis:      ~$0.27 (generate: model varies per call)" in text
+    # Trace-mode projection lines render bare amounts; ``(partial)`` would
+    # double up with the explicit excluded line above.
+    assert "Cost without caching:        ~$2.16\n" in text + "\n"
+    assert "Cost without caching:        ~$2.16 (partial)" not in text
+    assert "Cost on rerun (within TTL):  ~$2.07 (partial)" not in text
+
+
+def test_greenfield_with_cache_drops_partial_qualifier_when_excluded_line_renders() -> None:
+    """Fix A — greenfield-with-cache branch: the ``(projected subset)`` label
+    suffix already conveys "this is over a partial cohort" when
+    projection_exclusions is populated. The ``(partial)`` parenthetical on
+    the value side is redundant and gets dropped.
+
+    Mutation contract: revert ``projection_partial_marker`` in
+    ``_render_greenfield_with_cache_lines`` to ``s.partial_cost_usd`` →
+    label-and-value lines re-acquire ``(partial)`` and the negative
+    assertion fails.
+    """
+    exclusion = ProjectionExclusion(
+        workflow_path="/abs/x.pflow.md",
+        node_path="generate",
+        reason="heterogeneous_model",
+        actual_cost_usd=None,
+    )
+    analysis = _make_analysis(
+        no_cache=1.20,
+        first_run_with_cache=0.95,
+        rerun=0.80,
+        partial=True,
+        projection_exclusions=(exclusion,),
+    )
+
+    text = render_text(analysis)
+
+    # Label still carries (projected subset) — the cohort is genuinely partial.
+    assert "Cost without caching (projected subset):" in text
+    # But the value-side (partial) marker is gone — redundant with the
+    # label suffix and the Excluded line above.
+    assert "(partial)" not in text
+
+
+def test_greenfield_no_cache_keeps_partial_qualifier_no_other_signal() -> None:
+    """Fix A — greenfield-no-cache (single ``Cost per run:`` line) MUST keep
+    ``(partial)``: there's no Excluded-from-analysis line, no ``(projected
+    subset)`` label suffix, and no ``(executed)`` qualifier in this branch.
+    The parenthetical is the only signal that the projection cohort is
+    incomplete.
+
+    Mutation contract: extend the projection_partial_marker suppression to
+    ``_render_greenfield_no_cache_lines`` → this assertion fails (the cohort
+    signal vanishes silently).
+    """
+    analysis = _make_analysis(
+        no_cache=0.50,
+        partial=True,
+    )
+
+    text = render_text(analysis)
+
+    # Single-line greenfield-no-cache case — preserve (partial) qualifier.
+    assert "Cost per run:                ~$0.50 (partial)" in text
+
+
+def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -> None:
+    """Fix B: ``_per_call_scope_explainer`` returns a multi-line bullet block
+    (lead sentence + 3 bullets) instead of a 60-word run-on. The prior
+    "divide by calls for per-call values" advice was structurally wrong
+    after Pass A2 normalized static-list batch trace rows to per-call
+    units; the blanket guidance is dropped rather than caveated.
+
+    Mutation contract: revert the function to return a single string with
+    the run-on text → the multi-line shape assertions fail AND the
+    ``divide by calls`` negative assertion fails.
+    """
+    rows = [
+        PerCallRow(
+            node_path="generate",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=2000,
+            cacheable_tokens_estimated=1500,
+            cache_ratio_pct=75,
+            data_source="trace",
+            declared_prompt_cache=("article",),
+            workflow_path="/abs/x.pflow.md",
+            cacheable_data_source="trace",
+            observed_call_count=4,
+        ),
+    ]
+    analysis = _make_analysis(rows=rows, actually_paid=0.10, no_cache=0.20)
+
+    text = render_text(analysis)
+
+    # Lead sentence and bullets each on their own line — standalone substrings.
+    assert "Actual cache ratios from declared `prompt_cache:` subsets." in text
+    assert "· cached_now: tokens that went through cache this run." in text
+    assert "· could_cache: tokens that could be cached if you declare/extend prompt_cache:." in text
+    assert "· — means the column does not apply to this row's tier." in text
+    # Run-on form with semicolon separators must NOT appear.
+    assert "cached_now: tokens that went through cache this run; could_cache:" not in text
+    # The wrong-after-Pass-A2 advice is gone.
+    assert "divide by calls" not in text
+    assert "Numbers aggregate across all calls" not in text
+
+
+def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
+    """Fix C: ``_cell_calls`` renders ``—`` instead of ``0`` when the
+    workflow was analyzed standalone (no trace evidence). In trace mode,
+    ``observed_call_count == 0`` is a real signal (conditional branch not
+    taken) and MUST render as ``0``.
+
+    Mutation contract: drop the ``static_mode`` gate → static-analysis mode
+    renders ``0``, fresh agents reading a sub-workflow analyzed standalone
+    misread it as "this node never runs".
+    """
+    from pflow.core.cache_analysis.render_text import _cell_calls
+
+    row_unobserved = PerCallRow(
+        node_path="generate",
+        model="anthropic/claude-sonnet-4-5",
+        is_batch=False,
+        batch_size_estimated=None,
+        input_tokens_estimated=100,
+        cacheable_tokens_estimated=None,
+        cache_ratio_pct=None,
+        data_source="estimator",
+        declared_prompt_cache=None,
+        workflow_path="/abs/x.pflow.md",
+        observed_call_count=0,
+    )
+    row_observed = dataclasses.replace(row_unobserved, observed_call_count=4)
+
+    # Static-analysis mode: zero is rendered as em-dash (no execution evidence).
+    assert _cell_calls(row_unobserved, static_mode=True) == "—"
+    # Even nonzero counts can't appear in static mode (by construction —
+    # static analysis has no trace, so observed_call_count is always 0 —
+    # but defense-in-depth keeps the gate symmetric).
+    assert _cell_calls(row_observed, static_mode=True) == "—"
+    # Trace mode: integer renders directly, including a real 0.
+    assert _cell_calls(row_unobserved, static_mode=False) == "0"
+    assert _cell_calls(row_observed, static_mode=False) == "4"
+
+
+def test_static_mode_per_call_table_renders_em_dash_for_calls_column_e2e() -> None:
+    """Fix C end-to-end: when ``evidence_scope == "static_analysis"`` the
+    rendered per-call table emits ``—`` in the calls column for every row.
+    The ``calls=0`` rendering previously masqueraded as "this node never
+    runs" for fresh agents running ``pflow analyze-cache`` on a sub-
+    workflow standalone (which is what ``## Per-child analyze-cache
+    commands`` instructs them to do).
+
+    Mutation contract: revert ``_append_per_call_rows``'s ``static_mode``
+    threading → calls render as ``0`` and the negative ``" 0  "``
+    assertion still tolerates it (kept for column-position robustness).
+    The positive ``—`` assertion does the load-bearing check.
+    """
+    rows = [
+        PerCallRow(
+            node_path="generate",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=2000,
+            cacheable_tokens_estimated=1500,
+            cache_ratio_pct=75,
+            data_source="memo",
+            declared_prompt_cache=("article",),
+            workflow_path="/abs/x.pflow.md",
+            cacheable_data_source="memo",
+            observed_call_count=0,
+        ),
+    ]
+    # Note: _make_analysis sets evidence_scope="static_analysis" when
+    # actually_paid is None — so omitting the trace-cost knob is the
+    # builder's path into static mode.
+    analysis = _make_analysis(rows=rows, no_cache=0.05)
+
+    text = render_text(analysis)
+    lines = text.splitlines()
+    # Locate the per-call data row (after `node`/`---` header lines).
+    data_lines = [line for line in lines if "generate" in line and "anthropic" in line]
+    assert data_lines, f"per-call data row missing — text was:\n{text}"
+    row_text = data_lines[0]
+    # Em-dash present in the calls column position. The `—` symbol is
+    # ASCII-distinct from the `cached_now` em-dash earlier in the row, so
+    # this assertion catches the calls-column substitution specifically
+    # via its trailing position in the row (followed only by an empty
+    # notes column).
+    assert row_text.rstrip().endswith("—"), f"expected calls column to render as '—' in static mode, got:\n{row_text!r}"
+
+
 def test_header_discloses_ir_default_when_overridden_by_trace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

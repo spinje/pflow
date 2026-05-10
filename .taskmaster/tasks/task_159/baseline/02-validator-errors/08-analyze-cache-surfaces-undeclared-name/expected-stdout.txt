@@ -28,9 +28,12 @@
      → Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`.
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:.
+    · — means the column does not apply to this row's tier.
 
   node       model                       input  cached_now  could_cache  ratio  calls  notes
   -------------------------------------------------------------------------------------
 
-  summarize  anthropic/claude-haiku-4-5      7           —            ?     ?%      0
+  summarize  anthropic/claude-haiku-4-5      7           —            ?     ?%      —

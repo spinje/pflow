@@ -10849,3 +10849,135 @@ Verification:
 - Near-full sandbox suite:
   `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
   returned 6549 passed, 1 skipped.
+
+## 2026-05-10 — Task 159 — fresh-eyes ABC trio (cost-block partial / per-call explainer / static-mode calls)
+
+After Pass A/B/C-prep cleared most of the originally-flagged friction, a
+cold-read of the post-merge lyrics-generator + song-creator captures
+surfaced three new offenders that were exposed by the prior fixes
+themselves:
+
+- **A** — `(partial)` qualifier on no-cache / rerun cost lines. Once Pass
+  B / cohort-coherence introduced `Excluded from analysis: ~$X (...)`,
+  the `(partial)` parenthetical became redundant in trace mode and in
+  greenfield-with-cache mode (where `(projected subset)` label suffix is
+  the parallel signal). Reading cold, `(partial)` next to a dollar value
+  read as "this number might be wrong", undermining math an agent could
+  do trivially against the visible Excluded line.
+- **B** — `_per_call_scope_explainer` packed four facts into a 60-word
+  run-on. Worse, it carried "(divide by calls for per-call values)"
+  advice that became structurally wrong after Pass A2 normalized
+  static-list batch trace rows to per-call units. Agents following the
+  blanket guidance on a static-list batch row would compute 1/N the
+  actual per-call value.
+- **C** — `calls=0` for sub-workflow standalone analysis. The song-
+  creator capture is precisely what `## Per-child analyze-cache
+  commands` instructs agents to run. Every row showed `calls=0` because
+  static analysis has no trace evidence — but `0` reads as "this node
+  never runs", a semantic mismatch that contradicts what the row's
+  populated input/cacheable columns are saying.
+
+Behavior:
+
+- `_render_trace_cost_lines` and `_render_greenfield_with_cache_lines`
+  compute `projection_partial_marker = s.partial_cost_usd and not
+  s.projection_exclusions and (not truncated_branch)` — preserve
+  `(partial)` only when no structural signal carries the cohort gap.
+  `_render_greenfield_no_cache_lines` (single-line `Cost per run:`)
+  keeps `s.partial_cost_usd` directly — no other signal in that branch.
+- `_per_call_scope_explainer` returns `list[str]` (lead sentence + 3
+  bullets) rather than one string. Caller in `_render_per_call`
+  iterates and indents each line. The "divide by calls" guidance is
+  dropped entirely rather than caveated — column-by-column meaning is
+  the agent-actionable signal; per-call vs cohort is a downstream
+  concern Pass A2's static-list batch fix already handles.
+- `_cell_calls(row, *, static_mode=False)` renders `—` when
+  `static_mode=True`. `static_mode` is computed once at section build
+  time as `analysis.summary.evidence_scope == "static_analysis"` and
+  threaded through `_append_per_call_rows → _format_per_call_row →
+  _per_call_cells → _cell_calls`, also through
+  `_compute_per_call_column_widths` for symmetric width math. Trace
+  mode (where `observed_call_count == 0` is a real "didn't fire" signal
+  for conditional dispatch) still renders `0`.
+
+Files: `src/pflow/core/cache_analysis/render_text.py` (+~30/-15 LOC, no
+new helpers — three small renderer-internal changes).
+`tests/test_core/test_cache_analysis_renderers.py` (+6 tests, all with
+verified mutation contracts).
+
+Tests added:
+
+- `test_trace_mode_drops_partial_qualifier_when_excluded_line_renders`
+  — A (trace branch). Mutation: revert `projection_partial_marker` to
+  `s.partial_cost_usd` → both negative substring assertions fail.
+- `test_greenfield_with_cache_drops_partial_qualifier_when_excluded_line_renders`
+  — A (greenfield-with-cache branch). Mutation: same revert → `(partial)`
+  reappears in either label or value position; negative `not in text`
+  assertion fails.
+- `test_greenfield_no_cache_keeps_partial_qualifier_no_other_signal`
+  — A (regression-prevention for the single-line branch). Mutation:
+  extend the suppression to greenfield-no-cache → positive substring
+  fails; signals the cohort-incomplete condition has been silently
+  hidden.
+- `test_per_call_explainer_renders_multi_line_block_without_divide_by_calls`
+  — B. Locks the lead sentence + 3 bullet substrings, plus negative
+  assertions on the run-on form and the wrong "divide by calls"
+  advice.
+- `test_cell_calls_renders_em_dash_in_static_mode_only`
+  — C unit-level. Tests both branches plus zero/nonzero rows.
+- `test_static_mode_per_call_table_renders_em_dash_for_calls_column_e2e`
+  — C end-to-end through `render_text`. Locks the column-position
+  shift via `endswith("—")` after rstrip.
+
+Baseline drift:
+
+- 14 cases drifted from this commit, all strict improvements:
+  - 5 parser/validator cases (`01-parser-errors/03,09`,
+    `02-validator-errors/06,07,08`): B explainer split + C `calls=0` →
+    `calls=—`.
+  - 5 analyze-cache-modes cases (`03-analyze-cache-modes/01,03,05,06,08`):
+    B explainer split everywhere; C `calls` fix on the four static-mode
+    cases (the `--from-trace` case correctly retains real call counts).
+  - 2 live-recordings cases (`10-live-recordings/03,05`): B everywhere;
+    A `(partial)` removal on `05-gemini-lyrics-generator`.
+  - 2 lyrics-generator real-world cases
+    (`12-real-world-lyrics-generator/01,03`): B everywhere; C
+    `calls=—` for the song-creator standalone analysis.
+- 1 case drifted on upstream LiteLLM pricing-data shift unrelated to
+  this commit (`04-warning-catalog/20-llm.thinking-temperature-mismatch`)
+  — same drift class documented in the prior Tier-0 CLI parameter
+  resolution commit and the per-call-column-split commit.
+
+Verification:
+
+- Focused new tests: 6/6 passed with verified mutation contracts.
+- `tests/test_core/test_cache_analysis_renderers.py`: 142 passed.
+- Cache-analysis suite (analyze, renderers, per-id-emission/coverage,
+  warnings, cost/token estimation, CLI): 566 passed.
+- Baseline harness with sandbox shim: 66 passed, 0 drifted, 0 harness
+  errors after regenerating the 15 affected cases.
+- Quality checks: `ruff check`, `ruff format --check`,
+  `mypy src/pflow/core/cache_analysis` clean.
+- Near-full sandbox suite:
+  `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
+  returned 6555 passed, 1 skipped.
+
+Coordination notes:
+
+- Pass C (cross-workflow → per-call row plumbing,
+  `pass-c-cross-workflow-row-plumbing-plan.md`) is in-flight by another
+  agent. ABC was scoped to renderer-only surfaces that don't conflict:
+  `_render_trace_cost_lines`, `_render_greenfield_with_cache_lines`,
+  `_per_call_scope_explainer`, `_append_per_call_rows`,
+  `_format_per_call_row`, `_compute_per_call_column_widths`,
+  `_per_call_cells`, `_cell_calls`. None of these are Pass C's editing
+  surface (Pass C touches `_per_call_confidence_footer`,
+  `_cell_could_cache`, the catalog template for
+  `cache.sub-workflow-cache-undeclared`, and `_build_per_call_row`).
+- Pass C's regen pass will re-roll the lyrics-generator captures on
+  top of these changes; the explainer's lead sentence and the
+  `(partial)`-suppression are independent of Pass C's cross-workflow
+  candidate tier label.
+
+Closes the three highest-leverage fresh-eyes findings remaining after
+Pass A/B prep.

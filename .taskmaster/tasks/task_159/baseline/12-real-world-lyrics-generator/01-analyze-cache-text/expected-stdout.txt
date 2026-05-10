@@ -65,23 +65,26 @@
         used by chorus-chooser (line 97)
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:.
+    · — means the column does not apply to this row's tier.
   Showing 8 of 25 LLM nodes; all-clean rows hidden (--all-rows shows everything).
 
   node                     model         input  cached_now  could_cache  ratio  calls  notes
   -------------------------------------------------------------------------------------
 
 ### song-creator.pflow.md (called by create-songs)
-  write-lyrics             <unresolved>  3,684           —            ?     ?%      0
-  song-architecture        <unresolved>  2,886           —            ?     ?%      0
-  rewrite-emotional        <unresolved>  2,575           —            ?     ?%      0
-  rewrite-craft            <unresolved>  2,454           —            ?     ?%      0
-  generate-suno-prompt     <unresolved>  1,340           —            ?     ?%      0
-  creative-direction       <unresolved>  1,248           —            ?     ?%      0
-  easter-eggs              <unresolved>  1,066           —            ?     ?%      0
+  write-lyrics             <unresolved>  3,684           —            ?     ?%      —
+  song-architecture        <unresolved>  2,886           —            ?     ?%      —
+  rewrite-emotional        <unresolved>  2,575           —            ?     ?%      —
+  rewrite-craft            <unresolved>  2,454           —            ?     ?%      —
+  generate-suno-prompt     <unresolved>  1,340           —            ?     ?%      —
+  creative-direction       <unresolved>  1,248           —            ?     ?%      —
+  easter-eggs              <unresolved>  1,066           —            ?     ?%      —
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
-  generate-chorus-options  <varies>          ?           —            ?     ?%      0  opaque-prompt
+  generate-chorus-options  <varies>          ?           —            ?     ?%      —  opaque-prompt
 
   Token estimate confidence: projected input tokens: write-lyrics, song-architecture, rewrite-emotional, rewrite-craft, generate-suno-prompt, creative-direction, easter-eggs, generate-chorus-options.
 
