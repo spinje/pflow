@@ -1274,16 +1274,21 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
     assert "Actual trace delta:" not in text
 
 
-def test_excluded_from_analysis_line_renders_dollar_amount_and_reason() -> None:
-    """When projection_exclusions carries trace-recorded costs, the renderer
-    emits an explicit ``Excluded from analysis: ~$X (node: reason)`` line in
-    the cost block. This line is what makes the savings math visually
-    compose: ``actually_paid - excluded`` is the cohort the savings figure
-    is computed against.
+def test_trace_mode_folds_excluded_passthrough_into_projections() -> None:
+    """Fix 7: when all projection_exclusions carry a trace-recorded
+    actual_cost_usd, the renderer FOLDS that cost into the no-cache /
+    rerun projections so the cost block reconciles in-place without the
+    agent doing subtraction. The standalone ``Excluded from analysis:``
+    line is replaced by a footnote.
 
-    Mutation contract: drop the new ``_format_excluded_from_analysis_line``
-    emission in ``_render_trace_cost_lines`` → the line disappears from
-    text → both substring assertions fail.
+    Math reconciliation: paid $2.31 < no-cache (folded) $2.43 — natural
+    direction. Excluded $0.27 = $2.43 - $2.16 (the analyzer's priced
+    cohort no-cache value). Agent reads top-to-bottom without subtraction.
+
+    Mutation contract: drop the ``can_fold`` branch in
+    ``_render_trace_cost_lines`` → the cost block reverts to showing
+    the Excluded line + priced-cohort no-cache value, breaking the
+    cohort reconciliation.
     """
     exclusion = ProjectionExclusion(
         workflow_path="/abs/x.pflow.md",
@@ -1293,26 +1298,81 @@ def test_excluded_from_analysis_line_renders_dollar_amount_and_reason() -> None:
     )
     analysis = _make_analysis(
         actually_paid=2.31,
-        no_cache=2.53,
+        no_cache=2.16,  # analyzer's priced-cohort value
+        rerun=2.07,
         partial=True,
         projection_exclusions=(exclusion,),
     )
 
     text = render_text(analysis)
-    assert "Excluded from analysis:      ~$0.27 (generate-chorus-options: model varies per call)" in text
-    # When NO exclusions, the line MUST NOT render — would be analyst-noise
-    # on the common case.
-    clean_analysis = _make_analysis(actually_paid=2.31, no_cache=2.53)
-    clean_text = render_text(clean_analysis)
-    assert "Excluded from analysis:" not in clean_text
+    # No-cache is folded: $2.16 + $0.27 = $2.43 — now larger than paid.
+    assert "Cost without caching:        ~$2.43" in text
+    # Rerun is folded: $2.07 + $0.27 = $2.34.
+    assert "Cost on rerun (within TTL):  ~$2.34" in text
+    # The old standalone Excluded line is GONE in the folded case.
+    assert "Excluded from analysis:" not in text
+    # Footnote names the pass-through node + amount + honest framing.
+    assert "~$0.27 of the above is pass-through for generate-chorus-options" in text
+    assert "model varies per call" in text
+    assert "projected savings unavailable" in text
+    assert "real savings could be higher if model+content combos repeat" in text
 
 
-def test_excluded_from_analysis_line_aggregates_multiple_exclusions() -> None:
-    """Multi-exclusion case: dollar amounts sum, node:reason pairs join with
-    ``, `` so a fresh agent reading the line sees the full breakdown.
+def test_trace_mode_falls_back_to_excluded_line_when_excluded_cost_unknown() -> None:
+    """Fix 7 fallback: when any excluded row has ``actual_cost_usd=None``
+    (honest-unmeasurable), we can't pass through what we didn't measure.
+    Keep the original ``Excluded from analysis:`` line + priced-cohort
+    projections.
 
-    Mutation contract: change the reason-label map or the join separator
-    → the assertion's exact substring fails.
+    Mutation contract: make the fold branch unconditional (ignore the
+    None check) → the assertion that the Excluded line is present fails
+    AND the pass-through math becomes wrong (under-counting unpriced
+    exclusion). Either way, the test fails.
+    """
+    exclusion = ProjectionExclusion(
+        workflow_path="/abs/x.pflow.md",
+        node_path="ghost-node",
+        reason="unpriced_model",
+        actual_cost_usd=None,  # honest unmeasurable
+    )
+    analysis = _make_analysis(
+        actually_paid=2.31,
+        no_cache=2.16,
+        rerun=2.07,
+        partial=True,
+        projection_exclusions=(exclusion,),
+    )
+    text = render_text(analysis)
+    # Excluded line falls back to render without dollar amount.
+    assert "Excluded from analysis:" in text
+    assert "ghost-node" in text
+    # Original no-cache value (priced cohort, unchanged) — NOT folded.
+    assert "Cost without caching:        ~$2.16" in text
+    # No footnote in this branch — nothing was folded.
+    assert "of the above is pass-through" not in text
+
+
+def test_trace_mode_no_exclusions_renders_clean_cost_block() -> None:
+    """Fix 7 baseline: when no exclusions exist, the cost block is the
+    simplest case — no Excluded line, no footnote, no fold.
+
+    Mutation contract: emit the Excluded line or footnote unconditionally
+    → either negative assertion fails.
+    """
+    analysis = _make_analysis(actually_paid=2.31, no_cache=2.53)
+    text = render_text(analysis)
+    assert "Excluded from analysis:" not in text
+    assert "of the above is pass-through" not in text
+    assert "Cost without caching:        ~$2.53" in text
+
+
+def test_trace_mode_folds_multi_node_exclusions_into_footnote() -> None:
+    """Fix 7 multi-exclusion: when multiple nodes are excluded and all
+    have trace-recorded costs, the footnote names them comma-separated
+    and the projection lines fold the summed pass-through.
+
+    Mutation contract: drop multi-exclusion handling in
+    ``_format_passthrough_footnote`` → the multi-node CSV form fails.
     """
     exclusions = (
         ProjectionExclusion(
@@ -1334,45 +1394,14 @@ def test_excluded_from_analysis_line_aggregates_multiple_exclusions() -> None:
         partial=True,
         projection_exclusions=exclusions,
     )
-
     text = render_text(analysis)
-    assert "Excluded from analysis:      ~$0.15 (alpha: model varies per call, beta: no pricing data for model)" in text
-
-
-def test_trace_mode_drops_partial_qualifier_when_excluded_line_renders() -> None:
-    """Fix A: ``(partial)`` on no-cache / rerun projection lines is redundant
-    when the ``Excluded from analysis:`` line above already names the cohort
-    gap in plain English. A fresh agent reading the cost block sees the
-    paid amount, the excluded line, and the projection lines without the
-    parenthetical noise that previously read as "this number might be wrong".
-
-    Mutation contract: revert ``projection_partial_marker`` in
-    ``_render_trace_cost_lines`` back to ``s.partial_cost_usd`` → both
-    ``not in text`` substring assertions fail.
-    """
-    exclusion = ProjectionExclusion(
-        workflow_path="/abs/x.pflow.md",
-        node_path="generate",
-        reason="heterogeneous_model",
-        actual_cost_usd=0.27,
-    )
-    analysis = _make_analysis(
-        actually_paid=2.31,
-        no_cache=2.16,
-        rerun=2.07,
-        partial=True,
-        projection_exclusions=(exclusion,),
-    )
-
-    text = render_text(analysis)
-
-    # Excluded line carries the cohort signal in plain English.
-    assert "Excluded from analysis:      ~$0.27 (generate: model varies per call)" in text
-    # Trace-mode projection lines render bare amounts; ``(partial)`` would
-    # double up with the explicit excluded line above.
-    assert "Cost without caching:        ~$2.16\n" in text + "\n"
-    assert "Cost without caching:        ~$2.16 (partial)" not in text
-    assert "Cost on rerun (within TTL):  ~$2.07 (partial)" not in text
+    # Folded no-cache: $1.20 + $0.10 + $0.05 = $1.35.
+    assert "Cost without caching:        ~$1.35" in text
+    # Footnote names both nodes.
+    assert "~$0.15 of the above is pass-through for: alpha, beta" in text
+    assert "projected savings unavailable" in text
+    # No standalone Excluded line.
+    assert "Excluded from analysis:" not in text
 
 
 def test_greenfield_with_cache_drops_partial_qualifier_when_excluded_line_renders() -> None:
@@ -2587,13 +2616,13 @@ def test_text_renders_notes_in_locked_order() -> None:
     notes = [
         "Found 2 2.0.0 traces matching this workflow but skipped...",
         "Found 1 unparseable trace files in ~/.pflow/debug/...",
-        "Gemini telemetry note: ...",
+        "Gemini caching: ...",
     ]
     text = render_text(_make_analysis(notes=notes))
     # Each note appears in order in the text output.
     pos_2_0 = text.find("2.0.0 traces")
     pos_unparseable = text.find("unparseable")
-    pos_gemini = text.find("Gemini telemetry")
+    pos_gemini = text.find("Gemini caching")
     assert pos_2_0 < pos_unparseable < pos_gemini
 
 
@@ -2601,12 +2630,12 @@ def test_text_notes_shorten_workflow_paths_in_prose() -> None:
     workflow_path = "/abs/project/workflows/root.pflow.md"
     child_path = "/abs/project/workflows/sub/child.pflow.md"
     notes = [
-        f"Discrepancy detection: predicted-key matching for {child_path}.draft skipped — template resolution failed."
+        f"Cache fidelity check skipped for {child_path}.draft: a template reference couldn't be resolved at analysis time. TTL expiry and chunk-skip detection still apply."
     ]
     row = PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": child_path})
     text = render_text(_make_analysis(rows=[row], workflow_path=workflow_path, notes=notes))
 
-    assert "child.pflow.md.draft skipped" in text
+    assert "child.pflow.md.draft" in text
     assert child_path not in text
 
 
@@ -2667,9 +2696,9 @@ def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> No
     """CP5 #3 — section renamed from 'Cross-workflow alignment (Tier 2)' to
     'Sub-workflow boundaries' so agents don't have to know what 'Tier 2' is.
 
-    Stage 0.2: cross-workflow section renders rename + prose-mismatch findings
-    only; value-flow surfaces in Recommended actions. Use a rename diag to
-    trigger the section.
+    Cross-workflow section text now renders prose-mismatch findings only;
+    value-flow surfaces in Recommended actions and rename diagnostics stay
+    JSON-only.
 
     Mutation test: revert the header in ``_render_cross_workflow``; this test
     fails because the agent-facing section name regresses to internal pflow
@@ -2678,13 +2707,13 @@ def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> No
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
-        "cache.cross-workflow-rename-detected",
+        "cache.cross-workflow-prose-mismatch",
+        node_id=None,
         parent_workflow="/abs/song-creator.pflow.md",
         child_workflow="/abs/chorus-chooser.pflow.md",
-        parent_value_expr="concept_brief",
-        child_input_name="creative_brief",
-        line_in_parent=42,
-        parent_node_id="parent-step",
+        chunk_name="concept",
+        parent_prose="Parent prose",
+        child_prose="Different prose",
     )
     text = render_text(_make_analysis(warnings=[diag]))
     assert "## Sub-workflow boundaries" in text
@@ -2735,34 +2764,72 @@ def test_text_sub_workflow_cache_finding_emits_child_action_line() -> None:
     assert "[cache.sub-workflow-cache-undeclared]" not in text
 
 
-def test_text_cross_workflow_rename_finding_full_format() -> None:
-    """Single-rename single-consumer renders as a parent-grouped entry.
-
-    Layout: parent header (``In <parent>:``) + arrow line
-    (`` `expr` → `name` ``) + consumer line (``used by <child> (line N)``).
-    No bracketed catalog ID, no global rank numbering — structural grouping
-    carries the hierarchy.
-    """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
-
-    diag = make_diagnostic(
-        "cache.cross-workflow-rename-detected",
-        parent_workflow="/abs/song-creator.pflow.md",
-        child_workflow="/abs/chorus-chooser.pflow.md",
-        parent_value_expr="concept_brief",
-        child_input_name="creative_brief",
-        line_in_parent=42,
-        parent_node_id="parent-step",
+def test_text_sub_workflow_boundaries_omits_rename_diagnostics() -> None:
+    """Rename diagnostics remain in the analysis data but are text-silent."""
+    rename = _rename_diag(
+        source="concept_brief",
+        target="creative_brief",
+        parent="/abs/song-creator.pflow.md",
+        child="/abs/chorus-chooser.pflow.md",
+        line=42,
     )
-    text = render_text(_make_analysis(warnings=[diag]))
-    # Parent-grouped header anchors the section by source workflow.
-    assert "In song-creator:" in text
-    # Arrow line carries source expr and child input name as the discriminator.
-    assert "`concept_brief` → `creative_brief`" in text
-    # Consumer line names the child and the call-site line.
-    assert "used by chorus-chooser (line 42)" in text
-    # The bracketed catalog ID is not exposed.
-    assert "[cache.cross-workflow-rename-detected]" not in text
+    prose = _prose_mismatch_diag(
+        parent="/abs/song-creator.pflow.md",
+        child="/abs/review-rhyme.pflow.md",
+        chunk="concept",
+    )
+    analysis = _make_analysis(warnings=[rename, prose])
+    text = render_text(analysis)
+
+    assert any(d.id == "cache.cross-workflow-rename-detected" for d in analysis.warnings)
+    assert "## Sub-workflow boundaries (1)" in text
+    assert "review-rhyme, chunk `concept`:" in text
+    assert "concept_brief" not in text
+    assert "creative_brief" not in text
+    assert "chorus-chooser" not in text
+    assert "line 42" not in text
+
+
+def test_text_sub_workflow_boundaries_section_omitted_when_only_renames_present() -> None:
+    """JSON-only rename diagnostics must not create an empty text section."""
+    rename = _rename_diag(
+        source="concept_brief",
+        target="creative_brief",
+        parent="/abs/song-creator.pflow.md",
+        child="/abs/chorus-chooser.pflow.md",
+        line=42,
+    )
+
+    text = render_text(_make_analysis(warnings=[rename]))
+
+    assert "## Sub-workflow boundaries" not in text
+    assert "concept_brief" not in text
+    assert "creative_brief" not in text
+    assert "chorus-chooser" not in text
+
+
+def test_text_sub_workflow_boundaries_renders_prose_mismatches_only() -> None:
+    """Mixed rename/prose input renders only the cache-fidelity finding."""
+    rename = _rename_diag(
+        source="lyrics",
+        target="song_lyrics",
+        parent="/abs/song-creator.pflow.md",
+        child="/abs/review-rhyme.pflow.md",
+        line=239,
+    )
+    prose = _prose_mismatch_diag(
+        parent="/abs/song-creator.pflow.md",
+        child="/abs/review-rhyme.pflow.md",
+        chunk="lyrics",
+    )
+
+    text = render_text(_make_analysis(warnings=[rename, prose]))
+
+    assert "## Sub-workflow boundaries (1)" in text
+    assert "Prose mismatches in song-creator:" in text
+    assert "review-rhyme, chunk `lyrics`:" in text
+    assert "song_lyrics" not in text
+    assert "line 239" not in text
 
 
 def test_text_cross_workflow_prose_mismatch_finding_full_format() -> None:
@@ -2792,100 +2859,6 @@ def test_text_cross_workflow_prose_mismatch_finding_full_format() -> None:
     assert 'child prose:  "Different prose"' in text
     # The bracketed catalog ID is not exposed.
     assert "[cache.cross-workflow-prose-mismatch]" not in text
-
-
-def test_text_cross_workflow_renames_dedup_by_source() -> None:
-    """N children consuming the same logical rename collapse to ONE entry
-    listing all consumers (the "fix at source once" framing for N-8).
-
-    Construction: 7 rename diagnostics that share
-    ``(parent_workflow, parent_value_expr, child_input_name)`` and differ
-    only in ``child_workflow`` / ``line_in_parent`` — what the analyzer
-    emits when one parent batch fans the same renamed input out to N
-    children.
-    """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
-
-    children = [
-        ("/abs/chorus-chooser.pflow.md", 97),
-        ("/abs/review-emotional-architecture.pflow.md", 124),
-        ("/abs/review-ai-tells.pflow.md", 239),
-        ("/abs/review-cliche.pflow.md", 239),
-        ("/abs/review-genre.pflow.md", 239),
-        ("/abs/review-accuracy.pflow.md", 239),
-        ("/abs/review-rhyme.pflow.md", 239),
-    ]
-    diags = [
-        make_diagnostic(
-            "cache.cross-workflow-rename-detected",
-            parent_workflow="/abs/song-creator.pflow.md",
-            child_workflow=child_path,
-            parent_value_expr="creative-direction.response",
-            child_input_name="creative_direction",
-            line_in_parent=line,
-            parent_node_id="parent-step",
-        )
-        for child_path, line in children
-    ]
-    text = render_text(_make_analysis(warnings=diags))
-
-    # Single source-rename arrow line — not 7 of them.
-    assert text.count("`creative-direction.response` → `creative_direction`") == 1, (
-        f"expected source-deduped to one arrow line; got {text}"
-    )
-    # Consumer summary shows all N children and all distinct lines.
-    assert "used by 7 children at lines 97, 124, 239:" in text
-    for child_basename in (
-        "chorus-chooser",
-        "review-emotional-architecture",
-        "review-ai-tells",
-        "review-cliche",
-        "review-genre",
-        "review-accuracy",
-        "review-rhyme",
-    ):
-        assert child_basename in text
-
-
-def test_text_cross_workflow_renames_grouped_by_parent_with_consumer_lines() -> None:
-    """Multiple distinct renames at the same boundary render as separate
-    arrow lines under one parent header (each with its own consumer line).
-
-    Construction: 3 different
-    ``(parent_value_expr, child_input_name)`` pairs at the same
-    ``(parent_workflow, child_workflow, line_in_parent)`` — the multi-rename
-    case (B-2): three input renames on one workflow node call.
-    """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
-
-    pairs = [
-        ("creative-direction.response", "creative_direction"),
-        ("song-architecture.response", "architecture"),
-        ("concept_brief", "creative_brief"),
-    ]
-    diags = [
-        make_diagnostic(
-            "cache.cross-workflow-rename-detected",
-            parent_workflow="/abs/song-creator.pflow.md",
-            child_workflow="/abs/chorus-chooser.pflow.md",
-            parent_value_expr=expr,
-            child_input_name=name,
-            line_in_parent=97,
-            parent_node_id="parent-step",
-        )
-        for expr, name in pairs
-    ]
-    text = render_text(_make_analysis(warnings=diags))
-
-    # All 3 distinct arrow lines render under the single parent header.
-    assert "In song-creator:" in text
-    for expr, name in pairs:
-        assert f"`{expr}` → `{name}`" in text
-    # Each rename has its own single-consumer line.
-    assert text.count("used by chorus-chooser (line 97)") == 3
-    # No global ranking numbers (numbered list dropped in favor of grouping).
-    assert "1. " not in text
-    assert "2. " not in text
 
 
 # ---------------------------------------------------------------------------
@@ -3501,7 +3474,9 @@ def test_per_call_confidence_footer_lists_low_confidence_nodes() -> None:
     rows[2] = PerCallRow(**{**rows[2].__dict__, "data_source": "estimator", "declared_prompt_cache": ["foo"]})
     rows[3] = PerCallRow(**{**rows[3].__dict__, "data_source": "heuristic", "declared_prompt_cache": ["foo"]})
     text = render_text(_make_analysis(rows=rows))
-    assert "Token estimate confidence: projected input tokens: estim-row, heur-row." in text
+    # Multi-line bullet block (Fix 5+6): header + indented bullet.
+    assert "Token estimate confidence:" in text
+    assert "Projected input tokens for: estim-row, heur-row." in text
     assert "src=" not in text
 
 
@@ -3521,9 +3496,10 @@ def test_per_call_confidence_footer_flags_batch_exemplar_projections() -> None:
         "cacheable_data_source": "parameters",
     })
     text = render_text(_make_analysis(rows=[row]))
+    assert "Token estimate confidence:" in text
     assert (
-        "Token estimate confidence: batched-review uses the first batch item as a representative sample; "
-        "actual tokens may vary for later items."
+        "batched-review: tokens estimated from the first batch item as a representative sample. "
+        "Actual tokens may vary for later items."
     ) in text
 
 
@@ -3549,15 +3525,15 @@ def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_proje
     text = render_text(_make_analysis(rows=[row]))
     assert "Token estimate confidence:" in text
     assert (
-        "score-choruses projects savings from the prompt's static prefix repeated across observed calls; "
-        "declare prompt_cache to confirm"
+        "score-choruses: savings projected from a stable prompt prefix repeated across observed calls. "
+        "Declare prompt_cache to confirm."
     ) in text
     assert "first batch item as a representative sample" not in text
 
 
 def test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_projection() -> None:
     """Cross-workflow projection footer must name affected rows and route agents
-    to both sections that can carry the required edits.
+    to the section that carries the required edits.
 
     Mutation contract: route ``cross_workflow_projection`` through the generic
     future-tier path or mention only Recommended actions; this test fails
@@ -3572,11 +3548,85 @@ def test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_pro
     })
     text = render_text(_make_analysis(rows=[row]))
     assert "Token estimate confidence:" in text
-    assert "select-chorus uses cross-workflow projections from shared inputs" in text
-    assert "Recommended actions" in text
-    assert "Sub-workflow boundaries" in text
-    assert "remove inline body refs" in text
+    assert "select-chorus: savings projected from shared inputs" in text
+    assert "See Recommended actions for the per-boundary fix." in text
+    assert "Sub-workflow boundaries" not in text
+    # Cleanup-first guidance lives in Recommended actions (the bullet routes
+    # the agent there); the footer no longer duplicates that prose.
     assert "static prefix repeated across observed calls" not in text
+
+
+def test_per_call_confidence_footer_aggregates_duplicate_node_names() -> None:
+    """Fix 5: when the same ``node_path`` repeats across rows from
+    different sub-workflows (lyrics-generator has 8 review sub-workflows
+    each containing a node literally named ``review``), the footer would
+    previously render ``"review, review, review, ..."`` — reads as a
+    string-join bug. Aggregate to ``"8 review nodes"``.
+
+    Mutation contract: drop the ``Counter``-based aggregation in
+    ``_format_node_list`` → "review, review, ..." returns.
+    """
+    rows = [
+        PerCallRow(**{
+            **_row("review", 20).__dict__,
+            "data_source": "trace",
+            "cacheable_data_source": "cross_workflow_projection",
+            "cross_workflow_inputs": ("creative_direction",),
+            "observed_call_count": 4,
+        })
+        for _ in range(8)
+    ]
+    # Add one unique-name row so the aggregate test exercises mixing.
+    rows.append(
+        PerCallRow(**{
+            **_row("select-chorus", 20).__dict__,
+            "data_source": "trace",
+            "cacheable_data_source": "cross_workflow_projection",
+            "cross_workflow_inputs": ("concept",),
+            "observed_call_count": 4,
+        })
+    )
+    text = render_text(_make_analysis(rows=rows))
+    # Aggregated form: "8 review nodes" (reviews come first in row order).
+    assert "8 review nodes" in text
+    assert "select-chorus" in text
+    # Old buggy form is gone — no "review, review" duplication.
+    assert "review, review" not in text
+
+
+def test_per_call_confidence_footer_renders_multi_line_bullet_block() -> None:
+    """Fix 6: the footer renders as a multi-line bullet block, not a single
+    semicolon-chained paragraph. Header line + one bullet per tier.
+
+    Mutation contract: change ``_per_call_confidence_footer`` back to
+    ``str | None`` returning a joined paragraph → multi-line bullet
+    assertions fail.
+    """
+    rows = [
+        PerCallRow(**{
+            **_row("score-choruses", 1000).__dict__,
+            "is_batch": True,
+            "batch_size_estimated": 0,
+            "data_source": "trace",
+            "cacheable_data_source": "batch_prefix",
+            "observed_call_count": 136,
+        }),
+        PerCallRow(**{
+            **_row("select-chorus", 20).__dict__,
+            "data_source": "trace",
+            "cacheable_data_source": "cross_workflow_projection",
+            "cross_workflow_inputs": ("concept",),
+            "observed_call_count": 4,
+        }),
+    ]
+    text = render_text(_make_analysis(rows=rows))
+    # Header line standalone (no inline content after the colon).
+    assert "  Token estimate confidence:\n" in text
+    # Each tier is its own indented bullet.
+    assert "    · score-choruses: savings projected from a stable prompt prefix" in text
+    assert "    · select-chorus: savings projected from shared inputs" in text
+    # Old semicolon-chained form is gone.
+    assert "Token estimate confidence: score-choruses" not in text
 
 
 def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> None:
@@ -3768,6 +3818,94 @@ def test_text_header_keeps_medium_from_memo_with_coverage() -> None:
     text = render_text(analysis)
     assert "Confidence: medium_from_memo" in text
     assert "(2 of 2 nodes)" in text
+
+
+def test_text_header_suppresses_confidence_when_redundant_with_evidence() -> None:
+    """Fix 4: ``Confidence: high_from_trace (N of N nodes)`` is redundant
+    when the Evidence line above already says ``complete trace (N LLM
+    nodes executed)`` and nothing was unreached.
+
+    The lyrics-generator capture surfaced this: lines 7 + 9 said the same
+    thing in different words. A fresh agent reads the second one as
+    leaking an enum (``high_from_trace`` looks like an internal label).
+    Drop it when tautological.
+
+    Mutation contract: remove the ``suppress`` gate (always-emit the
+    Confidence line) → this test fails because the redundant line returns.
+    """
+    rows = [_row("n1", 50), _row("n2", 50)]
+    analysis = _make_analysis(rows=rows)
+    analysis = CacheAnalysis(**{
+        **analysis.__dict__,
+        "estimate_confidence": "high_from_trace",
+        "estimate_confidence_coverage": {"trace": 2, "memo": 0, "estimator": 0, "heuristic": 0, "total": 2},
+        "summary": AnalysisSummary(**{
+            **analysis.summary.__dict__,
+            "evidence_scope": "complete_trace",
+            "trace_llm_nodes_static": 2,
+            "trace_llm_nodes_executed": 2,
+        }),
+    })
+    text = render_text(analysis)
+    # Evidence still emitted (carries the same info actionably).
+    assert "complete trace (2 LLM nodes executed)" in text
+    # Confidence suppressed — the redundant tautology is gone.
+    assert "Confidence: high_from_trace" not in text
+    assert "(2 of 2 nodes)" not in text
+
+
+def test_text_header_keeps_confidence_when_unreached_nodes_present() -> None:
+    """Fix 4 inverse: when Evidence says ``N of M executed; K not reached``,
+    Confidence's denominator (analyzed rows) differs from Evidence's
+    (static IR nodes) and the line carries genuine signal — keep it.
+
+    Mutation contract: tighten the suppression to fire even with unreached
+    nodes → this test fails because Confidence disappears here.
+    """
+    rows = [_row("n1", 50), _row("n2", 50)]
+    analysis = _make_analysis(rows=rows)
+    analysis = CacheAnalysis(**{
+        **analysis.__dict__,
+        "estimate_confidence": "high_from_trace",
+        "estimate_confidence_coverage": {"trace": 2, "memo": 0, "estimator": 0, "heuristic": 0, "total": 2},
+        "summary": AnalysisSummary(**{
+            **analysis.summary.__dict__,
+            "evidence_scope": "complete_trace",
+            "trace_llm_nodes_static": 3,  # 3 IR nodes
+            "trace_llm_nodes_executed": 2,  # 2 actually ran (1 unreached)
+        }),
+    })
+    text = render_text(analysis)
+    # Evidence says X executed; Z not reached.
+    assert "not reached" in text
+    # Confidence still emitted — the denominators are different.
+    assert "Confidence: high_from_trace" in text
+
+
+def test_text_header_keeps_confidence_for_truncated_trace() -> None:
+    """Fix 4 inverse: truncated traces report different signal classes on
+    the two lines — Evidence describes the truncation, Confidence describes
+    per-tier sources over executed rows. Keep both.
+
+    Mutation contract: extend suppression to truncated branch → this test
+    fails because the truncated case loses its Confidence signal.
+    """
+    rows = [_row("n1", 50)]
+    analysis = _make_analysis(rows=rows)
+    analysis = CacheAnalysis(**{
+        **analysis.__dict__,
+        "estimate_confidence": "high_from_trace",
+        "estimate_confidence_coverage": {"trace": 1, "memo": 0, "estimator": 0, "heuristic": 0, "total": 1},
+        "summary": AnalysisSummary(**{
+            **analysis.summary.__dict__,
+            "evidence_scope": "truncated_trace_executed_subset",
+            "trace_llm_nodes_static": 2,
+            "trace_llm_nodes_executed": 1,
+        }),
+    })
+    text = render_text(analysis)
+    assert "trace truncated" in text
+    assert "Confidence: high_from_trace" in text
 
 
 # ---------------------------------------------------------------------------
@@ -4612,12 +4750,10 @@ def test_summary_renders_section_mapped_counts_when_both_present() -> None:
             affected_workflow="/abs/path/song-creator.pflow.md",
             savings_usd=0.05,
         ),
-        _rename_diag(
-            source="concept_brief",
-            target="creative_brief",
+        _prose_mismatch_diag(
             parent="/abs/song-creator.pflow.md",
             child="/abs/chorus-chooser.pflow.md",
-            line=42,
+            chunk="concept",
         ),
     ]
     text = render_text(_make_analysis(warnings=warnings))
@@ -4677,69 +4813,6 @@ def test_summary_renders_blocking_only_when_no_opportunities() -> None:
     assert "cross-workflow boundary finding" not in text
 
 
-def test_section_header_drops_rollup_when_no_collapse() -> None:
-    """Rollup suffix only fires when grouping reduced the count.
-
-    Three distinct renames (each with a unique source) → grouped == raw
-    so the agent doesn't need ``covering N underlying renames`` (it'd say
-    ``covering 3 underlying renames`` for a section already showing 3
-    entries — pure noise).
-
-    Mutation contract: render the rollup unconditionally; this test fails
-    because ``covering`` leaks into the no-collapse case.
-    """
-    diags = [
-        _rename_diag(
-            source=src,
-            target=tgt,
-            parent="/abs/song-creator.pflow.md",
-            child="/abs/chorus-chooser.pflow.md",
-            line=97,
-        )
-        for src, tgt in (
-            ("creative-direction.response", "creative_direction"),
-            ("song-architecture.response", "architecture"),
-            ("concept_brief", "creative_brief"),
-        )
-    ]
-    text = render_text(_make_analysis(warnings=diags))
-
-    assert "## Sub-workflow boundaries (3)" in text
-    # Rollup detail must NOT render; bracketed search prevents matching
-    # an unrelated "covering" elsewhere in the output.
-    assert "## Sub-workflow boundaries (3, covering" not in text
-
-
-def test_section_header_includes_rollup_when_renames_collapse() -> None:
-    """Rollup surfaces collapse work: 7 raw renames into 1 grouped entry.
-
-    Mutation contract: drop the rollup branch; this test fails because the
-    ``covering 7 underlying renames`` qualifier disappears.
-    """
-    children = [
-        ("/abs/chorus-chooser.pflow.md", 97),
-        ("/abs/review-emotional-architecture.pflow.md", 124),
-        ("/abs/review-ai-tells.pflow.md", 239),
-        ("/abs/review-cliche.pflow.md", 239),
-        ("/abs/review-genre.pflow.md", 239),
-        ("/abs/review-accuracy.pflow.md", 239),
-        ("/abs/review-rhyme.pflow.md", 239),
-    ]
-    diags = [
-        _rename_diag(
-            source="creative-direction.response",
-            target="creative_direction",
-            parent="/abs/song-creator.pflow.md",
-            child=child_path,
-            line=line,
-        )
-        for child_path, line in children
-    ]
-    text = render_text(_make_analysis(warnings=diags))
-
-    assert "## Sub-workflow boundaries (1, covering 7 underlying renames)" in text
-
-
 def test_section_header_drops_rollup_for_prose_mismatch_only() -> None:
     """Prose-mismatches don't collapse (1-per-finding) — section header
     shows the rendered count only, no rollup.
@@ -4762,17 +4835,8 @@ def test_section_header_drops_rollup_for_prose_mismatch_only() -> None:
     assert "covering" not in text
 
 
-def test_section_header_rollup_in_mixed_renames_and_prose() -> None:
-    """Mixed case: rollup wording stays anchored to 'underlying renames' even
-    when prose-mismatches are present (prose entries don't collapse — they
-    contribute to the rendered count M but never to K).
-
-    Construction: 17 raw renames collapsing to 5 source-deduped groups plus
-    2 prose-mismatches → header ``(7, covering 17 underlying renames)``.
-
-    Mutation contract: include prose count in K (raw_rename_count); this
-    test fails because the header would say ``covering 19 underlying renames``.
-    """
+def test_section_header_counts_only_prose_mismatches_when_renames_present() -> None:
+    """Rename diagnostics do not affect the text section count."""
     children = [
         ("/abs/chorus-chooser.pflow.md", 97),
         ("/abs/review-emotional-architecture.pflow.md", 124),
@@ -4817,29 +4881,24 @@ def test_section_header_rollup_in_mixed_renames_and_prose() -> None:
     ]
     text = render_text(_make_analysis(warnings=rename_diags + prose_diags))
 
-    # Rendered count = 1 grouped rename + 2 prose = 3 entries
-    # (the multiple-children-with-same-source still group to 1 since key is
-    # (source_expr, child_input)). Raw renames = 17.
-    assert "## Sub-workflow boundaries (3, covering 17 underlying renames)" in text
-    # Wording stays anchored to renames; prose count not folded into K.
-    assert "covering 19" not in text
-    assert "underlying entries" not in text
+    assert "## Sub-workflow boundaries (2)" in text
+    assert "covering" not in text
+    assert "creative_direction" not in text
+    assert "line 239" not in text
 
 
 def test_summary_singular_form_for_one_boundary_finding() -> None:
     """Singular ``1 cross-workflow boundary finding`` renders when only one
-    rendered entry exists (1 rename, no prose, no recs).
+    rendered prose-mismatch entry exists (no recs).
 
     Mutation contract: drop the singular branch in ``_append_summary_counts``;
     this test fails because the headline would emit
     ``1 cross-workflow boundary findings`` (plural) for the single-entry case.
     """
-    diag = _rename_diag(
-        source="concept_brief",
-        target="creative_brief",
+    diag = _prose_mismatch_diag(
         parent="/abs/song-creator.pflow.md",
         child="/abs/chorus-chooser.pflow.md",
-        line=42,
+        chunk="concept",
     )
     text = render_text(_make_analysis(warnings=[diag]))
 

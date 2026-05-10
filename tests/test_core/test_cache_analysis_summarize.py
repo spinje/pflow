@@ -137,19 +137,42 @@ def test_context_carries_opportunity_count_and_savings() -> None:
     assert diag.context["estimated_savings_pct"] == 61
 
 
-def test_dry_run_nudge_uses_rendered_count_after_rename_collapse() -> None:
-    """A-4 follow-up: nudge surfaces the rendered count (post-Cluster-A
-    collapse), not the raw diagnostic count, so ``pflow run --dry-run`` and
-    ``pflow analyze-cache`` agree on how many things the agent will see.
-
-    Construction: 5 raw rename diagnostics that share
-    ``(parent_workflow, parent_value_expr, child_input_name)`` — the fan-out
-    case that collapses to 1 grouped entry. Pre-A-4 the nudge would have
-    said ``5 design opportunities``; post-A-4 it must say ``1``.
+def test_dry_run_nudge_counts_rendered_prose_mismatch_boundary_findings() -> None:
+    """A-4 follow-up: nudge surfaces the rendered count, not the raw summary
+    counter, so ``pflow run --dry-run`` and ``pflow analyze-cache`` agree on
+    how many things the agent will see.
 
     Mutation contract: revert ``summarize_from_analysis`` to read
-    ``analysis.summary.actionable_opportunities``; this test fails because
-    the message would render ``5 design opportunities`` (raw count).
+    ``analysis.summary.actionable_opportunities``; this test fails because the
+    message would render ``0`` and return ``None`` instead of the visible prose
+    mismatch.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    prose_diag = make_diagnostic(
+        "cache.cross-workflow-prose-mismatch",
+        parent_workflow="/abs/parent.pflow.md",
+        child_workflow="/abs/child.pflow.md",
+        chunk_name="concept",
+        parent_prose="Parent prose",
+        child_prose="Child prose",
+    )
+    analysis = _analysis_with(actionable=0, current=2.0, optimized=1.5)
+    # Replace the synthetic warnings with the real rendered boundary diagnostic.
+    from dataclasses import replace as _replace
+
+    analysis = _replace(analysis, warnings=(prose_diag,))
+    diag = summarize_from_analysis(analysis)
+
+    assert diag is not None
+    assert "1 design opportunity available" in diag.message
+    assert diag.context is not None
+    assert diag.context["opportunity_count"] == 1
+
+
+def test_dry_run_nudge_excludes_renames_from_actionable_count() -> None:
+    """Rename diagnostics are emitted for JSON consumers but text-silent, so the
+    dry-run nudge must stay silent when no rendered opportunities exist.
     """
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
@@ -166,17 +189,12 @@ def test_dry_run_nudge_uses_rendered_count_after_rename_collapse() -> None:
         for i in range(5)
     )
     analysis = _analysis_with(actionable=0, current=2.0, optimized=1.5)
-    # Replace the synthetic warnings with the real rename diagnostics.
     from dataclasses import replace as _replace
 
     analysis = _replace(analysis, warnings=rename_diags)
     diag = summarize_from_analysis(analysis)
 
-    assert diag is not None
-    assert "1 design opportunity available" in diag.message
-    assert "5 design opportunities" not in diag.message
-    assert diag.context is not None
-    assert diag.context["opportunity_count"] == 1
+    assert diag is None
 
 
 def test_summarize_from_workflow_ir_returns_none_on_optimal() -> None:

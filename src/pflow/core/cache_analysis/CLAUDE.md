@@ -89,7 +89,7 @@ The walker has **four downstream consumers** in `analyze.py`:
 
 Cycle handling: the root workflow path is seeded into `seen` from the outset so cycles back to the root (A → B → A) are detected at the cycle-check rather than producing a back-edge. Without this seed, downstream `_build_parameters_by_workflow` would mutate the root parameter dict.
 
-**`is_rename` and `is_batch_alias_root` are SYNTACTIC predicates.** They answer "are the names different?" / "is the root segment the batch alias?" without judgment about whether the difference matters for caching. The decision to emit a `cache.cross-workflow-rename-detected` warning is made downstream in `analyze.py`, gated on actionability.
+**`is_rename` and `is_batch_alias_root` are SYNTACTIC predicates.** They answer "are the names different?" / "is the root segment the batch alias?" without judgment about whether the difference matters for caching. The decision to emit a `cache.cross-workflow-rename-detected` warning is made downstream in `analyze.py`. Post-investigation 2026-05-10: rename diagnostics are emitted for JSON/raw consumers only and are NOT rendered in CLI text. Technical reason: variable names are stripped before the provider wire format; cache fidelity is governed by prose mismatches plus undeclared sub-workflow cache inputs. Empirical reason: lyrics-generator produced 23 rename false positives for agent-facing text.
 
 ### cost_estimation.py
 
@@ -151,11 +151,11 @@ Both are projections of `CacheAnalysis` — read-only, no mutation. `render_text
 
 ### view_helpers.py
 
-Renderer-side projections. Four exports: `build_blocking_errors(warnings) → list[RecommendedAction]` (cache-domain ERRORs only), `build_other_blocking_errors(warnings) → list[RecommendedAction]` (non-cache ERRORs — workflow-blocking issues tangential to caching), `build_recommended_actions(warnings) → list[RecommendedAction]`, and `is_cross_workflow_alignment(diag) → bool`.
+Renderer-side projections. Five exports: `build_blocking_errors(warnings) → list[RecommendedAction]` (cache-domain ERRORs only), `build_other_blocking_errors(warnings) → list[RecommendedAction]` (non-cache ERRORs — workflow-blocking issues tangential to caching), `build_recommended_actions(warnings) → list[RecommendedAction]`, `count_rendered_findings(warnings) → tuple[int, int]`, and `is_cross_workflow_alignment(diag) → bool`.
 
 **Lazy import inside the helper** is a documented circular-import workaround: `RecommendedAction` is defined in `analyze.py` but built here from a list of `Diagnostic`s. Top-level import would cycle.
 
-**`_CROSS_WORKFLOW_ALIGNMENT_IDS` is a frozenset of warning IDs** (`cache.cross-workflow-rename-detected`, `cache.cross-workflow-prose-mismatch`) that render in the "Sub-workflow boundaries" section ONLY — filtered OUT of recommended actions to keep each finding visible in exactly one section. **Adding a new cross-workflow alignment ID requires extending this constant in lockstep.**
+**`_CROSS_WORKFLOW_ALIGNMENT_IDS` is a frozenset of warning IDs** (`cache.cross-workflow-rename-detected`, `cache.cross-workflow-prose-mismatch`) filtered OUT of recommended actions. `cache.cross-workflow-prose-mismatch` renders in "Sub-workflow boundaries"; `cache.cross-workflow-rename-detected` remains JSON/raw-only after the 2026-05-10 investigation because variable names do not appear on the provider wire and rendered as noise on lyrics-generator. Keep rename in the frozenset so it does not reappear in Recommended actions. **Adding a new cross-workflow alignment ID requires extending this constant in lockstep and deciding whether it renders in text or remains machine-only.**
 
 **Action-view ranking key** (lexicographic, all ascending after negation/inversion): detection-class priority (from `RECOMMENDED_ACTION_PRIORITY` in `warning_catalog`) → savings (descending within priority tier) → severity (ERROR only for blocking errors; WARNING > INFO as a same-priority/same-savings tie-break for recommended actions) → stable alphabetical on `id`. The detection-class priority resolves the common "all INFO, no savings" case where alphabetical tiebreak used to bury actionable findings; savings before severity keeps the `ordered by impact` header honest when an INFO finding has larger projected savings than a WARNING.
 

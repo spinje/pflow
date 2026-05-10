@@ -21,4 +21,5 @@
 
   summarize  anthropic/claude-sonnet-4-5      4           —            ?     ?%      —
 
-  Token estimate confidence: projected input tokens: summarize.
+  Token estimate confidence:
+    · Projected input tokens for: summarize.

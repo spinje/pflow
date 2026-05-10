@@ -11353,3 +11353,217 @@ Verification:
 - Baseline harness after regeneration: 67 passed, 0 drifted, 0 harness errors.
 - Touched-file `ruff check`, `ruff format --check`, and `git diff --check`
   clean.
+
+## 2026-05-10 — Task 159 — Stage 1 polish bundle (5 fresh-eyes UX fixes)
+
+Renderer + catalog polish bundle after a fresh-eyes read of the post-Pass-C
+lyrics-generator capture. Five independent fixes; sequenced ahead of the
+in-flight below-threshold demotion work and the Stage 2 cleanup-boilerplate
+lift so the surfaces don't collide.
+
+- **Fix 3 — pluralization.** `"is used by 1 LLM nodes there"` → `"1 LLM
+  node there"` on `cache.sub-workflow-cache-undeclared`. Added a
+  `nodes_phrase` computed field in `make_diagnostic` (mirrors the
+  existing `is_or_are_capitalized` precedent); template substitutes
+  `{nodes_phrase}` after `{node_count}`. Lyrics-generator recs #4-25
+  no longer carry the typo-feeling "1 LLM nodes" string.
+- **Fix 4 — suppress redundant `Confidence:` line.** When Evidence says
+  `complete trace (N LLM nodes executed)` with no unreached, the
+  `Confidence: high_from_trace (N of N nodes)` line is tautological.
+  Suppress in that exact state; keep for `medium_from_memo`, partial
+  coverage, truncated trace, and unreached-nodes cases. Removes the
+  enum-looking internal label (`high_from_trace`) from common-case
+  output.
+- **Fix 5+6 — token-confidence footer aggregate + multi-line.**
+  `_per_call_confidence_footer` returns `list[str] | None` instead of
+  one semicolon-chained paragraph; caller renders as header + indented
+  bullets. New `_format_node_list` helper aggregates duplicate node
+  names via `Counter` — lyrics-generator's `"review, review, review,
+  review, review, review, review, review"` collapses to `"8 review
+  nodes"`. Per-tier bullets rewritten as single-statement guidance.
+- **Fix 7 — fold excluded pass-through into cost block.** When every
+  `projection_exclusion` carries `actual_cost_usd`, fold that cost
+  into `no_cache` and `rerun` projection lines and surface the cohort
+  context as a plain-English footnote below the block. Old standalone
+  `Excluded from analysis: ~$X (...)` line replaced by the footnote;
+  math reconciles in-place (paid $2.31 < no-cache $2.42, no
+  subtraction required). Falls back to current `Excluded from
+  analysis:` behavior when any excluded row has `actual_cost_usd=None`
+  (honest-unmeasurable). Wording corrected: "no caching can apply" →
+  "projected savings unavailable; real savings could be higher if
+  model+content combos repeat" (caching CAN fire on coincidental
+  matches; what's unavailable is the static projection).
+- **Fix 8 — Notes-section jargon.** Two notes rewritten:
+  - Memo-empty `Discrepancy detection: predicted-key matching
+    unavailable (memo cache empty — ...). Observable-field
+    attributions ...` → `Cache fidelity check skipped: this is a
+    first run (no prior runs to compare cached vs uncached against).
+    On later runs, specific cache misfires (TTL expired, chunks
+    skipped) will appear here.`
+  - `_GEMINI_TELEMETRY_NOTE` rewritten to drop `"LiteLLM's
+    Vertex/Gemini translation"` (library-internal). Keeps the
+    `cache_read_input_tokens` field name (agent grep target).
+
+### Scope-cut documented (not fixed in this bundle)
+
+Nine other "Discrepancy detection: predicted-key matching ...
+Observable-field attributions still apply." sites remain in
+`analyze.py` (lines 4822, 4829, 4939, 4967, 4974, 4982, 4990, 4996,
+5000). They emit per-node skip notes on subsequent runs (when memo
+IS populated but specific predictions fail). Out of scope for Stage 1
+quick-wins per user framing; a follow-up commit should apply the same
+"Cache fidelity check ... TTL expiry and chunk-skip detection still
+apply" rename across all 9 — ideally via a shared
+`_format_fidelity_skip_note(target, reason)` helper so the framing
+lives in one place.
+
+### Text/JSON divergence carried forward
+
+Fix 7 is renderer-only. `summary.no_cache_hypothetical_usd` in JSON
+still emits the priced-cohort value ($2.16); text shows the folded
+value ($2.42). MCP and `--format=json` consumers see different math
+than text-reading agents for the same workflow. Per the plan: data-
+model change deferred. Add `no_cache_with_passthrough_usd` (additive)
+or document the asymmetry in a follow-up.
+
+### Verification
+
+- Targeted: 12 new tests (5 emission/dispatch, 3 Confidence-line
+  gating, 2 footer aggregate+multi-line, 4 cost-block fold). Adjacent
+  tests updated to new wording (cost-block exclusion tests now lock
+  the all-priced fold vs the unpriced fallback as two distinct
+  paths). All mutation contracts documented in test docstrings.
+- `make test` default suite: 6,544 passed, 1 skipped (+12 net new).
+- Baseline harness: 67/67 pass after regenerating 11 affected cases
+  (+ 1 unrelated pre-existing LiteLLM pricing drift on
+  `04-warning-catalog/20-llm.thinking-temperature-mismatch`).
+- Quality: `ruff check`, `ruff format --check` clean on touched
+  files; `mypy src/pflow/core/cache_analysis` clean except for one
+  pre-existing error at `analyze.py:4665` (verified pre-existing via
+  `git stash`).
+
+Coordination: does not touch `## Recommended actions` per-finding
+rendering (the in-flight below-threshold demotion work) or the
+`suggestions_template` cleanup boilerplate (Stage 2). Each fix
+operates on a different section/helper.
+
+## 2026-05-10 — Task 159 — Shape δ rename diagnostics text-suppression polish
+
+Implemented Shape δ: `cache.cross-workflow-rename-detected` continues to emit
+for JSON/raw consumers, catalog count remains 22, and `_CROSS_WORKFLOW_ALIGNMENT_IDS`
+still filters rename diagnostics out of Recommended actions, but CLI text no
+longer renders rename diagnostics in `## Sub-workflow boundaries`.
+
+Key changes:
+
+- `render_text.py` now renders the Sub-workflow boundaries section only for
+  `cache.cross-workflow-prose-mismatch`; rename grouping/render helpers and
+  their CSV wrapper were deleted after grep confirmed no callers.
+- `view_helpers.count_rendered_findings()` now counts only recommended actions
+  plus rendered prose-mismatch boundary findings, so dry-run nudges stay silent
+  when the only diagnostics are JSON-only renames.
+- `warning_catalog.py` updates the rename suggestion to state that identifier
+  divergence is informational: provider cache hits depend on prose/value bytes,
+  not variable names.
+- Renderer, summarize, and warning tests were migrated from rename-rendering
+  expectations to the new invariant: renames remain in `analysis.warnings` but
+  do not create text sections, summary counts, or dry-run nudges.
+- `cache_analysis/CLAUDE.md` documents the trust boundary: variable names are
+  stripped before provider wire format; prose mismatches and undeclared
+  sub-workflow cache inputs govern cache fidelity.
+
+Why Shape δ over γ-full:
+
+- Raw lyrics-generator output showed 17 rename diagnostics collapsed into 5
+  boundary findings that looked actionable but were cache-fidelity false
+  positives. Hiding them from text removes first-contact noise without deleting
+  the machine-readable signal.
+- Keeping emission and JSON is reversible and preserves downstream diagnostic
+  contracts; restoring text rendering would be a small renderer-only change.
+
+Verification:
+
+- Focused renderer/summarize/warning tests: 232 passed.
+- Full cache-analysis suite was rerun and currently stops on an unrelated
+  pre-existing/staged skip-note wording assertion; per user instruction, that
+  test issue was not addressed in this pass.
+- Baseline harness passed after targeted regeneration: 67 passed, 0 drifted,
+  0 harness errors.
+- `ruff format --check .` passes after applying ruff formatting.
+
+## 2026-05-10 — Task 159 — Fix 8 follow-up: jargon rewrite across all 9 remaining sites
+
+Closes the "Scope-cut documented" section of the Stage 1 polish bundle entry
+above. Stage 1 rewrote 2 of 10 jargon-laden discrepancy-stage notes (memo-empty
++ Gemini telemetry); this follow-up rewrites the 9 remaining "Discrepancy
+detection: predicted-key matching ... Observable-field attributions still
+apply." sites via a single `_format_fidelity_skip_note(target, reason, *,
+applicable=True)` helper in `analyze.py`.
+
+Helper shape (SSoT for all 10 sites including Stage 1's memo-empty case,
+though that one stays inline since it's a different structural shape):
+
+```
+def _format_fidelity_skip_note(target: str, reason: str, *, applicable: bool = True) -> str:
+    prefix = "Cache fidelity check skipped for" if applicable else "Cache fidelity check not applicable to"
+    return f"{prefix} {target}: {reason}. TTL expiry and chunk-skip detection still apply."
+```
+
+Sites rewritten:
+
+| Site (`analyze.py` line) | Function | Trigger | New reason text |
+|---|---|---|---|
+| 4820 | `_format_skipped_workflows_note` (singular) | 1 sub-workflow with unsupplied declared inputs | "that sub-workflow declares inputs which weren't supplied as parameters" |
+| 4828 | `_format_skipped_workflows_note` (aggregated) | ≥2 sub-workflows with unsupplied inputs | "they declare inputs which weren't supplied as parameters. Pass concrete `<input>=<value>` parameters via CLI to enable per-workflow checks" |
+| 4939 | `_build_predict_scaffold` | `compile_workflow` raised | "workflow failed to compile ({exc_type})" |
+| 4967 | `_predict_node_with_scaffold` | node missing from compiled output | "node missing from the compiled workflow (parser/IR mismatch)" |
+| 4974 | `_predict_node_with_scaffold` | node not reachable from start | "node not reachable from the workflow's start" |
+| 4982 | `_predict_node_with_scaffold` | `plan_node` raised | "planner raised {exc_type} during prediction" |
+| 4990 | `_predict_node_with_scaffold` | template resolution failed | "a template reference couldn't be resolved at analysis time (depends on a runtime value)" |
+| 4996 | `_predict_node_with_scaffold` | node has `cache: false` | `applicable=False` → "Cache fidelity check **not applicable to** {target}: this node has `cache: false`" |
+| 5000 | `_predict_node_with_scaffold` | planner returned None, no specific reason | "planner returned no cache key (status={plan.status})" |
+
+Every site appends the consistent tail: `TTL expiry and chunk-skip detection
+still apply.` No more `"Discrepancy detection"` or `"Observable-field
+attributions"` strings emit from production code — verified via grep
+(remaining matches are all inside the helper's docstring as historical
+context, intentional anti-drift framing).
+
+Tests:
+
+- 1 new SSoT regression test
+  (`test_format_fidelity_skip_note_is_single_source_of_truth`) exercises both
+  `applicable=True` and `applicable=False` paths, asserts the exact "Cache
+  fidelity check..." framing, and locks the negative invariant that no old
+  jargon appears via this helper. Mutation contract: change the prefix/tail
+  here, all 9 emit sites diverge from production observation.
+- 7 existing tests updated from old-jargon substring assertions to new-wording
+  substring assertions
+  (`test_skipped_workflows_note_single_renders_plain_english`,
+  `..._multi_collapses_to_summary`,
+  `test_predict_cache_keys_aggregates_skip_notes_via_production_path`,
+  `test_discrepancy_skips_predicted_key_match_when_compile_fails_no_inputs`,
+  `test_predict_cache_keys_catches_schema_validation_error`,
+  `test_discrepancy_compile_failure_falls_back_to_observable_only`,
+  `test_predict_node_cache_key_returns_none_for_unresolvable_node_output_ref`)
+  + 1 fixture in `test_text_notes_shorten_workflow_paths_in_prose` migrated.
+
+Production-output impact: zero baseline drift on the canonical lyrics-generator
+capture (first-run case doesn't fire any per-node skip notes — Fix 8 Stage 1
+already covered the memo-empty path). The 9 rewritten sites fire on subsequent
+runs with specific failure modes; their captures live in
+`04-warning-catalog/20-llm.thinking-temperature-mismatch` (pre-existing
+LiteLLM pricing drift case — regenerated for the unrelated drift) and
+synthetic emission tests.
+
+Verification:
+
+- 1 new + 7 updated focused tests: all pass.
+- Full cache-analysis suite: 634 passed.
+- `make test` (default suite, `-m "not e2e"`): 6,545 passed, 1 skipped.
+- Baseline harness: 67/67 pass after regen of 1 case (unrelated LiteLLM
+  pricing drift).
+- `ruff check`, `ruff format --check`, focused `mypy` clean.
+- Production-code grep for `"Discrepancy detection:"` / `"Observable-field
+  attributions"` confirms 0 emission sites remain; matches only inside the
+  helper's docstring (intentional historical-reference context).

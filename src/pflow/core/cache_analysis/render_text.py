@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterable, Mapping
+from typing import cast
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
@@ -191,7 +192,22 @@ def _render_header(analysis: CacheAnalysis) -> str:
             if label == "high_from_trace"
             else coverage.get("memo", 0) + coverage.get("trace", 0)
         )
-        lines.append(f"  Confidence: {label} ({source_count} of {coverage.get('total', 0)} nodes)")
+        total_rows = coverage.get("total", 0)
+        # Suppress when redundant with the Evidence line. Evidence already
+        # conveys "complete trace covers every LLM node" in this state; the
+        # Confidence line would render "(N of N nodes)" — same denominator,
+        # zero added signal. Keep the line for medium_from_memo (carries
+        # memo-tier info Evidence doesn't), for partial trace coverage, for
+        # truncated traces, and when conditional dispatch left nodes
+        # unreached (Confidence's count is over a different denominator
+        # there and is worth showing).
+        evidence_complete_all_executed = (
+            s.evidence_scope == "complete_trace" and s.trace_llm_nodes_static == s.trace_llm_nodes_executed
+        )
+        confidence_says_full_trace = label == "high_from_trace" and source_count == total_rows
+        suppress = evidence_complete_all_executed and confidence_says_full_trace
+        if not suppress:
+            lines.append(f"  Confidence: {label} ({source_count} of {total_rows} nodes)")
     return "\n".join(lines)
 
 
@@ -321,7 +337,21 @@ def _render_cost_block(s: AnalysisSummary) -> list[str]:
 
 
 def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
-    """Cost lines when a trace contributed actual costs."""
+    """Cost lines when a trace contributed actual costs.
+
+    Fix 7: when ``projection_exclusions`` is non-empty and every excluded
+    row carries a trace-recorded ``actual_cost_usd``, FOLD that cost into
+    the no-cache and rerun projection lines (pass-through) so the cost
+    block reconciles in-place without the agent doing subtraction. Drop
+    the standalone ``Excluded from analysis:`` line in that case and
+    surface the same info as a footnote below the cost block.
+
+    Fallback: when an excluded row has ``actual_cost_usd is None`` (rare
+    in production — trace_tree coerces unpriced events to 0.0, but the
+    honest-unmeasurable contract requires None when truly absent), keep
+    the original ``Excluded from analysis:`` line and priced-cohort
+    projections. Can't pass through what we didn't measure.
+    """
     tier = s.actually_paid_tier.value
     actually_paid_str = _format_cost(
         s.actually_paid_usd,
@@ -329,27 +359,48 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         s.unavailable_models,
         tier_annotation=tier,
     )
-    # ``(partial)`` on the no_cache / rerun projections is redundant when a
-    # structural signal already names the cohort gap: ``Excluded from analysis:``
-    # (complete-trace mode) names the excluded rows in plain English, and the
-    # ``(executed)`` label suffix (truncated branch) signals "executed subset
-    # only". Suppress the parenthetical in those cases — keep it only for the
-    # rare edge where ``partial_cost_usd`` is set without either signal.
-    projection_partial_marker = (
-        s.partial_cost_usd and not s.projection_exclusions and s.evidence_scope != "truncated_trace_executed_subset"
-    )
-    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models)
-    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, projection_partial_marker, s.unavailable_models)
     if s.evidence_scope == "truncated_trace_executed_subset":
+        # Truncated branch is structurally different (executed subset is the
+        # cohort by construction). Unchanged by Fix 7.
+        no_cache_str = _format_cost(s.no_cache_hypothetical_usd, False, s.unavailable_models)
+        rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, False, s.unavailable_models)
         return [
             f"  Actually paid (executed trace):       {actually_paid_str}",
             f"  Cost without caching (executed):      {no_cache_str}",
             f"  Cost on rerun (executed, within TTL): {rerun_str}",
         ]
-    # Label is bare ``Actually paid:`` — the value already carries the tier
-    # annotation ``(trace)`` or ``(trace_partial)`` via ``_format_cost``, so
-    # repeating ``(trace)`` on the label is redundant. Truncated branch above
-    # keeps ``(executed trace)`` because "executed" carries unique signal.
+    # Complete-trace branch — try to fold pass-through.
+    can_fold = (
+        bool(s.projection_exclusions)
+        and all(e.actual_cost_usd is not None for e in s.projection_exclusions)
+        and s.no_cache_hypothetical_usd is not None
+    )
+    if can_fold:
+        # mypy: all() narrowed actual_cost_usd to float, but the generator
+        # still types the elements as ``float | None``. Cast at the use site.
+        excluded_total = sum(cast(float, e.actual_cost_usd) for e in s.projection_exclusions)
+        no_cache_folded = cast(float, s.no_cache_hypothetical_usd) + excluded_total
+        rerun_folded: float | None = (
+            s.rerun_within_ttl_hypothetical_usd + excluded_total
+            if s.rerun_within_ttl_hypothetical_usd is not None
+            else None
+        )
+        no_cache_str = _format_cost(no_cache_folded, False, s.unavailable_models)
+        rerun_str = _format_cost(rerun_folded, False, s.unavailable_models)
+        lines = [
+            f"  Actually paid:               {actually_paid_str}",
+            f"  Cost without caching:        {no_cache_str}",
+            f"  Cost on rerun (within TTL):  {rerun_str}",
+        ]
+        footnote = _format_passthrough_footnote(s, excluded_total)
+        if footnote is not None:
+            lines.append("")
+            lines.append(footnote)
+        return lines
+    # Fall back: keep the standalone Excluded line + priced-cohort projections.
+    projection_partial_marker = s.partial_cost_usd and not s.projection_exclusions
+    no_cache_str = _format_cost(s.no_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models)
+    rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, projection_partial_marker, s.unavailable_models)
     lines = [f"  Actually paid:               {actually_paid_str}"]
     excluded_line = _format_excluded_from_analysis_line(s)
     if excluded_line is not None:
@@ -357,6 +408,36 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     lines.append(f"  Cost without caching:        {no_cache_str}")
     lines.append(f"  Cost on rerun (within TTL):  {rerun_str}")
     return lines
+
+
+def _format_passthrough_footnote(s: AnalysisSummary, excluded_total: float) -> str | None:
+    """Footnote naming the excluded nodes folded into the projection lines.
+
+    Wording is deliberately jargon-free and accurate: caching CAN apply to
+    these calls when a model+content combo coincidentally repeats across
+    them — what's unavailable is the static projection, not caching itself.
+    """
+    if not s.projection_exclusions:
+        return None
+    sorted_exclusions = sorted(
+        s.projection_exclusions,
+        key=lambda e: (e.workflow_path or "", e.node_path),
+    )
+    amount = _format_dollar_amount(excluded_total)
+    if len(sorted_exclusions) == 1:
+        e = sorted_exclusions[0]
+        reason = _EXCLUSION_REASON_LABELS.get(e.reason, e.reason)
+        return (
+            f"  · {amount} of the above is pass-through for {e.node_path} "
+            f"({reason} — projected savings unavailable; real savings could "
+            "be higher if model+content combos repeat)."
+        )
+    node_csv = ", ".join(e.node_path for e in sorted_exclusions)
+    return (
+        f"  · {amount} of the above is pass-through for: {node_csv} "
+        "(projected savings unavailable; real savings could be higher if "
+        "model+content combos repeat)."
+    )
 
 
 def _format_excluded_from_analysis_line(s: AnalysisSummary) -> str | None:
@@ -1119,58 +1200,34 @@ def _label_for_model_state(model_state: object) -> str:
 def _render_cross_workflow(analysis: CacheAnalysis) -> str:
     """Render the "Sub-workflow boundaries" section.
 
-    Renames are source-deduped: each unique
-    ``(parent_workflow, parent_value_expr, child_input_name)`` triple becomes
-    one entry that lists its consumer children. Multiple consumers of the
-    same logical rename (e.g. one parent value passed to N batch children
-    under the same input name) collapse to a single "fix at source"
-    recommendation. Prose-mismatches stay 1-per-finding (different schema —
-    keyed by ``chunk_name``); they render in a parent-grouped sub-section
-    after the renames.
+    Prose-mismatches render 1-per-finding, parent-grouped by source workflow.
+    Rename diagnostics are still emitted for JSON/raw consumers, but are not
+    rendered in agent-facing text because variable names are stripped before
+    provider-cache bytes are sent.
 
     Cross-boundary value-flow opportunities surface in Recommended actions
     only (filtered by ``view_helpers._CROSS_WORKFLOW_ALIGNMENT_IDS``).
     """
-    from .view_helpers import group_renames_by_parent
-
-    rename_detections = [d for d in analysis.warnings if d.id == "cache.cross-workflow-rename-detected"]
     prose_mismatches = [d for d in analysis.warnings if d.id == "cache.cross-workflow-prose-mismatch"]
-    if not (rename_detections or prose_mismatches):
+    if not prose_mismatches:
         return ""
 
-    rename_groups_by_parent = group_renames_by_parent(rename_detections)
-    grouped_rename_count = sum(len(g) for g in rename_groups_by_parent.values())
-    raw_rename_count = len(rename_detections)
-    rendered_count = grouped_rename_count + len(prose_mismatches)
-    # Rollup suffix only when grouping actually collapsed something. If every
-    # rename had a unique source the rollup adds noise (K==M); same for
-    # prose-mismatches alone (no collapse semantics).
-    if raw_rename_count > grouped_rename_count:
-        header = f"## Sub-workflow boundaries ({rendered_count}, covering {raw_rename_count} underlying renames)"
-    else:
-        header = f"## Sub-workflow boundaries ({rendered_count})"
-
     lines = [
-        header,
+        f"## Sub-workflow boundaries ({len(prose_mismatches)})",
         "",
         "  Prompt-cache hits need byte-exact matches across boundaries. Each",
-        "  finding below is a name or prose mismatch between a parent workflow",
-        "  and its child sub-workflow that blocks one. Fix at the source once",
-        "  to align every listed consumer.",
+        "  finding below is a prose mismatch between cached chunk content in",
+        "  a parent workflow and its child sub-workflow that blocks one.",
+        "  Fix at the source once to align every listed consumer.",
     ]
 
     parents = sorted(
-        _collect_parent_paths(rename_detections, prose_mismatches),
+        _collect_parent_paths(prose_mismatches),
         key=_workflow_short_name,
     )
     for parent_path in parents:
         parent_short = _workflow_short_name(parent_path)
-        parent_rename_groups = rename_groups_by_parent.get(parent_path, {})
         parent_prose = [d for d in prose_mismatches if (d.context or {}).get("parent_workflow") == parent_path]
-        if parent_rename_groups:
-            lines.append("")
-            lines.append(f"  In {parent_short}:")
-            lines.extend(_render_renames_for_parent(parent_rename_groups))
         if parent_prose:
             lines.append("")
             lines.append(f"  Prose mismatches in {parent_short}:")
@@ -1187,81 +1244,6 @@ def _collect_parent_paths(*diag_lists: list[Diagnostic]) -> set[str]:
             if isinstance(parent, str) and parent:
                 out.add(parent)
     return out
-
-
-def _render_renames_for_parent(
-    groups: dict[tuple[str, str], list[tuple[str, int]]],
-) -> list[str]:
-    """Render the renames sub-block for one parent workflow.
-
-    Takes a pre-grouped dict (from ``_group_renames_by_parent``) so the count
-    is derivable up-front for the section header. Within the parent, sort by
-    consumer count DESC (highest fan-out first), tiebreak alphabetical on
-    source expression — surfaces the "biggest fix" first.
-    """
-    sorted_keys = sorted(groups.keys(), key=lambda k: (-len(groups[k]), k[0]))
-
-    out: list[str] = []
-    for key in sorted_keys:
-        source_expr, child_input = key
-        out.append("")
-        out.append(f"    `{source_expr}` → `{child_input}`")
-        out.extend(_format_consumer_summary(groups[key]))
-    return out
-
-
-def _format_consumer_summary(consumers: list[tuple[str, int]]) -> list[str]:
-    """Format the "used by ..." block under a source-rename arrow line.
-
-    Three modes:
-      1 consumer:        ``used by chorus-chooser (line 97)``
-      same line for all: ``used by N children at line L:`` + names
-      multiple lines:    ``used by N children at lines L1, L2:`` + names
-    """
-    if len(consumers) == 1:
-        child_wf, line = consumers[0]
-        return [f"        used by {_workflow_short_name(child_wf)} (line {line})"]
-
-    seen: set[str] = set()
-    ordered_names: list[str] = []
-    for child_wf, _line in consumers:
-        name = _workflow_short_name(child_wf)
-        if name not in seen:
-            seen.add(name)
-            ordered_names.append(name)
-
-    distinct_lines = sorted({line for _, line in consumers})
-    if len(distinct_lines) == 1:
-        line_clause = f"line {distinct_lines[0]}"
-    else:
-        line_clause = "lines " + ", ".join(str(L) for L in distinct_lines)
-    header = f"        used by {len(ordered_names)} children at {line_clause}:"
-    return [header, *_wrap_csv(ordered_names, indent="        ", max_width=72)]
-
-
-def _wrap_csv(items: list[str], *, indent: str, max_width: int) -> list[str]:
-    """Wrap a comma-separated list so each line stays within ``max_width``.
-
-    Items render as ``a, b, c`` with no trailing comma. Each continuation
-    line carries the same ``indent`` as the first.
-    """
-    if not items:
-        return []
-    lines: list[str] = []
-    current = indent
-    for i, item in enumerate(items):
-        suffix = "," if i < len(items) - 1 else ""
-        chunk = item + suffix
-        if current == indent:
-            current = indent + chunk
-        elif len(current) + 1 + len(chunk) > max_width:
-            lines.append(current)
-            current = indent + chunk
-        else:
-            current = current + " " + chunk
-    if current != indent:
-        lines.append(current)
-    return lines
 
 
 def _render_prose_mismatches_for_parent(diags: list[Diagnostic]) -> list[str]:
@@ -1361,10 +1343,11 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
             f"  Hidden: {hidden_count} low-signal nodes "
             "(no warnings or actionable cache projection; rerun with --all-rows)."
         )
-    footer = _per_call_confidence_footer(visible)
-    if footer is not None:
+    footer_lines = _per_call_confidence_footer(visible)
+    if footer_lines is not None:
         lines.append("")
-        lines.append(f"  {footer}")
+        for line in footer_lines:
+            lines.append(f"  {line}")
     return "\n".join(lines)
 
 
@@ -1771,40 +1754,62 @@ def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "sta
     ]
 
 
-def _per_call_confidence_footer(rows: list[PerCallRow]) -> str | None:
+def _format_node_list(node_paths: list[str]) -> str:
+    """Format a list of node names, aggregating duplicates.
+
+    The same ``node_path`` repeats across rows when distinct sub-workflows
+    each contain a node with the same id (lyrics-generator's 8 review
+    sub-workflows each name their node ``review``). A bare
+    ``", ".join(...)`` produces ``"review, review, review, ..."`` — reads
+    as a string-join bug. Aggregate duplicates into ``"N <name> nodes"``
+    and preserve first-seen order for unique names.
+    """
+    from collections import Counter
+
+    counts = Counter(node_paths)
+    parts: list[str] = []
+    for name in dict.fromkeys(node_paths):  # preserves first-seen order, dedupes
+        n = counts[name]
+        parts.append(name if n == 1 else f"{n} {name} nodes")
+    return ", ".join(parts)
+
+
+def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
+    """Build the multi-line token-estimate-confidence footer block.
+
+    Returns ``["Token estimate confidence:", "  · <bullet>", ...]`` or
+    ``None`` when no tier-specific guidance applies. Caller renders each
+    string as its own line (indented at the call site).
+    """
     low_input_nodes = [row.node_path for row in rows if row.data_source in {"estimator", "heuristic"}]
     batch_exemplar_nodes = [row.node_path for row in rows if row.cacheable_data_source == "parameters" and row.is_batch]
     batch_prefix_nodes = [row.node_path for row in rows if row.cacheable_data_source == "batch_prefix"]
     cross_workflow_nodes = [row.node_path for row in rows if row.cacheable_data_source == "cross_workflow_projection"]
-    parts: list[str] = []
+    bullets: list[str] = []
     if low_input_nodes:
-        parts.append(f"projected input tokens: {', '.join(low_input_nodes)}")
+        bullets.append(f"Projected input tokens for: {_format_node_list(low_input_nodes)}.")
     if batch_exemplar_nodes:
-        parts.append(
-            f"{', '.join(batch_exemplar_nodes)} uses the first batch item as a representative sample; "
-            "actual tokens may vary for later items"
+        bullets.append(
+            f"{_format_node_list(batch_exemplar_nodes)}: tokens estimated from the first batch item "
+            "as a representative sample. Actual tokens may vary for later items."
         )
     if batch_prefix_nodes:
         # Distinct from the batch-exemplar case above: this projection scans
         # the prompt's static prefix (bytes before the first per-item ref)
         # and multiplies by observed call count. No item content participates,
         # so the message must not claim sampling.
-        parts.append(
-            f"{', '.join(batch_prefix_nodes)} projects savings from the prompt's static prefix repeated "
-            "across observed calls; declare prompt_cache to confirm"
+        bullets.append(
+            f"{_format_node_list(batch_prefix_nodes)}: savings projected from a stable prompt prefix "
+            "repeated across observed calls. Declare prompt_cache to confirm."
         )
     if cross_workflow_nodes:
-        subject = ", ".join(cross_workflow_nodes)
-        verb = "uses" if len(cross_workflow_nodes) == 1 else "use"
-        parts.append(
-            f"{subject} {verb} cross-workflow projections from shared inputs declared "
-            "in parent workflow(s); declare the listed values in the receiving sub-workflow's ## Cache "
-            "and remove inline body refs (see Recommended actions for the boundary's recommended fix and "
-            "Sub-workflow boundaries for source-side renames)"
+        bullets.append(
+            f"{_format_node_list(cross_workflow_nodes)}: savings projected from shared inputs "
+            "declared in parent workflow(s). See Recommended actions for the per-boundary fix."
         )
-    if not parts:
+    if not bullets:
         return None
-    return "Token estimate confidence: " + "; ".join(parts) + "."
+    return ["Token estimate confidence:", *(f"  · {bullet}" for bullet in bullets)]
 
 
 def _row_has_real_data(row: PerCallRow) -> bool:

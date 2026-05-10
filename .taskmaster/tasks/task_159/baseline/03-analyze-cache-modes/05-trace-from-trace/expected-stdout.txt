@@ -3,7 +3,6 @@
 
   Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
   Evidence: complete trace (2 LLM nodes executed)
-  Confidence: high_from_trace (2 of 2 nodes)
 
 ## Summary
 
@@ -24,4 +23,4 @@
 
 ## Notes
 
-  · Discrepancy detection: predicted-key matching unavailable (memo cache empty — predicted-key matching needs prior memo cache entries to compare against). Observable-field attributions (TTL expiry, chunk skipped) still apply.
+  · Cache fidelity check skipped: this is a first run (no prior runs to compare cached vs uncached against). On later runs, specific cache misfires (TTL expired, chunks skipped) will appear here.

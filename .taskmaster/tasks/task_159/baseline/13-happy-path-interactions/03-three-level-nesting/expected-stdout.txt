@@ -182,7 +182,7 @@
         "id": "cache.cross-workflow-rename-detected",
         "title": "Cache Advisory",
         "suggestions": [
-          "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+          "This warning is informational. Provider cache hits do not depend on variable names; they depend on the exact prose before each cached value and the resolved value bytes. Align names only if it improves code clarity."
         ],
         "context": {
           "parent_workflow": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",
@@ -233,7 +233,7 @@
       "id": "cache.cross-workflow-rename-detected",
       "title": "Cache Advisory",
       "suggestions": [
-        "Rename the child input to match the parent's value name, OR rename the parent value to match the child's input name. Then ensure both ## Cache blocks use the same chunk identifier and identical prose."
+        "This warning is informational. Provider cache hits do not depend on variable names; they depend on the exact prose before each cached value and the resolved value bytes. Align names only if it improves code clarity."
       ],
       "context": {
         "parent_workflow": "<BASELINE_CASE_DIR>/level2/level2.pflow.md",

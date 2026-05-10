@@ -1292,16 +1292,21 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     ]
 
     text = render_text(result)
-    # Cohort qualifiers on no-cache/rerun labels are gone — the explicit
-    # ``Excluded from analysis`` line establishes which nodes are out
-    # of the projection cohort.
+    # Fix 7: when every excluded row has trace-recorded cost, the analyzer
+    # FOLDS that cost into the no-cache/rerun projection lines and surfaces
+    # the cohort context as a footnote below. The agent reads the cost block
+    # top-to-bottom without doing subtraction.
     assert "Cost without caching:" in text
     assert "Cost without caching (projected subset):" not in text
-    assert "Excluded from analysis:" in text
-    assert "generate: model varies per call" in text
+    # Old standalone Excluded line is gone in the folded path; the
+    # excluded node + reason move into the pass-through footnote.
+    assert "Excluded from analysis:" not in text
+    assert "of the above is pass-through for generate" in text
+    assert "model varies per call" in text  # now in the footnote
+    assert "projected savings unavailable" in text
     assert "Actual savings (this run):" in text
     # The savings line no longer inlines (excludes ...); the cohort context
-    # is in the ``Excluded from analysis`` line above.
+    # is in the footnote below.
     assert "(excludes generate)" not in text
     assert "unavailable (projection excludes generate)" not in text
     assert "Actual trace delta:" not in text
@@ -2660,7 +2665,7 @@ def test_gemini_note_appended_when_gemini_in_per_call() -> None:
         )
     ]
     _maybe_append_gemini_note(rows, notes)
-    assert any("Gemini telemetry" in n for n in notes)
+    assert any("Gemini caching" in n for n in notes)
 
 
 def test_gemini_note_NOT_appended_for_anthropic_only_rows() -> None:
@@ -2680,6 +2685,47 @@ def test_gemini_note_NOT_appended_for_anthropic_only_rows() -> None:
     ]
     _maybe_append_gemini_note(rows, notes)
     assert notes == []
+
+
+def test_gemini_note_uses_plain_english_no_internals() -> None:
+    """Fix 8: Gemini note must not leak pflow/LiteLLM internals.
+
+    A fresh agent reading the note cold must be able to act on it. Phrases
+    like "LiteLLM's Vertex/Gemini translation" describe how pflow's adapter
+    layer translates the API response — implementation detail. The note's
+    job is to tell the agent (a) which trace-event field carries Gemini's
+    cache-hit signal so they can grep for it, and (b) how to verify caching
+    is working.
+
+    Mutation contract: re-add the "LiteLLM's Vertex/Gemini translation"
+    string to ``_GEMINI_TELEMETRY_NOTE`` → the negative assertions fail.
+    """
+    notes: list[str] = []
+    rows = [
+        PerCallRow(
+            node_path="x",
+            model="gemini/gemini-2.5-pro",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=80,
+            cache_ratio_pct=80,
+            data_source="trace",
+            declared_prompt_cache=None,
+        )
+    ]
+    _maybe_append_gemini_note(rows, notes)
+    assert len(notes) == 1
+    note = notes[0]
+    # Positive: agent-actionable phrases present.
+    assert "cache_read_input_tokens" in note  # the grep target
+    assert "verify caching is working" in note
+    assert "## Cache" in note  # tells agent what to declare
+    # Negative: no library/adapter internals.
+    assert "LiteLLM" not in note
+    assert "Vertex" not in note
+    assert "translation" not in note
+    assert "prompt_tokens_details.cached_tokens" not in note  # picked one canonical field
 
 
 # ---------------------------------------------------------------------------
@@ -5701,10 +5747,49 @@ def test_memo_hit_trace_recovers_input_and_output_tokens_via_index(
 # ---------------------------------------------------------------------------
 
 
-def test_skipped_workflows_note_single_keeps_legacy_phrasing() -> None:
-    """L-4: single-workflow skip case keeps the original one-line phrasing for
-    continuity with pre-L-4 baselines and the existing per-id-emission test
-    that asserts ``"weren't supplied"`` substring matches.
+def test_format_fidelity_skip_note_is_single_source_of_truth() -> None:
+    """Fix 8 follow-up: every "we couldn't verify cache fidelity here" note
+    in the discrepancy stage routes through ``_format_fidelity_skip_note``.
+    Locks the wording in one place so future drift across the 9 emit sites
+    is impossible — change the prefix or the TTL/chunk-skip tail here, and
+    every downstream note inherits the change.
+
+    Mutation contract:
+    - Change the prefix string ("Cache fidelity check skipped for") → every
+      production note using the helper diverges from this test's substring.
+    - Drop the "TTL expiry and chunk-skip detection still apply." tail →
+      the final substring assertion fails.
+    - Inline the helper at any emit site (bypassing the SSoT) → those notes
+      drift from the rest; the integration tests for that site fail.
+    """
+    from pflow.core.cache_analysis.analyze import _format_fidelity_skip_note
+
+    # Default (applicable=True): "skipped for" prefix.
+    note = _format_fidelity_skip_note("x.pflow.md", "workflow failed to compile")
+    assert note == (
+        "Cache fidelity check skipped for x.pflow.md: workflow failed to "
+        "compile. TTL expiry and chunk-skip detection still apply."
+    )
+
+    # applicable=False switches to "not applicable to" — for cases like
+    # cache: false on a node, where the check doesn't fit, vs. genuinely
+    # couldn't run.
+    not_applicable = _format_fidelity_skip_note("x.pflow.md.draft", "this node has `cache: false`", applicable=False)
+    assert "Cache fidelity check not applicable to x.pflow.md.draft" in not_applicable
+    assert "`cache: false`" in not_applicable
+    assert "TTL expiry and chunk-skip detection still apply" in not_applicable
+
+    # Negative: no old jargon ever appears via this helper.
+    for output in (note, not_applicable):
+        assert "Discrepancy detection" not in output
+        assert "predicted-key matching" not in output
+        assert "Observable-field attributions" not in output
+
+
+def test_skipped_workflows_note_single_renders_plain_english() -> None:
+    """Fix 8 follow-up: single-workflow skip case routes through the
+    ``_format_fidelity_skip_note`` helper. No jargon prefix; plain English
+    target + reason; consistent TTL/chunk-skip tail.
 
     Mutation contract: drop the ``len(paths) == 1`` branch → this test fails
     (renders the multi-summary phrasing for one workflow).
@@ -5712,8 +5797,15 @@ def test_skipped_workflows_note_single_keeps_legacy_phrasing() -> None:
     from pflow.core.cache_analysis.analyze import _format_skipped_workflows_note
 
     note = _format_skipped_workflows_note(["song-creator.pflow.md"])
-    assert "predicted-key matching skipped for song-creator.pflow.md" in note
-    assert "weren't supplied or resolvable" in note
+    # Plain-English framing with the workflow named.
+    assert "Cache fidelity check skipped for song-creator.pflow.md" in note
+    assert "weren't supplied as parameters" in note
+    # Consistent fallback tail (TTL expiry / chunk-skip detection still apply).
+    assert "TTL expiry and chunk-skip detection still apply" in note
+    # No jargon.
+    assert "Discrepancy detection" not in note
+    assert "predicted-key matching" not in note
+    assert "Observable-field attributions" not in note
     # Must NOT use the multi-summary phrasing.
     assert "sub-workflows" not in note
 
@@ -5733,7 +5825,8 @@ def test_skipped_workflows_note_multi_collapses_to_summary() -> None:
         "/abs/song-creator/review-narrative.pflow.md",
     ]
     note = _format_skipped_workflows_note(paths)
-    assert "skipped for 3 sub-workflows" in note
+    # Fix 8 follow-up: plain-English framing in the multi-workflow case.
+    assert "Cache fidelity check skipped for 3 sub-workflows" in note
     # Basenames listed inline, full paths NOT (they blow past terminal width).
     assert "review-rhyme.pflow.md" in note
     assert "review-imagery.pflow.md" in note
@@ -5742,8 +5835,11 @@ def test_skipped_workflows_note_multi_collapses_to_summary() -> None:
     # Actionable suggestion (pass concrete inputs) appears.
     assert "Pass concrete" in note
     assert "<input>=<value>" in note
-    # Observable-fields fallback still applies.
-    assert "Observable-field attributions still apply" in note
+    # Consistent fallback tail.
+    assert "TTL expiry and chunk-skip detection still apply" in note
+    # No jargon.
+    assert "Discrepancy detection" not in note
+    assert "Observable-field attributions" not in note
 
 
 def test_skipped_workflows_note_multi_truncates_at_five_with_overflow_marker() -> None:
@@ -5763,6 +5859,46 @@ def test_skipped_workflows_note_multi_truncates_at_five_with_overflow_marker() -
     assert "wf-5.pflow.md" not in note
     assert "wf-6.pflow.md" not in note
     assert "wf-7.pflow.md" not in note
+
+
+def test_predict_cache_keys_memo_empty_note_uses_plain_english() -> None:
+    """Fix 8: memo-empty discrepancy note must read as plain English.
+
+    The original "Discrepancy detection: predicted-key matching unavailable
+    (memo cache empty — predicted-key matching needs prior memo cache entries
+    to compare against). Observable-field attributions (TTL expiry, chunk
+    skipped) still apply." packs four internal terms ("Discrepancy detection",
+    "predicted-key matching", "Observable-field attributions", "memo cache")
+    into one sentence. A fresh agent reading it cold can't derive any action.
+
+    Replacement framing: "this is a first run, on later runs misfires will
+    appear here". Preserves the actionable signal; drops every internal term.
+
+    Mutation contract: revert the new wording in ``_predict_cache_keys`` →
+    the negative assertions fail.
+    """
+    from pflow.core.cache_analysis.analyze import _predict_cache_keys
+
+    ctx = AnalysisContext.build(
+        workflow_ir={"nodes": []},
+        parameters={},
+        memo_cache=None,  # triggers the memo-empty early-return path
+        workflow_path="/abs/parent.pflow.md",
+    )
+
+    _, notes = _predict_cache_keys(cw_result=None, ctx=ctx)
+
+    assert len(notes) == 1
+    note = notes[0]
+    # Positive: agent-actionable phrasing.
+    assert "first run" in note
+    assert "later runs" in note
+    assert "TTL" in note  # tells agent what misfire types will appear later
+    # Negative: no internals.
+    assert "Discrepancy detection" not in note
+    assert "predicted-key matching" not in note
+    assert "Observable-field attributions" not in note
+    assert "memo cache" not in note  # internal pflow term
 
 
 def test_predict_cache_keys_aggregates_skip_notes_via_production_path() -> None:
@@ -5809,7 +5945,9 @@ def test_predict_cache_keys_aggregates_skip_notes_via_production_path() -> None:
 
     _, notes = _predict_cache_keys(cw_result, ctx)
 
-    skip_notes = [n for n in notes if "predicted-key matching skipped" in n]
+    # Fix 8 follow-up: the skip-note prefix is now "Cache fidelity check
+    # skipped for" — single SSoT across all sites via ``_format_fidelity_skip_note``.
+    skip_notes = [n for n in notes if "Cache fidelity check skipped for" in n]
     # Pre-L-4: 3 per-workflow notes. Post-L-4: 1 aggregated summary.
     assert len(skip_notes) == 1, f"Expected 1 aggregated note, got {len(skip_notes)}:\n" + "\n".join(
         f"  - {n}" for n in skip_notes

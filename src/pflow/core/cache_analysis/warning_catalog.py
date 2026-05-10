@@ -135,7 +135,7 @@ _UNUSED_CHUNK_MESSAGE = (
 _SHARED_CONTEXT_WORKFLOW_TEMPLATE = "Used by {node_count} LLM nodes. Chunks: {shared_chunks_csv}.{savings_clause}"
 _SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = (
     "`{parent_value_expr}` flows into `{child_workflow_basename}` as "
-    "`{child_input_name}` and is used by {node_count} LLM nodes there "
+    "`{child_input_name}` and is used by {node_count} LLM {nodes_phrase} there "
     "({child_node_ids_csv}). Add `{child_input_name}` to that sub-workflow's "
     "## Cache; sub-workflows do not inherit the parent cache block."
     "{below_threshold_clause}{cleanup_hint_clause}"
@@ -445,9 +445,10 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("parent_node_id", str),
         ),
         suggestions_template=(
-            "Rename the child input to match the parent's value name, OR rename the "
-            "parent value to match the child's input name. Then ensure both "
-            "## Cache blocks use the same chunk identifier and identical prose.",
+            "This warning is informational. Provider cache hits do not depend on "
+            "variable names; they depend on the exact prose before each cached "
+            "value and the resolved value bytes. Align names only if it improves "
+            "code clarity.",
         ),
         path_template=("workflows[path={parent_workflow}].nodes[id={parent_node_id}].inputs[name={child_input_name}]"),
         headline_template="Cross-workflow rename — `{parent_value_expr}` ↔ `{child_input_name}`",
@@ -1118,6 +1119,12 @@ def make_diagnostic(
         format_dict["is_or_are_capitalized"] = (
             "this field is" if context_kwargs["is_or_are"] == "is" else "these fields are"
         )
+
+    # Pluralize "LLM node(s)" in templates that interpolate ``node_count``.
+    # Singular when count==1; plural otherwise. Mirrors the is_or_are pattern
+    # above — pluralization decision lives at dispatch, template substitutes.
+    if "node_count" in context_kwargs:
+        format_dict["nodes_phrase"] = "node" if context_kwargs["node_count"] == 1 else "nodes"
 
     selected_message_template = _select_message_template(
         warning_id=warning_id,

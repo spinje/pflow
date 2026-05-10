@@ -4635,7 +4635,7 @@ def _emit_sub_workflow_cache_findings(
             candidate, rows_by_node_path, ctx, cw_result
         )
         below_threshold_clause = _below_threshold_clause(tokens, threshold_model)
-        below_threshold_context = (
+        below_threshold_context: dict[str, Any] = (
             {
                 "below_threshold_tokens": tokens,
                 "below_threshold_model": threshold_model,
@@ -4749,9 +4749,9 @@ def _predict_cache_keys(
     notes: list[str] = []
     if ctx.memo_cache is None:
         notes.append(
-            "Discrepancy detection: predicted-key matching unavailable (memo cache empty — "
-            "predicted-key matching needs prior memo cache entries to compare against). "
-            "Observable-field attributions (TTL expiry, chunk skipped) still apply."
+            "Cache fidelity check skipped: this is a first run "
+            "(no prior runs to compare cached vs uncached against). "
+            "On later runs, specific cache misfires (TTL expired, chunks skipped) will appear here."
         )
         return {}, notes
 
@@ -4809,28 +4809,48 @@ def _format_dynamic_batches_note(batches: tuple[DynamicBatchInfo, ...]) -> str |
     )
 
 
+def _format_fidelity_skip_note(target: str, reason: str, *, applicable: bool = True) -> str:
+    """Single SSoT for the "we couldn't verify cache fidelity here" notes.
+
+    Every skip-note in the discrepancy stage describes the same shape: the
+    analyzer wanted to compare predicted cache_keys against trace evidence
+    for a specific target (workflow or workflow.node), couldn't, and falls
+    back to reporting explicit cache events (TTL expiry, chunk-skipped)
+    from the trace. The framing is jargon-free and consistent across all
+    9 emit sites so an agent reading the Notes section never has to map
+    "Discrepancy detection: predicted-key matching" → "cache fidelity
+    check" by themselves.
+
+    ``applicable=False`` switches the prefix for cases like ``cache: false``
+    on a node — the check isn't unavailable; it doesn't apply at all.
+
+    Mutation contract: if a producer ever bypasses this helper and emits
+    the old "Discrepancy detection: ..." prefix directly, the jargon
+    returns. The wording lives in this one place to prevent that drift.
+    """
+    prefix = "Cache fidelity check skipped for" if applicable else "Cache fidelity check not applicable to"
+    return f"{prefix} {target}: {reason}. TTL expiry and chunk-skip detection still apply."
+
+
 def _format_skipped_workflows_note(paths: list[str]) -> str:
     """Aggregate per-sub-workflow skip notes into one summary (L-4).
 
-    Single-workflow case keeps the original phrasing for continuity with
-    pre-L-4 baselines. Multi-workflow case lists up to 5 basenames; overflow
-    as ``+N more``. Real lyrics-generator runs emit 15 of these — the
-    pre-L-4 rendering blew ~4KB of repeated prose into the Notes section.
+    Single-workflow case keeps the per-workflow detail. Multi-workflow case
+    lists up to 5 basenames; overflow as ``+N more``. Real lyrics-generator
+    runs emit 15 of these — pre-L-4 rendering blew ~4KB of repeated prose
+    into the Notes section.
     """
     if len(paths) == 1:
-        return (
-            f"Discrepancy detection: predicted-key matching skipped for "
-            f"{paths[0]} — workflow declares inputs that weren't supplied or "
-            "resolvable. Observable-field attributions still apply."
+        return _format_fidelity_skip_note(
+            paths[0],
+            "that sub-workflow declares inputs which weren't supplied as parameters",
         )
     shown = [Path(p).name if p and p != "<root>" else "<root>" for p in paths[:5]]
     suffix = "" if len(paths) <= 5 else f" + {len(paths) - 5} more"
-    return (
-        f"Discrepancy detection: predicted-key matching skipped for "
-        f"{len(paths)} sub-workflows ({', '.join(shown)}{suffix}) — they "
-        "declare inputs that weren't supplied or resolvable. Pass concrete "
-        "`<input>=<value>` parameters to enable per-workflow predicted-key "
-        "matching. Observable-field attributions still apply."
+    return _format_fidelity_skip_note(
+        f"{len(paths)} sub-workflows ({', '.join(shown)}{suffix})",
+        "they declare inputs which weren't supplied as parameters. "
+        "Pass concrete `<input>=<value>` parameters via CLI to enable per-workflow checks",
     )
 
 
@@ -4935,11 +4955,7 @@ def _build_predict_scaffold(
         FileNotFoundError,
         ValueError,
     ) as exc:
-        return None, (
-            f"Discrepancy detection: predicted-key matching for {workflow_label} "
-            f"unavailable ({type(exc).__name__}); compile failed. Observable-field "
-            "attributions still apply."
-        )
+        return None, _format_fidelity_skip_note(workflow_label, f"workflow failed to compile ({type(exc).__name__})")
     shared = create_planner_shared(compiled, dict(params), memo_cache, workflow_path)
     bare_nodes_by_id = _enumerate_compiled_bare_nodes(compiled)
     return _PredictScaffold(compiled=compiled, shared=shared, bare_nodes_by_id=bare_nodes_by_id), None
@@ -4961,46 +4977,29 @@ def _predict_node_with_scaffold(
 
     node_id = str(node.get("id", "?"))
     workflow_label = workflow_path or "<root>"
+    target = f"{workflow_label}.{node_id}"
     config = scaffold.compiled.node_configs.get(node_id)
     if config is None:
-        return None, (
-            f"Discrepancy detection: node {workflow_label}.{node_id} not found in "
-            "compiled workflow (parser-injected metadata mismatch). Observable-field "
-            "attributions still apply."
-        )
+        return None, _format_fidelity_skip_note(target, "node missing from the compiled workflow (parser/IR mismatch)")
     bare_node = scaffold.bare_nodes_by_id.get(node_id)
     if bare_node is None:
-        return None, (
-            f"Discrepancy detection: node {workflow_label}.{node_id} not reachable from "
-            "start_node (graph-walk gap). Observable-field attributions still apply."
-        )
+        return None, _format_fidelity_skip_note(target, "node not reachable from the workflow's start")
     try:
         plan = plan_node(bare_node, config, scaffold.shared)
     except Exception as exc:
         logger.debug("plan_node raised for %s.%s", workflow_label, node_id, exc_info=True)
-        return None, (
-            f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
-            f"raised {type(exc).__name__}; skipping. Observable-field attributions still apply."
-        )
+        return None, _format_fidelity_skip_note(target, f"planner raised {type(exc).__name__} during prediction")
 
     if plan.cache_key is not None:
         return plan.cache_key, None
     if plan.template_exception is not None:
-        return None, (
-            f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
-            "skipped — template resolution failed at analyzer-time (unresolvable upstream "
-            "ref). Observable-field attributions still apply."
+        return None, _format_fidelity_skip_note(
+            target,
+            "a template reference couldn't be resolved at analysis time (depends on a runtime value)",
         )
     if plan.status == "cache_disabled":
-        return None, (
-            f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
-            "skipped — node has cache disabled. Observable-field attributions still apply."
-        )
-    return None, (
-        f"Discrepancy detection: predicted-key matching for {workflow_label}.{node_id} "
-        f"skipped — plan_node returned no cache_key (status={plan.status}). "
-        "Observable-field attributions still apply."
-    )
+        return None, _format_fidelity_skip_note(target, "this node has `cache: false`", applicable=False)
+    return None, _format_fidelity_skip_note(target, f"planner returned no cache key (status={plan.status})")
 
 
 def _predict_node_cache_key(
@@ -5697,12 +5696,10 @@ def _safe_pct_or_none(numerator: float | None, denominator: float | None) -> int
 
 
 _GEMINI_TELEMETRY_NOTE = (
-    "Gemini telemetry note: LiteLLM's Vertex/Gemini translation surfaces "
-    "explicit-cache reads via 'cache_read_input_tokens' (or "
-    "'prompt_tokens_details.cached_tokens'); 'cache_creation_input_tokens' is "
-    "0/absent even when caching is working. Verification path is reads on "
-    "subsequent calls — explicit cache markers are required for caching to "
-    "fire on Gemini."
+    "Gemini caching: Gemini reports cache reads via 'cache_read_input_tokens' "
+    "in trace events. Cache writes don't show in telemetry, so verify caching "
+    "is working by checking that follow-up calls show cache reads. Explicit "
+    "## Cache declarations are required for Gemini."
 )
 
 

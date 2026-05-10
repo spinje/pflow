@@ -6,18 +6,18 @@
   Heterogeneous: generate-chorus-options (model varies per batch item)
   Evidence: complete trace (25 LLM nodes executed)
   (2 in lyrics-generator.pflow.md, 23 in 14 sub-workflows)
-  Confidence: high_from_trace (25 of 25 nodes)
 
 ## Summary
 
   Actually paid:               ~$2.31 (trace)
-  Excluded from analysis:      ~$0.27 (generate-chorus-options: model varies per call)
-  Cost without caching:        ~$2.16
-  Cost on rerun (within TTL):  ~$2.07
+  Cost without caching:        ~$2.42
+  Cost on rerun (within TTL):  ~$2.34
+
+  · ~$0.27 of the above is pass-through for generate-chorus-options (model varies per call — projected savings unavailable; real savings could be higher if model+content combos repeat).
   Actual savings (this run):    saves ~$0.11/run vs no-cache, 5% of no-cache cost
   Rerun delta (projected):      saves ~$0.09/run on rerun, 4% of no-cache cost
 
-  26 recommended actions + 5 cross-workflow boundary findings
+  26 recommended actions
 
 ## Blocking errors
 
@@ -48,7 +48,7 @@
 
   3. Sub-workflow cache undeclared — add `creative_brief` in chorus-chooser.pflow.md's ## Cache  saves ~$0.0052/run
      chorus-chooser.pflow.md
-     `concept_brief` flows into `chorus-chooser.pflow.md` as `creative_brief` and is used by 1 LLM nodes there (`select-chorus`). Add `creative_brief` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `concept_brief` flows into `chorus-chooser.pflow.md` as `creative_brief` and is used by 1 LLM node there (`select-chorus`). Add `creative_brief` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Before declaring `creative_brief` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `select-chorus`: `${creative_brief}`
      → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
@@ -58,7 +58,7 @@
 
   4. Sub-workflow cache undeclared — add `concept_brief` in review-accuracy.pflow.md's ## Cache  saves ~$0.0052/run
      review-accuracy.pflow.md
-     `concept_brief` flows into `review-accuracy.pflow.md` as `concept_brief` and is used by 1 LLM nodes there (`review`). Add `concept_brief` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `concept_brief` flows into `review-accuracy.pflow.md` as `concept_brief` and is used by 1 LLM node there (`review`). Add `concept_brief` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Before declaring `concept_brief` in `review-accuracy.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${concept_brief}`
      → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
@@ -68,7 +68,7 @@
 
   5. Sub-workflow cache undeclared — add `concept_brief` in review-emotional-architecture.pflow.md's ## Cache  saves ~$0.0052/run
      review-emotional-architecture.pflow.md
-     `concept_brief` flows into `review-emotional-architecture.pflow.md` as `concept_brief` and is used by 1 LLM nodes there (`review`). Add `concept_brief` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `concept_brief` flows into `review-emotional-architecture.pflow.md` as `concept_brief` and is used by 1 LLM node there (`review`). Add `concept_brief` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Before declaring `concept_brief` in `review-emotional-architecture.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${concept_brief}`
      → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
@@ -78,7 +78,7 @@
 
   6. Sub-workflow cache undeclared — add `architecture` in chorus-chooser.pflow.md's ## Cache  savings unavailable
      chorus-chooser.pflow.md
-     `song-architecture.response` flows into `chorus-chooser.pflow.md` as `architecture` and is used by 1 LLM nodes there (`select-chorus`). Add `architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `song-architecture.response` flows into `chorus-chooser.pflow.md` as `architecture` and is used by 1 LLM node there (`select-chorus`). Add `architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~3,630 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `architecture` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `select-chorus`: `${architecture}`
@@ -89,7 +89,7 @@
 
   7. Sub-workflow cache undeclared — add `creative_direction` in review-accuracy.pflow.md's ## Cache  savings unavailable
      review-accuracy.pflow.md
-     `creative-direction.response` flows into `review-accuracy.pflow.md` as `creative_direction` and is used by 1 LLM nodes there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `creative-direction.response` flows into `review-accuracy.pflow.md` as `creative_direction` and is used by 1 LLM node there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~1,922 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `creative_direction` in `review-accuracy.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${creative_direction}`
@@ -100,7 +100,7 @@
 
   8. Sub-workflow cache undeclared — add `lyrics` in review-accuracy.pflow.md's ## Cache  savings unavailable
      review-accuracy.pflow.md
-     `extract-emotional-lyrics.result.lyrics` flows into `review-accuracy.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `extract-emotional-lyrics.result.lyrics` flows into `review-accuracy.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~285 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-accuracy.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -111,7 +111,7 @@
 
   9. Sub-workflow cache undeclared — add `creative_direction` in review-ai-tells.pflow.md's ## Cache  savings unavailable
      review-ai-tells.pflow.md
-     `creative-direction.response` flows into `review-ai-tells.pflow.md` as `creative_direction` and is used by 1 LLM nodes there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `creative-direction.response` flows into `review-ai-tells.pflow.md` as `creative_direction` and is used by 1 LLM node there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~1,922 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `creative_direction` in `review-ai-tells.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${creative_direction}`
@@ -122,7 +122,7 @@
 
   10. Sub-workflow cache undeclared — add `lyrics` in review-ai-tells.pflow.md's ## Cache  savings unavailable
      review-ai-tells.pflow.md
-     `extract-emotional-lyrics.result.lyrics` flows into `review-ai-tells.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `extract-emotional-lyrics.result.lyrics` flows into `review-ai-tells.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~285 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-ai-tells.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -133,7 +133,7 @@
 
   11. Sub-workflow cache undeclared — add `creative_direction` in review-cliche.pflow.md's ## Cache  savings unavailable
      review-cliche.pflow.md
-     `creative-direction.response` flows into `review-cliche.pflow.md` as `creative_direction` and is used by 1 LLM nodes there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `creative-direction.response` flows into `review-cliche.pflow.md` as `creative_direction` and is used by 1 LLM node there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~1,922 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `creative_direction` in `review-cliche.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${creative_direction}`
@@ -144,7 +144,7 @@
 
   12. Sub-workflow cache undeclared — add `lyrics` in review-cliche.pflow.md's ## Cache  savings unavailable
      review-cliche.pflow.md
-     `extract-emotional-lyrics.result.lyrics` flows into `review-cliche.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `extract-emotional-lyrics.result.lyrics` flows into `review-cliche.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~285 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-cliche.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -155,7 +155,7 @@
 
   13. Sub-workflow cache undeclared — add `creative_direction` in review-emotional-architecture.pflow.md's ## Cache  savings unavailable
      review-emotional-architecture.pflow.md
-     `creative-direction.response` flows into `review-emotional-architecture.pflow.md` as `creative_direction` and is used by 1 LLM nodes there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `creative-direction.response` flows into `review-emotional-architecture.pflow.md` as `creative_direction` and is used by 1 LLM node there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~1,922 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `creative_direction` in `review-emotional-architecture.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${creative_direction}`
@@ -166,7 +166,7 @@
 
   14. Sub-workflow cache undeclared — add `lyrics` in review-emotional-architecture.pflow.md's ## Cache  savings unavailable
      review-emotional-architecture.pflow.md
-     `write-lyrics.response` flows into `review-emotional-architecture.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `write-lyrics.response` flows into `review-emotional-architecture.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~474 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-emotional-architecture.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -177,7 +177,7 @@
 
   15. Sub-workflow cache undeclared — add `creative_direction` in review-genre.pflow.md's ## Cache  savings unavailable
      review-genre.pflow.md
-     `creative-direction.response` flows into `review-genre.pflow.md` as `creative_direction` and is used by 1 LLM nodes there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `creative-direction.response` flows into `review-genre.pflow.md` as `creative_direction` and is used by 1 LLM node there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~1,922 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `creative_direction` in `review-genre.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${creative_direction}`
@@ -188,7 +188,7 @@
 
   16. Sub-workflow cache undeclared — add `lyrics` in review-genre.pflow.md's ## Cache  savings unavailable
      review-genre.pflow.md
-     `extract-emotional-lyrics.result.lyrics` flows into `review-genre.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `extract-emotional-lyrics.result.lyrics` flows into `review-genre.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~285 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-genre.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -199,7 +199,7 @@
 
   17. Sub-workflow cache undeclared — add `song_architecture` in review-genre.pflow.md's ## Cache  savings unavailable
      review-genre.pflow.md
-     `song-architecture.response` flows into `review-genre.pflow.md` as `song_architecture` and is used by 1 LLM nodes there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `song-architecture.response` flows into `review-genre.pflow.md` as `song_architecture` and is used by 1 LLM node there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~3,630 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `song_architecture` in `review-genre.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${song_architecture}`
@@ -210,7 +210,7 @@
 
   18. Sub-workflow cache undeclared — add `lyrics` in review-imagery.pflow.md's ## Cache  savings unavailable
      review-imagery.pflow.md
-     `write-lyrics.response` flows into `review-imagery.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `write-lyrics.response` flows into `review-imagery.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~474 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-imagery.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -221,7 +221,7 @@
 
   19. Sub-workflow cache undeclared — add `song_architecture` in review-imagery.pflow.md's ## Cache  savings unavailable
      review-imagery.pflow.md
-     `song-architecture.response` flows into `review-imagery.pflow.md` as `song_architecture` and is used by 1 LLM nodes there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `song-architecture.response` flows into `review-imagery.pflow.md` as `song_architecture` and is used by 1 LLM node there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~3,630 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `song_architecture` in `review-imagery.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${song_architecture}`
@@ -232,7 +232,7 @@
 
   20. Sub-workflow cache undeclared — add `lyrics` in review-narrative.pflow.md's ## Cache  savings unavailable
      review-narrative.pflow.md
-     `write-lyrics.response` flows into `review-narrative.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `write-lyrics.response` flows into `review-narrative.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~474 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-narrative.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -243,7 +243,7 @@
 
   21. Sub-workflow cache undeclared — add `song_architecture` in review-narrative.pflow.md's ## Cache  savings unavailable
      review-narrative.pflow.md
-     `song-architecture.response` flows into `review-narrative.pflow.md` as `song_architecture` and is used by 1 LLM nodes there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `song-architecture.response` flows into `review-narrative.pflow.md` as `song_architecture` and is used by 1 LLM node there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~3,630 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `song_architecture` in `review-narrative.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${song_architecture}`
@@ -254,7 +254,7 @@
 
   22. Sub-workflow cache undeclared — add `creative_direction` in review-rhyme.pflow.md's ## Cache  savings unavailable
      review-rhyme.pflow.md
-     `creative-direction.response` flows into `review-rhyme.pflow.md` as `creative_direction` and is used by 1 LLM nodes there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `creative-direction.response` flows into `review-rhyme.pflow.md` as `creative_direction` and is used by 1 LLM node there (`review`). Add `creative_direction` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~1,922 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `creative_direction` in `review-rhyme.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${creative_direction}`
@@ -265,7 +265,7 @@
 
   23. Sub-workflow cache undeclared — add `lyrics` in review-rhyme.pflow.md's ## Cache  savings unavailable
      review-rhyme.pflow.md
-     `extract-emotional-lyrics.result.lyrics` flows into `review-rhyme.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `extract-emotional-lyrics.result.lyrics` flows into `review-rhyme.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~285 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-rhyme.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -276,7 +276,7 @@
 
   24. Sub-workflow cache undeclared — add `song_architecture` in review-rhyme.pflow.md's ## Cache  savings unavailable
      review-rhyme.pflow.md
-     `song-architecture.response` flows into `review-rhyme.pflow.md` as `song_architecture` and is used by 1 LLM nodes there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `song-architecture.response` flows into `review-rhyme.pflow.md` as `song_architecture` and is used by 1 LLM node there (`review`). Add `song_architecture` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~3,630 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `song_architecture` in `review-rhyme.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${song_architecture}`
@@ -287,7 +287,7 @@
 
   25. Sub-workflow cache undeclared — add `lyrics` in review-stranger-summary.pflow.md's ## Cache  savings unavailable
      review-stranger-summary.pflow.md
-     `write-lyrics.response` flows into `review-stranger-summary.pflow.md` as `lyrics` and is used by 1 LLM nodes there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     `write-lyrics.response` flows into `review-stranger-summary.pflow.md` as `lyrics` and is used by 1 LLM node there (`review`). Add `lyrics` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
      Note: ~474 tokens estimated, below gemini/gemini-2.5-flash's 4,096-token minimum — caching won't fire until rendered content reaches 4,096 tokens.
      Before declaring `lyrics` in `review-stranger-summary.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
        • `review`: `${lyrics}`
@@ -301,35 +301,6 @@
      generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
      → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
      → See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern.
-
-## Sub-workflow boundaries (5, covering 17 underlying renames)
-
-  Prompt-cache hits need byte-exact matches across boundaries. Each
-  finding below is a name or prose mismatch between a parent workflow
-  and its child sub-workflow that blocks one. Fix at the source once
-  to align every listed consumer.
-
-  In song-creator:
-
-    `creative-direction.response` → `creative_direction`
-        used by 7 children at lines 97, 124, 239:
-        chorus-chooser, review-emotional-architecture, review-ai-tells,
-        review-cliche, review-genre, review-accuracy, review-rhyme
-
-    `song-architecture.response` → `song_architecture`
-        used by 4 children at lines 124, 239:
-        review-narrative, review-imagery, review-genre, review-rhyme
-
-    `write-lyrics.response` → `lyrics`
-        used by 4 children at line 124:
-        review-emotional-architecture, review-narrative, review-imagery,
-        review-stranger-summary
-
-    `concept_brief` → `creative_brief`
-        used by chorus-chooser (line 97)
-
-    `song-architecture.response` → `architecture`
-        used by chorus-chooser (line 97)
 
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
@@ -389,7 +360,9 @@
 
   Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 
-  Token estimate confidence: score-choruses projects savings from the prompt's static prefix repeated across observed calls; declare prompt_cache to confirm; select-chorus, review, review, review, review, review, review, review, review use cross-workflow projections from shared inputs declared in parent workflow(s); declare the listed values in the receiving sub-workflow's ## Cache and remove inline body refs (see Recommended actions for the boundary's recommended fix and Sub-workflow boundaries for source-side renames).
+  Token estimate confidence:
+    · score-choruses: savings projected from a stable prompt prefix repeated across observed calls. Declare prompt_cache to confirm.
+    · select-chorus, 8 review nodes: savings projected from shared inputs declared in parent workflow(s). See Recommended actions for the per-boundary fix.
 
 ## Per-child analyze-cache commands
 
@@ -413,5 +386,5 @@
 ## Notes
 
   · 3 dynamic batches not in per-call table: `fetch-sources` (items: `${sources}`), `analyze-sources` (items: `${fetch-sources.results}`), `create-songs` (items: `${zip-concepts-with-briefs.result}`). Batch items are computed at runtime, so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static items to list them. (Cost shown is measured from the trace, not estimated.)
-  · Discrepancy detection: predicted-key matching unavailable (memo cache empty — predicted-key matching needs prior memo cache entries to compare against). Observable-field attributions (TTL expiry, chunk skipped) still apply.
-  · Gemini telemetry note: LiteLLM's Vertex/Gemini translation surfaces explicit-cache reads via 'cache_read_input_tokens' (or 'prompt_tokens_details.cached_tokens'); 'cache_creation_input_tokens' is 0/absent even when caching is working. Verification path is reads on subsequent calls — explicit cache markers are required for caching to fire on Gemini.
+  · Cache fidelity check skipped: this is a first run (no prior runs to compare cached vs uncached against). On later runs, specific cache misfires (TTL expired, chunks skipped) will appear here.
+  · Gemini caching: Gemini reports cache reads via 'cache_read_input_tokens' in trace events. Cache writes don't show in telemetry, so verify caching is working by checking that follow-up calls show cache reads. Explicit ## Cache declarations are required for Gemini.

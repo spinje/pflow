@@ -25,16 +25,17 @@ if TYPE_CHECKING:
 # Cross-workflow alignment filter
 # ---------------------------------------------------------------------------
 #
-# These finding IDs render in the "Sub-workflow boundaries" section ONLY —
-# their ``parent → child (line N)`` framing is load-bearing and they're not
-# aggregable into a single resolution edit. Filtering them OUT of Recommended
-# actions keeps each finding visible in exactly ONE section.
+# These finding IDs are filtered OUT of Recommended actions because their
+# parent/child framing does not aggregate cleanly into a single action item.
+# Prose mismatches render in the "Sub-workflow boundaries" section; rename
+# diagnostics remain emitted for JSON/raw consumers but intentionally stay
+# silent in agent-facing text.
 #
 # Without the filter, post-Stage-0 the priority-50 entries in
 # ``warning_catalog.RECOMMENDED_ACTION_PRIORITY`` would surface them in BOTH
 # sections — that's the same duplication smell Stage 0 exists to remove
-# (latent today on lyrics-generator because no rename findings fire, but
-# would re-appear the moment a workflow has divergent prose labels).
+# (latent today on simple workflows, but would re-appear the moment a workflow
+# has divergent boundary labels).
 #
 # Adding new cross-workflow alignment IDs (per DD#29 catalog growth review)
 # extends this constant in lockstep.
@@ -48,10 +49,11 @@ _CROSS_WORKFLOW_ALIGNMENT_IDS: frozenset[str] = frozenset({
 
 
 def is_cross_workflow_alignment(diag: Diagnostic) -> bool:
-    """Return True when the diagnostic belongs in the Sub-workflow boundaries section.
+    """Return True when the diagnostic is cross-workflow alignment metadata.
 
-    Used by ``_render_cross_workflow`` (include) and both action-view builders
-    (exclude). Single source of truth for the renderer-side dispatch.
+    Used by action-view builders to exclude alignment metadata from
+    Recommended actions. Text rendering currently includes prose mismatches
+    and suppresses rename diagnostics.
     """
     return diag.id in _CROSS_WORKFLOW_ALIGNMENT_IDS
 
@@ -220,54 +222,22 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
     return actions
 
 
-# ---------------------------------------------------------------------------
-# Cross-workflow rename grouping (used by both renderer and dry-run nudge)
-# ---------------------------------------------------------------------------
-
-
-def group_renames_by_parent(
-    rename_detections: list[Diagnostic],
-) -> dict[str, dict[tuple[str, str], list[tuple[str, int]]]]:
-    """Source-dedup renames into ``parent → (source_expr, child_input) → consumers``.
-
-    Single-pass grouping that mirrors what ``## Sub-workflow boundaries``
-    renders. Lives here (not in ``render_text``) so the dry-run nudge and
-    other downstream surfaces can derive the same rendered count without
-    re-walking diagnostic context.
-    """
-    by_parent: dict[str, dict[tuple[str, str], list[tuple[str, int]]]] = {}
-    for diag in rename_detections:
-        ctx = diag.context or {}
-        parent = str(ctx.get("parent_workflow", ""))
-        source_expr = str(ctx.get("parent_value_expr", ""))
-        child_input = str(ctx.get("child_input_name", ""))
-        child_wf = str(ctx.get("child_workflow", ""))
-        try:
-            line = int(ctx.get("line_in_parent", 0))
-        except (TypeError, ValueError):
-            line = 0
-        groups = by_parent.setdefault(parent, {})
-        groups.setdefault((source_expr, child_input), []).append((child_wf, line))
-    return by_parent
-
-
 def count_rendered_findings(warnings: list[Diagnostic]) -> tuple[int, int]:
     """Return ``(recommended_action_count, cross_workflow_boundary_count)``.
 
     Section-mapped counts that surface in ``pflow analyze-cache`` text output
-    after Cluster A's parent-grouped collapse for renames. Use these on any
-    surface (dry-run nudge, MCP, downstream tooling) that wants the
-    user-facing count rather than ``actionable_opportunities`` (raw
-    diagnostic count, pre-collapse — exposed in JSON for machine consumers).
+    after text-only filtering. Use these on any surface (dry-run nudge, MCP,
+    downstream tooling) that wants the user-facing count rather than
+    ``actionable_opportunities`` (raw diagnostic count, exposed in JSON for
+    machine consumers).
 
-    For lyrics-generator: raw ``actionable_opportunities=19``; this returns
-    ``(2, 5) → 7`` rendered entries.
+    For lyrics-generator-like outputs where rename diagnostics are JSON-only
+    and no prose mismatches exist, this returns ``(2, 0)``: two Recommended
+    actions and zero rendered boundary findings.
     """
     rec_count = len(build_recommended_actions(list(warnings)))
-    rename_detections = [d for d in warnings if d.id == "cache.cross-workflow-rename-detected"]
     prose_mismatches = [d for d in warnings if d.id == "cache.cross-workflow-prose-mismatch"]
-    grouped_rename_count = sum(len(g) for g in group_renames_by_parent(rename_detections).values())
-    return (rec_count, grouped_rename_count + len(prose_mismatches))
+    return (rec_count, len(prose_mismatches))
 
 
 __all__ = [
@@ -275,7 +245,6 @@ __all__ = [
     "build_other_blocking_errors",
     "build_recommended_actions",
     "count_rendered_findings",
-    "group_renames_by_parent",
     "is_cross_workflow_alignment",
     "per_call_row_has_real_data",
 ]

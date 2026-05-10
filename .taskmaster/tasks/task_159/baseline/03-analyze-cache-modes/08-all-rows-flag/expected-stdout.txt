@@ -23,4 +23,5 @@
   translate  anthropic/claude-haiku-4-5     13           —            ?     ?%      —
   tag        anthropic/claude-haiku-4-5     12           —            ?     ?%      —
 
-  Token estimate confidence: projected input tokens: summarize, translate, tag.
+  Token estimate confidence:
+    · Projected input tokens for: summarize, translate, tag.

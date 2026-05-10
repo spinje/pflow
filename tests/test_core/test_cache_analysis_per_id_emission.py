@@ -2634,8 +2634,9 @@ def test_discrepancy_skips_predicted_key_match_when_compile_fails_no_inputs(tmp_
     assert diag.context is not None
     assert diag.context["root_cause"] == "ttl_expiry"
     assert diag.context["predicted_cache_key"] is None
-    # The notes entry surfacing why predicted-key matching was skipped.
-    assert any("predicted-key matching skipped" in n and "weren't supplied" in n for n in result.notes)
+    # The notes entry surfaces why the fidelity check was skipped (Fix 8
+    # follow-up: plain-English wording via ``_format_fidelity_skip_note``).
+    assert any("Cache fidelity check skipped" in n and "weren't supplied" in n for n in result.notes)
 
 
 def test_discrepancy_predicted_label_distinguishes_match_mismatch_and_miss(
@@ -2728,14 +2729,12 @@ def test_predict_cache_keys_catches_schema_validation_error(monkeypatch: pytest.
         _workflow_ir: Any, _params: Any, _memo_cache: Any, workflow_path: str | None
     ) -> tuple[Any, str | None]:
         # Mirror the real shape: scaffold=None + per-workflow error note.
-        # The note text format must match production so the assertion stays
-        # honest (scaffold's own error message uses `<root>` for None paths).
+        # The note text must match production (Fix 8 follow-up: routed through
+        # ``_format_fidelity_skip_note``) so the assertion stays honest.
         label = workflow_path or "<root>"
-        return None, (
-            f"Discrepancy detection: predicted-key matching for {label} "
-            "unavailable (SchemaValidationError); compile failed. Observable-field "
-            "attributions still apply."
-        )
+        from pflow.core.cache_analysis.analyze import _format_fidelity_skip_note
+
+        return None, _format_fidelity_skip_note(label, "workflow failed to compile (SchemaValidationError)")
 
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_build_predict_scaffold", _boom_scaffold)
@@ -2769,7 +2768,8 @@ def test_predict_cache_keys_catches_schema_validation_error(monkeypatch: pytest.
 
     keys, notes = _predict_cache_keys(cw_result, ctx)
     assert keys == {}
-    assert any("predicted-key matching for x.pflow.md unavailable" in n for n in notes)
+    # Fix 8 follow-up: jargon-free framing via ``_format_fidelity_skip_note``.
+    assert any("Cache fidelity check skipped for x.pflow.md" in n for n in notes)
     assert any("SchemaValidationError" in n for n in notes)
     # Sanity: the real _build_predict_scaffold's catch list still includes
     # SchemaValidationError. Drop it from the production except tuple and this
@@ -2784,7 +2784,7 @@ def test_predict_cache_keys_catches_schema_validation_error(monkeypatch: pytest.
     assert scaffold is None
     assert note is not None
     assert "bad.pflow.md" in note
-    assert "compile failed" in note
+    assert "failed to compile" in note
 
 
 def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Path) -> None:
@@ -2836,7 +2836,9 @@ def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Pat
         memo_cache=_Stub(),
     )
     # Per-workflow compile-failure note appended (compile fails before any node).
-    assert any("predicted-key matching for bad.pflow.md unavailable" in n for n in result.notes)
+    # Fix 8 follow-up: jargon-free framing via ``_format_fidelity_skip_note``.
+    assert any("Cache fidelity check skipped for bad.pflow.md" in n for n in result.notes)
+    assert any("failed to compile" in n for n in result.notes)
     # Observable-only attribution still fires (chunk_skipped is observable).
     diag = next((d for d in result.warnings if d.id == "cache.discrepancy"), None)
     assert diag is not None
@@ -3440,7 +3442,10 @@ def test_predict_node_cache_key_returns_none_for_unresolvable_node_output_ref() 
     assert skip_reason is not None
     # The per-node skip must name the node so agents can act on it.
     assert "x.pflow.md.review" in skip_reason
-    assert "template resolution failed" in skip_reason
+    # Fix 8 follow-up: plain-English framing via ``_format_fidelity_skip_note``.
+    assert "Cache fidelity check skipped for x.pflow.md.review" in skip_reason
+    assert "template reference couldn't be resolved" in skip_reason
+    assert "depends on a runtime value" in skip_reason
 
 
 def test_predict_cache_keys_byte_identical_to_runtime(

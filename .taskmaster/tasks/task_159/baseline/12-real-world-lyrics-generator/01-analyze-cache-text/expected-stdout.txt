@@ -10,7 +10,7 @@
 
   Cost per run:                unavailable
 
-  2 recommended actions + 5 cross-workflow boundary findings
+  2 recommended actions
 
   Cost data unavailable: no model resolved for LLM nodes (set settings.default_model or add per-node `- model:`).
 
@@ -41,35 +41,6 @@
      → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
      → See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern.
 
-## Sub-workflow boundaries (5, covering 17 underlying renames)
-
-  Prompt-cache hits need byte-exact matches across boundaries. Each
-  finding below is a name or prose mismatch between a parent workflow
-  and its child sub-workflow that blocks one. Fix at the source once
-  to align every listed consumer.
-
-  In song-creator:
-
-    `creative-direction.response` → `creative_direction`
-        used by 7 children at lines 97, 124, 239:
-        chorus-chooser, review-emotional-architecture, review-ai-tells,
-        review-cliche, review-genre, review-accuracy, review-rhyme
-
-    `song-architecture.response` → `song_architecture`
-        used by 4 children at lines 124, 239:
-        review-narrative, review-imagery, review-genre, review-rhyme
-
-    `write-lyrics.response` → `lyrics`
-        used by 4 children at line 124:
-        review-emotional-architecture, review-narrative, review-imagery,
-        review-stranger-summary
-
-    `concept_brief` → `creative_brief`
-        used by chorus-chooser (line 97)
-
-    `song-architecture.response` → `architecture`
-        used by chorus-chooser (line 97)
-
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
     · cached_now: tokens that went through cache this run.
@@ -92,7 +63,8 @@
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>          ?           —            ?     ?%      —  opaque-prompt
 
-  Token estimate confidence: projected input tokens: write-lyrics, song-architecture, rewrite-emotional, rewrite-craft, generate-suno-prompt, creative-direction, easter-eggs, generate-chorus-options.
+  Token estimate confidence:
+    · Projected input tokens for: write-lyrics, song-architecture, rewrite-emotional, rewrite-craft, generate-suno-prompt, creative-direction, easter-eggs, generate-chorus-options.
 
 ## Per-child analyze-cache commands
 

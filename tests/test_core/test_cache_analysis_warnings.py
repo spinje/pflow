@@ -215,6 +215,51 @@ def test_make_diagnostic_below_min_tokens_unknown_evidence_kind_fallback(caplog:
     assert "unknown evidence_kind" in caplog.text
 
 
+def test_make_diagnostic_sub_workflow_cache_undeclared_pluralizes_node_phrase() -> None:
+    """``node_count==1`` renders ``1 LLM node``; ``node_count>=2`` renders ``N LLM nodes``.
+
+    The lyrics-generator capture surfaces both cases: rec #1 has 2 consumers,
+    recs #4-25 have 1 consumer each. Without pluralization, recs #4-25 render
+    "1 LLM nodes there" — a typo-feeling glitch repeated 19 times in one
+    output. The fix routes node_count through a ``nodes_phrase`` computed
+    field in make_diagnostic dispatch.
+
+    Mutation contract: flip the ``== 1`` check or drop the dispatch line in
+    warning_catalog.py → both branches of this test fail.
+    """
+    base_kwargs = {
+        "parent_workflow": "parent.pflow.md",
+        "child_workflow": "child.pflow.md",
+        "child_workflow_basename": "child.pflow.md",
+        "parent_value_expr": "concept",
+        "child_input_name": "concept",
+        "parent_node_id": "call-child",
+        "line_in_parent": 42,
+        "affected_workflow": "child.pflow.md",
+        "savings_usd": None,
+        "below_threshold_clause": "",
+        "cleanup_hint_clause": "",
+    }
+    singular = make_diagnostic(
+        "cache.sub-workflow-cache-undeclared",
+        node_count=1,
+        child_node_ids_csv="`child-llm-a`",
+        **base_kwargs,
+    )
+    plural = make_diagnostic(
+        "cache.sub-workflow-cache-undeclared",
+        node_count=2,
+        child_node_ids_csv="`child-llm-a`, `child-llm-b`",
+        **base_kwargs,
+    )
+    # Singular renders correctly.
+    assert "is used by 1 LLM node there" in singular.message
+    assert "1 LLM nodes there" not in singular.message
+    # Plural keeps the existing wording — no regression.
+    assert "is used by 2 LLM nodes there" in plural.message
+    assert "2 LLM node there" not in plural.message
+
+
 def test_make_diagnostic_padding_advisory_with_savings() -> None:
     diag = make_diagnostic(
         "cache.padding-advisory",
@@ -516,6 +561,26 @@ def test_sub_workflow_cache_suggestions_use_exact_pflow_syntax() -> None:
     assert "`${shared_doc}`" in diag.suggestions[2]
     assert "`shared_doc` to `prompt_cache:`" in diag.suggestions[3]
     assert "`$shared_doc`" not in diag.suggestions[0]
+
+
+def test_cross_workflow_rename_suggestion_is_informational() -> None:
+    """Rename diagnostics are JSON-only and must not claim cache fidelity risk."""
+    diag = make_diagnostic(
+        "cache.cross-workflow-rename-detected",
+        parent_workflow="parent.pflow.md",
+        child_workflow="child.pflow.md",
+        parent_value_expr="concept_brief",
+        child_input_name="creative_brief",
+        line_in_parent=42,
+        parent_node_id="call-child",
+    )
+
+    assert diag.suggestions == [
+        "This warning is informational. Provider cache hits do not depend on "
+        "variable names; they depend on the exact prose before each cached "
+        "value and the resolved value bytes. Align names only if it improves "
+        "code clarity."
+    ]
 
 
 def _minimal_context_kwargs(warning_id: str) -> dict:
