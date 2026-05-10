@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from pflow.core.diagnostic import Diagnostic, Severity
 
 if TYPE_CHECKING:
-    from .analyze import RecommendedAction
+    from .analyze import PerCallRow, RecommendedAction
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +54,23 @@ def is_cross_workflow_alignment(diag: Diagnostic) -> bool:
     (exclude). Single source of truth for the renderer-side dispatch.
     """
     return diag.id in _CROSS_WORKFLOW_ALIGNMENT_IDS
+
+
+def per_call_row_has_real_data(row: PerCallRow) -> bool:
+    """Per-row visibility check for the per-call cache report.
+
+    A row is data-bearing iff it has a substantive signal to display:
+    trace/memo input evidence, a declared prompt-cache contract, a
+    heterogeneous-model signal, or projected cacheable evidence from a
+    non-unavailable tier. This helper is shared by analyzer notes and text
+    rendering so the "hidden" note cannot drift from actual row visibility.
+    """
+    return (
+        row.data_source in {"trace", "memo"}
+        or bool(row.declared_prompt_cache)
+        or row.model_is_heterogeneous
+        or row.cacheable_data_source != "unavailable"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,4 +274,5 @@ __all__ = [
     "count_rendered_findings",
     "group_renames_by_parent",
     "is_cross_workflow_alignment",
+    "per_call_row_has_real_data",
 ]

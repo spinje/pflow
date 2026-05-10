@@ -238,7 +238,5 @@
       ]
     }
   ],
-  "notes": [
-    "Per-call cache report hidden \u2014 workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections."
-  ]
+  "notes": []
 }

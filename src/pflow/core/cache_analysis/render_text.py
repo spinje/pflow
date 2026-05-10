@@ -1525,33 +1525,9 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> str | None:
 
 
 def _row_has_real_data(row: PerCallRow) -> bool:
-    """Per-row visibility check for the per-call cache report (Option C).
+    from .view_helpers import per_call_row_has_real_data
 
-    A row is real-data-bearing iff it has a substantive signal to display:
-
-    - ``data_source in {"trace", "memo"}`` — input_tokens is actual runtime
-      size (post-substitution); cacheable can be projected from real chunks.
-    - ``declared_prompt_cache`` non-empty — steady-state mode where the row
-      is interesting regardless of memo (the declared subset itself IS the
-      caching contract).
-    - ``model_is_heterogeneous`` (Stage C.1) — the row CARRIES signal even
-      without memo: the model-varies-per-item fact is what the agent needs
-      to see (and the per-call line is the only place that names which node
-      varies in detail). Hiding heterogeneous rows would force the agent to
-      grep the JSON for ``model_is_heterogeneous`` flags.
-
-    Pure-greenfield-no-memo rows that aren't heterogeneous fail all checks:
-    input_tokens is template size with ``${var}`` references counted as
-    ~5-token literals (NOT actual runtime size), and cacheable is
-    unprojectable. Hiding such rows is more honest than rendering misleading
-    numbers.
-    """
-    return (
-        row.data_source in {"trace", "memo"}
-        or bool(row.declared_prompt_cache)
-        or row.model_is_heterogeneous
-        or row.cacheable_data_source != "unavailable"
-    )
+    return per_call_row_has_real_data(row)
 
 
 def _strip_cache_prefix(warning_id: str) -> str:

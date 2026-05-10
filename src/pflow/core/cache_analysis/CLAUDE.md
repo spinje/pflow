@@ -123,7 +123,7 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 ### warning_catalog.py
 
-**Frozen catalog of 21 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
+**Frozen catalog of 22 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
 
 **`Diagnostic.id` is a top-level field, not nested in `context["warning_id"]`.** Mirrors mypy / rustc / ruff / eslint / clippy convention. Identity tuple updated from `(severity, source, node_id, message)` to `(severity, source, node_id, id or message)` — when `id` is set it's the dedup key, falling back to message-keyed dedup when absent (preserves legacy sub-workflow warning dedup byte-for-byte).
 
@@ -265,7 +265,7 @@ Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_
 
 - **`_workflow_short_name` is duplicated** in `analyze.py` and `render_text.py`. Both implement the same basename-strip-`.pflow.md` logic. The duplication is a known follow-up (task 160).
 - **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
-- **Stable warning ID catalog has 21 entries** as of v1: 9 cache IDs from the original spec (the spec's 10th, `cache.opportunities-available`, is the dry-run nudge ID and lives outside the catalog) + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `cache.system-prompts-fragment-cache` + `cache.sub-workflow-cache-undeclared` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
+- **Stable warning ID catalog has 22 entries** as of v1: 9 cache IDs from the original spec (the spec's 10th, `cache.opportunities-available`, is the dry-run nudge ID and lives outside the catalog) + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.prewarm-no-prefix` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-cache-incomplete` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `cache.system-prompts-fragment-cache` + `cache.sub-workflow-cache-undeclared` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
 
 ## Where to add a new feature
 

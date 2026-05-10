@@ -5,7 +5,8 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-21 entries: 14 ``cache.*`` from v1 + ``cache.prompt-body-duplicates-cache`` and
+22 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
+``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
 temperature-mismatch`` (Stage 2 follow-up: catch Anthropic temperature=1.0 +
@@ -271,6 +272,34 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="workflows[path={child_workflow}].inputs[name={child_input_name}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template=_SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE,
+    ),
+    "cache.prompt-cache-incomplete": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        message_template=(
+            "Workflow `{affected_workflow}` declares `## Cache` but {affected_node_count} LLM "
+            "node(s) reference shared cache chunks without declaring them in their own "
+            "`prompt_cache:`. Each affected call sends those chunks uncached, missing the "
+            "0.1x input-cost reuse.\n\n{node_findings_block}{below_threshold_clause}"
+        ),
+        required_context_keys=(
+            ("affected_workflow", str),
+            ("workflow_basename", str),
+            ("affected_node_count", int),
+            ("node_findings_block", str),
+            ("node_findings", list),
+            ("below_threshold_clause", str),
+            ("savings_usd", float),
+        ),
+        suggestions_template=(
+            "Apply both edits together — declaring without cleaning fires `cache.prompt-body-duplicates-cache` ERROR.",
+            "First, remove the listed prompt-body refs (or rewrite to literal text) so the chunks aren't sent twice.",
+            "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order.",
+        ),
+        path_template="workflows[path={affected_workflow}]",
+        nullable_cost_keys=frozenset({"savings_usd"}),
+        headline_template="Prompt-cache incomplete in {workflow_basename} — {affected_node_count} node(s) miss shared chunks",
     ),
     "cache.batch-prewarm-recommended": CacheWarningSpec(
         severity=Severity.WARNING,
@@ -757,6 +786,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     # Tier 1 — actionable opportunities with concrete suggestions agents can apply.
     "cache.shared-context-undeclared": 10,
     "cache.sub-workflow-cache-undeclared": 10,
+    "cache.prompt-cache-incomplete": 11,
     "cache.dynamic-before-static": 10,
     "cache.batch-prewarm-recommended": 10,
     "cache.heterogeneous-models-fragment-cache": 10,

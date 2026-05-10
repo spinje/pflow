@@ -75,6 +75,35 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "below_threshold_clause": "",
             },
         ),
+        "cache.prompt-cache-incomplete": (
+            None,
+            {
+                "affected_workflow": "x.pflow.md",
+                "workflow_basename": "x.pflow.md",
+                "affected_node_count": 2,
+                "node_findings_block": (
+                    "Affected nodes:\n"
+                    "- `draft` (model: anthropic/claude-sonnet-4-5):\n"
+                    "    1. Remove from prompt body: ${concept}\n"
+                    "    2. Set prompt_cache: [concept]"
+                ),
+                "node_findings": [
+                    {
+                        "node_id": "draft",
+                        "missing_chunks": ["concept"],
+                        "missing_chunks_csv": "`concept`",
+                        "corrected_prompt_cache": ["concept"],
+                        "corrected_prompt_cache_inline": "[concept]",
+                        "prompt_body_cleanup": ["concept"],
+                        "prompt_body_cleanup_csv": "${concept}",
+                        "rep_model": "anthropic/claude-sonnet-4-5",
+                        "missing_chunks_tokens": 1500,
+                    }
+                ],
+                "below_threshold_clause": "",
+                "savings_usd": None,
+            },
+        ),
         "cache.batch-prewarm-recommended": (
             "score",
             {
@@ -753,6 +782,37 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.shared-context-undeclared: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.shared-context-undeclared")
+
+    # cache.prompt-cache-incomplete: workflow already declares ## Cache, but
+    # each LLM node's prompt_cache omits a shared chunk it references.
+    partial_declaration_ir: dict[str, Any] = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "prompt_cache": ["a"],
+                "params": {"model": "priced/model", "prompt": "Use ${a} and ${b}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "prompt_cache": ["a"],
+                "params": {"model": "priced/model", "prompt": "Review ${a} and ${b}."},
+            },
+        ],
+    }
+    analysis = analyze(partial_declaration_ir, parameters={"a": "a " * 20, "b": "b " * 20})
+    found = [d for d in analysis.warnings if d.id == "cache.prompt-cache-incomplete"]
+    assert found, f"analyze did not emit cache.prompt-cache-incomplete: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.prompt-cache-incomplete")
 
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 

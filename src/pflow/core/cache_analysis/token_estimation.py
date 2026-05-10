@@ -129,6 +129,9 @@ def estimate_cacheable_tokens(
     workflow_path: str | None,
     prompt: str = "",
     ctx: AnalysisContext | None = None,
+    is_static_batch_trace: bool = False,
+    observed_call_count: int = 1,
+    resolved_chunk_call_count: int = 1,
 ) -> tuple[int | None, str]:
     """Return ``(cacheable_tokens, source)`` using highest-fidelity available data.
 
@@ -137,9 +140,13 @@ def estimate_cacheable_tokens(
     Tier order:
 
     - Tier 1 (``"trace"``): declared subset + trace event with
-      ``cache_creation+cache_read > 0``. Returns the sum.
+      ``cache_creation+cache_read > 0``. Returns the sum. For static-list
+      batch trace rows, the row-level trace event is a cohort aggregate, so
+      the returned value is divided to per-call units at the producer.
     - Tier 2 (``"memo"`` / ``"parameters"``): all chunks resolve to real
-      values via memo or workflow parameters. Returns the sum.
+      values via memo or workflow parameters. Returns the chunk sum multiplied
+      by ``resolved_chunk_call_count`` so repeated non-batch trace rows use
+      the same cohort units as their input tokens.
     - Tier 3 (``"unavailable"``): nothing else is honestly measurable.
       Returns ``(None, "unavailable")``.
 
@@ -163,7 +170,10 @@ def estimate_cacheable_tokens(
         creation = int(trace_event.get("cache_creation_input_tokens") or 0)
         read = int(trace_event.get("cache_read_input_tokens") or 0)
         if creation + read > 0:
-            return (creation + read, "trace")
+            trace_total = creation + read
+            if is_static_batch_trace:
+                trace_total = round(trace_total / max(1, observed_call_count))
+            return (trace_total, "trace")
         # Fall through: declared but didn't fire. Tier 2/3 computes
         # "what was attempted" so cache.below-min-tokens fires correctly.
 
@@ -173,7 +183,14 @@ def estimate_cacheable_tokens(
     # backward compatibility with legacy direct callers.
     chunks = declared_subset or candidate_subset
     if chunks and model and (ctx is not None or memo_cache is not None):
-        total = _sum_resolved_chunk_tokens(chunks, model, memo_cache, workflow_path, ctx=ctx)
+        total = _sum_resolved_chunk_tokens(
+            chunks,
+            model,
+            memo_cache,
+            workflow_path,
+            ctx=ctx,
+            call_count=resolved_chunk_call_count,
+        )
         if total is not None:
             # When the source is exclusively parameters, label accordingly so
             # agents can see WHICH tier produced the projection. Detection is
@@ -194,6 +211,7 @@ def _sum_resolved_chunk_tokens(
     workflow_path: str | None,
     *,
     ctx: AnalysisContext | None = None,
+    call_count: int = 1,
 ) -> int | None:
     """Sum chunk token counts via parameters (preferred) then memo.
 
@@ -205,7 +223,7 @@ def _sum_resolved_chunk_tokens(
         if tokens is None:
             return None
         total += tokens
-    return total
+    return total * max(1, call_count)
 
 
 def _classify_resolution_source(chunks: list[str], ctx: AnalysisContext | None) -> str:

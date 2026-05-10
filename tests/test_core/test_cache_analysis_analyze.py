@@ -115,6 +115,58 @@ def test_summary_reports_static_batch_invocation_estimate() -> None:
     assert summary.dynamic_batch_node_count == 0
 
 
+def test_summary_static_batch_input_and_cacheable_totals_are_cohort() -> None:
+    rows = [
+        PerCallRow(
+            node_path="batch-llm",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=True,
+            batch_size_estimated=4,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=60,
+            cache_ratio_pct=60,
+            data_source="trace",
+            declared_prompt_cache=["context"],
+        )
+    ]
+
+    summary = _build_summary(rows, warnings=[], ttl="5m")
+
+    assert summary.total_input_tokens_estimated == 400
+    assert summary.total_cacheable_tokens_estimated == 240
+
+
+def test_analyze_no_run_data_note_suppressed_when_parameter_backed_cacheable_present() -> None:
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Draft from ${context}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Review ${context}."},
+            },
+        ],
+    }
+
+    result = analyze(
+        workflow_ir,
+        parameters={"context": "stable " * 20},
+        workflow_path="x.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    assert any(row.cacheable_data_source == "parameters" for row in result.per_call)
+    assert not any("Per-call cache report hidden" in note for note in result.notes)
+
+
 def test_summary_reports_unknown_invocations_when_batch_size_is_dynamic() -> None:
     rows = [
         PerCallRow(
@@ -4965,6 +5017,157 @@ def test_batch_prefix_projection_does_not_fire_for_non_batch_repeated_call_nodes
     # cache opportunities for nodes whose static-prefix detection mechanism
     # isn't yet implemented.
     assert row.cacheable_data_source != "batch_prefix"
+
+
+def test_tier2_chunk_cacheable_multiplies_for_repeated_non_batch_trace_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2 chunk estimates use cohort units when trace input is cohort.
+
+    Mutation contract: force ``resolved_chunk_call_count`` to always return 1;
+    this test fails because the repeated non-batch row falls back to the
+    per-call chunk size while ``input_tokens_estimated`` remains cohort-summed.
+    """
+    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 123 if ref == "context" else None)
+
+    workflow_path = str(tmp_path / "repeated-non-batch.pflow.md")
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "judge",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Judge ${context}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${context}."},
+            },
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[
+            _llm_trace_event("judge", model="anthropic/claude-haiku-4-5", input_tokens=1_000),
+            _llm_trace_event("judge", model="anthropic/claude-haiku-4-5", input_tokens=1_000),
+            _llm_trace_event("judge", model="anthropic/claude-haiku-4-5", input_tokens=1_000),
+            _llm_trace_event("judge", model="anthropic/claude-haiku-4-5", input_tokens=1_000),
+        ],
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"context": "stable"},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    row = next(row for row in result.per_call if row.node_path == "judge")
+    assert row.is_batch is False
+    assert row.observed_call_count == 4
+    assert row.input_tokens_estimated == 4_000
+    assert row.cacheable_data_source == "parameters"
+    assert row.cacheable_tokens_estimated == 492
+
+
+def test_tier2_chunk_cacheable_single_call_remains_per_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 123 if ref == "context" else None)
+
+    workflow_path = str(tmp_path / "single-non-batch.pflow.md")
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "judge",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Judge ${context}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${context}."},
+            },
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[_llm_trace_event("judge", model="anthropic/claude-haiku-4-5", input_tokens=1_000)],
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"context": "stable"},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    row = next(row for row in result.per_call if row.node_path == "judge")
+    assert row.observed_call_count == 1
+    assert row.cacheable_data_source == "parameters"
+    assert row.cacheable_tokens_estimated == 123
+
+
+def test_tier2_chunk_cacheable_unresolved_repeated_row_stays_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda _ref, **_kwargs: None)
+
+    workflow_path = str(tmp_path / "unresolved-repeated.pflow.md")
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "judge",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Judge ${context}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${context}."},
+            },
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[
+            _llm_trace_event("judge", model="anthropic/claude-haiku-4-5", input_tokens=1_000),
+            _llm_trace_event("judge", model="anthropic/claude-haiku-4-5", input_tokens=1_000),
+        ],
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"context": "stable"},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    row = next(row for row in result.per_call if row.node_path == "judge")
+    assert row.observed_call_count == 2
+    assert row.cacheable_data_source == "unavailable"
+    assert row.cacheable_tokens_estimated is None
 
 
 def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> None:

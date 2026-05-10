@@ -227,6 +227,7 @@ Matching prose labels, exact model, and prefix ordering can help incidental prov
 | `cache.invalid-on-non-llm` | error | `prompt_cache:` or `prewarm:` on a non-LLM node |
 | `cache.shared-context-undeclared` | info | analyzer found shared context not in any `## Cache` |
 | `cache.sub-workflow-cache-undeclared` | info | child workflow reuses an input but lacks its own `## Cache` chunk |
+| `cache.prompt-cache-incomplete` | info | workflow has `## Cache`, but a node omits shared chunks from `prompt_cache:` |
 | `cache.batch-prewarm-recommended` | warning | batch ≥5% cacheable, no explicit `prewarm:` |
 | `cache.dynamic-before-static` | warning | `${var}` precedes the cacheable prefix in a prompt |
 | `cache.padding-advisory` | info | extending `prompt_cache:` would unlock prefix hits |

@@ -478,6 +478,7 @@ async def analyze_cache(
       - cache.unused-chunk
       - cache.shared-context-undeclared
       - cache.sub-workflow-cache-undeclared
+      - cache.prompt-cache-incomplete
       - cache.batch-prewarm-recommended
       - cache.dynamic-before-static
       - cache.padding-advisory

@@ -44,7 +44,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 21 entries (20 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 22 entries (21 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -64,10 +64,13 @@ def test_catalog_size_matches_v1_inventory() -> None:
       divergent ``system:`` strings fragment cross-node cache sharing)
     - ``cache.sub-workflow-cache-undeclared`` (Task 159 Stage 2 follow-up:
       child workflows need their own cache declarations)
+    - ``cache.prompt-cache-incomplete`` (Task 159 polish: partial per-node
+      `prompt_cache:` declarations inside workflows that already declare
+      `## Cache`)
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 21
+    assert len(CACHE_WARNING_CATALOG) == 22
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -547,6 +550,32 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "child_node_ids_csv": "`child-llm-a`, `child-llm-b`",
             "below_threshold_clause": "",
         },
+        "cache.prompt-cache-incomplete": {
+            "affected_workflow": "x.pflow.md",
+            "workflow_basename": "x.pflow.md",
+            "affected_node_count": 1,
+            "node_findings_block": (
+                "Affected nodes:\n"
+                "- `draft` (model: anthropic/claude-sonnet-4-5):\n"
+                "    1. Remove from prompt body: ${concept}\n"
+                "    2. Set prompt_cache: [concept]"
+            ),
+            "node_findings": [
+                {
+                    "node_id": "draft",
+                    "missing_chunks": ["concept"],
+                    "missing_chunks_csv": "`concept`",
+                    "corrected_prompt_cache": ["concept"],
+                    "corrected_prompt_cache_inline": "[concept]",
+                    "prompt_body_cleanup": ["concept"],
+                    "prompt_body_cleanup_csv": "${concept}",
+                    "rep_model": "anthropic/claude-sonnet-4-5",
+                    "missing_chunks_tokens": 1500,
+                }
+            ],
+            "below_threshold_clause": "",
+            "savings_usd": None,
+        },
         "cache.batch-prewarm-recommended": {
             "node_id": "score",
             "affected_workflow": "x.pflow.md",
@@ -710,6 +739,46 @@ def test_every_id_round_trips_through_make_diagnostic(warning_id: str) -> None:
     diag = make_diagnostic(warning_id, node_id=node_id, **kwargs)
     assert isinstance(diag, Diagnostic)
     assert diag.id == warning_id
+
+
+@pytest.mark.parametrize(
+    "warning_id",
+    [
+        "cache.sub-workflow-cache-undeclared",
+        "cache.cross-workflow-rename-detected",
+        "cache.cross-workflow-prose-mismatch",
+        "cache.consolidate-to-root-recommended",
+        "cache.prompt-cache-incomplete",
+    ],
+)
+def test_workflow_level_same_id_diagnostics_would_collapse_under_generic_dedup(warning_id: str) -> None:
+    """Document the N4 trust boundary for workflow-level cache advisories.
+
+    ``Diagnostic.__hash__`` ignores context and keys id-bearing diagnostics by
+    ``(severity, source, node_id, id)``. These workflow-level advisories use
+    ``node_id=None`` and encode workflow identity in context, so a generic
+    dedup pass would erase later workflows. Analyzer warning lists therefore
+    intentionally remain undeduped until the diagnostic identity is extended.
+    """
+    first = _minimal_context_kwargs(warning_id)
+    second = dict(first)
+    if "affected_workflow" in second:
+        second["affected_workflow"] = "other.pflow.md"
+    if "workflow_basename" in second:
+        second["workflow_basename"] = "other.pflow.md"
+    if "parent_workflow" in second:
+        second["parent_workflow"] = "other-parent.pflow.md"
+    if "child_workflow" in second:
+        second["child_workflow"] = "other-child.pflow.md"
+    if "child_workflow_basename" in second:
+        second["child_workflow_basename"] = "other-child.pflow.md"
+
+    first_diag = make_diagnostic(warning_id, **first)
+    second_diag = make_diagnostic(warning_id, **second)
+
+    assert first_diag.context != second_diag.context
+    assert len([first_diag, second_diag]) == 2
+    assert deduplicate_diagnostics([first_diag, second_diag]) == [first_diag]
 
 
 # ---------------------------------------------------------------------------

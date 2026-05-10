@@ -10620,3 +10620,172 @@ Known limitations carried forward (not fixed this round):
 - Tier 2 chunk-resolution path (`_sum_resolved_chunk_tokens`) returns
   per-call cacheable while `input_tokens` is cohort. Same shape as the
   select-chorus case; same mitigation strategy.
+
+## 2026-05-10 — Task 159 — partial-declaration detector interrupted handoff
+
+User interrupted implementation and requested an exact continuation state.
+This entry documents the current worktree state for the next agent.
+
+Implemented since the previous entry:
+
+- **Pass A1 visibility fix.** Added shared
+  `per_call_row_has_real_data(row)` in `view_helpers.py`; `render_text.py`
+  and the analyzer's hidden-report note now use the same predicate. The
+  note is suppressed when parameter-backed cacheable evidence exists and
+  retained for true no-data greenfield cases.
+- **Pass A2 static-list batch divisor fix.** `_build_per_call_row` now
+  recognizes static-list batch trace rows and normalizes trace
+  `input_tokens`, `output_tokens`, and Tier 1 trace cacheable tokens to
+  per-call units. Summary totals multiply normalized row values by the
+  effective row invocation count, preserving cohort totals. Dynamic batch
+  rows, non-batch repeated rows, and conditional dispatch rows are intended
+  to remain unchanged except for the explicit observed-count divisor case.
+- **Pass B partial declaration detector.** Added
+  `cache.prompt-cache-incomplete` as a workflow-level warning emitted once
+  per workflow and grouped by node. The detector compares LLM prompt
+  template root references against declared shared-cache names, estimates
+  missing chunk tokens, suppresses findings that overlap
+  consolidate-to-root advisories, includes cleanup-first suggestions, and
+  drops savings text when the missing declaration is below provider
+  minimum-cache thresholds.
+- **Catalog/docs/test surface updates.** Updated warning catalog priority,
+  cache-analysis CLAUDE warning count/list, MCP execution-tool guidance,
+  pflow guide caching warning table, catalog-count tests, per-ID kwargs
+  coverage, and added a new baseline case:
+  `04-warning-catalog/21-cache.prompt-cache-incomplete/`.
+
+Tests and verification already run:
+
+- Focused Pass A tests: 7 passed.
+- Focused Pass B/per-ID subset: 19 passed, 90 deselected.
+- Broader cache-analysis focused suite:
+  `tests/test_core/test_cache_analysis_token_estimation.py`,
+  `test_cache_analysis_cost_estimation.py`, `test_cache_analysis_renderers.py`,
+  `test_cache_analysis_analyze.py`, `test_cache_analysis_per_id_emission.py`,
+  `test_cache_analysis_per_id_coverage.py`, and
+  `test_cache_analysis_warnings.py`: 522 passed.
+- Baseline harness with sandbox `uv` shim:
+  `PATH="/private/tmp/pflow-uv-shim:$PATH" .taskmaster/tasks/task_159/baseline/verify.sh`
+  returned 66 passed, 0 drifted, 0 harness errors.
+- Latest post-refactor quality checks:
+  `ruff check` clean on touched cache-analysis/docs/test files,
+  `ruff format --check` clean, and
+  `mypy src/pflow/core/cache_analysis` clean.
+
+Trust boundary / continuation notes:
+
+- The final minor refactors for ruff complexity split helpers in
+  `analyze.py` (`_resolve_effective_row_model` and partial-detector helper
+  extraction). They are intended to be behavior-preserving, but the 522-test
+  cache-analysis suite and baseline verify were not rerun after those final
+  refactors. Rerun both before finalizing.
+- Mutation contracts were added for the new public behavior, but they have
+  not been manually audited after the final helper split. Next agent should
+  inspect whether the tests genuinely fail for the intended regressions
+  before claiming mutation coverage.
+- Baselines were regenerated after the new detector and visibility changes.
+  Eight existing baseline stdout files drifted for expected reasons plus the
+  new warning-catalog case was added. Verify with the sandbox shim, not
+  system `uv`, because direct baseline runs in Codex sandbox can produce
+  unrelated Homebrew `uv` panics.
+- Current intended next steps: rerun the 522-test cache-analysis suite,
+  rerun baseline verify with the shim, inspect `git diff` for accidental
+  broad churn, then run the widest practical sandbox-safe test/check command
+  before finalizing.
+
+## 2026-05-10 — Task 159 — partial-declaration detector completion review
+
+Continuation pass reviewed the staged implementation against
+`partial-declaration-detector-plan.md` and the interrupted handoff. The staged
+code already implemented Pass A1, Pass A2, and Pass B at the planned integration
+points: shared row-visibility predicate, static-list batch trace token divisor
+for input/output/Tier-1 cacheable, cohort-aware summary aggregation, the
+workflow-level `cache.prompt-cache-incomplete` detector, catalog/docs updates,
+and the new baseline case.
+
+One plan gap was fixed: B6's N4 dedup-risk lock was missing. Added
+`test_workflow_level_same_id_diagnostics_would_collapse_under_generic_dedup`,
+parametrized across the five workflow-level same-id cache advisories. This does
+not solve the deferred hash design issue; it documents why analyzer warning
+lists must remain undeduped until diagnostic identity includes workflow scope.
+
+Key review findings:
+
+- The partial detector reuses the canonical template scanner and
+  `cache_overlap.compute_overlaps()` path for cleanup hints. Direct-IR
+  `name != var` remains a detection-only edge case; overlap cleanup follows
+  the existing parser invariant that cache names are paths.
+- The static-list batch divisor is correctly gated to trace-backed static
+  batches; dynamic batches and non-batch repeated rows stay on the previous
+  cohort semantics.
+- No additional plan steps were skipped. The only deviation was adding the
+  missing dedup-risk test before final verification because the plan explicitly
+  called it out and the staged test set did not cover it.
+
+Verification after the final test addition:
+
+- Focused cache-analysis suite:
+  `tests/test_core/test_cache_analysis_token_estimation.py`,
+  `test_cache_analysis_cost_estimation.py`, `test_cache_analysis_renderers.py`,
+  `test_cache_analysis_analyze.py`, `test_cache_analysis_per_id_emission.py`,
+  `test_cache_analysis_per_id_coverage.py`, and
+  `test_cache_analysis_warnings.py`: 527 passed.
+- Baseline harness with sandbox shim:
+  `PATH="/private/tmp/pflow-uv-shim:$PATH" .taskmaster/tasks/task_159/baseline/verify.sh`
+  returned 66 passed, 0 drifted, 0 harness errors.
+- Quality checks: `ruff check` clean on touched source/docs/tests,
+  `ruff format --check` clean on touched source/docs/tests,
+  `mypy src/pflow/core/cache_analysis` clean, and `git diff --check` clean.
+- Near-full sandbox suite:
+  `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
+  returned 6536 passed, 1 skipped.
+
+Trust boundary:
+
+- The inherited staged changes remain staged. The continuation edits
+  (`tests/test_core/test_cache_analysis_warnings.py` dedup-risk test and this
+  progress-log entry) are intentionally unstaged because no `git add` was
+  requested.
+
+## 2026-05-10 — Task 159 — Tier 2 repeated non-batch row unit fix
+
+Implemented the small correctness follow-up discussed after reviewing the
+Gemini lyrics-generator baseline: Tier 2 resolved chunk estimates now multiply
+by observed call count for repeated **non-batch** trace rows, so `could_cache`
+uses the same cohort units as trace `input_tokens_estimated`.
+
+Scope and rationale:
+
+- Added `resolved_chunk_call_count` to
+  `token_estimation.estimate_cacheable_tokens()` and threaded it from
+  `_build_per_call_row`.
+- The multiplier is `observed_call_count` only when `is_batch` is false.
+  Static-list batch rows keep the Pass A2 per-call normalization; dynamic batch
+  rows remain governed by the existing batch-prefix path where safe.
+- `None` remains honest-unmeasurable: unresolved chunks still return
+  unavailable rather than zero.
+- This intentionally does **not** solve the larger static-prefix gap for
+  `select-chorus`; it only fixes the Tier 2 unit mismatch. The Gemini canary
+  moves `select-chorus` `could_cache` from `41` to `164`, not to the much
+  larger prefix opportunity.
+
+Tests added:
+
+- Repeated non-batch trace row with parameter-resolved chunks multiplies
+  per-call chunk tokens by observed call count.
+- Single-call row stays unchanged.
+- Repeated row with unresolved chunks stays unavailable.
+
+Verification:
+
+- New tests: 3 passed.
+- `tests/test_core/test_cache_analysis_analyze.py`: 149 passed.
+- Focused cache-analysis suite: 530 passed.
+- Baseline harness with sandbox shim: 66 passed, 0 drifted, 0 harness errors
+  after regenerating `10-live-recordings/05-gemini-lyrics-generator`.
+- Quality checks: touched-file `ruff check`, touched-file
+  `ruff format --check`, `mypy src/pflow/core/cache_analysis`, and
+  `git diff --check` clean.
+- Near-full sandbox suite:
+  `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
+  returned 6539 passed, 1 skipped.

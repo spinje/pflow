@@ -56,7 +56,7 @@
     "total_llm_nodes_estimated": 25,
     "total_llm_invocations_estimated": null,
     "dynamic_batch_node_count": 3,
-    "total_input_tokens_estimated": 38418,
+    "total_input_tokens_estimated": 38442,
     "total_cacheable_tokens_estimated": 0,
     "models_in_use": [],
     "ir_default_model": null,

@@ -76,6 +76,7 @@ from .token_estimation import (
     estimate_output_tokens,
     estimate_tokens,
 )
+from .view_helpers import per_call_row_has_real_data
 from .warning_catalog import CACHE_WARNING_CATALOG, make_diagnostic
 
 logger = logging.getLogger(__name__)
@@ -330,6 +331,17 @@ class TraceExecutionIndex:
     workflows_with_trace: set[str | None]
     current_cost_by_workflow: dict[str | None, float | None]
     trace_loaded: bool = False
+
+
+@dataclass(frozen=True)
+class _PartialDeclarationFinding:
+    node_id: str
+    declared_chunks: tuple[str, ...]
+    missing_chunks: tuple[str, ...]
+    corrected_prompt_cache: tuple[str, ...]
+    prompt_body_cleanup: tuple[str, ...]
+    missing_chunks_tokens: int | None
+    rep_model: str
 
 
 @dataclass(frozen=True)
@@ -647,21 +659,20 @@ def analyze(
     # empty so agents understand the absence is intentional. The renderer uses
     # the same predicate (``_row_has_real_data``) to decide visibility; we
     # mirror it here at analyze-time so the note appears in JSON too.
-    if per_call_rows and not any(_row_has_real_data_in_analyze(r) for r in per_call_rows):
+    if per_call_rows and not any(per_call_row_has_real_data(r) for r in per_call_rows):
         notes.append(
             "Per-call cache report hidden — workflow has no run data yet. "
             "Run once, then re-run analyze-cache for real per-node token "
             "estimates and cacheable projections."
         )
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
-    warnings.extend(
-        _consolidate_to_root_advisories(
-            workflow_ir=workflow_ir,
-            rows_by_node=rows_by_node,
-            declared_chunks=declared_chunks,
-            ctx=ctx,
-        )
+    consolidate_root_diags = _consolidate_to_root_advisories(
+        workflow_ir=workflow_ir,
+        rows_by_node=rows_by_node,
+        declared_chunks=declared_chunks,
+        ctx=ctx,
     )
+    warnings.extend(consolidate_root_diags)
     warnings.extend(
         _detect_model_cache_fragmentation(
             workflow_ir=workflow_ir,
@@ -679,6 +690,15 @@ def analyze(
         )
     )
     warnings.extend(_run_full_validation(workflow_ir, workflow_path=lookup_path))
+    rows_by_node_path = {(row.workflow_path, row.node_path): row for row in per_call_rows}
+    warnings.extend(
+        _emit_partial_declaration_findings(
+            cw_result=cw_result,
+            rows_by_node_path=rows_by_node_path,
+            ctx=ctx,
+            consolidate_root_diags=consolidate_root_diags,
+        )
+    )
 
     # --- Cross-workflow walker ------------------------------------------------
     # Stage 0: walker now returns (graph_info, findings). Findings flow into
@@ -1462,22 +1482,9 @@ def _build_per_call_row(
     memo_cache = ctx.memo_cache
     node_id = str(node.get("id", "?"))
     explicit = node.get("params", {}).get("model") or node.get("model")
-    model_is_heterogeneous = isinstance(explicit, str) and "${" in explicit
     observed_models = tuple(sorted({str(call.get("model")) for call in trace_llm_calls if call.get("model")}))
     observed_call_count = len(trace_llm_calls)
-    # Effective model resolution. Trace truth wins when present and
-    # unambiguous, because pricing, tokenization, thresholds, and rendering
-    # all need the model that actually ran. IR-declared heterogeneous models
-    # stay heterogeneous; trace-only multi-observed rows remain unpriced and
-    # render as <varies> without broadening model_is_heterogeneous semantics.
-    if model_is_heterogeneous or len(observed_models) > 1:
-        model = ""
-    elif len(observed_models) == 1:
-        model = observed_models[0]
-    elif explicit:
-        model = str(explicit)
-    else:
-        model = get_default_workflow_model() or ""
+    model, model_is_heterogeneous = _resolve_effective_row_model(explicit, observed_models)
     prompt = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt, str):
         prompt = str(prompt) if prompt is not None else ""
@@ -1508,6 +1515,18 @@ def _build_per_call_row(
         declared_subset=declared_subset,
         ctx=ctx,
     )
+    is_static_batch_trace = _is_static_batch_trace_row(
+        is_batch=is_batch,
+        batch_size=batch_size,
+        observed_call_count=observed_call_count,
+        source=source,
+    )
+    if is_static_batch_trace:
+        input_tokens, output_tokens = _divide_static_batch_trace_tokens(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            observed_call_count=observed_call_count,
+        )
 
     # Tiered cacheable estimation (mirrors ``estimate_tokens`` /
     # ``estimate_output_tokens``). Trace beats memo/parameters; honest
@@ -1525,6 +1544,12 @@ def _build_per_call_row(
         workflow_path=workflow_path,
         prompt=resolved_prompt,
         ctx=ctx,
+        is_static_batch_trace=is_static_batch_trace,
+        observed_call_count=observed_call_count,
+        resolved_chunk_call_count=_resolved_chunk_call_count(
+            is_batch=is_batch,
+            observed_call_count=observed_call_count,
+        ),
     )
     cacheable_tokens, cacheable_source = _prefer_batch_prefix_cacheable_tokens(
         node=node,
@@ -1598,6 +1623,65 @@ def _build_per_call_row(
         observed_models=observed_models,
         observed_call_count=observed_call_count,
     )
+
+
+def _resolve_effective_row_model(explicit: Any, observed_models: tuple[str, ...]) -> tuple[str, bool]:
+    """Return ``(model, model_is_heterogeneous)`` for one per-call row."""
+    # Trace truth wins when present and unambiguous, because pricing,
+    # tokenization, thresholds, and rendering all need the model that actually
+    # ran. IR-declared heterogeneous models stay heterogeneous; trace-only
+    # multi-observed rows remain unpriced and render as <varies> without
+    # broadening model_is_heterogeneous semantics.
+    model_is_heterogeneous = isinstance(explicit, str) and "${" in explicit
+    if model_is_heterogeneous or len(observed_models) > 1:
+        return "", model_is_heterogeneous
+    if len(observed_models) == 1:
+        return observed_models[0], model_is_heterogeneous
+    if explicit:
+        return str(explicit), model_is_heterogeneous
+    return get_default_workflow_model() or "", model_is_heterogeneous
+
+
+def _is_static_batch_trace_row(
+    *,
+    is_batch: bool,
+    batch_size: int | None,
+    observed_call_count: int,
+    source: str,
+) -> bool:
+    return is_batch and batch_size is not None and observed_call_count >= 2 and source == "trace"
+
+
+def _divide_static_batch_trace_tokens(
+    *,
+    input_tokens: int,
+    output_tokens: int | None,
+    observed_call_count: int,
+) -> tuple[int, int | None]:
+    """Normalize static-list batch trace cohort sums to per-call row units."""
+    # Static-list batch trace rows arrive from _aggregate_trace_llm_calls as
+    # cohort sums over observed events. Cost helpers later multiply static
+    # batches by batch_size_estimated, so row fields must be normalized here.
+    # Python round() uses bankers rounding; exact reconstruction is less
+    # important than avoiding floor bias on odd token totals.
+    divisor = max(1, observed_call_count)
+    divided_output = None if output_tokens is None else round(output_tokens / divisor)
+    return round(input_tokens / divisor), divided_output
+
+
+def _resolved_chunk_call_count(*, is_batch: bool, observed_call_count: int) -> int:
+    """Return the Tier 2 chunk multiplier for row-unit consistency.
+
+    Non-batch repeated trace rows arrive with cohort input tokens from
+    ``_aggregate_trace_llm_calls``. Resolved chunk estimates are per-call by
+    construction, so multiply them to cohort units. Batch rows keep existing
+    semantics: static-list batch rows are normalized to per-call units, and
+    dynamic batch opportunities are covered by batch-prefix projection where
+    safe.
+    """
+    if is_batch:
+        return 1
+    return max(1, observed_call_count)
 
 
 def _estimate_row_tokens(
@@ -1777,16 +1861,6 @@ def _build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[
         if value is not None:
             shared[root] = value
     return shared
-
-
-def _row_has_real_data_in_analyze(row: PerCallRow) -> bool:
-    """Mirror of ``render_text._row_has_real_data`` for analyze-time decisions.
-
-    Kept as a private duplicate (analyze.py shouldn't depend on render_text.py)
-    that MUST stay byte-equivalent — see ``render_text._row_has_real_data``
-    for contract documentation.
-    """
-    return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache) or row.model_is_heterogeneous
 
 
 def _per_node_warnings(
@@ -2387,6 +2461,58 @@ def _collect_llm_template_references(workflow_ir: dict[str, Any]) -> tuple[dict[
     return ref_to_nodes, first_seen
 
 
+def _collect_llm_template_root_references(
+    workflow_ir: dict[str, Any],
+    var_to_name: dict[str, str],
+) -> dict[str, list[str]]:
+    """Return ``cache_item_name -> node_ids`` for LLM prompt references.
+
+    Sibling of ``_collect_llm_template_references``: the existing helper
+    preserves literal refs for token pricing; this helper buckets by the cache
+    item whose ``var`` is the longest prefix of each operand. Batch-scoped refs
+    are filtered to match validator overlap behavior.
+    """
+    refs_by_name: dict[str, list[str]] = {}
+    vars_ = tuple(var_to_name.keys())
+    for node in workflow_ir.get("nodes", []) or []:
+        if not isinstance(node, dict) or node.get("type") != "llm":
+            continue
+        node_id = node.get("id")
+        prompt = node.get("params", {}).get("prompt", "")
+        if not node_id or not isinstance(prompt, str):
+            continue
+        batch_aliases = _batch_aliases(node)
+        seen_names: set[str] = set()
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                if _is_batch_scoped_ref(operand, batch_aliases):
+                    continue
+                matched_var = _longest_var_prefix_match(operand, vars_)
+                if matched_var is None:
+                    continue
+                name = var_to_name[matched_var]
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+                refs_by_name.setdefault(name, []).append(str(node_id))
+    return refs_by_name
+
+
+def _longest_var_prefix_match(operand: str, vars_: Iterable[str]) -> str | None:
+    """Return the longest cache var matching ``operand`` by root/sub-path prefix."""
+    if not operand:
+        return None
+    best: str | None = None
+    for var in vars_:
+        if not isinstance(var, str) or not var:
+            continue
+        if (operand == var or operand.startswith(f"{var}.") or operand.startswith(f"{var}[")) and (
+            best is None or len(var) > len(best)
+        ):
+            best = var
+    return best
+
+
 def _template_root_segment(ref: str) -> str:
     """Return the first segment of a template path.
 
@@ -2967,6 +3093,335 @@ def _compute_prompt_body_cleanup(
         if overlaps:
             cleanup[node_id] = sorted({o.body_ref for o in overlaps})
     return cleanup
+
+
+def _prompt_body_cleanup_for_node(
+    node: dict[str, Any],
+    corrected_prompt_cache: tuple[str, ...],
+    cache_item_names: set[str],
+) -> tuple[str, ...]:
+    """Return prompt-body refs that overlap the corrected cache declaration."""
+    from pflow.core.cache_overlap import compute_overlaps
+
+    prompt_text = node.get("params", {}).get("prompt", "") or ""
+    if not isinstance(prompt_text, str):
+        return ()
+    overlaps = compute_overlaps(
+        prompt_text=prompt_text,
+        prompt_cache=list(corrected_prompt_cache),
+        cache_item_names=cache_item_names,
+        batch_aliases=_batch_aliases(node),
+    )
+    return tuple(sorted({overlap.body_ref for overlap in overlaps}))
+
+
+def _detect_partial_prompt_cache_declarations(
+    workflow_ir: dict[str, Any],
+    workflow_path: str | None,
+    ctx: AnalysisContext,
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
+) -> list[_PartialDeclarationFinding]:
+    """Find LLM nodes that reference shared cache chunks they do not declare."""
+    items = _cache_items(workflow_ir)
+    if not items:
+        return []
+    name_order = [str(item["name"]) for item in items]
+    var_to_name = _cache_item_var_to_name(items)
+    if not var_to_name:
+        return []
+
+    refs_by_name = _collect_llm_template_root_references(workflow_ir, var_to_name)
+    cache_item_names = set(name_order)
+    findings: list[_PartialDeclarationFinding] = []
+    for node in workflow_ir.get("nodes", []) or []:
+        finding = _partial_declaration_finding_for_node(
+            node=node,
+            name_order=name_order,
+            var_to_name=var_to_name,
+            refs_by_name=refs_by_name,
+            cache_item_names=cache_item_names,
+            workflow_path=workflow_path,
+            ctx=ctx,
+            rows_by_node_path=rows_by_node_path,
+        )
+        if finding is not None:
+            findings.append(finding)
+    return findings
+
+
+def _cache_item_var_to_name(items: list[dict[str, Any]]) -> dict[str, str]:
+    var_to_name: dict[str, str] = {}
+    for item in items:
+        name = item.get("name")
+        if not isinstance(name, str):
+            continue
+        var = item.get("var", name)
+        if isinstance(var, str) and var:
+            var_to_name[var] = name
+    return var_to_name
+
+
+def _partial_declaration_finding_for_node(
+    *,
+    node: dict[str, Any],
+    name_order: list[str],
+    var_to_name: dict[str, str],
+    refs_by_name: dict[str, list[str]],
+    cache_item_names: set[str],
+    workflow_path: str | None,
+    ctx: AnalysisContext,
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
+) -> _PartialDeclarationFinding | None:
+    if not isinstance(node, dict) or node.get("type") != "llm":
+        return None
+    node_id_raw = node.get("id")
+    declared_raw = node.get("prompt_cache")
+    prompt = node.get("params", {}).get("prompt", "")
+    if not node_id_raw or not isinstance(declared_raw, list) or not isinstance(prompt, str):
+        return None
+    node_id = str(node_id_raw)
+    declared = tuple(str(chunk) for chunk in declared_raw)
+    node_refs = _node_referenced_cache_names(node, var_to_name)
+    missing = _missing_shared_cache_names(name_order, node_refs, set(declared), refs_by_name)
+    if not missing:
+        return None
+
+    corrected_set = set(declared) | set(missing)
+    corrected = tuple(name for name in name_order if name in corrected_set)
+    rep_model = _representative_model_for_node(node_id, workflow_path, rows_by_node_path)
+    missing_tokens = _estimate_missing_chunks_tokens(
+        missing,
+        var_to_name,
+        model=rep_model,
+        ctx=ctx,
+        workflow_path=workflow_path,
+    )
+    return _PartialDeclarationFinding(
+        node_id=node_id,
+        declared_chunks=declared,
+        missing_chunks=tuple(missing),
+        corrected_prompt_cache=corrected,
+        prompt_body_cleanup=_prompt_body_cleanup_for_node(node, corrected, cache_item_names),
+        missing_chunks_tokens=missing_tokens,
+        rep_model=rep_model,
+    )
+
+
+def _node_referenced_cache_names(node: dict[str, Any], var_to_name: dict[str, str]) -> set[str]:
+    prompt = node.get("params", {}).get("prompt", "")
+    if not isinstance(prompt, str):
+        return set()
+    node_refs: set[str] = set()
+    batch_aliases = _batch_aliases(node)
+    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            if _is_batch_scoped_ref(operand, batch_aliases):
+                continue
+            matched_var = _longest_var_prefix_match(operand, var_to_name.keys())
+            if matched_var is not None:
+                node_refs.add(var_to_name[matched_var])
+    return node_refs
+
+
+def _missing_shared_cache_names(
+    name_order: list[str],
+    node_refs: set[str],
+    declared: set[str],
+    refs_by_name: dict[str, list[str]],
+) -> list[str]:
+    missing: list[str] = []
+    for name in name_order:
+        if name not in node_refs or name in declared:
+            continue
+        if len(set(refs_by_name.get(name, []))) >= 2:
+            missing.append(name)
+    return missing
+
+
+def _estimate_missing_chunks_tokens(
+    missing_names: list[str],
+    var_to_name: dict[str, str],
+    *,
+    model: str,
+    ctx: AnalysisContext,
+    workflow_path: str | None,
+) -> int | None:
+    """Sum per-call token estimates for missing cache items' values."""
+    if not model:
+        return None
+    name_to_var = {name: var for var, name in var_to_name.items()}
+    total = 0
+    for name in missing_names:
+        var = name_to_var.get(name)
+        if var is None:
+            return None
+        tokens = _estimate_ref_tokens(
+            var,
+            model=model,
+            memo_cache=ctx.memo_cache,
+            workflow_path=workflow_path,
+            ctx=ctx,
+        )
+        if tokens is None:
+            return None
+        total += tokens
+    return total
+
+
+def _representative_model_for_node(
+    node_id: str,
+    workflow_path: str | None,
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
+) -> str:
+    row = rows_by_node_path.get((workflow_path, node_id))
+    return row.model if row is not None and row.model else ""
+
+
+def _emit_partial_declaration_findings(
+    *,
+    cw_result: Any,
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
+    ctx: AnalysisContext,
+    consolidate_root_diags: list[Diagnostic],
+) -> list[Diagnostic]:
+    """Emit one grouped ``cache.prompt-cache-incomplete`` diagnostic per workflow."""
+    consolidate_roots = _extract_consolidate_roots(consolidate_root_diags)
+    diagnostics: list[Diagnostic] = []
+    for workflow_path, workflow_ir in getattr(cw_result, "irs_by_workflow", {}).items():
+        wf_ctx = AnalysisContext.build(
+            workflow_ir=workflow_ir,
+            parameters=ctx.parameters_for_workflow(workflow_path),
+            memo_cache=ctx.memo_cache,
+            trace_data=ctx.trace_data,
+            workflow_path=workflow_path,
+            base_path=ctx.base_path,
+            parameters_by_workflow=ctx.parameters_by_workflow,
+        )
+        findings = _detect_partial_prompt_cache_declarations(
+            workflow_ir,
+            workflow_path,
+            wf_ctx,
+            rows_by_node_path,
+        )
+        findings = [
+            finding
+            for finding in findings
+            if not _finding_chunks_overlap_with_consolidate(finding.missing_chunks, consolidate_roots, workflow_path)
+        ]
+        if not findings:
+            continue
+        below_threshold = any(_is_below_min_cache_tokens(f.missing_chunks_tokens, f.rep_model) for f in findings)
+        below_threshold_clause = _below_threshold_clause_for_findings(findings) if below_threshold else ""
+        savings_usd = (
+            None
+            if below_threshold
+            else _project_partial_declaration_savings(findings, rows_by_node_path, workflow_path)
+        )
+        workflow_label = workflow_path or "<inline>"
+        diagnostics.append(
+            make_diagnostic(
+                "cache.prompt-cache-incomplete",
+                node_id=None,
+                affected_workflow=workflow_label,
+                workflow_basename=Path(workflow_label).name if workflow_path else "<inline>",
+                affected_node_count=len(findings),
+                node_findings=_node_findings_context(findings),
+                node_findings_block=_format_node_findings_block(findings),
+                below_threshold_clause=below_threshold_clause,
+                savings_usd=savings_usd,
+            )
+        )
+    return diagnostics
+
+
+def _extract_consolidate_roots(diagnostics: list[Diagnostic]) -> dict[str | None, set[str]]:
+    roots: dict[str | None, set[str]] = {}
+    for diag in diagnostics:
+        if diag.id != "cache.consolidate-to-root-recommended":
+            continue
+        ctx = diag.context or {}
+        workflow = ctx.get("affected_workflow")
+        root = ctx.get("root")
+        if isinstance(root, str):
+            roots.setdefault(str(workflow) if isinstance(workflow, str) else None, set()).add(root)
+    return roots
+
+
+def _finding_chunks_overlap_with_consolidate(
+    missing_chunks: tuple[str, ...],
+    consolidate_roots: dict[str | None, set[str]],
+    workflow_path: str | None,
+) -> bool:
+    roots = consolidate_roots.get(workflow_path, set())
+    return any(_template_root_segment(chunk) in roots for chunk in missing_chunks)
+
+
+def _is_below_min_cache_tokens(tokens: int | None, model: str) -> bool:
+    return tokens is not None and bool(model) and tokens < get_min_cache_tokens(model)
+
+
+def _below_threshold_clause_for_findings(findings: list[_PartialDeclarationFinding]) -> str:
+    entries: list[str] = []
+    for finding in findings:
+        tokens = finding.missing_chunks_tokens
+        if not _is_below_min_cache_tokens(tokens, finding.rep_model) or tokens is None:
+            continue
+        threshold = get_min_cache_tokens(finding.rep_model)
+        entries.append(f"{finding.node_id}: ~{tokens:,} tokens below {finding.rep_model}'s {threshold:,}-token minimum")
+    if not entries:
+        return ""
+    return "\nNote: " + "; ".join(entries) + " — caching won't fire until rendered content reaches the minimum."
+
+
+def _project_partial_declaration_savings(
+    findings: list[_PartialDeclarationFinding],
+    rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
+    workflow_path: str | None,
+) -> float | None:
+    total = 0.0
+    for finding in findings:
+        if finding.missing_chunks_tokens is None:
+            return None
+        row = rows_by_node_path.get((workflow_path, finding.node_id))
+        if row is None or not row.model:
+            return None
+        calls = row.observed_call_count or _row_invocation_count(row)
+        savings = _estimate_token_savings_usd(row.model, finding.missing_chunks_tokens, calls)
+        if savings is None:
+            return None
+        total += savings
+    return total
+
+
+def _node_findings_context(findings: list[_PartialDeclarationFinding]) -> list[dict[str, Any]]:
+    return [
+        {
+            "node_id": finding.node_id,
+            "missing_chunks": list(finding.missing_chunks),
+            "missing_chunks_csv": ", ".join(f"`{chunk}`" for chunk in finding.missing_chunks),
+            "corrected_prompt_cache": list(finding.corrected_prompt_cache),
+            "corrected_prompt_cache_inline": "[" + ", ".join(finding.corrected_prompt_cache) + "]",
+            "prompt_body_cleanup": list(finding.prompt_body_cleanup),
+            "prompt_body_cleanup_csv": ", ".join(f"${{{ref}}}" for ref in finding.prompt_body_cleanup) or "(none)",
+            "rep_model": finding.rep_model,
+            "missing_chunks_tokens": finding.missing_chunks_tokens,
+        }
+        for finding in findings
+    ]
+
+
+def _format_node_findings_block(findings: list[_PartialDeclarationFinding]) -> str:
+    lines = ["Affected nodes:"]
+    for finding in findings:
+        cleanup = ", ".join(f"${{{ref}}}" for ref in finding.prompt_body_cleanup) or "(none)"
+        corrected = "[" + ", ".join(finding.corrected_prompt_cache) + "]"
+        model = finding.rep_model or "<unresolved>"
+        lines.extend([
+            f"- `{finding.node_id}` (model: {model}):",
+            f"    1. Remove from prompt body: {cleanup}",
+            f"    2. Set prompt_cache: {corrected}",
+        ])
+    return "\n".join(lines)
 
 
 def _is_batch_scoped_ref(ref: str, aliases: set[str]) -> bool:
@@ -4440,6 +4895,13 @@ def _format_workflow_run_command(workflow_path: str | None, inputs: Mapping[str,
     return " ".join(parts)
 
 
+def _row_invocation_count(row: PerCallRow) -> int:
+    """Return the workflow-level call count represented by one row."""
+    if row.is_batch and row.batch_size_estimated is not None:
+        return max(1, row.batch_size_estimated)
+    return 1
+
+
 def _build_summary(
     rows: list[PerCallRow],
     warnings: list[Diagnostic],
@@ -4487,13 +4949,13 @@ def _build_summary(
     root_count = sum(1 for row in rows if root_workflow_path is None or row.workflow_path == root_workflow_path)
     sub_workflow_count = total_nodes - root_count
     total_invocations, dynamic_batch_count = _estimate_total_invocations(rows)
-    total_input = sum(r.input_tokens_estimated for r in rows)
+    total_input = sum(r.input_tokens_estimated * _row_invocation_count(r) for r in rows)
     # ``cacheable_tokens_estimated`` may be ``None`` for greenfield rows
     # without memo (Option C — projection unmeasurable). Sum only the known
     # values; None rows contribute 0 to the aggregate (honest "we don't know"
     # rather than fabricated 0). Top-level summary still useful — agents
     # see the partial signal from steady-state / post-run rows.
-    total_cacheable = sum(r.cacheable_tokens_estimated or 0 for r in rows)
+    total_cacheable = sum((r.cacheable_tokens_estimated or 0) * _row_invocation_count(r) for r in rows)
     trace_coverage, executed_count, unexecuted_nodes = _trace_coverage_for_rows(rows, ctx)
     models_observed_in_trace = tuple(sorted({model for row in rows for model in row.observed_models}))
     # Stage C.1: heterogeneous rows have ``model = ""`` AND

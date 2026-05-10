@@ -24,15 +24,22 @@ These tests lock:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
-from pflow.core.cache_analysis.analyze import PerCallRow, ProjectionExclusion
+import pflow.core.cache_analysis.cost_estimation as cost_estimation_module
+from pflow.core.cache_analysis.analyze import PerCallRow, ProjectionExclusion, analyze
 from pflow.core.cache_analysis.cost_estimation import (
+    ModelPricing,
     _pricing_from_dict,
     compute_actually_paid,
     compute_projections,
     get_model_pricing,
 )
+from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 
 def _row(
@@ -58,6 +65,33 @@ def _row(
     )
 
 
+def _write_trace(tmp_path: Path, workflow_path: str, nodes: list[dict[str, Any]]) -> Path:
+    path = tmp_path / "trace.json"
+    path.write_text(
+        json.dumps(TraceFixtureBuilder().trace(workflow_path=workflow_path, nodes=nodes)),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _static_batch_ir(*, declared: bool = False, batch_items: list[str] | None = None) -> dict:
+    node: dict = {
+        "id": "batch",
+        "type": "llm",
+        "model": "test/model",
+        "batch": {"items": batch_items or ["a", "b", "c"], "as": "item"},
+        "params": {"prompt": "${context} ${item}"},
+    }
+    cache = None
+    if declared:
+        cache = {"items": [{"name": "context", "var": "context", "prose_before": ""}]}
+        node["prompt_cache"] = ["context"]
+    workflow = {"nodes": [node]}
+    if cache is not None:
+        workflow["cache"] = cache
+    return workflow
+
+
 # ---------------------------------------------------------------------------
 # Pricing lookup
 # ---------------------------------------------------------------------------
@@ -69,6 +103,263 @@ def test_pricing_lookup_returns_model_pricing_for_known_model() -> None:
     assert pricing.input_rate > 0
     assert pricing.output_rate > pricing.input_rate  # Output is always pricier than input.
     assert pricing.cache_read_rate < pricing.input_rate  # Reads are cheaper than full input.
+
+
+def test_static_batch_no_cache_cost_matches_per_call_trace_total(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cost_estimation_module,
+        "get_model_pricing",
+        lambda _model: ModelPricing(
+            input_rate=3e-6,
+            output_rate=0.0,
+            cache_creation_rate=3.75e-6,
+            cache_read_rate=0.3e-6,
+        ),
+    )
+    workflow_path = str(tmp_path / "static-batch.pflow.md")
+    builder = TraceFixtureBuilder()
+    trace_path = _write_trace(
+        tmp_path,
+        workflow_path,
+        [
+            builder.llm_event("batch", model="test/model", input_tokens=1000, output_tokens=0),
+            builder.llm_event("batch", model="test/model", input_tokens=1000, output_tokens=0),
+            builder.llm_event("batch", model="test/model", input_tokens=1000, output_tokens=0),
+        ],
+    )
+
+    analysis = analyze(
+        _static_batch_ir(),
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    row = analysis.per_call[0]
+    projections = compute_projections(
+        list(analysis.per_call),
+        output_tokens_by_node={(row.workflow_path, row.node_path): row.output_tokens_estimated},
+    )
+
+    assert row.input_tokens_estimated == 1000
+    assert projections.no_cache_hypothetical_usd is not None
+    assert projections.no_cache_hypothetical_usd < 0.010
+    assert projections.no_cache_hypothetical_usd == pytest.approx(0.009)
+
+
+def test_static_batch_no_cache_cost_includes_output_tokens_once_per_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cost_estimation_module,
+        "get_model_pricing",
+        lambda _model: ModelPricing(
+            input_rate=1e-6,
+            output_rate=10e-6,
+            cache_creation_rate=1.25e-6,
+            cache_read_rate=0.1e-6,
+        ),
+    )
+    workflow_path = str(tmp_path / "static-batch-output.pflow.md")
+    builder = TraceFixtureBuilder()
+    trace_path = _write_trace(
+        tmp_path,
+        workflow_path,
+        [
+            builder.llm_event("batch", model="test/model", input_tokens=1000, output_tokens=500),
+            builder.llm_event("batch", model="test/model", input_tokens=1000, output_tokens=500),
+            builder.llm_event("batch", model="test/model", input_tokens=1000, output_tokens=500),
+        ],
+    )
+
+    analysis = analyze(
+        _static_batch_ir(),
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    row = analysis.per_call[0]
+    projections = compute_projections(
+        list(analysis.per_call),
+        output_tokens_by_node={(row.workflow_path, row.node_path): row.output_tokens_estimated},
+    )
+
+    assert row.output_tokens_estimated == 500
+    assert projections.no_cache_hypothetical_usd == pytest.approx(0.018)
+
+
+def test_static_batch_rerun_cost_with_cache_uses_per_call_trace_cacheable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cost_estimation_module,
+        "get_model_pricing",
+        lambda _model: ModelPricing(
+            input_rate=1e-6,
+            output_rate=0.0,
+            cache_creation_rate=1.25e-6,
+            cache_read_rate=0.1e-6,
+        ),
+    )
+    workflow_path = str(tmp_path / "static-batch-cache.pflow.md")
+    builder = TraceFixtureBuilder()
+    trace_path = _write_trace(
+        tmp_path,
+        workflow_path,
+        [
+            builder.llm_event(
+                "batch",
+                model="test/model",
+                input_tokens=1000,
+                output_tokens=0,
+                cache_creation_input_tokens=300,
+            ),
+            builder.llm_event(
+                "batch",
+                model="test/model",
+                input_tokens=1000,
+                output_tokens=0,
+                cache_read_input_tokens=300,
+            ),
+            builder.llm_event(
+                "batch",
+                model="test/model",
+                input_tokens=1000,
+                output_tokens=0,
+                cache_read_input_tokens=300,
+            ),
+        ],
+    )
+
+    analysis = analyze(
+        _static_batch_ir(declared=True),
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    row = analysis.per_call[0]
+    projections = compute_projections(
+        list(analysis.per_call),
+        output_tokens_by_node={(row.workflow_path, row.node_path): row.output_tokens_estimated},
+    )
+
+    assert row.cacheable_tokens_estimated == 300
+    assert projections.rerun_within_ttl_hypothetical_usd == pytest.approx(0.00219)
+
+
+def test_dynamic_batch_no_cache_cost_unchanged_after_static_batch_fix(tmp_path: Path) -> None:
+    workflow_path = str(tmp_path / "dynamic-batch.pflow.md")
+    workflow_ir = {
+        "inputs": {"items": {"type": "array"}},
+        "nodes": [
+            {
+                "id": "batch",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "${item}"},
+            }
+        ],
+    }
+    builder = TraceFixtureBuilder()
+    trace_path = _write_trace(
+        tmp_path,
+        workflow_path,
+        [
+            builder.llm_event("batch", input_tokens=1000, output_tokens=10),
+            builder.llm_event("batch", input_tokens=1000, output_tokens=10),
+            builder.llm_event("batch", input_tokens=1000, output_tokens=10),
+        ],
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        parameters={"items": ["a", "b", "c"]},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = analysis.per_call[0]
+    assert row.batch_size_estimated is None
+    assert row.input_tokens_estimated == 3000
+    assert row.output_tokens_estimated == 30
+
+
+def test_non_batch_repeated_calls_remain_cohort_rows(tmp_path: Path) -> None:
+    workflow_path = str(tmp_path / "parent-repeated.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "select",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Select"},
+            }
+        ],
+    }
+    builder = TraceFixtureBuilder()
+    trace_path = _write_trace(
+        tmp_path,
+        workflow_path,
+        [
+            builder.llm_event("select", input_tokens=1000, output_tokens=20),
+            builder.llm_event("select", input_tokens=1000, output_tokens=20),
+            builder.llm_event("select", input_tokens=1000, output_tokens=20),
+            builder.llm_event("select", input_tokens=1000, output_tokens=20),
+        ],
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = analysis.per_call[0]
+    assert row.is_batch is False
+    assert row.observed_call_count == 4
+    assert row.input_tokens_estimated == 4000
+    assert row.output_tokens_estimated == 80
+
+
+def test_static_batch_conditional_dispatch_divisor_uses_observed_count(tmp_path: Path) -> None:
+    workflow_path = str(tmp_path / "static-batch-conditional.pflow.md")
+    builder = TraceFixtureBuilder()
+    trace_path = _write_trace(
+        tmp_path,
+        workflow_path,
+        [
+            builder.llm_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=1000, output_tokens=100),
+            builder.llm_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=1000, output_tokens=100),
+            builder.llm_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=1000, output_tokens=100),
+        ],
+    )
+
+    analysis = analyze(
+        _static_batch_ir(batch_items=["a", "b", "c", "d"]),
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = analysis.per_call[0]
+    assert row.batch_size_estimated == 4
+    assert row.observed_call_count == 3
+    assert row.input_tokens_estimated == 1000
+    assert row.output_tokens_estimated == 100
+    assert analysis.summary.total_input_tokens_estimated == 4000
 
 
 def test_pricing_lookup_falls_back_to_bare_name() -> None:

@@ -18,7 +18,10 @@ import pytest
 
 from pflow.core.cache_analysis.analyze import analyze
 from pflow.core.cache_analysis.cost_estimation import ModelPricing
+from pflow.core.cache_analysis.render_text import render_text
+from pflow.core.file_resolver import resolve_file_references
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+from pflow.core.workflow.validator import WorkflowValidator
 
 
 def _iter_llm_events(events: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -4302,3 +4305,321 @@ def test_analyze_cache_surfaces_batch_scoped_reference_in_cache_block() -> None:
         "Batch-scoped reference in ## Cache should surface as error. "
         f"Saw: {[(d.id, d.severity.value, d.message[:60]) for d in result.warnings]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# cache.prompt-cache-incomplete
+# ---------------------------------------------------------------------------
+
+
+def _partial_prompt_cache_workflow(
+    *,
+    prompts: tuple[str, str] = ("Use ${a} and ${b}.", "Reuse ${a} and ${b}."),
+    cache_items: list[dict[str, str]] | None = None,
+    prompt_cache: list[str] | None = None,
+    second_prompt_cache: list[str] | None = None,
+    batch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    first_node: dict[str, Any] = {
+        "id": "one",
+        "type": "llm",
+        "prompt_cache": prompt_cache if prompt_cache is not None else ["a"],
+        "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": prompts[0]},
+    }
+    if batch is not None:
+        first_node["batch"] = batch
+    return {
+        "inputs": {
+            "a": {"type": "string"},
+            "b": {"type": "string"},
+            "concept": {"type": "object"},
+            "items": {"type": "array"},
+        },
+        "cache": {
+            "items": cache_items
+            or [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            first_node,
+            {
+                "id": "two",
+                "type": "llm",
+                "prompt_cache": second_prompt_cache if second_prompt_cache is not None else ["a"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": prompts[1]},
+            },
+        ],
+    }
+
+
+def _partial_diag(workflow_ir: dict[str, Any], **kwargs: Any) -> tuple[Any, Any]:
+    result = analyze(
+        workflow_ir,
+        parameters=kwargs.pop(
+            "parameters",
+            {
+                "a": "alpha " * 20,
+                "b": "bravo " * 20,
+                "concept": {"title": "Title", "body": "Body"},
+            },
+        ),
+        workflow_path=kwargs.pop("workflow_path", "partial.pflow.md"),
+        auto_load_trace=False,
+        memo_cache=None,
+        **kwargs,
+    )
+    return next((d for d in result.warnings if d.id == "cache.prompt-cache-incomplete"), None), result
+
+
+def test_partial_prompt_cache_declaration_emits_per_node_grouped_advisory() -> None:
+    diag, _result = _partial_diag(_partial_prompt_cache_workflow())
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["affected_node_count"] == 2
+    assert diag.context["node_findings"][0]["missing_chunks"] == ["b"]
+    assert "First, remove" in diag.suggestions[1]
+
+
+def test_partial_prompt_cache_groups_multiple_affected_nodes_in_single_diagnostic() -> None:
+    diag, _result = _partial_diag(_partial_prompt_cache_workflow())
+    assert diag is not None
+    assert diag.context is not None
+    assert [item["node_id"] for item in diag.context["node_findings"]] == ["one", "two"]
+
+
+def test_partial_prompt_cache_corrected_list_preserves_declaration_order() -> None:
+    workflow_ir = _partial_prompt_cache_workflow(
+        cache_items=[
+            {"name": "b", "var": "b", "prose_before": "B:\n"},
+            {"name": "a", "var": "a", "prose_before": "A:\n"},
+        ],
+        prompt_cache=["a"],
+        second_prompt_cache=["a"],
+    )
+    diag, _result = _partial_diag(workflow_ir)
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["node_findings"][0]["corrected_prompt_cache"] == ["b", "a"]
+
+
+def test_partial_prompt_cache_matches_var_but_suggests_name_for_diverged_ir() -> None:
+    """Direct-IR-only: parsed .pflow.md locks name == var, but analyzer handles divergence."""
+    workflow_ir = _partial_prompt_cache_workflow(
+        prompts=("Use ${source.value}.", "Reuse ${source.value}."),
+        cache_items=[
+            {"name": "stable-source", "var": "source", "prose_before": "S:\n"},
+            {"name": "declared", "var": "a", "prose_before": "A:\n"},
+        ],
+        prompt_cache=["declared"],
+        second_prompt_cache=["declared"],
+    )
+    diag, _result = _partial_diag(workflow_ir, parameters={"source": {"value": "x " * 20}, "a": "a " * 20})
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["node_findings"][0]["missing_chunks"] == ["stable-source"]
+    assert diag.context["node_findings"][0]["corrected_prompt_cache"] == ["stable-source", "declared"]
+
+
+def test_partial_prompt_cache_root_aware_match_handles_subpath_refs() -> None:
+    workflow_ir = _partial_prompt_cache_workflow(
+        prompts=("Use ${concept.title} and ${a}.", "Reuse ${concept.body} and ${a}."),
+        cache_items=[
+            {"name": "a", "var": "a", "prose_before": "A:\n"},
+            {"name": "concept", "var": "concept", "prose_before": "Concept:\n"},
+        ],
+        prompt_cache=["a"],
+        second_prompt_cache=["a"],
+    )
+    diag, _result = _partial_diag(workflow_ir)
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["node_findings"][0]["missing_chunks"] == ["concept"]
+
+
+def test_partial_prompt_cache_skips_when_only_one_node_references() -> None:
+    workflow_ir = _partial_prompt_cache_workflow(prompts=("Use ${a} and ${b}.", "Only ${a}."))
+    diag, _result = _partial_diag(workflow_ir)
+    assert diag is None
+
+
+def test_partial_prompt_cache_skips_when_no_cache_block() -> None:
+    workflow_ir = _partial_prompt_cache_workflow()
+    workflow_ir.pop("cache")
+    diag, _result = _partial_diag(workflow_ir)
+    assert diag is None
+
+
+def test_partial_prompt_cache_skips_when_batch_scoped_ref_only() -> None:
+    workflow_ir = _partial_prompt_cache_workflow(
+        prompts=("Use ${item.b}.", "Reuse ${item.b}."),
+        cache_items=[
+            {"name": "b", "var": "item.b", "prose_before": "B:\n"},
+            {"name": "a", "var": "a", "prose_before": "A:\n"},
+        ],
+        batch={"items": [{"b": "x"}, {"b": "y"}], "as": "item"},
+    )
+    diag, _result = _partial_diag(workflow_ir)
+    assert diag is None
+
+
+def test_partial_prompt_cache_below_threshold_keeps_advisory_drops_savings() -> None:
+    diag, _result = _partial_diag(_partial_prompt_cache_workflow(), parameters={"a": "a", "b": "b"})
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is None
+    assert "below" in diag.context["below_threshold_clause"]
+
+
+def test_partial_prompt_cache_includes_prompt_body_cleanup_hint() -> None:
+    diag, _result = _partial_diag(_partial_prompt_cache_workflow())
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["node_findings"][0]["prompt_body_cleanup"] == ["a", "b"]
+    assert "Remove from prompt body" in diag.context["node_findings_block"]
+
+
+def test_partial_prompt_cache_cleanup_covers_body_contains_cache_overlap_kind() -> None:
+    workflow_ir = _partial_prompt_cache_workflow(
+        prompts=("Use ${concept} and ${concept.title}.", "Reuse ${concept} and ${concept.title}."),
+        cache_items=[
+            {"name": "a", "var": "a", "prose_before": "A:\n"},
+            {"name": "concept.title", "var": "concept.title", "prose_before": "Title:\n"},
+        ],
+        prompt_cache=["a"],
+        second_prompt_cache=["a"],
+    )
+    diag, _result = _partial_diag(workflow_ir)
+    assert diag is not None
+    assert diag.context is not None
+    assert "concept" in diag.context["node_findings"][0]["prompt_body_cleanup"]
+
+
+def test_partial_prompt_cache_below_threshold_does_not_reduce_rerun_cost() -> None:
+    diag, result = _partial_diag(_partial_prompt_cache_workflow(), parameters={"a": "a", "b": "b"})
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is None
+    assert all(row.cacheable_data_source != "batch_prefix" for row in result.per_call)
+
+
+def test_partial_prompt_cache_validator_round_trip_zero_diagnostics_post_edit() -> None:
+    workflow_ir = _partial_prompt_cache_workflow()
+    diag, _result = _partial_diag(workflow_ir)
+    assert diag is not None
+    for node in workflow_ir["nodes"]:
+        node["prompt_cache"] = ["a", "b"]
+        node["params"]["prompt"] = "Use the cached context."
+    diagnostics = WorkflowValidator.validate(workflow_ir=workflow_ir, extracted_params={})
+    cache_diags = [d for d in diagnostics if d.id and d.id.startswith("cache.")]
+    assert cache_diags == []
+
+
+def test_partial_prompt_cache_heterogeneous_models_per_node_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    def fake_min(model: str) -> int:
+        return 1000 if "sonnet" in model else 10
+
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", fake_min)
+    workflow_ir = _partial_prompt_cache_workflow()
+    workflow_ir["nodes"][1]["params"]["model"] = "anthropic/claude-haiku-4-5"
+    diag, _result = _partial_diag(workflow_ir, parameters={"a": "a " * 200, "b": "b " * 20})
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is None
+    assert "one:" in diag.context["below_threshold_clause"]
+
+
+def test_partial_prompt_cache_node_findings_dict_has_documented_keys() -> None:
+    diag, _result = _partial_diag(_partial_prompt_cache_workflow())
+    assert diag is not None
+    assert diag.context is not None
+    assert set(diag.context["node_findings"][0]) == {
+        "node_id",
+        "missing_chunks",
+        "missing_chunks_csv",
+        "corrected_prompt_cache",
+        "corrected_prompt_cache_inline",
+        "prompt_body_cleanup",
+        "prompt_body_cleanup_csv",
+        "rep_model",
+        "missing_chunks_tokens",
+    }
+
+
+def test_partial_prompt_cache_emits_once_per_workflow_regardless_of_dynamic_batch_item_count() -> None:
+    workflow_ir = _partial_prompt_cache_workflow(batch={"items": "${items}", "as": "row"})
+    diag, result = _partial_diag(workflow_ir, parameters={"a": "a " * 20, "b": "b " * 20, "items": [1, 2, 3]})
+    assert diag is not None
+    assert [d.id for d in result.warnings].count("cache.prompt-cache-incomplete") == 1
+
+
+def test_partial_prompt_cache_external_prompt_md_file_resolved_at_analyzer_time(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("Use ${a} and ${b}.", encoding="utf-8")
+    workflow_ir = _partial_prompt_cache_workflow(prompts=(str(prompt_file), "Reuse ${a} and ${b}."))
+    resolve_file_references(workflow_ir, tmp_path)
+
+    diag, _result = _partial_diag(workflow_ir)
+
+    assert diag is not None
+    assert diag.context is not None
+    assert diag.context["node_findings"][0]["missing_chunks"] == ["b"]
+
+
+def test_partial_prompt_cache_suppressed_when_consolidate_to_root_covers_same_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+
+    def fake_ref_tokens(ref: str, **_kwargs: Any) -> int | None:
+        return 100 if ref == "concept" else 5
+
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", fake_ref_tokens)
+    workflow_ir = _partial_prompt_cache_workflow(
+        prompts=(
+            "Use ${concept.title} and ${concept.body}.",
+            "Reuse ${concept.title} and ${concept.body}.",
+        ),
+        cache_items=[
+            {"name": "concept.title", "var": "concept.title", "prose_before": "Title:\n"},
+            {"name": "concept.body", "var": "concept.body", "prose_before": "Body:\n"},
+        ],
+        prompt_cache=["concept.title"],
+        second_prompt_cache=["concept.title"],
+    )
+
+    diag, result = _partial_diag(workflow_ir)
+
+    assert any(d.id == "cache.consolidate-to-root-recommended" for d in result.warnings)
+    assert diag is None
+
+
+def test_partial_prompt_cache_renderer_handles_many_affected_nodes() -> None:
+    workflow_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "a", "var": "a", "prose_before": "A:\n"},
+                {"name": "b", "var": "b", "prose_before": "B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": f"node-{idx}",
+                "type": "llm",
+                "prompt_cache": ["a"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Use ${a} and ${b}."},
+            }
+            for idx in range(6)
+        ],
+    }
+
+    _diag, result = _partial_diag(workflow_ir)
+    rendered = render_text(result, all_rows=True)
+
+    assert "Prompt-cache incomplete" in rendered
+    assert rendered.count("Set prompt_cache: [a, b]") == 6

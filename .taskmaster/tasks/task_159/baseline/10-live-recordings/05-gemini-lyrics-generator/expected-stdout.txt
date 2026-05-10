@@ -10,10 +10,10 @@
 
   Actually paid:               ~$2.31 (trace)
   Excluded from analysis:      ~$0.27 (generate-chorus-options: model varies per call)
-  Cost without caching:        ~$2.53 (partial)
-  Cost on rerun (within TTL):  ~$2.45 (partial)
-  Actual savings (this run):    saves ~$0.49/run vs no-cache, 19% of no-cache cost
-  Rerun delta (projected):      saves ~$0.09/run on rerun, 3% of no-cache cost
+  Cost without caching:        ~$2.16 (partial)
+  Cost on rerun (within TTL):  ~$2.07 (partial)
+  Actual savings (this run):    saves ~$0.11/run vs no-cache, 5% of no-cache cost
+  Rerun delta (projected):      saves ~$0.09/run on rerun, 4% of no-cache cost
 
   2 recommended actions + 5 cross-workflow boundary findings
 
@@ -78,7 +78,7 @@
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
   score-choruses           gemini/gemini-2.5-flash  158,704           —      144,296    91%    136
-  select-chorus            gemini/gemini-2.5-flash   36,289           —           41     0%      4
+  select-chorus            gemini/gemini-2.5-flash   36,289           —          164     0%      4
 
 ### review-rhyme.pflow.md (called by craft-reviews)
   review                   gemini/gemini-2.5-flash  114,063           —            ?     ?%     20
@@ -95,15 +95,15 @@
   curate-briefs            gemini/gemini-2.5-flash   54,752           —            ?     ?%      4
   evaluate-songs           gemini/gemini-2.5-flash    9,090           —            ?     ?%      1
 
-### concept-chooser.pflow.md (called by choose-concepts)
-  generate-concepts        gemini/gemini-2.5-flash   20,666           —            ?     ?%      4  batch_items=4
-  select-concepts          gemini/gemini-2.5-flash    6,168           —            ?     ?%      1
-
 ### enforce-diversity.pflow.md (called by enforce-diversity)
   assign-diversity         gemini/gemini-2.5-flash   12,208           —            ?     ?%      1
 
+### concept-chooser.pflow.md (called by choose-concepts)
+  select-concepts          gemini/gemini-2.5-flash    6,168           —            ?     ?%      1
+  generate-concepts        gemini/gemini-2.5-flash    5,166           —            ?     ?%      4  batch_items=4
+
 ### analyze-source.pflow.md (called by analyze-sources)
-  analyze                  gemini/gemini-2.5-flash    6,346           —            ?     ?%      6  batch_items=6
+  analyze                  gemini/gemini-2.5-flash    1,058           —            ?     ?%      6  batch_items=6
 
   Hidden: 4 nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows).
 

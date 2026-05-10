@@ -176,7 +176,6 @@
   },
   "warnings": [],
   "notes": [
-    "Suggested-blocks: shared refs were found, but at least one assigned LLM node is below the provider cache threshold under current model/token evidence; no paste-ready provider-cache edit is actionable yet.",
-    "Per-call cache report hidden \u2014 workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections."
+    "Suggested-blocks: shared refs were found, but at least one assigned LLM node is below the provider cache threshold under current model/token evidence; no paste-ready provider-cache edit is actionable yet."
   ]
 }
