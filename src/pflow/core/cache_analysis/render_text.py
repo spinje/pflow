@@ -780,7 +780,7 @@ def _render_action_list(
         # catalog headline (defense-in-depth for non-catalog diagnostics).
         title = _format_action_title(action, show_warning_id=show_warning_id)
         if show_savings:
-            savings = _format_savings_usd(action.estimated_savings_usd)
+            savings = _format_action_savings(action)
             lines.append(f"  {action.rank}. {title}{_pad_savings(title, savings)}{savings}")
         else:
             lines.append(f"  {action.rank}. {title}")
@@ -880,6 +880,17 @@ def _format_savings_usd(value: float | None) -> str:
     if value < 0.01:
         return f"saves ~${value:.4f}/run"
     return f"saves ~${value:.2f}/run"
+
+
+def _format_action_savings(action: RecommendedAction) -> str:
+    if action.warning_id != "cache.batch-prewarm-recommended":
+        return _format_savings_usd(action.estimated_savings_usd)
+    value = action.estimated_savings_usd
+    if value is None or value < 0.0001:
+        return "savings unavailable"
+    if value < 0.01:
+        return f"saves ~${value:.4f}/workflow run"
+    return f"saves ~${value:.2f}/workflow run"
 
 
 def _render_suggested_blocks(analysis: CacheAnalysis) -> str:

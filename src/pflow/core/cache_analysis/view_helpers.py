@@ -133,14 +133,15 @@ def build_recommended_actions(warnings: list[Diagnostic]) -> list[RecommendedAct
 
     Sort key dimensions (lexicographic, all ascending after negation/inversion):
 
-    1. **Severity** (WARNING > INFO) — higher-severity opportunities first.
-    2. **Detection-class priority** (``RECOMMENDED_ACTION_PRIORITY`` in
+    1. **Detection-class priority** (``RECOMMENDED_ACTION_PRIORITY`` in
        ``warning_catalog``) — actionable opportunities ahead of informational
        findings. Resolves the common "all INFO, no savings" case where
        alphabetical tie-break used to bury ``cache.shared-context-undeclared``
        (priority 10) under other findings. See GH #1 / #361 thread.
-    3. **Savings** (when known) — higher dollar impact ranks ahead within a
+    2. **Savings** (when known) — higher dollar impact ranks ahead within a
        priority tier.
+    3. **Severity** (WARNING > INFO) — tie-break for unpriced findings within
+       the same priority class.
     4. **Stable alphabetical** on ``d.id`` — deterministic tie-break.
     """
     eligible = [
@@ -172,7 +173,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
         resolve_headline_for,
     )
 
-    def _key(d: Diagnostic) -> tuple[int, int, float, str]:
+    def _key(d: Diagnostic) -> tuple[int, float, int, str]:
         sev_weight = {Severity.ERROR: 2, Severity.WARNING: 1, Severity.INFO: 0}.get(d.severity, 0)
         priority = RECOMMENDED_ACTION_PRIORITY.get(d.id or "", DEFAULT_RECOMMENDED_ACTION_PRIORITY)
         savings = 0.0
@@ -180,7 +181,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
         savings_value = ctx.get("savings_usd")
         if isinstance(savings_value, (int, float)) and savings_value > 0:
             savings = float(savings_value)
-        return (-sev_weight, priority, -savings, d.id or "")
+        return (priority, -savings, -sev_weight, d.id or "")
 
     sorted_warnings = sorted(eligible, key=_key)
     actions: list[RecommendedAction] = []

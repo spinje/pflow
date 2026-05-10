@@ -15,14 +15,14 @@
   Actual savings (this run):    saves ~$0.11/run vs no-cache, 5% of no-cache cost
   Rerun delta (projected):      saves ~$0.09/run on rerun, 4% of no-cache cost
 
-  2 recommended actions + 5 cross-workflow boundary findings
+  3 recommended actions + 5 cross-workflow boundary findings
 
 ## Blocking errors
 
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
 
-## Recommended actions (2, ordered by impact)
+## Recommended actions (3, ordered by impact)
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
@@ -33,7 +33,13 @@
      → In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
      → Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
 
-  2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
+  2. Batch prewarm not declared — add `- prewarm: true` to score-choruses  saves ~$0.04/workflow run
+     score-choruses in chorus-chooser.pflow.md
+     score-choruses: stable ~1061-token prompt prefix repeats across 136 batch calls. Prewarming writes the prefix once, then lets the remaining calls read it from cache; projected savings are aggregate for the batch, not per item.
+     → Add `- prewarm: true` to score-choruses to opt in.
+     → OR add `- prewarm: false` to score-choruses to opt out explicitly (suppresses this warning).
+
+  3. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
      generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
      → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
@@ -77,7 +83,7 @@
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
-  score-choruses           gemini/gemini-2.5-flash  158,704           —      144,296    91%    136
+  score-choruses           gemini/gemini-2.5-flash  158,704           —      144,296    91%    136  batch-prewarm-recommended
   select-chorus            gemini/gemini-2.5-flash   36,289           —          164     0%      4
 
 ### review-rhyme.pflow.md (called by craft-reviews)

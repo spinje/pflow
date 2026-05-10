@@ -92,17 +92,6 @@
   "recommended_actions": [
     {
       "rank": 1,
-      "warning_id": "cache.unused-chunk",
-      "node_id": null,
-      "estimated_savings_usd": null,
-      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
-      "message": "Cache chunk 'b' is declared in ## Cache but no node references it via prompt_cache:.",
-      "suggestions": [
-        "Remove 'b' from ## Cache, OR reference it from a node's `- prompt_cache: [b]`."
-      ]
-    },
-    {
-      "rank": 2,
       "warning_id": "cache.prompt-cache-incomplete",
       "node_id": null,
       "estimated_savings_usd": 0.0324,
@@ -112,6 +101,17 @@
         "Apply both edits together \u2014 declaring without cleaning fires `cache.prompt-body-duplicates-cache` ERROR.",
         "First, remove the listed prompt-body refs (or rewrite to literal text) so the chunks aren't sent twice.",
         "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order."
+      ]
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.unused-chunk",
+      "node_id": null,
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Cache chunk 'b' is declared in ## Cache but no node references it via prompt_cache:.",
+      "suggestions": [
+        "Remove 'b' from ## Cache, OR reference it from a node's `- prompt_cache: [b]`."
       ]
     }
   ],

@@ -2992,6 +2992,21 @@ def test_recommended_actions_savings_orders_within_priority_tier() -> None:
     assert actions[1].warning_id == "cache.dynamic-before-static"
 
 
+def test_recommended_actions_savings_beats_severity_within_priority_tier() -> None:
+    """The rendered header says ordered by impact; a lower-value WARNING must
+    not outrank a higher-value INFO finding in the same action class.
+    """
+    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+
+    actions = build_recommended_actions([
+        _make_diag("cache.batch-prewarm-recommended", Severity.WARNING, savings_usd=0.04),
+        _make_diag("cache.sub-workflow-cache-undeclared", Severity.INFO, savings_usd=0.20),
+    ])
+
+    assert actions[0].warning_id == "cache.sub-workflow-cache-undeclared"
+    assert actions[1].warning_id == "cache.batch-prewarm-recommended"
+
+
 def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None:
     """An ID not in RECOMMENDED_ACTION_PRIORITY (e.g. a future addition that
     hasn't been added to the dict) gets ``DEFAULT_RECOMMENDED_ACTION_PRIORITY``
@@ -4865,6 +4880,160 @@ def test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch(tmp_pat
     assert row.observed_call_count == 3
 
 
+def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing batch-prefix evidence should become a ranked action.
+
+    Mutation contract: keep ``_batch_prewarm_recommendations`` gated only on
+    ``batch_size_estimated``; this test fails because dynamic ``batch.items:
+    ${items}`` rows have no static size even when trace observed repeated calls.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    model = "anthropic/claude-haiku-4-5"
+    prefix = "Shared rubric:\n" + ("stable context sentence. " * 40)
+    prompt = f"{prefix}\n${{item.dynamic}}"
+    workflow_path = str(tmp_path / "dynamic-batch-prewarm.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "params": {"model": model, "prompt": prompt},
+                "batch": {"items": "${items}", "as": "item"},
+            }
+        ]
+    }
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": model,
+                                    "input_tokens": 1_000,
+                                    "output_tokens": 10,
+                                    "total_tokens": 1_010,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(4)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"items": [{"dynamic": str(index)} for index in range(4)]},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-recommended")
+    assert diag.context is not None
+    assert diag.context["batch_size"] == 4
+    assert diag.context["prefix_tokens_estimated"] == len(f"{prefix}\n".split())
+    assert diag.context["prefix_tokens_cohort_estimated"] == len(f"{prefix}\n".split()) * 4
+
+
+def test_batch_prefix_prewarm_action_respects_explicit_prewarm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+
+    model = "anthropic/claude-haiku-4-5"
+    workflow_path = str(tmp_path / "explicit-prewarm.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "params": {"model": model, "prompt": ("stable " * 40) + "${item.dynamic}"},
+                "batch": {"items": [{"dynamic": "a"}, {"dynamic": "b"}], "as": "item"},
+                "prewarm": True,
+            }
+        ]
+    }
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False, memo_cache=None)
+
+    assert "cache.batch-prewarm-recommended" not in {d.id for d in result.warnings}
+
+
+def test_batch_prefix_prewarm_action_respects_explicit_opt_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+
+    model = "anthropic/claude-haiku-4-5"
+    workflow_path = str(tmp_path / "prewarm-opt-out.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "params": {"model": model, "prompt": ("stable " * 40) + "${item.dynamic}"},
+                "batch": {"items": [{"dynamic": "a"}, {"dynamic": "b"}], "as": "item"},
+                "prewarm": False,
+            }
+        ]
+    }
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False, memo_cache=None)
+
+    assert "cache.batch-prewarm-recommended" not in {d.id for d in result.warnings}
+
+
+def test_batch_prefix_prewarm_action_suppresses_low_call_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+
+    model = "anthropic/claude-haiku-4-5"
+    workflow_path = str(tmp_path / "single-batch-call.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "params": {"model": model, "prompt": ("stable " * 40) + "${item.dynamic}"},
+                "batch": {"items": [{"dynamic": "a"}], "as": "item"},
+            }
+        ]
+    }
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False, memo_cache=None)
+
+    assert "cache.batch-prewarm-recommended" not in {d.id for d in result.warnings}
+
+
 def test_batch_prefix_projection_does_not_ripple_into_rerun_cost_for_undeclared_rows(tmp_path: Path) -> None:
     """Cost-projection isolation: populating ``cacheable_tokens_estimated`` on
     an undeclared row (via the batch-prefix projection) must NOT shrink
@@ -5201,6 +5370,12 @@ def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> 
     assert score_rows, "expected score-choruses row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "batch_prefix" for row in score_rows)
     assert any((row.cacheable_tokens_estimated or 0) > 100_000 for row in score_rows)
+    score_actions = [
+        warning
+        for warning in result.warnings
+        if warning.id == "cache.batch-prewarm-recommended" and warning.node_id == "score-choruses"
+    ]
+    assert score_actions, "expected score-choruses batch-prefix evidence to appear as a recommended action"
 
 
 def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:

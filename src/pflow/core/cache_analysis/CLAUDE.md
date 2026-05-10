@@ -155,7 +155,7 @@ Renderer-side projections. Four exports: `build_blocking_errors(warnings) → li
 
 **`_CROSS_WORKFLOW_ALIGNMENT_IDS` is a frozenset of warning IDs** (`cache.cross-workflow-rename-detected`, `cache.cross-workflow-prose-mismatch`) that render in the "Sub-workflow boundaries" section ONLY — filtered OUT of recommended actions to keep each finding visible in exactly one section. **Adding a new cross-workflow alignment ID requires extending this constant in lockstep.**
 
-**Action-view ranking key** (lexicographic, all ascending after negation/inversion): severity (ERROR only for blocking errors; WARNING > INFO for recommended actions) → detection-class priority (from `RECOMMENDED_ACTION_PRIORITY` in `warning_catalog`) → savings (descending within priority tier) → stable alphabetical on `id`. The detection-class priority resolves the common "all INFO, no savings" case where alphabetical tiebreak used to bury actionable findings.
+**Action-view ranking key** (lexicographic, all ascending after negation/inversion): detection-class priority (from `RECOMMENDED_ACTION_PRIORITY` in `warning_catalog`) → savings (descending within priority tier) → severity (ERROR only for blocking errors; WARNING > INFO as a same-priority/same-savings tie-break for recommended actions) → stable alphabetical on `id`. The detection-class priority resolves the common "all INFO, no savings" case where alphabetical tiebreak used to bury actionable findings; savings before severity keeps the `ordered by impact` header honest when an INFO finding has larger projected savings than a WARNING.
 
 ### padding_advisor.py
 

@@ -2253,8 +2253,9 @@ def test_text_recommended_actions_render_savings_with_adaptive_precision() -> No
     assert savings_unavailable_count >= 2, (
         f"expected ≥2 'savings unavailable' (None + below-display); got {savings_unavailable_count}"
     )
-    # Above-threshold value renders the dollar figure on its rank line.
-    assert "saves ~$0.42/run" in text
+    # Batch prewarm renders the aggregate batch/workflow-run unit explicitly.
+    assert "saves ~$0.42/workflow run" in text
+    assert "saves ~$0.42/run" not in text
     assert "-$0.42/run" not in text
     # Bug D regression: NO "-$0.00/run" placeholder anywhere. (Note: a broad
     # "$0.00" check would false-trigger on "$0.0012" — match the precise

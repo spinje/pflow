@@ -10789,3 +10789,63 @@ Verification:
 - Near-full sandbox suite:
   `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
   returned 6539 passed, 1 skipped.
+
+## 2026-05-10 — Task 159 — prompt-shape recommended-actions planning
+
+Added
+`.taskmaster/tasks/task_159/implementation/fix-plans/prompt-shape-recommended-actions-plan.md`
+to capture the follow-up design: Tier 1 generalizes
+`cache.dynamic-before-static` for local batch dynamic-before-stable-tail
+prompts; Tier 2 promotes high-value existing `batch_prefix` evidence into
+recommended actions; Tier 3 defers repeated non-batch provenance. Created
+GitHub issue https://github.com/spinje/pflow/issues/383 for Tier 3.
+
+## 2026-05-10 — Task 159 — prompt-shape recommended actions implementation
+
+Implemented Tiers 1 and 2 from
+`prompt-shape-recommended-actions-plan.md`.
+
+- `cache.batch-prewarm-recommended` now uses existing `batch_prefix` row
+  evidence and falls back from static `batch_size_estimated` to
+  `observed_call_count`, so dynamic batch rows like lyrics-generator
+  `score-choruses` appear in `## Recommended actions`.
+- `cache.dynamic-before-static` now also covers local batch prompts where the
+  first `${item...}` / `${item[...]}` ref appears before a large literal stable
+  tail. The detector counts literal spans only after the dynamic ref; later
+  `${...}` refs are not counted as stable text. Repeated non-batch prompt-shape
+  detection remains deferred per the plan.
+- Adjusted recommended-action ranking to priority → savings → severity → id.
+  Deviation reason: the new prewarm action surfaced a smaller WARNING above
+  the larger sub-workflow INFO fix in the Gemini canary, contradicting the
+  rendered `ordered by impact` promise. This keeps high-impact actions first
+  without broadening detection.
+
+Key learnings:
+
+- Existing `batch_prefix` evidence should be trusted for action promotion
+  rather than re-gated through the static prompt-scan threshold. The Gemini
+  canary's per-call prefix is below the current static threshold, yet the row
+  already represents the analyzer's accepted repeated-prefix evidence and the
+  user-facing goal is to make that table signal actionable.
+- Literal-span-only tail counting is the right first pass for greenfield
+  prompt-shape advice: it undercounts unresolved stable refs, but avoids
+  telling agents to reorder content based on placeholder text that may be
+  dynamic or unmeasurable.
+
+Verification:
+
+- Focused new/changed tests: 11 passed.
+- Focused cache-analysis suite:
+  `test_cache_analysis_analyze.py`, `test_cache_analysis_renderers.py`,
+  `test_cache_analysis_per_id_emission.py`,
+  `test_cache_analysis_per_id_coverage.py`, and
+  `test_cache_analysis_warnings.py`: 472 passed.
+- Baseline harness with sandbox shim: 66 passed, 0 drifted, 0 harness errors
+  after regenerating the two intentional drifts
+  (`04-warning-catalog/21-cache.prompt-cache-incomplete`,
+  `10-live-recordings/05-gemini-lyrics-generator`).
+- Quality checks: `ruff check`, `ruff format --check`,
+  `mypy src/pflow/core/cache_analysis`, and `git diff --check` clean.
+- Near-full sandbox suite:
+  `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
+  returned 6549 passed, 1 skipped.

@@ -121,6 +121,105 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
     assert "cache.batch-prewarm-recommended" not in {d.id for d in opted_out.warnings}
 
 
+def test_batch_static_tail_after_dynamic_emits_recommended_action() -> None:
+    stable_tail = "rubric " * 20
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "as": "item"},
+                "params": {"prompt": f"${{item.text}}\n{stable_tail}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.dynamic-before-static")
+    assert diag.context is not None
+    assert diag.context["dynamic_ref"] == "item.text"
+    assert diag.context["affected_calls"] == 3
+    assert diag.context["detection_mode"] == "batch_static_tail"
+    rendered = render_text(result, all_rows=True)
+    assert "## Recommended actions" in rendered
+    assert "Dynamic ref blocks caching on score" in rendered
+
+
+def test_batch_static_tail_after_dynamic_matches_alias_bracket_form() -> None:
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [[{"text": "a"}], [{"text": "b"}]], "as": "item"},
+                "params": {"prompt": "${item[0].text}\n" + ("rubric " * 20)},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.dynamic-before-static")
+    assert diag.context is not None
+    assert diag.context["dynamic_ref"] == "item[0].text"
+
+
+def test_batch_static_tail_after_dynamic_suppresses_below_threshold() -> None:
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": "${item.text}\n" + ("rubric " * 5)},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    assert "cache.dynamic-before-static" not in {d.id for d in result.warnings}
+
+
+def test_batch_static_tail_after_dynamic_does_not_count_later_template_refs_as_stable() -> None:
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": "${item.text}\n" + ("small " * 5) + "${item.other}\n" + ("tiny " * 4)},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    assert "cache.dynamic-before-static" not in {d.id for d in result.warnings}
+
+
+def test_dynamic_before_static_not_guessed_for_repeated_non_batch_shape() -> None:
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "select",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "${context}\n" + ("stable judging rubric " * 20)},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    assert "cache.dynamic-before-static" not in {d.id for d in result.warnings}
+
+
 def test_dynamic_before_static_uses_full_path_cache_names() -> None:
     stable_suffix = "rubric " * 50
     workflow_ir = {

@@ -306,9 +306,10 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="cache_analyzer",
         category=CACHE_WARNING_CATEGORY,
         message_template=(
-            "{node_id}: {batch_size}-item batch with ~{prefix_tokens_estimated}-token "
-            "static prefix has no explicit prewarm decision; prewarming would save "
-            "~{savings_pct}% of batch cost"
+            "{node_id}: stable ~{prefix_tokens_estimated}-token prompt prefix repeats "
+            "across {batch_size} batch calls. Prewarming writes the prefix once, "
+            "then lets the remaining calls read it from cache; projected savings "
+            "are aggregate for the batch, not per item."
         ),
         required_context_keys=(
             ("node_id", str),
@@ -318,7 +319,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("savings_usd", float),
         ),
         suggestions_template=(
-            "Add `- prewarm: true` to {node_id} to opt in.{savings_clause}",
+            "Add `- prewarm: true` to {node_id} to opt in.",
             "OR add `- prewarm: false` to {node_id} to opt out explicitly (suppresses this warning).",
         ),
         path_template="nodes[id={node_id}]",
@@ -331,8 +332,8 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         category=CACHE_WARNING_CATEGORY,
         message_template=(
             "{node_id}: dynamic `${{{dynamic_ref}}}` reference at line {dynamic_line} "
-            "of the prompt template precedes ~{cacheable_tokens}-token cacheable "
-            "content; cache won't fire for {affected_calls} calls per run"
+            "appears before ~{cacheable_tokens} stable tokens; move stable instructions "
+            "before dynamic content so prefix caching can fire for {affected_calls} calls per run"
         ),
         required_context_keys=(
             ("node_id", str),

@@ -232,6 +232,16 @@ class RecommendedAction:
 
 
 @dataclass(frozen=True)
+class _PromptStaticTailFinding:
+    dynamic_ref: str
+    dynamic_line: int
+    stable_tail_tokens: int
+    tokens_before_dynamic: int
+    template_refs_after_dynamic: int
+    static_tail_excerpt: str
+
+
+@dataclass(frozen=True)
 class SuggestedBlockChunk:
     name: str
     var: str
@@ -1950,24 +1960,34 @@ def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> lis
     batch = node.get("batch")
     if "prewarm" in node or not isinstance(batch, dict):
         return []
-    batch_size = row.batch_size_estimated
-    if batch_size is None or batch_size < 2:
+    affected_calls = row.batch_size_estimated or row.observed_call_count
+    if affected_calls < 2:
         return []
     prompt = node.get("params", {}).get("prompt", "") or ""
     if not isinstance(prompt, str):
         return []
 
     alias = str(batch.get("as", "item"))
-    match = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)").search(prompt)
-    if match is None or match.start() == 0:
+    uses_existing_prefix_evidence = False
+    prefix_tokens: int | None = None
+    dynamic_tokens: int | None = None
+    if row.cacheable_data_source == "batch_prefix" and row.cacheable_tokens_estimated:
+        uses_existing_prefix_evidence = True
+        prefix_tokens = round(row.cacheable_tokens_estimated / affected_calls)
+        input_tokens_per_call = round(row.input_tokens_estimated / affected_calls)
+        dynamic_tokens = max(0, input_tokens_per_call - prefix_tokens)
+    else:
+        match = _first_batch_scoped_template_ref(prompt, alias)
+        if match is None or match.start() == 0:
+            return []
+        prefix_tokens = estimate_tokens(row.model, prompt[: match.start()])[0]
+        dynamic_tokens = estimate_tokens(row.model, prompt[match.start() :])[0]
+    if not uses_existing_prefix_evidence and prefix_tokens < get_min_cache_tokens(row.model):
         return []
 
-    prefix_tokens = estimate_tokens(row.model, prompt[: match.start()])[0]
-    dynamic_tokens = estimate_tokens(row.model, prompt[match.start() :])[0]
-    if prefix_tokens < get_min_cache_tokens(row.model):
-        return []
-
-    savings_ratio = ((batch_size - 1) * 1.15 * prefix_tokens) / (batch_size * ((1.25 * prefix_tokens) + dynamic_tokens))
+    savings_ratio = ((affected_calls - 1) * 1.15 * prefix_tokens) / (
+        affected_calls * ((1.25 * prefix_tokens) + dynamic_tokens)
+    )
     savings_pct = round(100 * savings_ratio)
     if savings_pct < 5:
         return []
@@ -1977,10 +1997,11 @@ def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> lis
             "cache.batch-prewarm-recommended",
             node_id=row.node_path,
             affected_workflow=row.workflow_path,
-            batch_size=batch_size,
+            batch_size=affected_calls,
             prefix_tokens_estimated=prefix_tokens,
+            prefix_tokens_cohort_estimated=prefix_tokens * affected_calls,
             savings_pct=savings_pct,
-            savings_usd=_estimate_token_savings_usd(row.model, prefix_tokens, batch_size - 1),
+            savings_usd=_estimate_token_savings_usd(row.model, prefix_tokens, affected_calls - 1),
         )
     ]
 
@@ -1992,10 +2013,43 @@ def _dynamic_before_static_warnings(
     declared_chunks: list[str],
 ) -> list[Diagnostic]:
     """Detect a dynamic template reference before a large stable suffix."""
-    if not row.declared_prompt_cache or not declared_chunks:
-        return []
     prompt = node.get("params", {}).get("prompt", "") or ""
     if not isinstance(prompt, str):
+        return []
+
+    batch = node.get("batch")
+    if not row.declared_prompt_cache and isinstance(batch, dict):
+        affected_calls = row.batch_size_estimated or row.observed_call_count
+        if affected_calls < 2:
+            return []
+        alias = str(batch.get("as", "item"))
+        finding = _find_batch_static_tail_after_dynamic(prompt=prompt, model=row.model, batch_alias=alias)
+        if finding is None:
+            return []
+        return [
+            make_diagnostic(
+                "cache.dynamic-before-static",
+                node_id=row.node_path,
+                affected_workflow=row.workflow_path,
+                dynamic_ref=finding.dynamic_ref,
+                dynamic_line=finding.dynamic_line,
+                cacheable_tokens=finding.stable_tail_tokens,
+                affected_calls=affected_calls,
+                savings_usd=_estimate_token_savings_usd(row.model, finding.stable_tail_tokens, affected_calls),
+                projected_ratio_pct=_safe_pct(
+                    finding.stable_tail_tokens,
+                    finding.stable_tail_tokens + finding.tokens_before_dynamic,
+                ),
+                detection_mode="batch_static_tail",
+                min_cache_tokens=get_min_cache_tokens(row.model),
+                model=row.model,
+                tokens_before_dynamic=finding.tokens_before_dynamic,
+                template_refs_after_dynamic=finding.template_refs_after_dynamic,
+                static_tail_excerpt=finding.static_tail_excerpt,
+            )
+        ]
+
+    if not row.declared_prompt_cache or not declared_chunks:
         return []
 
     declared = set(declared_chunks)
@@ -2022,9 +2076,77 @@ def _dynamic_before_static_warnings(
                 affected_calls=affected_calls,
                 savings_usd=_estimate_token_savings_usd(row.model, cacheable_tokens, affected_calls),
                 projected_ratio_pct=_safe_pct(cacheable_tokens, cacheable_tokens + tokens_before),
+                detection_mode="declared_cache",
+                min_cache_tokens=get_min_cache_tokens(row.model),
+                model=row.model,
+                tokens_before_dynamic=tokens_before,
+                template_refs_after_dynamic=len(list(TemplateResolver.TEMPLATE_PATTERN.finditer(prompt, match.end()))),
+                static_tail_excerpt=_static_excerpt(prompt[match.end() :]),
             )
         ]
     return []
+
+
+def _find_batch_static_tail_after_dynamic(
+    *,
+    prompt: str,
+    model: str,
+    batch_alias: str,
+) -> _PromptStaticTailFinding | None:
+    """Find a local-batch dynamic ref followed by enough literal stable text."""
+    matches = list(TemplateResolver.TEMPLATE_PATTERN.finditer(prompt))
+    for index, match in enumerate(matches):
+        var_expr = match.group(1)
+        operands = TemplateResolver.split_coalesce_operands(var_expr)
+        if not any(_is_batch_scoped_operand(operand, batch_alias) for operand in operands):
+            continue
+
+        literal_tail = _literal_spans_after_template(prompt, matches, index)
+        stable_tail_tokens = estimate_tokens(model, literal_tail)[0]
+        if stable_tail_tokens < get_min_cache_tokens(model):
+            return None
+        return _PromptStaticTailFinding(
+            dynamic_ref=var_expr,
+            dynamic_line=1 + prompt[: match.start()].count("\n"),
+            stable_tail_tokens=stable_tail_tokens,
+            tokens_before_dynamic=estimate_tokens(model, prompt[: match.start()])[0],
+            template_refs_after_dynamic=len(matches) - index - 1,
+            static_tail_excerpt=_static_excerpt(literal_tail),
+        )
+    return None
+
+
+def _first_batch_scoped_template_ref(prompt: str, batch_alias: str) -> re.Match[str] | None:
+    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+        operands = TemplateResolver.split_coalesce_operands(match.group(1))
+        if any(_is_batch_scoped_operand(operand, batch_alias) for operand in operands):
+            return match
+    return None
+
+
+def _is_batch_scoped_operand(operand: str, batch_alias: str) -> bool:
+    return operand == batch_alias or operand.startswith(f"{batch_alias}.") or operand.startswith(f"{batch_alias}[")
+
+
+def _literal_spans_after_template(
+    prompt: str,
+    matches: list[re.Match[str]],
+    dynamic_match_index: int,
+) -> str:
+    spans: list[str] = []
+    cursor = matches[dynamic_match_index].end()
+    for match in matches[dynamic_match_index + 1 :]:
+        spans.append(prompt[cursor : match.start()])
+        cursor = match.end()
+    spans.append(prompt[cursor:])
+    return "".join(spans)
+
+
+def _static_excerpt(text: str, *, limit: int = 120) -> str:
+    excerpt = " ".join(text.split())
+    if len(excerpt) <= limit:
+        return excerpt
+    return f"{excerpt[: limit - 1].rstrip()}..."
 
 
 def _opaque_prompt_warnings(
