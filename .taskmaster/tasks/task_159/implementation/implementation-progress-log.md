@@ -11307,3 +11307,49 @@ Verification:
 - Baseline harness with sandbox shim: 67 passed, 0 drifted, 0 harness errors.
 - Quality: minimizer + analyzer test `ruff check`, `ruff format --check`, and
   `git diff --check` clean.
+
+## 2026-05-10 — Task 159 — Per-call table `?` explanation polish
+
+Improved the per-call cache report after reading the live lyrics-generator
+output as a fresh agent. The table had two agent-UX problems: `cw=...` was an
+unexplained internal abbreviation, and several `could_cache ?` rows gave no
+reason why the analyzer could not project a cacheable chunk.
+
+Changes made:
+
+- Replaced `cw=a+b` notes with plain text `cacheable inputs: a, b`, so rows
+  explain that `could_cache` came from sub-workflow inputs rather than an
+  analyzer shorthand.
+- Added row-level reasons for unavailable `could_cache` when the analyzer has
+  enough evidence to be specific:
+  - repeated rows with no projection say no stable provider-minimum repeated
+    prefix was found;
+  - below-threshold cross-workflow candidates say which input is too small,
+    e.g. `below cache minimum: lyrics ~474 < 4,096`.
+- Hid single-call, no-warning, no-projection rows from the default per-call
+  table. Clear rationale: a single observed call has no within-run cache read
+  to optimize, so surfacing it beside actionable repeated rows makes the table
+  noisier. `--all-rows` still shows these rows, and rows with actual cache
+  evidence, warnings, heterogeneous-model risk, or projected opportunities
+  remain visible.
+- Added structured below-threshold context to
+  `cache.sub-workflow-cache-undeclared` diagnostics so the text renderer does
+  not parse prose to build row notes.
+
+Observed live-output effect:
+
+- `10-live-recordings/05-gemini-lyrics-generator` now shows 18/25 rows by
+  default instead of 21/25.
+- `evaluate-songs`, `assign-diversity`, and `select-concepts` are hidden as
+  low-signal single-call rows.
+- Remaining `?` rows explain themselves: `curate-briefs`, `generate-concepts`,
+  and `analyze` report no stable 4,096-token repeated prefix; `review-stranger-
+  summary` reports `lyrics ~474 < 4,096`.
+
+Verification:
+
+- `tests/test_core/test_cache_analysis_renderers.py` plus the real-trace
+  `score-choruses` canary: 152 passed.
+- Baseline harness after regeneration: 67 passed, 0 drifted, 0 harness errors.
+- Touched-file `ruff check`, `ruff format --check`, and `git diff --check`
+  clean.

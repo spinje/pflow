@@ -4635,6 +4635,15 @@ def _emit_sub_workflow_cache_findings(
             candidate, rows_by_node_path, ctx, cw_result
         )
         below_threshold_clause = _below_threshold_clause(tokens, threshold_model)
+        below_threshold_context = (
+            {
+                "below_threshold_tokens": tokens,
+                "below_threshold_model": threshold_model,
+                "below_threshold_min_tokens": get_min_cache_tokens(threshold_model),
+            }
+            if below_threshold_clause and tokens is not None and threshold_model
+            else {}
+        )
         if below_threshold_clause:
             savings_usd = None
         diagnostics.append(
@@ -4653,6 +4662,7 @@ def _emit_sub_workflow_cache_findings(
                 child_node_ids_csv=_format_child_node_ids_csv(candidate.child_node_ids),
                 below_threshold_clause=below_threshold_clause,
                 cleanup_hint_clause=_build_cleanup_hint_clause(candidate, cw_result),
+                **below_threshold_context,
             )
         )
     return diagnostics

@@ -956,7 +956,7 @@ def test_text_default_hides_clean_rows_above_80_pct() -> None:
     assert "dirty" in text
     assert "clean1" not in text
     assert "clean2" not in text
-    assert "Hidden: 2 nodes" in text
+    assert "Hidden: 2 low-signal nodes" in text
 
 
 def test_text_all_rows_flag_shows_everything() -> None:
@@ -1465,7 +1465,10 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
     # Lead sentence and bullets each on their own line — standalone substrings.
     assert "Actual cache ratios from declared `prompt_cache:` subsets." in text
     assert "· cached_now: tokens that went through cache this run." in text
-    assert "· could_cache: tokens that could be cached if you declare/extend prompt_cache:." in text
+    assert (
+        "· could_cache: tokens that could be cached if you declare/extend prompt_cache:; "
+        "? means no cacheable chunk could be projected."
+    ) in text
     assert "· — means the column does not apply to this row's tier." in text
     # Run-on form with semicolon separators must NOT appear.
     assert "cached_now: tokens that went through cache this run; could_cache:" not in text
@@ -2114,6 +2117,68 @@ def test_text_per_call_inline_marker_includes_analysis_wide_warning_id() -> None
     assert "dynamic-before-static" in review_lines[0]
     # Critical: the redundant ``cache.`` prefix is gone from the inline column.
     assert "cache.dynamic-before-static" not in review_lines[0]
+
+
+def test_text_hides_single_call_unavailable_rows_by_default() -> None:
+    single = PerCallRow(**{
+        **_row("evaluate-songs", 0).__dict__,
+        "data_source": "trace",
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+        "observed_call_count": 1,
+    })
+    repeated = PerCallRow(**{
+        **_row("curate-briefs", 0).__dict__,
+        "data_source": "trace",
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+        "observed_call_count": 4,
+    })
+
+    text = render_text(_make_analysis(rows=[single, repeated]))
+
+    assert "curate-briefs" in text
+    assert "no stable 1,024-token repeated prefix found" in text
+    assert "evaluate-songs" not in text
+    assert "low-signal rows hidden" in text
+
+    all_rows_text = render_text(_make_analysis(rows=[single, repeated]), all_rows=True)
+    assert "evaluate-songs" in all_rows_text
+    assert "single call; no repeated cache use observed" in all_rows_text
+
+
+def test_text_unavailable_row_notes_below_min_cross_workflow_candidate() -> None:
+    child_workflow = "/abs/child.pflow.md"
+    row = PerCallRow(**{
+        **_row("review", 0).__dict__,
+        "workflow_path": child_workflow,
+        "data_source": "trace",
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+        "observed_call_count": 4,
+    })
+    diag = Diagnostic(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        id="cache.sub-workflow-cache-undeclared",
+        message="lyrics is below threshold",
+        context={
+            "child_workflow": child_workflow,
+            "child_input_name": "lyrics",
+            "child_node_ids_csv": "`review`",
+            "below_threshold_tokens": 474,
+            "below_threshold_min_tokens": 4096,
+        },
+    )
+
+    text = render_text(_make_analysis(rows=[row], warnings=[diag]))
+
+    assert "review" in text
+    assert "below cache minimum: lyrics ~474 < 4,096" in text
+    assert "no stable" not in text
 
 
 def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findings() -> None:
@@ -3540,9 +3605,9 @@ def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> 
         "cross_workflow_inputs": ("a", "b", "c", "d"),
     })
     text = render_text(_make_analysis(rows=[multi, single, many]))
-    assert "cw=creative_direction+song_architecture" in text
-    assert "cw=concept" not in text
-    assert "cw=a+b+c+1 more" in text
+    assert "cacheable inputs: creative_direction, song_architecture" in text
+    assert "cacheable inputs: concept" not in text
+    assert "cacheable inputs: a, b, c, +1 more" in text
 
 
 def test_per_call_table_divider_excludes_notes_column_width() -> None:

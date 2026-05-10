@@ -39,9 +39,11 @@ CP4 changes (#16, #9, #7, #6+#13 — agent UX cleanup):
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterable, Mapping
 
 from pflow.core.diagnostic import Diagnostic
+from pflow.core.llm_capabilities import get_min_cache_tokens
 
 from .analyze import (
     AnalysisSummary,
@@ -1332,6 +1334,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # ``cache.*`` so the prefix is 100% redundant in the per-call notes column.
     # Full IDs stay in JSON for machine consumers (DD#27).
     warnings_by_node = _warnings_by_row_key(analysis)
+    unavailable_notes_by_node = _unavailable_notes_by_row_key(analysis)
 
     lines = ["## Per-call cache report"]
     explainer_lines = _per_call_scope_explainer(rows, analysis.summary.evidence_scope)
@@ -1347,16 +1350,16 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
         )
     elif not all_rows and len(visible) < len(rows):
         lines.append(
-            f"  Showing {len(visible)} of {len(rows)} LLM nodes; all-clean rows hidden (--all-rows shows everything)."
+            f"  Showing {len(visible)} of {len(rows)} LLM nodes; low-signal rows hidden (--all-rows shows everything)."
         )
     if visible:
         lines.append("")
-        _append_per_call_rows(lines, visible, warnings_by_node, analysis)
+        _append_per_call_rows(lines, visible, warnings_by_node, unavailable_notes_by_node, analysis)
     if hidden_count > 0:
         lines.append("")
         lines.append(
-            f"  Hidden: {hidden_count} nodes at ≥{_HIDDEN_RATIO_THRESHOLD}% projected "
-            "cache ratio with no warnings (rerun with --all-rows)."
+            f"  Hidden: {hidden_count} low-signal nodes "
+            "(no warnings or actionable cache projection; rerun with --all-rows)."
         )
     footer = _per_call_confidence_footer(visible)
     if footer is not None:
@@ -1401,10 +1404,33 @@ def _warnings_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | None, str]
     return warnings_by_node
 
 
+def _unavailable_notes_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | None, str], list[str]]:
+    notes_by_node: dict[tuple[str | None, str], list[str]] = {}
+    for diag in analysis.warnings:
+        if diag.id != "cache.sub-workflow-cache-undeclared":
+            continue
+        context = diag.context or {}
+        child_workflow = context.get("child_workflow") or context.get("affected_workflow")
+        child_input_name = context.get("child_input_name")
+        tokens = context.get("below_threshold_tokens")
+        min_tokens = context.get("below_threshold_min_tokens")
+        if not child_workflow or not child_input_name or not isinstance(tokens, int) or not isinstance(min_tokens, int):
+            continue
+        note = f"below cache minimum: {child_input_name} ~{tokens:,} < {min_tokens:,}"
+        for node_id in _node_ids_from_csv(str(context.get("child_node_ids_csv", ""))):
+            notes_by_node.setdefault((str(child_workflow), node_id), []).append(note)
+    return notes_by_node
+
+
+def _node_ids_from_csv(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"`([^`]+)`", value))
+
+
 def _append_per_call_rows(
     lines: list[str],
     visible: list[PerCallRow],
     warnings_by_node: dict[tuple[str | None, str], list[str]],
+    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     analysis: CacheAnalysis | None = None,
 ) -> None:
     # In static-analysis mode (no trace evidence) every row's
@@ -1415,7 +1441,12 @@ def _append_per_call_rows(
     # directly). Render ``—`` instead so the column means "no execution
     # evidence" consistent with the ``cached_now`` column's ``—`` semantics.
     static_mode = analysis is not None and analysis.summary.evidence_scope == "static_analysis"
-    widths = _compute_per_call_column_widths(visible, warnings_by_node, static_mode=static_mode)
+    widths = _compute_per_call_column_widths(
+        visible,
+        warnings_by_node,
+        unavailable_notes_by_node,
+        static_mode=static_mode,
+    )
     header = _format_table_row(
         ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"],
         widths,
@@ -1434,7 +1465,15 @@ def _append_per_call_rows(
         if multiple_workflows:
             lines.append(f"### {_format_workflow_group_heading(workflow_path, analysis)}")
         for row in group_rows:
-            lines.append(_format_per_call_row(row, warnings_by_node, widths, static_mode=static_mode))
+            lines.append(
+                _format_per_call_row(
+                    row,
+                    warnings_by_node,
+                    unavailable_notes_by_node,
+                    widths,
+                    static_mode=static_mode,
+                )
+            )
         if multiple_workflows:
             lines.append("")
     if multiple_workflows and lines and lines[-1] == "":
@@ -1467,23 +1506,40 @@ def _format_workflow_group_heading(workflow_path: str | None, analysis: CacheAna
 def _format_per_call_row(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
+    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     widths: tuple[int, ...],
     *,
     static_mode: bool = False,
 ) -> str:
-    return _format_table_row(_per_call_cells(row, warnings_by_node, static_mode=static_mode), widths)
+    return _format_table_row(
+        _per_call_cells(
+            row,
+            warnings_by_node,
+            unavailable_notes_by_node,
+            static_mode=static_mode,
+        ),
+        widths,
+    )
 
 
 def _compute_per_call_column_widths(
     rows: list[PerCallRow],
     warnings_by_node: dict[tuple[str | None, str], list[str]],
+    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     *,
     static_mode: bool = False,
 ) -> tuple[int, ...]:
     headers = ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"]
     widths = [len(header) for header in headers]
     for row in rows:
-        for index, cell in enumerate(_per_call_cells(row, warnings_by_node, static_mode=static_mode)):
+        for index, cell in enumerate(
+            _per_call_cells(
+                row,
+                warnings_by_node,
+                unavailable_notes_by_node,
+                static_mode=static_mode,
+            )
+        ):
             widths[index] = max(widths[index], len(cell))
     return tuple(widths)
 
@@ -1518,10 +1574,12 @@ def _structured_columns_width(widths: tuple[int, ...]) -> int:
 def _per_call_cells(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
+    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     *,
     static_mode: bool = False,
 ) -> list[str]:
     inline_warnings = warnings_by_node.get((row.workflow_path, row.node_path), [])
+    unavailable_notes = unavailable_notes_by_node.get((row.workflow_path, row.node_path), [])
     return [
         row.node_path,
         _cell_model(row),
@@ -1530,7 +1588,7 @@ def _per_call_cells(
         _cell_could_cache(row),
         _cell_ratio(row),
         _cell_calls(row, static_mode=static_mode),
-        _cell_notes(row, inline_warnings),
+        _cell_notes(row, inline_warnings, unavailable_notes),
     ]
 
 
@@ -1590,7 +1648,7 @@ def _cell_calls(row: PerCallRow, *, static_mode: bool = False) -> str:
     return str(row.observed_call_count)
 
 
-def _cell_notes(row: PerCallRow, inline_warnings: list[str]) -> str:
+def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: list[str]) -> str:
     notes: list[str] = []
     if row.did_not_execute_in_trace:
         notes.append("[unexecuted]")
@@ -1603,14 +1661,38 @@ def _cell_notes(row: PerCallRow, inline_warnings: list[str]) -> str:
         notes.append(f"observed={observed}")
     if row.cacheable_data_source == "cross_workflow_projection" and len(row.cross_workflow_inputs) > 1:
         notes.append(_format_cross_workflow_inputs_note(row.cross_workflow_inputs))
+    if row.cacheable_data_source == "unavailable":
+        notes.extend(unavailable_notes)
+        fallback_note = _unavailable_could_cache_note(row, inline_warnings, has_specific_note=bool(unavailable_notes))
+        if fallback_note:
+            notes.append(fallback_note)
     notes.extend(warning_id for warning_id in inline_warnings if warning_id != "opaque-prompt")
     return "; ".join(notes)
 
 
 def _format_cross_workflow_inputs_note(inputs: tuple[str, ...]) -> str:
     if len(inputs) <= 3:
-        return f"cw={'+'.join(inputs)}"
-    return f"cw={'+'.join(inputs[:3])}+{len(inputs) - 3} more"
+        return f"cacheable inputs: {', '.join(inputs)}"
+    return f"cacheable inputs: {', '.join(inputs[:3])}, +{len(inputs) - 3} more"
+
+
+def _unavailable_could_cache_note(
+    row: PerCallRow,
+    inline_warnings: list[str],
+    *,
+    has_specific_note: bool,
+) -> str | None:
+    if row.did_not_execute_in_trace or has_specific_note:
+        return None
+    if row.model_is_heterogeneous or "opaque-prompt" in inline_warnings:
+        return None
+    if row.observed_call_count == 1:
+        return "single call; no repeated cache use observed"
+    if row.observed_call_count < 2:
+        return None
+    if not row.model:
+        return "no stable repeated cache prefix found"
+    return f"no stable {get_min_cache_tokens(row.model):,}-token repeated prefix found"
 
 
 def _format_nullable_int(value: int | None) -> str:
@@ -1684,7 +1766,7 @@ def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "sta
     return [
         lead,
         "  · cached_now: tokens that went through cache this run.",
-        "  · could_cache: tokens that could be cached if you declare/extend prompt_cache:.",
+        "  · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.",
         "  · — means the column does not apply to this row's tier.",
     ]
 
@@ -1777,8 +1859,12 @@ def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[tuple[s
         return True
     if row.cacheable_data_source != "unavailable" and not row.declared_prompt_cache:
         return True
-    if row.cache_ratio_pct is None:
+    if row.model_is_heterogeneous:
         return True
+    if row.cache_ratio_pct is None:
+        if row.declared_prompt_cache:
+            return True
+        return row.observed_call_count != 1
     return row.cache_ratio_pct < _HIDDEN_RATIO_THRESHOLD
 
 

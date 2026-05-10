@@ -16,11 +16,11 @@
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
     · cached_now: tokens that went through cache this run.
-    · could_cache: tokens that could be cached if you declare/extend prompt_cache:.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
     · — means the column does not apply to this row's tier.
-  Showing 0 of 2 LLM nodes; all-clean rows hidden (--all-rows shows everything).
+  Showing 0 of 2 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
-  Hidden: 2 nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows).
+  Hidden: 2 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 
 ## Notes
 

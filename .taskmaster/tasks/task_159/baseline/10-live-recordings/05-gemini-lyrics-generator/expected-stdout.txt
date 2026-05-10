@@ -334,9 +334,9 @@
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.
     · cached_now: tokens that went through cache this run.
-    · could_cache: tokens that could be cached if you declare/extend prompt_cache:.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
     · — means the column does not apply to this row's tier.
-  Showing 21 of 25 LLM nodes; all-clean rows hidden (--all-rows shows everything).
+  Showing 18 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   node                     model                      input  cached_now  could_cache  ratio  calls  notes
   --------------------------------------------------------------------------------------------------
@@ -344,7 +344,7 @@
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
   score-choruses           gemini/gemini-2.5-flash  158,704           —      144,296    91%    136  batch-prewarm-recommended
-  select-chorus            gemini/gemini-2.5-flash   36,289           —       36,289   100%      4  cw=concept+song-architecture.response+concept_brief
+  select-chorus            gemini/gemini-2.5-flash   36,289           —       36,289   100%      4  cacheable inputs: concept, song-architecture.response, concept_brief
 
 ### song-creator.pflow.md (called by create-songs)
   rewrite-emotional        gemini/gemini-2.5-flash   94,100      63,009            —    67%      4
@@ -352,20 +352,19 @@
   generate-suno-prompt     gemini/gemini-2.5-flash   13,776       7,909            —    57%      4
 
 ### lyrics-generator.pflow.md
-  curate-briefs            gemini/gemini-2.5-flash   54,752           —            ?     ?%      4
-  evaluate-songs           gemini/gemini-2.5-flash    9,090           —            ?     ?%      1
+  curate-briefs            gemini/gemini-2.5-flash   54,752           —            ?     ?%      4  no stable 4,096-token repeated prefix found
 
 ### review-accuracy.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   34,481           —       27,004    78%      4  cw=creative-direction.response+concept_brief
+  review                   gemini/gemini-2.5-flash   34,481           —       27,004    78%      4  cacheable inputs: creative-direction.response, concept_brief
 
 ### review-emotional-architecture.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   32,873           —       27,004    82%      4  cw=concept_brief+creative-direction.response
+  review                   gemini/gemini-2.5-flash   32,873           —       27,004    82%      4  cacheable inputs: concept_brief, creative-direction.response
 
 ### review-rhyme.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,917           —       22,208    86%      4  cw=song-architecture.response+creative-direction.response
+  review                   gemini/gemini-2.5-flash   25,917           —       22,208    86%      4  cacheable inputs: song-architecture.response, creative-direction.response
 
 ### review-genre.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,693           —       22,208    86%      4  cw=creative-direction.response+song-architecture.response
+  review                   gemini/gemini-2.5-flash   25,693           —       22,208    86%      4  cacheable inputs: creative-direction.response, song-architecture.response
 
 ### review-imagery.pflow.md (called by emotional-reviews)
   review                   gemini/gemini-2.5-flash   21,260           —       14,520    68%      4
@@ -379,20 +378,16 @@
 ### review-cliche.pflow.md (called by craft-reviews)
   review                   gemini/gemini-2.5-flash   13,760           —        7,688    56%      4
 
-### enforce-diversity.pflow.md (called by enforce-diversity)
-  assign-diversity         gemini/gemini-2.5-flash   12,208           —            ?     ?%      1
-
 ### review-stranger-summary.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash    6,467           —            ?     ?%      4
+  review                   gemini/gemini-2.5-flash    6,467           —            ?     ?%      4  below cache minimum: lyrics ~474 < 4,096
 
 ### concept-chooser.pflow.md (called by choose-concepts)
-  select-concepts          gemini/gemini-2.5-flash    6,168           —            ?     ?%      1
-  generate-concepts        gemini/gemini-2.5-flash    5,166           —            ?     ?%      4  batch_items=4
+  generate-concepts        gemini/gemini-2.5-flash    5,166           —            ?     ?%      4  batch_items=4; no stable 4,096-token repeated prefix found
 
 ### analyze-source.pflow.md (called by analyze-sources)
-  analyze                  gemini/gemini-2.5-flash    1,058           —            ?     ?%      6  batch_items=6
+  analyze                  gemini/gemini-2.5-flash    1,058           —            ?     ?%      6  batch_items=6; no stable 4,096-token repeated prefix found
 
-  Hidden: 4 nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows).
+  Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 
   Token estimate confidence: score-choruses projects savings from the prompt's static prefix repeated across observed calls; declare prompt_cache to confirm; select-chorus, review, review, review, review, review, review, review, review use cross-workflow projections from shared inputs declared in parent workflow(s); declare the listed values in the receiving sub-workflow's ## Cache and remove inline body refs (see Recommended actions for the boundary's recommended fix and Sub-workflow boundaries for source-side renames).
 
