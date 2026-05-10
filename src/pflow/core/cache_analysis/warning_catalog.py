@@ -138,7 +138,7 @@ _SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = (
     "`{child_input_name}` and is used by {node_count} LLM nodes there "
     "({child_node_ids_csv}). Add `{child_input_name}` to that sub-workflow's "
     "## Cache; sub-workflows do not inherit the parent cache block."
-    "{below_threshold_clause}"
+    "{below_threshold_clause}{cleanup_hint_clause}"
 )
 
 
@@ -264,10 +264,13 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("savings_usd", float),
             ("child_node_ids_csv", str),
             ("below_threshold_clause", str),
+            ("cleanup_hint_clause", str),
         ),
         suggestions_template=(
-            "In {child_workflow}, add a ## Cache chunk for `${{{child_input_name}}}`.",
-            "Add `{child_input_name}` to `prompt_cache:` on the child LLM nodes that reuse it.",
+            "Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
+            "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
+            "Then, in {child_workflow}, add a ## Cache chunk for `${{{child_input_name}}}`.",
+            "Finally, add `{child_input_name}` to `prompt_cache:` on the child LLM nodes that reuse it.",
         ),
         path_template="workflows[path={child_workflow}].inputs[name={child_input_name}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
@@ -293,7 +296,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("savings_usd", float),
         ),
         suggestions_template=(
-            "Apply both edits together — declaring without cleaning fires `cache.prompt-body-duplicates-cache` ERROR.",
+            "Apply both edits together — declaring without cleaning sends the same content twice.",
             "First, remove the listed prompt-body refs (or rewrite to literal text) so the chunks aren't sent twice.",
             "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order.",
         ),

@@ -65,7 +65,7 @@ class TestTemplateResolutionsInTrace:
             "inputs": {"name": {"type": "string", "description": "Name input"}},
         }
 
-        shared, collector = _run_with_trace(ir, initial_params={"name": "World"})
+        _shared, collector = _run_with_trace(ir, initial_params={"name": "World"})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -110,7 +110,7 @@ class TestBatchNodeTraceEvents:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["a", "b", "c"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["a", "b", "c"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -163,7 +163,7 @@ class TestTraceToReportFormatCompatibility:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["alpha", "beta"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["alpha", "beta"]})
 
         # Build trace dict from REAL collector data (same structure as save_to_file)
         trace_data = {
@@ -222,7 +222,7 @@ class TestParallelBatchTraceCapture:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["alice", "bob"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["alice", "bob"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -262,7 +262,7 @@ class TestFailedBatchItemsInTrace:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["good", "bad", "good"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["good", "bad", "good"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -730,6 +730,64 @@ class TestParallelBatchSubWorkflowTrace:
 
         # Each worker resolved its own item; prompts must all differ
         assert sorted(seen_prompts) == ["Process item A.", "Process item B.", "Process item C."]
+
+    def test_dynamic_subworkflow_batch_records_canonical_workflow_path(self, tmp_path):
+        """Dynamic workflow batches keep raw template resolution and canonical child path.
+
+        ``template_resolutions["workflow"]["resolved"]`` is the generic
+        template result, so it may be relative. The batch item event needs the
+        canonical path from ``resolve_sub_workflow`` for analyzers to match the
+        child trace back to the statically analyzed child workflow row.
+        """
+        from pathlib import Path
+
+        child_md = Path(tmp_path) / "child.pflow.md"
+        child_md.write_text(
+            "# Child\n\nProcesses one item.\n\n"
+            "## Inputs\n\n"
+            "### value\n\nThe input value.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### child-shell\n\nShell call inside the child.\n\n"
+            "- type: shell\n"
+            "- command: printf '%s' '${value}'\n",
+            encoding="utf-8",
+        )
+        parent_path = Path(tmp_path) / "parent.pflow.md"
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${item.workflow}",
+                        "inputs": {"value": "${item.value}"},
+                    },
+                    "batch": {
+                        "items": [
+                            {"workflow": "./child.pflow.md", "value": "A"},
+                            {"workflow": "./child.pflow.md", "value": "B"},
+                        ],
+                        "as": "item",
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        _, parent_collector = _run_with_trace(
+            parent_ir,
+            extra_shared={"_pflow_workflow_file": str(parent_path)},
+        )
+
+        fanout_event = next(e for e in parent_collector.events if e["node_id"] == "fanout")
+        batch_items = fanout_event.get("batch_items", [])
+        assert len(batch_items) == 2
+        for batch_item in batch_items:
+            assert batch_item["template_resolutions"]["workflow"]["resolved"] == "./child.pflow.md"
+            assert batch_item["workflow_path"] == str(child_md.resolve())
+            assert any(event.get("node_id") == "child-shell" for event in batch_item.get("events", []))
 
     def test_llm_failure_in_one_item_does_not_corrupt_siblings(self, tmp_path, monkeypatch):
         """The failure-path complement to the success test above.

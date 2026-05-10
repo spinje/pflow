@@ -235,11 +235,13 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "cache_read_input_tokens": row.cache_read_input_tokens,
         "data_source": row.data_source,
         # Independent tier label for the cacheable metric. Sources:
-        # ``"trace"``, ``"memo"``, ``"parameters"``, ``"unavailable"``.
+        # ``"trace"``, ``"memo"``, ``"parameters"``, ``"batch_prefix"``,
+        # ``"cross_workflow_projection"``, ``"unavailable"``.
         # Independent from ``data_source`` (input) — the two may legitimately
         # diverge (e.g., trace fires for input but cacheable falls through
         # to memo when ``cache_creation+cache_read == 0``).
         "cacheable_data_source": row.cacheable_data_source,
+        "cross_workflow_inputs": list(row.cross_workflow_inputs),
         "declared_prompt_cache": row.declared_prompt_cache,
         # Stage C.1 (2.0 minor-additive): True when the IR's ``params.model``
         # was an unresolved ``${...}`` template (heterogeneous batch

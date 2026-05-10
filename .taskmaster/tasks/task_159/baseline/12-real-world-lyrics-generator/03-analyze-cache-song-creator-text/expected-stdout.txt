@@ -1,4 +1,5 @@
-# Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
+# Cache Analysis: song-creator.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
 
   Workflow: 19 LLM nodes, invocation count unavailable (2 dynamic batch nodes)
   Models: not resolved (set settings.default_model)
@@ -21,8 +22,13 @@
   1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  savings unavailable
      chorus-chooser.pflow.md
      `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
-     → In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
-     → Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
+     Before declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
+       • `score-choruses`: `${concept.core_idea}`
+       • `select-chorus`: `${concept.core_idea}`, `${concept.title}`
+     → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
+     → First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.
+     → Then, in chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
+     → Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
 
   2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
@@ -86,7 +92,7 @@
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    cd <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator
+    cd .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator
     pflow analyze-cache chorus-chooser/chorus-chooser.pflow.md
     pflow analyze-cache reviews/review-accuracy.pflow.md
     pflow analyze-cache reviews/review-ai-tells.pflow.md
@@ -97,3 +103,7 @@
     pflow analyze-cache reviews/review-narrative.pflow.md
     pflow analyze-cache reviews/review-rhyme.pflow.md
     pflow analyze-cache reviews/review-stranger-summary.pflow.md
+
+## Notes
+
+  · Cross-workflow projections require trace evidence to populate per-call rows. Recommended actions still surface; run with `--from-trace <path>` for per-call attribution.

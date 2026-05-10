@@ -119,6 +119,8 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 **Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2 (memo/parameters) and then to unavailable if chunks still can't resolve. Downstream `cache.below-min-tokens` warning is emitted through `below_min_tokens_detector.py` in predicted mode only when there is real positive cacheable-token evidence, and is suppressed when `cacheable_data_source == "trace"` so it doesn't contradict trace evidence when cache demonstrably worked.
 
+**`cacheable_data_source` projection tiers**: `batch_prefix` projects stable bytes before a batch item reference; `cross_workflow_projection` projects parent-declared values flowing into a child workflow that has not declared the receiving input in its own `## Cache`. Cross-workflow projection may replace weak parameter-derived candidate evidence when it finds a larger boundary-level opportunity, but it does not override trace, memo, or `batch_prefix` evidence. In no-trace analysis, structural cross-workflow recommendations still surface, but per-call cross-workflow rows stay unavailable and a note routes agents to `--from-trace` for attribution.
+
 **LiteLLM is lazy-imported** (mirrors the `llm_client.py` lazy-import pattern) to keep the analyzer package import-cheap.
 
 ### warning_catalog.py

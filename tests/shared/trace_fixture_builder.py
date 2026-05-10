@@ -166,9 +166,10 @@ class TraceFixtureBuilder:
 
         ``items`` is a list of ``(child_workflow_path, sub_events)`` tuples.
         Each batch item carries ``template_resolutions["workflow"]["resolved"]``
-        set to the per-item child path — matching the runtime shape that
-        ``_capture_item_trace + last_resolutions`` produces for
-        ``workflow: ${item.workflow}`` patterns.
+        set to the per-item child path. New runtime traces also carry an
+        explicit canonical ``workflow_path``; tests add that field when they
+        need the new producer shape. Leaving it out here keeps old-trace
+        compatibility tests easy to build.
         """
         return {
             "node_id": node_id,

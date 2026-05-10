@@ -284,12 +284,14 @@ def _execute_batch_item(
             item_shared[config.node_id] = {}
             item_shared[batch_config.item_alias] = item
             item_shared["__index__"] = idx
+            item_shared["_pflow_child_workflow_paths"] = {}
 
             # Execute via callback
             action, last_resolutions, template_errors = execute_single_fn(node, config, item_shared)
 
             # Extract child trace events from WorkflowExecutor (sub-workflow in batch)
             item_child_trace_events: list[dict[str, Any]] | None = getattr(node, "_child_trace_events", None)
+            item_child_workflow_path = _pop_child_workflow_path(item_shared, config.node_id)
 
             # Normalize result
             raw_result = item_shared.get(config.node_id)
@@ -324,6 +326,7 @@ def _execute_batch_item(
                     error_info,
                     last_resolutions,
                     child_trace_events=item_child_trace_events,
+                    child_workflow_path=item_child_workflow_path,
                 )
                 return result, error_info, duration_ms, last_resolutions, template_errors
 
@@ -337,6 +340,7 @@ def _execute_batch_item(
                 None,
                 last_resolutions,
                 child_trace_events=item_child_trace_events,
+                child_workflow_path=item_child_workflow_path,
             )
             return result, None, duration_ms, last_resolutions, template_errors
 
@@ -363,8 +367,17 @@ def _execute_batch_item(
         error_info,
         last_resolutions,
         child_trace_events=getattr(node, "_child_trace_events", None),
+        child_workflow_path=_pop_child_workflow_path(item_shared, config.node_id),
     )
     return None, error_info, duration_ms, last_resolutions, template_errors
+
+
+def _pop_child_workflow_path(shared: dict[str, Any], node_id: str) -> str | None:
+    paths = shared.get("_pflow_child_workflow_paths")
+    if not isinstance(paths, dict):
+        return None
+    value = paths.pop(node_id, None)
+    return value if isinstance(value, str) and value else None
 
 
 def _execute_sequential(
@@ -683,6 +696,7 @@ def _capture_item_trace(
     error: dict[str, Any] | None,
     last_resolutions: dict,
     child_trace_events: list[dict[str, Any]] | None = None,
+    child_workflow_path: str | None = None,
 ) -> None:
     """Capture per-item trace event. Appends to parent_shared._batch_trace."""
     trace_list = parent_shared.get("_batch_trace", {}).get(node_id)
@@ -695,6 +709,7 @@ def _capture_item_trace(
         "success": error is None,
         "duration_ms": round(duration_ms, 2) if duration_ms else 0,
     }
+    item_event.update({"workflow_path": child_workflow_path} if child_workflow_path else {})
     if error:
         item_event["error"] = error.get("error", str(error))
 

@@ -401,10 +401,12 @@
       "node_id": null,
       "estimated_savings_usd": null,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
+      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
       "suggestions": [
-        "In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
-        "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+        "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
+        "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
+        "Then, in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
+        "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
       ]
     },
     {
@@ -437,6 +439,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -460,6 +463,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -483,6 +487,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -506,6 +511,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -529,6 +535,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -552,6 +559,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -575,6 +583,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
         "concept_brief"
@@ -601,6 +610,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
         "concept_brief",
@@ -628,6 +638,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
         "concept_brief",
@@ -656,6 +667,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
         "concept_brief",
@@ -685,6 +697,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
         "concept_brief",
@@ -714,6 +727,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
         "concept_brief",
@@ -742,6 +756,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "creative-direction.response"
       ],
@@ -767,6 +782,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": true,
       "cost_usd": null,
@@ -790,6 +806,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -813,6 +830,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -836,6 +854,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -859,6 +878,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -882,6 +902,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -905,6 +926,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -928,6 +950,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -951,6 +974,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -974,6 +998,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -997,6 +1022,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -1020,6 +1046,7 @@
       "cache_read_input_tokens": null,
       "data_source": "heuristic",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -1428,13 +1455,15 @@
     "value_flow_opportunities": [
       {
         "severity": "info",
-        "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
+        "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
         "source": "cache_analyzer",
         "id": "cache.sub-workflow-cache-undeclared",
         "title": "Cache Advisory",
         "suggestions": [
-          "In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
-          "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+          "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
+          "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
+          "Then, in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
+          "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
         ],
         "context": {
           "node_count": 2,
@@ -1449,6 +1478,7 @@
           "line_in_parent": 97,
           "child_node_ids_csv": "`score-choruses`, `select-chorus`",
           "below_threshold_clause": "",
+          "cleanup_hint_clause": "\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
           "category": "cache_advisory",
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
         },
@@ -1890,13 +1920,15 @@
     },
     {
       "severity": "info",
-      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.",
+      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
       "source": "cache_analyzer",
       "id": "cache.sub-workflow-cache-undeclared",
       "title": "Cache Advisory",
       "suggestions": [
-        "In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
-        "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+        "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
+        "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
+        "Then, in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
+        "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
       ],
       "context": {
         "node_count": 2,
@@ -1911,6 +1943,7 @@
         "line_in_parent": 97,
         "child_node_ids_csv": "`score-choruses`, `select-chorus`",
         "below_threshold_clause": "",
+        "cleanup_hint_clause": "\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
         "category": "cache_advisory",
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
       },
@@ -1920,6 +1953,7 @@
     }
   ],
   "notes": [
-    "3 dynamic batches not in per-call table: `fetch-sources` (items: `${sources}`), `analyze-sources` (items: `${fetch-sources.results}`), `create-songs` (items: `${zip-concepts-with-briefs.result}`). Batch items are computed at runtime, so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static items to list them. (Cost shown is measured from the trace, not estimated.)"
+    "3 dynamic batches not in per-call table: `fetch-sources` (items: `${sources}`), `analyze-sources` (items: `${fetch-sources.results}`), `create-songs` (items: `${zip-concepts-with-briefs.result}`). Batch items are computed at runtime, so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static items to list them. (Cost shown is measured from the trace, not estimated.)",
+    "Cross-workflow projections require trace evidence to populate per-call rows. Recommended actions still surface; run with `--from-trace <path>` for per-call attribution."
   ]
 }

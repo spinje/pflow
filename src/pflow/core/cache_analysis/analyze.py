@@ -131,15 +131,23 @@ class PerCallRow:
     # ``data_source`` (input) and ``output_data_source`` — the three metrics
     # may legitimately diverge (e.g., trace fires for input but cacheable
     # falls through to memo when ``cache_creation+cache_read == 0``).
-    # Sources: ``"trace"``, ``"memo"``, ``"parameters"``, ``"batch_prefix"``,
+    # Sources: ``"trace"``, ``"memo"``, ``"parameters"``,
+    # ``"batch_prefix"``, ``"cross_workflow_projection"``,
     # ``"unavailable"``. ``"parameters"`` covers workflow-input refs resolved
     # via positional ``key=value`` params; ``"batch_prefix"`` covers the
     # batch-node static-prefix projection (repeated bytes before the first
-    # ``${alias.X}`` ref multiplied by observed call count) that fires when
-    # the agent has not declared ``prompt_cache:`` but a stable prefix is
-    # detectable. Confidence is heuristic — agents see a footer flagging
-    # the projection.
+    # ``${alias.X}`` ref multiplied by observed call count). ``"cross_workflow_projection"``
+    # covers a parent-declared value flowing into a child workflow that has not
+    # declared that receiving input in its own ``## Cache``. Projection tiers
+    # fire when the agent has not declared ``prompt_cache:`` but a stable
+    # reusable prefix is detectable. Confidence is heuristic — agents see a
+    # footer flagging the projection.
     cacheable_data_source: str = "unavailable"
+    # Parent-side values that contributed to a ``cross_workflow_projection``
+    # row. Empty for all other tiers. Text rendering uses this to add compact
+    # notes on rows whose ``could_cache`` value is a sum across multiple
+    # cross-workflow inputs.
+    cross_workflow_inputs: tuple[str, ...] = ()
     # Raw per-call provider cache token splits from the trace event's
     # ``llm_call`` dict. ``None`` when no trace row matched; ``int`` (including
     # 0) when trace data exists. Independent of ``cacheable_tokens_estimated``,
@@ -341,6 +349,15 @@ class TraceExecutionIndex:
     workflows_with_trace: set[str | None]
     current_cost_by_workflow: dict[str | None, float | None]
     trace_loaded: bool = False
+
+
+@dataclass(frozen=True)
+class _PerCallRowsResult:
+    rows: list[PerCallRow]
+    warnings: list[Diagnostic]
+    call_counts_by_node: dict[tuple[str | None, str], int]
+    cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]]
+    has_greenfield_cross_workflow_projection_gap: bool = False
 
 
 @dataclass(frozen=True)
@@ -611,11 +628,13 @@ def analyze(
     # Pass 1 (cheap): walk IR for shared template references — no tokenization.
     # Tier 2 of ``estimate_cacheable_tokens`` consumes the per-node candidate
     # subset to project cacheable counts via memo data.
-    per_call_rows, warnings = _build_per_call_rows_and_warnings(
+    per_call_result = _build_per_call_rows_and_warnings(
         ctx=ctx,
         cw_result=cw_result,
         trace_index=trace_index,
     )
+    per_call_rows = per_call_result.rows
+    warnings = per_call_result.warnings
     # Auto-load misalignment fallback: when the auto-loaded trace doesn't
     # cover all root LLM nodes in the IR, fall back to greenfield. This is
     # ORTHOGONAL to ``trace_coverage`` — a trace from a different parameter
@@ -644,11 +663,13 @@ def analyze(
             base_path=base_path,
             parameters_by_workflow=parameters_by_workflow,
         )
-        per_call_rows, warnings = _build_per_call_rows_and_warnings(
+        per_call_result = _build_per_call_rows_and_warnings(
             ctx=ctx,
             cw_result=cw_result,
             trace_index=trace_index,
         )
+        per_call_rows = per_call_result.rows
+        warnings = per_call_result.warnings
     # Root-only by design: suggested-block, padding, and consolidate advisories
     # edit the analyzed file's ## Cache block. Child workflow recommendations
     # are exposed through the per-call rollup plus renderer drill-in commands
@@ -674,6 +695,11 @@ def analyze(
             "Per-call cache report hidden — workflow has no run data yet. "
             "Run once, then re-run analyze-cache for real per-node token "
             "estimates and cacheable projections."
+        )
+    if per_call_result.has_greenfield_cross_workflow_projection_gap:
+        notes.append(
+            "Cross-workflow projections require trace evidence to populate per-call rows. "
+            "Recommended actions still surface; run with `--from-trace <path>` for per-call attribution."
         )
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
     consolidate_root_diags = _consolidate_to_root_advisories(
@@ -719,6 +745,7 @@ def analyze(
         notes=notes,
         per_call_rows=per_call_rows,
         ctx=ctx,
+        call_counts_by_node=per_call_result.call_counts_by_node,
     )
     warnings.extend(cross_diagnostics)
     if trace_data is not None:
@@ -1053,13 +1080,13 @@ def _edge_child_paths(cw_result: Any) -> dict[str, str]:
 
     For HETEROGENEOUS workflow batches (one parent_node_id spawning child
     workflows of different paths via ``workflow: ${item.workflow}``), this
-    map collapses the N edges into one (last-edge-wins) — that case is
-    handled at higher precedence in :meth:`TraceTree.walk` by reading
-    ``template_resolutions["workflow"]["resolved"]`` on each batch_item,
-    so per-item attribution is correct even when this map is lossy. The
-    edge-map fallback is consulted only for HOMOGENEOUS static workflow
-    batches (single child workflow, no template), which have no per-item
-    resolution metadata to override the parent-level edge.
+    map collapses the N edges into one (last-edge-wins). New traces avoid
+    the lossy map by recording per-item ``workflow_path`` after runtime
+    sub-workflow resolution; old traces fall back to a normalized
+    ``template_resolutions["workflow"]["resolved"]`` value in
+    :meth:`TraceTree.walk`. The edge-map fallback remains important for
+    HOMOGENEOUS static workflow batches (single child workflow, no template),
+    which have no per-item workflow template resolution metadata.
     """
     paths: dict[str, str] = {}
     for edge in getattr(cw_result, "edges", ()) or ():
@@ -1407,10 +1434,23 @@ def _build_per_call_rows_and_warnings(
     ctx: AnalysisContext,
     cw_result: Any,
     trace_index: TraceExecutionIndex,
-) -> tuple[list[PerCallRow], list[Diagnostic]]:
+) -> _PerCallRowsResult:
     """Walk every reachable workflow IR and build LLM rows."""
     rows: list[PerCallRow] = []
     warnings: list[Diagnostic] = []
+    call_counts_by_node = _build_call_counts_by_node(ctx, cw_result)
+    cross_workflow_candidates_by_row = _build_cross_workflow_candidates_by_row(
+        ctx=ctx,
+        cw_result=cw_result,
+        call_counts_by_node=call_counts_by_node,
+        trace_index=trace_index,
+    )
+    has_greenfield_projection_gap = (
+        ctx.trace is None
+        and bool(getattr(cw_result, "edges", ()) or ())
+        and not cross_workflow_candidates_by_row
+        and _has_structural_cross_workflow_projection_candidate(cw_result)
+    )
     for workflow_path, workflow_ir in getattr(cw_result, "irs_by_workflow", {}).items():
         declared_chunks = _extract_declared_chunks(workflow_ir.get("cache"))
         candidate_subsets_by_node = _detect_candidate_subsets(workflow_ir)
@@ -1442,11 +1482,194 @@ def _build_per_call_rows_and_warnings(
                 did_not_execute_in_trace=(
                     trace_index.trace_loaded and (workflow_path, node_id) not in trace_index.executed_keys
                 ),
+                cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
             )
             rows.append(row)
             if not row.did_not_execute_in_trace:
                 warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks, nodes_by_id=nodes_by_id))
-    return rows, warnings
+    return _PerCallRowsResult(
+        rows=rows,
+        warnings=warnings,
+        call_counts_by_node=call_counts_by_node,
+        cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
+        has_greenfield_cross_workflow_projection_gap=has_greenfield_projection_gap,
+    )
+
+
+def _build_call_counts_by_node(ctx: AnalysisContext, cw_result: Any) -> dict[tuple[str | None, str], int]:
+    """Observed LLM call counts keyed like per-call rows."""
+    if ctx.trace is None:
+        return {}
+    counts: dict[tuple[str | None, str], int] = {}
+    edges_map = _edge_child_paths(cw_result)
+    for leaf in ctx.trace.iter_llm_leaves(edges=edges_map, workflow_path=ctx.workflow_path):
+        node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
+        key = (leaf.workflow_path, node_id)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+@dataclass(frozen=True)
+class _RowCrossWorkflowCandidate:
+    """Per-row cache opportunity from a cross-workflow boundary."""
+
+    parent_workflow: str
+    parent_value_expr: str
+    parent_node_id: str
+    child_workflow: str
+    child_input_name: str
+    estimated_tokens_per_call: int
+
+
+def _build_cross_workflow_candidates_by_row(
+    *,
+    ctx: AnalysisContext,
+    cw_result: Any,
+    call_counts_by_node: dict[tuple[str | None, str], int],
+    trace_index: TraceExecutionIndex,
+) -> dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]]:
+    """Build row-level cross-workflow projections for trace-backed attribution."""
+    candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] = {}
+    for edge in getattr(cw_result, "edges", ()) or ():
+        candidate, consumer_node_ids = _row_cross_workflow_candidate_for_edge(
+            edge=edge,
+            ctx=ctx,
+            cw_result=cw_result,
+            call_counts_by_node=call_counts_by_node,
+            trace_index=trace_index,
+        )
+        if candidate is None:
+            continue
+        for node_id in consumer_node_ids:
+            if call_counts_by_node.get((candidate.child_workflow, node_id), 0) <= 0:
+                continue
+            candidates_by_row.setdefault((candidate.child_workflow, node_id), []).append(candidate)
+    return candidates_by_row
+
+
+def _row_cross_workflow_candidate_for_edge(
+    *,
+    edge: Any,
+    ctx: AnalysisContext,
+    cw_result: Any,
+    call_counts_by_node: dict[tuple[str | None, str], int],
+    trace_index: TraceExecutionIndex,
+) -> tuple[_RowCrossWorkflowCandidate | None, tuple[str, ...]]:
+    """Return the gated row-level candidate for one cross-workflow edge."""
+    if getattr(edge, "is_batch_alias_root", False) or getattr(edge, "parent_value_expr", None) is None:
+        return None, ()
+    child_workflow = str(edge.child_workflow)
+    child_ir = cw_result.irs_by_workflow.get(child_workflow)
+    if not child_ir:
+        return None, ()
+    child_declared = set(_items_by_name(cw_result.cache_items_by_workflow.get(child_workflow, ())))
+    if edge.child_input_name in child_declared:
+        return None, ()
+    consumer_node_ids = tuple(_collect_llm_nodes_referencing_path(child_ir, edge.child_input_name))
+    if not consumer_node_ids:
+        return None, ()
+    total_invocations = _total_observed_invocations(
+        child_workflow=child_workflow,
+        child_node_ids=consumer_node_ids,
+        call_counts_by_node=call_counts_by_node,
+    )
+    if total_invocations < 2:
+        return None, ()
+    child_models = _resolved_models_for_child(
+        child_ir,
+        workflow_path=child_workflow,
+        node_ids=consumer_node_ids,
+        trace_index=trace_index,
+    )
+    if not child_models:
+        return None, ()
+    token_estimate = _estimate_parent_value_tokens(
+        parent_workflow=edge.parent_workflow,
+        parent_value_expr=edge.parent_value_expr or "",
+        parent_node_id=edge.parent_node_id,
+        child_workflow=child_workflow,
+        child_input_name=edge.child_input_name,
+        model=child_models[0],
+        ctx=ctx,
+        cw_result=cw_result,
+    )
+    if token_estimate is None or token_estimate <= 0:
+        return None, ()
+    threshold_floor = max(get_min_cache_tokens(model) for model in child_models)
+    if token_estimate * total_invocations < threshold_floor:
+        return None, ()
+    return (
+        _RowCrossWorkflowCandidate(
+            parent_workflow=edge.parent_workflow,
+            parent_value_expr=edge.parent_value_expr or "",
+            parent_node_id=edge.parent_node_id,
+            child_workflow=child_workflow,
+            child_input_name=edge.child_input_name,
+            estimated_tokens_per_call=token_estimate,
+        ),
+        consumer_node_ids,
+    )
+
+
+def _has_structural_cross_workflow_projection_candidate(cw_result: Any) -> bool:
+    """Return True when a no-trace run has rows that trace attribution could fill."""
+    for edge in getattr(cw_result, "edges", ()) or ():
+        if getattr(edge, "is_batch_alias_root", False):
+            continue
+        if getattr(edge, "parent_value_expr", None) is None:
+            continue
+        child_workflow = str(edge.child_workflow)
+        child_ir = cw_result.irs_by_workflow.get(child_workflow)
+        if not child_ir:
+            continue
+        child_declared = set(_items_by_name(cw_result.cache_items_by_workflow.get(child_workflow, ())))
+        if edge.child_input_name in child_declared:
+            continue
+        if len(_collect_llm_nodes_referencing_path(child_ir, edge.child_input_name)) >= 2:
+            return True
+    return False
+
+
+def _resolved_models_for_child(
+    child_ir: dict[str, Any],
+    *,
+    workflow_path: str | None = None,
+    node_ids: tuple[str, ...] = (),
+    trace_index: TraceExecutionIndex | None = None,
+) -> list[str]:
+    """Resolved LLM models in child source order; template strings are skipped."""
+    models: list[str] = []
+    node_id_filter = set(node_ids)
+    for node in child_ir.get("nodes", []) or []:
+        if not isinstance(node, dict) or node.get("type") != "llm":
+            continue
+        node_id = str(node.get("id", ""))
+        if node_id_filter and node_id not in node_id_filter:
+            continue
+        model = node.get("params", {}).get("model") or node.get("model")
+        if (model is None or (isinstance(model, str) and "${" in model)) and trace_index is not None:
+            observed = trace_index.llm_call_lists_by_key.get((workflow_path, node_id), ())
+            observed_models = sorted({str(call.get("model")) for call in observed if call.get("model")})
+            if len(observed_models) == 1:
+                model = observed_models[0]
+        if model is None:
+            model = get_default_workflow_model()
+        if not model:
+            continue
+        model_str = str(model)
+        if "${" in model_str:
+            continue
+        models.append(model_str)
+    return models
+
+
+def _total_observed_invocations(
+    *,
+    child_workflow: str,
+    child_node_ids: tuple[str, ...],
+    call_counts_by_node: dict[tuple[str | None, str], int],
+) -> int:
+    return sum(call_counts_by_node.get((child_workflow, node_id), 0) for node_id in child_node_ids)
 
 
 def _detect_candidate_subsets(workflow_ir: dict[str, Any]) -> dict[str, list[str]]:
@@ -1486,6 +1709,7 @@ def _build_per_call_row(
     trace_llm_call: dict[str, Any] | None = None,
     trace_llm_calls: tuple[dict[str, Any], ...] = (),
     did_not_execute_in_trace: bool = False,
+    cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] | None = None,
 ) -> PerCallRow:
     """Compose a single PerCallRow for an LLM node."""
     workflow_path = ctx.workflow_path
@@ -1571,6 +1795,16 @@ def _build_per_call_row(
         current_source=cacheable_source,
     )
 
+    cacheable_tokens, cacheable_source, cross_workflow_inputs = _apply_cross_workflow_projection(
+        workflow_path=workflow_path,
+        node_id=node_id,
+        cacheable_tokens=cacheable_tokens,
+        cacheable_source=cacheable_source,
+        observed_call_count=observed_call_count,
+        is_static_batch_trace=is_static_batch_trace,
+        cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
+    )
+
     # Explicit 3-way: None / 0 / positive (preserves Option C visibility
     # contract — None hides the row, 0 shows "no cacheable yet", positive
     # shows the real estimate).
@@ -1632,6 +1866,34 @@ def _build_per_call_row(
         did_not_execute_in_trace=did_not_execute_in_trace,
         observed_models=observed_models,
         observed_call_count=observed_call_count,
+        cross_workflow_inputs=cross_workflow_inputs,
+    )
+
+
+def _apply_cross_workflow_projection(
+    *,
+    workflow_path: str | None,
+    node_id: str,
+    cacheable_tokens: int | None,
+    cacheable_source: str,
+    observed_call_count: int,
+    is_static_batch_trace: bool,
+    cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] | None,
+) -> tuple[int | None, str, tuple[str, ...]]:
+    """Promote weak row evidence to a broader cross-workflow projection."""
+    if cross_workflow_candidates_by_row is None or cacheable_source not in {"unavailable", "parameters"}:
+        return cacheable_tokens, cacheable_source, ()
+    row_candidates = cross_workflow_candidates_by_row.get((workflow_path, node_id), [])
+    if not row_candidates:
+        return cacheable_tokens, cacheable_source, ()
+    per_call_sum = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
+    projected_tokens = per_call_sum if is_static_batch_trace else per_call_sum * max(1, observed_call_count)
+    if projected_tokens <= (cacheable_tokens or 0):
+        return cacheable_tokens, cacheable_source, ()
+    return (
+        projected_tokens,
+        "cross_workflow_projection",
+        tuple(candidate.parent_value_expr for candidate in row_candidates),
     )
 
 
@@ -3760,6 +4022,7 @@ def _build_cross_workflow_findings(
     notes: list[str],
     per_call_rows: list[PerCallRow],
     ctx: AnalysisContext,
+    call_counts_by_node: dict[tuple[str | None, str], int],
 ) -> tuple[CrossWorkflowFindings, list[Diagnostic]]:
     """Run the F1.3 walker and emit rename / prose-mismatch / value-flow diagnostics.
 
@@ -3825,6 +4088,7 @@ def _build_cross_workflow_findings(
         rows_by_node_path=rows_by_node_path,
         ctx=ctx,
         cw_result=cw_result,
+        call_counts_by_node=call_counts_by_node,
     )
 
     findings: list[Diagnostic] = [*rename_diags, *prose_mismatches, *sub_workflow_cache_diags]
@@ -3887,7 +4151,7 @@ def _sub_workflow_cache_candidate(
     - ``parent_value_expr is None``: literal or multi-ref string at the
       boundary; no template to track.
     - the child already declares the receiving input in its own ``## Cache``.
-    - fewer than two LLM nodes in the child consume the input.
+    - no LLM nodes in the child consume the input.
 
     Batch-scoped parent values are still valid here: ``${item.concept}`` varies
     across parent fanout items, but inside each child invocation the receiving
@@ -3903,7 +4167,7 @@ def _sub_workflow_cache_candidate(
         irs_by_workflow.get(edge.child_workflow, {}),
         edge.child_input_name,
     )
-    if len(child_node_ids) < 2:
+    if not child_node_ids:
         return None
 
     return _SubWorkflowCacheCandidate(
@@ -4128,8 +4392,12 @@ def _resolve_input_at_workflow_node_invocation(
 
 
 def _estimate_parent_value_tokens(
-    candidate: _SubWorkflowCacheCandidate,
     *,
+    parent_workflow: str,
+    parent_value_expr: str,
+    parent_node_id: str,
+    child_workflow: str,
+    child_input_name: str,
     model: str,
     ctx: AnalysisContext,
     cw_result: Any,
@@ -4152,10 +4420,10 @@ def _estimate_parent_value_tokens(
     which operand sourced the value at runtime; returning None keeps the
     rest of the projection honest.
     """
-    ref = candidate.parent_value_expr
+    ref = parent_value_expr
     if "??" in ref:
         return None
-    workflow_path = candidate.parent_workflow
+    workflow_path = parent_workflow
     value = _resolve_value_in_workflow_parameters(ref, workflow_path=workflow_path, ctx=ctx)
     if value is None:
         value = _resolve_value_in_workflow_memo(ref, workflow_path=workflow_path, ctx=ctx)
@@ -4163,9 +4431,9 @@ def _estimate_parent_value_tokens(
         value = _resolve_value_in_workflow_trace(ref, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
     if value is None:
         value = _resolve_input_at_workflow_node_invocation(
-            parent_node_id=candidate.parent_node_id,
+            parent_node_id=parent_node_id,
             parent_workflow=workflow_path,
-            child_input_name=candidate.child_input_name,
+            child_input_name=child_input_name,
             ctx=ctx,
             cw_result=cw_result,
         )
@@ -4208,7 +4476,11 @@ def _project_sub_workflow_cache_savings(
         return (None, None, None)
     threshold_model = first_row.model
     tokens = _estimate_parent_value_tokens(
-        candidate,
+        parent_workflow=candidate.parent_workflow,
+        parent_value_expr=candidate.parent_value_expr,
+        parent_node_id=candidate.parent_node_id,
+        child_workflow=candidate.child_workflow,
+        child_input_name=candidate.child_input_name,
         model=threshold_model,
         ctx=ctx,
         cw_result=cw_result,
@@ -4278,12 +4550,49 @@ def _format_child_node_ids_csv(node_ids: tuple[str, ...], *, max_inline: int = 4
     return f"{head} +{len(ids) - max_inline} more"
 
 
+def _workflow_basename(workflow_path: str) -> str:
+    return workflow_path.rsplit("/", 1)[-1] if "/" in workflow_path else workflow_path
+
+
+def _build_cleanup_hint_clause(candidate: _SubWorkflowCacheCandidate, cw_result: Any) -> str:
+    """Body-ref cleanup needed before adding a child-local cache chunk."""
+    child_ir = cw_result.irs_by_workflow.get(candidate.child_workflow)
+    if not child_ir:
+        return ""
+    nodes_by_id = {
+        str(node.get("id")): node
+        for node in child_ir.get("nodes", []) or []
+        if isinstance(node, dict) and node.get("id")
+    }
+    cache_item_names = {candidate.child_input_name}
+    corrected = (candidate.child_input_name,)
+    findings: list[str] = []
+    for node_id in candidate.child_node_ids:
+        node = nodes_by_id.get(node_id)
+        if node is None:
+            continue
+        cleanup = _prompt_body_cleanup_for_node(node, corrected, cache_item_names)
+        if not cleanup:
+            continue
+        cleanup_csv = ", ".join(f"`${{{ref}}}`" for ref in cleanup)
+        findings.append(f"  • `{node_id}`: {cleanup_csv}")
+    if not findings:
+        return ""
+    child_basename = _workflow_basename(candidate.child_workflow)
+    return (
+        f"\n\nBefore declaring `{candidate.child_input_name}` in "
+        f"`{child_basename}`'s ## Cache, the following body refs need cleanup "
+        f"(remove from prompt body OR rewrite to literal text):\n" + "\n".join(findings)
+    )
+
+
 def _emit_sub_workflow_cache_findings(
     candidates: list[_SubWorkflowCacheCandidate],
     *,
     rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
     ctx: AnalysisContext,
     cw_result: Any,
+    call_counts_by_node: dict[tuple[str | None, str], int],
 ) -> list[Diagnostic]:
     """Emit child-scoped diagnostics for missing sub-workflow cache declarations.
 
@@ -4303,6 +4612,22 @@ def _emit_sub_workflow_cache_findings(
     """
     diagnostics: list[Diagnostic] = []
     for candidate in _dedupe_sub_workflow_cache_candidates(candidates):
+        if ctx.trace is None:
+            if candidate.child_count < 2:
+                continue
+        else:
+            total_invocations = _total_observed_invocations(
+                child_workflow=candidate.child_workflow,
+                child_node_ids=candidate.child_node_ids,
+                call_counts_by_node=call_counts_by_node,
+            )
+            child_has_trace_evidence = any(
+                (candidate.child_workflow, node_id) in call_counts_by_node for node_id in candidate.child_node_ids
+            )
+            if child_has_trace_evidence and total_invocations < 2:
+                continue
+            if not child_has_trace_evidence and candidate.child_count < 2:
+                continue
         child_basename = (
             candidate.child_workflow.rsplit("/", 1)[-1] if "/" in candidate.child_workflow else candidate.child_workflow
         )
@@ -4327,6 +4652,7 @@ def _emit_sub_workflow_cache_findings(
                 line_in_parent=candidate.line_in_parent,
                 child_node_ids_csv=_format_child_node_ids_csv(candidate.child_node_ids),
                 below_threshold_clause=below_threshold_clause,
+                cleanup_hint_clause=_build_cleanup_hint_clause(candidate, cw_result),
             )
         )
     return diagnostics

@@ -1,0 +1,41 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath/workflow.pflow.md
+
+  Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
+  (0 in workflow.pflow.md, 2 in 1 sub-workflow)
+
+## Summary
+
+  Cost per run:                unavailable
+
+  1 recommended action
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath/workflow.pflow.md article=<value>
+
+## Recommended actions (1, ordered by impact)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Sub-workflow cache undeclared — add `article` in child.pflow.md's ## Cache  saves ~$0.02/run
+     child.pflow.md
+     `article` flows into `child.pflow.md` as `article` and is used by 2 LLM nodes there (`summarize`, `translate`). Add `article` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
+     Before declaring `article` in `child.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
+       • `summarize`: `${article.title}`
+       • `translate`: `${article.body}`
+     → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
+     → First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.
+     → Then, in sub/child.pflow.md, add a ## Cache chunk for `${article}`.
+     → Finally, add `article` to `prompt_cache:` on the child LLM nodes that reuse it.
+
+## Per-child analyze-cache commands
+
+  Sub-workflow opportunities don't surface here — run analyze-cache per child:
+    cd .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath
+    pflow analyze-cache sub/child.pflow.md
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.
+  · Cross-workflow projections require trace evidence to populate per-call rows. Recommended actions still surface; run with `--from-trace <path>` for per-call attribution.

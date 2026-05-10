@@ -27,11 +27,12 @@ and is the regression oracle for trace-mode rendering at scale.
 
 **Expected behavior** after recording: `pflow analyze-cache --from-trace`
 shows:
-- `Confidence: high_from_trace (N of M nodes)` where N depends on
-  whether all batch sub-workflow per-item children appear in the IR
+- `Confidence: high_from_trace (25 of 25 nodes)`
 - `actually_paid_usd` populated from real Gemini cost data
 - 3-level cross-workflow trace attribution
 - Per-call rows with `data_source: "trace"` for executed nodes
+- Dynamic review sub-workflow rows attributed to their concrete child
+  workflows, not collapsed under the batch parent
 - `cache.discrepancy` warnings if any TTLs expired (5-min TTL with
   10-30min wall clock = likely)
 
@@ -52,3 +53,10 @@ bumps, or the lyrics-generator workflow itself is updated.
 
 **Recording log**: see `.run-log.md` (committed) for the actual
 elapsed time, cost, and any anomalies during this recording.
+
+**Fixture minimization**: the committed trace fixture is generated from
+the raw live trace with `minimize-trace-fixture.py` in this directory.
+The minimizer removes duplicate prompt/system/input echoes while preserving
+the analyzer canaries this case needs: 25/25 executed LLM rows, separate
+dynamic review workflow attribution, and concrete cross-workflow
+`could_cache` projections such as `review-rhyme`.

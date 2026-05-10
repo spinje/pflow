@@ -6,6 +6,8 @@ trace reports, runtime summaries, and analyze-cache rollups.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from pflow.core.trace_tree import TraceTree, WalkEvent
@@ -874,6 +876,56 @@ def test_walk_attributes_heterogeneous_batch_with_non_templated_inputs() -> None
         if leaf.llm_call is not None:
             by_workflow.setdefault(leaf.workflow_path, []).append(leaf.llm_call["cost_usd"])
     assert by_workflow == {"/abs/a.pflow.md": [0.05], "/abs/b.pflow.md": [0.07]}
+
+
+def test_walk_normalizes_old_relative_template_resolved_workflow_path() -> None:
+    """Old dynamic workflow-batch traces stored raw relative workflow refs.
+
+    The parent workflow path gives enough context to normalize those values
+    before matching child LLM events to analyzer rows keyed by absolute path.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    parent_path = "/repo/song-creator/song-creator.pflow.md"
+    child_path = str(Path("/repo/song-creator/reviews/review-rhyme.pflow.md"))
+    parent = builder.heterogeneous_workflow_batch_event(
+        "fan-out",
+        items=[
+            ("./reviews/review-rhyme.pflow.md", [builder.llm_event("review", cost_usd=0.05)]),
+        ],
+    )
+    tree = TraceTree.from_dict(builder.trace(workflow_path=parent_path, nodes=[parent]))
+
+    leaves = list(tree.iter_llm_leaves(workflow_path=parent_path))
+    assert [leaf.workflow_path for leaf in leaves] == [child_path]
+
+    actual_cost_events = list(tree.iter_actual_cost_events(workflow_path=parent_path))
+    actual_cost_leaf_paths = [
+        leaf.workflow_path
+        for leaf in actual_cost_events
+        if leaf.llm_call is not None and leaf.event_node_id == "review"
+    ]
+    assert actual_cost_leaf_paths == [child_path]
+
+
+def test_walk_prefers_explicit_batch_item_workflow_path_over_template_resolution() -> None:
+    """New traces carry canonical ``workflow_path`` on batch items."""
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    parent_path = "/repo/song-creator/song-creator.pflow.md"
+    parent = builder.heterogeneous_workflow_batch_event(
+        "fan-out",
+        items=[
+            ("./reviews/review-rhyme.pflow.md", [builder.llm_event("review", cost_usd=0.05)]),
+        ],
+    )
+    parent["batch_items"][0]["workflow_path"] = "/canonical/review-rhyme.pflow.md"
+    tree = TraceTree.from_dict(builder.trace(workflow_path=parent_path, nodes=[parent]))
+
+    leaves = list(tree.iter_llm_leaves(workflow_path=parent_path))
+    assert [leaf.workflow_path for leaf in leaves] == ["/canonical/review-rhyme.pflow.md"]
 
 
 def test_resolved_child_workflow_from_event_prefers_template_resolutions() -> None:

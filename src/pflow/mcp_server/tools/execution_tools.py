@@ -508,13 +508,17 @@ async def analyze_cache(
 
     **per_call[].cacheable_data_source** is INDEPENDENT from ``data_source``
     and tracks the cacheable-tokens metric specifically. Values: ``trace``
-    / ``memo`` / ``parameters`` / ``batch_prefix`` / ``unavailable``. The
+    / ``memo`` / ``parameters`` / ``batch_prefix`` /
+    ``cross_workflow_projection`` / ``unavailable``. The
     two labels may legitimately diverge — e.g., trace fires for input but
     cacheable falls through to memo when ``cache_creation+cache_read==0``.
     ``batch_prefix`` covers the static-prefix projection on batch nodes
     (repeated bytes before the first ``${alias.X}`` ref multiplied by
     observed call count) — a heuristic projection for undeclared rows;
-    the text renderer surfaces a footer note flagging it.
+    ``cross_workflow_projection`` covers parent-declared values sent into
+    a child workflow that has not declared the receiving input in its own
+    ``## Cache``. The text renderer surfaces footer notes flagging both
+    projection tiers.
 
     **per_call[].did_not_execute_in_trace** (boolean): True when the IR
     declares the LLM node but the loaded trace did not record an execution

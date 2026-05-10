@@ -10981,3 +10981,329 @@ Coordination notes:
 
 Closes the three highest-leverage fresh-eyes findings remaining after
 Pass A/B prep.
+
+## 2026-05-10 — Task 159 — drill-in filters 0-LLM-node children
+
+`_render_sub_workflow_drill_in` and `_format_sub_workflow_breakdown_line`
+now skip rollup entries with `llm_node_count == 0` via shared helper
+`_llm_bearing_rollup_entries`. Lockstep filter: the header parenthetical
+count and the drill-in command list move together so they can't disagree
+(canary went from `15 sub-workflows` + 15 commands to `14 sub-workflows`
++ 14 commands — `fetch-source` is MCP-only, has no LLM cache findings,
+emitting a command for it was noise). Whole-section suppression when no
+LLM-bearing children remain. JSON unchanged. 2 baselines regenerated
+(`10-live-recordings/05`, `12-real-world-lyrics-generator/01`); 2 new
+tests with verified mutation contracts.
+
+## 2026-05-10 — Task 159 — Pass C cross-workflow row plumbing interrupted handoff
+
+User interrupted during final baseline-regeneration cleanup. Current code state:
+
+- Implemented cross-workflow per-call row plumbing in
+  `src/pflow/core/cache_analysis/analyze.py`.
+  - `_build_per_call_rows_and_warnings` now returns `_PerCallRowsResult`
+    carrying rows, warnings, trace-backed `call_counts_by_node`,
+    `cross_workflow_candidates_by_row`, and the no-trace routing-note flag.
+  - Row candidates are built from cross-workflow edges using observed total
+    invocations, provider min-cache threshold gating, explicit-field
+    `_estimate_parent_value_tokens(...)`, and child-model resolution that can
+    fall back to observed trace models when child IR models are templated or
+    omitted.
+  - `_build_per_call_row` promotes weak `unavailable`/`parameters` evidence to
+    `cross_workflow_projection` only when the cross-workflow projection is
+    larger. It still does not override trace, memo, or `batch_prefix`.
+    This deviation from the written fallback-only plan was required by the
+    real Gemini canary: `select-chorus` had tiny parameter evidence (`164`)
+    and needed the broader boundary projection, while `score-choruses` still
+    correctly keeps `batch_prefix`.
+- Implemented `PerCallRow.cross_workflow_inputs` and JSON output for it.
+  Text rows with multiple contributing inputs render compact `cw=a+b` notes.
+- Implemented renderer support:
+  - `could_cache` renders `cross_workflow_projection`.
+  - confidence footer names affected rows and points agents to both
+    Recommended actions and Sub-workflow boundaries.
+  - last edit before interruption changed footer prose from
+    "`select-chorus project savings...`" to
+    "`select-chorus use cross-workflow projections...`"; tests/baselines need
+    rerun after this wording change.
+- Implemented cleanup-hint extension for
+  `cache.sub-workflow-cache-undeclared`.
+  - Message now appends `cleanup_hint_clause`.
+  - Suggestions are cleanup-first: apply both edits, remove/rewrite body refs,
+    then add child `## Cache`, then add child `prompt_cache:`.
+  - `_build_cleanup_hint_clause` reuses `_prompt_body_cleanup_for_node` with
+    synthetic cache item scope `{child_input_name}` and includes the required
+    antecedent: "Before declaring X in Y's ## Cache..." plus "remove ... OR
+    rewrite to literal text".
+- Added new baseline fixture
+  `04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath/`
+  proving subpath cleanup hints render for `${article.title}` /
+  `${article.body}`.
+- Updated docs/comments in `cache_analysis/CLAUDE.md`, JSON format history,
+  MCP tool docstring, `view_helpers`, and JSON renderer comments.
+
+Tests added/updated:
+
+- Synthetic row projection tests in
+  `tests/test_core/test_cache_analysis_per_id_emission.py`:
+  single-consumer/many-calls row + recommendation parity, multi-input summing,
+  subpath cleanup hint.
+- Real canary assertion in
+  `tests/test_core/test_cache_analysis_analyze.py`:
+  `score-choruses` stays `batch_prefix` and `select-chorus` becomes
+  `cross_workflow_projection` with >5k tokens.
+- Renderer tests for cross-workflow footer and multi-candidate notes.
+- Coverage/warnings fixtures updated with `cleanup_hint_clause`.
+
+Verification already completed before the final footer wording tweak:
+
+- Focused cache-analysis suite including CLI:
+  `test_cache_analysis_token_estimation.py`,
+  `test_cache_analysis_cost_estimation.py`,
+  `test_cache_analysis_renderers.py`,
+  `test_cache_analysis_analyze.py`,
+  `test_cache_analysis_per_id_emission.py`,
+  `test_cache_analysis_per_id_coverage.py`,
+  `test_cache_analysis_warnings.py`,
+  `tests/test_cli/test_analyze_cache.py`: 571 passed.
+- Full `tests/test_core/test_cache_analysis_*.py`: 594 passed.
+- Baseline verify with sandbox shim: 67 passed, 0 drifted, 0 harness errors.
+- `ruff check` on touched files clean, `ruff format --check` clean,
+  `mypy src/pflow/core/cache_analysis` clean, `deptry src` clean,
+  `git diff --check` clean.
+- Near-full sandbox-safe suite:
+  `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
+  returned 6560 passed, 1 skipped.
+
+State after interruption:
+
+- After changing footer wording, I regenerated only
+  `10-live-recordings/` successfully. I started regenerating
+  `12-real-world-lyrics-generator/`, but the user interrupted the turn; treat
+  that command as possibly partially executed and rerun it if needed.
+- Baseline verify and tests have NOT been rerun after the footer wording tweak.
+  Next agent should rerun, at minimum:
+  1. `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest tests/test_core/test_cache_analysis_renderers.py::test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_projection tests/test_core/test_cache_analysis_analyze.py::test_per_call_could_cache_populated_for_score_choruses_with_real_trace -q`
+  2. touched-file `ruff check`, `ruff format --check`, `mypy src/pflow/core/cache_analysis`, `git diff --check`
+  3. baseline regenerate for any groups that drift from the footer wording, then
+     `PATH="/private/tmp/pflow-uv-shim:$PWD/.venv/bin:$PATH" .taskmaster/tasks/task_159/baseline/verify.sh`
+  4. full `tests/test_core/test_cache_analysis_*.py`; near-full suite if time.
+
+Trust boundary / caveats:
+
+- The written plan said cross-workflow projection should be fallback-only.
+  Final code intentionally allows replacing `parameters` evidence when the
+  boundary projection is larger. Clear reason: the real canary's success
+  criterion (`select-chorus`) is otherwise not met; `parameters` there was a
+  tiny child-local chunk estimate, not stronger evidence than the parent value.
+  `batch_prefix` remains protected, preserving the score-choruses no-double-
+  count invariant.
+- Recommendation gating in trace mode falls back to structural `child_count`
+  when no child LLM trace events exist for the boundary. Clear reason:
+  existing savings-from-parent-trace tests use parent trace evidence without
+  child `sub_workflow_events`; dropping those recommendations would regress
+  first-contact analysis. Rows still require observed child call counts.
+- Current `git status` includes pre-existing added/untracked plan/context files
+  (`pass-c-cross-workflow-row-plumbing-plan.md`,
+  `braindump-pass-c-implementation.md`) that I did not create or stage.
+
+## 2026-05-10 — Task 159 — Pass C completion polish after handoff
+
+Picked up the staged Pass C implementation after the interrupted footer wording
+tweak and verified it against the written plan plus the raw lyrics-generator
+output.
+
+Changes made:
+
+- Fixed row attribution for conditional/unreached child consumers. The staged
+  code attached a cross-workflow row candidate to every structural consumer
+  once the boundary passed the aggregate invocation gate; this made an
+  unexecuted conditional row claim a `could_cache` projection. Row candidates
+  now attach only to consumers with observed trace calls. Recommendation-level
+  gating still uses aggregate total invocations, so the broad boundary advice
+  remains visible when caching pays off.
+- Added regression coverage for that conditional-dispatch case and for the
+  strictest-child-model threshold gate. The latter locks the plan's v1.2
+  requirement that heterogeneous child consumers use the maximum provider
+  cache threshold, not the first child model.
+- Removed diagnostic-ID leakage from cleanup-first suggestions in
+  `cache.sub-workflow-cache-undeclared` and `cache.prompt-cache-incomplete`.
+  Clear reason: the Task 159 priority says agent-facing output should not
+  require pflow internals. The suggestions now describe the failure mode in
+  plain English while preserving the cleanup-first action order.
+- Fixed the cross-workflow footer grammar for a single affected row
+  (`select-chorus uses ...`, not `select-chorus use ...`).
+
+Plan deviations / decisions:
+
+- Did not revert the inherited `parameters` → `cross_workflow_projection`
+  upgrade behavior. Verified rationale still holds: `select-chorus` needs the
+  broader boundary projection, while `score-choruses` remains protected by the
+  `batch_prefix` precedence. This is a deliberate deviation from the older
+  fallback-only wording, already documented in the handoff.
+- Did not add every enumerated test from the plan. Added the missing tests that
+  guarded real observed or high-risk failure modes after reading the current
+  staged tests: conditional unexecuted rows and heterogeneous strict-threshold
+  gating. Existing tests already cover single-consumer/many-calls parity,
+  multi-input summing, subpath cleanup hints, canary positive/negative behavior,
+  renderer footer routing, and baseline output shape.
+
+Verification:
+
+- Focused inherited tests: 5 passed.
+- `tests/test_core/test_cache_analysis_per_id_emission.py`
+  + `tests/test_core/test_cache_analysis_warnings.py`: 180 passed.
+- Full cache-analysis suite plus CLI analyze-cache:
+  `tests/test_core/test_cache_analysis_*.py tests/test_cli/test_analyze_cache.py`:
+  616 passed.
+- Baseline harness with sandbox shim: 67 passed, 0 drifted, 0 harness errors
+  after targeted regen for suggestion/footer wording.
+- Quality: touched-file `ruff check`, `ruff format --check`,
+  `mypy src/pflow/core/cache_analysis`, `deptry src`, and `git diff --check`
+  clean.
+- Near-full sandbox-safe suite:
+  `HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
+  returned 6562 passed, 1 skipped.
+
+## 2026-05-10 — Task 159 — Dynamic workflow trace path attribution fix
+
+Investigated why replacing the trimmed lyrics-generator trace with the original
+rich trace made dynamic review child rows look unexecuted. Root cause: real
+batch traces can store `template_resolutions["workflow"]["resolved"]` as the
+generic template result (`./reviews/review-rhyme.pflow.md`), while analyzer
+rows are keyed by the canonical absolute child workflow path from
+`resolve_sub_workflow()`.
+
+Changes made:
+
+- New runtime traces now record canonical per-item `workflow_path` for workflow
+  batch items after `WorkflowExecutor` resolves the child. The handoff uses the
+  per-item shared store (`_pflow_child_workflow_paths`) rather than new node
+  instance state; the first implementation used `self._child_workflow_path`,
+  and the stateless-node invariant correctly rejected it.
+- `TraceTree` now prefers explicit batch-item `workflow_path`, then falls back
+  to old-trace `template_resolutions["workflow"]["resolved"]` normalized
+  relative to the parent workflow path when possible, then the existing edge
+  map, then inherited workflow path. It still does not read
+  `node_params.workflow`, because that field is raw user IR.
+- Added regression coverage at the runtime producer, TraceTree compatibility,
+  and analyzer row-attribution boundaries.
+
+Manual canary:
+
+- Running `analyze-cache` against the original rich trace
+  `/Users/andfal/.pflow/debug/workflow-trace-c2f89d56-lyrics-generator-20260508-221119.json`
+  now attributes dynamic review workflows correctly. `review-rhyme.pflow.md`
+  shows `calls=4`, `did_not_execute_in_trace=False`, and
+  `could_cache=22,208` in text output instead of being lost under a relative
+  trace path. `review-stranger-summary.pflow.md` also moves from unexecuted to
+  `calls=4`; remaining `?` there is a separate cache projection/value-size
+  issue, not row attribution.
+
+Verification:
+
+- Focused new regressions plus stateless invariant: 5 passed.
+- Related suites:
+  `tests/test_core/test_trace_tree.py tests/test_runtime/test_trace_integration.py tests/test_core/test_cache_analysis_analyze.py tests/test_core/test_cache_analysis_*.py tests/test_cli/test_analyze_cache.py`:
+  675 passed.
+- Baseline harness with sandbox shim: 67 passed, 0 drifted, 0 harness errors.
+- Quality on touched files: `ruff check`, `ruff format --check`, targeted
+  `mypy`, and `git diff --check` clean.
+- Near-full sandbox-safe suite with the known Homebrew-uv subprocess cases
+  excluded: 6546 passed, 19 skipped. A whole-repo `ruff check` still reports
+  unrelated pre-existing lint in other test files; touched-file ruff is clean.
+
+## 2026-05-10 — Task 159 — Text path UX polish
+
+Investigated the raw lyrics-generator analyzer output after the dynamic trace
+path fix. The path-heavy surfaces were text-renderer presentation, not analyzer
+identity: header, suggested run command, action suggestions, the per-child
+`cd` line, and discrepancy notes. JSON and internal `workflow_path` values
+still need canonical paths for trace/memo matching and machine consumers.
+
+Changes made:
+
+- Added renderer-only path formatting helpers. Text output now leads with the
+  workflow filename and a cwd-relative `File:` line when useful; canonical paths
+  remain unchanged in `CacheAnalysis` and JSON.
+- Shortened text-only commands and edit targets:
+  - `Suggested: pflow run ...` uses cwd-relative paths when the workflow is
+    under the current directory.
+  - Sub-workflow cache suggestions render child edit targets relative to the
+    analyzed workflow's directory (`song-creator/chorus-chooser/...`) instead
+    of full absolute paths.
+  - Per-child analyze-cache blocks keep the paste-ready `cd` + relative child
+    command shape, but the `cd` path is cwd-relative.
+- Shortened workflow paths embedded in Notes prose to workflow filenames, so
+  discrepancy notes read as `song-creator.pflow.md.write-lyrics` instead of a
+  repeated absolute path.
+- Added renderer tests covering header/File rendering, relative suggested run
+  commands, relative child edit targets, shortened Notes prose, and JSON
+  canonical-path stability.
+
+Trust boundary / rationale:
+
+- This deliberately did not change analyzer data, diagnostic context, trace
+  attribution, memo lookup keys, or JSON path fields. The fix is only for
+  agent-facing text output.
+- Did not collapse every path to basename. Edit/run surfaces keep relative
+  paths when they help the agent act; explanatory prose uses filenames.
+
+Verification:
+
+- `tests/test_core/test_cache_analysis_renderers.py`: 149 passed.
+- `tests/test_core/test_cache_analysis_*.py tests/test_cli/test_analyze_cache.py`:
+  622 passed.
+- Baseline harness after full regen: 67 passed, 0 drifted, 0 harness errors.
+- Quality: touched-file `ruff check`, touched-file `ruff format --check`,
+  `mypy src/pflow/core/cache_analysis`, and `git diff --check` clean.
+
+## 2026-05-10 — Task 159 — Rich lyrics trace fixture minimization
+
+Replaced the live Gemini lyrics-generator trace fixture with a minimized rich
+fixture generated from the original raw trace. Clear reason: the previous 12MB
+fixture had stripped `template_resolutions` and long values, which made the
+baseline materially less truthful after the trace-attribution fix: dynamic
+review rows collapsed or looked unexecuted, and concrete cross-workflow
+`could_cache` projections stayed unavailable.
+
+Changes made:
+
+- Added `minimize-trace-fixture.py` beside the live-recording case so the
+  committed fixture is reproducible from the raw trace instead of hand-edited.
+  The minimizer removes duplicate prompt/system/input/result echoes while
+  preserving event structure, per-item workflow attribution, LLM usage/cost
+  telemetry, `llm_prompt`, and producer values needed for cross-workflow
+  projection.
+- Replaced `_shared/fixtures/live-gemini-lyrics-generator.trace.json` with the
+  minimized fixture. Size moved from 12.2MB misleading fixture to 8.8MB rich
+  fixture; the raw source trace is 52.9MB.
+- Regenerated `10-live-recordings/05-gemini-lyrics-generator`. Output now shows
+  25/25 LLM rows executed, 26 recommended actions, and concrete review
+  projections such as `review-rhyme.pflow.md` `calls=4`,
+  `could_cache=22,208`.
+- Updated the live-recording README/run log and strengthened the real-trace
+  analyzer canary to assert the dynamic `review-rhyme` row remains executed
+  with a large cache projection.
+
+Tradeoffs / trust boundary:
+
+- The minimized fixture is not byte-for-byte identical to the raw trace output:
+  one discrepancy note changes from 9 skipped sub-workflows to 10 because some
+  analyzer-time predicted-key inputs were deliberately removed. This is
+  acceptable for this baseline because the row attribution and cache-projection
+  canaries are preserved exactly, and discrepancy prediction is explicitly
+  secondary observable-field fallback output.
+- Did not commit the 52.9MB raw trace. A gzip of the 8.8MB minimized fixture is
+  about 1.9MB, but the baseline harness consumes plain JSON today, so the
+  committed file remains uncompressed.
+
+Verification:
+
+- Minimize script reproduces the committed fixture byte-for-byte
+  (`sha256 a76d5564ddefe67d31fab81e053a253988ddbe197b15d5a4645bac958d206fa8`).
+- Focused fixture/trace attribution tests: 4 passed.
+- `tests/test_core/test_cache_analysis_analyze.py`: 155 passed.
+- Baseline harness with sandbox shim: 67 passed, 0 drifted, 0 harness errors.
+- Quality: minimizer + analyzer test `ruff check`, `ruff format --check`, and
+  `git diff --check` clean.

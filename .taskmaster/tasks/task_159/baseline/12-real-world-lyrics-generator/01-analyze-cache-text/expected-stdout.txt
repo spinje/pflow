@@ -1,9 +1,10 @@
-# Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
+# Cache Analysis: lyrics-generator.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
 
   Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes)
   Models: not resolved (set settings.default_model)
   Heterogeneous: generate-chorus-options (model varies per batch item)
-  (2 in lyrics-generator.pflow.md, 23 in 15 sub-workflows)
+  (2 in lyrics-generator.pflow.md, 23 in 14 sub-workflows)
 
 ## Summary
 
@@ -26,8 +27,13 @@
   1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  savings unavailable
      chorus-chooser.pflow.md
      `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
-     → In <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
-     → Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
+     Before declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
+       • `score-choruses`: `${concept.core_idea}`
+       • `select-chorus`: `${concept.core_idea}`, `${concept.title}`
+     → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
+     → First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.
+     → Then, in song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
+     → Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
 
   2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
@@ -91,11 +97,10 @@
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    cd <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator
+    cd .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator
     pflow analyze-cache analyze-source/analyze-source.pflow.md
     pflow analyze-cache concept-chooser/concept-chooser.pflow.md
     pflow analyze-cache enforce-diversity/enforce-diversity.pflow.md
-    pflow analyze-cache fetch-source/fetch-source.pflow.md
     pflow analyze-cache song-creator/chorus-chooser/chorus-chooser.pflow.md
     pflow analyze-cache song-creator/reviews/review-accuracy.pflow.md
     pflow analyze-cache song-creator/reviews/review-ai-tells.pflow.md
@@ -111,3 +116,4 @@
 ## Notes
 
   · 3 dynamic batches not in per-call table: `fetch-sources` (items: `${sources}`), `analyze-sources` (items: `${fetch-sources.results}`), `create-songs` (items: `${zip-concepts-with-briefs.result}`). Batch items are computed at runtime, so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static items to list them. (Cost shown is measured from the trace, not estimated.)
+  · Cross-workflow projections require trace evidence to populate per-call rows. Recommended actions still surface; run with `--from-trace <path>` for per-call attribution.

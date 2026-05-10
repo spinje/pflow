@@ -338,6 +338,7 @@ class WorkflowExecutor(BaseNode):
         child_params = prep_res["child_params"]
         storage_mode = prep_res["storage_mode"]
         parent_shared = prep_res.get("parent_shared", {})
+        self._record_child_workflow_path(parent_shared, workflow_path)
 
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
@@ -530,6 +531,16 @@ class WorkflowExecutor(BaseNode):
                 message, _context = normalize_runtime_warning(warning)
                 return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {message}"
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
+
+    def _record_child_workflow_path(self, parent_shared: dict[str, Any], workflow_path: str) -> None:
+        if not workflow_path or workflow_path == "<inline>":
+            return
+        step_id = getattr(self, "node_id", None)
+        if not isinstance(step_id, str) or not step_id:
+            return
+        paths = parent_shared.setdefault(f"{self.RESERVED_KEY_PREFIX}child_workflow_paths", {})
+        if isinstance(paths, dict):
+            paths[step_id] = str(workflow_path)
 
     def _extract_child_inputs(self) -> dict[str, Any]:
         """Extract child workflow inputs from the ``inputs`` dict param.

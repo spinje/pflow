@@ -46,6 +46,11 @@ Version history (``JSON_FORMAT_VERSION``):
   ``summary.ir_default_model`` added (``string | null``). Captures the
   IR-resolved default model so text/JSON consumers can compare declared
   settings with ``summary.observed_models_in_trace``.
+- ``"4.1"`` — Pass C prompt-caching polish (additive, same minor):
+  ``per_call[].cacheable_data_source`` gains ``"cross_workflow_projection"``
+  and ``per_call[].cross_workflow_inputs`` is added for rows whose
+  ``could_cache`` value comes from parent-declared values flowing into a
+  child workflow.
 - ``"4.1"`` — B-9 split (additive, same minor): cache-domain ERRORs stay in
   ``blocking_errors[]`` (now matches ``summary.blocking_errors`` count);
   non-cache validator errors (unknown node types, schema errors) move to a

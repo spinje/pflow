@@ -43,7 +43,15 @@ from collections.abc import Iterable, Mapping
 
 from pflow.core.diagnostic import Diagnostic
 
-from .analyze import AnalysisSummary, CacheAnalysis, CostDelta, PerCallRow, RecommendedAction
+from .analyze import (
+    AnalysisSummary,
+    CacheAnalysis,
+    CostDelta,
+    PerCallRow,
+    RecommendedAction,
+    SubWorkflowRollup,
+    SubWorkflowRollupEntry,
+)
 
 _HIDDEN_RATIO_THRESHOLD = 80
 
@@ -139,12 +147,15 @@ def _render_header(analysis: CacheAnalysis) -> str:
     coverage = analysis.estimate_confidence_coverage
     label = analysis.estimate_confidence
     scale_lines = _format_scale_line(s)
-    lines = [
-        f"# Cache Analysis: {analysis.workflow_path}",
+    lines = [f"# Cache Analysis: {_workflow_filename(analysis.workflow_path)}"]
+    display_path = _display_path_from_cwd(analysis.workflow_path)
+    if display_path != _workflow_filename(analysis.workflow_path):
+        lines.append(f"  File: {display_path}")
+    lines.extend([
         "",
         f"  Workflow: {scale_lines[0]}",
         *(f"  {extra}" for extra in scale_lines[1:]),
-    ]
+    ])
     if s.evidence_scope == "truncated_trace_executed_subset":
         lines.append(
             f"  Evidence: trace truncated ({s.trace_llm_nodes_executed} of {s.trace_llm_nodes_static} LLM nodes executed)"
@@ -182,6 +193,19 @@ def _render_header(analysis: CacheAnalysis) -> str:
     return "\n".join(lines)
 
 
+def _llm_bearing_rollup_entries(
+    rollup: SubWorkflowRollup,
+) -> tuple[SubWorkflowRollupEntry, ...]:
+    """Filter rollup entries to those with at least one LLM node.
+
+    Workflows with ``llm_node_count == 0`` (e.g., MCP/shell-only orchestrators)
+    have no per-call cache findings to surface; the drill-in command and
+    breakdown-count both use this filter to keep sub-workflow signals aligned
+    with what ``analyze-cache`` would actually report on each child.
+    """
+    return tuple(entry for entry in rollup.per_workflow if entry.llm_node_count > 0)
+
+
 def _format_sub_workflow_breakdown_line(analysis: CacheAnalysis) -> str | None:
     """Return the per-workflow LLM-node breakdown parenthetical.
 
@@ -193,7 +217,8 @@ def _format_sub_workflow_breakdown_line(analysis: CacheAnalysis) -> str | None:
     if rollup is None:
         return None
     s = analysis.summary
-    child_count = len(rollup.per_workflow)
+    llm_bearing = _llm_bearing_rollup_entries(rollup)
+    child_count = len(llm_bearing)
     workflow_word = "sub-workflow" if child_count == 1 else "sub-workflows"
     return (
         f"({s.root_llm_node_count} in {_workflow_filename(analysis.workflow_path)}, "
@@ -452,13 +477,13 @@ def _render_summary(analysis: CacheAnalysis) -> str:
             "  Absolute cost figures need a prior run. Run the workflow once, then "
             "re-run analyze-cache for real cost figures and cacheable projections."
         )
-        _append_suggested_run_command(summary_lines, s)
+        _append_suggested_run_command(summary_lines, s, workflow_path=analysis.workflow_path)
     elif _all_cost_atoms_unavailable(s) and not s.unavailable_models:
-        _append_unavailable_cost_message(summary_lines, s)
+        _append_unavailable_cost_message(summary_lines, s, workflow_path=analysis.workflow_path)
     return "\n".join(summary_lines)
 
 
-def _append_suggested_run_command(summary_lines: list[str], s: AnalysisSummary) -> None:
+def _append_suggested_run_command(summary_lines: list[str], s: AnalysisSummary, *, workflow_path: str) -> None:
     """Emit the paste-ready ``Suggested:`` line when a runnable command exists.
 
     Shared by the two unavailable-cost branches (priced-with-savings and
@@ -467,10 +492,10 @@ def _append_suggested_run_command(summary_lines: list[str], s: AnalysisSummary) 
     ``ir-hash:`` lookup keys.
     """
     if s.suggested_run_command:
-        summary_lines.append(f"  Suggested:  {s.suggested_run_command}")
+        summary_lines.append(f"  Suggested:  {_display_run_command(s.suggested_run_command, workflow_path)}")
 
 
-def _append_unavailable_cost_message(summary_lines: list[str], s: AnalysisSummary) -> None:
+def _append_unavailable_cost_message(summary_lines: list[str], s: AnalysisSummary, *, workflow_path: str) -> None:
     """Render the four "Cost data unavailable" sub-branches.
 
     The branch fires on four distinct sub-cases; conflating them produced the
@@ -501,7 +526,7 @@ def _append_unavailable_cost_message(summary_lines: list[str], s: AnalysisSummar
         )
     else:
         summary_lines.append("  Cost data unavailable: run the workflow once for cost figures.")
-        _append_suggested_run_command(summary_lines, s)
+        _append_suggested_run_command(summary_lines, s, workflow_path=workflow_path)
 
 
 def _append_summary_counts(summary_lines: list[str], analysis: CacheAnalysis) -> None:
@@ -816,8 +841,9 @@ def _render_action_list(
         # `title` (not `headline`) closes the dedup gap that doubled blocking-
         # error lines.
         if action.message and action.message != title:
-            lines.extend(_indent_message(action.message, prefix="     "))
-        lines.extend(_format_action_suggestions(action))
+            message = _replace_action_scope_in_prose(action.message, action, workflow_path)
+            lines.extend(_indent_message(message, prefix="     "))
+        lines.extend(_format_action_suggestions(action, workflow_path=workflow_path))
         lines.append("")
     # Drop trailing blank.
     while lines and lines[-1] == "":
@@ -825,8 +851,11 @@ def _render_action_list(
     return "\n".join(lines)
 
 
-def _format_action_suggestions(action: RecommendedAction) -> list[str]:
-    return [f"     → {suggestion}" for suggestion in action.suggestions]
+def _format_action_suggestions(action: RecommendedAction, *, workflow_path: str) -> list[str]:
+    return [
+        f"     → {_replace_action_scope_as_edit_target(suggestion, action, workflow_path)}"
+        for suggestion in action.suggestions
+    ]
 
 
 def _format_action_title(action: RecommendedAction, *, show_warning_id: bool) -> str:
@@ -859,6 +888,20 @@ def _indent_message(message: str, *, prefix: str) -> list[str]:
     return [f"{prefix}{line}" for line in message.splitlines() if line.strip()]
 
 
+def _replace_action_scope_in_prose(text: str, action: RecommendedAction, workflow_path: str) -> str:
+    if not action.scope_workflow:
+        return text
+    return text.replace(action.scope_workflow, _workflow_filename(action.scope_workflow or workflow_path))
+
+
+def _replace_action_scope_as_edit_target(text: str, action: RecommendedAction, workflow_path: str) -> str:
+    if not action.scope_workflow:
+        return text
+    return text.replace(
+        action.scope_workflow, _display_edit_target(action.scope_workflow, root_workflow_path=workflow_path)
+    )
+
+
 def _short_workflow_label(path: str) -> str:
     """Render a workflow path as a short label for the recommended-actions section.
 
@@ -868,6 +911,84 @@ def _short_workflow_label(path: str) -> str:
     if "/" in path:
         return path.rsplit("/", 1)[-1] or path
     return path
+
+
+def _display_path_from_cwd(path: str) -> str:
+    """Return a stable human-facing path relative to the current directory.
+
+    Canonical paths stay in the analyzer model and JSON; text output uses this
+    helper so agents see repository-relative locations instead of long absolute
+    machine paths. If the path is outside the current working directory, keep it
+    unchanged to avoid misleading ``../../../`` paths.
+    """
+    if not path or path.startswith("ir-hash:") or "/" not in path:
+        return path
+    if not os.path.isabs(path):
+        return path
+    try:
+        rel = os.path.relpath(path, os.getcwd())
+    except ValueError:
+        return path
+    if rel == "." or rel.startswith(".."):
+        return path
+    return rel
+
+
+def _display_edit_target(path: str, *, root_workflow_path: str) -> str:
+    """Return a compact path for prose that points at a file to edit."""
+    if not path or path.startswith("ir-hash:") or "/" not in path:
+        return path
+    if path == root_workflow_path:
+        return _workflow_filename(path)
+
+    root_dir = os.path.dirname(root_workflow_path)
+    if root_dir:
+        try:
+            rel = os.path.relpath(path, root_dir)
+        except ValueError:
+            rel = ""
+        if rel and rel != "." and not rel.startswith(".."):
+            return rel
+    return _display_path_from_cwd(path)
+
+
+def _display_run_command(command: str, workflow_path: str) -> str:
+    """Shorten the workflow path in a generated ``pflow run`` command."""
+    prefix = "pflow run "
+    if not command.startswith(prefix):
+        return command
+    rest = command[len(prefix) :]
+    command_path, sep, args = rest.partition(" ")
+    if not command_path:
+        command_path = workflow_path
+    display_path = _display_path_from_cwd(command_path)
+    return f"{prefix}{display_path}{sep}{args}" if sep else f"{prefix}{display_path}"
+
+
+def _shorten_paths_in_prose(text: str, paths: Iterable[str | None]) -> str:
+    replacements = {
+        path: _workflow_filename(path) for path in paths if path and "/" in path and not path.startswith("ir-hash:")
+    }
+    for path in sorted(replacements, key=len, reverse=True):
+        text = text.replace(path, replacements[path])
+    return text
+
+
+def _analysis_workflow_paths(analysis: CacheAnalysis) -> set[str]:
+    paths = {analysis.workflow_path}
+    paths.update(row.workflow_path for row in analysis.per_call if row.workflow_path)
+    rollup = analysis.summary.sub_workflow_rollup
+    if rollup is not None:
+        paths.update(entry.workflow_path for entry in rollup.per_workflow)
+    for diag in analysis.warnings:
+        context = diag.context or {}
+        for key in ("affected_workflow", "parent_workflow", "child_workflow", "trace_path"):
+            value = context.get(key)
+            if isinstance(value, str):
+                paths.add(value)
+    if analysis.trace_path:
+        paths.add(analysis.trace_path)
+    return paths
 
 
 def _format_savings_usd(value: float | None) -> str:
@@ -1443,7 +1564,7 @@ def _cell_could_cache(row: PerCallRow) -> str:
         # Tier 1 fired (declared + cache_creation/read recorded). cached_now
         # carries the number; could_cache has no projection role here.
         return "—"
-    if row.cacheable_data_source in {"memo", "parameters", "batch_prefix"}:
+    if row.cacheable_data_source in {"memo", "parameters", "batch_prefix", "cross_workflow_projection"}:
         # Tier 2 / heuristic projection — show the projected count.
         return _format_nullable_int(row.cacheable_tokens_estimated)
     if row.cacheable_data_source == "unavailable":
@@ -1480,8 +1601,16 @@ def _cell_notes(row: PerCallRow, inline_warnings: list[str]) -> str:
     if row.observed_models and (row.model_is_heterogeneous or len(row.observed_models) > 1):
         observed = ",".join(_short_observed_model_name(model) for model in row.observed_models)
         notes.append(f"observed={observed}")
+    if row.cacheable_data_source == "cross_workflow_projection" and len(row.cross_workflow_inputs) > 1:
+        notes.append(_format_cross_workflow_inputs_note(row.cross_workflow_inputs))
     notes.extend(warning_id for warning_id in inline_warnings if warning_id != "opaque-prompt")
     return "; ".join(notes)
+
+
+def _format_cross_workflow_inputs_note(inputs: tuple[str, ...]) -> str:
+    if len(inputs) <= 3:
+        return f"cw={'+'.join(inputs)}"
+    return f"cw={'+'.join(inputs[:3])}+{len(inputs) - 3} more"
 
 
 def _format_nullable_int(value: int | None) -> str:
@@ -1507,6 +1636,9 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     rollup = analysis.summary.sub_workflow_rollup
     if rollup is None:
         return ""
+    llm_bearing = _llm_bearing_rollup_entries(rollup)
+    if not llm_bearing:
+        return ""
     lines = [
         "## Per-child analyze-cache commands",
         "",
@@ -1514,11 +1646,11 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     ]
     parent_dir = os.path.dirname(analysis.workflow_path)
     if parent_dir:
-        lines.append(f"    cd {parent_dir}")
-        for entry in rollup.per_workflow:
+        lines.append(f"    cd {_display_path_from_cwd(parent_dir)}")
+        for entry in llm_bearing:
             lines.append(f"    pflow analyze-cache {os.path.relpath(entry.workflow_path, parent_dir)}")
     else:
-        for entry in rollup.per_workflow:
+        for entry in llm_bearing:
             lines.append(f"    pflow analyze-cache {entry.workflow_path}")
     return "\n".join(lines)
 
@@ -1561,6 +1693,7 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> str | None:
     low_input_nodes = [row.node_path for row in rows if row.data_source in {"estimator", "heuristic"}]
     batch_exemplar_nodes = [row.node_path for row in rows if row.cacheable_data_source == "parameters" and row.is_batch]
     batch_prefix_nodes = [row.node_path for row in rows if row.cacheable_data_source == "batch_prefix"]
+    cross_workflow_nodes = [row.node_path for row in rows if row.cacheable_data_source == "cross_workflow_projection"]
     parts: list[str] = []
     if low_input_nodes:
         parts.append(f"projected input tokens: {', '.join(low_input_nodes)}")
@@ -1577,6 +1710,15 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> str | None:
         parts.append(
             f"{', '.join(batch_prefix_nodes)} projects savings from the prompt's static prefix repeated "
             "across observed calls; declare prompt_cache to confirm"
+        )
+    if cross_workflow_nodes:
+        subject = ", ".join(cross_workflow_nodes)
+        verb = "uses" if len(cross_workflow_nodes) == 1 else "use"
+        parts.append(
+            f"{subject} {verb} cross-workflow projections from shared inputs declared "
+            "in parent workflow(s); declare the listed values in the receiving sub-workflow's ## Cache "
+            "and remove inline body refs (see Recommended actions for the boundary's recommended fix and "
+            "Sub-workflow boundaries for source-side renames)"
         )
     if not parts:
         return None
@@ -1644,8 +1786,9 @@ def _render_notes(analysis: CacheAnalysis) -> str:
     if not analysis.notes:
         return ""
     lines = ["## Notes", ""]
+    prose_paths = _analysis_workflow_paths(analysis)
     for note in analysis.notes:
-        lines.append(f"  · {note}")
+        lines.append(f"  · {_shorten_paths_in_prose(note, prose_paths)}")
     return "\n".join(lines)
 
 

@@ -5343,12 +5343,13 @@ def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> 
     """Real lyrics-generator canary for dynamic batch per-call projection.
 
     This intentionally covers the whole chain on the production-shaped fixture:
-    nested batch aliases, trace-item fallback for trimmed upstream batch values,
-    external prompt loading, and repeated-prefix projection.
+    nested batch aliases, minimized trace values, dynamic sub-workflow batch
+    attribution, external prompt loading, and repeated-prefix projection.
 
     Mutation contract: remove either trace batch-item fallback or the batch
     prefix projection path; this test fails because ``score-choruses`` no
-    longer has a large actionable ``could_cache`` estimate.
+    longer has a large actionable ``could_cache`` estimate, or the dynamic
+    review workflows stop receiving their own executed rows.
     """
     from pflow.core.markdown_parser import parse_markdown
 
@@ -5370,6 +5371,19 @@ def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> 
     assert score_rows, "expected score-choruses row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "batch_prefix" for row in score_rows)
     assert any((row.cacheable_tokens_estimated or 0) > 100_000 for row in score_rows)
+    select_rows = [row for row in result.per_call if row.node_path == "select-chorus"]
+    assert select_rows, "expected select-chorus row in lyrics-generator analysis"
+    assert any(row.cacheable_data_source == "cross_workflow_projection" for row in select_rows)
+    assert any((row.cacheable_tokens_estimated or 0) > 5_000 for row in select_rows)
+    review_rhyme_rows = [
+        row
+        for row in result.per_call
+        if row.node_path == "review" and Path(str(row.workflow_path or "")).name == "review-rhyme.pflow.md"
+    ]
+    assert review_rhyme_rows, "expected review-rhyme row in lyrics-generator analysis"
+    assert all(not row.did_not_execute_in_trace for row in review_rhyme_rows)
+    assert any(row.observed_call_count == 4 for row in review_rhyme_rows)
+    assert any((row.cacheable_tokens_estimated or 0) > 20_000 for row in review_rhyme_rows)
     score_actions = [
         warning
         for warning in result.warnings
@@ -5542,6 +5556,72 @@ def test_homogeneous_static_workflow_batch_child_cost_attributed_to_child(
 
     # Pre-fix: child_entry.actually_paid_usd was None (or 0.0).
     # Post-fix: child cost rolls up correctly.
+    assert child_entry.actually_paid_usd == pytest.approx(0.03)
+
+
+def test_dynamic_workflow_batch_old_relative_trace_attributed_to_child(
+    tmp_path: Path,
+) -> None:
+    """Old heterogeneous workflow-batch traces may store relative child refs.
+
+    The analyzer still needs to match those child LLM events to rows keyed by
+    the canonical child workflow path from static cross-workflow analysis.
+    """
+    child_path = tmp_path / "child.pflow.md"
+    child_path.write_text(
+        "# Child\n\nChild workflow.\n\n## Inputs\n\n### input\n"
+        "The input.\n- type: string\n\n## Steps\n\n### c-llm\n\n"
+        "Child LLM.\n\n- type: llm\n- model: anthropic/claude-sonnet-4-5\n\n"
+        "```prompt\nProcess ${input}\n```\n",
+        encoding="utf-8",
+    )
+    parent_path = tmp_path / "parent.pflow.md"
+    parent_path.write_text(
+        "# Parent\n\nParent with dynamic workflow batch.\n\n## Steps\n\n"
+        "### fanout\n\nFan out to child.\n\n- type: workflow\n"
+        "- workflow: ${item.workflow}\n"
+        "- batch:\n"
+        "    items:\n"
+        "      - workflow: ./child.pflow.md\n"
+        "        input: alpha\n"
+        "      - workflow: ./child.pflow.md\n"
+        "        input: beta\n"
+        "    as: item\n"
+        "- inputs:\n    input: ${item.input}\n",
+        encoding="utf-8",
+    )
+
+    builder = TraceFixtureBuilder()
+    parent_event = builder.heterogeneous_workflow_batch_event(
+        "fanout",
+        items=[
+            ("./child.pflow.md", [builder.llm_event("c-llm", cost_usd=0.01)]),
+            ("./child.pflow.md", [builder.llm_event("c-llm", cost_usd=0.02)]),
+        ],
+    )
+    trace = builder.trace(workflow_path=str(parent_path), nodes=[parent_event])
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+
+    resolved = resolve_workflow(str(parent_path))
+    result = analyze(
+        resolved.ir,
+        workflow_path=resolved.file_path,
+        base_path=parent_path.parent,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    child_workflow_path = str(child_path.resolve())
+    child_row = next(row for row in result.per_call if row.workflow_path == child_workflow_path)
+    assert child_row.node_path == "c-llm"
+    assert child_row.observed_call_count == 2
+    assert child_row.did_not_execute_in_trace is False
+
+    assert result.summary.sub_workflow_rollup is not None
+    child_entry = next(
+        entry for entry in result.summary.sub_workflow_rollup.per_workflow if entry.workflow_path == child_workflow_path
+    )
     assert child_entry.actually_paid_usd == pytest.approx(0.03)
 
 

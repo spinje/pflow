@@ -656,6 +656,31 @@ def test_text_summary_priced_with_savings_branch_emits_suggested_line() -> None:
     assert "Suggested:  pflow run /abs/x.pflow.md" in text
 
 
+def test_text_renderer_shows_relative_workflow_path_without_mutating_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text output should lead with short workflow labels and cwd-relative paths.
+
+    JSON keeps canonical paths for machine consumers; only the text renderer
+    compresses filesystem noise for agents reading the report.
+    """
+    workflow_path = tmp_path / "workflows" / "lyrics-generator.pflow.md"
+    workflow_path.parent.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    analysis = _make_analysis(rows=[_row("draft", 30)], workflow_path=str(workflow_path))
+    text = render_text(analysis)
+    payload = render_json(analysis)
+
+    assert "# Cache Analysis: lyrics-generator.pflow.md" in text
+    assert "  File: workflows/lyrics-generator.pflow.md" in text
+    assert "Suggested:  pflow run workflows/lyrics-generator.pflow.md" in text
+    assert str(workflow_path) not in text
+    assert payload["workflow_path"] == str(workflow_path)
+    assert payload["summary"]["suggested_run_command"] == f"pflow run {workflow_path}"
+
+
 def test_text_summary_renders_blocking_errors_categorically() -> None:
     """Top-10% pattern (mypy / rustc / clippy / ruff): errors render
     categorically separate from opportunities. ``blocking_errors`` lands
@@ -2507,6 +2532,19 @@ def test_text_renders_notes_in_locked_order() -> None:
     assert pos_2_0 < pos_unparseable < pos_gemini
 
 
+def test_text_notes_shorten_workflow_paths_in_prose() -> None:
+    workflow_path = "/abs/project/workflows/root.pflow.md"
+    child_path = "/abs/project/workflows/sub/child.pflow.md"
+    notes = [
+        f"Discrepancy detection: predicted-key matching for {child_path}.draft skipped — template resolution failed."
+    ]
+    row = PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": child_path})
+    text = render_text(_make_analysis(rows=[row], workflow_path=workflow_path, notes=notes))
+
+    assert "child.pflow.md.draft skipped" in text
+    assert child_path not in text
+
+
 # ---------------------------------------------------------------------------
 # CP2 (#11) — Cross-workflow rendering surfaces node_id + chunks
 # ---------------------------------------------------------------------------
@@ -2535,7 +2573,29 @@ def _make_sub_workflow_cache_diag(
         line_in_parent=0,
         child_node_ids_csv="`child-llm-a`, `child-llm-b`",
         below_threshold_clause="",
+        cleanup_hint_clause="",
     )
+
+
+def test_text_recommended_action_suggestion_uses_relative_child_edit_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_path = tmp_path / "lyrics-generator.pflow.md"
+    child_path = tmp_path / "song-creator" / "chorus-chooser" / "chorus-chooser.pflow.md"
+    child_path.parent.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    text = render_text(
+        _make_analysis(
+            rows=[_row("draft", 30)],
+            workflow_path=str(root_path),
+            warnings=[_make_sub_workflow_cache_diag("choose-chorus", "concept", str(child_path))],
+        )
+    )
+
+    assert "→ Then, in song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk" in text
+    assert str(child_path) not in text
 
 
 def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> None:
@@ -3430,6 +3490,61 @@ def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_proje
     assert "first batch item as a representative sample" not in text
 
 
+def test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_projection() -> None:
+    """Cross-workflow projection footer must name affected rows and route agents
+    to both sections that can carry the required edits.
+
+    Mutation contract: route ``cross_workflow_projection`` through the generic
+    future-tier path or mention only Recommended actions; this test fails
+    because the row-specific routing prose disappears.
+    """
+    row = PerCallRow(**{
+        **_row("select-chorus", 20).__dict__,
+        "data_source": "trace",
+        "cacheable_data_source": "cross_workflow_projection",
+        "cross_workflow_inputs": ("concept",),
+        "observed_call_count": 4,
+    })
+    text = render_text(_make_analysis(rows=[row]))
+    assert "Token estimate confidence:" in text
+    assert "select-chorus uses cross-workflow projections from shared inputs" in text
+    assert "Recommended actions" in text
+    assert "Sub-workflow boundaries" in text
+    assert "remove inline body refs" in text
+    assert "static prefix repeated across observed calls" not in text
+
+
+def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> None:
+    """Rows with multiple cross-workflow contributors should show compact
+    decomposition in the notes column; single-input rows should stay quiet.
+
+    Mutation contract: remove the ``cross_workflow_inputs`` note branch from
+    ``_cell_notes``; this test fails because the summed row becomes opaque.
+    """
+    multi = PerCallRow(**{
+        **_row("review", 20).__dict__,
+        "data_source": "trace",
+        "cacheable_data_source": "cross_workflow_projection",
+        "cross_workflow_inputs": ("creative_direction", "song_architecture"),
+    })
+    single = PerCallRow(**{
+        **_row("select", 20).__dict__,
+        "data_source": "trace",
+        "cacheable_data_source": "cross_workflow_projection",
+        "cross_workflow_inputs": ("concept",),
+    })
+    many = PerCallRow(**{
+        **_row("many", 20).__dict__,
+        "data_source": "trace",
+        "cacheable_data_source": "cross_workflow_projection",
+        "cross_workflow_inputs": ("a", "b", "c", "d"),
+    })
+    text = render_text(_make_analysis(rows=[multi, single, many]))
+    assert "cw=creative_direction+song_architecture" in text
+    assert "cw=concept" not in text
+    assert "cw=a+b+c+1 more" in text
+
+
 def test_per_call_table_divider_excludes_notes_column_width() -> None:
     """The horizontal divider between header and data rows must size to the
     structured columns (``node`` through ``calls``), NOT to the unbounded
@@ -3699,6 +3814,90 @@ def test_render_text_drill_in_uses_relpath_for_subdirectory_children() -> None:
     assert "    cd /abs/parent" in text
     assert "pflow analyze-cache sub/child.pflow.md" in text
     assert "/abs/parent/sub/child.pflow.md" not in text
+
+
+def test_render_text_drill_in_filters_zero_llm_node_children() -> None:
+    """Children with ``llm_node_count == 0`` (e.g., MCP/shell-only orchestrators)
+    produce no LLM cache findings under ``analyze-cache`` — emitting a command
+    for them is noise. Filter at the renderer; the breakdown count must move
+    in lockstep so the header doesn't claim ``N sub-workflows`` while the
+    block lists ``N-1`` commands.
+
+    Mutation contract: drop the ``llm_node_count > 0`` filter in
+    ``_llm_bearing_rollup_entries``; both negative substring assertions fail
+    (the 0-LLM child reappears in the drill-in, and the breakdown count
+    drifts up to include it).
+    """
+    rows = [
+        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"}),
+        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/llm-child.pflow.md"}),
+    ]
+    base = _make_analysis(rows=rows, workflow_path="/abs/parent.pflow.md")
+    rollup = SubWorkflowRollup(
+        workflows_included=("/abs/llm-child.pflow.md", "/abs/mcp-only-child.pflow.md"),
+        max_depth_walked=1,
+        truncated=False,
+        per_workflow=(
+            SubWorkflowRollupEntry(
+                workflow_path="/abs/llm-child.pflow.md",
+                called_by_node_id="call-llm-child",
+                llm_node_count=1,
+            ),
+            SubWorkflowRollupEntry(
+                workflow_path="/abs/mcp-only-child.pflow.md",
+                called_by_node_id="call-mcp-child",
+                llm_node_count=0,
+            ),
+        ),
+    )
+    analysis = CacheAnalysis(**{
+        **base.__dict__,
+        "summary": AnalysisSummary(**{**base.summary.__dict__, "sub_workflow_rollup": rollup}),
+    })
+
+    text = render_text(analysis, all_rows=True)
+
+    # Drill-in lists only the LLM-bearing child.
+    assert "pflow analyze-cache llm-child.pflow.md" in text
+    assert "mcp-only-child.pflow.md" not in text
+    # Breakdown count says "1 sub-workflow", not "2 sub-workflows".
+    assert "in 1 sub-workflow)" in text
+    assert "in 2 sub-workflows)" not in text
+
+
+def test_render_text_drill_in_suppressed_when_all_children_have_zero_llm_nodes() -> None:
+    """When every cross-workflow child has ``llm_node_count == 0``, the drill-in
+    section emits nothing (not even the ``cd`` line — a paste-ready block with
+    no commands is worse than absence).
+
+    Mutation contract: drop the ``if not llm_bearing: return ""`` early-out;
+    the section emits a header + ``cd`` line with no commands, and the
+    "## Per-child analyze-cache commands" substring reappears.
+    """
+    rows = [PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"})]
+    base = _make_analysis(rows=rows, workflow_path="/abs/parent.pflow.md")
+    rollup = SubWorkflowRollup(
+        workflows_included=("/abs/mcp-only-child.pflow.md",),
+        max_depth_walked=1,
+        truncated=False,
+        per_workflow=(
+            SubWorkflowRollupEntry(
+                workflow_path="/abs/mcp-only-child.pflow.md",
+                called_by_node_id="call-mcp-child",
+                llm_node_count=0,
+            ),
+        ),
+    )
+    analysis = CacheAnalysis(**{
+        **base.__dict__,
+        "summary": AnalysisSummary(**{**base.summary.__dict__, "sub_workflow_rollup": rollup}),
+    })
+
+    text = render_text(analysis, all_rows=True)
+
+    assert "## Per-child analyze-cache commands" not in text
+    # Breakdown line correctly reports "0 in 0 sub-workflows".
+    assert "in 0 sub-workflows)" in text
 
 
 def test_render_text_unpriced_model_includes_child_workflow_attribution() -> None:

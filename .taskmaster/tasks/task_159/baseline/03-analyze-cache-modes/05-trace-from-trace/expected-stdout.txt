@@ -1,4 +1,5 @@
-# Cache Analysis: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/smoke-with-cache.pflow.md
+# Cache Analysis: smoke-with-cache.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/_shared/workflows/smoke-with-cache.pflow.md
 
   Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
   Evidence: complete trace (2 LLM nodes executed)

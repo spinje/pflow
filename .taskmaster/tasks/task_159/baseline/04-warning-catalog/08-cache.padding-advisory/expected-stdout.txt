@@ -107,6 +107,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "a",
         "b",
@@ -134,6 +135,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "c"
       ],

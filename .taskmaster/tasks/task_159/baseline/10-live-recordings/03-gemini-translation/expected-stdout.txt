@@ -1,4 +1,5 @@
-# Cache Analysis: <BASELINE_CASE_DIR>/workflow.pflow.md
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/10-live-recordings/03-gemini-translation/workflow.pflow.md
 
   Workflow: 2 LLM nodes using gemini/gemini-2.5-flash
   Evidence: complete trace (2 LLM nodes executed)

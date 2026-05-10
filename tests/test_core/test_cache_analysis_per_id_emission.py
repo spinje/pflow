@@ -1534,8 +1534,408 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
 
     payload = render_json(result)
     warning = next(w for w in payload["warnings"] if w.get("id") == "cache.sub-workflow-cache-undeclared")
-    assert warning["suggestions"][0] == "In /abs/child.pflow.md, add a ## Cache chunk for `${concept}`."
-    assert warning["suggestions"][1] == "Add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+    assert warning["suggestions"][0].startswith("Apply both edits together")
+    assert warning["suggestions"][1].startswith("First, remove")
+    assert warning["suggestions"][2] == "Then, in /abs/child.pflow.md, add a ## Cache chunk for `${concept}`."
+    assert (
+        warning["suggestions"][3] == "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+    )
+    assert any("Cross-workflow projections require trace evidence" in note for note in result.notes)
+
+
+def test_cross_workflow_projection_populates_row_and_recommendation_for_single_consumer_many_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trace-backed total invocations, not structural consumer count, gates the
+    row projection and the matching recommendation.
+
+    Mutation contract: restore the old ``len(child_node_ids) >= 2`` gate in
+    the recommendation constructor or remove the row candidate builder; this
+    test fails because a 1-consumer/2-call boundary either loses the
+    recommendation or falls back to unavailable per-call attribution.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "use-concept",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Use ${concept}"},
+            }
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_type": "WorkflowExecutor",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"concept": "shared concept content " * 20},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "use-concept",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "use-concept",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    row = next(
+        row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "use-concept"
+    )
+    assert row.cacheable_data_source == "cross_workflow_projection"
+    assert row.cacheable_tokens_estimated == 120
+    assert row.cross_workflow_inputs == ("concept",)
+    assert any(d.id == "cache.sub-workflow-cache-undeclared" for d in result.warnings)
+
+
+def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multiple undeclared cross-workflow inputs are independent prefix chunks;
+    the row should show their sum across observed calls.
+
+    Mutation contract: change the row projection combinator from ``sum`` to
+    ``max``; this test fails because the row drops from 100 to 60 tokens.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"a": "${a}", "b": "${b}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${a} and ${b}"},
+            }
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"a": "alpha " * 30, "b": "beta " * 20},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "review",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 200,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "review",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 200,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
+    assert row.cacheable_data_source == "cross_workflow_projection"
+    assert row.cacheable_tokens_estimated == 100
+    assert row.cross_workflow_inputs == ("a", "b")
+
+
+def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aggregate boundary reuse can pass even when one consumer is unreached,
+    but only rows observed in the trace should show cross-workflow projections.
+
+    Mutation contract: append the row candidate to every structural consumer
+    instead of only observed consumers; this test fails because the unreached
+    ``review`` row claims a ``could_cache`` value for a branch that did not run.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_type": "WorkflowExecutor",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"concept": "shared concept content " * 20},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    draft = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
+    review = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
+    assert draft.cacheable_data_source == "cross_workflow_projection"
+    assert draft.cacheable_tokens_estimated == 120
+    assert review.did_not_execute_in_trace is True
+    assert review.cacheable_data_source != "cross_workflow_projection"
+    assert review.cross_workflow_inputs == ()
+
+
+def test_cross_workflow_projection_uses_strictest_child_model_threshold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A boundary must clear the strictest provider minimum across child
+    consumers before any row claims a cross-workflow projection.
+
+    Mutation contract: change the threshold gate from ``max(child_models)`` to
+    the first child model; this test fails because the low-threshold first node
+    admits a projection that the stricter second node could not cache.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda model: 100 if model == "strict/model" else 10)
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {"id": "draft", "type": "llm", "model": "low/model", "params": {"prompt": "Draft ${concept}"}},
+            {"id": "review", "type": "llm", "model": "strict/model", "params": {"prompt": "Review ${concept}"}},
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_type": "WorkflowExecutor",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"concept": "short shared content " * 10},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "draft",
+                            "llm_call": {"model": "low/model", "input_tokens": 100, "output_tokens": 1},
+                        },
+                        {
+                            "node_id": "review",
+                            "llm_call": {"model": "strict/model", "input_tokens": 100, "output_tokens": 1},
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    child_rows = [row for row in result.per_call if row.workflow_path == str(child_path)]
+    assert {row.node_path for row in child_rows} == {"draft", "review"}
+    assert all(row.cacheable_data_source != "cross_workflow_projection" for row in child_rows)
+
+
+def test_sub_workflow_cache_undeclared_emits_cleanup_hint_when_body_uses_subpath(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Subpath body refs would shadow the newly declared child cache chunk, so
+    the recommendation must tell the agent what to clean before declaring.
+
+    Mutation contract: remove ``cleanup_hint_clause`` construction or drop the
+    "OR rewrite to literal text" alternative; this test fails on the rendered
+    context strings.
+    """
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+        "inputs": {"concept": {"type": "object"}},
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.title}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept.core_idea}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    clause = diag.context["cleanup_hint_clause"]
+    assert "Before declaring `concept` in `child.pflow.md`'s ## Cache" in clause
+    assert "remove from prompt body OR rewrite to literal text" in clause
+    assert "`draft`: `${concept.title}`" in clause
+    assert "`review`: `${concept.core_idea}`" in clause
 
 
 def test_child_cache_declaration_suppresses_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:

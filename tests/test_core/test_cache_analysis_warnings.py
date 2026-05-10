@@ -509,12 +509,13 @@ def test_sub_workflow_cache_suggestions_use_exact_pflow_syntax() -> None:
         savings_usd=None,
         child_node_ids_csv="`child-llm-a`, `child-llm-b`",
         below_threshold_clause="",
+        cleanup_hint_clause="",
     )
 
     assert diag.suggestions is not None
-    assert "`${shared_doc}`" in diag.suggestions[0]
+    assert "`${shared_doc}`" in diag.suggestions[2]
+    assert "`shared_doc` to `prompt_cache:`" in diag.suggestions[3]
     assert "`$shared_doc`" not in diag.suggestions[0]
-    assert "`shared_doc` to `prompt_cache:`" in diag.suggestions[1]
 
 
 def _minimal_context_kwargs(warning_id: str) -> dict:
@@ -549,6 +550,7 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "savings_usd": None,
             "child_node_ids_csv": "`child-llm-a`, `child-llm-b`",
             "below_threshold_clause": "",
+            "cleanup_hint_clause": "",
         },
         "cache.prompt-cache-incomplete": {
             "affected_workflow": "x.pflow.md",

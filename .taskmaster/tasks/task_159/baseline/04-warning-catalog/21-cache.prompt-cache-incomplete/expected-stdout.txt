@@ -98,7 +98,7 @@
       "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
       "message": "Workflow `<BASELINE_CASE_DIR>/workflow.pflow.md` declares `## Cache` but 2 LLM node(s) reference shared cache chunks without declaring them in their own `prompt_cache:`. Each affected call sends those chunks uncached, missing the 0.1x input-cost reuse.\n\nAffected nodes:\n- `draft` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]\n- `review` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]",
       "suggestions": [
-        "Apply both edits together \u2014 declaring without cleaning fires `cache.prompt-body-duplicates-cache` ERROR.",
+        "Apply both edits together \u2014 declaring without cleaning sends the same content twice.",
         "First, remove the listed prompt-body refs (or rewrite to literal text) so the chunks aren't sent twice.",
         "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order."
       ]
@@ -132,6 +132,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "a"
       ],
@@ -157,6 +158,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "a"
       ],
@@ -202,7 +204,7 @@
       "id": "cache.prompt-cache-incomplete",
       "title": "Cache Advisory",
       "suggestions": [
-        "Apply both edits together \u2014 declaring without cleaning fires `cache.prompt-body-duplicates-cache` ERROR.",
+        "Apply both edits together \u2014 declaring without cleaning sends the same content twice.",
         "First, remove the listed prompt-body refs (or rewrite to literal text) so the chunks aren't sent twice.",
         "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order."
       ],

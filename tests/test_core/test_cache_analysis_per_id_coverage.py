@@ -73,6 +73,7 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "savings_usd": None,
                 "child_node_ids_csv": "`child-llm-a`, `child-llm-b`",
                 "below_threshold_clause": "",
+                "cleanup_hint_clause": "",
             },
         ),
         "cache.prompt-cache-incomplete": (

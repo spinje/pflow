@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 EventTier = Literal["top", "batch_item", "sub_workflow_descendant"]
@@ -155,18 +156,20 @@ class TraceTree:
                 if item.get("cached") and not descend_cached_subtrees:
                     continue
                 # Per-item attribution priority for batch_items:
-                # 1. ``template_resolutions["workflow"]["resolved"]`` — present
-                #    only for HETEROGENEOUS batches (``workflow: ${item.workflow}``).
-                #    Carries the runtime-resolved per-item child path.
-                # 2. ``edges.get(event_node_id)`` — analyzer-resolved absolute
+                # 1. ``workflow_path`` — canonical child path recorded after
+                #    runtime sub-workflow resolution.
+                # 2. ``template_resolutions["workflow"]["resolved"]`` —
+                #    older heterogeneous-batch traces only. Normalized when
+                #    relative and the parent workflow path is absolute.
+                # 3. ``edges.get(event_node_id)`` — analyzer-resolved absolute
                 #    child path for HOMOGENEOUS workflow batches (static
                 #    ``workflow: ./child.pflow.md`` over ``items: [...]``).
                 #    These items have no ``template_resolutions["workflow"]``
                 #    because the workflow ref is static, not templated.
-                # 3. Inherited ``workflow_path`` — final fallback for
+                # 4. Inherited ``workflow_path`` — final fallback for
                 #    non-workflow batches and unattributed cases.
                 item_workflow_path = (
-                    _resolved_child_workflow_from_event(item)
+                    _child_workflow_path_from_batch_item(item, parent_workflow_path=workflow_path)
                     or (edges.get(event_node_id) if edges is not None else None)
                     or workflow_path
                 )
@@ -380,7 +383,7 @@ class TraceTree:
             if not isinstance(item, Mapping):
                 continue
             item_workflow_path = (
-                _resolved_child_workflow_from_event(item)
+                _child_workflow_path_from_batch_item(item, parent_workflow_path=workflow_path)
                 or (edges.get(event_node_id) if edges is not None else None)
                 or workflow_path
             )
@@ -531,14 +534,36 @@ def _has_llm_cost_evidence(
     )
 
 
+def _child_workflow_path_from_batch_item(
+    event: Mapping[str, Any],
+    *,
+    parent_workflow_path: str | None,
+) -> str | None:
+    """Return a canonical-ish child workflow path from a batch item.
+
+    New traces record ``workflow_path`` after ``resolve_sub_workflow`` runs.
+    Older heterogeneous workflow-batch traces only have the generic template
+    resolution value, which may be relative. Normalize that older value when
+    the parent workflow path gives us an absolute directory.
+    """
+    explicit = event.get("workflow_path")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+
+    resolved = _resolved_child_workflow_from_event(event)
+    if resolved is None:
+        return None
+    return _resolve_relative_child_workflow_path(resolved, parent_workflow_path=parent_workflow_path)
+
+
 def _resolved_child_workflow_from_event(event: Mapping[str, Any]) -> str | None:
-    """Extract the runtime-resolved child workflow path from an event.
+    """Extract the template-resolved child workflow reference from an event.
 
     Source: ``template_resolutions["workflow"]["resolved"]`` — present per
     batch_item when the parent workflow-type node's ``workflow:`` references
-    a template (``${item.workflow}`` in heterogeneous batches). The runtime
-    captures the resolved value (always an absolute path produced by
-    ``resolve_sub_workflow``) per item.
+    a template (``${item.workflow}`` in heterogeneous batches). This is a
+    generic template-resolution value, not necessarily a canonical workflow
+    path; older traces may store relative refs here.
 
     Returns ``None`` for events without this metadata. Note: deliberately
     does NOT fall back to ``node_params["workflow"]`` — that field stores
@@ -555,6 +580,19 @@ def _resolved_child_workflow_from_event(event: Mapping[str, Any]) -> str | None:
             if isinstance(resolved, str) and resolved:
                 return resolved
     return None
+
+
+def _resolve_relative_child_workflow_path(resolved: str, *, parent_workflow_path: str | None) -> str:
+    path = Path(resolved)
+    if path.is_absolute():
+        return resolved
+    if not parent_workflow_path:
+        return resolved
+
+    parent_path = Path(parent_workflow_path)
+    if not parent_path.is_absolute():
+        return resolved
+    return str((parent_path.parent / path).resolve())
 
 
 __all__ = ["LlmEventLeaf", "TraceTree", "WalkEvent"]

@@ -62,8 +62,10 @@ def per_call_row_has_real_data(row: PerCallRow) -> bool:
     A row is data-bearing iff it has a substantive signal to display:
     trace/memo input evidence, a declared prompt-cache contract, a
     heterogeneous-model signal, or projected cacheable evidence from a
-    non-unavailable tier. This helper is shared by analyzer notes and text
-    rendering so the "hidden" note cannot drift from actual row visibility.
+    non-unavailable tier. New projection tiers such as ``batch_prefix`` and
+    ``cross_workflow_projection`` are covered by the final discriminator
+    automatically. This helper is shared by analyzer notes and text rendering
+    so the "hidden" note cannot drift from actual row visibility.
     """
     return (
         row.data_source in {"trace", "memo"}

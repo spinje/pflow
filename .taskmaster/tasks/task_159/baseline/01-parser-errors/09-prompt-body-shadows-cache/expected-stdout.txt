@@ -1,4 +1,5 @@
-# Cache Analysis: <BASELINE_CASE_DIR>/workflow.pflow.md
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/01-parser-errors/09-prompt-body-shadows-cache/workflow.pflow.md
 
   Workflow: 1 LLM node using anthropic/claude-haiku-4-5
 
@@ -10,7 +11,7 @@
   1 recommended action
 
   Cost data unavailable: run the workflow once for cost figures.
-  Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/01-parser-errors/09-prompt-body-shadows-cache/workflow.pflow.md article=<value>
 
 ## Cache blocking errors (must fix before save and run)
 

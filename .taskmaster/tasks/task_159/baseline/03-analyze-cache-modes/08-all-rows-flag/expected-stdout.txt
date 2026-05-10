@@ -1,4 +1,5 @@
-# Cache Analysis: <REPO_ROOT>/examples/core/prompt-caching.pflow.md
+# Cache Analysis: prompt-caching.pflow.md
+  File: examples/core/prompt-caching.pflow.md
 
   Workflow: 4 LLM nodes using anthropic/claude-haiku-4-5
 
@@ -7,7 +8,7 @@
   Cost per run:                unavailable
 
   Cost data unavailable: run the workflow once for cost figures.
-  Suggested:  pflow run <REPO_ROOT>/examples/core/prompt-caching.pflow.md article=<value>
+  Suggested:  pflow run examples/core/prompt-caching.pflow.md article=<value>
 
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.

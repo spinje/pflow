@@ -119,6 +119,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
       "cost_usd": null,
@@ -142,6 +143,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "extract.response"
       ],
@@ -167,6 +169,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "extract.response"
       ],
@@ -192,6 +195,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "extract.response"
       ],

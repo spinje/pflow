@@ -113,6 +113,7 @@
       "cache_read_input_tokens": null,
       "data_source": "estimator-partial",
       "cacheable_data_source": "unavailable",
+      "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "article"
       ],
