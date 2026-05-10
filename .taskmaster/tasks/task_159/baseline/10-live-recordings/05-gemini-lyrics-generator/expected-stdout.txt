@@ -69,40 +69,45 @@
         used by chorus-chooser (line 97)
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
+  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
   Showing 14 of 25 LLM nodes; all-clean rows hidden (--all-rows shows everything).
 
+  node                     model                      input  cached_now  could_cache  ratio  calls  notes
+  --------------------------------------------------------------------------------------------------
+
 ### chorus-chooser.pflow.md (called by choose-chorus)
-  generate-chorus-options               model=<varies>                            tokens=      ?  cacheable=      ?  ratio=  ?%  src=high calls=32 observed_models=gemini/gemini-2.5-flash-lite,gemini/gemini-3-flash-preview  opaque-prompt
-  score-choruses                        model=gemini/gemini-2.5-flash             tokens=158,704  cacheable=      ?  ratio=  ?%  src=high calls=136
-  select-chorus                         model=gemini/gemini-2.5-flash             tokens= 36,289  cacheable=      ?  ratio=  ?%  src=high calls=4
+  generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
+  score-choruses           gemini/gemini-2.5-flash  158,704           —      144,296    91%    136
+  select-chorus            gemini/gemini-2.5-flash   36,289           —           41     0%      4
 
 ### review-rhyme.pflow.md (called by craft-reviews)
-  review                                model=gemini/gemini-2.5-flash             tokens=114,063  cacheable=      ?  ratio=  ?%  src=high calls=20
+  review                   gemini/gemini-2.5-flash  114,063           —            ?     ?%     20
 
 ### song-creator.pflow.md (called by create-songs)
-  rewrite-emotional                     model=gemini/gemini-2.5-flash             tokens= 94,100  cacheable= 63,009  ratio= 67%  src=high calls=4
-  rewrite-craft                         model=gemini/gemini-2.5-flash             tokens= 84,124  cacheable= 56,785  ratio= 68%  src=high calls=4
-  generate-suno-prompt                  model=gemini/gemini-2.5-flash             tokens= 13,776  cacheable=  7,909  ratio= 57%  src=high calls=4
+  rewrite-emotional        gemini/gemini-2.5-flash   94,100      63,009            —    67%      4
+  rewrite-craft            gemini/gemini-2.5-flash   84,124      56,785            —    68%      4
+  generate-suno-prompt     gemini/gemini-2.5-flash   13,776       7,909            —    57%      4
 
 ### review-stranger-summary.pflow.md (called by emotional-reviews)
-  review                                model=gemini/gemini-2.5-flash             tokens= 77,336  cacheable=      ?  ratio=  ?%  src=high calls=16
+  review                   gemini/gemini-2.5-flash   77,336           —            ?     ?%     16
 
 ### lyrics-generator.pflow.md
-  curate-briefs                         model=gemini/gemini-2.5-flash             tokens= 54,752  cacheable=      ?  ratio=  ?%  src=high calls=4
-  evaluate-songs                        model=gemini/gemini-2.5-flash             tokens=  9,090  cacheable=      ?  ratio=  ?%  src=high
+  curate-briefs            gemini/gemini-2.5-flash   54,752           —            ?     ?%      4
+  evaluate-songs           gemini/gemini-2.5-flash    9,090           —            ?     ?%      1
 
 ### concept-chooser.pflow.md (called by choose-concepts)
-  generate-concepts              (×4)   model=gemini/gemini-2.5-flash             tokens= 20,666  cacheable=      ?  ratio=  ?%  src=high calls=4
-  select-concepts                       model=gemini/gemini-2.5-flash             tokens=  6,168  cacheable=      ?  ratio=  ?%  src=high
+  generate-concepts        gemini/gemini-2.5-flash   20,666           —            ?     ?%      4  batch_items=4
+  select-concepts          gemini/gemini-2.5-flash    6,168           —            ?     ?%      1
 
 ### enforce-diversity.pflow.md (called by enforce-diversity)
-  assign-diversity                      model=gemini/gemini-2.5-flash             tokens= 12,208  cacheable=      ?  ratio=  ?%  src=high
+  assign-diversity         gemini/gemini-2.5-flash   12,208           —            ?     ?%      1
 
 ### analyze-source.pflow.md (called by analyze-sources)
-  analyze                        (×6)   model=gemini/gemini-2.5-flash             tokens=  6,346  cacheable=      ?  ratio=  ?%  src=high calls=6
+  analyze                  gemini/gemini-2.5-flash    6,346           —            ?     ?%      6  batch_items=6
 
   Hidden: 4 nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows).
+
+  Token estimate confidence: score-choruses projects savings from the prompt's static prefix repeated across observed calls; declare prompt_cache to confirm.
 
 ## Per-child analyze-cache commands
 

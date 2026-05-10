@@ -68,7 +68,7 @@ from .below_min_tokens_detector import (
     detect as detect_below_min_tokens,
 )
 from .context import AnalysisContext, _normalize_empty
-from .cross_workflow import DynamicBatchInfo, walk_cross_workflow
+from .cross_workflow import CrossWorkflowEdge, DynamicBatchInfo, walk_cross_workflow
 from .padding_advisor import PaddingCandidate, compute_padding_advisories
 from .token_estimation import (
     _estimate_ref_tokens,
@@ -130,9 +130,14 @@ class PerCallRow:
     # ``data_source`` (input) and ``output_data_source`` — the three metrics
     # may legitimately diverge (e.g., trace fires for input but cacheable
     # falls through to memo when ``cache_creation+cache_read == 0``).
-    # Sources: ``"trace"``, ``"memo"``, ``"parameters"``, ``"unavailable"``.
-    # ``"parameters"`` covers workflow-input refs resolved via positional
-    # ``key=value`` params.
+    # Sources: ``"trace"``, ``"memo"``, ``"parameters"``, ``"batch_prefix"``,
+    # ``"unavailable"``. ``"parameters"`` covers workflow-input refs resolved
+    # via positional ``key=value`` params; ``"batch_prefix"`` covers the
+    # batch-node static-prefix projection (repeated bytes before the first
+    # ``${alias.X}`` ref multiplied by observed call count) that fires when
+    # the agent has not declared ``prompt_cache:`` but a stable prefix is
+    # detectable. Confidence is heuristic — agents see a footer flagging
+    # the projection.
     cacheable_data_source: str = "unavailable"
     # Raw per-call provider cache token splits from the trace event's
     # ``llm_call`` dict. ``None`` when no trace row matched; ``int`` (including
@@ -1278,7 +1283,7 @@ def _build_parameters_by_workflow(
                 base_path=base_path,
                 parameters_by_workflow=params_by_workflow,
             )
-            resolved = _resolve_child_input_value(getattr(edge, "parent_input_value", None), parent_ctx)
+            resolved = _resolve_child_input_value(edge, parent_ctx)
             if resolved is None:
                 continue
             child_params = params_by_workflow.setdefault(str(child_workflow), {})
@@ -1288,14 +1293,28 @@ def _build_parameters_by_workflow(
     return params_by_workflow
 
 
-def _resolve_child_input_value(value: Any, parent_ctx: AnalysisContext) -> Any | None:
-    """Resolve a workflow-node input value against its parent workflow context."""
+def _resolve_child_input_value(edge: CrossWorkflowEdge, parent_ctx: AnalysisContext) -> Any | None:
+    """Resolve a child workflow input value from the parent's analysis context.
+
+    Batch sub-workflow calls can pass values rooted on the parent batch alias
+    (for example ``${item}`` or ``${item.field}``). Static analysis cannot know
+    every runtime item, so this uses ``items[0]`` as a deterministic exemplar
+    when the parent's ``batch.items`` expression is resolvable, falling back to
+    trace-recorded batch items when the trace is the only available evidence.
+    """
+    value = edge.parent_input_value
     if not isinstance(value, str):
         return _normalize_empty(value)
     refs = _extract_unique_refs(value)
     if not refs:
         return _normalize_empty(value)
     shared = _build_shared_store_for_refs(refs, parent_ctx)
+    if edge.is_batch_alias_root:
+        first_item = _resolve_first_batch_item(edge, parent_ctx)
+        if first_item is None:
+            return None
+        if edge.parent_batch_alias is not None:
+            shared[edge.parent_batch_alias] = first_item
     try:
         resolved = TemplateResolver.resolve_template(value, shared)
     except Exception:
@@ -1304,6 +1323,53 @@ def _resolve_child_input_value(value: Any, parent_ctx: AnalysisContext) -> Any |
     if isinstance(resolved, str) and TemplateResolver.TEMPLATE_PATTERN.search(resolved):
         return None
     return _normalize_empty(resolved)
+
+
+def _resolve_first_batch_item(edge: CrossWorkflowEdge, parent_ctx: AnalysisContext) -> Any | None:
+    """Resolve the parent batch's ``items:`` expression and return its first item."""
+    nodes_by_id = {
+        str(n["id"]): n for n in parent_ctx.workflow_ir.get("nodes", []) if isinstance(n, dict) and "id" in n
+    }
+    parent_node = nodes_by_id.get(edge.parent_node_id)
+    if parent_node is None:
+        return None
+    batch = parent_node.get("batch")
+    if not isinstance(batch, dict):
+        return None
+    items_expr = batch.get("items")
+    if isinstance(items_expr, list):
+        return _normalize_empty(items_expr[0]) if items_expr else None
+    if not isinstance(items_expr, str):
+        return None
+    try:
+        resolved = TemplateResolver.resolve_template(
+            items_expr,
+            _build_shared_store_for_refs(_extract_unique_refs(items_expr), parent_ctx),
+        )
+    except Exception:
+        logger.debug("failed to resolve batch items expression", exc_info=True)
+        return None
+    if isinstance(resolved, list) and resolved:
+        return _normalize_empty(resolved[0])
+    trace_item = _resolve_first_trace_batch_item(edge, parent_ctx)
+    if trace_item is not None:
+        return trace_item
+    return None
+
+
+def _resolve_first_trace_batch_item(edge: CrossWorkflowEdge, parent_ctx: AnalysisContext) -> Any | None:
+    """Return the first recorded runtime batch item for ``edge.parent_node_id``."""
+    event = parent_ctx.trace_event_for(edge.parent_node_id)
+    if not isinstance(event, Mapping):
+        return None
+    batch_items = event.get("batch_items")
+    if not isinstance(batch_items, list):
+        return None
+    item_events = [item for item in batch_items if isinstance(item, Mapping)]
+    if not item_events:
+        return None
+    first = min(item_events, key=lambda item: int(item.get("index") or 0))
+    return _normalize_empty(first.get("item"))
 
 
 def _build_per_call_rows_and_warnings(
@@ -1398,6 +1464,7 @@ def _build_per_call_row(
     explicit = node.get("params", {}).get("model") or node.get("model")
     model_is_heterogeneous = isinstance(explicit, str) and "${" in explicit
     observed_models = tuple(sorted({str(call.get("model")) for call in trace_llm_calls if call.get("model")}))
+    observed_call_count = len(trace_llm_calls)
     # Effective model resolution. Trace truth wins when present and
     # unambiguous, because pricing, tokenization, thresholds, and rendering
     # all need the model that actually ran. IR-declared heterogeneous models
@@ -1458,6 +1525,15 @@ def _build_per_call_row(
         workflow_path=workflow_path,
         prompt=resolved_prompt,
         ctx=ctx,
+    )
+    cacheable_tokens, cacheable_source = _prefer_batch_prefix_cacheable_tokens(
+        node=node,
+        model=model,
+        resolved_prompt=resolved_prompt,
+        declared_subset=declared_subset,
+        observed_call_count=observed_call_count,
+        current_tokens=cacheable_tokens,
+        current_source=cacheable_source,
     )
 
     # Explicit 3-way: None / 0 / positive (preserves Option C visibility
@@ -1520,7 +1596,7 @@ def _build_per_call_row(
         workflow_path=workflow_path,
         did_not_execute_in_trace=did_not_execute_in_trace,
         observed_models=observed_models,
-        observed_call_count=len(trace_llm_calls),
+        observed_call_count=observed_call_count,
     )
 
 
@@ -1962,6 +2038,56 @@ def _estimate_batch_size(batch: dict[str, Any]) -> int | None:
     if isinstance(items, list):
         return len(items)
     return None
+
+
+def _estimate_batch_prefix_cacheable_tokens(
+    *,
+    node: dict[str, Any],
+    model: str,
+    resolved_prompt: str,
+    declared_subset: list[str] | None,
+    observed_call_count: int,
+) -> int | None:
+    """Estimate repeated static prefix tokens before the first batch-item ref."""
+    batch = node.get("batch")
+    if declared_subset or not isinstance(batch, dict) or observed_call_count < 2:
+        return None
+    alias = str(batch.get("as", "item"))
+    match = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)").search(resolved_prompt)
+    if match is None or match.start() == 0:
+        return None
+    prefix_tokens = estimate_tokens(model, resolved_prompt[: match.start()])[0]
+    if prefix_tokens <= 0:
+        return None
+    return prefix_tokens * observed_call_count
+
+
+def _prefer_batch_prefix_cacheable_tokens(
+    *,
+    node: dict[str, Any],
+    model: str,
+    resolved_prompt: str,
+    declared_subset: list[str] | None,
+    observed_call_count: int,
+    current_tokens: int | None,
+    current_source: str,
+) -> tuple[int | None, str]:
+    prefix_tokens = _estimate_batch_prefix_cacheable_tokens(
+        node=node,
+        model=model,
+        resolved_prompt=resolved_prompt,
+        declared_subset=declared_subset,
+        observed_call_count=observed_call_count,
+    )
+    if prefix_tokens is not None and prefix_tokens > (current_tokens or 0):
+        # Distinct tier label: this is a static-prefix scan + per-call
+        # multiplier, not chunk-resolution-via-CLI-parameters. Sharing the
+        # ``"parameters"`` label would violate the documented contract on
+        # ``cacheable_data_source`` and mis-route the confidence footer's
+        # "first batch item as a representative sample" message (no batch
+        # item content participates in this projection).
+        return prefix_tokens, "batch_prefix"
+    return current_tokens, current_source
 
 
 def _starter_prose_for_ref(ref: str) -> str:

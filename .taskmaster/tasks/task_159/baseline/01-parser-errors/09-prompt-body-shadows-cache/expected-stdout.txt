@@ -31,6 +31,11 @@
      → Increase cache content above 4096 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from summarize since the cache won't fire as declared.
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
+  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
 
-  summarize                             model=anthropic/claude-haiku-4-5          tokens=     12  cacheable=      1  ratio=  8%  src=medium  below-min-tokens, prompt-body-duplicates-cache
+  node       model                       input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  summarize  anthropic/claude-haiku-4-5     12           —            1     8%      0  below-min-tokens; prompt-body-duplicates-cache
+
+  Token estimate confidence: projected input tokens: summarize.

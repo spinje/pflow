@@ -268,14 +268,24 @@ def _per_call_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: 
     """Cost of one call with all cacheable tokens at read rate.
 
     Equivalent to: every call after the first, within TTL.
+
+    Cacheable tokens only earn the read-rate when the row actually declares
+    ``prompt_cache:`` — provider caches don't fire for undeclared rows even
+    when the analyzer can project a candidate cacheable count. Mirrors
+    ``_aggregate_first_run_savings`` and ``_aggregate_rerun_savings`` (both
+    skip undeclared rows). Without this gate, populating
+    ``cacheable_tokens_estimated`` on undeclared rows (e.g. via the
+    batch-prefix projection) would silently shrink ``rerun_within_ttl_hypothetical_usd``
+    while ``first_run_delta`` stayed flat — an internal contradiction in
+    the headline cost block.
     """
     if output_tokens is None:
         return None
     invocations = _invocation_count(row)
-    # Option C: cacheable may be None when greenfield-no-memo (no projection
-    # data). Treat as 0 — same as "no caching" → cost reduces to all-input-rate.
-    # Aggregate savings naturally → 0 for these rows (honest "we don't know").
-    cacheable = row.cacheable_tokens_estimated or 0
+    # Undeclared rows: treat cacheable as 0 (no caching → cost reduces to
+    # all-input-rate). Declared rows: Option C — cacheable may be None when
+    # greenfield-no-memo (no projection data); treat as 0 there too.
+    cacheable = row.cacheable_tokens_estimated or 0 if row.declared_prompt_cache else 0
     non_cacheable = max(0, row.input_tokens_estimated - cacheable)
     per_call_input = cacheable * pricing.cache_read_rate + non_cacheable * pricing.input_rate
     return float(invocations) * (per_call_input + output_tokens * pricing.output_rate)

@@ -9,6 +9,18 @@
   Cost data unavailable: run the workflow once for cost figures.
   Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
 
+## Per-call cache report
+  Projected cache ratios from prior run data. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
+
+  node       model                       input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  tag        anthropic/claude-haiku-4-5      9           —            1    11%      0
+  summarize  anthropic/claude-haiku-4-5      7           —            1    14%      0
+  translate  anthropic/claude-haiku-4-5      7           —            1    14%      0
+
+  Token estimate confidence: projected input tokens: tag, summarize, translate.
+
 ## Notes
 
   · Suggested-blocks: shared refs were found, but at least one assigned LLM node is below the provider cache threshold under current model/token evidence; no paste-ready provider-cache edit is actionable yet.

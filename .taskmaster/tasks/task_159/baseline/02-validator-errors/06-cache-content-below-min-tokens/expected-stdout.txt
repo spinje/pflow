@@ -10,6 +10,11 @@
   Suggested:  pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
+  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
 
-  summarize                             model=anthropic/claude-sonnet-4-5         tokens=      4  cacheable=      ?  ratio=  ?%  src=medium
+  node       model                        input  cached_now  could_cache  ratio  calls  notes
+  --------------------------------------------------------------------------------------
+
+  summarize  anthropic/claude-sonnet-4-5      4           —            ?     ?%      0
+
+  Token estimate confidence: projected input tokens: summarize.

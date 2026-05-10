@@ -10,8 +10,13 @@
   Suggested:  pflow run <REPO_ROOT>/examples/core/prompt-caching.pflow.md article=<value>
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
+  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
 
-  summarize                             model=anthropic/claude-haiku-4-5          tokens=     14  cacheable=      ?  ratio=  ?%  src=medium
-  translate                             model=anthropic/claude-haiku-4-5          tokens=     13  cacheable=      ?  ratio=  ?%  src=medium
-  tag                                   model=anthropic/claude-haiku-4-5          tokens=     12  cacheable=      ?  ratio=  ?%  src=medium
+  node       model                       input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  summarize  anthropic/claude-haiku-4-5     14           —            ?     ?%      0
+  translate  anthropic/claude-haiku-4-5     13           —            ?     ?%      0
+  tag        anthropic/claude-haiku-4-5     12           —            ?     ?%      0
+
+  Token estimate confidence: projected input tokens: summarize, translate, tag.

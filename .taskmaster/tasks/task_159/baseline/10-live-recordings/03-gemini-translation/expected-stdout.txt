@@ -13,7 +13,7 @@
   Rerun delta (projected):      saves ~$0.0033/run on rerun, 71% of no-cache cost
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
+  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
   Showing 0 of 2 LLM nodes; all-clean rows hidden (--all-rows shows everything).
 
   Hidden: 2 nodes at ≥80% projected cache ratio with no warnings (rerun with --all-rows).

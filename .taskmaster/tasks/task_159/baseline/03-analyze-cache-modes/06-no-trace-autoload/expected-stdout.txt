@@ -27,7 +27,10 @@
      → Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from answer-b since the cache won't fire as declared.
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
+  Actual cache ratios from declared `prompt_cache:` subsets. cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you declare/extend prompt_cache:. — means the column does not apply to this row's tier. Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values).
 
-  answer-a                              model=anthropic/claude-sonnet-4-5         tokens=     16  cacheable=      1  ratio=  6%  src=estimator-partial  below-min-tokens
-  answer-b                              model=anthropic/claude-sonnet-4-5         tokens=     16  cacheable=      1  ratio=  6%  src=estimator-partial  below-min-tokens
+  node      model                        input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  answer-a  anthropic/claude-sonnet-4-5     16           —            1     6%      0  below-min-tokens
+  answer-b  anthropic/claude-sonnet-4-5     16           —            1     6%      0  below-min-tokens

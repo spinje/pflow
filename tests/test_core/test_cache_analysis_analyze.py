@@ -3432,7 +3432,7 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
     assert "## Per-call cache report" in rendered
     assert "score-choruses" in rendered
     # Renderer uses ``<varies>``, not the literal ``${item.model}``.
-    assert "model=<varies>" in rendered
+    assert "<varies>" in rendered
     assert "${item.model}" not in rendered
 
 
@@ -4500,6 +4500,504 @@ def test_walk_attributes_heterogeneous_batch_costs_per_item() -> None:
 # ---------------------------------------------------------------------------
 # Cycle bug regression (Commit 4 of cleanup plan)
 # ---------------------------------------------------------------------------
+
+
+class _NodeMemoStub:
+    def __init__(self, values: dict[str, Any]) -> None:
+        self.values = values
+
+    def get_latest_for_node(
+        self, node_id: str, *, workflow_path: str | None = None
+    ) -> tuple[dict[str, Any], str] | None:
+        value = self.values.get(node_id)
+        if value is None:
+            return None
+        return value, "2026-05-09T00:00:00Z"
+
+
+def _batch_edge(*, parent_input_value: Any = "${item.concept_brief}") -> Any:
+    from pflow.core.cache_analysis.cross_workflow import CrossWorkflowEdge
+
+    return CrossWorkflowEdge(
+        parent_workflow="/abs/parent.pflow.md",
+        child_workflow="/abs/child.pflow.md",
+        parent_value_expr="item.concept_brief" if isinstance(parent_input_value, str) else None,
+        child_input_name="concept",
+        line_in_parent=1,
+        parent_node_id="fanout",
+        parent_batch_alias="item",
+        parent_input_value=parent_input_value,
+    )
+
+
+def test_resolve_child_input_value_propagates_via_batch_alias() -> None:
+    """Batch alias values resolve by binding ``batch.items[0]`` as an exemplar.
+
+    Mutation contract: remove the ``edge.is_batch_alias_root`` branch from
+    ``_resolve_child_input_value``; this test fails because ``${item...}``
+    remains unresolved.
+    """
+    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "fanout",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${item.concept_brief}"}},
+                "batch": {"items": "${make-concepts.result}", "as": "item"},
+            }
+        ]
+    }
+    ctx = AnalysisContext.build(
+        workflow_ir=parent_ir,
+        memo_cache=_NodeMemoStub({
+            "make-concepts": {
+                "result": [
+                    {"concept_brief": "first concept"},
+                    {"concept_brief": "second concept"},
+                ]
+            }
+        }),
+        workflow_path="/abs/parent.pflow.md",
+    )
+
+    assert _resolve_child_input_value(_batch_edge(), ctx) == "first concept"
+
+
+def test_resolve_child_input_value_returns_none_when_batch_items_unresolvable() -> None:
+    """Unresolvable batch items keep the child value honestly unmeasurable.
+
+    Mutation contract: fabricate an empty shared-store value for the batch
+    alias; this test fails because unresolved runtime values stop returning
+    ``None``.
+    """
+    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "fanout",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${item.concept_brief}"}},
+                "batch": {"items": "${runtime.thing}", "as": "item"},
+            }
+        ]
+    }
+    ctx = AnalysisContext.build(workflow_ir=parent_ir, workflow_path="/abs/parent.pflow.md")
+
+    assert _resolve_child_input_value(_batch_edge(), ctx) is None
+
+
+def test_resolve_child_input_value_handles_inline_static_batch_items() -> None:
+    """Inline static ``batch.items`` uses the first item as the exemplar.
+
+    Mutation contract: only handle template-string ``items``; this test fails
+    because literal-list batches no longer propagate child parameters.
+    """
+    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "fanout",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${item.concept_brief}"}},
+                "batch": {"items": [{"concept_brief": "inline first"}], "as": "item"},
+            }
+        ]
+    }
+    ctx = AnalysisContext.build(workflow_ir=parent_ir, workflow_path="/abs/parent.pflow.md")
+
+    assert _resolve_child_input_value(_batch_edge(), ctx) == "inline first"
+
+
+def test_resolve_child_input_value_swallows_batch_items_resolve_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bad batch-items expression cannot crash the analyzer.
+
+    Mutation contract: remove the ``try/except`` around batch-items template
+    resolution; this test fails by raising the injected exception.
+    """
+    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "fanout",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${item.concept_brief}"}},
+                "batch": {"items": "${make-concepts.result}", "as": "item"},
+            }
+        ]
+    }
+    ctx = AnalysisContext.build(workflow_ir=parent_ir, workflow_path="/abs/parent.pflow.md")
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("template boom")
+
+    monkeypatch.setattr(analyze_module.TemplateResolver, "resolve_template", boom)
+
+    assert _resolve_child_input_value(_batch_edge(), ctx) is None
+
+
+def test_build_parameters_by_workflow_propagates_batch_alias_child_input() -> None:
+    """Caller-site regression for the edge-based resolver signature.
+
+    Mutation contract: keep the old caller that passes ``edge.parent_input_value``
+    instead of the edge; this test fails because batch-alias metadata is lost.
+    """
+    from pflow.core.cache_analysis.analyze import _build_parameters_by_workflow
+    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.markdown_parser import parse_markdown
+
+    fixtures_dir = Path("tests/fixtures/cache_analysis").resolve()
+    parent_path = fixtures_dir / "batch-alias-parent.pflow.md"
+    child_path = fixtures_dir / "child.pflow.md"
+    parent_ir = parse_markdown(parent_path.read_text(encoding="utf-8")).ir
+
+    cw_result = walk_cross_workflow(
+        parent_ir,
+        base_path=fixtures_dir,
+        root_workflow_path=str(parent_path),
+    )
+    params_by_workflow = _build_parameters_by_workflow(
+        cw_result,
+        {"items": [{"concept_brief": "current first"}]},
+        str(parent_path),
+        memo_cache=None,
+        trace_data=None,
+        base_path=fixtures_dir,
+    )
+
+    assert params_by_workflow[str(child_path)]["brief"] == "current first"
+
+
+def test_build_parameters_by_workflow_uses_trace_batch_item_when_items_expr_unresolvable() -> None:
+    """Trace batch items are a real evidence source for dynamic workflow batches.
+
+    The live lyrics-generator trace trims the upstream node output that produced
+    ``batch.items`` but keeps each workflow batch item's concrete ``item``. This
+    test locks that integration point without relying on the large fixture.
+
+    Mutation contract: remove ``_resolve_first_trace_batch_item`` from
+    ``_resolve_first_batch_item``; this test fails because the child workflow
+    receives no propagated ``brief`` parameter.
+    """
+    from pflow.core.cache_analysis.analyze import _build_parameters_by_workflow
+    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+    parent_path = "/abs/parent.pflow.md"
+    child_path = "/abs/child.pflow.md"
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "fanout",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"brief": "${item.concept_brief}"}},
+                "batch": {"items": "${make-items.result}", "as": "item"},
+            }
+        ]
+    }
+    child_ir = {"inputs": {"brief": {"type": "string"}}, "nodes": []}
+
+    def resolver(params: dict[str, Any], _base: Path | None) -> SubWorkflowResult | None:
+        if params.get("workflow") == "./child.pflow.md":
+            return SubWorkflowResult(ir=child_ir, path=Path(child_path), warnings=())
+        return None
+
+    cw_result = walk_cross_workflow(
+        parent_ir,
+        base_path=Path("/abs"),
+        resolve_child=resolver,
+        root_workflow_path=parent_path,
+    )
+    builder = TraceFixtureBuilder()
+    trace_data = builder.trace(
+        workflow_path=parent_path,
+        nodes=[
+            builder.homogeneous_workflow_batch_event(
+                "fanout",
+                workflow_path="./child.pflow.md",
+                items=[({"concept_brief": "trace first"}, []), ({"concept_brief": "trace second"}, [])],
+                item_input_template="${item.concept_brief}",
+            )
+        ],
+    )
+
+    params_by_workflow = _build_parameters_by_workflow(
+        cw_result,
+        {},
+        parent_path,
+        memo_cache=None,
+        trace_data=trace_data,
+        base_path=Path("/abs"),
+    )
+
+    assert params_by_workflow[child_path]["brief"] == "trace first"
+
+
+def test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch(tmp_path: Path) -> None:
+    """Dynamic batch rows project the repeated static prefix, not just refs.
+
+    This is the small-fixture version of the ``score-choruses`` canary: the
+    actionable provider-cache opportunity is the prompt prefix before
+    ``${item...}``, multiplied by the observed batch call count.
+
+    Mutation contract: remove ``_prefer_batch_prefix_cacheable_tokens`` from
+    ``_build_per_call_row``; this test fails because the row's
+    ``could_cache`` projection returns to unavailable/tiny chunk-only evidence.
+    """
+    from pflow.core.cache_analysis.token_estimation import estimate_tokens
+
+    model = "anthropic/claude-haiku-4-5"
+    prefix = "Shared rubric:\n" + ("stable context sentence. " * 300)
+    prompt = f"{prefix}\n${{item.dynamic}}"
+    workflow_path = str(tmp_path / "batch-prefix.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "params": {"model": model, "prompt": prompt},
+                "batch": {"items": "${items}", "as": "item"},
+            }
+        ]
+    }
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": model,
+                                    "input_tokens": 50_000,
+                                    "output_tokens": 10,
+                                    "total_tokens": 50_010,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(3)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"items": [{"dynamic": "a"}, {"dynamic": "b"}, {"dynamic": "c"}]},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    row = next(row for row in result.per_call if row.node_path == "score")
+    expected_prefix_tokens = estimate_tokens(model, f"{prefix}\n")[0] * 3
+    assert row.cacheable_data_source == "batch_prefix"
+    assert row.cacheable_tokens_estimated == expected_prefix_tokens
+    assert row.observed_call_count == 3
+
+
+def test_batch_prefix_projection_does_not_ripple_into_rerun_cost_for_undeclared_rows(tmp_path: Path) -> None:
+    """Cost-projection isolation: populating ``cacheable_tokens_estimated`` on
+    an undeclared row (via the batch-prefix projection) must NOT shrink
+    ``rerun_within_ttl_hypothetical_usd`` — the provider cache doesn't fire
+    when ``prompt_cache:`` isn't declared, regardless of how the analyzer
+    projects the candidate.
+
+    Without this gate, the headline cost block would carry an internal
+    contradiction: ``actually_paid - rerun_hypothetical`` would diverge from
+    ``first_run_delta`` because ``_aggregate_first_run_savings`` correctly
+    skips undeclared rows but ``_per_call_rerun_cost`` ungated would not.
+
+    Mutation contract: remove the ``if row.declared_prompt_cache`` gate from
+    ``_per_call_rerun_cost`` in ``cost_estimation.py``; this test fails
+    because the rerun hypothetical drops below the no-cache hypothetical for
+    a workflow with no declared cache.
+    """
+    model = "anthropic/claude-haiku-4-5"
+    prefix = "Shared rubric:\n" + ("stable context sentence. " * 300)
+    prompt = f"{prefix}\n${{item.dynamic}}"
+    workflow_path = str(tmp_path / "batch-prefix-cost.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "params": {"model": model, "prompt": prompt},
+                "batch": {"items": "${items}", "as": "item"},
+            }
+        ]
+    }
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": model,
+                                    "input_tokens": 50_000,
+                                    "output_tokens": 10,
+                                    "total_tokens": 50_010,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(3)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"items": [{"dynamic": "a"}, {"dynamic": "b"}, {"dynamic": "c"}]},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    # The score row has cacheable_tokens_estimated > 0 (prefix projection
+    # fires) but no declared_prompt_cache. The rerun hypothetical must
+    # equal the no-cache hypothetical because no provider cache fires.
+    row = next(row for row in result.per_call if row.node_path == "score")
+    assert row.cacheable_tokens_estimated and row.cacheable_tokens_estimated > 0
+    assert not row.declared_prompt_cache
+    no_cache = result.summary.no_cache_hypothetical_usd
+    rerun = result.summary.rerun_within_ttl_hypothetical_usd
+    assert no_cache is not None and rerun is not None
+    assert rerun == pytest.approx(no_cache), (
+        f"rerun_hypothetical (${rerun:.6f}) must equal no_cache_hypothetical (${no_cache:.6f}) "
+        "for workflows with no declared prompt_cache; the prefix-projection cacheable "
+        "value must NOT ripple into the rerun cost."
+    )
+
+
+def test_batch_prefix_projection_does_not_fire_for_non_batch_repeated_call_nodes(tmp_path: Path) -> None:
+    """Limitation lock: the prefix-projection only fires for nodes whose own
+    IR declares ``batch:``. Nodes called multiple times because their PARENT
+    sub-workflow is invoked from a batch (e.g., ``select-chorus`` in
+    chorus-chooser, called 4x because chorus-chooser is invoked from a parent
+    batch) do NOT receive prefix-projection — even though the static-prefix
+    cache opportunity is structurally identical.
+
+    This is a documented limitation, not a bug — broadening the gate to
+    ``observed_call_count >= 2`` requires identifying the per-call-dynamic
+    boundary independently of a batch alias, which is a deeper change. Future
+    work tracked in the deferred partial-declaration handoff.
+
+    Mutation contract: drop the ``isinstance(batch, dict)`` gate in
+    ``_estimate_batch_prefix_cacheable_tokens``; this test fails because the
+    repeated-call non-batch node now ALSO gets a prefix-projection (which the
+    helper isn't structured to compute correctly without knowing the per-call
+    dynamic boundary).
+    """
+    model = "anthropic/claude-haiku-4-5"
+    workflow_path = str(tmp_path / "single-call.pflow.md")
+    # Single-call node (no batch:) — observed call count is provided externally
+    # by trace, not by the node's own batch config.
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "judge",
+                "type": "llm",
+                "params": {"model": model, "prompt": "Stable rubric.\n${context}"},
+            }
+        ]
+    }
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.llm_event(
+                        "judge",
+                        model=model,
+                        input_tokens=1_000,
+                        output_tokens=10,
+                        cost_usd=0.001,
+                    )
+                    for _ in range(4)  # invoked 4 times via parent batch
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        memo_cache=None,
+    )
+
+    row = next(row for row in result.per_call if row.node_path == "judge")
+    # The row may have other Tier 2 evidence (or unavailable), but it must NOT
+    # have a batch-prefix-projection result — this gate prevents over-claiming
+    # cache opportunities for nodes whose static-prefix detection mechanism
+    # isn't yet implemented.
+    assert row.cacheable_data_source != "batch_prefix"
+
+
+def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> None:
+    """Real lyrics-generator canary for dynamic batch per-call projection.
+
+    This intentionally covers the whole chain on the production-shaped fixture:
+    nested batch aliases, trace-item fallback for trimmed upstream batch values,
+    external prompt loading, and repeated-prefix projection.
+
+    Mutation contract: remove either trace batch-item fallback or the batch
+    prefix projection path; this test fails because ``score-choruses`` no
+    longer has a large actionable ``could_cache`` estimate.
+    """
+    from pflow.core.markdown_parser import parse_markdown
+
+    baseline_dir = Path(".taskmaster/tasks/task_159/baseline").resolve()
+    workflow_path = baseline_dir / "_shared/workflows/lyrics-generator/lyrics-generator.pflow.md"
+    trace_path = baseline_dir / "_shared/fixtures/live-gemini-lyrics-generator.trace.json"
+    source = (baseline_dir / "_shared/long-stable-text.txt").read_text(encoding="utf-8")[:3000]
+    workflow_ir = parse_markdown(workflow_path.read_text(encoding="utf-8")).ir
+
+    result = analyze(
+        workflow_ir,
+        parameters={"sources": [source]},
+        workflow_path=str(workflow_path),
+        base_path=workflow_path.parent,
+        trace_path=trace_path,
+    )
+
+    score_rows = [row for row in result.per_call if row.node_path == "score-choruses"]
+    assert score_rows, "expected score-choruses row in lyrics-generator analysis"
+    assert any(row.cacheable_data_source == "batch_prefix" for row in score_rows)
+    assert any((row.cacheable_tokens_estimated or 0) > 100_000 for row in score_rows)
 
 
 def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:

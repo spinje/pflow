@@ -507,9 +507,13 @@ async def analyze_cache(
 
     **per_call[].cacheable_data_source** is INDEPENDENT from ``data_source``
     and tracks the cacheable-tokens metric specifically. Values: ``trace``
-    / ``memo`` / ``parameters`` / ``unavailable``. The two
-    labels may legitimately diverge — e.g., trace fires for input but
+    / ``memo`` / ``parameters`` / ``batch_prefix`` / ``unavailable``. The
+    two labels may legitimately diverge — e.g., trace fires for input but
     cacheable falls through to memo when ``cache_creation+cache_read==0``.
+    ``batch_prefix`` covers the static-prefix projection on batch nodes
+    (repeated bytes before the first ``${alias.X}`` ref multiplied by
+    observed call count) — a heuristic projection for undeclared rows;
+    the text renderer surfaces a footer note flagging it.
 
     **per_call[].did_not_execute_in_trace** (boolean): True when the IR
     declares the LLM node but the loaded trace did not record an execution

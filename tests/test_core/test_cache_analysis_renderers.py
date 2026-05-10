@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -917,6 +918,13 @@ def _row(node_path: str, ratio: int) -> PerCallRow:
     )
 
 
+def _per_call_cells(text: str, node_path: str) -> list[str]:
+    for line in text.splitlines():
+        if line.lstrip().startswith(f"{node_path}  "):
+            return re.split(r" {2,}", line.strip(), maxsplit=7)
+    raise AssertionError(f"expected per-call row for {node_path!r} in:\n{text}")
+
+
 def test_text_default_hides_clean_rows_above_80_pct() -> None:
     rows = [_row("clean1", 90), _row("clean2", 95), _row("dirty", 30)]
     text = render_text(_make_analysis(rows=rows))
@@ -955,9 +963,9 @@ def test_per_call_row_renders_tokens_unmeasurable_for_opaque_prompt_with_no_data
 
     text = render_text(_make_analysis(rows=[row], warnings=[warning]))
 
-    # B-8 + L-7: column widened from 5 to 7 chars; padding for "?" updated.
-    assert "tokens=      ?" in text
-    assert "tokens=      3" not in text
+    cells = _per_call_cells(text, "generate-chorus-options")
+    assert cells[2] == "?"
+    assert cells[2] != "3"
 
 
 def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> None:
@@ -980,9 +988,9 @@ def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> No
 
     text = render_text(_make_analysis(rows=[row], warnings=[warning]))
 
-    # B-8 + L-7: 7-char column padding (3 → "      3").
-    assert "tokens=      3" in text
-    assert "tokens=      ?" not in text
+    cells = _per_call_cells(text, "generate-chorus-options")
+    assert cells[2] == "3"
+    assert cells[2] != "?"
 
 
 def test_text_truncated_trace_labels_executed_scope() -> None:
@@ -1855,7 +1863,7 @@ def test_text_per_call_inline_marker_includes_analysis_wide_warning_id() -> None
     )
     text = render_text(_make_analysis(rows=rows, warnings=[diag]))
     # The warning ID surfaces inline on the row line — without ``cache.`` prefix.
-    review_lines = [line for line in text.splitlines() if "review" in line and "model=" in line]
+    review_lines = [line for line in text.splitlines() if line.lstrip().startswith("review  ")]
     assert review_lines, "expected a per-call row line for review"
     assert "dynamic-before-static" in review_lines[0]
     # Critical: the redundant ``cache.`` prefix is gone from the inline column.
@@ -2707,10 +2715,9 @@ def test_per_call_row_renders_unresolved_when_model_empty() -> None:
     """
     row = PerCallRow(**{**_row("n1", 50).__dict__, "model": ""})
     text = render_text(_make_analysis(rows=[row]))
-    assert "model=<unresolved>" in text
-    # Defense against a quietly-emptied column: the literal "model=    "
-    # followed by tokens= would mean nothing rendered for the model field.
-    assert "model=                " not in text
+    cells = _per_call_cells(text, "n1")
+    assert cells[1] == "<unresolved>"
+    assert "model=" not in text
 
 
 def test_text_header_handles_zero_llm_nodes() -> None:
@@ -3126,19 +3133,13 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
     assert "## All warnings" not in text
 
 
-def test_text_per_call_src_renders_as_confidence_labels() -> None:
-    """CP4 #9 — internal data_source values map to user-facing confidence labels.
+def test_per_call_confidence_footer_lists_low_confidence_nodes() -> None:
+    """Low-confidence input token estimates move from per-row ``src=`` cells
+    into one footer.
 
-    JSON keeps the granular 4-tier (`per_call[].data_source` is unchanged
-    machine consumers).
-
-    Option C note: ``estimator`` and ``heuristic`` rows fail
-    ``_row_has_real_data`` and would normally be hidden — pin them visible by
-    setting ``declared_prompt_cache=["foo"]`` (steady-state branch passes the
-    filter regardless of data_source).
-
-    Mutation test: revert ``_data_source_display`` mapping to passthrough;
-    this test fails because ``src=estimator`` re-appears in the rendered text.
+    Mutation contract: remove ``_per_call_confidence_footer`` from
+    ``_render_per_call``; this test fails because the estimator/heuristic rows
+    have no human-readable confidence signal.
     """
     rows = [
         _row("trace-row", 50),
@@ -3153,35 +3154,98 @@ def test_text_per_call_src_renders_as_confidence_labels() -> None:
     rows[2] = PerCallRow(**{**rows[2].__dict__, "data_source": "estimator", "declared_prompt_cache": ["foo"]})
     rows[3] = PerCallRow(**{**rows[3].__dict__, "data_source": "heuristic", "declared_prompt_cache": ["foo"]})
     text = render_text(_make_analysis(rows=rows))
-    assert "src=high" in text  # trace + memo
-    assert "src=medium" in text  # estimator
-    assert "src=low" in text  # heuristic
-    # Internal values must NOT leak into rendered text:
-    assert "src=estimator" not in text
-    assert "src=heuristic" not in text
-    assert "src=trace" not in text
-    assert "src=memo" not in text
+    assert "Token estimate confidence: projected input tokens: estim-row, heur-row." in text
+    assert "src=" not in text
 
 
-def test_text_per_call_src_passes_through_unknown_values() -> None:
-    """CP4 #9 — unknown source values pass through unmapped (fail-loud).
+def test_per_call_confidence_footer_flags_batch_exemplar_projections() -> None:
+    """Batch rows resolved from parameters are single-item exemplars and the
+    footer names that approximation.
 
-    A future tier (e.g. ``inferred``) surfaces verbatim until the map gains a
-    row. This is intentional: silently mapping unknown values to a default
-    confidence would mislead agents during the rollout window.
-
-    Option C note: ``mystery`` is an unknown data_source so the row would be
-    filtered out — pin it visible via ``declared_prompt_cache=["foo"]``
-    (steady-state branch passes the filter regardless of data_source).
-
-    Mutation test: replace the dict ``.get(value, value)`` with ``.get(value,
-    "low")`` (a permissive default); this test fails because ``src=mystery``
-    becomes ``src=low``, hiding the new tier.
+    Mutation contract: drop the ``cacheable_data_source == "parameters" and
+    row.is_batch`` branch from ``_per_call_confidence_footer``; this test
+    fails because the representative-sample caveat disappears.
     """
-    rows = [_row("X", 50)]
-    rows[0] = PerCallRow(**{**rows[0].__dict__, "data_source": "mystery", "declared_prompt_cache": ["foo"]})
-    text = render_text(_make_analysis(rows=rows))
-    assert "src=mystery" in text  # passes through unchanged
+    row = PerCallRow(**{
+        **_row("batched-review", 50).__dict__,
+        "is_batch": True,
+        "batch_size_estimated": 4,
+        "data_source": "memo",
+        "cacheable_data_source": "parameters",
+    })
+    text = render_text(_make_analysis(rows=[row]))
+    assert (
+        "Token estimate confidence: batched-review uses the first batch item as a representative sample; "
+        "actual tokens may vary for later items."
+    ) in text
+
+
+def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_projection() -> None:
+    """Batch-prefix projection is structurally different from the parameters-tier
+    batch exemplar case: no batch item content participates in the projection.
+    The footer message must say "static prefix repeated across observed calls",
+    NOT "first batch item as a representative sample" — the latter would be a
+    factual misrepresentation of what the analyzer measured.
+
+    Mutation contract: revert ``_prefer_batch_prefix_cacheable_tokens`` to return
+    ``"parameters"`` instead of ``"batch_prefix"``; this test fails because the
+    footer routes through the exemplar branch instead and emits the wrong prose.
+    """
+    row = PerCallRow(**{
+        **_row("score-choruses", 1000).__dict__,
+        "is_batch": True,
+        "batch_size_estimated": 0,
+        "data_source": "trace",
+        "cacheable_data_source": "batch_prefix",
+        "observed_call_count": 136,
+    })
+    text = render_text(_make_analysis(rows=[row]))
+    assert "Token estimate confidence:" in text
+    assert (
+        "score-choruses projects savings from the prompt's static prefix repeated across observed calls; "
+        "declare prompt_cache to confirm"
+    ) in text
+    assert "first batch item as a representative sample" not in text
+
+
+def test_per_call_table_divider_excludes_notes_column_width() -> None:
+    """The horizontal divider between header and data rows must size to the
+    structured columns (``node`` through ``calls``), NOT to the unbounded
+    trailing ``notes`` column. Without this gate, one row with a long
+    ``observed=...; warning-id`` notes cell stretches the divider far beyond
+    every other row's visible width — visually overshooting the table.
+
+    Mutation contract: change ``_structured_columns_width`` to use the full
+    ``len(header)`` (i.e., include the notes column); this test fails because
+    the divider becomes ~50+ chars longer than the row's structured prefix.
+    """
+    long_observed_models = ("gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview")
+    long_notes_row = PerCallRow(**{
+        **_row("opaque-batch", 50).__dict__,
+        "model": "",
+        "observed_models": long_observed_models,
+        "model_is_heterogeneous": True,
+        "is_batch": True,
+        "batch_size_estimated": 4,
+    })
+    short_row = PerCallRow(**{
+        **_row("plain-row", 50).__dict__,
+        "data_source": "trace",
+    })
+    text = render_text(_make_analysis(rows=[long_notes_row, short_row]))
+    lines = text.split("\n")
+    divider_lines = [line for line in lines if set(line.strip()) == {"-"}]
+    assert divider_lines, "expected a horizontal divider in per-call section"
+    divider = divider_lines[0]
+    # The longest data row — the one with long observed= notes — must be
+    # strictly longer than the divider. If the divider tracked notes-column
+    # width, it would equal the full row length.
+    long_data_rows = [line for line in lines if "observed=" in line and "opaque-batch" in line]
+    assert long_data_rows, "expected the long-notes row to be rendered"
+    assert len(long_data_rows[0]) > len(divider), (
+        "divider should be SHORTER than the long-notes row "
+        f"(divider={len(divider)} chars, row={len(long_data_rows[0])} chars)"
+    )
 
 
 def test_text_pure_greenfield_hides_per_call_section_with_explanatory_note() -> None:
@@ -4417,34 +4481,74 @@ def test_per_call_row_tokens_use_thousands_separator() -> None:
     # all_rows=True so the 80%-ratio row isn't hidden by the default filter.
     row = PerCallRow(**{**_row("write-lyrics", 80).__dict__, "input_tokens_estimated": 266_728})
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    assert "tokens=266,728" in text
+    cells = _per_call_cells(text, "write-lyrics")
+    assert cells[2] == "266,728"
     # Negative — raw integer must NOT appear.
     assert "tokens=266728" not in text
 
 
-def test_per_call_row_cacheable_tokens_use_thousands_separator() -> None:
-    """B-8 + L-7: cacheable column gets the same treatment as tokens column."""
+def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
+    """Tier 1 active provider-cache evidence renders in ``cached_now``.
+
+    Mutation contract: make ``_cell_cached_now`` always return em dash; this
+    test fails because the trace-backed cache token count disappears.
+    """
     row = PerCallRow(**{
         **_row("write-lyrics", 80).__dict__,
         "input_tokens_estimated": 266_728,
         "cacheable_tokens_estimated": 213_382,
+        "declared_prompt_cache": ["prefix"],
+        "cacheable_data_source": "trace",
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    assert "cacheable=213,382" in text
+    cells = _per_call_cells(text, "write-lyrics")
+    assert cells[3] == "213,382"
+    assert cells[4] == "—"
 
 
-def test_per_call_row_unmeasurable_cacheable_uses_seven_char_padding() -> None:
-    """B-8 + L-7: ``cacheable=      ?`` (6 spaces + ?) is 7 chars wide so it
-    column-aligns with measured values that use the 7-char ``:>7,`` format.
+def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
+    """Tier 2 candidate projections render in ``could_cache``.
 
-    Targeting cacheable= rather than tokens= here because cacheable's
-    unmeasurable branch is data-driven (``cacheable_tokens_estimated is None``)
-    while the tokens= unmeasurable branch is gated on inline-warning
-    propagation (``"opaque-prompt" in inline_ids``) which is a per-call
-    rendering concern unrelated to the column width.
+    Mutation contract: make ``_cell_could_cache`` return em dash for memo
+    source rows; this test fails because the projected opportunity vanishes.
+    """
+    row = PerCallRow(**{
+        **_row("score-choruses", 80).__dict__,
+        "input_tokens_estimated": 266_728,
+        "cacheable_tokens_estimated": 213_382,
+        "cacheable_data_source": "memo",
+    })
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells(text, "score-choruses")
+    assert cells[3] == "—"
+    assert cells[4] == "213,382"
 
-    Mutation contract: revert ``"      ?"`` to the 5-char ``"    ?"`` →
-    assertion fails.
+
+def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
+    """Rows populate only the applicable cache-token tier today.
+
+    Mutation contract: render zero or question mark instead of em dash for
+    inactive tier cells; this test fails because inactive tiers no longer have
+    a distinct visual contract.
+    """
+    row = PerCallRow(**{
+        **_row("rewrite-emotional", 80).__dict__,
+        "cacheable_tokens_estimated": 63_009,
+        "declared_prompt_cache": ["prefix"],
+        "cacheable_data_source": "trace",
+    })
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells(text, "rewrite-emotional")
+    assert cells[3] == "63,009"
+    assert cells[4] == "—"
+
+
+def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
+    """Unmeasurable cacheable tokens render as a plain question mark in the
+    ``could_cache`` column; table widths handle alignment.
+
+    Mutation contract: return em dash for unavailable cacheable evidence; this
+    test fails because honest-unmeasurable and inactive-tier become conflated.
     """
     row = PerCallRow(**{
         **_row("greenfield", 50).__dict__,
@@ -4452,6 +4556,5 @@ def test_per_call_row_unmeasurable_cacheable_uses_seven_char_padding() -> None:
         "cache_ratio_pct": None,
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    assert "cacheable=      ?" in text
-    # Negative — the old 5-char padding must NOT appear in this row.
-    assert "cacheable=    ?  " not in text
+    cells = _per_call_cells(text, "greenfield")
+    assert cells[4] == "?"

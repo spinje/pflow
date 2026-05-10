@@ -26,9 +26,9 @@ CP4 changes (#16, #9, #7, #6+#13 — agent UX cleanup):
 - Dropped the "All warnings" section. Recommended actions IS the canonical
   warnings view, sorted by impact. JSON output (``warnings[]``) keeps the
   full machine-readable list — agents who want raw access run ``--format=json``.
-- ``src=heuristic``/``src=estimator`` column values map to ``low``/``medium``/
-  ``high`` confidence labels at render time. JSON keeps the granular 4-tier
-  source for machine consumers.
+- Per-call token confidence is summarized once below the table instead of
+  repeating analyzer-internal source names on every row. JSON keeps the
+  granular 4-tier source for machine consumers.
 - Per-call section header tells agents whether ratios reflect CURRENT state
   (greenfield: always 0%) or ACTUAL cache hit rate (steady-state: real data).
 - ``Confidence: low_no_data`` header line is dropped (it duplicates the
@@ -1176,26 +1176,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # ${var} as ~5-token literals — NOT actual runtime size) and their
     # cacheable column is unprojectable without memo. Both columns mislead.
     # When ALL rows are filtered, the section is hidden entirely.
-    real_data_rows = [r for r in rows if _row_has_real_data(r)]
-    if not real_data_rows:
-        return ""
-    # Analytical detections (cache.dynamic-before-static, cache.padding-advisory,
-    # cache.batch-prewarm-recommended, cache.below-min-tokens, etc.) emit Diagnostic
-    # objects to ``analysis.warnings`` rather than populating ``row.warnings`` (the
-    # inline tuple). The default-hide rule MUST consult analysis-wide warnings;
-    # otherwise nodes with cache_ratio ≥ 80% AND analytical warnings get silently
-    # hidden from the default report — agents miss high-leverage recommendations.
-    nodes_with_warnings = set(_warnings_by_row_key(analysis))
-    truncated_trace_default_view = analysis.summary.evidence_scope == "truncated_trace_executed_subset" and not all_rows
-    if truncated_trace_default_view:
-        visible = [row for row in real_data_rows if not row.did_not_execute_in_trace]
-        hidden_count = 0
-    else:
-        visible, hidden_count = _select_visible_rows(
-            real_data_rows,
-            all_rows=all_rows,
-            nodes_with_warnings=nodes_with_warnings,
-        )
+    visible, hidden_count, truncated_trace_default_view = _visible_per_call_rows(analysis, rows, all_rows=all_rows)
     if not visible and hidden_count == 0:
         return ""
 
@@ -1223,14 +1204,43 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
         )
     if visible:
         lines.append("")
-    _append_per_call_rows(lines, visible, warnings_by_node, analysis)
+        _append_per_call_rows(lines, visible, warnings_by_node, analysis)
     if hidden_count > 0:
         lines.append("")
         lines.append(
             f"  Hidden: {hidden_count} nodes at ≥{_HIDDEN_RATIO_THRESHOLD}% projected "
             "cache ratio with no warnings (rerun with --all-rows)."
         )
+    footer = _per_call_confidence_footer(visible)
+    if footer is not None:
+        lines.append("")
+        lines.append(f"  {footer}")
     return "\n".join(lines)
+
+
+def _visible_per_call_rows(
+    analysis: CacheAnalysis,
+    rows: list[PerCallRow],
+    *,
+    all_rows: bool,
+) -> tuple[list[PerCallRow], int, bool]:
+    real_data_rows = [row for row in rows if _row_has_real_data(row)]
+    if not real_data_rows:
+        return [], 0, False
+    # Analytical detections (cache.dynamic-before-static, cache.padding-advisory,
+    # cache.batch-prewarm-recommended, cache.below-min-tokens, etc.) emit Diagnostic
+    # objects to ``analysis.warnings`` rather than populating ``row.warnings``. The
+    # default-hide rule MUST consult analysis-wide warnings.
+    nodes_with_warnings = set(_warnings_by_row_key(analysis))
+    truncated_trace_default_view = analysis.summary.evidence_scope == "truncated_trace_executed_subset" and not all_rows
+    if truncated_trace_default_view:
+        return [row for row in real_data_rows if not row.did_not_execute_in_trace], 0, True
+    visible, hidden_count = _select_visible_rows(
+        real_data_rows,
+        all_rows=all_rows,
+        nodes_with_warnings=nodes_with_warnings,
+    )
+    return visible, hidden_count, False
 
 
 def _warnings_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | None, str], list[str]]:
@@ -1250,13 +1260,26 @@ def _append_per_call_rows(
     warnings_by_node: dict[tuple[str | None, str], list[str]],
     analysis: CacheAnalysis | None = None,
 ) -> None:
+    widths = _compute_per_call_column_widths(visible, warnings_by_node)
+    header = _format_table_row(
+        ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"],
+        widths,
+    )
+    lines.append(header)
+    # Divider tracks the structured-column width (everything left of and
+    # including ``calls``). The trailing ``notes`` column is unbounded prose
+    # whose length should not stretch the divider — when one row has long
+    # observed=... or warning IDs, the divider would otherwise blow out
+    # ~160 chars and overshoot every other row visually.
+    lines.append("  " + "-" * _structured_columns_width(widths))
+    lines.append("")
     grouped = _group_rows_by_workflow(visible)
     multiple_workflows = len(grouped) > 1
     for workflow_path, group_rows in grouped:
         if multiple_workflows:
             lines.append(f"### {_format_workflow_group_heading(workflow_path, analysis)}")
         for row in group_rows:
-            lines.extend(_format_per_call_row(row, warnings_by_node))
+            lines.append(_format_per_call_row(row, warnings_by_node, widths))
         if multiple_workflows:
             lines.append("")
     if multiple_workflows and lines and lines[-1] == "":
@@ -1289,48 +1312,136 @@ def _format_workflow_group_heading(workflow_path: str | None, analysis: CacheAna
 def _format_per_call_row(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
+    widths: tuple[int, ...],
+) -> str:
+    return _format_table_row(_per_call_cells(row, warnings_by_node), widths)
+
+
+def _compute_per_call_column_widths(
+    rows: list[PerCallRow],
+    warnings_by_node: dict[tuple[str | None, str], list[str]],
+) -> tuple[int, ...]:
+    headers = ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(_per_call_cells(row, warnings_by_node)):
+            widths[index] = max(widths[index], len(cell))
+    return tuple(widths)
+
+
+def _format_table_row(cells: list[str], widths: tuple[int, ...]) -> str:
+    left_aligned = {0, 1, 7}
+    padded = [
+        cell.ljust(widths[index]) if index in left_aligned else cell.rjust(widths[index])
+        for index, cell in enumerate(cells)
+    ]
+    # Trim trailing whitespace on the (left-aligned) notes column. Padding
+    # the last column to its max-width creates trailing spaces on shorter-
+    # notes rows; ``rstrip`` keeps the per-row line tight without affecting
+    # earlier columns' alignment.
+    return ("  " + "  ".join(padded)).rstrip()
+
+
+def _structured_columns_width(widths: tuple[int, ...]) -> int:
+    """Width of the structured column block (everything before ``notes``).
+
+    The notes column trails as unbounded prose; including it in the divider
+    width would let one long row (e.g., ``observed=A,B,C; warning-id``)
+    stretch the divider far beyond every other row's width. The divider
+    is sized to span ``node`` through ``calls``: indent (2) + sum(column
+    widths 0..6) + separators (2 chars between each of 7 columns = 12).
+    """
+    structured = widths[:7]
+    separators = 2 * max(0, len(structured) - 1)
+    return 2 + sum(structured) + separators
+
+
+def _per_call_cells(
+    row: PerCallRow,
+    warnings_by_node: dict[tuple[str | None, str], list[str]],
 ) -> list[str]:
-    lines: list[str] = []
-    marker = f"(×{row.batch_size_estimated})" if row.is_batch and row.batch_size_estimated else ""
-    # Catalog warning IDs (e.g. ``dynamic-before-static``, ``padding-advisory``)
-    # render bare; the unexecuted-in-trace flag uses a bracketed prefix so agents
-    # grepping for catalog IDs don't conflate it with a warning. ``[unexecuted]``
-    # is a row state, not a warning — see "## Notes" section for context.
-    inline_ids = warnings_by_node.get((row.workflow_path, row.node_path), [])
-    if row.did_not_execute_in_trace:
-        inline_ids = [*inline_ids, "[unexecuted]"]
-    warning_marker = ", ".join(inline_ids)
+    inline_warnings = warnings_by_node.get((row.workflow_path, row.node_path), [])
+    return [
+        row.node_path,
+        _cell_model(row),
+        _cell_input(row, inline_warnings),
+        _cell_cached_now(row),
+        _cell_could_cache(row),
+        _cell_ratio(row),
+        _cell_calls(row),
+        _cell_notes(row, inline_warnings),
+    ]
+
+
+def _cell_model(row: PerCallRow) -> str:
+    if row.model_is_heterogeneous or len(row.observed_models) > 1:
+        return "<varies>"
+    if row.model:
+        return row.model
+    # Empty model: pricing/capabilities couldn't be resolved (no
+    # ``settings.default_model``, no per-node ``- model:``). Sentinel mirrors
+    # the header's "no model resolved" wording.
+    return "<unresolved>"
+
+
+def _cell_input(row: PerCallRow, inline_warnings: list[str]) -> str:
     # For opaque prompts without runtime/cacheable evidence, the token count is
     # only the literal "${...}" template size, not a meaningful prompt size.
-    tokens_unmeasurable = "opaque-prompt" in inline_ids and row.cacheable_data_source == "unavailable"
-    # B-8 + L-7: 7-char width with thousands separator covers up to 999,999
-    # tokens (typical production max). Beyond that, mild misalignment; chosen
-    # over a wider column that adds visual noise to every typical row.
-    tokens_str = "      ?" if tokens_unmeasurable else f"{row.input_tokens_estimated:>7,}"
-    cacheable_str = f"{row.cacheable_tokens_estimated:>7,}" if row.cacheable_tokens_estimated is not None else "      ?"
-    ratio_str = f"{row.cache_ratio_pct:>3}%" if row.cache_ratio_pct is not None else "  ?%"
-    if row.model_is_heterogeneous or len(row.observed_models) > 1:
-        model_display = "<varies>"
-    elif row.model:
-        model_display = row.model
-    else:
-        # Empty model: pricing/capabilities couldn't be resolved (no
-        # ``settings.default_model``, no per-node ``- model:``). Sentinel
-        # mirrors the header's "no model resolved" wording so agents see the
-        # same vocabulary across header and per-call rows.
-        model_display = "<unresolved>"
-    observed = ""
+    if "opaque-prompt" in inline_warnings and row.cacheable_data_source == "unavailable":
+        return "?"
+    return f"{row.input_tokens_estimated:,}"
+
+
+def _cell_cached_now(row: PerCallRow) -> str:
+    if row.cacheable_data_source == "trace" and row.declared_prompt_cache:
+        return _format_nullable_int(row.cacheable_tokens_estimated)
+    return "—"
+
+
+def _cell_could_cache(row: PerCallRow) -> str:
+    if row.cacheable_data_source == "trace":
+        # Tier 1 fired (declared + cache_creation/read recorded). cached_now
+        # carries the number; could_cache has no projection role here.
+        return "—"
+    if row.cacheable_data_source in {"memo", "parameters", "batch_prefix"}:
+        # Tier 2 / heuristic projection — show the projected count.
+        return _format_nullable_int(row.cacheable_tokens_estimated)
+    if row.cacheable_data_source == "unavailable":
+        return "?"
+    # Future tier: fail-loud, fail-actionable — show the value if the analyzer
+    # produced one, else fall through to the formatter's None handling.
+    return _format_nullable_int(row.cacheable_tokens_estimated)
+
+
+def _cell_ratio(row: PerCallRow) -> str:
+    return f"{row.cache_ratio_pct}%" if row.cache_ratio_pct is not None else "?%"
+
+
+def _cell_calls(row: PerCallRow) -> str:
+    return str(row.observed_call_count)
+
+
+def _cell_notes(row: PerCallRow, inline_warnings: list[str]) -> str:
+    notes: list[str] = []
+    if row.did_not_execute_in_trace:
+        notes.append("[unexecuted]")
+    if "opaque-prompt" in inline_warnings:
+        notes.append("opaque-prompt")
+    if row.is_batch and row.batch_size_estimated:
+        notes.append(f"batch_items={row.batch_size_estimated}")
     if row.observed_models and (row.model_is_heterogeneous or len(row.observed_models) > 1):
-        observed = f" observed_models={','.join(row.observed_models)}"
-    calls = f" calls={row.observed_call_count}" if row.observed_call_count > 1 else ""
-    lines.append(
-        f"  {row.node_path:30s} {marker:<6} model={model_display:35s} "
-        f"tokens={tokens_str}  "
-        f"cacheable={cacheable_str}  "
-        f"ratio={ratio_str}  "
-        f"src={_data_source_display(row.data_source)}{calls}{observed}  {warning_marker}"
-    )
-    return lines
+        observed = ",".join(_short_observed_model_name(model) for model in row.observed_models)
+        notes.append(f"observed={observed}")
+    notes.extend(warning_id for warning_id in inline_warnings if warning_id != "opaque-prompt")
+    return "; ".join(notes)
+
+
+def _format_nullable_int(value: int | None) -> str:
+    return f"{value:,}" if value is not None else "?"
+
+
+def _short_observed_model_name(model: str) -> str:
+    return model.removeprefix("gemini/")
 
 
 def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
@@ -1364,29 +1475,8 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     return "\n".join(lines)
 
 
-# CP4 #9 — ``data_source`` mapping: pflow's internal 4-tier source classification
-# leaks the implementation detail of WHICH estimator produced the number. Agents
-# only need to know how much to trust it; the granular source stays in JSON for
-# machine consumers (per ``per_call[].data_source`` schema).
-_DATA_SOURCE_DISPLAY: dict[str, str] = {
-    "trace": "high",
-    "memo": "high",
-    "estimator": "medium",
-    "heuristic": "low",
-}
-
-
-def _data_source_display(value: str) -> str:
-    """Map an internal data_source value to the user-facing confidence label.
-
-    Unknown values pass through unchanged so a future tier (e.g. ``inferred``)
-    surfaces verbatim until this map gets a row — fail-loud, fail-actionable.
-    """
-    return _DATA_SOURCE_DISPLAY.get(value, value)
-
-
 def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "static_analysis") -> str:
-    """Return a one-line explainer describing what ``ratio=`` means here.
+    """Return a compact explainer describing what the per-call columns mean.
 
     Two modes that survive the Option C row filter:
 
@@ -1398,9 +1488,40 @@ def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "sta
     if evidence_scope == "truncated_trace_executed_subset":
         return "Executed trace rows are evidence-only; unexecuted rows are marked when shown."
     is_steady_state = any(row.declared_prompt_cache is not None for row in rows)
+    column_notes = (
+        "cached_now: tokens that went through cache this run; could_cache: tokens that could be cached if you "
+        "declare/extend prompt_cache:. — means the column does not apply to this row's tier. "
+        "Numbers aggregate across all calls when calls > 1 (divide by calls for per-call values)."
+    )
     if is_steady_state:
-        return "Actual cache ratios from declared `prompt_cache:` subsets."
-    return "Projected cache ratios from prior run data."
+        return f"Actual cache ratios from declared `prompt_cache:` subsets. {column_notes}"
+    return f"Projected cache ratios from prior run data. {column_notes}"
+
+
+def _per_call_confidence_footer(rows: list[PerCallRow]) -> str | None:
+    low_input_nodes = [row.node_path for row in rows if row.data_source in {"estimator", "heuristic"}]
+    batch_exemplar_nodes = [row.node_path for row in rows if row.cacheable_data_source == "parameters" and row.is_batch]
+    batch_prefix_nodes = [row.node_path for row in rows if row.cacheable_data_source == "batch_prefix"]
+    parts: list[str] = []
+    if low_input_nodes:
+        parts.append(f"projected input tokens: {', '.join(low_input_nodes)}")
+    if batch_exemplar_nodes:
+        parts.append(
+            f"{', '.join(batch_exemplar_nodes)} uses the first batch item as a representative sample; "
+            "actual tokens may vary for later items"
+        )
+    if batch_prefix_nodes:
+        # Distinct from the batch-exemplar case above: this projection scans
+        # the prompt's static prefix (bytes before the first per-item ref)
+        # and multiplies by observed call count. No item content participates,
+        # so the message must not claim sampling.
+        parts.append(
+            f"{', '.join(batch_prefix_nodes)} projects savings from the prompt's static prefix repeated "
+            "across observed calls; declare prompt_cache to confirm"
+        )
+    if not parts:
+        return None
+    return "Token estimate confidence: " + "; ".join(parts) + "."
 
 
 def _row_has_real_data(row: PerCallRow) -> bool:
@@ -1425,7 +1546,12 @@ def _row_has_real_data(row: PerCallRow) -> bool:
     unprojectable. Hiding such rows is more honest than rendering misleading
     numbers.
     """
-    return row.data_source in {"trace", "memo"} or bool(row.declared_prompt_cache) or row.model_is_heterogeneous
+    return (
+        row.data_source in {"trace", "memo"}
+        or bool(row.declared_prompt_cache)
+        or row.model_is_heterogeneous
+        or row.cacheable_data_source != "unavailable"
+    )
 
 
 def _strip_cache_prefix(warning_id: str) -> str:
@@ -1471,6 +1597,8 @@ def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[tuple[s
     — show by default since the agent should at least see that the row exists.
     """
     if (row.workflow_path, row.node_path) in nodes_with_warnings or (None, row.node_path) in nodes_with_warnings:
+        return True
+    if row.cacheable_data_source != "unavailable" and not row.declared_prompt_cache:
         return True
     if row.cache_ratio_pct is None:
         return True

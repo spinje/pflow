@@ -10473,3 +10473,150 @@ sees production-shape input.
 
 Closes A-4 from POLISH-PLAN.md Cluster E (cluster fully closed: A-4 +
 N-10 + L-5 + B-3 + B-4 all shipped).
+
+## 2026-05-09 — Task 159 — per-call table split + batch-alias propagation
+
+Implemented `per-call-column-split-and-batch-alias-propagation-plan.md`.
+`## Per-call cache report` now renders one global table header/divider and
+splits the old conflated `cacheable=` value into `cached_now` (trace-backed
+declared cache activity) and `could_cache` (projected undeclared/failed-fire
+opportunity). Row annotations moved into `notes`; the old per-row `src=`
+column is replaced by one confidence footer for projected input-token rows and
+single-batch-exemplar projections. Default visibility now includes rows with
+measurable projected cacheable evidence, so greenfield parameter-resolved
+opportunities no longer disappear behind the old data-source-only filter.
+
+Batch sub-workflow parameter propagation now passes the `CrossWorkflowEdge` to
+`_resolve_child_input_value`, detects `edge.is_batch_alias_root`, resolves the
+parent batch exemplar, and binds it under the parent batch alias before template
+resolution. Inline static batch lists and memo/parameter-resolved `items:` are
+covered. Added trace-batch fallback for the live lyrics-generator case: the
+committed trace trims `zip-concepts-with-briefs.result` but retains
+`create-songs.batch_items[*].item`, so trace evidence is the only available
+source for that real canary. The fallback sorts by `index` and takes the first
+item to keep the exemplar deterministic.
+
+Additional implementation beyond the written plan: per-call `could_cache` for
+trace-backed batch rows now prefers the repeated static prefix before the first
+`${item...}` ref when that exceeds chunk-only candidate tokens. Clear reason:
+after alias propagation, `score-choruses` otherwise showed `could_cache=41`
+from `${concept.core_idea}` only, while the actionable provider-cache prefix is
+the ~144k-token repeated rubric/context prefix across 136 calls. This is the
+behavior the plan's canary was trying to lock.
+
+Baseline drift audit:
+
+- Expected table-shape drift in the 11 listed per-call cases plus
+  `03-analyze-cache-modes/01-greenfield-text`, where the plan's visibility
+  extension intentionally surfaces newly measurable parameter-resolved
+  greenfield rows.
+- `03-analyze-cache-modes/05-trace-from-trace` and
+  `10-live-recordings/03-gemini-translation` were regenerated for the
+  text-explainer change on reports with only hidden rows; empty table
+  header/divider rendering was removed before final verification.
+- `04-warning-catalog/20-llm.thinking-temperature-mismatch` drifted from
+  current LiteLLM local pricing metadata (`unpriced_model` →
+  `missing_output_tokens`), not this code path. Regenerated so the full
+  baseline oracle reflects the deterministic current dependency behavior.
+
+Verification:
+
+- Focused renderer/analyzer tests: 274 passed.
+- Cache-analysis adjacent suite: 406 passed.
+- Source mypy: `src/pflow/core/cache_analysis` clean.
+- `ruff check`, `ruff format --check`, `deptry src`, and `git diff --check`
+  clean.
+- Baseline harness: 65/65 passed with the sandbox `uv` shim.
+- Sandbox near-full suite: 6477 passed, 19 skipped after excluding the
+  Homebrew-`uv` subprocess panic class. Running without the two newly observed
+  `pflow save` subprocess exclusions reproduced the documented sandbox
+  `Attempted to create a NULL object` / Tokio executor panic, so those failures
+  were tooling, not pflow regressions.
+
+Post-check test audit:
+
+- Tightened the live `score-choruses` canary's stated contract. It is a broad
+  final-chain test (nested alias propagation + trace-item fallback + external
+  prompt loading + batch-prefix projection), not a pure alias-propagation unit
+  test. The old docstring overstated what mutation it isolated.
+- Added a small trace-fallback propagation test where `batch.items` is
+  unresolvable but `trace.batch_items[*].item` is available. This locks the
+  real trimmed-trace failure mode without depending on the large lyrics fixture.
+- Added a small batch-prefix projection test proving `could_cache` uses the
+  repeated static prefix before `${item...}` multiplied by observed call count.
+  This catches the actual bug where the report would show tiny chunk-only
+  evidence (`concept.core_idea`) while missing the provider-cache prefix.
+
+## 2026-05-10 — Task 159 — review-driven follow-ups for per-call refactor
+
+A 4-agent code review of the prior commit surfaced four issues; this commit
+addresses them.
+
+- **Cost-projection ripple gated.** `_per_call_rerun_cost`
+  (`cost_estimation.py`) now skips `cacheable_tokens_estimated` for rows
+  without `declared_prompt_cache`, mirroring `_aggregate_first_run_savings`
+  / `_aggregate_rerun_savings`. The prior commit's batch-prefix projection
+  populated `cacheable_tokens_estimated` on undeclared rows, which leaked
+  into the rerun-cost hypothetical (canary `Rerun delta` had drifted from
+  $0.09/3% to $0.13/5%). With the gate, the headline cost block is
+  internally consistent again.
+- **New `cacheable_data_source = "batch_prefix"` tier.** The prior commit
+  reused `"parameters"` for the static-prefix projection, violating the
+  documented enum contract (`"parameters"` covers chunk-resolution via
+  CLI parameters; the prefix projection is a static-prefix scan that
+  bypasses chunk resolution entirely). Added the new tier label, updated
+  the enum docstring, MCP tool docstring, and `_cell_could_cache`
+  explicit-branch listing.
+- **Confidence footer split.** `_per_call_confidence_footer` no longer
+  routes `batch_prefix` rows through the "first batch item as a
+  representative sample" branch (a factual misrepresentation — no batch
+  item content participates in the prefix projection). New message:
+  "projects savings from the prompt's static prefix repeated across
+  observed calls; declare prompt_cache to confirm." The genuine
+  parameters+is_batch exemplar branch keeps its existing wording.
+- **Divider sized to structured columns only.** Added
+  `_structured_columns_width` so the table divider spans `node`..`calls`
+  instead of tracking the unbounded `notes` column. Canary divider drops
+  from ~160 chars to ~98 chars; long observed-models / inline-warning
+  notes no longer stretch the divider visually.
+- **Cohort-vs-per-call clarification in explainer.** Extended
+  `_per_call_scope_explainer` text to note that values aggregate across
+  all calls when `calls > 1` (divide by calls for per-call values).
+  Mitigates the agent-UX risk that values look per-call when the section
+  title says "Per-call" but the data is cohort-summed.
+- **`_format_table_row` rstrips trailing whitespace** so notes-padded
+  rows don't carry trailing spaces.
+
+Tests added (5 new, all with mutation contracts):
+
+- `test_batch_prefix_projection_does_not_ripple_into_rerun_cost_for_undeclared_rows`
+  — cost-projection ripple lock; mutates the new gate to verify it's
+  load-bearing.
+- `test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_projection`
+  — locks the footer message routing for `batch_prefix`.
+- `test_per_call_table_divider_excludes_notes_column_width` — locks the
+  divider sizing.
+- `test_batch_prefix_projection_does_not_fire_for_non_batch_repeated_call_nodes`
+  — locks the documented limitation (single-call non-batch nodes don't
+  receive prefix-projection) so future work has a regression contract.
+- Existing `test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch`
+  + canary updated to assert the new `"batch_prefix"` source label.
+
+Verification: 402 cache-analysis tests pass; 65/65 baselines verify;
+`ruff check` clean on touched files; `mypy` clean on cache_analysis/.
+15 baselines regenerated; the canary's cost block reverts to its
+pre-prefix-projection consistency (`Rerun delta: $0.09/run, 3%` matches
+`Actual savings: $0.49/run, 19%`).
+
+Known limitations carried forward (not fixed this round):
+
+- `select-chorus`-style nodes (called multiple times via parent batch but
+  without their own `batch:` config) miss the prefix-projection. Locked
+  via the limitation test above; broader per-call-dynamic-boundary
+  detection is deferred.
+- The section title `## Per-call cache report` describes data that's
+  cohort-aggregated when `calls > 1`. Explainer line mitigates; rename
+  deferred (broader baseline + doc impact).
+- Tier 2 chunk-resolution path (`_sum_resolved_chunk_tokens`) returns
+  per-call cacheable while `input_tokens` is cohort. Same shape as the
+  select-chorus case; same mitigation strategy.
