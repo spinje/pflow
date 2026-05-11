@@ -492,6 +492,14 @@ Use `output_schema` for structured responses (guarantees valid JSON via constrai
 
 **Iterating cheaply**: Use `--only <node>` to re-run a single LLM node (upstream cached, downstream skipped). Saves time and tokens when tuning prompts in multi-node workflows.
 
+**Prompt caching**: When several LLM nodes or batch items reuse the same long
+context, rubric, instructions, source text, or parent value, run
+`pflow analyze-cache workflow.pflow.md` before editing cache fields. The
+analyzer tells you when to add a workflow-level `## Cache`, add
+`prompt_cache: [...]` to LLM nodes, add `prewarm: true` for batch LLM nodes, or
+move stable prompt text before per-item data. Load `pflow guide prompt-caching`
+for the full rules and examples.
+
 ### Node Creation Pattern
 
 `````markdown
@@ -532,6 +540,12 @@ Criteria:
 3. Suggest improvements
 ```
 `````
+
+Optional cache fields for LLM nodes:
+
+- `prompt_cache: [chunk_name]` uses chunks declared in the workflow's `## Cache` block.
+- `prewarm: true` lets parallel batch LLM nodes write a shared prefix once,
+  then fan out as cache reads.
 
 ---
 
