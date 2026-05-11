@@ -128,3 +128,16 @@ def get_min_cache_tokens(model: str | None) -> int:
     if best_threshold is not None:
         return best_threshold
     return CONSERVATIVE_FLOOR
+
+
+def anthropic_models_at_threshold(threshold: int) -> tuple[str, ...]:
+    """Anthropic model patterns whose cache minimum equals ``threshold``.
+
+    Wildcard rows are excluded so caller suggestions name concrete model
+    families instead of broad provider defaults.
+    """
+    return tuple(
+        cap.model_pattern
+        for cap in MODEL_CAPABILITIES
+        if cap.provider == "anthropic" and cap.model_pattern and cap.min_cache_tokens == threshold
+    )

@@ -50,6 +50,7 @@ from .analyze import (
     AnalysisSummary,
     CacheAnalysis,
     CostDelta,
+    CrossWorkflowInputContribution,
     PerCallRow,
     RecommendedAction,
     SubWorkflowRollup,
@@ -861,12 +862,22 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
         header = f"## Recommended actions ({count}, ordered by impact)"
     else:
         header = f"## Recommended actions ({count})"
+    intro = (
+        "Each item below is a cache-optimization opportunity for this workflow.\n"
+        "Declared values are sent once and reused at 0.1× input cost."
+    )
+    if any(action.warning_id == "cache.sub-workflow-cache-undeclared" for action in actions):
+        intro += (
+            '\n\nFor each "Sub-workflow cache undeclared" finding, apply ALL THREE edits '
+            "in the listed child workflow. Doing only some leaves the cache disabled:\n"
+            "  (1) Remove the `${var}` references from each affected node's prompt. "
+            "Leaving them re-sends the content uncached.\n"
+            "  (2) Add the input as a named entry under the child workflow's ## Cache section.\n"
+            "  (3) Reference that named entry in `prompt_cache:` on each consumer node."
+        )
     return _render_action_list(
         header=header,
-        intro=(
-            "Each item below is a cache-optimization opportunity for this workflow.\n"
-            "Declared values are sent once and reused at 0.1× input cost."
-        ),
+        intro=intro,
         actions=actions,
         workflow_path=analysis.workflow_path,
         show_savings=True,
@@ -1102,6 +1113,13 @@ def _format_savings_usd(value: float | None) -> str:
 
 
 def _format_action_savings(action: RecommendedAction) -> str:
+    if action.warning_id == "cache.sub-workflow-cache-undeclared" and action.estimated_savings_usd is None:
+        if "Switch model:" in action.message:
+            return "savings available with model switch"
+        if "cannot compute the cache threshold" in action.message:
+            return "unmeasurable"
+        if "below the smallest provider cache minimum" in action.message:
+            return "not yet cacheable"
     if action.warning_id != "cache.batch-prewarm-recommended":
         return _format_savings_usd(action.estimated_savings_usd)
     value = action.estimated_savings_usd
@@ -1394,14 +1412,23 @@ def _unavailable_notes_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | N
             continue
         context = diag.context or {}
         child_workflow = context.get("child_workflow") or context.get("affected_workflow")
-        child_input_name = context.get("child_input_name")
-        tokens = context.get("below_threshold_tokens")
-        min_tokens = context.get("below_threshold_min_tokens")
-        if not child_workflow or not child_input_name or not isinstance(tokens, int) or not isinstance(min_tokens, int):
+        case = context.get("case")
+        if case not in {"model_switch", "refactor"} or not child_workflow:
             continue
-        note = f"below cache minimum: {child_input_name} ~{tokens:,} < {min_tokens:,}"
-        for node_id in _node_ids_from_csv(str(context.get("child_node_ids_csv", ""))):
-            notes_by_node.setdefault((str(child_workflow), node_id), []).append(note)
+        inputs = context.get("inputs", [])
+        if not isinstance(inputs, list):
+            continue
+        for input_dict in inputs:
+            if not isinstance(input_dict, dict):
+                continue
+            tokens = input_dict.get("tokens_estimated")
+            input_name = input_dict.get("child_input_name", "")
+            consumer_ids = input_dict.get("consumer_node_ids", [])
+            if not isinstance(tokens, int) or not input_name or not isinstance(consumer_ids, list):
+                continue
+            note = f"below cache minimum (case={case}): {input_name} ~{tokens:,}"
+            for node_id in consumer_ids:
+                notes_by_node.setdefault((str(child_workflow), str(node_id)), []).append(note)
     return notes_by_node
 
 
@@ -1653,10 +1680,11 @@ def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: 
     return "; ".join(notes)
 
 
-def _format_cross_workflow_inputs_note(inputs: tuple[str, ...]) -> str:
-    if len(inputs) <= 3:
-        return f"cacheable inputs: {', '.join(inputs)}"
-    return f"cacheable inputs: {', '.join(inputs[:3])}, +{len(inputs) - 3} more"
+def _format_cross_workflow_inputs_note(inputs: tuple[CrossWorkflowInputContribution, ...]) -> str:
+    names = tuple(item.name if isinstance(item, CrossWorkflowInputContribution) else str(item) for item in inputs)
+    if len(names) <= 3:
+        return f"cacheable inputs: {', '.join(names)}"
+    return f"cacheable inputs: {', '.join(names[:3])}, +{len(names) - 3} more"
 
 
 def _unavailable_could_cache_note(

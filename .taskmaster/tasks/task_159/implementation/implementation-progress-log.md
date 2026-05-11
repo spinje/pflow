@@ -11567,3 +11567,100 @@ Verification:
 - Production-code grep for `"Discrepancy detection:"` / `"Observable-field
   attributions"` confirms 0 emission sites remain; matches only inside the
   helper's docstring (intentional historical-reference context).
+
+## 2026-05-11 — Task 159 — Sub-workflow cache recommendation aggregation
+
+Implemented the A1 grouping plan: `cache.sub-workflow-cache-undeclared` now
+emits one diagnostic per child workflow instead of one per child input. The
+diagnostic context is `inputs[]` + `case` + `body_block`; removed per-input
+top-level fields (`child_input_name`, `below_threshold_clause`,
+`cleanup_hint_clause`, `child_node_ids_csv`) from this warning shape.
+
+Key implementation insights:
+
+- The durable shape is simpler as `edge -> child group -> per-consumer
+  projection -> case -> body_block`. Keeping case text pre-rendered in
+  `body_block` mirrors `cache.prompt-cache-incomplete` and avoids duplicating
+  threshold prose between catalog, renderer, and JSON.
+- Threshold correctness must be cumulative at the consumer call, not per
+  input. pflow sends one cache breakpoint covering all declared chunks in that
+  prefix, so the analyzer now classifies child recommendations by cumulative
+  per-consumer tokens.
+- Heterogeneous child consumers use the strictest provider threshold. This is
+  now consistent across row-level cross-workflow projections,
+  grouped sub-workflow recommendations, and `_consolidate_to_root_advisories`.
+- Row-level cross-workflow inputs now carry `name`, `tokens_per_call`, and
+  `model`, letting grouped recommendations reuse row token estimates instead
+  of re-tokenizing when that evidence already exists.
+
+Plan deviations / trust boundaries:
+
+- Kept the JSON format version at `4.1`, matching the existing pre-merge
+  convention for Task 159 shape corrections.
+- Extended the `${var}` wording cleanup to `cache.prompt-cache-incomplete` and
+  `cache.prompt-body-shadows-cache` suggestions because leaving "prompt-body
+  refs" in adjacent agent-facing output would preserve the same jargon the
+  plan explicitly removed from sub-workflow guidance.
+- Did not expose threshold numbers in per-call row notes for grouped
+  model-switch/refactor cases. The row note only points to the case; the full
+  threshold/action explanation lives once in Recommended actions.
+
+Verification completed:
+
+- Focused cache-analysis + CLI + capabilities suite: 680 passed.
+- Baseline harness after regeneration: 67 passed, 0 drifted, 0 harness errors.
+- Near-full sandbox-safe suite: 6589 passed, 1 skipped.
+- Touched-file `ruff check`, `ruff format --check`, focused `mypy`, `deptry`,
+  and `git diff --check` clean at the time of this entry.
+
+## 2026-05-11 — Task 159 — Fix units bug in sub-workflow cache threshold gate
+
+Post-review fix on top of the rec-aggregation work. `_GroupedConsumerProjection`
+stored `per_call_sum × multiplier` (cohort total) as `cumulative_tokens` and
+compared it against `get_min_cache_tokens()` (per-call threshold) —
+mismatched units that silently misclassified low-per-call high-call-count
+cases as `actionable`/`model_switch` when the per-call cache prefix is too
+small to fire. Spotted by user reading lyrics-generator output: `score-choruses
+~725,016 tokens cumulative — above 4,096 minimum` (725,016 = 5,331 per-call ×
+136 calls; the relevant comparison is 5,331 vs 4,096, not 725,016 vs 4,096).
+
+Real impact on lyrics-generator before fix: `review-stranger-summary` was
+classified `model_switch` (cohort 1,896 > 1,024) but per-call lyrics ~474 <
+1,024 — switching to Sonnet 4.5 would not have fired caching. Two more
+cases (`review-ai-tells`, `review-cliche`) were borderline.
+
+Changes:
+
+- Renamed field to `per_call_prefix_tokens` and dropped the multiplier from
+  storage. Cohort math stays internal to `_estimate_token_savings_usd`
+  (which already takes `(tokens, calls)`) for honest cost framing.
+- Rewrote `_classify_group_case` to take projections directly: classify each
+  consumer per-call against its threshold, group case = worst per-consumer
+  case. Per-consumer cumulative caching is the right model — the provider
+  sees one cache_control marker per call.
+- Body block rewords to surface "per call" units everywhere: per-consumer
+  shows `~5,331 tokens per call — above 4,096-token minimum`, single-consumer
+  shows `~7,225 tokens per call (above 4,096-token cache minimum)`.
+- Catalog `_SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE` collapsed to just
+  `{body_block}` — the previous "Workflow X receives N value(s)" preamble
+  duplicated the body's "K values flow in from parent" intro.
+- Body model_switch case dropped the redundant `to {workflow}` path on the
+  `→ Then:` line (the `→ Edit:` from `suggestions_template` provides it).
+- Dropped `(or replace them with literal text)` from the section header
+  procedural explainer. Literal-text replacement either bakes dynamic
+  content into static prompt text (breaks the workflow) or duplicates the
+  cached chunk bytes (defeats caching) — the parenthetical was
+  agent-misleading with zero actionable value.
+
+Regression test
+`test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort`
+engineers per-call=~300 tokens × 10 calls → cohort > 1,024 but per-call <
+1,024. Asserts case == `refactor`; mutation contract: revert the gate to
+cohort-multiplied and the test fails with `model_switch`.
+
+Verification:
+
+- Focused cache-analysis suite: 604 passed.
+- Baseline harness: 67 passed, 0 drifted (6 regenerated).
+- Near-full sandbox-safe suite: 3,255 passed.
+- Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.

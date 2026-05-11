@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis.analyze import analyze
+from pflow.core.cache_analysis.analyze import CrossWorkflowInputContribution, analyze
 from pflow.core.cache_analysis.cost_estimation import ModelPricing
 from pflow.core.cache_analysis.render_text import render_text
 from pflow.core.file_resolver import resolve_file_references
@@ -435,20 +435,17 @@ def test_sub_workflow_cache_undeclared_emits_for_reused_child_input(monkeypatch:
     diag = matching[0]
     assert diag.node_id is None
     assert diag.context is not None
-    assert diag.context["parent_workflow"] == "parent.pflow.md"
     assert diag.context["child_workflow"] == "<inline>"
     assert diag.context["child_workflow_basename"] == "<inline>"
-    assert diag.context["parent_value_expr"] == "creative.direction"
-    assert diag.context["child_input_name"] == "direction"
-    assert diag.context["node_count"] == 2
+    assert diag.context["affected_input_count"] == 1
     assert diag.context["affected_workflow"] == "<inline>"
-    # N-7 (Cluster C): the message body names the affected child LLM nodes
-    # inline so agents can connect rec → impact without scanning the per-call
-    # table. Mutation contract: drop the CSV append from the catalog template
-    # OR clear ``child_node_ids`` on the candidate, this fails.
-    assert diag.context["child_node_ids_csv"] == "`use-input`, `review-input`"
-    assert "(`use-input`, `review-input`)" in diag.message
-    assert "sub-workflows do not inherit" in diag.message
+    input_info = diag.context["inputs"][0]
+    assert input_info["parent_workflow"] == "parent.pflow.md"
+    assert input_info["parent_value_expr"] == "creative.direction"
+    assert input_info["child_input_name"] == "direction"
+    assert input_info["consumer_node_ids_csv"] == "`use-input`, `review-input`"
+    assert diag.context["case"] == "refactor"
+    assert "Monitor:" in diag.message
     # N-7 honest-unmeasurable: no memo, no trace, model unpriced. ``savings_usd``
     # MUST be None — never fabricate. Mutation contract: change
     # ``_project_sub_workflow_cache_savings`` to return ``0.0`` instead of None
@@ -600,7 +597,24 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
                         "duration_ms": 200,
                         "success": True,
                         "cached": False,
-                        "sub_workflow_events": [],
+                        "sub_workflow_events": [
+                            {
+                                "node_id": "draft",
+                                "llm_call": {
+                                    "model": "gemini/gemini-2.5-flash",
+                                    "input_tokens": 100,
+                                    "output_tokens": 1,
+                                },
+                            },
+                            {
+                                "node_id": "review",
+                                "llm_call": {
+                                    "model": "gemini/gemini-2.5-flash",
+                                    "input_tokens": 100,
+                                    "output_tokens": 1,
+                                },
+                            },
+                        ],
                     },
                 ],
             }),
@@ -706,7 +720,24 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_node_invo
                             "workflow": "./child.pflow.md",
                             "inputs": {"concept": "shared concept content " * 200},
                         },
-                        "sub_workflow_events": [],
+                        "sub_workflow_events": [
+                            {
+                                "node_id": "draft",
+                                "llm_call": {
+                                    "model": "gemini/gemini-2.5-flash",
+                                    "input_tokens": 100,
+                                    "output_tokens": 1,
+                                },
+                            },
+                            {
+                                "node_id": "review",
+                                "llm_call": {
+                                    "model": "gemini/gemini-2.5-flash",
+                                    "input_tokens": 100,
+                                    "output_tokens": 1,
+                                },
+                            },
+                        ],
                     },
                 ],
             }),
@@ -838,7 +869,7 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_parameter
     assert diag.context is not None
     assert diag.context["savings_usd"] is not None
     assert diag.context["savings_usd"] > 0.0
-    assert diag.context["below_threshold_clause"] == ""
+    assert diag.context["case"] == "actionable"
 
 
 def test_sub_workflow_cache_undeclared_parameters_win_over_memo(
@@ -978,7 +1009,7 @@ def test_sub_workflow_cache_undeclared_savings_populated_via_walker_propagated_p
     assert len(matching) == 1
     diag = matching[0]
     assert diag.context is not None
-    assert diag.context["parent_workflow"] == "/abs/middle.pflow.md"
+    assert diag.context["inputs"][0]["parent_workflow"] == "/abs/middle.pflow.md"
     assert diag.context["child_workflow"] == "/abs/leaf.pflow.md"
     assert diag.context["savings_usd"] is not None
     assert diag.context["savings_usd"] > 0.0
@@ -1058,14 +1089,8 @@ def test_sub_workflow_cache_undeclared_below_threshold_warns_and_drops_savings(
     assert diag.context is not None
     # Savings dropped because caching won't fire as-stated — content is below threshold.
     assert diag.context["savings_usd"] is None
-    # Warning clause names the model and threshold so the agent knows the gap to close.
-    clause = diag.context["below_threshold_clause"]
-    assert clause != ""
-    assert "below" in clause
-    assert "minimum" in clause
-    assert "gemini/gemini-2.5-flash" in clause
-    assert "1,000" in clause
-    # Rendered message includes the warning so text consumers see it.
+    assert diag.context["case"] == "refactor"
+    # Rendered message includes plain-English threshold context so text consumers see it.
     assert "below" in diag.message
     assert "minimum" in diag.message
 
@@ -1135,10 +1160,9 @@ def test_sub_workflow_cache_undeclared_above_threshold_keeps_savings_and_no_clau
     assert diag.context is not None
     assert diag.context["savings_usd"] is not None
     assert diag.context["savings_usd"] > 0.0
-    assert diag.context["below_threshold_clause"] == ""
+    assert diag.context["case"] == "actionable"
     # No warning prose leaked into the rendered message.
     assert "below" not in diag.message
-    assert "minimum" not in diag.message
 
 
 def test_sub_workflow_cache_undeclared_unmeasurable_keeps_clause_empty(
@@ -1190,10 +1214,9 @@ def test_sub_workflow_cache_undeclared_unmeasurable_keeps_clause_empty(
     diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
     assert diag.context is not None
     assert diag.context["savings_usd"] is None
-    assert diag.context["below_threshold_clause"] == ""
+    assert diag.context["case"] == "refactor"
     # Existing rendering preserved: the body message has no threshold warning.
-    assert "below" not in diag.message
-    assert "minimum" not in diag.message
+    assert "Monitor:" in diag.message
 
 
 def test_sub_workflow_cache_undeclared_suppresses_when_no_llm_consumers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1285,8 +1308,8 @@ def test_sub_workflow_cache_undeclared_emits_for_batch_item_input(monkeypatch: p
     found = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
     assert len(found) == 1
     assert found[0].context is not None
-    assert found[0].context["parent_value_expr"] == "item.concept"
-    assert found[0].context["child_input_name"] == "concept"
+    assert found[0].context["inputs"][0]["parent_value_expr"] == "item.concept"
+    assert found[0].context["inputs"][0]["child_input_name"] == "concept"
     assert found[0].context["affected_workflow"] == "/abs/song-child.pflow.md"
     assert "cache.cross-workflow-rename-detected" not in {d.id for d in result.warnings}
 
@@ -1371,7 +1394,7 @@ def test_sub_workflow_cache_undeclared_emits_one_diagnostic_per_child(
         "/abs/review-craft.pflow.md",
         "/abs/review-emotional.pflow.md",
     ]
-    assert all(d.context and d.context["child_input_name"] == "concept_brief" for d in matching)
+    assert all(d.context and d.context["inputs"][0]["child_input_name"] == "concept_brief" for d in matching)
 
 
 def test_sub_workflow_cache_undeclared_tracks_child_input_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1453,7 +1476,7 @@ def test_sub_workflow_cache_undeclared_tracks_child_input_names(monkeypatch: pyt
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
     matching = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
-    assert [d.context["child_input_name"] for d in matching if d.context] == ["title", "core_idea"]
+    assert [d.context["inputs"][0]["child_input_name"] for d in matching if d.context] == ["title", "core_idea"]
 
 
 def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1529,17 +1552,12 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
     assert len(found) == 1
     assert found[0].context is not None
     assert found[0].context["affected_workflow"] == "/abs/child.pflow.md"
-    assert found[0].context["child_input_name"] == "concept"
+    assert found[0].context["inputs"][0]["child_input_name"] == "concept"
     from pflow.core.cache_analysis.render_json import render_json
 
     payload = render_json(result)
     warning = next(w for w in payload["warnings"] if w.get("id") == "cache.sub-workflow-cache-undeclared")
-    assert warning["suggestions"][0].startswith("Apply both edits together")
-    assert warning["suggestions"][1].startswith("First, remove")
-    assert warning["suggestions"][2] == "Then, in /abs/child.pflow.md, add a ## Cache chunk for `${concept}`."
-    assert (
-        warning["suggestions"][3] == "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
-    )
+    assert warning["suggestions"] == ["Edit: /abs/child.pflow.md"]
     assert any("Cross-workflow projections require trace evidence" in note for note in result.notes)
 
 
@@ -1628,7 +1646,13 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
     )
     assert row.cacheable_data_source == "cross_workflow_projection"
     assert row.cacheable_tokens_estimated == 120
-    assert row.cross_workflow_inputs == ("concept",)
+    assert row.cross_workflow_inputs == (
+        CrossWorkflowInputContribution(
+            name="concept",
+            tokens_per_call=60,
+            model="anthropic/claude-haiku-4-5",
+        ),
+    )
     assert any(d.id == "cache.sub-workflow-cache-undeclared" for d in result.warnings)
 
 
@@ -1712,7 +1736,10 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
     row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
     assert row.cacheable_data_source == "cross_workflow_projection"
     assert row.cacheable_tokens_estimated == 100
-    assert row.cross_workflow_inputs == ("a", "b")
+    assert row.cross_workflow_inputs == (
+        CrossWorkflowInputContribution(name="a", tokens_per_call=30, model="anthropic/claude-haiku-4-5"),
+        CrossWorkflowInputContribution(name="b", tokens_per_call=20, model="anthropic/claude-haiku-4-5"),
+    )
 
 
 def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
@@ -1883,6 +1910,306 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
     assert all(row.cacheable_data_source != "cross_workflow_projection" for row in child_rows)
 
 
+def test_sub_workflow_cache_undeclared_groups_multiple_inputs_per_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two undeclared inputs into one child should produce one grouped action.
+
+    Mutation contract: restore per-input emission and this test fails with two
+    diagnostics instead of one child-scoped diagnostic.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"a": "${a}", "b": "${b}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${a} and ${b}"},
+            }
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module, "resolve_sub_workflow", lambda _p, _b: SubWorkflowResult(child_ir, child_path, ())
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"a": "alpha " * 30, "b": "beta " * 20},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "review",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 200,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "review",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 200,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    diagnostics = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert len(diagnostics) == 1
+    diag = diagnostics[0]
+    assert diag.context is not None
+    assert diag.context["affected_input_count"] == 2
+    assert diag.context["case"] == "actionable"
+    assert [item["child_input_name"] for item in diag.context["inputs"]] == ["a", "b"]
+    assert "Two values flow in" in diag.message
+
+
+def test_sub_workflow_cache_undeclared_case_model_switch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-call cache prefix above 1,024 but below the current model threshold
+    gets model-switch guidance, not a misleading unavailable-savings dead end.
+
+    Mutation contract: revert to cohort-total threshold gating (per_call x
+    call_count) and this test still passes (cohort > 1024 < 2000), but the
+    sibling ``test_sub_workflow_case_uses_per_call_not_cohort`` fails because
+    it engineers a case where per-call < 1024 but cohort > 1024.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 2000)
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"a": "${a}", "b": "${b}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${a} ${b}"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    # Two inputs sized so per-call sum lands between 1024 (MODEL_SWITCH_BAND)
+    # and 2000 (mocked strictest threshold). 1500 reps x "alpha " ≈ 1500 tokens
+    # each input → ~3000 tokens per call → model_switch range.
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"a": "alpha " * 750, "b": "beta " * 750},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "review",
+                            "llm_call": {"model": "gemini/gemini-2.5-flash", "input_tokens": 200, "output_tokens": 1},
+                        },
+                        {
+                            "node_id": "review",
+                            "llm_call": {"model": "gemini/gemini-2.5-flash", "input_tokens": 200, "output_tokens": 1},
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    # Override the mocked threshold for THIS test so the per-call prefix lands
+    # in the model_switch band [1024, threshold). Set threshold = 4096.
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["case"] == "model_switch"
+    assert diag.context["savings_usd"] is None
+    assert "Switch model" in diag.message
+    assert "anthropic/claude-sonnet-4-5" in diag.message
+
+
+def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The threshold gate compares PER-CALL cache prefix bytes, NOT cohort.
+
+    pflow emits one cache_control marker on the last cached block per call.
+    The provider checks ``min_cache_tokens`` against the per-call prefix —
+    multiplying by call count doesn't help the provider activate caching.
+
+    Regression: an earlier implementation stored ``per_call x call_count`` as
+    ``cumulative_tokens`` and gated on it, silently misclassifying low-per-call
+    high-call-count cases as ``actionable`` or ``model_switch`` when caching
+    won't actually fire.
+
+    Mutation contract: switch the gate back to cohort x call_count (multiply
+    per_call_prefix_tokens by call count before comparing to threshold) and
+    this test fails with case=actionable/model_switch instead of refactor.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    # Threshold = 4096, MODEL_SWITCH_BAND = 1024.
+    # We engineer: per-call ~500 tokens (below 1024 → refactor under correct math),
+    # 10 calls in trace → cohort ~5000 (above 4096 → buggy "actionable").
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+    parent_ir = {
+        "inputs": {"a": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"a": "${a}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${a}"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+    # ~250 reps x "alpha " is ~250-300 tokens per call (below 1024). 10 trace
+    # events give cohort ~2500-3000 (above 1024, would falsely trigger
+    # model_switch under cohort gating).
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"a": "alpha " * 250},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "review",
+                            "llm_call": {"model": "gemini/gemini-2.5-flash", "input_tokens": 300, "output_tokens": 1},
+                        }
+                    ]
+                    * 10,
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    # Per-call ~250-300 tokens; threshold 4096; MODEL_SWITCH_BAND 1024.
+    # Correct classification: per_call < 1024 → refactor.
+    # Buggy (cohort) classification: per_call * 10 > 1024 → model_switch.
+    assert diag.context["case"] == "refactor", (
+        f"Expected refactor (per-call check), got {diag.context['case']}. "
+        "The threshold gate is using cohort tokens instead of per-call prefix."
+    )
+    assert diag.context["savings_usd"] is None
+
+
+def test_sub_workflow_cache_undeclared_case_unmeasurable_no_resolved_consumer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If no child consumer model resolves, the recommendation should say so."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+        "inputs": {"concept": {"type": "string"}},
+    }
+    child_ir = {
+        "nodes": [
+            {"id": "draft", "type": "llm", "model": "${model}", "params": {"prompt": "Draft ${concept}"}},
+            {"id": "review", "type": "llm", "model": "${model}", "params": {"prompt": "Review ${concept}"}},
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["case"] == "unmeasurable"
+    assert "no consumer node has a resolved model" in diag.message
+
+
 def test_sub_workflow_cache_undeclared_emits_cleanup_hint_when_body_uses_subpath(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1927,15 +2254,24 @@ def test_sub_workflow_cache_undeclared_emits_cleanup_hint_when_body_uses_subpath
         lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
     )
 
-    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"concept": {"title": "title " * 100, "core_idea": "idea " * 100}},
+        auto_load_trace=False,
+        memo_cache=None,
+    )
 
     diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
     assert diag.context is not None
-    clause = diag.context["cleanup_hint_clause"]
-    assert "Before declaring `concept` in `child.pflow.md`'s ## Cache" in clause
-    assert "remove from prompt body OR rewrite to literal text" in clause
-    assert "`draft`: `${concept.title}`" in clause
-    assert "`review`: `${concept.core_idea}`" in clause
+    assert "Per-consumer cache prefix" in diag.message
+    assert "`${concept.title}`" in diag.message
+    assert "`${concept.core_idea}`" in diag.message
+    refs_by_node = diag.context["inputs"][0]["template_var_refs_by_node"]
+    assert refs_by_node == {
+        "draft": ["concept.title"],
+        "review": ["concept.core_idea"],
+    }
 
 
 def test_child_cache_declaration_suppresses_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2989,24 +3325,24 @@ def test_iter_llm_events_recurses_into_batch_items() -> None:
 
 
 # ---------------------------------------------------------------------------
-# `_dedupe_sub_workflow_cache_candidates` — tie-break determinism
+# `_aggregate_sub_workflow_cache_candidates_by_child` — tie-break determinism
 # ---------------------------------------------------------------------------
 
 
-def test_dedupe_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow() -> None:
+def test_aggregate_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow() -> None:
     """When two parents in different workflows share the same parent_node_id
     and reach the same (child_workflow, child_input_name), the tie-break must
     be deterministic on the full ``(parent_node_id, parent_workflow)`` tuple
     — NOT dict-insertion-order.
 
     Mutation contract: removing ``parent_workflow`` from the comparison tuple
-    at ``analyze.py::_dedupe_sub_workflow_cache_candidates`` makes this test
+    at ``analyze.py::_aggregate_sub_workflow_cache_candidates_by_child`` makes this test
     insertion-order-dependent. With both candidates passed in either order,
     the deterministic-by-tuple version always picks the lex-smaller
     parent_workflow. The pre-fix code returned whichever was first seen.
     """
     from pflow.core.cache_analysis.analyze import (
-        _dedupe_sub_workflow_cache_candidates,
+        _aggregate_sub_workflow_cache_candidates_by_child,
         _SubWorkflowCacheCandidate,
     )
 
@@ -3032,13 +3368,13 @@ def test_dedupe_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow() ->
     )
 
     # Either order in → same winner out (alpha-parent < zulu-parent lex).
-    forward = _dedupe_sub_workflow_cache_candidates([candidate_a, candidate_b])
-    reversed_ = _dedupe_sub_workflow_cache_candidates([candidate_b, candidate_a])
+    forward = _aggregate_sub_workflow_cache_candidates_by_child([candidate_a, candidate_b])
+    reversed_ = _aggregate_sub_workflow_cache_candidates_by_child([candidate_b, candidate_a])
 
     assert len(forward) == 1
     assert len(reversed_) == 1
-    assert forward[0].parent_workflow == "alpha-parent.pflow.md"
-    assert reversed_[0].parent_workflow == "alpha-parent.pflow.md", (
+    assert forward[0].candidates[0].parent_workflow == "alpha-parent.pflow.md"
+    assert reversed_[0].candidates[0].parent_workflow == "alpha-parent.pflow.md", (
         "tie-break drift: dict-insertion-order won instead of lex-smallest "
         "parent_workflow. Did the (parent_node_id, parent_workflow) tuple "
         "comparison get reverted?"

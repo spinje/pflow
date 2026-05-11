@@ -51,6 +51,10 @@ Version history (``JSON_FORMAT_VERSION``):
   and ``per_call[].cross_workflow_inputs`` is added for rows whose
   ``could_cache`` value comes from parent-declared values flowing into a
   child workflow.
+- ``"4.1"`` — sub-workflow cache recommendation grouping (same minor, pre-merge
+  shape correction): ``cache.sub-workflow-cache-undeclared`` now emits one
+  diagnostic per child workflow. Its context uses ``inputs[]``, ``case``, and
+  ``body_block`` instead of per-input top-level fields.
 - ``"4.1"`` — B-9 split (additive, same minor): cache-domain ERRORs stay in
   ``blocking_errors[]`` (now matches ``summary.blocking_errors`` count);
   non-cache validator errors (unknown node types, schema errors) move to a

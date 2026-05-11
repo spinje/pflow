@@ -113,12 +113,9 @@
       "node_id": null,
       "estimated_savings_usd": 0.008645400000000001,
       "scope_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
-      "message": "`article` flows into `child.pflow.md` as `article` and is used by 2 LLM nodes there (`summarize`, `translate`). Add `article` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `article` in `child.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `summarize`: `${article}`\n  \u2022 `translate`: `${article}`",
+      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
       "suggestions": [
-        "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
-        "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
-        "Then, in <BASELINE_CASE_DIR>/sub/child.pflow.md, add a ## Cache chunk for `${article}`.",
-        "Finally, add `article` to `prompt_cache:` on the child LLM nodes that reuse it."
+        "Edit: <BASELINE_CASE_DIR>/sub/child.pflow.md"
       ]
     }
   ],
@@ -180,32 +177,46 @@
     "value_flow_opportunities": [
       {
         "severity": "info",
-        "message": "`article` flows into `child.pflow.md` as `article` and is used by 2 LLM nodes there (`summarize`, `translate`). Add `article` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `article` in `child.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `summarize`: `${article}`\n  \u2022 `translate`: `${article}`",
+        "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
         "source": "cache_analyzer",
         "id": "cache.sub-workflow-cache-undeclared",
         "title": "Cache Advisory",
         "suggestions": [
-          "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
-          "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
-          "Then, in <BASELINE_CASE_DIR>/sub/child.pflow.md, add a ## Cache chunk for `${article}`.",
-          "Finally, add `article` to `prompt_cache:` on the child LLM nodes that reuse it."
+          "Edit: <BASELINE_CASE_DIR>/sub/child.pflow.md"
         ],
         "context": {
-          "node_count": 2,
           "affected_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
-          "savings_usd": 0.008645400000000001,
-          "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
           "child_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
           "child_workflow_basename": "child.pflow.md",
-          "parent_value_expr": "article",
-          "child_input_name": "article",
-          "parent_node_id": "child",
-          "line_in_parent": 14,
-          "child_node_ids_csv": "`summarize`, `translate`",
-          "below_threshold_clause": "",
-          "cleanup_hint_clause": "\n\nBefore declaring `article` in `child.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `summarize`: `${article}`\n  \u2022 `translate`: `${article}`",
+          "affected_input_count": 1,
+          "inputs": [
+            {
+              "child_input_name": "article",
+              "parent_value_expr": "article",
+              "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+              "parent_node_id": "child",
+              "line_in_parent": 14,
+              "tokens_estimated": 1601,
+              "consumer_node_ids": [
+                "summarize",
+                "translate"
+              ],
+              "consumer_node_ids_csv": "`summarize`, `translate`",
+              "template_var_refs_by_node": {
+                "summarize": [
+                  "article"
+                ],
+                "translate": [
+                  "article"
+                ]
+              }
+            }
+          ],
+          "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+          "case": "actionable",
+          "savings_usd": 0.008645400000000001,
           "category": "cache_advisory",
-          "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md].inputs[name=article]"
+          "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md]"
         },
         "see_also": [
           "caching"
@@ -216,32 +227,46 @@
   "warnings": [
     {
       "severity": "info",
-      "message": "`article` flows into `child.pflow.md` as `article` and is used by 2 LLM nodes there (`summarize`, `translate`). Add `article` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `article` in `child.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `summarize`: `${article}`\n  \u2022 `translate`: `${article}`",
+      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
       "source": "cache_analyzer",
       "id": "cache.sub-workflow-cache-undeclared",
       "title": "Cache Advisory",
       "suggestions": [
-        "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
-        "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
-        "Then, in <BASELINE_CASE_DIR>/sub/child.pflow.md, add a ## Cache chunk for `${article}`.",
-        "Finally, add `article` to `prompt_cache:` on the child LLM nodes that reuse it."
+        "Edit: <BASELINE_CASE_DIR>/sub/child.pflow.md"
       ],
       "context": {
-        "node_count": 2,
         "affected_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
-        "savings_usd": 0.008645400000000001,
-        "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "child_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
         "child_workflow_basename": "child.pflow.md",
-        "parent_value_expr": "article",
-        "child_input_name": "article",
-        "parent_node_id": "child",
-        "line_in_parent": 14,
-        "child_node_ids_csv": "`summarize`, `translate`",
-        "below_threshold_clause": "",
-        "cleanup_hint_clause": "\n\nBefore declaring `article` in `child.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `summarize`: `${article}`\n  \u2022 `translate`: `${article}`",
+        "affected_input_count": 1,
+        "inputs": [
+          {
+            "child_input_name": "article",
+            "parent_value_expr": "article",
+            "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+            "parent_node_id": "child",
+            "line_in_parent": 14,
+            "tokens_estimated": 1601,
+            "consumer_node_ids": [
+              "summarize",
+              "translate"
+            ],
+            "consumer_node_ids_csv": "`summarize`, `translate`",
+            "template_var_refs_by_node": {
+              "summarize": [
+                "article"
+              ],
+              "translate": [
+                "article"
+              ]
+            }
+          }
+        ],
+        "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+        "case": "actionable",
+        "savings_usd": 0.008645400000000001,
         "category": "cache_advisory",
-        "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md].inputs[name=article]"
+        "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md]"
       },
       "see_also": [
         "caching"

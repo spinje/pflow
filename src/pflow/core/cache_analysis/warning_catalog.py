@@ -133,20 +133,16 @@ _UNUSED_CHUNK_MESSAGE = (
 # declarations use ``cache.sub-workflow-cache-undeclared`` so the remediation
 # path stays explicit and does not depend on context-shape dispatch.
 _SHARED_CONTEXT_WORKFLOW_TEMPLATE = "Used by {node_count} LLM nodes. Chunks: {shared_chunks_csv}.{savings_clause}"
-_SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = (
-    "`{parent_value_expr}` flows into `{child_workflow_basename}` as "
-    "`{child_input_name}` and is used by {node_count} LLM {nodes_phrase} there "
-    "({child_node_ids_csv}). Add `{child_input_name}` to that sub-workflow's "
-    "## Cache; sub-workflows do not inherit the parent cache block."
-    "{below_threshold_clause}{cleanup_hint_clause}"
-)
+# The body block leads with "K values flow in from parent X" — the same info a
+# preamble would carry — so the catalog message is just the body block.
+_SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = "{body_block}"
 
 
 # Headline templates — short action-led titles for analyze-cache text output.
 # Per-id, catalog-driven; the renderer reads these without knowing the IDs.
 _SHARED_CONTEXT_WORKFLOW_HEADLINE = "Shared context undeclared — declare {shared_chunks_short} in ## Cache"
 _SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE = (
-    "Sub-workflow cache undeclared — add `{child_input_name}` in {child_workflow_basename}'s ## Cache"
+    "Sub-workflow cache undeclared in {child_workflow_basename} — declare {affected_input_count} input(s)"
 )
 
 # cache.below-min-tokens has two evidence tiers with different remediation
@@ -252,27 +248,17 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         category=CACHE_ADVISORY_CATEGORY,
         message_template=_SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE,
         required_context_keys=(
-            ("parent_workflow", str),
+            ("affected_workflow", str),
             ("child_workflow", str),
             ("child_workflow_basename", str),
-            ("parent_value_expr", str),
-            ("child_input_name", str),
-            ("parent_node_id", str),
-            ("line_in_parent", int),
-            ("node_count", int),
-            ("affected_workflow", str),
+            ("affected_input_count", int),
+            ("inputs", list),
+            ("body_block", str),
+            ("case", str),
             ("savings_usd", float),
-            ("child_node_ids_csv", str),
-            ("below_threshold_clause", str),
-            ("cleanup_hint_clause", str),
         ),
-        suggestions_template=(
-            "Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
-            "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
-            "Then, in {child_workflow}, add a ## Cache chunk for `${{{child_input_name}}}`.",
-            "Finally, add `{child_input_name}` to `prompt_cache:` on the child LLM nodes that reuse it.",
-        ),
-        path_template="workflows[path={child_workflow}].inputs[name={child_input_name}]",
+        suggestions_template=("Edit: {child_workflow}",),
+        path_template="workflows[path={child_workflow}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template=_SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE,
     ),
@@ -297,7 +283,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         suggestions_template=(
             "Apply both edits together — declaring without cleaning sends the same content twice.",
-            "First, remove the listed prompt-body refs (or rewrite to literal text) so the chunks aren't sent twice.",
+            "First, remove the listed `${{var}}` references (or rewrite to literal text) so the chunks aren't sent twice.",
             "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order.",
         ),
         path_template="workflows[path={affected_workflow}]",
@@ -703,7 +689,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="validator",
         category=CACHE_WARNING_CATEGORY,
         message_template=(
-            "Node '{node_id}' has overlapping cached chunks and prompt-body refs (sub-path overlap):\n{overlap_lines}"
+            "Node '{node_id}' has overlapping cached chunks and `${{var}}` references (sub-path overlap):\n{overlap_lines}"
         ),
         required_context_keys=(
             ("node_id", str),

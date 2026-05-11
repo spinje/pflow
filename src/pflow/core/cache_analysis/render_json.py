@@ -241,7 +241,14 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         # diverge (e.g., trace fires for input but cacheable falls through
         # to memo when ``cache_creation+cache_read == 0``).
         "cacheable_data_source": row.cacheable_data_source,
-        "cross_workflow_inputs": list(row.cross_workflow_inputs),
+        "cross_workflow_inputs": [
+            {
+                "name": contribution.name if hasattr(contribution, "name") else str(contribution),
+                "tokens_per_call": contribution.tokens_per_call if hasattr(contribution, "tokens_per_call") else None,
+                "model": contribution.model if hasattr(contribution, "model") else row.model,
+            }
+            for contribution in row.cross_workflow_inputs
+        ],
         "declared_prompt_cache": row.declared_prompt_cache,
         # Stage C.1 (2.0 minor-additive): True when the IR's ``params.model``
         # was an unresolved ``${...}`` template (heterogeneous batch
@@ -265,13 +272,10 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
 def _cross_workflow_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
     """Empty-array contract: always present, even when no findings.
 
-    Stage 0 (Task 159): the three arrays are DERIVED from ``analysis.warnings``
-    by filtering on ``Diagnostic.id``. Pre-Stage-0, the same Diagnostics were
-    duplicated on ``analysis.cross_workflow.{rename_detections, prose_mismatches,
-    value_flow_opportunities}`` AND in ``analysis.warnings`` — that
-    pre-computed-view smell is gone. JSON shape preserved for consumer
-    compatibility (1.x → 2.x bump documents the source change in the
-    version-history block at module top).
+    The three arrays are derived from ``analysis.warnings`` by filtering on
+    ``Diagnostic.id``. Sub-workflow value-flow opportunities now emit one
+    grouped diagnostic per child workflow; read ``context.inputs[]`` and
+    ``context.case`` for the per-input details.
 
     Filter discriminators:
     - ``rename_detections``: ``Diagnostic.id == "cache.cross-workflow-rename-detected"``

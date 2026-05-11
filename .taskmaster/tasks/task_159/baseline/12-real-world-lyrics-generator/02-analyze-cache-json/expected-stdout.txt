@@ -401,12 +401,9 @@
       "node_id": null,
       "estimated_savings_usd": null,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
+      "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
       "suggestions": [
-        "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
-        "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
-        "Then, in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
-        "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+        "Edit: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
       ]
     },
     {
@@ -1455,32 +1452,81 @@
     "value_flow_opportunities": [
       {
         "severity": "info",
-        "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
+        "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
         "source": "cache_analyzer",
         "id": "cache.sub-workflow-cache-undeclared",
         "title": "Cache Advisory",
         "suggestions": [
-          "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
-          "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
-          "Then, in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
-          "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+          "Edit: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
         ],
         "context": {
-          "node_count": 2,
           "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-          "savings_usd": null,
-          "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
           "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
           "child_workflow_basename": "chorus-chooser.pflow.md",
-          "parent_value_expr": "concept",
-          "child_input_name": "concept",
-          "parent_node_id": "choose-chorus",
-          "line_in_parent": 97,
-          "child_node_ids_csv": "`score-choruses`, `select-chorus`",
-          "below_threshold_clause": "",
-          "cleanup_hint_clause": "\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
+          "affected_input_count": 3,
+          "inputs": [
+            {
+              "child_input_name": "architecture",
+              "parent_value_expr": "song-architecture.response",
+              "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+              "parent_node_id": "choose-chorus",
+              "line_in_parent": 97,
+              "tokens_estimated": null,
+              "consumer_node_ids": [
+                "select-chorus"
+              ],
+              "consumer_node_ids_csv": "`select-chorus`",
+              "template_var_refs_by_node": {
+                "select-chorus": [
+                  "architecture"
+                ]
+              }
+            },
+            {
+              "child_input_name": "concept",
+              "parent_value_expr": "concept",
+              "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+              "parent_node_id": "choose-chorus",
+              "line_in_parent": 97,
+              "tokens_estimated": null,
+              "consumer_node_ids": [
+                "score-choruses",
+                "select-chorus"
+              ],
+              "consumer_node_ids_csv": "`score-choruses`, `select-chorus`",
+              "template_var_refs_by_node": {
+                "score-choruses": [
+                  "concept.core_idea"
+                ],
+                "select-chorus": [
+                  "concept.core_idea",
+                  "concept.title"
+                ]
+              }
+            },
+            {
+              "child_input_name": "creative_brief",
+              "parent_value_expr": "concept_brief",
+              "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+              "parent_node_id": "choose-chorus",
+              "line_in_parent": 97,
+              "tokens_estimated": null,
+              "consumer_node_ids": [
+                "select-chorus"
+              ],
+              "consumer_node_ids_csv": "`select-chorus`",
+              "template_var_refs_by_node": {
+                "select-chorus": [
+                  "creative_brief"
+                ]
+              }
+            }
+          ],
+          "body_block": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+          "case": "unmeasurable",
+          "savings_usd": null,
           "category": "cache_advisory",
-          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
+          "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md]"
         },
         "see_also": [
           "caching"
@@ -1920,32 +1966,81 @@
     },
     {
       "severity": "info",
-      "message": "`concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
+      "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
       "source": "cache_analyzer",
       "id": "cache.sub-workflow-cache-undeclared",
       "title": "Cache Advisory",
       "suggestions": [
-        "Apply both edits together \u2014 declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.",
-        "First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.",
-        "Then, in <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.",
-        "Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it."
+        "Edit: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
       ],
       "context": {
-        "node_count": 2,
         "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-        "savings_usd": null,
-        "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
         "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "child_workflow_basename": "chorus-chooser.pflow.md",
-        "parent_value_expr": "concept",
-        "child_input_name": "concept",
-        "parent_node_id": "choose-chorus",
-        "line_in_parent": 97,
-        "child_node_ids_csv": "`score-choruses`, `select-chorus`",
-        "below_threshold_clause": "",
-        "cleanup_hint_clause": "\n\nBefore declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):\n  \u2022 `score-choruses`: `${concept.core_idea}`\n  \u2022 `select-chorus`: `${concept.core_idea}`, `${concept.title}`",
+        "affected_input_count": 3,
+        "inputs": [
+          {
+            "child_input_name": "architecture",
+            "parent_value_expr": "song-architecture.response",
+            "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+            "parent_node_id": "choose-chorus",
+            "line_in_parent": 97,
+            "tokens_estimated": null,
+            "consumer_node_ids": [
+              "select-chorus"
+            ],
+            "consumer_node_ids_csv": "`select-chorus`",
+            "template_var_refs_by_node": {
+              "select-chorus": [
+                "architecture"
+              ]
+            }
+          },
+          {
+            "child_input_name": "concept",
+            "parent_value_expr": "concept",
+            "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+            "parent_node_id": "choose-chorus",
+            "line_in_parent": 97,
+            "tokens_estimated": null,
+            "consumer_node_ids": [
+              "score-choruses",
+              "select-chorus"
+            ],
+            "consumer_node_ids_csv": "`score-choruses`, `select-chorus`",
+            "template_var_refs_by_node": {
+              "score-choruses": [
+                "concept.core_idea"
+              ],
+              "select-chorus": [
+                "concept.core_idea",
+                "concept.title"
+              ]
+            }
+          },
+          {
+            "child_input_name": "creative_brief",
+            "parent_value_expr": "concept_brief",
+            "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+            "parent_node_id": "choose-chorus",
+            "line_in_parent": 97,
+            "tokens_estimated": null,
+            "consumer_node_ids": [
+              "select-chorus"
+            ],
+            "consumer_node_ids_csv": "`select-chorus`",
+            "template_var_refs_by_node": {
+              "select-chorus": [
+                "creative_brief"
+              ]
+            }
+          }
+        ],
+        "body_block": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+        "case": "unmeasurable",
+        "savings_usd": null,
         "category": "cache_advisory",
-        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md].inputs[name=concept]"
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md]"
       },
       "see_also": [
         "caching"

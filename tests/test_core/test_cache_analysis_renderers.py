@@ -27,6 +27,7 @@ from pflow.core.cache_analysis.analyze import (
     CacheAnalysis,
     CostDelta,
     CrossWorkflowFindings,
+    CrossWorkflowInputContribution,
     PerCallRow,
     ProjectionExclusion,
     SubWorkflowRollup,
@@ -2196,17 +2197,21 @@ def test_text_unavailable_row_notes_below_min_cross_workflow_candidate() -> None
         message="lyrics is below threshold",
         context={
             "child_workflow": child_workflow,
-            "child_input_name": "lyrics",
-            "child_node_ids_csv": "`review`",
-            "below_threshold_tokens": 474,
-            "below_threshold_min_tokens": 4096,
+            "case": "refactor",
+            "inputs": [
+                {
+                    "child_input_name": "lyrics",
+                    "tokens_estimated": 474,
+                    "consumer_node_ids": ["review"],
+                }
+            ],
         },
     )
 
     text = render_text(_make_analysis(rows=[row], warnings=[diag]))
 
     assert "review" in text
-    assert "below cache minimum: lyrics ~474 < 4,096" in text
+    assert "below cache minimum (case=refactor): lyrics ~474" in text
     assert "no stable" not in text
 
 
@@ -2655,19 +2660,29 @@ def _make_sub_workflow_cache_diag(
     child_basename = child_workflow.rsplit("/", 1)[-1] if "/" in child_workflow else child_workflow
     return make_diagnostic(
         "cache.sub-workflow-cache-undeclared",
-        node_count=6,
         affected_workflow=child_workflow,
         savings_usd=None,
-        parent_workflow="/abs/parent.pflow.md",
         child_workflow=child_workflow,
         child_workflow_basename=child_basename,
-        parent_value_expr=child_input_name,
-        child_input_name=child_input_name,
-        parent_node_id=node_id,
-        line_in_parent=0,
-        child_node_ids_csv="`child-llm-a`, `child-llm-b`",
-        below_threshold_clause="",
-        cleanup_hint_clause="",
+        affected_input_count=1,
+        inputs=[
+            {
+                "child_input_name": child_input_name,
+                "parent_value_expr": child_input_name,
+                "parent_workflow": "/abs/parent.pflow.md",
+                "parent_node_id": node_id,
+                "line_in_parent": 0,
+                "tokens_estimated": 2048,
+                "consumer_node_ids": ["child-llm-a", "child-llm-b"],
+                "consumer_node_ids_csv": "`child-llm-a`, `child-llm-b`",
+            }
+        ],
+        body_block=(
+            f"Template variables to remove:\n"
+            f"  • `{child_input_name}` ~2,048 tokens — node(s) `child-llm-a`, "
+            f"`child-llm-b` use `${{{child_input_name}}}`"
+        ),
+        case="actionable",
     )
 
 
@@ -2688,7 +2703,7 @@ def test_text_recommended_action_suggestion_uses_relative_child_edit_path(
         )
     )
 
-    assert "→ Then, in song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk" in text
+    assert "→ Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md" in text
     assert str(child_path) not in text
 
 
@@ -2757,7 +2772,8 @@ def test_text_sub_workflow_cache_finding_emits_child_action_line() -> None:
     # Headline surfaces in Recommended actions section.
     assert "Sub-workflow cache undeclared" in text
     assert "`concept`" in text
-    assert "sub-workflows do not inherit the parent cache block" in text
+    assert "apply ALL THREE edits" in text
+    assert "Remove the `${var}` references" in text
     assert "either workflow's ## Cache" not in text
     assert "share cached bytes across the boundary" not in text
     # Stage-1 UX pass: per-finding ``[cache.X]`` footer is gone.
@@ -3543,7 +3559,7 @@ def test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_pro
         **_row("select-chorus", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
-        "cross_workflow_inputs": ("concept",),
+        "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
         "observed_call_count": 4,
     })
     text = render_text(_make_analysis(rows=[row]))
@@ -3571,7 +3587,7 @@ def test_per_call_confidence_footer_aggregates_duplicate_node_names() -> None:
             **_row("review", 20).__dict__,
             "data_source": "trace",
             "cacheable_data_source": "cross_workflow_projection",
-            "cross_workflow_inputs": ("creative_direction",),
+            "cross_workflow_inputs": (CrossWorkflowInputContribution("creative_direction", 20, "test/model"),),
             "observed_call_count": 4,
         })
         for _ in range(8)
@@ -3582,7 +3598,7 @@ def test_per_call_confidence_footer_aggregates_duplicate_node_names() -> None:
             **_row("select-chorus", 20).__dict__,
             "data_source": "trace",
             "cacheable_data_source": "cross_workflow_projection",
-            "cross_workflow_inputs": ("concept",),
+            "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
             "observed_call_count": 4,
         })
     )
@@ -3615,7 +3631,7 @@ def test_per_call_confidence_footer_renders_multi_line_bullet_block() -> None:
             **_row("select-chorus", 20).__dict__,
             "data_source": "trace",
             "cacheable_data_source": "cross_workflow_projection",
-            "cross_workflow_inputs": ("concept",),
+            "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
             "observed_call_count": 4,
         }),
     ]
@@ -3640,19 +3656,27 @@ def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> 
         **_row("review", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
-        "cross_workflow_inputs": ("creative_direction", "song_architecture"),
+        "cross_workflow_inputs": (
+            CrossWorkflowInputContribution("creative_direction", 20, "test/model"),
+            CrossWorkflowInputContribution("song_architecture", 20, "test/model"),
+        ),
     })
     single = PerCallRow(**{
         **_row("select", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
-        "cross_workflow_inputs": ("concept",),
+        "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
     })
     many = PerCallRow(**{
         **_row("many", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
-        "cross_workflow_inputs": ("a", "b", "c", "d"),
+        "cross_workflow_inputs": (
+            CrossWorkflowInputContribution("a", 20, "test/model"),
+            CrossWorkflowInputContribution("b", 20, "test/model"),
+            CrossWorkflowInputContribution("c", 20, "test/model"),
+            CrossWorkflowInputContribution("d", 20, "test/model"),
+        ),
     })
     text = render_text(_make_analysis(rows=[multi, single, many]))
     assert "cacheable inputs: creative_direction, song_architecture" in text

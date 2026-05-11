@@ -61,19 +61,25 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
         "cache.sub-workflow-cache-undeclared": (
             None,
             {
-                "parent_workflow": "parent.pflow.md",
+                "affected_workflow": "child.pflow.md",
                 "child_workflow": "child.pflow.md",
                 "child_workflow_basename": "child.pflow.md",
-                "parent_value_expr": "concept",
-                "child_input_name": "concept",
-                "parent_node_id": "call-child",
-                "line_in_parent": 42,
-                "node_count": 2,
-                "affected_workflow": "child.pflow.md",
+                "affected_input_count": 1,
+                "inputs": [
+                    {
+                        "child_input_name": "concept",
+                        "parent_value_expr": "concept",
+                        "parent_workflow": "parent.pflow.md",
+                        "parent_node_id": "call-child",
+                        "line_in_parent": 42,
+                        "tokens_estimated": 2048,
+                        "consumer_node_ids": ["child-llm-a", "child-llm-b"],
+                        "consumer_node_ids_csv": "`child-llm-a`, `child-llm-b`",
+                    }
+                ],
+                "body_block": "Template variables to remove:\n  • `concept` ~2,048 tokens — uses `${concept}`",
+                "case": "actionable",
                 "savings_usd": None,
-                "child_node_ids_csv": "`child-llm-a`, `child-llm-b`",
-                "below_threshold_clause": "",
-                "cleanup_hint_clause": "",
             },
         ),
         "cache.prompt-cache-incomplete": (

@@ -18,16 +18,20 @@
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
 
-  1. Sub-workflow cache undeclared — add `article` in child.pflow.md's ## Cache  saves ~$0.02/run
+  For each "Sub-workflow cache undeclared" finding, apply ALL THREE edits in the listed child workflow. Doing only some leaves the cache disabled:
+    (1) Remove the `${var}` references from each affected node's prompt. Leaving them re-sends the content uncached.
+    (2) Add the input as a named entry under the child workflow's ## Cache section.
+    (3) Reference that named entry in `prompt_cache:` on each consumer node.
+
+  1. Sub-workflow cache undeclared in child.pflow.md — declare 1 input(s)  saves ~$0.02/run
      child.pflow.md
-     `article` flows into `child.pflow.md` as `article` and is used by 2 LLM nodes there (`summarize`, `translate`). Add `article` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
-     Before declaring `article` in `child.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
-       • `summarize`: `${article.title}`
-       • `translate`: `${article.body}`
-     → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
-     → First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.
-     → Then, in sub/child.pflow.md, add a ## Cache chunk for `${article}`.
-     → Finally, add `article` to `prompt_cache:` on the child LLM nodes that reuse it.
+     1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.
+     Per-consumer cache prefix (what the provider sees per call):
+       Node `summarize` (~3,207 tokens per call — above 1,024-token minimum):
+         • `article` ~3,207 tokens — uses `${article.title}`
+       Node `translate` (~3,207 tokens per call — above 1,024-token minimum):
+         • `article` ~3,207 tokens — uses `${article.body}`
+     → Edit: sub/child.pflow.md
 
 ## Per-child analyze-cache commands
 

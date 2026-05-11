@@ -24,16 +24,16 @@
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
 
-  1. Sub-workflow cache undeclared — add `concept` in chorus-chooser.pflow.md's ## Cache  savings unavailable
+  For each "Sub-workflow cache undeclared" finding, apply ALL THREE edits in the listed child workflow. Doing only some leaves the cache disabled:
+    (1) Remove the `${var}` references from each affected node's prompt. Leaving them re-sends the content uncached.
+    (2) Add the input as a named entry under the child workflow's ## Cache section.
+    (3) Reference that named entry in `prompt_cache:` on each consumer node.
+
+  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 input(s)  unmeasurable
      chorus-chooser.pflow.md
-     `concept` flows into `chorus-chooser.pflow.md` as `concept` and is used by 2 LLM nodes there (`score-choruses`, `select-chorus`). Add `concept` to that sub-workflow's ## Cache; sub-workflows do not inherit the parent cache block.
-     Before declaring `concept` in `chorus-chooser.pflow.md`'s ## Cache, the following body refs need cleanup (remove from prompt body OR rewrite to literal text):
-       • `score-choruses`: `${concept.core_idea}`
-       • `select-chorus`: `${concept.core_idea}`, `${concept.title}`
-     → Apply both edits together — declaring without cleaning sends the same content twice or leaves a body reference that shadows the cached chunk.
-     → First, remove the listed body refs from the affected nodes' prompts (or rewrite to literal text) so the chunks aren't sent twice.
-     → Then, in song-creator/chorus-chooser/chorus-chooser.pflow.md, add a ## Cache chunk for `${concept}`.
-     → Finally, add `concept` to `prompt_cache:` on the child LLM nodes that reuse it.
+     Three values flow in but no consumer node has a resolved model — cannot compute the cache threshold.
+     → Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.
+     → Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md
 
   2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md

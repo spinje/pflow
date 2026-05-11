@@ -470,6 +470,14 @@ async def analyze_cache(
     ``cross_workflow.{rename, prose, value_flow}`` arrays are derived from
     ``warnings`` by ``Diagnostic.id``.
 
+    For ``cache.sub-workflow-cache-undeclared``, agents should read
+    ``context.case`` (``actionable`` / ``model_switch`` / ``refactor`` /
+    ``unmeasurable``), ``context.inputs[]`` (per incoming value with
+    ``child_input_name``, ``parent_value_expr``, ``tokens_estimated``, and
+    ``consumer_node_ids``), ``context.body_block`` (text-ready guidance), and
+    ``context.savings_usd``. Older per-input top-level fields such as
+    ``child_input_name`` and ``below_threshold_clause`` are no longer emitted.
+
     **``warnings[].id`` shape**: either one of these cache catalog entries or
     ``None`` for un-IDed validator findings. Use ``severity`` for
     blocking-vs-advisory dispatch; use cache catalog membership for

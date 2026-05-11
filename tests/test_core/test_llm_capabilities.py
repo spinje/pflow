@@ -224,3 +224,37 @@ def test_get_min_cache_tokens_for_unknown_anthropic_uses_floor_not_zero() -> Non
     threshold = get_min_cache_tokens("anthropic/claude-opus-99-99")
     assert threshold > 0
     assert threshold == 4096
+
+
+def test_anthropic_models_at_threshold_lists_named_1024_models() -> None:
+    from pflow.core.llm_capabilities import anthropic_models_at_threshold
+
+    assert anthropic_models_at_threshold(1024) == (
+        "claude-sonnet-4-5",
+        "claude-opus-4-1",
+        "claude-opus-4",
+        "claude-sonnet-4",
+        "claude-sonnet-3-7",
+    )
+
+
+def test_anthropic_models_at_threshold_lists_named_2048_models() -> None:
+    from pflow.core.llm_capabilities import anthropic_models_at_threshold
+
+    assert anthropic_models_at_threshold(2048) == (
+        "claude-sonnet-4-6",
+        "claude-haiku-3-5",
+    )
+
+
+def test_anthropic_models_at_threshold_returns_empty_for_unknown_threshold() -> None:
+    from pflow.core.llm_capabilities import anthropic_models_at_threshold
+
+    assert anthropic_models_at_threshold(12345) == ()
+
+
+def test_anthropic_models_at_threshold_excludes_provider_wildcards() -> None:
+    from pflow.core.llm_capabilities import anthropic_models_at_threshold
+
+    assert "" not in anthropic_models_at_threshold(1024)
+    assert all("/" not in model for model in anthropic_models_at_threshold(1024))
