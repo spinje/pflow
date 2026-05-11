@@ -1,8 +1,14 @@
-# Recording Live API Cases (Surface 10 — TODO)
+# Recording Live API Cases (Surface 10 — partial)
 
-The 4 live API cases listed in `PLAN.md` §6.J have NOT yet been recorded.
-This file documents how the implementing agent for Surface 10 should record
-them.
+Surface 10 is partially recorded. The original 4 live API cases listed in
+`PLAN.md` §6.J are not all complete, but the baseline now includes committed
+Gemini fixtures for:
+
+- `10-live-recordings/03-gemini-translation/`
+- `10-live-recordings/05-gemini-lyrics-generator/` (extension beyond PLAN.md)
+
+This file documents how future agents should record the remaining live cases
+or intentionally refresh the committed fixtures.
 
 ## What "live recording" means
 
@@ -12,16 +18,20 @@ Subsequent `verify.sh` runs use the committed fixture — they DO NOT call the
 provider again. Re-recording is a one-time operation per change to provider
 behavior or trace format.
 
-## The 4 cases
+## Original planned cases
 
-| Folder | Provider | Recipe |
-|---|---|---|
-| `10-live-recordings/01-anthropic-basic/` | Anthropic | `examples/core/prompt-caching.pflow.md` with article fixture; default 5m TTL |
-| `10-live-recordings/02-anthropic-1h-ttl/` | Anthropic | Same workflow + `- ttl: 1h` in `## Cache`; record TWO runs within 1h to verify cache_read on the 2nd |
-| `10-live-recordings/03-gemini-translation/` | Gemini | Same workflow shape; model `gemini/gemini-2.5-flash` |
-| `10-live-recordings/04-anthropic-prewarm-batch/` | Anthropic | Batch workflow with `prewarm: true`, batch size 4 |
+| Folder | Provider | Status | Recipe |
+|---|---|---|---|
+| `10-live-recordings/01-anthropic-basic/` | Anthropic | TODO | `examples/core/prompt-caching.pflow.md` with article fixture; default 5m TTL |
+| `10-live-recordings/02-anthropic-1h-ttl/` | Anthropic | TODO | Same workflow + `- ttl: 1h` in `## Cache`; record TWO runs within 1h to verify cache_read on the 2nd |
+| `10-live-recordings/03-gemini-translation/` | Gemini | recorded | Same workflow shape; model `gemini/gemini-2.5-flash` |
+| `10-live-recordings/04-anthropic-prewarm-batch/` | Anthropic | TODO | Batch workflow with `prewarm: true`, batch size 4 |
 
-(There is no `10-live-recordings/` folder yet — create it as the first step.)
+Additional recorded case:
+
+| Folder | Provider | Status | Recipe |
+|---|---|---|---|
+| `10-live-recordings/05-gemini-lyrics-generator/` | Gemini | recorded | Full real lyrics-generator workflow trace, minimized and committed |
 
 ## Required env
 

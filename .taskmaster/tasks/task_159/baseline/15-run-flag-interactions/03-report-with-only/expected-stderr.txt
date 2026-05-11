@@ -1,0 +1,9 @@
+Executing workflow (2 nodes):
+  first... ✓ <DURATION>
+
+✓ Workflow completed in <DURATION>
+  ⤷ Stopped after 'first' (--only), 1 remaining node skipped
+cli: --only active — streaming auto-detected key 'stdout' from target 'first' to stdout.
+📊 Workflow trace saved: <BASELINE_CASE_DIR>/.run-home/.pflow/debug/workflow-trace-<HASH>-<TIMESTAMP>.json
+📋 Execution report: <BASELINE_CASE_DIR>/.run-home/.pflow/reports/workflow
+   → Target node: <BASELINE_CASE_DIR>/.run-home/.pflow/reports/workflow/01-first.md

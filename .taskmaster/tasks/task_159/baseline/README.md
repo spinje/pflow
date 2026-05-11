@@ -1,10 +1,10 @@
 # Task 159 Baseline — Index
 
-**63 cases** captured across 8 surfaces (01–05 + 12–14). Read
-[PLAN.md](./PLAN.md) for the full strategy and [FINDINGS.md](./FINDINGS.md)
-for the **5 findings** (1 spec-vs-impl mismatch, 2 agent-UX issues, 1 false-
-positive on greenfield analysis, 1 visualize/validate coupling) surfaced
-during baseline construction.
+**72 runnable cases** captured across 10 surfaces (01–05, 10, 12–15).
+`PLAN.md`, `RECORDING.md`, and the audit files are historical context; the
+filesystem plus `./verify.sh` are the current source of truth. Read
+[PLAN.md](./PLAN.md) for the original strategy and [FINDINGS.md](./FINDINGS.md)
+for the initial construction findings.
 
 ## How to use this folder
 
@@ -30,23 +30,25 @@ during baseline construction.
 | Surface 01 — parser errors (10 cases) | ✅ done; 1 finding (F-01) |
 | Surface 02 — validator errors (8 cases) | ✅ done |
 | Surface 03 — analyze-cache modes (8 cases, compressed from 17) | ✅ done |
-| Surface 04 — warning catalog (20 cases, one per ID) | ✅ done; 15/20 trigger target ID; 5 documented in F-02 as TODOs |
+| Surface 04 — warning catalog (22 cases: 21 IDs + subpath variant) | ✅ done; 16/22 trigger target ID; 6 non-trigger cases intentionally lock current silence |
 | Surface 05 — advisory cases (5 cases) | ✅ done |
+| **Surface 10 — live recordings (2 cases)** | ✅ partial; Gemini translation + real lyrics-generator trace committed |
 | **Surface 12 — real-world lyrics-generator (5 cases)** | ✅ done; 3 findings (F-03, F-04, F-05) |
 | **Surface 13 — happy-path interactions (4 cases)** | ✅ done |
 | **Surface 14 — Pitfall #19 defenses (3 cases)** | ✅ done |
+| **Surface 15 — run flag interactions (5 cases)** | ✅ done; `--only`, `--report`, partial traces, and dry-run/report conflict |
 | Surface 06 — dry-run nudge | ⏭ TODO (continue from PLAN.md §6.F) |
 | Surface 07 — hash invariants | ⏭ TODO |
 | Surface 08 — `--no-cache` flag | ⏭ TODO |
 | Surface 09 — `--help` and guide | ⏭ TODO |
-| Surface 10 — live recordings | ⏭ TODO (see RECORDING.md) |
 | Surface 11 — end-to-end UX | ⏭ TODO |
 
-> **Note on numbering**: surfaces 12–14 were added AFTER 01–05 because the
+> **Note on numbering**: surfaces 12–15 were added AFTER 01–05 because the
 > Task 159 review surfaced their need (real-world integration, happy-path
-> interactions, Pitfall #19 defenses — all critical, none in the original
-> PLAN). The next agent should still build 06–11 from PLAN.md §6.F onward.
-> Numbering preserves planned topology; chronology is in the git log.
+> interactions, Pitfall #19 defenses, and run-flag/report interactions — all
+> critical, none in the original PLAN). Surfaces 06–09 and 11 remain optional
+> follow-up work; surface 10 is partially complete despite the older
+> RECORDING.md wording.
 
 > **Out of scope**: trace format 2.0.0 backcompat. The user has confirmed
 > we don't need to test for old traces. The 2.0.0 stripped fixture was
@@ -67,7 +69,9 @@ baseline/
 ├── .gitignore                      # ignores .run-home, .raw-*
 ├── _shared/
 │   ├── fixtures/
-│   │   └── sample-2.1.0-trace.json          # real recorded trace (2.1.0)
+│   │   ├── sample-2.1.0-trace.json          # real recorded trace (2.1.0)
+│   │   ├── live-gemini-translation.trace.json
+│   │   └── live-gemini-lyrics-generator.trace.json
 │   ├── workflows/
 │   │   ├── smoke-with-cache.pflow.md        # source workflow for the trace fixture
 │   │   └── lyrics-generator/                # real Task 159 motivating workflow tree (17 .pflow.md files)
@@ -75,11 +79,13 @@ baseline/
 ├── 01-parser-errors/                  (10 cases)
 ├── 02-validator-errors/               (8 cases)
 ├── 03-analyze-cache-modes/            (8 cases)
-├── 04-warning-catalog/                (20 cases)
+├── 04-warning-catalog/                (22 cases)
 ├── 05-advisory-cases/                 (5 cases)
+├── 10-live-recordings/                (2 cases)
 ├── 12-real-world-lyrics-generator/    (5 cases)
 ├── 13-happy-path-interactions/        (4 cases)
-└── 14-pitfall-19-defenses/            (3 cases)
+├── 14-pitfall-19-defenses/            (3 cases)
+└── 15-run-flag-interactions/          (5 cases)
 ```
 
 ## Coverage summary
@@ -103,7 +109,7 @@ baseline/
 04-steady-state-json · 05-trace-from-trace · 06-no-trace-autoload ·
 07-json-error-envelope-unknown-workflow · 08-all-rows-flag
 
-### Surface 04 — Warning catalog (20/20 cases captured; 15 trigger target ID)
+### Surface 04 — Warning catalog (22/22 cases captured; 16 trigger target ID)
 
 | # | ID | Triggered |
 |---|---|---|
@@ -112,23 +118,25 @@ baseline/
 | 03 | cache.invalid-on-non-llm | ✓ |
 | 04 | cache.shared-context-undeclared | ✓ |
 | 05 | cache.sub-workflow-cache-undeclared | ✓ |
-| 06 | cache.batch-prewarm-recommended | ⏭ (F-02 TODO) |
-| 07 | cache.dynamic-before-static | ⏭ (F-02 TODO) |
-| 08 | cache.padding-advisory | ⏭ (F-02 TODO) |
+| 05b | cache.sub-workflow-cache-undeclared-subpath | ✓ |
+| 06 | cache.batch-prewarm-recommended | ⏭ (intentional silence fixture) |
+| 07 | cache.dynamic-before-static | ⏭ (intentional silence fixture) |
+| 08 | cache.padding-advisory | ⏭ (intentional silence fixture) |
 | 09 | cache.below-min-tokens | ✓ |
 | 10 | cache.cross-workflow-prose-mismatch | ✓ |
 | 11 | cache.cross-workflow-rename-detected | ✓ |
-| 12 | cache.discrepancy | ⏭ (F-02 TODO — needs trace) |
+| 12 | cache.discrepancy | ⏭ (intentional silence fixture) |
 | 13 | cache.prewarm-no-prefix | ✓ |
-| 14 | cache.consolidate-to-root-recommended | ⏭ (F-02 TODO) |
+| 14 | cache.consolidate-to-root-recommended | ⏭ (intentional silence fixture) |
 | 15 | cache.heterogeneous-models-fragment-cache | ✓ |
 | 16 | cache.first-call-write-penalty | ✓ |
 | 17 | cache.opaque-prompt | ✓ |
 | 18 | cache.prompt-body-duplicates-cache | ✓ |
-| 19 | cache.prompt-body-shadows-cache | ⏭ (F-02 TODO — fires duplicates instead) |
+| 19 | cache.prompt-body-shadows-cache | ⏭ (intentional silence fixture — fires duplicates instead) |
 | 20 | llm.thinking-temperature-mismatch | ✓ |
+| 21 | cache.prompt-cache-incomplete | ✓ |
 
-The 5 untriggered cases STILL serve as regression gates: they capture the
+The 6 untriggered cases STILL serve as regression gates: they capture the
 analyzer's current output on the fixture; if a code change makes one of these
 IDs start firing on the existing fixture, the case fails, surfacing the
 behavior change for review.
@@ -140,6 +148,14 @@ behavior change for review.
 03-prewarm-explicit-true-no-warning (silence captured) ·
 04-model-fragmentation-with-write-penalty (co-emission captured) ·
 05-cost-projection-excludes-heterogeneous-cohort (cohort exclusions captured)
+
+### Surface 10 — Live recordings (2/2 pass)
+
+03-gemini-translation · 05-gemini-lyrics-generator
+
+These are committed trace fixtures; verify mode does not call live providers.
+`05-gemini-lyrics-generator` is the load-bearing real trace for the motivating
+17-file workflow.
 
 ### Surface 12 — Real-world lyrics-generator (5/5 pass)
 
@@ -168,6 +184,14 @@ NamespacedSharedStore proxy) ·
 02-multi-segment-dotted-path (deeper through-dict nesting) ·
 03-file-resolved-system-prompt (Path 1 boundary contract — `prompt:
 ./file.md` resolves to file content not filename string)
+
+### Surface 15 — Run flag interactions (5/5 pass)
+
+01-partial-trace-analyze-cache (truncated trace executed-subset framing) ·
+02-report-cache-telemetry (`## Cached System` + `## Cache telemetry`) ·
+03-report-with-only (`--report --only` snapshot + target path) ·
+04-dry-run-report-conflict (hard error) ·
+05-print-only-mode-signal (`-p --only` keeps mode signal)
 
 ## Conventions
 
