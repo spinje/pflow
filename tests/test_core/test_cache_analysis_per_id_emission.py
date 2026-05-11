@@ -3152,105 +3152,266 @@ def test_discrepancy_predicted_label_distinguishes_match_mismatch_and_miss(
     assert diag.context["predicted_label"] == "hit (bytes diverged at runtime)"
 
 
-def test_predict_cache_keys_catches_schema_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bug A regression — ``_predict_cache_keys`` must catch ``SchemaValidationError``
-    when the per-workflow compile path raises. They're sibling subclasses of
-    ``PflowError`` (not related to ``CompilationError``); the original except
-    clause let ``SchemaValidationError`` propagate uncaught and crashed
-    ``pflow analyze-cache`` whenever a 2.1.0 trace was auto-loaded for a
-    workflow with required-but-malformed inputs (the dominant agent flow).
+def test_predict_cache_keys_pads_partial_walker_params_no_schema_failure_note(tmp_path: Path) -> None:
+    """Bug 3 regression — when the cross-workflow walker resolves SOME but
+    not all of a sub-workflow's declared inputs (e.g. an input that flows
+    from an upstream sub-workflow output), the discrepancy stage must NOT
+    emit a "workflow failed to compile (SchemaValidationError)" Note for
+    that sub-workflow. The walker's partial params get padded with the
+    standard ``"__validation_placeholder__"`` for missing required slots
+    so compile succeeds; per-node prediction is skipped silently for any
+    node whose templates touch a padded slot.
 
-    Mutation test: drop ``SchemaValidationError`` from the except tuple in
-    ``_build_predict_scaffold``; this test fails with an unhandled exception.
-
-    Patches ``compile_workflow`` AT the analyzer's call site
-    (``pflow.core.cache_analysis.analyze``) — patching the
-    ``pflow.runtime.compile_workflow`` re-export leaks into ``workflow_executor``'s
-    cached top-level binding (set at first import of ``pflow.runtime.workflow_executor``)
-    and breaks any subsequent test that calls ``WorkflowRunner.run``. Patching
-    the lazy import's resolved attribute keeps the patch local to the analyzer.
+    Mutation contract: revert ``_predict_one_workflow``'s call to
+    ``_pad_inputs_for_prediction`` (pass raw walker params straight to
+    ``_build_predict_scaffold``) and ``compile_workflow`` raises
+    ``SchemaValidationError("Workflow requires input 'analyses'")`` for
+    the missing slot. The scaffold's broad catch then debug-logs and
+    returns None — but the OLD code path that paired that failure with a
+    user-facing Note via ``_format_fidelity_skip_note`` is gone, so the
+    test would only catch the regression if the padding were restored
+    AND a Note were emitted. Concretely: this test fails if a future
+    edit reintroduces a ``notes.append(...)`` on scaffold failure.
     """
     from types import SimpleNamespace
 
-    from pflow.core.cache_analysis.analyze import _build_predict_scaffold, _predict_cache_keys
+    from pflow.core.cache_analysis.analyze import _predict_cache_keys
     from pflow.core.cache_analysis.context import AnalysisContext
-    from pflow.core.exceptions import SchemaValidationError
+    from pflow.runtime.cache import MemoizationCache
 
-    # Inject a SchemaValidationError at the analyzer's compile boundary by
-    # replacing _build_predict_scaffold's behavior — same effect as patching
-    # compile_workflow but contained to the analyzer (no side-effect on
-    # workflow_executor's cached binding).
-    def _boom_scaffold(
-        _workflow_ir: Any, _params: Any, _memo_cache: Any, workflow_path: str | None
-    ) -> tuple[Any, str | None]:
-        # Mirror the real shape: scaffold=None + per-workflow error note.
-        # The note text must match production (Fix 8 follow-up: routed through
-        # ``_format_fidelity_skip_note``) so the assertion stays honest.
-        label = workflow_path or "<root>"
-        from pflow.core.cache_analysis.analyze import _format_fidelity_skip_note
-
-        return None, _format_fidelity_skip_note(label, "workflow failed to compile (SchemaValidationError)")
-
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_build_predict_scaffold", _boom_scaffold)
-    # Reference SchemaValidationError so the docstring's mutation-test claim
-    # stays honest (the catch list lives in ``_build_predict_scaffold`` and
-    # this test's stub mirrors what production would produce on that catch).
-    _ = SchemaValidationError
-
-    class _Stub:
-        pass
-
+    # Sub-workflow that declares two required inputs. Walker resolves
+    # only one (``brief``); ``analyses`` flows from an upstream node and
+    # is left empty by the walker. Mirrors the lyrics-generator
+    # ``concept-chooser`` case exactly (which was the source of Bug 3).
+    # Each node uses its input via the cache mechanism (``prompt_cache:``)
+    # — referencing it both inline and via cache trips the validator's
+    # ``cache.prompt-body-duplicates-cache`` rule.
     workflow_ir: dict[str, Any] = {
-        "inputs": {"name": {"type": "string"}},
+        "inputs": {
+            "brief": {"type": "string", "required": True},
+            "analyses": {"type": "any", "required": True},
+        },
+        "cache": {
+            "items": [
+                {"name": "brief", "var": "brief", "prose_before": "B:\n"},
+                {"name": "analyses", "var": "analyses", "prose_before": "A:\n"},
+            ]
+        },
         "nodes": [
             {
-                "id": "draft",
+                "id": "use-brief",
                 "type": "llm",
-                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "go ${name}"},
-                "prompt_cache": ["name"],
-            }
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Apply the brief shown above."},
+                "prompt_cache": ["brief"],
+            },
+            {
+                "id": "use-analyses",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Apply the analyses shown above."},
+                "prompt_cache": ["analyses"],
+            },
         ],
-        "cache": {"items": [{"name": "name", "var": "name", "prose_before": "N:\n"}]},
+        "edges": [{"from": "use-brief", "to": "use-analyses"}],
     }
     ctx = AnalysisContext.build(
         workflow_ir=workflow_ir,
-        parameters={"name": "alice"},
-        memo_cache=_Stub(),
+        parameters={"brief": "real brief content from upstream"},
+        memo_cache=MemoizationCache(db_path=tmp_path / "cache.db"),
         workflow_path="x.pflow.md",
     )
     cw_result = SimpleNamespace(irs_by_workflow={"x.pflow.md": workflow_ir}, edges=())
 
     keys, notes = _predict_cache_keys(cw_result, ctx)
-    assert keys == {}
-    # Fix 8 follow-up: jargon-free framing via ``_format_fidelity_skip_note``.
-    assert any("Cache fidelity check skipped for x.pflow.md" in n for n in notes)
-    assert any("SchemaValidationError" in n for n in notes)
-    # Sanity: the real _build_predict_scaffold's catch list still includes
-    # SchemaValidationError. Drop it from the production except tuple and this
-    # passes (the test's stub doesn't use the real catch), so we also exercise
-    # the production helper directly with a synthetic crashing IR.
+    # The misleading SchemaValidationError Note must not appear — this is
+    # the whole point of the fix.
+    assert not any("SchemaValidationError" in n for n in notes), f"unexpected: {notes!r}"
+    assert not any("failed to compile" in n for n in notes), f"unexpected: {notes!r}"
+    # ``use-brief`` references only walker-resolved ``brief`` → predicted.
+    # ``use-analyses`` references the padded ``analyses`` → silently skipped.
+    assert ("x.pflow.md", "use-brief") in keys, f"expected use-brief in {sorted(keys)}"
+    assert ("x.pflow.md", "use-analyses") not in keys, f"unexpected use-analyses in {sorted(keys)}"
+
+
+def test_build_predict_scaffold_silent_on_compile_failure() -> None:
+    """Bug 3 contract — when ``compile_workflow`` raises despite the
+    unified validator's earlier pass, the scaffold returns ``None`` and
+    emits no user-facing Note. Failures here only fire for compiler-
+    internal bugs the validator missed; debug logging keeps them
+    traceable without polluting agent output.
+
+    Mutation contract: restore ``notes.append(_format_fidelity_skip_note(...))``
+    on scaffold-failure paths (the pre-fix shape) and the negative
+    assertions below fail.
+    """
+    from pflow.core.cache_analysis.analyze import _build_predict_scaffold
+
+    class _Stub:
+        pass
+
+    # Required input ``x`` with empty params — compile raises
+    # SchemaValidationError. After the fix, this is reachable only when
+    # callers bypass ``_pad_inputs_for_prediction`` (production never
+    # does); the scaffold still degrades silently.
     bad_ir: dict[str, Any] = {
         "inputs": {"x": {"type": "string", "required": True}},
-        # Missing required "x" parameter → compile-time validation fails.
         "nodes": [{"id": "n", "type": "llm", "params": {"prompt": "${x}"}}],
     }
-    scaffold, note = _build_predict_scaffold(bad_ir, {}, _Stub(), "bad.pflow.md")
+    scaffold = _build_predict_scaffold(bad_ir, {}, _Stub(), "bad.pflow.md")
     assert scaffold is None
-    assert note is not None
-    assert "bad.pflow.md" in note
-    assert "failed to compile" in note
+
+
+def test_pad_inputs_for_prediction_preserves_walker_values_and_marks_missing() -> None:
+    """Padding helper: walker-resolved values pass through unchanged; only
+    missing declared inputs get the placeholder. Returned ``dummied_keys``
+    names exactly the slots that received a placeholder.
+
+    Mutation contract: change the ``if key not in padded`` guard to
+    unconditionally overwrite, and walker values get clobbered — the
+    discrepancy stage's predicted cache_keys would never match the trace.
+    """
+    from pflow.core.cache_analysis.analyze import _pad_inputs_for_prediction
+
+    declared = {
+        "brief": {"type": "string", "required": True},
+        "analyses": {"type": "any", "required": True},
+        "top_n": {"type": "integer", "required": False, "default": 4},
+    }
+    known = {"brief": "real value from upstream"}
+    padded, dummied = _pad_inputs_for_prediction(known, declared)
+    assert padded["brief"] == "real value from upstream"  # walker value preserved
+    assert padded["analyses"] == "__validation_placeholder__"
+    assert padded["top_n"] == "__validation_placeholder__"
+    assert dummied == frozenset({"analyses", "top_n"})
+
+
+def test_node_references_any_detects_cache_chunk_chain() -> None:
+    """A node taints when its ``prompt_cache:`` references a chunk whose
+    ``var`` traces to a dummied input — even if the node has no inline
+    template ref to the dummied input. This is the lyrics-generator
+    concept-chooser shape: ``cache.prompt-body-duplicates-cache``
+    forbids inlining the var in the prompt body, so the only path from
+    node to dummied input is via the cache chunk's ``var``.
+
+    Mutation contract: drop the ``prompt_cache`` check from
+    ``_node_references_any`` and ``use-analyses`` is no longer detected
+    as tainted — its predicted cache_key carries the placeholder bytes
+    and never matches the trace.
+    """
+    from pflow.core.cache_analysis.analyze import _dummied_cache_chunks, _node_references_any
+
+    workflow_ir = {
+        "cache": {
+            "items": [
+                {"name": "brief", "var": "brief", "prose_before": "B:\n"},
+                {"name": "analyses", "var": "analyses", "prose_before": "A:\n"},
+            ]
+        },
+    }
+    dummied_keys = frozenset({"analyses"})
+    dummied_chunks = _dummied_cache_chunks(workflow_ir, dummied_keys)
+    assert dummied_chunks == frozenset({"analyses"})
+
+    use_brief = {
+        "id": "use-brief",
+        "type": "llm",
+        "params": {"prompt": "Apply the brief above."},
+        "prompt_cache": ["brief"],
+    }
+    use_analyses = {
+        "id": "use-analyses",
+        "type": "llm",
+        "params": {"prompt": "Apply the analyses above."},
+        "prompt_cache": ["analyses"],
+    }
+    assert _node_references_any(use_brief, dummied_keys, dummied_chunks) is False
+    assert _node_references_any(use_analyses, dummied_keys, dummied_chunks) is True
+
+
+def test_node_references_any_detects_inline_template_ref() -> None:
+    """A node also taints when its IR contains a ``${var}`` template ref
+    whose root is in ``dummied_keys``. Covers the second path to taint
+    (the first is ``prompt_cache`` → cache chunk → var); both must be
+    checked because either alone is sufficient for the predicted
+    cache_key to carry placeholder bytes.
+
+    Mutation contract: drop the ``_walk_strings`` loop in
+    ``_node_references_any`` and code-block inputs (``inputs: x: ${k}``)
+    that reference dummied keys go undetected.
+    """
+    from pflow.core.cache_analysis.analyze import _node_references_any
+
+    code_node = {
+        "id": "build-items",
+        "type": "code",
+        "params": {"code": "items = raw"},
+        "inputs": {"raw": "${analyses}"},
+    }
+    assert _node_references_any(code_node, frozenset({"analyses"}), frozenset()) is True
+    # Coalesce: any operand referencing a dummied root taints.
+    coalesce_node = {
+        "id": "n",
+        "type": "llm",
+        "params": {"prompt": "${analyses ?? brief}"},
+    }
+    assert _node_references_any(coalesce_node, frozenset({"analyses"}), frozenset()) is True
+    # No refs to dummied roots → not tainted.
+    safe_node = {
+        "id": "n",
+        "type": "llm",
+        "params": {"prompt": "${brief}"},
+    }
+    assert _node_references_any(safe_node, frozenset({"analyses"}), frozenset()) is False
+
+
+def test_build_predict_scaffold_injects_pflow_workflow_file() -> None:
+    """The scaffold must inject ``_pflow_workflow_file`` into compile
+    params so relative file refs in child workflows resolve against the
+    workflow's directory instead of CWD — matches
+    ``WorkflowValidator._validate_one_child_call``'s pattern.
+
+    Mutation contract: drop the injection and ``@./file.ext`` refs in
+    sub-workflows resolve against CWD, silently misresolving for any
+    workflow not under the current directory.
+    """
+    from pflow.core.cache_analysis.analyze import _build_predict_scaffold
+    from pflow.runtime.cache import MemoizationCache
+
+    workflow_ir: dict[str, Any] = {
+        "inputs": {"name": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "n",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "hi"},
+            }
+        ],
+        "edges": [],
+    }
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = MemoizationCache(db_path=Path(tmp) / "cache.db")
+        scaffold = _build_predict_scaffold(workflow_ir, {"name": "alice"}, cache, "x.pflow.md")
+        assert scaffold is not None
+        assert scaffold.shared.get("_pflow_workflow_file") == "x.pflow.md"
 
 
 def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Path) -> None:
-    """When ``compile_workflow`` raises (here: a malformed IR shape that
-    fails compile checks), the analyzer catches the exception, appends a
-    notes entry, and falls back to observable-only attribution. The
-    discrepancy is still emitted via the chunk_skipped observable path.
+    """When ``compile_workflow`` raises (here: a malformed batch shape that
+    triggers a ValueError downstream of compile), the discrepancy stage
+    silently degrades — no user-facing Note — and observable-field
+    attribution (chunk_skipped) still emits the ``cache.discrepancy``
+    diagnostic.
 
-    Defends: the except clause must be broad enough to cover ValueError
-    (and other compile-time exceptions); narrowing back to just
-    CompilationError lets analyze() crash entirely on this fixture.
+    Bug 3 contract: the pre-fix code emitted a "Cache fidelity check
+    skipped for bad.pflow.md: workflow failed to compile (ValueError)"
+    Note for every compile failure during prediction, including for
+    workflows that ran fine end-to-end. The fix downgrades all scaffold
+    failures to a debug log; observable attribution is now the sole
+    agent-facing signal for this case.
+
+    Mutation contract: restore the ``notes.append(...)`` on scaffold
+    failure (pre-fix shape) and the negative assertions below fail.
     """
     trace_path = _write_trace(
         tmp_path,
@@ -3267,9 +3428,10 @@ def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Pat
             }
         ],
     )
-    # This IR has no ``inputs`` declaration so D11-A doesn't fire, but
-    # the malformed batch shape (string instead of dict) triggers a
-    # ValueError downstream of compile_workflow during planning.
+    # This IR has no ``inputs`` declaration so the cold-skip gate doesn't
+    # fire, but the malformed batch shape (string instead of dict)
+    # triggers a ValueError downstream of compile_workflow during
+    # planning.
     bad_ir = {
         "nodes": [
             {
@@ -3290,10 +3452,11 @@ def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Pat
         trace_path=trace_path,
         memo_cache=_Stub(),
     )
-    # Per-workflow compile-failure note appended (compile fails before any node).
-    # Fix 8 follow-up: jargon-free framing via ``_format_fidelity_skip_note``.
-    assert any("Cache fidelity check skipped for bad.pflow.md" in n for n in result.notes)
-    assert any("failed to compile" in n for n in result.notes)
+    # No user-facing compile-failure Note (Bug 3 fix: silent degradation).
+    assert not any("Cache fidelity check skipped for bad.pflow.md" in n for n in result.notes), (
+        f"unexpected compile-failure note: {result.notes!r}"
+    )
+    assert not any("failed to compile" in n for n in result.notes), f"unexpected compile-failure note: {result.notes!r}"
     # Observable-only attribution still fires (chunk_skipped is observable).
     diag = next((d for d in result.warnings if d.id == "cache.discrepancy"), None)
     assert diag is not None

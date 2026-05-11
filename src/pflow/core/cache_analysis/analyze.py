@@ -5255,31 +5255,188 @@ def _predict_one_workflow(
     build, per-node loop) that naturally cluster together.
     """
     params = ctx.parameters_for_workflow(workflow_path)
-    # Per-workflow input check: if THIS workflow declares inputs but no
-    # parameters resolved for it, derived keys would diverge from the
-    # trace's run-time values. Honest fallback is observable-only
-    # attribution. (The legacy implementation only checked the root
-    # workflow; child workflows silently degraded to defaults.)
-    # L-4: aggregate per-workflow skips into one summary note at the
-    # caller level, instead of emitting one note per sub-workflow.
-    if not params and isinstance(ir.get("inputs"), dict) and ir["inputs"]:
+    declared_inputs_raw = ir.get("inputs")
+    declared_inputs: Mapping[str, Any] | None = (
+        declared_inputs_raw if isinstance(declared_inputs_raw, Mapping) else None
+    )
+    # Truly cold case: walker resolved NOTHING and the workflow declares
+    # inputs. Skip the whole workflow and aggregate to a single Notes
+    # summary at the caller level (L-4). Distinct from the partial-params
+    # case below where some inputs were resolved and we want to predict
+    # what we can on a per-node basis.
+    if not params and declared_inputs:
         skipped_input_workflows.append(workflow_path or "<root>")
         return
     if not any(_is_llm_node(node) for node in ir.get("nodes", [])):
         return
-    scaffold, scaffold_error = _build_predict_scaffold(ir, params, ctx.memo_cache, workflow_path)
+    # Partial-params case: walker resolved some inputs but not all (e.g.,
+    # a child input that flows from an upstream sub-workflow output the
+    # walker can't reach statically). Pad the missing slots with the
+    # standard placeholder so compile succeeds; then skip prediction per
+    # node for any node whose templates or referenced cache chunks touch
+    # a padded slot — its predicted cache_key would be placeholder-
+    # tainted and never match the trace. Per-node skip is silent;
+    # observable-field attribution (TTL expiry, chunk-skipped) covers any
+    # real miss on those nodes.
+    padded_params, dummied_keys = _pad_inputs_for_prediction(params, declared_inputs)
+    dummied_chunks = _dummied_cache_chunks(ir, dummied_keys)
+    scaffold = _build_predict_scaffold(ir, padded_params, ctx.memo_cache, workflow_path)
     if scaffold is None:
-        if scaffold_error:
-            notes.append(scaffold_error)
         return
     for node in ir.get("nodes", []):
         if not _is_llm_node(node):
+            continue
+        if _node_references_any(node, dummied_keys, dummied_chunks):
             continue
         cache_key, skip_reason = _predict_node_with_scaffold(node, scaffold, workflow_path)
         if cache_key is not None:
             predicted_keys[(workflow_path, str(node["id"]))] = cache_key
         elif skip_reason:
             notes.append(skip_reason)
+
+
+def _pad_inputs_for_prediction(
+    known_params: Mapping[str, Any],
+    declared_inputs: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Merge walker-resolved params with placeholders for missing inputs.
+
+    The discrepancy stage compiles every sub-workflow to predict runtime
+    cache_keys, but the cross-workflow walker can only resolve inputs
+    whose values flow statically from the parent. For inputs that come
+    from upstream node outputs (e.g. ``${upstream.results}``) the walker
+    leaves the slot empty — and ``compile_workflow`` would reject the
+    incomplete params dict with ``SchemaValidationError`` before any
+    per-node prediction could run, emitting a misleading "workflow failed
+    to compile" Note for workflows that run fine end-to-end.
+
+    Padding the missing slots with ``"__validation_placeholder__"`` lets
+    compile succeed (same idiom ``WorkflowValidator._validate_one_child_call``
+    uses for structural validation). The returned ``dummied_keys`` set
+    lets ``_predict_one_workflow`` skip prediction for any node whose
+    templates touch a placeholder; those predictions would never match
+    the trace's real values.
+    """
+    padded: dict[str, Any] = dict(known_params)
+    if not declared_inputs:
+        return padded, frozenset()
+    dummies = generate_dummy_parameters(dict(declared_inputs))
+    dummied: set[str] = set()
+    for key, placeholder in dummies.items():
+        if key not in padded:
+            padded[key] = placeholder
+            dummied.add(key)
+    return padded, frozenset(dummied)
+
+
+def _node_references_any(
+    node: Mapping[str, Any],
+    dummied_keys: frozenset[str],
+    dummied_chunks: frozenset[str],
+) -> bool:
+    """True iff ``node``'s cache_key would be placeholder-tainted.
+
+    Used by the discrepancy stage to skip cache_key prediction for nodes
+    whose inputs depend on dummied (un-walker-resolved) workflow inputs.
+    A node is tainted if EITHER:
+
+    - it declares ``prompt_cache: [name]`` referencing a chunk whose
+      ``var`` traces back to a dummied input (``dummied_chunks``), OR
+    - any ``${var}`` ref in the node's IR has a root in ``dummied_keys``.
+
+    Conservative on coalesce: if ANY operand of ``${a ?? b}`` has a root
+    in ``dummied_keys``, returns True. The alternative (only skip when
+    ALL operands are dummied) risks producing placeholder-tainted
+    predictions when the resolver happens to pick the dummied operand
+    first.
+    """
+    if not isinstance(node, Mapping):
+        return False
+    if _node_prompt_cache_touches(node, dummied_chunks):
+        return True
+    return _node_templates_touch(node, dummied_keys)
+
+
+def _node_prompt_cache_touches(node: Mapping[str, Any], dummied_chunks: frozenset[str]) -> bool:
+    """True iff the node's ``prompt_cache:`` lists any dummied chunk name."""
+    if not dummied_chunks:
+        return False
+    prompt_cache = node.get("prompt_cache")
+    if not isinstance(prompt_cache, list):
+        return False
+    return any(isinstance(name, str) and name in dummied_chunks for name in prompt_cache)
+
+
+def _node_templates_touch(node: Mapping[str, Any], dummied_keys: frozenset[str]) -> bool:
+    """True iff any ``${var}`` ref in the node's IR has a root in ``dummied_keys``.
+
+    Walks every nested string value in the node dict — broader than
+    ``_collect_llm_nodes_referencing_path`` (which only inspects
+    ``params.prompt``) because cache_key inputs come from any templated
+    field on the node (``params``, ``inputs``, ``batch``, nested
+    code-block inputs, etc.).
+    """
+    if not dummied_keys:
+        return False
+    for text in _walk_strings(node):
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(text):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                root = TemplateResolver.extract_root_node_id(operand)
+                if root and root in dummied_keys:
+                    return True
+    return False
+
+
+def _dummied_cache_chunks(
+    workflow_ir: Mapping[str, Any],
+    dummied_keys: frozenset[str],
+) -> frozenset[str]:
+    """Cache chunk names whose ``var`` traces back to a dummied input.
+
+    A ``## Cache`` block declares chunks with ``var: <ref>``; when a
+    node's ``prompt_cache:`` references such a chunk, the runtime
+    resolves ``var`` against parameters to produce the chunk's content.
+    If ``var``'s root is dummied, the chunk content carries the
+    placeholder and any node consuming it via ``prompt_cache`` would
+    produce a placeholder-tainted cache_key — same outcome as a direct
+    template ref to a dummied input.
+
+    Pre-computed once per workflow so the per-node check stays O(1) in
+    the number of chunks.
+    """
+    if not dummied_keys:
+        return frozenset()
+    cache = workflow_ir.get("cache") if isinstance(workflow_ir, Mapping) else None
+    if not isinstance(cache, Mapping):
+        return frozenset()
+    items = cache.get("items")
+    if not isinstance(items, list):
+        return frozenset()
+    tainted: set[str] = set()
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        var = item.get("var")
+        if not isinstance(var, str):
+            continue
+        root = TemplateResolver.extract_root_node_id(var)
+        if root and root in dummied_keys:
+            name = item.get("name")
+            if isinstance(name, str):
+                tainted.add(name)
+    return frozenset(tainted)
+
+
+def _walk_strings(value: Any) -> Iterable[str]:
+    """Yield every string value reachable from ``value`` via dict/list nesting."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for inner in value.values():
+            yield from _walk_strings(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            yield from _walk_strings(inner)
 
 
 def _is_llm_node(node: Any) -> bool:
@@ -5309,12 +5466,24 @@ def _build_predict_scaffold(
     params: Mapping[str, Any],
     memo_cache: Any,
     workflow_path: str | None,
-) -> tuple[_PredictScaffold | None, str | None]:
+) -> _PredictScaffold | None:
     """Compile + planner-shared once per workflow.
 
-    Returns ``(scaffold, error_note)``. On failure the scaffold is None and
-    ``error_note`` describes why (one note per workflow, not per node). Lazy
-    imports keep the analyzer package import-cheap (mirrors
+    Returns the scaffold, or ``None`` if compile/planner setup fails. The
+    unified validator (``_run_full_validation``) runs strictly earlier in
+    ``analyze()`` and surfaces structural errors via ``blocking_errors[]``
+    /``other_blocking_errors[]``, so this catch only fires for compiler-
+    internal failures the validator missed. Those degrade silently with
+    a debug log — the agent already has the actionable structural signal
+    from the validator pass, and a misleading "workflow failed to compile
+    (SchemaValidationError)" Note (the Bug 3 symptom) is worse than no
+    Note at all.
+
+    Callers inject ``_pflow_workflow_file`` so relative ``@./file.ext``
+    refs resolve against the workflow's own directory instead of CWD —
+    matches ``WorkflowValidator._validate_one_child_call``'s pattern.
+
+    Lazy imports keep the analyzer package import-cheap (mirrors
     ``token_estimation.py``'s LiteLLM lazy-import).
     """
     from pflow.core.exceptions import (
@@ -5327,9 +5496,11 @@ def _build_predict_scaffold(
     from pflow.registry import Registry
     from pflow.runtime import compile_workflow
 
-    workflow_label = workflow_path or "<root>"
+    compile_params: dict[str, Any] = dict(params)
+    if workflow_path is not None:
+        compile_params.setdefault("_pflow_workflow_file", str(workflow_path))
     try:
-        compiled = compile_workflow(dict(workflow_ir), Registry(), dict(params))
+        compiled = compile_workflow(dict(workflow_ir), Registry(), dict(compile_params))
     except (
         CompilationError,
         MarkdownParseError,
@@ -5338,10 +5509,16 @@ def _build_predict_scaffold(
         FileNotFoundError,
         ValueError,
     ) as exc:
-        return None, _format_fidelity_skip_note(workflow_label, f"workflow failed to compile ({type(exc).__name__})")
-    shared = create_planner_shared(compiled, dict(params), memo_cache, workflow_path)
+        logger.debug(
+            "predict-stage compile failed for %s: %s",
+            workflow_path or "<root>",
+            exc,
+            exc_info=True,
+        )
+        return None
+    shared = create_planner_shared(compiled, dict(compile_params), memo_cache, workflow_path)
     bare_nodes_by_id = _enumerate_compiled_bare_nodes(compiled)
-    return _PredictScaffold(compiled=compiled, shared=shared, bare_nodes_by_id=bare_nodes_by_id), None
+    return _PredictScaffold(compiled=compiled, shared=shared, bare_nodes_by_id=bare_nodes_by_id)
 
 
 def _predict_node_with_scaffold(
@@ -5396,13 +5573,17 @@ def _predict_node_cache_key(
     """Self-contained per-node prediction — builds its own scaffold.
 
     Production callers should use ``_predict_cache_keys`` (which hoists the
-    compile + shared per workflow). This helper is kept for direct test
-    callers that want a single-node prediction without setting up a
-    ``cw_result`` / ``AnalysisContext``.
+    compile + shared per workflow, applies dummy padding for partial
+    walker params, and skips nodes whose templates touch a padded slot).
+    This helper is kept for direct test callers that want a single-node
+    prediction without setting up a ``cw_result`` / ``AnalysisContext``;
+    they pass real (already-resolved) params, so no padding is needed.
+    Returns ``(None, None)`` on scaffold failure — the silent-skip
+    contract matches production.
     """
-    scaffold, error_note = _build_predict_scaffold(workflow_ir, params, memo_cache, workflow_path)
+    scaffold = _build_predict_scaffold(workflow_ir, params, memo_cache, workflow_path)
     if scaffold is None:
-        return None, error_note
+        return None, None
     return _predict_node_with_scaffold(node, scaffold, workflow_path)
 
 

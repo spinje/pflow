@@ -11999,3 +11999,97 @@ present.
   Bug 1's drift gate. Worth folding into a follow-up that lets partial-trace
   rows render with per-row `data_source` instead of discarding the whole
   trace.
+
+## 2026-05-11 — Task 159 — Bug 3 fix: SchemaValidationError on validated sub-workflows
+
+User-reported symptom (scratchpad `cache-analyzer-feedback-20260511.md` Bug 3):
+`pflow analyze-cache` emits `Cache fidelity check skipped for concept-chooser.pflow.md:
+workflow failed to compile (SchemaValidationError)` Notes for sub-workflows that
+`pflow run` accepts and executes successfully end-to-end. Two workflows
+(`concept-chooser`, `enforce-diversity`) affected on the lyrics-generator case.
+
+Root cause: the discrepancy-prediction stage (`_build_predict_scaffold` in
+`analyze.py:5283`) compiled each sub-workflow with the cross-workflow walker's
+**partial** params dict — only inputs whose values flow statically from the
+parent. Sub-workflow inputs that come from upstream node outputs (e.g.
+`${analyze-sources.results}`) stayed empty; `compile_workflow → prepare_inputs`
+raised `SchemaValidationError("Workflow requires input 'analyses'")`; the
+catch site replaced the structured exception with `type(exc).__name__` and
+emitted a misleading Note. The unified validator (`_run_full_validation`)
+strictly precedes the prediction stage and pads with `__validation_placeholder__`
+for every declared input — so it never sees this failure mode.
+
+Fix (single architectural pattern, surgical scope):
+
+- `_pad_inputs_for_prediction(known_params, declared_inputs)` merges walker-
+  resolved values with `"__validation_placeholder__"` for missing declared
+  inputs, returning the padded params + the set of dummied keys.
+- `_build_predict_scaffold` now injects `_pflow_workflow_file=str(workflow_path)`
+  into compile params (mirrors `WorkflowValidator._validate_one_child_call`)
+  so relative `@./file.ext` refs resolve against the workflow's directory.
+- Per-node check in `_predict_one_workflow` skips prediction silently when a
+  node's `prompt_cache:` references a chunk whose `var` traces to a dummied
+  key (`_dummied_cache_chunks` + `_node_prompt_cache_touches`) OR any
+  `${var}` ref in the node's IR has a root in the dummied set
+  (`_node_templates_touch`). Both checks are needed: cache chunks via
+  `var:` and direct template refs are two independent paths to a
+  placeholder-tainted predicted cache_key.
+- Scaffold catch downgrade: kept broad (`CompilationError`, `MarkdownParseError`,
+  `SchemaValidationError`, `WorkflowValidationError`, `FileNotFoundError`,
+  `ValueError`) for defense-in-depth, but now debug-logs and silently
+  returns `None`. The unified validator surfaces real structural errors
+  through `blocking_errors[]` / `other_blocking_errors[]` earlier in
+  `analyze()`, so user-facing Notes here are redundant at best, misleading
+  at worst.
+- `_predict_node_cache_key` (test helper) returns `(None, None)` on scaffold
+  failure — matches the silent-skip contract.
+
+Tradeoffs / trust boundary:
+
+- Chose string sentinel (`"__validation_placeholder__"`) over a typed
+  sentinel: it's the existing idiom (used by `generate_dummy_parameters`
+  in 6 call sites including the validator's child-call boundary), is
+  type-coercion-compatible for `string`/`any` inputs, and the detection
+  problem ("does this node's cache_key consume a placeholder?") is solved
+  statically by walking the node IR before compile — no need to detect
+  placeholder values in resolved output. Static taint detection is more
+  robust than string-sniffing post-resolution and doesn't depend on
+  strict-vs-permissive template-resolution mode.
+- Did not add a per-row or aggregated "predictions skipped for N nodes
+  whose inputs depend on runtime values" Note. The existing per-call
+  table's `cacheable inputs: ...` column and Recommended actions section
+  already convey the actionable cache info for these nodes; a "couldn't
+  predict" meta-note would be redundant. Observable-field attribution
+  (TTL expiry, chunk-skipped) surfaces any actual cache miss on skipped
+  nodes if one occurs.
+- Did not delete the scaffold catch entirely. After the fix the catch is
+  near-dead (the unified validator handles every structural error type
+  it covers earlier in `analyze()`), but a `CompilationError` from
+  compiler-internal failures the validator missed could still slip
+  through — debug-logged silent return preserves the safety net without
+  reintroducing the bug.
+
+Per-node prediction is silent by design — the Notes section should only
+carry information the agent can act on. Static-analysis tools that emit
+"I skipped this for valid reasons" preemptively become noise floors;
+pflow follows the "speak only when there's something to say" pattern.
+
+Verification:
+
+- 4 new focused tests + 3 updated regression tests (`tests/test_core/
+  test_cache_analysis_per_id_emission.py`): all pass with mutation
+  contracts documented in docstrings.
+- Cache-analysis + CLI suite: 535 passed.
+- Default test suite (`make test`, `-m "not e2e"`): 6,357 passed, 10
+  skipped, 42 deselected. Integration suite: 218 passed. Total 6,575
+  passing.
+- Baseline harness: 75 passed, 0 drifted, 0 harness errors.
+- Touched-file `ruff check`, `ruff format --check`, `mypy
+  src/pflow/core/cache_analysis/` all clean.
+- End-to-end on the user's reported workflow (lyrics-generator with
+  `--from-trace ...153228.json`): the two misleading
+  `concept-chooser.pflow.md / enforce-diversity.pflow.md ... workflow
+  failed to compile (SchemaValidationError)` Notes are gone. Per-node
+  skips for upstream node-output refs remain (correctly — those are
+  honest `template_exception` cases for nodes whose templates touch
+  runtime values like `${some-node.results}`).
