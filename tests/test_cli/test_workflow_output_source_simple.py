@@ -38,7 +38,7 @@ class TestWorkflowOutputSource:
             workflow_file = f.name
 
         try:
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
@@ -66,7 +66,7 @@ class TestWorkflowOutputSource:
             workflow_file = f.name
 
         try:
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
@@ -96,7 +96,7 @@ class TestWorkflowOutputSource:
             workflow_file = f.name
 
         try:
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
@@ -122,7 +122,7 @@ class TestWorkflowOutputSource:
             workflow_file = f.name
 
         try:
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             # Use direct file path instead of --file flag, with flags BEFORE the workflow
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
@@ -153,7 +153,7 @@ class TestWorkflowOutputSource:
             workflow_file = f.name
 
         try:
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0

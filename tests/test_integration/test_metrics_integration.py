@@ -150,7 +150,7 @@ class TestMetricsCollection:
 
     def test_json_output_includes_metrics(self, temp_home, temp_registry, simple_workflow):
         """Test that --output-format json includes top-level metrics."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
@@ -200,7 +200,7 @@ class TestMetricsCollection:
         """
         from pflow.core.llm_client import AdapterResponse
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         # Mock per-model with known cost_usd values that the adapter would
         # have set from LiteLLM's response_cost.
@@ -266,7 +266,7 @@ class TestMetricsCollection:
 
     def test_error_workflow_metrics(self, temp_home, temp_registry):
         """Test metrics collection when workflow execution fails."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         error_workflow = {
             "ir_version": "0.1.0",
@@ -303,7 +303,7 @@ class TestTraceGeneration:
 
     def test_trace_file_created_by_default(self, temp_home, temp_registry, simple_workflow):
         """Trace files should be created even without explicit flags."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
@@ -349,7 +349,7 @@ class TestTraceGeneration:
         """Trace files should capture LLM call details by default."""
         from pflow.core.llm_client import AdapterResponse
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         per_model = {
             "gpt-4o-mini": ("Test haiku", 20, 10),
@@ -403,7 +403,7 @@ class TestTraceGeneration:
 
     def test_no_trace_flag_disables_tracing(self, temp_home, temp_registry, simple_workflow):
         """The --no-trace flag should suppress trace file creation."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
@@ -433,7 +433,7 @@ class TestTraceGeneration:
 
     def test_no_trace_flag_skips_trace_on_failure(self, temp_home, temp_registry):
         """Even failing workflows should not leave traces when --no-trace is set."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         failing_workflow = {
             "ir_version": "0.1.0",
@@ -621,7 +621,7 @@ class TestCLIFlags:
     @pytest.mark.trace_files
     def test_trace_file_saved_without_flag(self, temp_home, temp_registry, simple_workflow):
         """Trace files should be generated without specifying tracing flags."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
@@ -677,7 +677,7 @@ class TestCLIFlags:
 
     def test_output_format_json_always_includes_metrics(self, temp_home, temp_registry, simple_workflow):
         """JSON output should include metrics without requiring explicit trace flags."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
@@ -710,7 +710,7 @@ class TestJSONOutputStructure:
 
     def test_successful_workflow_json_structure(self, temp_home, temp_registry, simple_workflow):
         """Test JSON structure for successful workflow execution."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
@@ -760,7 +760,7 @@ class TestJSONOutputStructure:
         - Error information is included
         - Basic metrics are still provided
         """
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         error_workflow = {
             "ir_version": "0.1.0",
@@ -800,7 +800,7 @@ class TestMetricsAccuracy:
 
     def test_duration_measurement(self, temp_home, temp_registry, simple_workflow):
         """Test that duration is measured accurately."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
@@ -833,7 +833,7 @@ class TestMetricsAccuracy:
 
     def test_node_count_accuracy(self, temp_home, temp_registry):
         """Test that node counts are accurate."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         # Workflow with various node counts
         workflows = [

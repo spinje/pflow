@@ -704,7 +704,8 @@ class TestJSONOutputFormat:
         workflow_file = tmp_path / "workflow.pflow.md"
         workflow_file.write_text(ir_to_markdown(workflow))
 
-        runner = CliRunner()
+        # mix_stderr=False: see note on test_multiple_stdin_error_json_output.
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_file)], input="piped data")
 
         assert result.exit_code == 1
@@ -758,7 +759,11 @@ class TestJSONOutputFormat:
         workflow_file = tmp_path / "workflow.pflow.md"
         workflow_file.write_text(ir_to_markdown(workflow))
 
-        runner = CliRunner()
+        # mix_stderr=False: under click 8.1 (transitive pin from litellm 1.83.x),
+        # CliRunner defaults to mix_stderr=True which merges stderr into stdout
+        # and breaks json.loads(result.stdout). Click 8.2 flipped the default;
+        # 8.3+ removed the kwarg.
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_file)], input="piped data")
 
         assert result.exit_code == 1
