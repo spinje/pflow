@@ -1,0 +1,11 @@
+Executing workflow (1 nodes):
+
+Error: Cache Failure [cache.order-mismatch]
+
+Node 'summarize' prompt_cache order doesn't match ## Cache declaration
+  expected:  [article, topic]
+  you wrote: [topic, article]
+  fix:       reorder the `prompt_cache:` field to match ## Cache declaration order
+  At: node 'summarize', nodes[id=summarize].prompt_cache
+
+See also: pflow guide prompt-caching

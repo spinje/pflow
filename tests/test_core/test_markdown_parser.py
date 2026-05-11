@@ -4845,3 +4845,67 @@ class TestCoerceYamlScalar:
 
         with pytest.raises(yaml.YAMLError):
             _coerce_yaml_scalar("{invalid: [unclosed")
+
+
+class TestNodeSourceLine:
+    """Parser populates ``_source_line`` on every node (Tier 1 #10).
+
+    Pre-fix: ``_source_line`` was only set on outputs (and conditionally — only
+    when ``source:`` was present). Cross-workflow analysis tried to read this
+    field for boundary attribution, got ``None``, and rendered ``(line 0)``
+    everywhere. Setting it from ``entity.heading_line`` makes the field
+    consistently available across all node types.
+    """
+
+    def test_source_line_set_on_workflow_type_node(self) -> None:
+        """Workflow-type nodes (the case that originally surfaced the bug —
+        cross-workflow walker reads from these)."""
+        from pflow.core.markdown_parser import parse_markdown
+
+        markdown = """# Test Workflow
+
+Tests parser populates _source_line on workflow-type nodes.
+
+## Steps
+
+### sub-call
+
+Calls a child sub-workflow. Cross-workflow walker reads this node's
+_source_line for boundary attribution.
+
+- type: workflow
+- workflow: ./child.pflow.md
+"""
+        result = parse_markdown(markdown)
+        node = next(n for n in result.ir["nodes"] if n["id"] == "sub-call")
+        assert isinstance(node["_source_line"], int)
+        assert node["_source_line"] > 0
+
+    def test_source_line_set_on_shell_node(self) -> None:
+        """Generalization — every node type gets _source_line, not just
+        workflow-type. Future consumers (e.g. richer diagnostic rendering)
+        rely on the field being universally populated."""
+        from pflow.core.markdown_parser import parse_markdown
+
+        markdown = """# Test
+
+Tests parser populates _source_line on shell nodes.
+
+## Steps
+
+### echo-step
+
+Prints a message. Source line should be the heading line.
+
+- type: shell
+
+```shell command
+echo hi
+```
+"""
+        result = parse_markdown(markdown)
+        node = next(n for n in result.ir["nodes"] if n["id"] == "echo-step")
+        assert isinstance(node["_source_line"], int)
+        # Heading is the line "### echo-step"; expect a positive line number
+        # well past the workflow header.
+        assert node["_source_line"] > 5

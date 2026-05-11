@@ -1,0 +1,91 @@
+# Cache Analysis: lyrics-generator.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
+
+  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes)
+  Models: not resolved (set settings.default_model)
+  Heterogeneous: generate-chorus-options (model varies per batch item)
+  (2 in lyrics-generator.pflow.md, 23 in 14 sub-workflows)
+
+## Summary
+
+  Cost per run:                unavailable
+
+  2 recommended actions
+
+  Cost data unavailable: no model resolved for LLM nodes (set settings.default_model or add per-node `- model:`).
+
+## Blocking errors
+
+  1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
+     fetch-youtube-mcp in fetch-source.pflow.md
+
+## Recommended actions (2)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  For each "Sub-workflow cache undeclared" finding, apply ALL THREE edits in the listed child workflow. Doing only some leaves the cache disabled:
+    (1) Remove the `${var}` references from each affected node's prompt. Leaving them re-sends the content uncached.
+    (2) Add the input as a named entry under the child workflow's ## Cache section.
+    (3) Reference that named entry in `prompt_cache:` on each consumer node.
+
+  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 inputs  unmeasurable
+     chorus-chooser.pflow.md
+     Three values flow in but no consumer node has a resolved model — cannot compute the cache threshold.
+     → Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.
+     → Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md
+
+  2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
+     generate-chorus-options in chorus-chooser.pflow.md
+     generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
+     → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
+     → See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern.
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+  Showing 8 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
+
+  node                     model         input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+### song-creator.pflow.md (called by create-songs)
+  write-lyrics             <unresolved>  3,684           —            ?     ?%      —
+  song-architecture        <unresolved>  2,886           —            ?     ?%      —
+  rewrite-emotional        <unresolved>  2,575           —            ?     ?%      —
+  rewrite-craft            <unresolved>  2,454           —            ?     ?%      —
+  generate-suno-prompt     <unresolved>  1,340           —            ?     ?%      —
+  creative-direction       <unresolved>  1,248           —            ?     ?%      —
+  easter-eggs              <unresolved>  1,066           —            ?     ?%      —
+
+### chorus-chooser.pflow.md (called by choose-chorus)
+  generate-chorus-options  <varies>          ?           —            ?     ?%      —  opaque-prompt
+
+  Token estimate confidence:
+    · Projected input tokens for: write-lyrics, song-architecture, rewrite-emotional, rewrite-craft, generate-suno-prompt, creative-direction, easter-eggs, generate-chorus-options.
+
+## Per-child analyze-cache commands
+
+  Sub-workflow opportunities don't surface here — run analyze-cache per child:
+    cd .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator
+    pflow analyze-cache analyze-source/analyze-source.pflow.md
+    pflow analyze-cache concept-chooser/concept-chooser.pflow.md
+    pflow analyze-cache enforce-diversity/enforce-diversity.pflow.md
+    pflow analyze-cache song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache song-creator/reviews/review-stranger-summary.pflow.md
+    pflow analyze-cache song-creator/song-creator.pflow.md
+
+## Notes
+
+  · 3 dynamic batches not in per-call table: `fetch-sources` (items: `${sources}`), `analyze-sources` (items: `${fetch-sources.results}`), `create-songs` (items: `${zip-concepts-with-briefs.result}`). Batch items are computed at runtime, so per-item rows can't be enumerated statically. Pass items as a CLI parameter or use inline static items to list them. (Cost shown is measured from the trace, not estimated.)
+  · Cross-workflow projections require trace evidence to populate per-call rows. Recommended actions still surface; run with `--from-trace <path>` for per-call attribution.

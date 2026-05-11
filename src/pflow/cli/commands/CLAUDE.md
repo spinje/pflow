@@ -20,6 +20,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | `settings.py` | `pflow settings ...` | `pflow.core.settings` |
 | `report.py` | `pflow report` | `pflow.core.trace_report` |
 | `visualize.py` | `pflow visualize` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
+| `analyze_cache.py` | `pflow analyze-cache <workflow> [params]` | `pflow.core.cache_analysis` |
 
 ## Cross-References Within commands/
 
@@ -142,3 +143,4 @@ LLM model resolution chain (genuinely hard to discover):
 | `skills.py` | `test_skills.py` | `pflow.cli.commands.skills.WorkflowManager`, `.create_skill_symlink`, `.enrich_workflow`, `.find_skill_for_workflow`, `.find_pflow_skills`, `.remove_skill_service` |
 | `settings.py` | `test_settings_cli.py` | None |
 | `visualize.py` | `test_visualize.py` | None |
+| `analyze_cache.py` | `test_analyze_cache.py` | `pflow.cli.commands.analyze_cache.analyze` (lazy import patched in nudge-failure test) |

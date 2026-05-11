@@ -2083,3 +2083,107 @@ parallel: false
 
     # Second run did no extra work
     assert _log_lines(log_file) == ["a:hello", "b:world"]
+
+
+def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_client) -> None:
+    """A workflow with `## Cache` declared: the planner's plan_node must see
+    the same `__pflow_cache_render__` dict as the engine, otherwise plan and
+    runtime hashes diverge — the planner mispredicts ``cached`` vs ``execute``.
+
+    Pre-fix bug (Task 159 B3 review-feature-interactions C1): the planner's
+    ``_create_planner_shared`` did not install ``__pflow_cache_render__``.
+    Engine's ``plan_node`` saw a populated dict via ``WorkflowEngine.run``'s
+    save/restore; planner's ``plan_node`` saw ``None``. config_hash diverged
+    silently for cache-using workflows.
+
+    Mutation: remove the install at ``_create_planner_shared`` and this
+    test fails — planner predicts ``execute`` even though engine actually
+    serves the entry from memo cache.
+    """
+    mock_llm_client.set_response("gpt-4o-mini", None, "ok", cost_usd=0.0)
+    ir = {
+        "inputs": {
+            "concept": {
+                "type": "string",
+                "required": False,
+                "default": "caching",
+                "description": "concept to render",
+            }
+        },
+        "nodes": [
+            {
+                "id": "gen",
+                "type": "llm",
+                # Prompt body intentionally does NOT reference ${concept} — this
+                # plan-vs-engine drift test cares about cache content flowing into
+                # the hash, not about prompt body content. Inlining ${concept}
+                # would trigger cache.prompt-body-duplicates-cache (Task 159
+                # follow-up overlap check) and conflate two checks.
+                "params": {"model": "gpt-4o-mini", "prompt": "Tell me a one-liner story."},
+                "prompt_cache": ["concept"],
+            }
+        ],
+        "edges": [],
+        "cache": {
+            "items": [{"name": "concept", "var": "concept", "prose_before": "About: "}],
+        },
+    }
+    compiled, registry = _compile(ir, params={"concept": "caching"})
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    # First run populates the memo cache under engine's hash.
+    _run(compiled, cache, params={"concept": "caching"})
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "cache.db")
+    try:
+        row = conn.execute(
+            "SELECT cache_key FROM cache_entries WHERE node_id = ? ORDER BY created_at DESC LIMIT 1",
+            ("gen",),
+        ).fetchone()
+        engine_cache_key = row[0] if row else None
+    finally:
+        conn.close()
+
+    # Plan via the planner. Must see the SAME __pflow_cache_render__ dict the
+    # engine installs — otherwise plan_node's hash diverges and the plan
+    # incorrectly predicts "execute".
+    plan = build_plan(
+        compiled,
+        {"concept": "caching"},
+        cache,
+        registry,
+        workflow_name="prompt-cache-parity",
+    )
+    assert plan.entries, "plan produced no entries"
+    gen_entry = next(entry for entry in plan.entries if entry.node_id == "gen")
+    assert engine_cache_key is not None, "engine did not populate cache row"
+    assert gen_entry.cache_key == engine_cache_key, (
+        f"PlanEntry.cache_key drift: planner={gen_entry.cache_key!r} engine={engine_cache_key!r}"
+    )
+    statuses = [entry.status for entry in plan.entries]
+    assert all(s == "cached" for s in statuses), (
+        f"planner mispredicted for prompt_cache workflow: statuses={statuses!r}. "
+        "Likely cause: _create_planner_shared did not install __pflow_cache_render__, "
+        "so plan_node's config_hash excludes cache content while engine's includes it."
+    )
+
+
+def test_create_planner_shared_underscore_alias_is_preserved() -> None:
+    """Back-compat: ``_create_planner_shared`` alias must resolve and point at
+    the canonical ``create_planner_shared`` callable.
+
+    The alias was preserved during Stage A/0/B/C data-model redesign so existing
+    in-tree imports don't churn. There are no production callers of the
+    underscored name today, so a future cleanup could silently delete the
+    alias. This test makes deletion fail loudly.
+
+    Mutation contract: removing
+    ``_create_planner_shared = create_planner_shared`` at ``plan.py:503``
+    breaks this import.
+    """
+    from pflow.execution.plan import _create_planner_shared, create_planner_shared
+
+    assert _create_planner_shared is create_planner_shared, (
+        "alias drift: _create_planner_shared should be the same callable as create_planner_shared (set at plan.py:503)."
+    )

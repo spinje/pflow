@@ -65,7 +65,7 @@ class TestTemplateResolutionsInTrace:
             "inputs": {"name": {"type": "string", "description": "Name input"}},
         }
 
-        shared, collector = _run_with_trace(ir, initial_params={"name": "World"})
+        _shared, collector = _run_with_trace(ir, initial_params={"name": "World"})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -110,7 +110,7 @@ class TestBatchNodeTraceEvents:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["a", "b", "c"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["a", "b", "c"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -163,7 +163,7 @@ class TestTraceToReportFormatCompatibility:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["alpha", "beta"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["alpha", "beta"]})
 
         # Build trace dict from REAL collector data (same structure as save_to_file)
         trace_data = {
@@ -222,7 +222,7 @@ class TestParallelBatchTraceCapture:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["alice", "bob"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["alice", "bob"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -262,7 +262,7 @@ class TestFailedBatchItemsInTrace:
             "edges": [],
         }
 
-        shared, collector = _run_with_trace(ir, extra_shared={"data": ["good", "bad", "good"]})
+        _shared, collector = _run_with_trace(ir, extra_shared={"data": ["good", "bad", "good"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -731,6 +731,64 @@ class TestParallelBatchSubWorkflowTrace:
         # Each worker resolved its own item; prompts must all differ
         assert sorted(seen_prompts) == ["Process item A.", "Process item B.", "Process item C."]
 
+    def test_dynamic_subworkflow_batch_records_canonical_workflow_path(self, tmp_path):
+        """Dynamic workflow batches keep raw template resolution and canonical child path.
+
+        ``template_resolutions["workflow"]["resolved"]`` is the generic
+        template result, so it may be relative. The batch item event needs the
+        canonical path from ``resolve_sub_workflow`` for analyzers to match the
+        child trace back to the statically analyzed child workflow row.
+        """
+        from pathlib import Path
+
+        child_md = Path(tmp_path) / "child.pflow.md"
+        child_md.write_text(
+            "# Child\n\nProcesses one item.\n\n"
+            "## Inputs\n\n"
+            "### value\n\nThe input value.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### child-shell\n\nShell call inside the child.\n\n"
+            "- type: shell\n"
+            "- command: printf '%s' '${value}'\n",
+            encoding="utf-8",
+        )
+        parent_path = Path(tmp_path) / "parent.pflow.md"
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "${item.workflow}",
+                        "inputs": {"value": "${item.value}"},
+                    },
+                    "batch": {
+                        "items": [
+                            {"workflow": "./child.pflow.md", "value": "A"},
+                            {"workflow": "./child.pflow.md", "value": "B"},
+                        ],
+                        "as": "item",
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        _, parent_collector = _run_with_trace(
+            parent_ir,
+            extra_shared={"_pflow_workflow_file": str(parent_path)},
+        )
+
+        fanout_event = next(e for e in parent_collector.events if e["node_id"] == "fanout")
+        batch_items = fanout_event.get("batch_items", [])
+        assert len(batch_items) == 2
+        for batch_item in batch_items:
+            assert batch_item["template_resolutions"]["workflow"]["resolved"] == "./child.pflow.md"
+            assert batch_item["workflow_path"] == str(child_md.resolve())
+            assert any(event.get("node_id") == "child-shell" for event in batch_item.get("events", []))
+
     def test_llm_failure_in_one_item_does_not_corrupt_siblings(self, tmp_path, monkeypatch):
         """The failure-path complement to the success test above.
 
@@ -948,3 +1006,87 @@ class TestParallelBatchOfLLMs:
         # parallel mode this is last-writer-wins by design; the per-item
         # prompts above are the authoritative data.
         assert scorer_event.get("llm_prompt") in seen_prompts
+
+
+class TestCachedSystemEndToEnd:
+    """End-to-end: ``## Cache`` block → trace event → generated report.
+
+    Exercises the full pipeline that gives an agent visibility into the
+    cached prefix the LLM saw. Without this, `pflow ... --report` shows
+    only the user prompt, leaving the cached system content invisible
+    except via raw JSON inspection.
+    """
+
+    def test_cached_system_reaches_report_for_llm_node_with_cache_block(self, tmp_path: "Any") -> None:
+        """Run a workflow with a ## Cache block; verify the trace records
+        ``llm_system`` AND the generated report has a ``## Cached System``
+        section with the cache_control marker visible.
+        """
+        import json
+
+        ir = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "context": {
+                    "type": "string",
+                    "required": False,
+                    "default": "Reference doc body",
+                },
+            },
+            "cache": {
+                "items": [
+                    {"name": "context", "var": "context", "prose_before": ""},
+                ],
+            },
+            "nodes": [
+                {
+                    "id": "answer",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "prompt": "Question: what is the answer?",
+                    },
+                    "prompt_cache": ["context"],
+                },
+            ],
+            "edges": [],
+        }
+
+        _, collector = _run_with_trace(ir)
+
+        event = next(e for e in collector.events if e["node_id"] == "answer")
+        assert "llm_system" in event, "llm_system missing from trace event — cache prefix not surfaced"
+        # Cache-rendered system is a list[dict] with cache_control on the
+        # last block.
+        llm_system = event["llm_system"]
+        assert isinstance(llm_system, list)
+        assert any("cache_control" in block for block in llm_system if isinstance(block, dict))
+
+        # Build a complete trace dict + persist + render
+        from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION
+
+        trace_data = {
+            "format_version": TRACE_FORMAT_VERSION,
+            "execution_id": collector.execution_id,
+            "workflow_name": collector.workflow_name,
+            "workflow_path": None,
+            "start_time": collector.start_time.isoformat(),
+            "end_time": collector.start_time.isoformat(),
+            "duration_ms": 100.0,
+            "final_status": "success",
+            "nodes_executed": len(collector.events),
+            "nodes_failed": 0,
+            "failed_node_ids": [],
+            "nodes": collector.events,
+        }
+        trace_path = tmp_path / "trace.json"
+        trace_path.write_text(json.dumps(trace_data, default=str))
+
+        from pflow.core.trace_report import generate_report
+
+        report_dir = generate_report(str(trace_path), str(tmp_path / "report"))
+        assert report_dir is not None
+        node_md = (report_dir / "01-answer.md").read_text()
+        assert "## Cached System" in node_md
+        assert "```json" in node_md
+        assert "cache_control" in node_md

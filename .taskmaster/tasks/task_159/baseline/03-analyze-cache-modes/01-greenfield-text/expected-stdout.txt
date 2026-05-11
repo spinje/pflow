@@ -1,0 +1,31 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md
+
+  Workflow: 3 LLM nodes using anthropic/claude-haiku-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md article=<value>
+
+## Per-call cache report
+  Projected cache ratios from prior run data.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+
+  node       model                       input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  tag        anthropic/claude-haiku-4-5      9           —            1    11%      —
+  summarize  anthropic/claude-haiku-4-5      7           —            1    14%      —
+  translate  anthropic/claude-haiku-4-5      7           —            1    14%      —
+
+  Token estimate confidence:
+    · Projected input tokens for: tag, summarize, translate.
+
+## Notes
+
+  · Suggested-blocks: shared refs were found, but at least one assigned LLM node is below the provider cache threshold under current model/token evidence; no paste-ready provider-cache edit is actionable yet.

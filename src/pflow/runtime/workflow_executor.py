@@ -112,9 +112,17 @@ class WorkflowExecutor(BaseNode):
     #               |                                    | in exec(), not reusing parent's.
     #
     # NOT propagated (per-workflow, children get their own):
-    #   __execution__       — node completion/failure tracking
-    #   __cache_hits__      — per-workflow cache hit display
-    #   __template_errors__ — per-workflow template error accumulation
+    #   __execution__         — node completion/failure tracking
+    #   __cache_hits__        — per-workflow cache hit display
+    #   __template_errors__   — per-workflow template error accumulation
+    #   __pflow_cache_render__ — Task 159 B3.2: per-workflow CacheRenderContext map.
+    #     Each .pflow.md file declares its own ## Cache block scoped to its own
+    #     inputs and step outputs (DD#12). The child engine builds its own dict at
+    #     engine.run() entry; sub-workflow save/restore at engine.py masks the
+    #     parent's value during child execution and restores it on exit. Adding
+    #     this key here would leak parent chunks into child rendering, breaking
+    #     cache scoping AND the CacheBlockIR freeze guarantee (parallel batch
+    #     concurrency surface).
     _PROPAGATED_KEYS = (
         "__registry__",
         "__progress_callback__",
@@ -330,6 +338,7 @@ class WorkflowExecutor(BaseNode):
         child_params = prep_res["child_params"]
         storage_mode = prep_res["storage_mode"]
         parent_shared = prep_res.get("parent_shared", {})
+        self._record_child_workflow_path(parent_shared, workflow_path)
 
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
@@ -339,7 +348,14 @@ class WorkflowExecutor(BaseNode):
         if parent_trace:
             from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
-            child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
+            # Task 159 E.1 trace 2.1.0: child trace records the child's
+            # workflow_path (NOT the parent's) so analyze-cache --from-trace
+            # can correlate the child's events back to the child workflow's
+            # cache plan.
+            child_trace = WorkflowTraceCollector(
+                workflow_name=str(workflow_path or "sub-workflow"),
+                workflow_path=str(workflow_path or "sub-workflow"),
+            )
 
         # Compile (with compile-once caching)
         compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)
@@ -515,6 +531,16 @@ class WorkflowExecutor(BaseNode):
                 message, _context = normalize_runtime_warning(warning)
                 return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {message}"
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
+
+    def _record_child_workflow_path(self, parent_shared: dict[str, Any], workflow_path: str) -> None:
+        if not workflow_path or workflow_path == "<inline>":
+            return
+        step_id = getattr(self, "node_id", None)
+        if not isinstance(step_id, str) or not step_id:
+            return
+        paths = parent_shared.setdefault(f"{self.RESERVED_KEY_PREFIX}child_workflow_paths", {})
+        if isinstance(paths, dict):
+            paths[step_id] = str(workflow_path)
 
     def _extract_child_inputs(self) -> dict[str, Any]:
         """Extract child workflow inputs from the ``inputs`` dict param.

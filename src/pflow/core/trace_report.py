@@ -7,16 +7,23 @@ of markdown files — one file per node, with summaries at each level.
 import json
 import logging
 import re
+import shutil
 import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from pflow.core.exceptions import ReportGenerationError
 from pflow.runtime.workflow_trace import final_events_by_node
 
 logger = logging.getLogger(__name__)
 
 # Priority keys for extracting a label from a batch item's input data
 _LABEL_PRIORITY_KEYS = ("name", "title", "label")
+_REPORT_MARKER = ".pflow-report.json"
+_REPORT_MARKER_FORMAT = "pflow.report"
+_REPORT_MARKER_VERSION = 1
 
 
 def _safe_name(name: str) -> str:
@@ -94,6 +101,121 @@ def _item_filename(item: dict[str, Any], suffix: str = ".md") -> str:
     return f"item-{idx}{suffix}"
 
 
+def validate_report_output_dir(report_dir: str | Path, *, allow_unmarked_existing: bool = False) -> None:
+    """Raise if ``report_dir`` is not safe for report snapshot replacement."""
+    path = Path(report_dir)
+    if path.is_symlink():
+        raise ReportGenerationError(
+            f"Refusing to replace symlink report directory: {path}",
+            report_path=str(path),
+            suggestions=["Choose an empty directory or an existing pflow report directory."],
+            reason="symlink_target",
+        )
+    if path.exists() and not path.is_dir():
+        raise ReportGenerationError(
+            f"Report output path exists and is not a directory: {path}",
+            report_path=str(path),
+            suggestions=["Choose an empty directory or an existing pflow report directory."],
+            reason="not_directory",
+        )
+    try:
+        is_empty = not path.exists() or not any(path.iterdir())
+    except OSError as exc:
+        raise ReportGenerationError(
+            f"Failed to inspect report directory: {path}",
+            report_path=str(path),
+            suggestions=["Check directory permissions and try again."],
+            reason="inspect_failed",
+        ) from exc
+    if is_empty:
+        return
+
+    marker_path = path / _REPORT_MARKER
+    if marker_path.exists():
+        if _is_valid_report_marker(marker_path):
+            return
+        raise ReportGenerationError(
+            f"Refusing to replace report directory with invalid {_REPORT_MARKER}: {path}",
+            report_path=str(path),
+            suggestions=[
+                "Choose an empty directory.",
+                "Remove the invalid marker after verifying the directory is safe to replace.",
+            ],
+            reason="invalid_marker",
+        )
+
+    if allow_unmarked_existing:
+        return
+
+    raise ReportGenerationError(
+        f"Refusing to replace non-empty report directory without {_REPORT_MARKER}: {path}",
+        report_path=str(path),
+        suggestions=["Choose an empty directory or an existing pflow report directory."],
+        reason="unmarked_non_empty_directory",
+    )
+
+
+def _is_valid_report_marker(marker_path: Path) -> bool:
+    try:
+        data = json.loads(marker_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    return data.get("format") == _REPORT_MARKER_FORMAT and data.get("format_version") == _REPORT_MARKER_VERSION
+
+
+def _build_report_marker(trace: dict[str, Any], trace_path: Path) -> str:
+    data = {
+        "format": _REPORT_MARKER_FORMAT,
+        "format_version": _REPORT_MARKER_VERSION,
+        "workflow_name": str(trace.get("workflow_name", "workflow")),
+        "trace_path": str(trace_path),
+        "trace_format_version": str(trace.get("format_version", "unknown")),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
+def _render_report_snapshot(
+    trace: dict[str, Any],
+    trace_path: Path,
+    report_dir: Path,
+    *,
+    only_node: str | None,
+    total_nodes: int | None,
+) -> None:
+    summary = _build_summary(trace, source_path=str(trace_path), only_node=only_node, total_nodes=total_nodes)
+    (report_dir / "summary.md").write_text(summary)
+    (report_dir / _REPORT_MARKER).write_text(_build_report_marker(trace, trace_path))
+    _write_node_files(trace.get("nodes", []), report_dir, node_index=1)
+
+
+def _replace_report_dir(report_dir: Path, temp_dir: Path) -> None:
+    backup_dir = report_dir.with_name(f".{report_dir.name}.old-{uuid4().hex}")
+    try:
+        if report_dir.exists():
+            report_dir.rename(backup_dir)
+        temp_dir.rename(report_dir)
+    except OSError as exc:
+        if backup_dir.exists() and not report_dir.exists():
+            try:
+                backup_dir.rename(report_dir)
+            except OSError:
+                logger.exception("Failed to restore previous report directory %s", report_dir)
+        raise ReportGenerationError(
+            f"Failed to replace report directory: {report_dir}",
+            report_path=str(report_dir),
+            suggestions=["Check directory permissions and try again."],
+            reason="replace_failed",
+        ) from exc
+    if backup_dir.exists():
+        try:
+            shutil.rmtree(backup_dir)
+        except OSError:
+            logger.warning("Generated report %s, but failed to remove old backup %s", report_dir, backup_dir)
+
+
 def _find_notable_items(
     batch_items: list[dict[str, Any]],
     parent_event: dict[str, Any],
@@ -111,7 +233,7 @@ def _find_notable_items(
     duration_outlier = _compute_outlier_threshold(durations)
     median_duration = statistics.median(durations) if durations else 0
 
-    costs = [_compute_event_cost(item) for item in batch_items]
+    costs = [_compute_batch_item_cost(item) for item in batch_items]
     cost_values = [c for c in costs if c is not None]
     cost_outlier = _compute_outlier_threshold(cost_values)
     median_cost = statistics.median(cost_values) if cost_values else 0
@@ -136,7 +258,7 @@ def _find_notable_items(
             continue
 
         # Cost outlier: must exceed both IQR threshold AND 4x median cost
-        item_cost = _compute_event_cost(item)
+        item_cost = _compute_batch_item_cost(item)
         if (
             cost_outlier is not None
             and item_cost is not None
@@ -163,89 +285,43 @@ def _compute_outlier_threshold(values: list[float]) -> float | None:
     return q3 + 1.5 * iqr
 
 
-def _accumulate_call_cost(call: dict[str, Any] | None, state: list[Any]) -> None:
-    """Fold a single ``llm_call`` dict into ``state = [total, found_any, has_unpriced]``."""
-    if not isinstance(call, dict) or "cost_usd" not in call:
-        return
-    cost = call.get("cost_usd")
-    state[1] = True  # found_any
-    if cost is None:
-        state[2] = True  # has_unpriced
-    else:
-        state[0] += cost  # total
-
-
-def _accumulate_child_cost(child_event: dict[str, Any], state: list[Any]) -> None:
-    """Fold a recursive child cost into ``state``."""
-    child_cost = _compute_event_cost(child_event)
-    if child_cost is None:
-        # Could mean "no data" or "unpriced". Distinguish by scanning the
-        # subtree: if any llm_call exists, the None reflects an unpriced leaf
-        # (propagate). If not, the subtree contributes nothing.
-        if _has_any_cost_data(child_event):
-            state[1] = True
-            state[2] = True
-    else:
-        state[0] += child_cost
-        state[1] = True
-
-
 def _compute_event_cost(event: dict[str, Any]) -> float | None:
-    """Recursively compute total cost for an event (including children).
+    """Total cost for a real trace event (top-level or sub-workflow descendant).
 
-    Returns None when:
-      - no cost data exists anywhere in the tree, OR
-      - any leaf has ``cost_usd: None`` (LiteLLM has no pricing for that
-        model — Ollama, custom endpoints, brand-new models). The unpriced
-        case propagates as None so the report displays "—" rather than a
-        misleading sum that silently drops the unpriced contribution.
+    Returns None when no cost data exists anywhere in the subtree OR when any
+    leaf has ``cost_usd: None`` (unpriced model — Ollama, custom endpoints).
+    The unpriced case propagates as None so the report renders "—" rather
+    than silently dropping the unpriced contribution.
 
     Returns 0.0 only when every leaf is explicitly priced at zero.
 
-    NOTE: This traverses the same tree structure as _collect_llm_summary() in
-    workflow_trace.py. If the trace event shape changes, both must be updated.
+    For batch items (which lack ``node_id`` and store children under
+    ``events`` rather than ``sub_workflow_events``), use
+    :func:`_compute_batch_item_cost` instead.
     """
-    state: list[Any] = [0.0, False, False]  # [total, found_any, has_unpriced]
+    from pflow.core.trace_tree import TraceTree
 
-    _accumulate_call_cost(event.get("llm_call"), state)
-
-    # Recurse into batch items
-    # Invariant (D9): batch items have llm_call XOR events, never both.
-    for item in event.get("batch_items", []):
-        _accumulate_call_cost(item.get("llm_call"), state)
-        for child_event in item.get("events", []):
-            _accumulate_child_cost(child_event, state)
-
-    for child_event in event.get("sub_workflow_events", []):
-        _accumulate_child_cost(child_event, state)
-
-    # "events" — used by sub-workflow batch items (they store child events
-    # under "events", not "sub_workflow_events").
-    for child_event in event.get("events", []):
-        _accumulate_child_cost(child_event, state)
-
-    total, found_any, has_unpriced = state
-    if not found_any or has_unpriced:
+    tree = TraceTree(events=(event,), format_version="2.1")
+    cost, source = tree.cost_for_event(event)
+    if source in {"trace_partial", "unavailable"}:
         return None
-    return float(total)
+    return cost
 
 
-def _has_any_cost_data(event: dict[str, Any]) -> bool:
-    """Quick scan: does this event tree carry an ``llm_call`` anywhere?
+def _compute_batch_item_cost(item: dict[str, Any]) -> float | None:
+    """Total cost for one batch item dict.
 
-    Used by _compute_event_cost to distinguish "child has no cost data
-    (skip)" from "child has cost data but is unpriced (propagate None)".
+    Batch items have a different shape from real events (no top-level
+    ``node_id``; sub-events under ``events`` not ``sub_workflow_events``).
+    See :meth:`TraceTree.cost_for_batch_item`.
     """
-    if isinstance(event.get("llm_call"), dict):
-        return True
-    if any(
-        isinstance(item.get("llm_call"), dict) or any(_has_any_cost_data(c) for c in item.get("events", []))
-        for item in event.get("batch_items", [])
-    ):
-        return True
-    if any(_has_any_cost_data(c) for c in event.get("sub_workflow_events", [])):
-        return True
-    return any(_has_any_cost_data(c) for c in event.get("events", []))
+    from pflow.core.trace_tree import TraceTree
+
+    tree = TraceTree(events=(), format_version="2.1")
+    cost, source = tree.cost_for_batch_item(item)
+    if source in {"trace_partial", "unavailable"}:
+        return None
+    return cost
 
 
 def _format_cost(cost: float | None) -> str:
@@ -253,6 +329,39 @@ def _format_cost(cost: float | None) -> str:
     if cost is None:
         return "\u2014"
     return f"${cost:.4f}"
+
+
+def _format_llm_call_metadata(
+    llm_call: dict[str, Any],
+    lines: list[str],
+    *,
+    paid_cost: float | None,
+    cached: bool,
+) -> None:
+    """Append LLM metadata with explicit current-run cost semantics.
+
+    ``llm_call`` is retained provider-call metadata. On cached events it
+    describes the source call that produced the reused result, not work paid
+    for by this event. ``paid_cost`` must come from ``TraceTree`` via the
+    report cost helpers so the display uses the same current-run contract as
+    summary tables.
+    """
+    model_label = "Source model" if cached else "Model"
+    tokens_label = "Source tokens" if cached else "Tokens"
+    thinking_label = "Source thinking" if cached else "Thinking"
+    lines.append(f"- {model_label}: {llm_call.get('model', '?')}")
+    tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
+    tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
+    lines.append(f"- {tokens_label}: {tokens_in:,} in / {tokens_out:,} out")
+    thinking_tokens = llm_call.get("thinking_tokens")
+    if isinstance(thinking_tokens, int) and thinking_tokens > 0:
+        lines.append(f"- {thinking_label}: {thinking_tokens:,} tokens")
+    lines.append(f"- Paid this run: {_format_cost(paid_cost)}")
+
+    historical_cost = llm_call.get("cost_usd")
+    if cached and historical_cost is not None and historical_cost != paid_cost:
+        source_cost_label = "Historical source cost" if llm_call.get("cache_source") == "memo" else "Source call cost"
+        lines.append(f"- {source_cost_label}: ${historical_cost:.4f}")
 
 
 def _collect_errors(
@@ -469,21 +578,35 @@ def generate_report(
         return None
 
     # Determine output directory
+    is_auto_output = output_path is None or output_path == "auto"
     if output_path is None or output_path == "auto":
         name = _safe_name(str(trace.get("workflow_name", "workflow")))
         report_dir = Path.home() / ".pflow" / "reports" / name
     else:
         report_dir = Path(output_path)
 
-    report_dir.mkdir(parents=True, exist_ok=True)
+    validate_report_output_dir(report_dir, allow_unmarked_existing=is_auto_output)
 
-    # Generate summary.md (pass source path without mutating loaded trace)
-    summary = _build_summary(trace, source_path=str(trace_path), only_node=only_node, total_nodes=total_nodes)
-    (report_dir / "summary.md").write_text(summary)
-
-    # Generate per-node files
-    events = trace.get("nodes", [])
-    _write_node_files(events, report_dir, node_index=1)
+    try:
+        report_dir.parent.mkdir(parents=True, exist_ok=True)
+        temp_dir = report_dir.with_name(f".{report_dir.name}.tmp-{uuid4().hex}")
+        temp_dir.mkdir()
+        try:
+            _render_report_snapshot(trace, trace_path, temp_dir, only_node=only_node, total_nodes=total_nodes)
+            _replace_report_dir(report_dir, temp_dir)
+        except Exception:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
+            raise
+    except ReportGenerationError:
+        raise
+    except OSError as exc:
+        raise ReportGenerationError(
+            f"Failed to generate report directory: {report_dir}",
+            report_path=str(report_dir),
+            suggestions=["Check directory permissions and try again."],
+            reason="write_failed",
+        ) from exc
 
     return report_dir
 
@@ -671,7 +794,12 @@ def _append_runtime_warnings(warnings: list[dict[str, Any]], lines: list[str]) -
     for w in warnings:
         node_id = w.get("node_id", "?")
         message = w.get("message", "Unknown warning")
-        lines.append(f"- **{node_id}**: {message}")
+        warning_id = w.get("id")
+        suggestions = w.get("suggestions") or []
+        prefix = f"[{warning_id}] " if warning_id else ""
+        lines.append(f"- {prefix}**{node_id}**: {message}")
+        for suggestion in suggestions:
+            lines.append(f"  - {suggestion}")
     lines.append("")
 
 
@@ -754,14 +882,13 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
     lines.append(f"- Status: {status}")
 
     llm_call = event.get("llm_call")
-    if llm_call:
-        lines.append(f"- Model: {llm_call.get('model', '?')}")
-        tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
-        tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
-        lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
-        cost = llm_call.get("cost_usd")
-        if cost is not None:
-            lines.append(f"- Cost: ${cost:.4f}")
+    if isinstance(llm_call, dict):
+        _format_llm_call_metadata(
+            llm_call,
+            lines,
+            paid_cost=_compute_event_cost(event),
+            cached=bool(event.get("cached")),
+        )
 
     # Show user-configured LLM parameters (only when explicitly set in workflow)
     node_params = event.get("node_params", {})
@@ -837,6 +964,77 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
             lines.append("")
 
 
+def _format_cached_system(event: dict[str, Any], lines: list[str]) -> None:
+    """Render the ``## Cached System`` section for trace 2.2.0 events.
+
+    Plain string is rendered verbatim; ``list[dict]`` (cache-rendered blocks)
+    emits a fenced JSON block so provider-specific ``cache_control`` markers
+    stay visible to agents reading the report. No-op when the field is absent.
+    """
+    llm_system = event.get("llm_system")
+    if llm_system is None:
+        return
+
+    lines.append("## Cached System")
+    lines.append("")
+    if isinstance(llm_system, str):
+        lines.append(llm_system)
+    else:
+        lines.append("```json")
+        lines.append(json.dumps(llm_system, indent=2, default=str))
+        lines.append("```")
+    skipped = (event.get("llm_call") or {}).get("cache_chunks_skipped") or []
+    if skipped:
+        lines.append("")
+        lines.append(f"> Skipped chunks (resolved as ABSENT): {', '.join(skipped)}")
+    lines.append("")
+
+
+def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
+    """Render per-call cache observations from ``llm_call`` trace data."""
+    llm_call = event.get("llm_call") or {}
+    if not isinstance(llm_call, dict):
+        return
+
+    cache_creation = llm_call.get("cache_creation_input_tokens")
+    cache_read = llm_call.get("cache_read_input_tokens")
+    cache_key = llm_call.get("cache_key")
+    cache_age_sec = llm_call.get("cache_age_sec")
+    chunks_skipped = llm_call.get("cache_chunks_skipped") or []
+    is_cached_replay = bool(llm_call.get("cache_source"))
+
+    # When llm_system is present the workflow opted into caching — render the
+    # section even with all-zero tokens so agents see "declared cache, didn't
+    # fire" instead of silent suppression.
+    has_signal = (
+        is_cached_replay
+        or (isinstance(cache_creation, int) and cache_creation > 0)
+        or (isinstance(cache_read, int) and cache_read > 0)
+        or bool(chunks_skipped)
+        or bool(event.get("llm_system"))
+    )
+    if not has_signal:
+        return
+
+    if llm_call.get("cache_source") == "memo":
+        lines.append("## Cache telemetry (cached result reused from prior run)")
+    elif is_cached_replay:
+        lines.append("## Cache telemetry (cached result reused)")
+    else:
+        lines.append("## Cache telemetry")
+    lines.append("")
+
+    if isinstance(cache_creation, int):
+        lines.append(f"- Cache write: {cache_creation:,} tokens")
+    if isinstance(cache_read, int):
+        lines.append(f"- Cache read: {cache_read:,} tokens")
+    if cache_key:
+        lines.append(f"- Cache key: {cache_key}")
+    if is_cached_replay and isinstance(cache_age_sec, (int, float)):
+        lines.append(f"- Result age: {cache_age_sec:.0f}s")
+    lines.append("")
+
+
 def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     """Render template resolutions and static params as markdown sections.
 
@@ -845,6 +1043,11 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     """
     resolutions = event.get("template_resolutions", {})
     shown: set[str] = set()
+
+    # 2.2.0: cached system prefix — rendered before ## Prompt to match the
+    # API call order (system → user).
+    _format_cached_system(event, lines)
+    _format_cache_telemetry(event, lines)
 
     if "prompt" in resolutions:
         lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])
@@ -1022,7 +1225,7 @@ def _build_items_table(
     for item in items:
         idx = item.get("index", "?")
         dur = item.get("duration_ms", 0)
-        cost = _format_cost(_compute_event_cost(item))
+        cost = _format_cost(_compute_batch_item_cost(item))
         status = _format_event_status(item)
         if has_labels:
             label = _item_label_or_index(item)
@@ -1046,7 +1249,7 @@ def _append_batch_stats(batch_items: list[dict[str, Any]], lines: list[str]) -> 
         else:
             lines.append(f"- Median time: {median_dur:.0f}ms")
 
-    costs = [_compute_event_cost(item) for item in batch_items]
+    costs = [_compute_batch_item_cost(item) for item in batch_items]
     total_cost = sum(c for c in costs if c is not None)
     if total_cost > 0:
         lines.append(f"- Total cost: ${total_cost:.4f}")
@@ -1060,17 +1263,19 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
     label = _item_label_or_index(item)
     lines = [f"# {node_id} — {label}", ""]
     lines.append(f"- Time: {item.get('duration_ms', 0):.0f}ms")
-    lines.append(f"- Status: {'success' if item.get('success') else 'failed'}")
+    status = "success" if item.get("success") else "failed"
+    if item.get("cached"):
+        status += " [cached]"
+    lines.append(f"- Status: {status}")
 
     llm_call = item.get("llm_call")
-    if llm_call:
-        lines.append(f"- Model: {llm_call.get('model', '?')}")
-        tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
-        tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
-        lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
-        cost = llm_call.get("cost_usd")
-        if cost is not None:
-            lines.append(f"- Cost: ${cost:.4f}")
+    if isinstance(llm_call, dict):
+        _format_llm_call_metadata(
+            llm_call,
+            lines,
+            paid_cost=_compute_batch_item_cost(item),
+            cached=bool(item.get("cached")),
+        )
 
     error = item.get("error")
     if error:

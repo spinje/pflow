@@ -1,0 +1,21 @@
+FIRST_ONLY_VALUE
+
+--- report files ---
+./01-first.md
+./summary.md
+
+--- summary.md ---
+# Execution Report: workflow
+
+- Status: success
+- Duration: <DURATION>
+- Nodes: 1/2 (--only 'first', 1 skipped)
+- Generated: <TIMESTAMP>
+
+## Pipeline
+
+| # | Node | Type | Time | Cost | Status |
+|---|------|------|------|------|--------|
+| 1 | first | ShellNode | <DURATION> | — | ok |
+
+*Full trace: <BASELINE_CASE_DIR>/.run-home/.pflow/debug/workflow-trace-<HASH>-<TIMESTAMP>.json*

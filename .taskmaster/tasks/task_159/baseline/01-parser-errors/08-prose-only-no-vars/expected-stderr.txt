@@ -1,0 +1,20 @@
+Error: Parse Error
+
+'## Cache' block must contain at least one '${var}' reference.
+  At: line 13
+
+  → Cache uses section-level params + a single tagged code block:
+
+    ## Cache
+
+    - ttl: 5m       # optional; default 5m, also accepts 1h
+
+    ```cache
+    Description of the value:
+
+    ${concept}
+
+    Description of the next value:
+
+    ${concept_brief}
+    ```

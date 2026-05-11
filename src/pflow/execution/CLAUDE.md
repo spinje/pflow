@@ -159,14 +159,13 @@ class WorkflowRunner:
 **Stateless**: fresh instance per call. No mutable state on instance.
 
 **Pipeline** (inside `run()`):
-1. `_resolve()` — unified resolver (file, library, markdown, dict → `ResolvedWorkflow`)
-2. `_resolve_file_references()` — external file refs in IR
-3. `_fill_declared_defaults()` — fills declared inputs with defaults or placeholders so validation doesn't flag them as missing. Stripped before compilation.
-4. `_validate()` — `WorkflowValidator.validate()`, once per execution
-5. Create per-execution resources (MetricsCollector, TraceCollector, MCPConnectionPool, MemoizationCache)
-6. `_compile_and_execute()` — `compile_workflow()` + `WorkflowEngine.run()`. On exception: annotates `e._pflow_node_id` (skipped for `OutputResolutionError`) and `e._pflow_shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after` with the full failure state.
-7. `_build_errors()` + `_extract_runtime_warnings()` — converts shared store + action result into `Diagnostic` list. Permissive-mode template warnings pass through the structured `Diagnostic` already built by `runtime/engine/template_errors.py` (preserves `unresolved_references`); api warnings still build a basic Diagnostic from `__warnings__[id]`.
-8. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
+1. `_resolve()` — unified resolver (file, library, markdown, dict → `ResolvedWorkflow`). File references are resolved at this boundary; `ResolvedWorkflow.ir` is fully file-resolved by contract (see `workflow_resolver.py`'s module docstring and `test_workflow_resolver_contract.py`). The Runner does NOT re-resolve.
+2. `_fill_declared_defaults()` — fills declared inputs with defaults or placeholders so validation doesn't flag them as missing. Stripped before compilation.
+3. `_validate()` — `WorkflowValidator.validate()`, once per execution
+4. Create per-execution resources (MetricsCollector, TraceCollector, MCPConnectionPool, MemoizationCache)
+5. `_compile_and_execute()` — `compile_workflow()` + `WorkflowEngine.run()`. On exception: annotates `e._pflow_node_id` (skipped for `OutputResolutionError`) and `e._pflow_shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after` with the full failure state.
+6. `_build_errors()` + `_extract_runtime_warnings()` — converts shared store + action result into `Diagnostic` list. Permissive-mode template warnings pass through the structured `Diagnostic` already built by `runtime/engine/template_errors.py` (preserves `unresolved_references`). Runtime `__warnings__` values that are already `Diagnostic` instances also pass through unchanged, bypassing recovery/api-warning classification and canned api-warning suggestions. Legacy string/dict warnings still build a basic runtime Diagnostic.
+7. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
 
 `plan()` reuses the same resolve → file-ref → validation → compile pipeline, then delegates to `execution/plan.py::build_plan()` instead of running the engine. No trace collector, metrics collector, MCP pool, or progress callback is created on the plan path.
 

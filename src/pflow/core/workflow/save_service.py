@@ -52,6 +52,8 @@ RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
     "batch",
     "branching",
     "sub-workflows",
+    "prompt-caching",
+    "caching",
 })
 
 
@@ -104,6 +106,42 @@ def validate_workflow_name(name: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
+def _resolve_for_validation(workflow_ir: dict[str, Any], source_path: Optional[Path]) -> dict[str, Any]:
+    """Return an IR copy with file references resolved, for validation only.
+
+    The input IR keeps its literal file path strings (e.g.
+    ``params.prompt = './creative-direction.md'``) so
+    ``_discover_and_bundle_deps`` can still see them and bundle the files.
+    Without this split, save would either skip file-content-aware checks
+    (the original gap that motivated Task 159 follow-up) or break bundling
+    (file paths get replaced with content before discovery scans the IR).
+
+    Falls through to the original IR if resolution can't run (no
+    ``source_path``) or raises (missing files, YAML errors). Downstream
+    layers diagnose those failures via ``MarkdownParseError`` /
+    ``CompilationError`` — this layer's job is just to expose the file
+    content for content-aware validators when resolution succeeds.
+    """
+    if source_path is None:
+        return workflow_ir
+    try:
+        import copy
+
+        from pflow.core.file_resolver import resolve_file_references
+
+        validation_ir = copy.deepcopy(workflow_ir)
+        resolve_file_references(validation_ir, source_path.parent)
+        return validation_ir
+    except (FileNotFoundError, OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Save-path file-reference resolution skipped (%s); missing-file errors surface elsewhere.",
+            exc,
+        )
+    except Exception:
+        logger.debug("Save-path file-reference resolution raised; skipping silently", exc_info=True)
+    return workflow_ir
+
+
 def _validate_and_normalize_ir(
     workflow_ir: dict[str, Any],
     auto_normalize: bool,
@@ -141,6 +179,10 @@ def _validate_and_normalize_ir(
             raise WorkflowValidationError(f"{source_desc}: {e}") from e
         raise ValueError(f"{source_desc}: {e}") from e
 
+    # Step 1.5: build a separate copy with file references resolved, used
+    # ONLY for downstream validation. See ``_resolve_for_validation``.
+    validation_ir = _resolve_for_validation(workflow_ir, source_path)
+
     # Step 2: Comprehensive workflow validation (data flow, output sources, node types)
     from pflow.core.validation_utils import generate_dummy_parameters
     from pflow.core.workflow.validator import WorkflowValidator
@@ -149,12 +191,12 @@ def _validate_and_normalize_ir(
     try:
         # Generate dummy parameters for template validation
         # This enables structural validation without requiring real parameter values
-        inputs = workflow_ir.get("inputs", {})
+        inputs = validation_ir.get("inputs", {})
         dummy_params = generate_dummy_parameters(inputs)
 
         registry = Registry()
         validator_diagnostics = WorkflowValidator.validate(
-            workflow_ir=workflow_ir,
+            workflow_ir=validation_ir,
             extracted_params=dummy_params,  # Use dummy params for template validation
             registry=registry,
             skip_node_types=False,  # Validate node types

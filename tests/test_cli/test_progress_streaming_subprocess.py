@@ -31,7 +31,10 @@ import pytest
 
 from tests.shared.markdown_utils import ir_to_markdown
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Unix subprocess test")
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(sys.platform == "win32", reason="Unix subprocess test"),
+]
 
 
 def _skip_if_uv_sandbox_panics(result: subprocess.CompletedProcess) -> None:

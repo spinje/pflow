@@ -1,0 +1,46 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/01-parser-errors/09-prompt-body-shadows-cache/workflow.pflow.md
+
+  Workflow: 1 LLM node using anthropic/claude-haiku-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  1 error blocking
+  1 recommended action
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/01-parser-errors/09-prompt-body-shadows-cache/workflow.pflow.md article=<value>
+
+## Cache blocking errors (must fix before save and run)
+
+  1. Prompt body duplicates cached chunks on summarize (`cache.prompt-body-duplicates-cache`)
+     summarize
+     Node 'summarize' duplicates cached chunks in the prompt body — the cache stores these values at 0.1× rate but the body sends them inline at 1.0× every call:
+       - cached `${article}` AND inline `${article}`
+     → Remove the listed `${...}` references from the prompt body — the cached chunks already supply these values via the system prompt.
+
+## Recommended actions (1)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Cache content below provider minimum on summarize                   savings unavailable
+     summarize
+     summarize: declared cache content is ~1 tokens, below anthropic/claude-haiku-4-5's minimum of 4096; cache_control markers will silently no-op at the provider
+     → Increase cache content above 4096 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from summarize since the cache won't fire as declared.
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+
+  node       model                       input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  summarize  anthropic/claude-haiku-4-5     12           —            1     8%      —  below-min-tokens; prompt-body-duplicates-cache
+
+  Token estimate confidence:
+    · Projected input tokens for: summarize.

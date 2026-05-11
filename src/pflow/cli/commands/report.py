@@ -28,6 +28,8 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
         pflow report ~/.pflow/debug/workflow-trace-my-wf-20260412.json
         pflow report -o ./report/
     """
+    from pflow.cli.error_output import output_error
+    from pflow.core.exceptions import ReportGenerationError
     from pflow.core.trace_report import generate_report
 
     if trace_path is None:
@@ -48,7 +50,11 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
         click.echo(f"Trace file not found: {trace_path}", err=True)
         ctx.exit(1)
 
-    report_dir = generate_report(trace_path, output_path or "auto")
+    try:
+        report_dir = generate_report(trace_path, output_path or "auto")
+    except ReportGenerationError as exc:
+        output_error(ctx, exception=exc)
+        ctx.exit(1)
     if report_dir:
         click.echo(str(report_dir))  # stdout — pipeable for scripting
         click.echo(f"Report generated: {report_dir}", err=True)

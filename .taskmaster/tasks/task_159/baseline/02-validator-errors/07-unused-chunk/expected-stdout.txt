@@ -1,0 +1,34 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/02-validator-errors/07-unused-chunk/workflow.pflow.md
+
+  Workflow: 1 LLM node using anthropic/claude-haiku-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  1 recommended action
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/02-validator-errors/07-unused-chunk/workflow.pflow.md article=<value> topic=<value>
+
+## Recommended actions (1)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Unused cache chunk — remove `topic` from ## Cache                   savings unavailable
+     workflow.pflow.md
+     Cache chunk 'topic' is declared in ## Cache but no node references it via prompt_cache:.
+     → Remove 'topic' from ## Cache, OR reference it from a node's `- prompt_cache: [topic]`.
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+
+  node       model                       input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  summarize  anthropic/claude-haiku-4-5     11           —            ?     ?%      —

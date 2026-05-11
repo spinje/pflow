@@ -21,6 +21,18 @@ DEFAULT_TTL_SECONDS = 86400.0
 # Eviction frequency: run eviction every N puts
 _EVICTION_INTERVAL = 50
 
+# Parser-injected metadata key suffixes filtered from cache_key inputs (GH #357).
+# These shift on every workflow edit / saved-library frontmatter mutation but
+# carry no execution-relevant data — filtering them keeps memo cache hits stable
+# across cosmetic changes. Suffix-match (not exact) so per-node metadata like
+# ``nodes.foo._source_lines`` flows through after template resolution lands it
+# under a path-prefixed key.
+_METADATA_KEY_SUFFIXES = (
+    "_source_line",  # Singular — per-yaml-item line, set by markdown_parser entity flush
+    "_source_lines",  # Plural dict — per-code-block line ranges
+    "_source_files",  # Per-file-reference resolution metadata
+)
+
 
 def _make_serializable(obj: Any) -> Any:
     """Convert an object to a JSON-serializable representation for hashing.
@@ -34,6 +46,19 @@ def _make_serializable(obj: Any) -> Any:
     Returns:
         JSON-serializable version of the object
     """
+    # Task 159 B3.3: defense against a leaked _CHUNK_ABSENT sentinel. The
+    # catch-all branch at the bottom would silently serialize the sentinel to
+    # a stable type-name string and fold it into the cache hash — the
+    # silent-stale-cache regression class. Lazy-import keeps cache.py
+    # dependency-free at module load.
+    from pflow.core.cache_render import _ChunkAbsentSentinel
+
+    if isinstance(obj, _ChunkAbsentSentinel):
+        raise TypeError(
+            "_CHUNK_ABSENT must be filtered before serialization; reached "
+            "_make_serializable. Caller forgot to drop ABSENT chunks before "
+            "passing prompt_cache_content into compute_node_config (DD#19)."
+        )
     if isinstance(obj, dict):
         result = {}
         for key, value in obj.items():
@@ -69,7 +94,7 @@ def compute_node_cache_key(
 ) -> str:
     """Compute memoization cache key for a non-batch node.
 
-    cache_key = md5(config_hash + hash(resolved_inputs))
+    cache_key = md5(config_hash + hash(filtered_resolved_inputs))
 
     Args:
         config_hash: Hash of the node's static configuration
@@ -77,10 +102,26 @@ def compute_node_cache_key(
 
     Returns:
         MD5 hex digest cache key
+
+    GH #357: parser-injected line-number metadata is filtered from the
+    cache key (mirrors ``compute_node_config``'s config-hash filter).
+    These keys are cosmetic — used by ``python_code.py`` at runtime for
+    error reporting — but they shift on every workflow edit AND on every
+    invocation of a saved-library workflow (since the library mutates the
+    file's frontmatter post-run, growing the prefix and shifting body
+    line numbers). Without this filter, the cache_key changed on every
+    saved-workflow run and memo cache never hit.
+
+    The filter targets the explicit suffix set ``_METADATA_KEY_SUFFIXES``
+    rather than a generic ``_``-prefix rule so user-defined inputs named
+    e.g. ``_internal`` pass through unchanged.
     """
     parts = [config_hash]
     if resolved_inputs is not None:
-        parts.append(_deterministic_json(resolved_inputs))
+        filtered = {
+            k: v for k, v in resolved_inputs.items() if not any(k.endswith(suffix) for suffix in _METADATA_KEY_SUFFIXES)
+        }
+        parts.append(_deterministic_json(filtered))
     combined = "|".join(parts)
     return hashlib.md5(combined.encode()).hexdigest()  # noqa: S324
 

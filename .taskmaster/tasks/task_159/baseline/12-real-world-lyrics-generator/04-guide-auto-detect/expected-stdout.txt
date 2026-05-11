@@ -1,0 +1,1287 @@
+# Batch Processing
+
+**Use when**: Same operation on multiple items — "each", "for every", "in parallel", "N at a time". Add `batch` to any node:
+
+````markdown
+### process-each
+
+Analyze each file.
+
+- type: llm
+- prompt: "Analyze: ${item}"
+- batch:
+    items: ${source.files}
+
+### fetch-each
+
+Fetch each URL in parallel.
+
+- type: shell
+- batch:
+    items: ${urls}
+    parallel: true
+    max_concurrent: 40
+
+```shell command
+curl -s '${item}'
+```
+````
+
+Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Results: `${node.results}` (array in input order).
+
+**Options**:
+| Field | Default | Notes |
+|-------|---------|-------|
+| `items` | required | Template reference OR inline array (must resolve to JSON array, not newline-separated string) |
+| `as` | `"item"` | Custom name: `"file"` → `${file}` |
+| `parallel` | `false` | Concurrent execution |
+| `max_concurrent` | `10` | 1-100; use 30-50 for LLM APIs (rate limits) |
+| `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
+
+**Text lines → JSON array:**
+```shell
+your-command | jq -R -s 'split("\n") | map(select(. != ""))'
+```
+
+**All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
+Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`.
+
+**Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`. Note: index-based access (`results[N]`) requires `fail_fast` mode (the default). With `error_handling: continue`, use iteration (`items: ${node.results}`) instead.
+
+**Inline array pattern** (parallel independent operations):
+Batch is the way to run operations concurrently (conditional branching picks ONE path, not multiple).
+````markdown
+### multi-format
+
+Reformat the report in multiple styles concurrently.
+
+- type: llm
+- prompt: "Reformat as ${item.style}:\n${item.content}"
+
+```yaml batch
+items:
+  - style: executive-summary
+    content: ${report.result}
+  - style: technical-details
+    content: ${report.result}
+  - style: action-items
+    content: ${report.result}
+parallel: true
+```
+````
+**Completely different operations** (each item defines its own prompt and data):
+````markdown
+### parallel-tasks
+
+Run completely different operations in parallel.
+
+- type: llm
+- prompt: ${item.prompt}
+
+```yaml batch
+items:
+  - prompt: |
+      Summarize the following data in exactly 2 sentences.
+      Focus on key findings and actionable insights.
+
+      Data: ${data}
+  - prompt: "Extract action items from: ${data}"
+  - prompt: "Translate to Spanish: ${other-data}"
+parallel: true
+```
+````
+Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-tasks.results[0].item}` (original input)
+
+**Per-item configuration** — vary node params (model, temperature, reasoning_effort) per item:
+````markdown
+### compare-configs
+
+Compare quality across different settings.
+
+- type: llm
+- model: ${item.model}
+- reasoning_effort: ${item.effort}
+- prompt: "Analyze: ${item.data}"
+
+```yaml batch
+items:
+  - data: ${report}
+    model: anthropic/claude-opus-4-5
+    effort: high
+  - data: ${report}
+    model: openai/gpt-5.4
+    effort: medium
+parallel: true
+```
+````
+Any `${item.field}` template works in any param — not just prompt/command.
+
+**Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate (requires `fail_fast` — not supported with `error_handling: continue`):
+```
+${previous.results[${__index__}]}     # Access by position (fail_fast only)
+${previous.results[${item.idx}]}      # Access by item field (fail_fast only)
+```
+
+**Using results**:
+```markdown
+### report
+
+Summarizes the batch. Reads `success_count` and the results array from
+the upstream batched node — not a per-item response, since batch replaces
+the normal output shape.
+
+- type: llm
+- prompt: "Summary of ${process-each.success_count} items:\n${process-each.results}"
+```
+
+**Common mistake: missing explicit prompt wiring on batch LLM.** Batch items may have `prompt:` fields in the data, but the LLM node ignores them unless you wire it explicitly: `- prompt: ${item.prompt}`. Batch provides data; the node still needs explicit parameter references.
+
+---
+
+# Conditional Branching
+
+**Use when**: Different paths based on data or errors — "if X then Y", "handle failures", "retry on error". Default flow is top-to-bottom; branching overrides it.
+
+**Error routing** — any node can route failures to a handler:
+````markdown
+### call-api
+
+Fetch data from the API.
+
+- type: shell
+- on-error: handle-error
+
+```shell command
+curl -f https://api.example.com/data
+```
+
+### process
+
+Process the result.
+
+- type: code
+- inputs: { data: "${call-api.stdout}" }
+- next: end
+
+```python code
+data: str
+result: dict = {"processed": True}
+```
+
+### handle-error
+
+Log the failure.
+
+- type: shell
+- next: end
+
+```shell command
+echo "API call failed" >&2
+```
+````
+
+**Data-driven routing (literal)** — a `code` node sets `next` to pick the path. When all targets are string literals, pflow detects them automatically:
+````markdown
+### classify
+
+Route based on input size.
+
+- type: code
+- inputs: { items: "${fetch.result}" }
+
+```python code
+items: list
+if not items:
+    raise ValueError("No items to process")
+result: int = len(items)
+if len(items) > 100:
+    next: str = "bulk-process"
+else:
+    next: str = "simple-process"
+```
+
+### simple-process
+
+Handle small batches.
+
+- type: shell
+- next: end
+
+```shell command
+echo "Small batch: ${classify.result} items"
+```
+
+### bulk-process
+
+Handle large batches.
+
+- type: shell
+- next: end
+
+```shell command
+echo "Large batch: ${classify.result} items"
+```
+````
+
+**Data-driven routing (dynamic)** — when the target comes from a variable, declare all possible targets with `- next:`:
+````markdown
+### route
+
+Pick path based on category.
+
+- type: code
+- inputs: { category: "${analyze.result}" }
+- next: path-a, path-b
+
+```python code
+category: str
+result: str = category
+next: str = category
+```
+
+### path-a
+
+Handle category A.
+
+- type: shell
+- next: end
+
+```shell command
+echo "A: ${route.result}"
+```
+
+### path-b
+
+Handle category B.
+
+- type: shell
+- next: end
+
+```shell command
+echo "B: ${route.result}"
+```
+````
+
+**Routing rules:**
+- `- next: node-id` — override default successor (any node)
+- `- next: end` — terminate flow (no successor)
+- `- on-error: node-id` — route on failure (any node)
+- `next: str = "node-id"` — dynamic routing (code nodes only)
+- `next: str = "end"` — terminate from code (code nodes only, e.g., skip optional steps)
+- `"end"` is a reserved keyword — do not use it as a node ID
+- No `next` set in code → continues to next node in document order
+
+**Required: Branch targets MUST have explicit `- next:`**
+- Every node reached via `- on-error:` or named routing action MUST declare `- next: end` or `- next: <node-id>`
+- Without this, branches fall through to the next node in document order (silent bug)
+- If code uses dynamic routing (`next = variable`), the code node MUST declare `- next: target-a, target-b` listing all possible targets
+- Literal routing (`next: str = "target"`) does NOT need `- next:` on the code node — pflow detects targets automatically
+
+**When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
+
+**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand whose node executed wins. Works in any node type — no merge node needed.
+
+---
+
+# Code Node
+
+**Use for**: Data transformation — filter, reshape, merge, compute, string parsing.
+
+**Not for extraction** — templates handle path traversal (`${node.result.data.field}`). Use code only when you need to compute or reshape.
+
+- Receives native objects from upstream nodes (no serialization needed)
+- Supports multiple inputs from different nodes
+- Type-annotated Python code for clarity and validation
+
+### Node Creation Patterns
+
+```markdown
+### filter-and-reshape
+
+Filter active items and reshape for downstream processing.
+Templates go in `inputs`, Python code in the code block.
+All inputs and result MUST have type annotations.
+
+- type: code
+- inputs:
+    items: ${fetch-with-auth.response.data.items}
+
+```python code
+items: list
+
+result: list = [
+    {'id': i['id'], 'name': i['name'], 'value': i['metrics']['value']}
+    for i in items
+    if i['status'] == 'active'
+]
+```
+
+### merge-data
+
+Merge and summarize data from two sources.
+Downstream nodes access fields: `${merge-data.result.summary}`, `${merge-data.result.count}`.
+
+- type: code
+- inputs:
+    api_data: ${fetch-with-auth.response.data.items}
+    db_records: ${query-db.result}
+
+```python code
+api_data: list
+db_records: list
+
+merged = api_data + db_records
+result: dict = {
+    'items': merged,
+    'count': len(merged),
+    'summary': f'{len(api_data)} from API, {len(db_records)} from DB'
+}
+```
+```
+
+### Code Node Rules
+
+**Code node rules:**
+- Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
+- All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
+- Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
+- Use `Any` as the type when you don't want type validation (see syntax table below — auto-injected, no import needed)
+- Single output via `result` variable — use dict for structured output
+- Downstream access: `${node.result}` or `${node.result.field}` for dict results
+
+## Validate-Time Type Checking
+
+Three code-node input errors are now caught at validate time (`pflow
+--validate-only`) instead of runtime:
+
+1. **Input bound, annotation missing** — `inputs: {x: ${ref}}` with no `x:
+   <type>` in code. The suggestion uses the upstream's declared type when
+   known (`Add an annotation (in params.code): x: str  (inferred from ...)`).
+2. **Annotation declared, no input bound** — opinionated one-fix-per-case:
+   `Remove the annotation 'y: list' — it is never read in the code` for dead
+   annotations, `Add 'y' to the inputs dict` when the name is read in the
+   body, `Rename the annotation to 'items'` when a fuzzy-matched input key
+   exists (typo case).
+3. **Type mismatch** — `x: dict` bound to `${upstream.result}` that declares
+   `list`:
+
+    ```text
+    Input 'x' expects dict but receives list from ${upstream.result}.
+
+    To fix this:
+      1. Change the type annotation (in params.code): x: list
+      2. Or change ${upstream.result} to return dict
+      3. Or accept any type (in params.code): x: Any
+    ```
+
+Suggestions include locality hints (`in params.code` vs `in params.inputs`) so
+agents know which section to edit. Upstream type is read from the registry
+interface for standard nodes and from the code-block `result:` annotation for
+upstream code nodes (including batch code nodes — enrichment flows through
+`results[0].result` access paths). Use `Any` when you want to accept any
+upstream type deliberately.
+
+### Type annotation syntax
+
+Type annotations in code blocks are Python. pflow follows modern Python style (PEP 585 + PEP 604):
+
+| For... | Write | Example |
+|---|---|---|
+| Any type (wildcard) | `Any` | `x: Any` |
+| Built-in scalars | `str`, `int`, `float`, `bool`, `bytes` | `x: str` |
+| List | `list[T]` | `x: list[str]` |
+| Dict | `dict[K, V]` | `x: dict[str, int]` |
+| Tuple | `tuple[T, ...]` | `x: tuple[int, str]` |
+| Set | `set[T]` | `x: set[str]` |
+| Union | `A \| B` (pipe syntax) | `x: int \| str` |
+| Optional | `Optional[T]` or `T \| None` | `x: str \| None` |
+
+**Auto-injected** (no import needed): `Any`, `Optional`, and the `typing` module.
+
+**Requires** `from typing import X` at the top of your code block: `Literal`, `TypeVar`, `Callable`, `Final`, `ClassVar`, `Iterable`, `Iterator`, `Sequence`, `Mapping`.
+
+**Not allowed**: `List[T]`, `Dict[K, V]`, `Union[A, B]`, and other uppercase typing-module generics — use the modern lowercase / pipe forms above. pflow's NameError suggestions point at the canonical replacement.
+
+Only the outer type is enforced at prep time (e.g. `list[dict]` checks `isinstance(x, list)` but not element types).
+
+---
+
+### Parameters
+
+- `code: str` - Python code to execute (required, must contain type annotations)
+- `inputs: dict` - Variable name to value mapping (optional)
+- `timeout: int` - Execution timeout in seconds (optional)
+- `requires: list` - Package dependencies for documentation (optional)
+
+### Outputs
+
+- `result: any` - Value of result variable after execution
+- `stdout: str` - Captured print() output
+- `stderr: str` - Captured stderr output
+- `error: str` - Error message if execution failed
+
+---
+
+# File Node
+
+**Use for**: Reading and writing files. Known interface — no probing needed.
+
+### Node Creation Patterns
+
+```markdown
+### read-config
+
+Read configuration from disk.
+
+- type: read-file
+- file_path: ${config_path}
+```
+
+```markdown
+### deliver
+
+Write the final report to disk.
+
+- type: write-file
+- file_path: ${output_path}
+- content: ${format-for-delivery.response}
+```
+
+---
+
+### read-file
+Read content from a file.
+
+**Parameters**:
+- `file_path: str` - Path to the file to read
+- `encoding: str` - File encoding (optional)
+
+**Outputs**:
+- `content: str` - File contents (with line numbers for text, base64-encoded for binary)
+- `content_is_binary: bool` - True if content is binary data
+- `file_path: str` - Path that was read
+- `error: str` - Error message if operation failed
+
+### write-file
+Write content to a file with automatic directory creation.
+
+**Parameters**:
+- `content: str` - Content to write to the file (text or base64-encoded binary)
+- `content_is_binary: bool` - True if content is base64-encoded binary (optional)
+- `file_path: str` - Path to the file to write
+- `encoding: str` - File encoding (optional)
+- `append: bool` - Append to file instead of overwriting (default: false)
+
+**Outputs**:
+- `written: bool` - True if write succeeded
+- `error: str` - Error message if operation failed
+
+---
+
+# LLM Node
+
+**Use for**: Tasks requiring judgment — summarizing, interpreting, deciding what matters. Costs tokens per workflow execution.
+
+**Don't use LLM for**: Extracting fields from structured data (`${node.result.data.field}` does this for free), transforming/filtering data (use `code` node), or formatting with a fixed structure (use `code` node).
+
+**The test**: Can you write a deterministic algorithm for it? YES → `code` node. NO → LLM.
+
+Use `output_schema` for structured responses (guarantees valid JSON via constrained decoding).
+
+**Debugging prompts**: Run with `--report` to see every LLM node's rendered prompt (templates resolved) alongside the actual response, token count, and cost. Ask the user if they want reports in the project (`--report-dir ./report/`) — useful for reviewing LLM responses together or tracking them in git.
+
+**Iterating cheaply**: Use `--only <node>` to re-run a single LLM node (upstream cached, downstream skipped). Saves time and tokens when tuning prompts in multi-node workflows.
+
+### Node Creation Pattern
+
+`````markdown
+### structured-analysis
+
+Analyze data with specific criteria.
+
+- type: llm
+- temperature: 0.7
+- model: openai/gpt-4
+
+```yaml output_schema
+type: object
+properties:
+  findings:
+    type: array
+    items:
+      type: string
+  risk_level:
+    type: string
+  recommendation:
+    type: string
+required:
+  - findings
+  - risk_level
+  - recommendation
+```
+
+```prompt
+Analyze this data according to these criteria:
+
+Data:
+${filter-and-reshape.result}
+
+Criteria:
+1. Identify patterns
+2. Find anomalies
+3. Suggest improvements
+```
+`````
+
+---
+
+### Parameters
+
+- `prompt: str` - Text prompt to send to model
+- `system: str` - System prompt (optional)
+- `images: list[str]` - Image URLs or file paths (optional)
+- `output_schema: dict` - JSON Schema for structured output (optional)
+- `reasoning_effort: str` - Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
+- `reasoning_max_tokens: int` - Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
+- `model_options: dict` - Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
+- `model: str` - Model to use (optional - always use smart default unless user requests specific model)
+- `temperature: float` - Sampling temperature (default: 1.0)
+- `max_tokens: int` - Max response tokens (optional)
+- `timeout: int` - Execution timeout in seconds for LLM API call (default: 120)
+
+### Outputs
+
+- `response: str|dict` - Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
+- `error: str` - Error message if LLM call or JSON parsing failed
+- `prompt: str` - Rendered prompt actually sent to the model (populated for tracing/audit, including per-item batch traces)
+- `llm_usage: dict` - Token usage metrics (empty dict {} if unavailable)
+
+---
+
+# MCP Node
+
+**Use for**: Service-specific APIs (Slack, GitHub, Postgres, etc.) with automatic authentication.
+
+Node naming: `mcp-{server}-{TOOL}` (e.g., `mcp-slack-SEND_MESSAGE`, `mcp-postgres-QUERY`).
+
+### Supported Service Categories
+
+MCP servers span these categories (each has unique output structure):
+**Data** · **Communication** · **Storage** · **DevOps** · **Productivity** · **APIs**
+
+Examples: Databases (PostgreSQL, MySQL), Chat (Slack, Discord), Cloud (S3, GCS), Version Control (GitHub, GitLab), Docs (Notion, Sheets), REST/GraphQL
+
+**Always test - never assume similarity.**
+
+See `pflow mcp describe <tool> --help` for how to interpret tool details.
+
+## ⚠️ MCP Output Has NO Standard Structure
+
+**Every MCP server is completely different. Even the SAME operation:**
+
+```python
+# Three different "send message" MCPs:
+Server A:  result.data.message.ts
+Server B:  result.ok and result.ts           # Flat structure
+Server C:  result.response.data[0].id       # Deep nesting
+
+# Three different "query database" MCPs:
+Server A:  result.rows[]                    # PostgreSQL style
+Server B:  result.data.results[]            # Wrapped
+Server C:  result.Items[]                   # DynamoDB style
+```
+
+**There are NO patterns. Test every MCP tool:**
+`pflow probe mcp-service-TOOL param=value`
+
+### Node Creation Pattern
+
+`````markdown
+### update-service
+
+Update external service with results.
+
+- type: mcp-service-UPDATE
+- resource_id: ${resource_id}
+
+```yaml data
+status: completed
+results: ${structured-analysis.response}
+timestamp: ${get-timestamp.stdout}
+metadata:
+  source: ${api_url}
+  processed_count: ${limit}
+```
+`````
+
+### Pattern: Service Orchestration with Formatting
+
+**Use case**: Multiple services with human-readable output
+
+`````markdown
+## Steps
+
+### fetch-service1
+
+Query primary data source.
+
+- type: mcp-service1-GET_DATA
+- resource: ${resource_id}
+
+### fetch-service2
+
+List items from secondary source.
+
+- type: mcp-service2-LIST_ITEMS
+- filter: ${filter_criteria}
+
+### analyze-and-format
+
+Find relationships between datasets and format as report. One LLM call for both analysis and formatting.
+
+- type: llm
+
+````prompt
+Analyze these two datasets and identify cross-references:
+
+Service1: ${fetch-service1.result}
+
+Service2: ${fetch-service2.result}
+
+Find relationships, correlations, and connections. Format as a professional report with markdown headers and sections.
+````
+
+### send-report
+
+Email the analysis report to the recipient.
+
+- type: mcp-email-SEND
+- to: ${recipient_email}
+- subject: Data Analysis Report
+- body: ${analyze-and-format.response}
+`````
+
+**Note**: `analyze-and-format` combines analysis and formatting in one LLM call - don't use separate LLM nodes when one can do both. If you just need to concatenate data with a fixed structure, use code node or templates instead.
+
+### MCP/HTTP Reality vs Documentation
+
+**Documentation lies. Testing reveals truth.**
+
+| What Docs Say | What You Get | How to Handle |
+|---------------|--------------|---------------|
+| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test structure with pflow probe |
+| "Optional parameter" | Actually required or fails | Always provide it |
+| "Returns array" | `{"items": [...], "metadata": {...}}` | Access via `.items` |
+| "String parameter" | Needs specific format | Test with examples |
+| "Async endpoint" | Might support Prefer:wait | Try header first |
+| "Returns immediately" | Actually takes 5-10 seconds | Add timeout handling |
+
+### When to Probe MCP Nodes
+
+**Probe when** you need specific nested fields like `${node.result.data.items[0].id}`.
+**Skip probing when** you're passing `${node.result}` wholesale to the next step — you don't need to know the structure.
+
+See `pflow probe --help` for output format and usage.
+
+**MCP Testing Protocol:**
+```bash
+# 1. Inform user
+echo "I need to test access to [service]. This will [describe effect]."
+
+# 2. Ask permission if side effects
+# If has_side_effects: "This test will [visible effect]. Should I proceed?"
+
+# 3. Probe with actual data
+pflow probe mcp-{mcp-service-name}-{mcp-tool-name} \
+  param1="your_actual_format_here"
+
+# 4. Copy template paths from output into your workflow
+```
+
+### MCP Meta-Discovery Process
+
+**Before testing individual MCP tools, always check for helpers:**
+
+```bash
+# 1. Find all tools from a service
+pflow mcp list "slack"
+
+# Returns something like:
+# mcp-slack-SEND_MESSAGE
+# mcp-slack-FETCH_HISTORY
+# mcp-slack-LIST_CHANNELS
+# mcp-slack-GET_CHANNEL_INFO  ← Meta tool!
+
+# 2. Use meta tools to understand
+pflow probe mcp-slack-GET_CHANNEL_INFO \
+  channel="general"
+
+# 3. Now you know the actual structure for that service
+```
+
+### MCP Structure Discovery Process
+
+**Often the documentation says "Output: result (Any)" - here's how to find the ACTUAL structure:**
+
+```bash
+# Probe with minimal real data
+pflow probe mcp-example-service-get-data query="test_value"
+
+# Copy the exact template paths from the output and use them in your workflow:
+# If probe shows: ${result.data.items}
+# Then use: ${node.result.data.items} in your workflow templates
+```
+
+**Never assume. Always discover.**
+
+**MCP "JSON string" parameters**: When registry output shows a parameter as "JSON string" (like `body_schema`, `query_params`), still use object syntax. pflow auto-serializes with proper escaping. Manual `'{"key": "${val}"}'` breaks on newlines/quotes in template values.
+
+---
+
+# Prompt Caching
+
+Use prompt caching when one workflow sends the same long context, rubric,
+instructions, source text, or parent value to multiple LLM calls or batch
+items.
+
+This guide covers LLM provider prompt caching:
+
+- `## Cache` declares reusable prompt prefix chunks once per workflow.
+- `prompt_cache: [...]` tells an LLM node which declared chunks to send before
+  its prompt.
+- `prewarm: true` lets batch nodes write the shared prefix once before parallel
+  reads.
+
+This is separate from pflow's local memo cache. `--no-cache` only bypasses
+local memo-cache reads; it does not disable `## Cache`, `prompt_cache:`, or
+`prewarm:`.
+
+## First Action
+
+Before editing cache fields, run:
+
+```bash
+pflow analyze-cache workflow.pflow.md
+```
+
+Read `## Recommended actions` first. It tells you exactly what to edit:
+
+- add or extend `## Cache`
+- add missing `prompt_cache: [...]`
+- add `prewarm: true` for cacheable batches
+- move stable prompt text before per-item data
+- run per-child analysis commands for sub-workflows
+
+Useful variants:
+
+```bash
+pflow analyze-cache workflow.pflow.md --no-trace-autoload # static analysis only
+pflow analyze-cache workflow.pflow.md --from-trace <path> # inspect a specific run
+pflow analyze-cache workflow.pflow.md --format=json       # machine-readable output
+```
+
+Trace files live at
+`~/.pflow/debug/workflow-trace-<hash>-<name>-<timestamp>.json`. The default
+command auto-loads the most recent matching trace when one exists.
+
+`pflow run --dry-run` emits a one-line prompt-cache nudge when actionable
+opportunities exist. It stays silent when the workflow already looks optimal.
+
+## Minimal Pattern
+
+````markdown
+# Song Creator
+
+## Inputs
+
+### concept
+
+The song concept to build around.
+
+- type: string
+
+## Cache
+
+- ttl: 5m
+
+```cache
+The concept we are building this song around:
+
+${concept}
+
+The creative direction decisions:
+
+${creative-direction.response}
+```
+
+## Steps
+
+### creative-direction
+
+Decide creative direction from the cached concept.
+
+- type: llm
+- prompt_cache: [concept]
+- prompt: "Pick a creative direction for the cached concept."
+
+### write-lyrics
+
+Write lyrics using the cached concept and cached creative direction.
+
+- type: llm
+- prompt_cache: [concept, creative-direction.response]
+- prompt: "Write lyrics from the cached concept and creative direction."
+````
+
+Important: do not repeat cached values in the prompt body. If
+`prompt_cache: [concept]` sends `${concept}` as cached prefix text, then
+`prompt:` should refer to the cached concept in prose, not include
+`${concept}` again.
+
+## Rules
+
+`prompt_cache: [...]` items must match `## Cache` declaration order. This is a
+hard validation error:
+
+````markdown
+## Cache
+
+```cache
+First:
+${a}
+
+Second:
+${b}
+```
+
+### use-cache
+- type: llm
+- prompt_cache: [b, a]  # wrong: out of order
+````
+
+Fix by reordering the node field:
+
+```markdown
+- prompt_cache: [a, b]
+```
+
+Keep stable bytes first. Provider prompt caches work on shared prefixes, so
+dynamic per-item text should come after stable instructions and cached chunks.
+
+## TTL
+
+Default TTL is 5 minutes. Allowed values are exactly `5m` and `1h`; other TTLs
+are rejected. Omit `ttl` for the default `5m` behavior.
+
+````markdown
+## Cache
+
+- ttl: 1h
+
+```cache
+...
+```
+````
+
+Use `1h` when later calls or reruns will read the same prefix within an hour.
+Longer TTL writes cost more, so prefer the analyzer recommendation when unsure.
+
+## Batch Nodes
+
+For `type: llm` nodes with `batch:`, add `prewarm: true` when the analyzer
+recommends it:
+
+```markdown
+### score-each-chorus
+
+Score every chorus against the rubric.
+
+- type: llm
+- prewarm: true
+- prompt: |
+    Use this rubric:
+    ${rubric}
+
+    Score this chorus:
+    ${item.text}
+- batch:
+    items: ${choruses}
+    parallel: true
+```
+
+Without `prewarm`, parallel batch items can all try to write the same provider
+cache prefix at once. With `prewarm`, the first item writes the prefix, then
+the remaining items fan out as reads.
+
+## Python-Assembled Prompts
+
+Prompt caching works best when stable prompt text is visible in the LLM node's
+`prompt:` field. If a code node builds a complete prompt string and the LLM
+node only says `prompt: ${item.prompt}`, the analyzer cannot inspect the stable
+prefix.
+
+Opaque shape:
+
+````markdown
+### prepare-items
+
+Assemble full per-item prompts in code.
+
+- type: code
+- inputs:
+    rubric: ${rubric}
+    dataset: ${dataset}
+```python code
+rubric: str
+dataset: list
+result: list = []
+for text in dataset:
+    result.append({"prompt": f"{rubric}\n\nProcess this: {text}"})
+```
+
+### process-items
+
+Process prompts assembled by the code node.
+
+- type: llm
+- batch:
+    items: ${prepare-items.result}
+- prompt: ${item.prompt}
+````
+
+Prefer this shape when each item shares the same prefix:
+
+````markdown
+### prepare-items
+
+Return only per-item dynamic data.
+
+- type: code
+- inputs:
+    dataset: ${dataset}
+```python code
+dataset: list
+result: list = [{"input_text": text} for text in dataset]
+```
+
+### process-items
+
+Inline the stable prompt prefix in the LLM node.
+
+- type: llm
+- batch:
+    items: ${prepare-items.result}
+- prompt: |
+    Use this rubric:
+    ${rubric}
+
+    Process this:
+    ${item.input_text}
+````
+
+If each per-item prompt has different structure, different ordering, or
+branch-specific sections, keep the code-node assembly. Provider prompt caching
+needs byte-identical prefixes; not every prompt shape should be refactored.
+
+## Sub-Workflows
+
+Each `.pflow.md` declares its own `## Cache` block. Sub-workflows do not
+inherit the parent's cache declaration.
+
+When a child workflow reuses an input across multiple LLM nodes:
+
+1. Open the child workflow.
+2. Add that input to the child's own `## Cache`.
+3. Add the chunk name to the child LLM nodes' `prompt_cache: [...]`.
+4. Run the per-child command printed by `pflow analyze-cache`.
+
+If both parent and child cache the same value, use the same prose label around
+that value when practical. Matching prose, exact model, and prefix order can
+help provider cache reads across files. Different variable names alone are not
+a reason to edit; the provider sees rendered text, not pflow variable names.
+
+## Provider Notes
+
+- Anthropic: cache content must cross the model's minimum token threshold. If
+  a declared prefix is too small, add more stable context, switch only if the
+  analyzer recommends it, or leave it uncached.
+- OpenAI: prompt caching is automatic for long prefixes. pflow still uses
+  `prompt_cache:` to keep provider routing and retention aligned.
+- Gemini: cache reads are the clearest proof that caching is working. Creation
+  telemetry can be absent even when later calls read from the cache.
+
+## Common Analyzer Findings
+
+When the analyzer names one of these findings, apply the corresponding edit:
+
+| Finding | What to do |
+|---|---|
+| `cache.shared-context-undeclared` | Add the suggested `## Cache` block or chunk. |
+| `cache.prompt-cache-incomplete` | Add the missing chunk names to the listed LLM nodes. |
+| `cache.sub-workflow-cache-undeclared` | Edit the child workflow; add its own `## Cache` and `prompt_cache:` entries. |
+| `cache.batch-prewarm-recommended` | Add `prewarm: true` to the batch LLM node. |
+| `cache.dynamic-before-static` | Move stable instructions/context before dynamic `${...}` text. |
+| `cache.below-min-tokens` | Include more stable context or leave that small prefix uncached. |
+| `cache.opaque-prompt` | Inline the stable prompt prefix into the LLM node when the prompt shape is uniform. |
+| `cache.system-prompts-fragment-cache` | Keep `system:` uniform across nodes that should share the same cached prefix. |
+| `cache.prompt-body-duplicates-cache` | Remove the duplicated value from `prompt:`; it already arrives through `prompt_cache:`. |
+| `cache.prompt-body-shadows-cache` | Rewrite the prompt so cached content is not repeated by a parent/sub-path reference. |
+
+## Other Findings You May See
+
+These IDs can appear in validator output, trace-mode checks, or less common
+cache-shape advisories:
+
+| Finding | What to do |
+|---|---|
+| `cache.order-mismatch` | Reorder `prompt_cache: [...]` to match the order of chunks in `## Cache`. |
+| `cache.invalid-on-non-llm` | Remove `prompt_cache:` or `prewarm:` from non-LLM nodes; those fields only apply to `type: llm`. |
+| `cache.unused-chunk` | Remove the unused chunk from `## Cache`, or add it to a node's `prompt_cache: [...]` list. |
+| `cache.padding-advisory` | Extend the node's `prompt_cache: [...]` list to include the earlier chunks the analyzer suggests. |
+| `cache.prewarm-no-prefix` | Move stable instructions before the first `${item...}` reference, or remove `prewarm: true`. |
+| `cache.consolidate-to-root-recommended` | Cache the larger root value instead of small sub-path chunks when the sub-paths are below the provider minimum. |
+| `cache.heterogeneous-models-fragment-cache` | Use one exact model for nodes that should share a cache, or accept that each model writes its own cache. |
+| `cache.first-call-write-penalty` | Remove `prompt_cache:` from one-off calls when no later call reads that cache. |
+| `cache.cross-workflow-prose-mismatch` | Use the same prose around the cached value in both workflows when you want cross-file cache reuse. |
+| `cache.discrepancy` | In trace mode, compare the reported cause: TTL expiry, skipped chunks, or runtime value changes. |
+
+`cache.cross-workflow-rename-detected` is informational. Different variable
+names alone do not break provider cache hits; edit names only when it improves
+workflow readability.
+
+The analyzer output is the source of truth for what to edit. Prefer its
+paste-ready recommendations over manually guessing chunk names or order.
+
+---
+
+# Shell Node
+
+**Use for**: External tools and side effects — any program where the exit code or side effect is the point.
+
+- CLI tools: git, curl, docker, ffmpeg, terraform, npm
+- System commands: mkdir, chmod, which
+- Binary/streaming data: use `shell` with `curl`
+- Use macOS-compatible (BSD) commands, not GNU-specific extensions
+- Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
+- **Warning sign**: Long chains of `sed`, `awk`, `jq`, `tr`, `grep` piped together → use `code` node instead (more readable, portable, debuggable)
+- **Don't use shell for data pass-through**: `jq '.'` before an LLM is unnecessary — pass `${node.response}` directly. Templates handle JSON natively.
+
+### Node Creation Pattern
+
+```markdown
+### list-recent-files
+
+List recently modified files. Note: `$var` = shell variable, `${var}` = pflow template.
+
+- type: shell
+
+```shell command
+find . -maxdepth ${depth} -type f -newer <TMP> 2>/dev/null | head -20
+```
+```
+
+### Templates in Shell Commands
+
+**In shell commands** — pflow variables resolve before the shell runs. Use a code block for multi-line or complex commands:
+
+````markdown
+### run-pipeline
+
+Creates the output directory, then pulls items from the API into it.
+
+- type: shell
+
+```shell command
+mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
+```
+````
+
+### Testing Shell Pipelines
+
+**Testing shell pipelines independently:**
+When building shell commands with piped CLI tools (e.g., git log | head, curl | grep), test the complete pipeline outside pflow first:
+```bash
+# Test with actual data source before integrating:
+curl -s "https://example.com/api" | head -20
+
+# Once verified, integrate into workflow
+```
+
+**Pipeline exit codes**: Only the last command's exit code is captured. In `grep | sed`, if sed fails you see sed's stderr, but can't tell if grep found matches or not.
+
+---
+
+### Parameters
+
+- `stdin: any` - Optional input data for the command (dict/list auto-serialized to JSON)
+- `command: str` - Shell command to execute (required)
+- `cwd: str` - Working directory (optional, defaults to current)
+- `env: dict` - Additional environment variables (optional)
+- `timeout: int` - Max execution time in seconds (optional, default 30)
+- `ignore_errors: bool` - Continue on non-zero exit (optional, default false)
+- `strip_newline: bool` - Strip trailing newlines from stdout only (optional, default true). stderr is never stripped.
+
+### Outputs
+
+- `stdout: str` - Command standard output (text or base64-encoded binary)
+- `stdout_is_binary: bool` - True if stdout is binary data
+- `stderr: str` - Command error output (text or base64-encoded binary)
+- `stderr_is_binary: bool` - True if stderr is binary data
+- `exit_code: int` - Process exit code
+
+---
+
+# Sub-Workflows
+
+**Use when**: Reusable sub-tasks across workflows, or decomposing complex workflows — "reuse this", "same validation as X".
+
+- Child inputs are passed via the top-level `inputs:` dict on the workflow node
+- Child workflow must declare `## Inputs` (for required params) and `## Outputs` (for exposed results)
+- `workflow:` accepts a file path (`./child.pflow.md`), a saved workflow name (`my-saved-workflow`), or a template that resolves to one at runtime (see Dynamic Child Selection below)
+- Nesting depth limited to 10 levels (configurable via `max_depth` param)
+- Parent→child boundary is strict — every key in `inputs:` must be declared on the child's `## Inputs`; typos are rejected at parse time
+
+### When to Use Sub-Workflows
+
+- Common sub-tasks are reused across multiple parent workflows
+- A complex workflow benefits from decomposition into self-contained phases
+- A sub-task needs to be executable both standalone AND as part of a parent
+- You want to test sub-workflows independently but run them together as a unit
+
+**Example**: "Fetch data, validate it (reusable), transform it, validate output (same validation reused)"
+→ Validation is a NESTED `workflow` node, called twice in the parent
+
+### Pattern: Sub-Workflow Composition
+
+**Child workflow** (`to-uppercase.pflow.md`):
+````markdown
+# To Uppercase
+
+Convert text to uppercase.
+
+## Inputs
+
+### text
+
+The text to convert.
+
+- type: string
+
+## Outputs
+
+### result
+
+The uppercased text.
+
+- source: ${transform.stdout}
+
+## Steps
+
+### transform
+
+Uppercase via `tr`.
+
+- type: shell
+- command: echo "${text}" | tr '[:lower:]' '[:upper:]'
+````
+
+**Parent workflow** calling the child:
+````markdown
+## Steps
+
+### process_title
+
+Convert the title to uppercase using the shared sub-workflow.
+
+- type: workflow
+- workflow: ./to-uppercase.pflow.md
+- inputs:
+    text: ${title}
+
+### process_body
+
+Convert the body to uppercase using the shared sub-workflow.
+
+- type: workflow
+- workflow: ./to-uppercase.pflow.md
+- inputs:
+    text: ${body}
+
+### combine
+
+Combine the processed title and body into a single output.
+
+- type: shell
+- command: printf "Title: %s\nBody: %s" "${process_title.result}" "${process_body.result}"
+````
+
+### Dynamic Child Selection (Template References)
+
+`workflow:` can be a template (`${var}`) that resolves at runtime — from CLI input, an upstream node's output, or a batch item field. The child is loaded and validated when the parent node executes, not at parent-parse time.
+
+**Use when**: the same parent node needs to dispatch to different children per batch item or per run.
+
+**Example** — fan out over three review aspects, each specifying which child workflow to run:
+
+`````markdown
+### reviews
+
+Review the combined analysis from three critical perspectives. Each batch item picks which child workflow to run.
+
+- type: workflow
+- workflow: ${item.workflow}
+- inputs:
+    summary: ${combine.result}
+    aspect: ${item.aspect}
+
+```yaml batch
+items:
+  - aspect: accuracy
+    workflow: ./review-aspect.pflow.md
+  - aspect: completeness
+    workflow: ./review-aspect.pflow.md
+  - aspect: clarity
+    workflow: ./review-aspect.pflow.md
+parallel: true
+```
+`````
+
+**Trade-off**: invalid children surface as runtime compile errors, not at `--validate-only`. Prefer the static-path form when the child is known at authoring time; reserve the template form for genuine runtime dispatch.
+
+### Pattern: Heterogeneous Batch over Sub-Workflows
+
+Parallel fan-out over N *different* child workflows, each with its own inputs.
+Per-item `inputs: ${item.inputs}` lets each child receive exactly the values it declares.
+
+````markdown
+### reviews
+
+Parallel review fan-out — each item names a different child and supplies
+that child's exact inputs.
+
+- type: workflow
+- workflow: ${item.workflow}
+- inputs: ${item.inputs}
+
+```yaml batch
+items:
+  - workflow: ./reviews/review-narrative.pflow.md
+    inputs:
+      lyrics: ${write-lyrics.response}
+      song_architecture: ${song-architecture.response}
+  - workflow: ./reviews/review-imagery.pflow.md
+    inputs:
+      lyrics: ${write-lyrics.response}
+      creative_direction: ${creative-direction.response}
+  - workflow: ./reviews/review-emotional.pflow.md
+    inputs:
+      lyrics: ${write-lyrics.response}
+      concept_brief: ${concept_brief}
+parallel: true
+```
+````
+
+Each child declares only the inputs it uses; nothing is "extra" from any
+child's perspective. Reading one item tells you exactly what that child
+receives. Typos in any item's `inputs:` fail at parse time with a fuzzy
+suggestion — there's no silent drop.

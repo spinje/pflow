@@ -1,0 +1,279 @@
+{
+  "format_version": "4.1",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 2,
+    "heuristic": 0,
+    "total": 2
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "no_trace",
+      "excluded_nodes": []
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 2,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 1,
+    "warnings_count": 0,
+    "info_count": 1,
+    "total_llm_nodes_estimated": 2,
+    "total_llm_invocations_estimated": 2,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 3208,
+    "total_cacheable_tokens_estimated": 3202,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "ir_default_model": null,
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+        "node_path": "summarize",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+        "node_path": "translate",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 0,
+    "sub_workflow_llm_node_count": 2,
+    "sub_workflow_rollup": {
+      "workflows_included": [
+        "<BASELINE_CASE_DIR>/sub/child.pflow.md"
+      ],
+      "max_depth_walked": 1,
+      "truncated": false,
+      "per_workflow": [
+        {
+          "workflow_path": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+          "called_by_node_id": "child",
+          "llm_node_count": 2,
+          "actually_paid_usd": null,
+          "no_cache_hypothetical_usd": null,
+          "first_run_with_cache_hypothetical_usd": null,
+          "rerun_within_ttl_hypothetical_usd": null
+        }
+      ]
+    },
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>"
+  },
+  "blocking_errors": [],
+  "other_blocking_errors": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.sub-workflow-cache-undeclared",
+      "node_id": null,
+      "estimated_savings_usd": 0.008645400000000001,
+      "scope_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+      "suggestions": [
+        "Edit: <BASELINE_CASE_DIR>/sub/child.pflow.md"
+      ]
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "summarize",
+      "workflow_path": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1605,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 1601,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "translate",
+      "workflow_path": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 1603,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 1601,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 1,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": [
+      {
+        "severity": "info",
+        "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+        "source": "cache_analyzer",
+        "id": "cache.sub-workflow-cache-undeclared",
+        "title": "Cache Advisory",
+        "suggestions": [
+          "Edit: <BASELINE_CASE_DIR>/sub/child.pflow.md"
+        ],
+        "context": {
+          "affected_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+          "child_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+          "child_workflow_basename": "child.pflow.md",
+          "affected_input_count": 1,
+          "inputs": [
+            {
+              "child_input_name": "article",
+              "parent_value_expr": "article",
+              "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+              "parent_node_id": "child",
+              "line_in_parent": 14,
+              "tokens_estimated": 1601,
+              "consumer_node_ids": [
+                "summarize",
+                "translate"
+              ],
+              "consumer_node_ids_csv": "`summarize`, `translate`",
+              "template_var_refs_by_node": {
+                "summarize": [
+                  "article"
+                ],
+                "translate": [
+                  "article"
+                ]
+              }
+            }
+          ],
+          "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+          "case": "actionable",
+          "savings_usd": 0.008645400000000001,
+          "category": "cache_advisory",
+          "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md]"
+        },
+        "see_also": [
+          "prompt-caching"
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "severity": "info",
+      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+      "source": "cache_analyzer",
+      "id": "cache.sub-workflow-cache-undeclared",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Edit: <BASELINE_CASE_DIR>/sub/child.pflow.md"
+      ],
+      "context": {
+        "affected_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+        "child_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
+        "child_workflow_basename": "child.pflow.md",
+        "affected_input_count": 1,
+        "inputs": [
+          {
+            "child_input_name": "article",
+            "parent_value_expr": "article",
+            "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+            "parent_node_id": "child",
+            "line_in_parent": 14,
+            "tokens_estimated": 1601,
+            "consumer_node_ids": [
+              "summarize",
+              "translate"
+            ],
+            "consumer_node_ids_csv": "`summarize`, `translate`",
+            "template_var_refs_by_node": {
+              "summarize": [
+                "article"
+              ],
+              "translate": [
+                "article"
+              ]
+            }
+          }
+        ],
+        "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+        "case": "actionable",
+        "savings_usd": 0.008645400000000001,
+        "category": "cache_advisory",
+        "path": "workflows[path=<BASELINE_CASE_DIR>/sub/child.pflow.md]"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    }
+  ],
+  "notes": [
+    "Cross-workflow projections require trace evidence to populate per-call rows. Recommended actions still surface; run with `--from-trace <path>` for per-call attribution."
+  ]
+}

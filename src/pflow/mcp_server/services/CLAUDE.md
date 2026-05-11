@@ -21,7 +21,7 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 
 - **BaseService** — Pattern enforcement via `@ensure_stateless` decorator
 - **DiscoveryService** — Wraps `find_workflow()` and `find_components()` plain functions
-- **ExecutionService** — Execute, validate, plan, save workflows + run registry nodes (largest service)
+- **ExecutionService** — Execute, validate, plan, save, analyze-cache workflows + run registry nodes (largest service). `analyze_cache(workflow, parameters)` mirrors `pflow analyze-cache --format=json`; returns the `render_json(analyze(...))` payload as a dict.
 - **FieldService** — Read cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. **Not exported from `__init__.py`** — imported directly in execution_tools.py.
 - **RegistryService** — Node describe, list/search via `build_component_context()` and `Registry.search()`
 - **WorkflowService** — Workflow list/describe with shared formatters, "did you mean" suggestions

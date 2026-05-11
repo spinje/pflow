@@ -390,17 +390,24 @@ Caching is automatic — unchanged nodes return instantly on re-run. Use this:
 - Edit a prompt or parameter → re-run → only changed nodes re-execute
 - `--dry-run` — preview plan + historical cost/duration without executing (expensive LLM runs, verifying what an edit invalidated)
 - `--only <node>` — run just that node (upstream from cache, downstream skipped)
-- `--no-cache` — force fresh execution (side-effect nodes, external API changes)
+- `--no-cache` — bypass pflow memo-cache reads; provider prompt caching may still apply
 - `cache: false` on a node — permanently opt out for nodes reading runtime state (date, git branch, env vars)
 - `pflow report` — when errors aren't enough, inspect per-node resolved inputs and outputs
+
+Provider prompt caching: if many LLM calls reuse the same long context, run
+`pflow analyze-cache workflow.pflow.md`, then follow `pflow guide prompt-caching`.
 
 ```bash
 # Re-run just one node (upstream cached, downstream skipped)
 pflow ./workflow.pflow.md --only node-name
 
-# Force fresh execution (bypass all caches)
+# Bypass pflow memo-cache reads; provider prompt caching may still apply
 pflow ./workflow.pflow.md --no-cache
 ```
+
+`--no-cache` still writes memo results for later runs. It does not disable LLM
+provider prompt/context caching declared with `## Cache` / `prompt_cache:`, OpenAI
+automatic prompt caching, or Gemini implicit caching.
 
 ### Saving (Optional)
 

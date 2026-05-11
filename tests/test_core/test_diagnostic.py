@@ -9,6 +9,7 @@ from pflow.core.diagnostic import (
     Severity,
     deduplicate_diagnostics,
     exception_to_diagnostics,
+    normalize_runtime_warning,
 )
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.exceptions import (
@@ -96,6 +97,26 @@ def test_to_dict_and_to_display_dict_preserve_context_shape() -> None:
         "category": "api_validation",
         "raw_response": {"api_key": "secret", "error": "bad"},
     }
+
+
+def test_normalize_runtime_warning_preserves_diagnostic_shape() -> None:
+    diagnostic = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.below-min-tokens",
+        node_id="draft",
+        message="draft: declared cache did not fire",
+        suggestions=["Increase cache content above 1024 tokens."],
+        context={"category": "cache_warning", "path": "nodes[id=draft].prompt_cache"},
+    )
+
+    message, context = normalize_runtime_warning(diagnostic)
+
+    assert message == "draft: declared cache did not fire"
+    assert context["id"] == "cache.below-min-tokens"
+    assert context["severity"] == "warning"
+    assert context["suggestions"] == ["Increase cache content above 1024 tokens."]
+    assert context["category"] == "cache_warning"
 
 
 def test_format_diagnostic_renders_warning_with_suggestion() -> None:

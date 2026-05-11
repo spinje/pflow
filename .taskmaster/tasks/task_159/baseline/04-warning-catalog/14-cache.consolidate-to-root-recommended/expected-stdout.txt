@@ -1,0 +1,48 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/04-warning-catalog/14-cache.consolidate-to-root-recommended/workflow.pflow.md
+
+  Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  3 recommended actions
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/04-warning-catalog/14-cache.consolidate-to-root-recommended/workflow.pflow.md concept=<value>
+
+## Recommended actions (3)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Cache content below provider minimum on writer-a                    savings unavailable
+     writer-a
+     writer-a: declared cache content is ~4 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider
+     → Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from writer-a since the cache won't fire as declared.
+
+  2. Cache content below provider minimum on writer-b                    savings unavailable
+     writer-b
+     writer-b: declared cache content is ~4 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider
+     → Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from writer-b since the cache won't fire as declared.
+
+  3. Consolidate sub-paths of `concept` to root in ## Cache              savings unavailable
+     workflow.pflow.md
+     Sub-paths of `concept` (concept.core_idea, concept.title) are individually below anthropic/claude-sonnet-4-5's min-cache threshold (1024 tokens, max sub-path ~2); consolidating to `${concept}` (~6017 tokens) would cross the threshold and actually cache. Sub-path markers silently no-op at the provider as declared.
+     → Replace [concept.core_idea, concept.title] with [concept] in the ## Cache block and in every node's `prompt_cache:` list that currently references any of those sub-paths. Trade-off: each call sends the entire `concept` value (~6017 tokens) instead of just the sub-paths it references; cache write costs 1.25× input rate, reads cost 0.1×, so consolidation pays off after the first read.
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+
+  node      model                        input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  writer-b  anthropic/claude-sonnet-4-5      9           —            4    44%      —  below-min-tokens
+  writer-a  anthropic/claude-sonnet-4-5      7           —            4    57%      —  below-min-tokens
+
+  Token estimate confidence:
+    · Projected input tokens for: writer-b, writer-a.

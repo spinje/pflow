@@ -18,7 +18,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 | `registry_search_formatter` | Node search results | str |
 | `history_formatter` | Execution history (compact/detailed) | str or None |
 | `field_output_formatter` | Field retrieval results (read-fields) | str or dict |
-| `output_utils` | Unified output auto-detection (shared by CLI + JSON/MCP) | tuple |
+| `output_utils` | Full-run auto-detection and target-scoped `--only` output selection | tuple |
 
 ## Rules (all enforced by tests)
 
@@ -40,7 +40,9 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 
 **history_formatter** expects FLAT metadata dicts with execution fields at top level (`execution_count`, `last_execution_timestamp`, etc.) — NOT wrapped in `rich_metadata`. Silently returns `None` if fields aren't found, which can be hard to debug.
 
-**success_formatter** auto-detects output when no declared outputs via `find_auto_output()` in `output_utils.py` (shared with CLI text path). Priority: `result > response > output > text > data > stdout`. Root first, then namespaces (last occurrence wins — most downstream node). Skips `_`/`__` prefixed keys and invalid values (None, empty strings). Last-key fallback for non-standard keys. When `--only` is active: skips declared outputs (downstream nodes didn't execute), relies on auto-detection. JSON `execution` dict includes `cache_hits`, `only_node`, `nodes_skipped` fields when applicable. MCP text output filters `not_executed` steps and shows `⤷ Stopped after 'X' (--only)` summary.
+**success_formatter** auto-detects output when full runs have no declared outputs via `find_auto_output()` in `output_utils.py` (shared with CLI text path). Priority: `result > response > output > text > data > stdout`. Root first, then namespaces (last occurrence wins — most downstream node). Skips `_`/`__` prefixed keys and invalid values (None, empty strings). Last-key fallback for non-standard keys.
+
+**`--only` output routing** uses `find_only_output(shared, only_node)`, not `find_auto_output()`. Declared full-run outputs are skipped in text and JSON when `--only` is active and no `output_key` was requested. Flat targets unwrap priority keys from `shared[target]`; dotted targets return the root sub-workflow namespace (`shared[root]`). JSON `execution` dict includes `cache_hits`, `only_node`, `nodes_skipped` fields when applicable. MCP text output filters `not_executed` steps and shows `⤷ Stopped after 'X' (--only)` summary.
 
 ## Dependencies
 

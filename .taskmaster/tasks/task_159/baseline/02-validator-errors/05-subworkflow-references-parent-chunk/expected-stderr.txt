@@ -1,0 +1,21 @@
+Executing workflow (1 nodes):
+WARNING: Found 1 unused inputs
+❌ Workflow execution failed (2 errors, 1 warning)
+
+Error 1: Validation Error
+
+In step 'child' sub-workflow: Node 'summarize' references undeclared cache chunk 'article' in prompt_cache:.
+  At: node 'summarize', nodes[id=summarize].prompt_cache
+  Sub-workflow: ./sub/child.pflow.md
+
+Error 2: Validation Error
+
+In step 'child' sub-workflow: Declared input(s) never used as template variable: article
+  At: node 'child', inputs
+  Sub-workflow: ./sub/child.pflow.md
+
+  → Remove unused declarations from '## Inputs' or reference them in a node parameter.
+
+⚠️ Warnings:
+  ⚠ [cache.unused-chunk] Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.
+    → Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`.

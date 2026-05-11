@@ -80,6 +80,21 @@ class PflowCLI(click.Group):
         # format_options on Group also calls format_commands internally
         self.format_options(ctx, formatter)
 
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        commands: list[tuple[str, click.Command]] = []
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is None or cmd.hidden:
+                continue
+            commands.append((subcommand, cmd))
+
+        if not commands:
+            return
+
+        rows = [(subcommand, cmd.get_short_help_str(limit=10_000)) for subcommand, cmd in commands]
+        with formatter.section("Commands"):
+            formatter.write_dl(rows)
+
 
 def _setup_signals() -> None:
     """Configure signal handlers for all commands."""
@@ -118,6 +133,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
         ctx.exit(0)
 
 
+from pflow.cli.commands.analyze_cache import analyze_cache  # noqa: E402
 from pflow.cli.commands.describe import describe_cmd  # noqa: E402
 from pflow.cli.commands.find import find_cmd  # noqa: E402
 from pflow.cli.commands.guide import guide_cmd  # noqa: E402
@@ -147,6 +163,7 @@ cli.add_command(read_fields)
 cli.add_command(skill)
 cli.add_command(report_cmd)
 cli.add_command(visualize)
+cli.add_command(analyze_cache)
 
 
 def cli_main() -> None:

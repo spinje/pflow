@@ -1,7 +1,9 @@
 """Root-level test configuration and fixtures."""
 
+import copy
 import os
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -88,7 +90,7 @@ def precomputed_core_registry_nodes(tmp_path_factory):
     return raw.get("nodes", raw)
 
 
-def _create_registry_patcher(test_registry_path, precomputed_nodes=None) -> callable:
+def _create_registry_patcher(test_registry_path) -> callable:
     """Create a patcher function for Registry initialization.
 
     Args:
@@ -113,16 +115,70 @@ def _create_registry_patcher(test_registry_path, precomputed_nodes=None) -> call
             if _should_auto_load(p, test_registry_path, _initializing):
                 _initializing.add(p)
                 try:
-                    if precomputed_nodes is not None:
-                        self.save(precomputed_nodes)
-                    else:
-                        self.load()
+                    self.load()
                 finally:
                     _initializing.discard(p)
 
         return patched_registry_init
 
     return create_patched_init
+
+
+def _patch_registry_load(monkeypatch, Registry, test_registry_path, precomputed_nodes) -> None:
+    """Serve the default isolated test registry from memory.
+
+    Most tests only need core node metadata to validate/compile workflows. Writing
+    the same ~48K registry JSON into hundreds of per-test ``.pflow`` directories
+    creates a lot of filesystem churn on macOS. Explicit registry-path tests are
+    left untouched, and if a test writes the default registry path itself we fall
+    back to the real disk-backed ``Registry.load`` behavior.
+    """
+    original_load = Registry.load
+
+    def _filter_nodes(self, nodes, include_filtered: bool):
+        if include_filtered:
+            return nodes
+
+        filtered_nodes = {}
+        for node_name, node_data in nodes.items():
+            module_path = node_data.get("module_path") or node_data.get("module") or node_data.get("file_path", "")
+            if self.settings_manager.should_include_node(node_name, module_path):
+                filtered_nodes[node_name] = node_data
+        return filtered_nodes
+
+    def patched_load(self, include_filtered: bool = False):
+        registry_path = Path(self.registry_path)
+        if registry_path == test_registry_path and not registry_path.exists():
+            nodes = copy.deepcopy(precomputed_nodes)
+            self._cached_nodes = nodes
+            self._registry_version = self._get_version()
+            self._registry_last_scan = self._now_iso()
+            return _filter_nodes(self, nodes, include_filtered)
+
+        return original_load(self, include_filtered=include_filtered)
+
+    monkeypatch.setattr(Registry, "load", patched_load)
+
+
+@pytest.fixture(autouse=True, scope="function")
+def disable_trace_file_writes_by_default(monkeypatch, request):
+    """Avoid trace-file I/O unless a test explicitly opts in.
+
+    Runtime tests still get an in-memory ``WorkflowTraceCollector`` via
+    ``ExecutionResult.trace``. Only the expensive side effect of writing JSON
+    into ``~/.pflow/debug`` is disabled by default.
+    """
+    if request.node.get_closest_marker("trace_files"):
+        yield
+        return
+
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    def _skip_save_to_file(_self):
+        return None
+
+    monkeypatch.setattr(WorkflowTraceCollector, "save_to_file", _skip_save_to_file)
+    yield
 
 
 def _get_registry_path(args, kwargs, default_path):
@@ -241,6 +297,22 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
     test_pflow_dir = tmp_path / ".pflow"
     test_pflow_dir.mkdir(parents=True, exist_ok=True)
 
+    # Redirect both ``Path.home()`` calls AND ``$HOME``-driven path
+    # resolution (``Path("~/...").expanduser()``, ``os.path.expanduser``,
+    # subprocess env inheritance) at ``tmp_path``. The two are NOT
+    # interchangeable per ``tests/CLAUDE.md`` — production code uses both
+    # idioms (``Path.home()`` in ``runtime/workflow_trace.py``,
+    # ``runtime/cache.py``, ``cli/commands/report.py``,
+    # ``core/cache_analysis/analyze.py``; ``Path.expanduser()`` in
+    # ``mcp/manager.py``, ``nodes/mcp/node.py``,
+    # ``core/workflow/skill_service.py``). Patching both closes the
+    # pre-existing leak where ``WorkflowTraceCollector.save_to_file`` and
+    # ``_autoload_trace`` read/wrote the user's real ``~/.pflow/debug/``
+    # during tests — which otherwise produces O(N-real-traces)
+    # ``analyze-cache`` test slowdown on developer machines.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
     # Create temporary paths for each component
     test_registry_path = test_pflow_dir / "registry.json"
     test_settings_path = test_pflow_dir / "settings.json"
@@ -251,9 +323,10 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
     Registry, SettingsManager, MCPServerManager, WorkflowManager = _import_test_modules()
 
     # Patch Registry to use temp path by default
-    registry_patcher = _create_registry_patcher(test_registry_path, precomputed_core_registry_nodes)
+    registry_patcher = _create_registry_patcher(test_registry_path)
     patched_registry_init = registry_patcher(Registry.__init__)
     monkeypatch.setattr(Registry, "__init__", patched_registry_init)
+    _patch_registry_load(monkeypatch, Registry, test_registry_path, precomputed_core_registry_nodes)
 
     # Patch SettingsManager, MCPServerManager, and WorkflowManager if available
     _patch_settings_manager(monkeypatch, SettingsManager, test_settings_path)

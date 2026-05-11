@@ -1,0 +1,72 @@
+{
+  "format_version": "2.2.0",
+  "execution_id": "fixture",
+  "workflow_name": "parent",
+  "workflow_path": "tests/fixtures/cache_analysis/parent.pflow.md",
+  "start_time": "2026-05-02T00:00:00",
+  "end_time": "2026-05-02T00:00:01",
+  "duration_ms": 1.0,
+  "final_status": "failed",
+  "nodes_executed": 2,
+  "nodes_failed": 1,
+  "failed_node_ids": [
+    "call-child"
+  ],
+  "nodes": [
+    {
+      "node_id": "draft",
+      "node_type": "LLMNode",
+      "duration_ms": 1.0,
+      "success": true,
+      "timestamp": "2026-05-02T00:00:00",
+      "node_output": {
+        "response": "ok"
+      },
+      "llm_call": {
+        "model": "anthropic/claude-sonnet-4-5",
+        "input_tokens": 1000,
+        "output_tokens": 100,
+        "total_tokens": 1100,
+        "cost_usd": 0.05,
+        "cache_creation_input_tokens": 200,
+        "cache_read_input_tokens": 0
+      },
+      "llm_prompt": "prompt",
+      "llm_response": "ok"
+    },
+    {
+      "node_id": "call-child",
+      "node_type": "WorkflowExecutor",
+      "duration_ms": 1.0,
+      "success": false,
+      "timestamp": "2026-05-02T00:00:00",
+      "node_params": {
+        "workflow": "tests/fixtures/cache_analysis/child.pflow.md"
+      },
+      "error": "child failed after first LLM",
+      "sub_workflow_events": [
+        {
+          "node_id": "draft",
+          "node_type": "LLMNode",
+          "duration_ms": 1.0,
+          "success": true,
+          "timestamp": "2026-05-02T00:00:00",
+          "node_output": {
+            "response": "ok"
+          },
+          "llm_call": {
+            "model": "anthropic/claude-sonnet-4-5",
+            "input_tokens": 900,
+            "output_tokens": 90,
+            "total_tokens": 990,
+            "cost_usd": 0.07,
+            "cache_creation_input_tokens": 300,
+            "cache_read_input_tokens": 0
+          },
+          "llm_prompt": "prompt",
+          "llm_response": "ok"
+        }
+      ]
+    }
+  ]
+}

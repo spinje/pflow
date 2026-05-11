@@ -13,8 +13,11 @@ Key design decisions:
 """
 
 import time
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any, Optional
 
+from pflow.core.cache_render import CacheRenderContext
 from pflow.core.exceptions import CompilationError
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
@@ -58,6 +61,55 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
     "MCPNode": FAILURE_CATEGORY_MCP,
     "LLMNode": FAILURE_CATEGORY_LLM,
 }
+
+# Read-only empty mapping used to restore ``__pflow_cache_render__`` after a
+# child engine.run completes when the parent had no value installed. Module
+# level so deeply-nested sub-workflow restores don't allocate per call.
+_EMPTY_CACHE_RENDER: Mapping[str, CacheRenderContext] = MappingProxyType({})
+
+
+def build_cache_render_dict(workflow: CompiledWorkflow) -> dict[str, CacheRenderContext]:
+    """Build the per-node ``CacheRenderContext`` map for one engine.run.
+
+    Includes only LLM nodes that have at least one cache-relevant declaration
+    (``prompt_cache_items``, ``prewarm``, or a workflow-level ``## Cache``
+    block). Sparse by design — non-cache workflows produce an empty dict and
+    consumers (`plan_node`, `LLMNode.prep`) read via the canonical
+    ``(shared.get(K) or {}).get(node_id)`` defensive pattern.
+    """
+    cache_block = workflow.cache_block
+    out: dict[str, CacheRenderContext] = {}
+    for node_id, config in workflow.node_configs.items():
+        if config.node_type_name != "LLMNode":
+            continue
+        if not (config.prompt_cache_items or config.prewarm or cache_block):
+            continue
+        out[node_id] = _make_cache_render_context(config, cache_block)
+    return out
+
+
+def _make_cache_render_context(
+    config: NodeConfig,
+    cache_block: Any,
+) -> CacheRenderContext:
+    """Build one node's ``CacheRenderContext`` from its ``NodeConfig``.
+
+    ``unresolved_batch_prompt`` and ``batch_alias`` are populated only for
+    batch LLM nodes (D.1 auto-prefix detection reads them); non-batch nodes
+    get ``None`` for both.
+    """
+    unresolved = None
+    alias = None
+    if config.batch_config and config.template_config:
+        unresolved = config.template_config.template_params.get("prompt")
+        alias = config.batch_config.item_alias
+    return CacheRenderContext(
+        cache_block=cache_block,
+        subset=config.prompt_cache_items,
+        prewarm=config.prewarm,
+        unresolved_batch_prompt=unresolved,
+        batch_alias=alias,
+    )
 
 
 def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:
@@ -159,12 +211,12 @@ class WorkflowEngine:
     def run(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
         """Execute a compiled workflow. Returns action string.
 
-        Installs ``self.trace`` into ``shared["__trace_collector__"]`` for the
-        duration of the run, so LLMNode.prep() can resolve a per-call trace
-        hook from the active engine's collector. The save/restore pattern
-        correctly handles nested sub-workflow runs (parent's collector is
-        restored after a child engine.run completes) for both ``mapped`` and
-        ``shared`` storage modes.
+        Installs ``self.trace`` into ``shared["__trace_collector__"]`` and a
+        per-workflow ``CacheRenderContext`` map into
+        ``shared["__pflow_cache_render__"]`` for the duration of the run.
+        The save/restore pattern correctly handles nested sub-workflow runs
+        (parent's values reinstated after a child engine.run completes) for
+        both ``mapped`` and ``shared`` storage modes.
         """
         # Install this engine's trace collector so LLMNode.prep() can find
         # it. Save+restore handles nested sub-workflow runs (parent's
@@ -178,13 +230,32 @@ class WorkflowEngine:
         # cli/error_output.py, workflow_executor.py), so writing None back
         # when the key was originally absent is indistinguishable from
         # absence to every reader.
+        # Task 159 B3.2: install per-workflow CacheRenderContext map. Always
+        # install (even when the dict is empty) so child engine.run masks the
+        # parent's value during sub-workflow execution. MappingProxyType
+        # enforces read-only at the call sites; consumers use the
+        # ``(shared.get(K) or {}).get(node_id)`` defensive pattern. On
+        # restore-from-absent, write the module-level _EMPTY_CACHE_RENDER
+        # constant rather than ``None`` so a future consumer that drops the
+        # ``or {}`` defense hits a Mapping, not None.get(...).
+        #
+        # Build BEFORE installing anything so an exception during
+        # ``build_cache_render_dict`` leaves shared completely unchanged —
+        # otherwise a build-time exception would leak the trace install
+        # (saved_trace overwritten, finally never fires).
         saved_trace = shared.get("__trace_collector__")
+        saved_cache_render = shared.get("__pflow_cache_render__")
+        new_cache_render = MappingProxyType(build_cache_render_dict(workflow))
         if self.trace is not None:
             shared["__trace_collector__"] = self.trace
+        shared["__pflow_cache_render__"] = new_cache_render
         try:
             return self._run_inner(workflow, shared)
         finally:
             shared["__trace_collector__"] = saved_trace
+            shared["__pflow_cache_render__"] = (
+                saved_cache_render if saved_cache_render is not None else _EMPTY_CACHE_RENDER
+            )
 
     def _run_inner(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
         """Run body — split out so run() can wrap with save/restore cleanly."""
@@ -347,6 +418,14 @@ class WorkflowEngine:
                 raise plan.template_exception
 
             if plan.status in ("cached_memo", "cached_in_process"):
+                # Task 159 E.1: ``cache_source`` is keyword-driven by plan status.
+                # - ``cached_memo``: ``apply_memo_hit`` already augments
+                #   ``llm_usage`` with ``cache_source="memo"`` plus the matching
+                #   key + age. Pass ``cache_source=None`` so
+                #   ``handle_cached_execution`` does NOT overwrite that augment.
+                # - ``cached_in_process``: nothing has augmented yet; pass
+                #   ``"in_process"`` so the trace correctly tags the intra-run
+                #   loop-revisit hit. DD#22 distinguishes the two layers.
                 if plan.status == "cached_memo" and plan.cached_output is not None and plan.cached_action is not None:
                     apply_memo_hit(
                         config.node_id,
@@ -354,7 +433,13 @@ class WorkflowEngine:
                         plan.cached_action,
                         plan.cached_output,
                         plan.config_hash,
+                        node_type_name=config.node_type_name,
+                        cache_key=plan.cache_key,
+                        created_at=plan.cached_created_at,
                     )
+                    cached_source: Optional[str] = None
+                else:
+                    cached_source = "in_process"
                 return str(
                     handle_cached_execution(
                         config.node_id,
@@ -364,6 +449,7 @@ class WorkflowEngine:
                         config.node_type_name,
                         node.params,
                         self.trace,
+                        cache_source=cached_source,
                     )
                 )
 
@@ -425,7 +511,14 @@ class WorkflowEngine:
 
             # 13. Memo cache write (skip for nodes with cache: false)
             if config.cache_enabled:
-                write_memo_cache(config.node_id, shared, cache_key, action, duration_ms=duration_ms)
+                write_memo_cache(
+                    config.node_id,
+                    shared,
+                    cache_key,
+                    action,
+                    duration_ms=duration_ms,
+                    node_type_name=config.node_type_name,
+                )
 
             # 14. Metrics
             if self.metrics:

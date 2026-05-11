@@ -1,0 +1,7 @@
+Error: Cannot combine --dry-run and --report
+
+--report generates output from execution traces; --dry-run does not execute anything, so there is nothing to report.
+
+To fix this:
+  1. pflow <workflow> --dry-run
+  2. pflow <workflow> --report

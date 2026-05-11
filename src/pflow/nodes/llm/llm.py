@@ -10,8 +10,23 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
+from pflow.core.cache_analysis.below_min_tokens_detector import (
+    BelowMinTokensEvidence,
+)
+from pflow.core.cache_analysis.below_min_tokens_detector import (
+    detect as detect_below_min_tokens,
+)
+from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+from pflow.core.cache_render import (
+    CacheRenderContext,
+    _build_cache_control_marker,
+    _ChunkAbsentSentinel,
+    _resolve_chunk_value,
+    _resolve_static_prefix_for_cache,
+)
 from pflow.core.exceptions import LLMCallError, LLMTransientError
 from pflow.core.llm_client import Attachment, TraceHook, complete
+from pflow.core.llm_providers import detect_provider
 from pflow.core.llm_reasoning_map import (
     DEFAULT_MAX_TOKENS_BASE,
     EFFORT_RATIOS,
@@ -137,6 +152,463 @@ def _error_dict_for_generic_failure(model: str, exc: Exception, attempts: int) -
     }
 
 
+def _read_cache_render_context(shared: dict[str, Any], node_id: str | None) -> CacheRenderContext | None:
+    """Canonical defensive read of ``shared['__pflow_cache_render__'][node_id]``.
+
+    Mirrors ``runtime/engine/plan_node._read_cache_context`` byte-for-byte —
+    the same defensive read ensures hash-side and prep-side see the same
+    context (or both miss). The ``or {}`` guard handles legacy/test paths
+    where ``__pflow_cache_render__`` may be absent or set to ``None``.
+    """
+    if node_id is None:
+        return None
+    return (shared.get("__pflow_cache_render__") or {}).get(node_id)
+
+
+def _emit_observed_below_min_cache_warning(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    model: str,
+    llm_usage: dict[str, Any],
+) -> None:
+    """Emit observed-tier cache.below-min-tokens for LLMNode cache misses."""
+    cache_ctx = _read_cache_render_context(shared, node_id)
+    declared_prompt_cache = list(cache_ctx.subset) if cache_ctx and cache_ctx.subset else []
+    if node_id is None or not declared_prompt_cache:
+        return
+
+    # When the provider didn't expose cache telemetry, we cannot honestly
+    # observe whether the cache fired. Skip rather than emit a false-positive
+    # observed-tier finding. ``has_cache_telemetry`` is the load-bearing
+    # signal: it's True iff the source provider returned at least one cache
+    # field. The previous ``not in llm_usage`` check was structurally
+    # ineffective because ``LLMNode.post()`` always synthesizes the cache
+    # keys (defaulting to 0); the presence flag carries the absence semantic
+    # cleanly through the runtime → trace boundary. Mirrors the analyzer's
+    # honest-unmeasurable convention used by ``_estimate_ref_tokens`` and
+    # ``_compute_fragmentation_costs``.
+    if not llm_usage.get("has_cache_telemetry", False):
+        return
+
+    finding = detect_below_min_tokens(
+        BelowMinTokensEvidence(
+            node_id=node_id,
+            model=model,
+            declared_prompt_cache=declared_prompt_cache,
+            has_observed=True,
+            observed_creation_tokens=int(llm_usage.get("cache_creation_input_tokens") or 0),
+            observed_read_tokens=int(llm_usage.get("cache_read_input_tokens") or 0),
+        )
+    )
+    if finding is None:
+        return
+
+    workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
+    diagnostic = make_diagnostic(
+        "cache.below-min-tokens",
+        node_id=finding.node_id,
+        affected_workflow=workflow_path,
+        model=finding.model,
+        min_tokens=finding.min_tokens,
+        evidence_kind=finding.evidence_kind,
+        cacheable_tokens=finding.cacheable_tokens,
+        provider_note=finding.provider_note,
+    )
+    shared.setdefault("__warnings__", {}).setdefault(node_id, diagnostic)
+
+
+def _build_openai_cache_kwargs(
+    *,
+    system_blocks: list[dict[str, Any]] | None,
+    cache_ttl: str | None,
+) -> dict[str, Any]:
+    """OpenAI-specific cache routing kwargs (Task 159 C3).
+
+    OpenAI caches automatically; ``cache_control`` markers are no-ops there.
+    But two pflow-relevant knobs ride alongside: ``prompt_cache_key`` (sticky
+    routing for parallel batches; soft-capped at ~15 RPM per backend) and
+    ``prompt_cache_retention`` (DD#37 — pflow ``- ttl: 1h`` maps to ``"24h"``
+    so the user's explicit opt-in isn't silently truncated by OpenAI's
+    default ``in_memory`` 5-10-min idle expiry).
+
+    Returns an empty dict when no cache rendering happened (``system_blocks``
+    is ``None`` or empty) — caller merges into existing ``model_options``.
+
+    The ``prompt_cache_key`` is MD5(deterministic-JSON(system_blocks)). On
+    OpenAI the last block's marker is fixed at ``{"type": "ephemeral"}``
+    (per ``_build_cache_control_marker``), so identical cache content across
+    calls produces byte-identical ``system_blocks`` and thus an identical
+    cache key — sticky routing fires.
+    """
+    if not system_blocks:
+        return {}
+
+    import hashlib
+
+    from pflow.runtime.cache import _deterministic_json
+
+    cache_kwargs: dict[str, Any] = {
+        # MD5 is the project convention for content-identity hashing
+        # (runtime/cache.py:108, instrumentation.py:191).
+        "prompt_cache_key": hashlib.md5(
+            _deterministic_json(system_blocks).encode(),
+            usedforsecurity=False,
+        ).hexdigest(),
+    }
+    # DD#37: workflow ttl=1h → OpenAI prompt_cache_retention="24h" (closest
+    # discrete bucket above 1h; default ``in_memory`` is 5-10 min idle).
+    if cache_ttl == "1h":
+        cache_kwargs["prompt_cache_retention"] = "24h"
+    return cache_kwargs
+
+
+def _emit_prewarm_disabled_warning(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    kind: str,
+    text: str,
+    context: dict[str, Any],
+) -> None:
+    """Emit a structured ``__warnings__`` entry + a logger.warning when
+    auto-batch-prefix caching gracefully degrades. Centralized so D.1's
+    multiple bail-out paths share one observability surface."""
+    if node_id is not None:
+        shared.setdefault("__warnings__", {})[node_id] = {
+            "kind": kind,
+            "text": text,
+            "context": context,
+        }
+    logger.warning("%s", text)
+
+
+def _resolve_dynamic_suffix(
+    *,
+    unresolved: str,
+    cut: int,
+    static_prefix: str,
+    resolved_prompt: str,
+    shared: dict[str, Any],
+) -> str | None:
+    """Find the dynamic suffix in the resolved prompt.
+
+    The cache path's ``static_prefix`` may differ byte-for-byte from the
+    same portion in ``resolved_prompt`` (canonical JSON vs standard
+    resolver's JSON-with-spaces / Python repr for embedded dict/list refs).
+    Strategy:
+
+    1. ``resolved_prompt.startswith(static_prefix)`` → fast path; trim by
+       length.
+    2. Fall back to the standard resolver's substitution for the same
+       unresolved range; if that prefix matches, trim by its length.
+    3. If neither matches, return ``None`` — caller emits the
+       ``prewarm_disabled_static_prefix_unaligned`` warning and degrades
+       to the plain-prompt path.
+    """
+    if resolved_prompt.startswith(static_prefix):
+        return resolved_prompt[len(static_prefix) :]
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    standard_static = TemplateResolver.resolve_template(unresolved[:cut], shared)
+    if isinstance(standard_static, str) and resolved_prompt.startswith(standard_static):
+        return resolved_prompt[len(standard_static) :]
+    return None
+
+
+def _build_user_message_blocks(
+    *,
+    cache_ctx: CacheRenderContext | None,
+    resolved_prompt: str,
+    shared: dict[str, Any],
+    model: str,
+    attachments: list[Attachment] | None = None,
+    node_id: str | None = None,
+) -> list[dict[str, Any]] | None:
+    """Auto-batch-prefix detection (Task 159 D.1).
+
+    Returns ``None`` when the gate doesn't fire — caller falls back to the
+    plain-string ``prompt`` path. Gate conditions (all required):
+
+    1. ``cache_ctx`` exists.
+    2. ``cache_ctx.prewarm`` is ``True`` (per spec DD#9 — auto-batch-prefix
+       is opt-in via prewarm).
+    3. ``cache_ctx.unresolved_batch_prompt`` is set (this is a batch LLM
+       node; the engine populates the field for batch nodes only).
+    4. ``cache_ctx.batch_alias`` is set (the per-item alias name).
+    5. ``attachments`` is empty / None (Task 159 v1 limitation — see
+       GH #358). pflow's ``## Cache`` rendering produces text-only content
+       blocks; native image-cache support is a v1.x follow-up. When
+       ``images: [...]`` AND ``prewarm: true`` both fire on the same node,
+       gracefully disable prewarm for this run, emit a ``__warnings__``
+       entry, and let the standard attachment path carry the images. The
+       user sees the explicit signal "prewarm disabled because images."
+    6. The unresolved template contains a ``${batch_alias.X}`` or
+       ``${batch_alias[X]}`` reference (the boundary).
+    7. The boundary's match start is > 0 (a non-trivial static prefix
+       exists). When ``${item.X}`` is at position 0, F2 emits
+       ``cache.prewarm-no-prefix`` in the analytical tier; runtime emits
+       nothing per DD#36.
+
+    When the gate fires, return ``[{"type": "text", "text": <static>,
+    "cache_control": <marker>}, {"type": "text", "text": <suffix>}]``:
+
+    - ``<static>``: deterministic resolution of the prefix portion via
+      ``_resolve_static_prefix_for_cache`` (canonical JSON for embedded
+      dict/list refs — load-bearing for hash-vs-prep byte-identity).
+    - ``<marker>``: per-provider ``cache_control`` per the workflow ttl.
+    - ``<suffix>``: dynamic portion of the resolved prompt (taken from
+      ``resolved_prompt`` since the standard resolver already substituted
+      the per-item ``${item.X}`` ref). The suffix is the resolved prompt
+      minus the unresolved-static-prefix's resolved length.
+
+    Note: the static portion's bytes here MAY differ from the same portion
+    in ``resolved_prompt`` (which used the standard resolver — Python repr
+    for embedded dict/list refs in complex templates). That's the
+    deliberate trade-off: cache prefix bytes match the chunk-hash bytes for
+    the same logical value, so cache hits fire reliably across calls. See
+    ``_resolve_static_prefix_for_cache`` docstring + B3.3 plan section.
+    """
+    import re
+
+    if cache_ctx is None:
+        return None
+    if not cache_ctx.prewarm:
+        return None
+    unresolved = cache_ctx.unresolved_batch_prompt
+    alias = cache_ctx.batch_alias
+    if unresolved is None or alias is None:
+        return None
+
+    # Task 159 v1 limitation — see GH #358. Auto batch-prefix caching cannot
+    # mix with image attachments yet because ``## Cache`` chunks render as
+    # text-only content blocks. When images: [...] AND prewarm: true both
+    # fire, gracefully disable prewarm for this run (full fan-out, images
+    # ride the standard attachment path) and emit a __warnings__ entry so
+    # the user sees the degradation explicitly. Native image-cache support
+    # in ``## Cache`` is the v1.x follow-up.
+    if attachments:
+        _emit_prewarm_disabled_warning(
+            shared=shared,
+            node_id=node_id,
+            kind="prewarm_disabled_with_images",
+            text=(
+                f"Auto batch-prefix caching disabled for node "
+                f"{node_id or '<unknown>'!r}: images: [...] are present and "
+                "pflow v1 does not support images in the cached prefix. "
+                "Either remove images:, remove prewarm:, or wait for native "
+                "image-cache support (GH #358)."
+            ),
+            context={
+                "node_id": node_id or "<unknown>",
+                "image_count": len(attachments),
+                "issue": "https://github.com/spinje/pflow/issues/358",
+            },
+        )
+        return None
+
+    pattern = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)")
+    match = pattern.search(unresolved)
+    if match is None:
+        return None
+    cut = match.start()
+    if cut == 0:
+        # No static portion — boundary at position 0.
+        return None
+
+    static_prefix = _resolve_static_prefix_for_cache(unresolved[:cut], shared)
+    suffix = _resolve_dynamic_suffix(
+        unresolved=unresolved,
+        cut=cut,
+        static_prefix=static_prefix,
+        resolved_prompt=resolved_prompt,
+        shared=shared,
+    )
+    if suffix is None:
+        # Boundary detection couldn't align canonical-bytes or
+        # standard-resolver-bytes with the resolved prompt. Should not
+        # fire in practice; surface as an explicit prewarm-disabled
+        # signal so observability isn't silent.
+        _emit_prewarm_disabled_warning(
+            shared=shared,
+            node_id=node_id,
+            kind="prewarm_disabled_static_prefix_unaligned",
+            text=(
+                f"Auto batch-prefix caching disabled for node "
+                f"{node_id or '<unknown>'!r}: static-prefix bytes could not "
+                "be aligned with the resolved prompt (cache-canonical and "
+                "standard-resolver paths both diverged). prewarm degraded "
+                "for this run; items[1:] each pay full cache-write cost."
+            ),
+            context={
+                "node_id": node_id or "<unknown>",
+                "unresolved_len": len(unresolved),
+                "cut": cut,
+            },
+        )
+        return None
+
+    provider = detect_provider(model)
+    provider_name = provider.name if provider else None
+    ttl = cache_ctx.cache_block.ttl if cache_ctx.cache_block else None
+    return [
+        {
+            "type": "text",
+            "text": static_prefix,
+            "cache_control": _build_cache_control_marker(provider_name, ttl),
+        },
+        {"type": "text", "text": suffix},
+    ]
+
+
+def _build_attachments_from_images(images: Any) -> list[Attachment]:
+    """Convert the user's ``images`` param into typed ``Attachment`` blocks.
+
+    Single-value inputs are wrapped in a list. URLs are stored verbatim;
+    local paths are validated for existence and stored as image_path
+    attachments (the adapter encodes them at the API boundary).
+    """
+    if not isinstance(images, list):
+        images = [images]
+    attachments: list[Attachment] = []
+    for img in images:
+        if not isinstance(img, str):
+            raise TypeError(f"Image must be a string (URL or path), got: {type(img).__name__}")
+        if img.startswith(("http://", "https://")):
+            attachments.append(Attachment(kind="image_url", value=img))
+            continue
+        path = Path(img)
+        if not path.exists():
+            raise ValueError(f"Image file not found: {img}\nPlease ensure the file exists at the specified path.")
+        attachments.append(Attachment(kind="image_path", value=str(path)))
+    return attachments
+
+
+def _assemble_cache_prep(
+    *,
+    user_system: str | None,
+    cache_ctx: CacheRenderContext | None,
+    shared: dict[str, Any],
+    model: str,
+    resolved_prompt: str,
+    user_model_options: dict[str, Any],
+    attachments: list[Attachment] | None = None,
+    node_id: str | None = None,
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None, list[str], dict[str, Any]]:
+    """Build the cache-rendering quad for ``prep_res``.
+
+    Returns ``(system_blocks, user_message_blocks, chunks_skipped,
+    model_options)``:
+
+    - ``system_blocks`` — declared cache rendered as content blocks (C1.2),
+      or ``None`` when no cache opt-in applies.
+    - ``user_message_blocks`` — auto-batch-prefix split for prewarm batches
+      (D.1), or ``None`` when the gate doesn't fire.
+    - ``chunks_skipped`` — names of chunks filtered as ABSENT (trace 2.1.0
+      channel via ``cache_chunks_skipped`` on ``llm_usage``).
+    - ``model_options`` — user options with OpenAI cache kwargs merged in
+      (only on OpenAI; other providers pass through unchanged).
+
+    Extracted from ``LLMNode.prep`` to keep cyclomatic complexity below the
+    project's C901 threshold.
+    """
+    system_blocks, chunks_skipped = _build_system_blocks(
+        user_system=user_system,
+        cache_ctx=cache_ctx,
+        shared=shared,
+        model=model,
+    )
+    user_message_blocks = _build_user_message_blocks(
+        cache_ctx=cache_ctx,
+        resolved_prompt=resolved_prompt,
+        shared=shared,
+        model=model,
+        attachments=attachments,
+        node_id=node_id,
+    )
+    options = dict(user_model_options)
+    provider = detect_provider(model)
+    if provider is not None and provider.name == "openai":
+        cache_ttl = cache_ctx.cache_block.ttl if cache_ctx and cache_ctx.cache_block else None
+        for key, value in _build_openai_cache_kwargs(system_blocks=system_blocks, cache_ttl=cache_ttl).items():
+            # ``setdefault`` so a user-provided override wins (e.g., a test
+            # pinning a specific prompt_cache_key for fixture stability).
+            options.setdefault(key, value)
+    return system_blocks, user_message_blocks, chunks_skipped, options
+
+
+def _build_system_blocks(
+    *,
+    user_system: str | None,
+    cache_ctx: CacheRenderContext | None,
+    shared: dict[str, Any],
+    model: str,
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Render the cached system prefix as structured content blocks.
+
+    Returns ``(system_blocks, chunks_skipped)``. ``system_blocks`` is
+    ``None`` when no cache rendering applies (no ctx, empty subset, or every
+    chunk filtered as ABSENT) — caller falls back to today's plain-string
+    ``system`` path so byte-for-byte behavior is preserved for opt-out
+    nodes.
+
+    When at least one chunk renders, the returned list is:
+
+    1. The user's ``system`` param (when set) as the FIRST block, no marker.
+    2. One block per declared chunk in declaration order: ``prose_before``
+       concatenated with the deterministic-serialized chunk value.
+    3. A per-provider ``cache_control`` marker on the LAST block only
+       (v1 single-breakpoint strategy, task-159 DD#11).
+
+    The ABSENT filter MUST stay symmetric with
+    ``runtime/engine/plan_node._render_cache_for_hash`` — both sites import
+    ``_resolve_chunk_value`` and ``_ChunkAbsentSentinel`` from
+    ``pflow.core.cache_render``. If they diverge, hash and prep render
+    different bytes for the same logical state — the silent stale-cache
+    regression class B3.3/C1.2 close together.
+    """
+    if cache_ctx is None or not cache_ctx.subset or cache_ctx.cache_block is None:
+        return None, []
+
+    chunks_by_name = {c.name: c for c in cache_ctx.cache_block.items}
+    rendered: list[tuple[str, str]] = []  # (prose_before, value_str)
+    chunks_skipped: list[str] = []
+
+    for name in cache_ctx.subset:
+        chunk = chunks_by_name.get(name)
+        if chunk is None:
+            # Validator rejects undeclared subset entries (B2.3). Defensive
+            # skip here for direct-compile bypass paths (logged at the hash
+            # site; we silently match the hash-side filter so bytes stay
+            # symmetric).
+            continue
+        value = _resolve_chunk_value(chunk, shared)
+        if isinstance(value, _ChunkAbsentSentinel):
+            chunks_skipped.append(name)
+            continue
+        rendered.append((chunk.prose_before, value))
+
+    if not rendered:
+        # Every chunk was filtered. Fall back to the plain-string system
+        # path (return None) but still record the skip list so the trace
+        # channel can attribute discrepancies to runtime branch skips.
+        return None, chunks_skipped
+
+    blocks: list[dict[str, Any]] = []
+    if user_system:
+        blocks.append({"type": "text", "text": user_system})
+    for prose, value in rendered:
+        blocks.append({"type": "text", "text": prose + value})
+
+    provider = detect_provider(model)
+    provider_name = provider.name if provider else None
+    blocks[-1]["cache_control"] = _build_cache_control_marker(
+        provider_name,
+        cache_ctx.cache_block.ttl,
+    )
+    return blocks, chunks_skipped
+
+
 class LLMNode(Node):
     """
     General-purpose LLM node for text processing and AI reasoning or data transformation.
@@ -164,6 +636,10 @@ class LLMNode(Node):
         - thinking_tokens: int  # Reasoning/thinking tokens consumed (0 for non-reasoning models)
         - thinking_budget: int  # Reasoning token budget set on the request (0 when not configured or provider uses categorical levels)
         - cost_usd: float  # Estimated cost in USD (None when LiteLLM has no pricing data — e.g. Ollama, custom endpoints, brand-new models)
+        - cache_key: str  # Trace 2.1.0 — memo cache key (write events: key the entry was created with; hit events: matching key). Absent for fresh executions without a memo write.
+        - cache_source: str  # Trace 2.1.0 — "memo" | "in_process" — which pflow cache layer served this call. Absent for fresh executions.
+        - cache_age_sec: float  # Trace 2.1.0 — age of the cached entry in seconds. Absent for fresh executions or in-process hits.
+        - cache_chunks_skipped: list  # Trace 2.1.0 — chunk names skipped during cache rendering due to ABSENT upstream branches (default empty list).
     - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)
@@ -247,36 +723,14 @@ class LLMNode(Node):
         temperature = self.params.get("temperature", 1.0)
         temperature = max(0.0, min(2.0, temperature))
 
-        # Process images from params
-        images = self.params.get("images", [])
-
-        # Ensure images is a list
-        if not isinstance(images, list):
-            images = [images]  # Wrap single value in list
-
-        # Build attachments list (typed dataclass; the adapter encodes
-        # local paths to data-URLs at the API boundary).
-        attachments: list[Attachment] = []
-        for img in images:
-            if not isinstance(img, str):
-                raise TypeError(f"Image must be a string (URL or path), got: {type(img).__name__}")
-
-            # Detect URL vs file path
-            if img.startswith(("http://", "https://")):
-                attachments.append(Attachment(kind="image_url", value=img))
-            else:
-                # Image paths are inputs (not workflow assets) — stored verbatim.
-                # Relative paths are resolved against the current working
-                # directory at file-open time by the adapter (Python's open()
-                # semantics). This contrasts with code-block file refs
-                # (`code: @./helper.py`) which resolve relative to the workflow
-                # file because they're part of the workflow definition.
-                path = Path(img)
-                if not path.exists():
-                    raise ValueError(
-                        f"Image file not found: {img}\nPlease ensure the file exists at the specified path."
-                    )
-                attachments.append(Attachment(kind="image_path", value=str(path)))
+        # Build attachments from the user's images param. URLs pass through;
+        # local paths are validated and stored as image_path entries (the
+        # adapter encodes them at the API boundary). Image paths are inputs
+        # (not workflow assets) — relative paths resolve against CWD at
+        # file-open time by the adapter (Python's open() semantics). Distinct
+        # from code-block file refs (``code: @./helper.py``) which resolve
+        # relative to the workflow file.
+        attachments = _build_attachments_from_images(self.params.get("images", []))
 
         # Validate reasoning_effort early (deterministic error, not worth retrying)
         reasoning_effort = self.params.get("reasoning_effort")
@@ -302,17 +756,41 @@ class LLMNode(Node):
                 "'model' explicitly via node.set_params({'model': '<provider>/<model>'})."
             )
 
+        # Cache rendering (Task 159 C1.2 + C3) — build structured
+        # ``system_blocks`` with per-provider ``cache_control`` markers, plus
+        # OpenAI-specific ``prompt_cache_key`` / ``prompt_cache_retention``
+        # kwargs when applicable. The system_blocks filter is symmetric with
+        # the hash-side at ``runtime/engine/plan_node._render_cache_for_hash``
+        # — same shared helper, same ABSENT sentinel — so hash and prep
+        # render byte-identical bytes for the same logical state (DD#19
+        # silent-stale-cache gate).
+        node_id = getattr(self, "node_id", None)
+        cache_ctx = _read_cache_render_context(shared, node_id)
+        system_blocks, user_message_blocks, chunks_skipped, merged_model_options = _assemble_cache_prep(
+            user_system=system,
+            cache_ctx=cache_ctx,
+            shared=shared,
+            model=model,
+            resolved_prompt=prompt,
+            user_model_options=self.params.get("model_options") or {},
+            attachments=attachments,
+            node_id=node_id,
+        )
+
         prep_res = {
             "prompt": prompt,
             "model": model,
             "temperature": temperature,
             "system": system,
+            "system_blocks": system_blocks,
+            "user_message_blocks": user_message_blocks,
+            "__cache_chunks_skipped__": chunks_skipped,
             "max_tokens": self.params.get("max_tokens"),
             "attachments": attachments,
             "output_schema": self.params.get("output_schema"),
             "reasoning_effort": reasoning_effort,
             "reasoning_max_tokens": self.params.get("reasoning_max_tokens"),
-            "model_options": self.params.get("model_options", {}),
+            "model_options": merged_model_options,
             "timeout": self._validate_timeout(),
         }
 
@@ -323,7 +801,6 @@ class LLMNode(Node):
         # state from the worker thread (where it was never registered).
         # See plan: /Users/andfal/.claude/plans/magical-swinging-taco.md
         collector = shared.get("__trace_collector__")
-        node_id = getattr(self, "node_id", None)
         if collector is not None and node_id is not None:
             prep_res["_trace_hook"] = collector.get_trace_hook(node_id)
 
@@ -354,11 +831,17 @@ class LLMNode(Node):
         # consumes it. See pflow.core.llm_client.complete docstring and
         # pflow.core.exceptions for the typed hierarchy.
         model = prep_res["model"]
+        # Cache rendering (Task 159 C1.2): pass structured ``system_blocks``
+        # to the adapter when prep built them; fall back to the plain-string
+        # ``system`` path otherwise. ``complete()``'s ``system`` parameter
+        # accepts both shapes (C1.1 widening).
+        system_blocks = prep_res.get("system_blocks")
+        system_arg: str | list[dict[str, Any]] | None = system_blocks if system_blocks else prep_res["system"]
         try:
             adapter_response = complete(
                 model=model,
                 prompt=prep_res["prompt"],
-                system=prep_res["system"],
+                system=system_arg,
                 temperature=prep_res["temperature"],
                 max_tokens=prep_res["max_tokens"],
                 attachments=prep_res["attachments"] or None,
@@ -367,6 +850,7 @@ class LLMNode(Node):
                 model_options=prep_res.get("model_options") or None,
                 timeout=prep_res.get("timeout"),
                 trace_hook=trace_hook,
+                user_message_blocks=prep_res.get("user_message_blocks"),
             )
         except LLMTransientError:
             # Transient: re-raise so the Node retry loop catches it and
@@ -377,7 +861,16 @@ class LLMNode(Node):
             # the exception's own to_diagnostics() override. Covers
             # UnknownModelError, MissingApiKeyError, InvalidRequestError, and
             # any future deterministic subclass automatically.
-            return _error_dict_from_exception(e)
+            #
+            # Task 159 C1.2 cross-layer co-edit: the error-dict's ``usage``
+            # keyset must carry ``cache_chunks_skipped`` so the trace event
+            # for the failure still records runtime branch skips. We wrap at
+            # the call site (here) — NOT in the builder signature — to keep
+            # error-dict builders cross-cutting-stable. ``prep_res`` is the
+            # method's input arg; directly available.
+            err_dict = _error_dict_from_exception(e)
+            err_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
+            return err_dict
 
         return {
             "response": adapter_response.text,
@@ -419,12 +912,16 @@ class LLMNode(Node):
             # in-flight requests (wasting money and adding rate-limit pressure).
             # Distinct from LiteLLM's Timeout (now LLMTransientError) — that
             # path does retry; this one explicitly does not.
-            return _error_dict_for_timeout(
+            err_dict = _error_dict_for_timeout(
                 prep_res["model"],
                 f"LLM call timed out after {timeout}s. "
                 f"Model: {prep_res['model']}. "
                 f"Increase timeout or check API connectivity.",
             )
+            # Task 159 C1.2 cross-layer co-edit (cache_chunks_skipped) — wrap
+            # at the caller, not the builder.
+            err_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
+            return err_dict
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
@@ -438,6 +935,13 @@ class LLMNode(Node):
         rendered_prompt = prep_res.get("prompt")
         if isinstance(rendered_prompt, str):
             shared["prompt"] = rendered_prompt
+        # 2.2.0: same seam for the effective system content (cache-rendered
+        # list[dict] when present, else plain string). Parallel batch workers
+        # overwrite the collector's llm_systems slot; the per-item trace
+        # falls back to node_output["system"] for per-item visibility.
+        rendered_system = prep_res.get("system_blocks") or prep_res.get("system")
+        if isinstance(rendered_system, (str, list)):
+            shared["system"] = rendered_system
 
         # Check for error first
         if isinstance(exec_res, dict) and exec_res.get("status") == "error":
@@ -455,12 +959,25 @@ class LLMNode(Node):
             llm_usage = {
                 "model": usage_dict.get("model", exec_res.get("model", "unknown")),
                 "input_tokens": usage_dict.get("input_tokens", 0) or 0,
+                "uncached_input_tokens": usage_dict.get("uncached_input_tokens", 0) or 0,
                 "output_tokens": usage_dict.get("output_tokens", 0) or 0,
                 "total_tokens": usage_dict.get("total_tokens", 0) or 0,
                 "cache_creation_input_tokens": usage_dict.get("cache_creation_input_tokens", 0) or 0,
                 "cache_read_input_tokens": usage_dict.get("cache_read_input_tokens", 0) or 0,
+                # ``has_cache_telemetry`` distinguishes "provider reported zero
+                # cache tokens" from "provider didn't expose cache telemetry."
+                # Load-bearing for ``_emit_observed_below_min_cache_warning``:
+                # zero counts are only evidence the cache failed to fire when
+                # telemetry is actually present (otherwise we can't observe it).
+                "has_cache_telemetry": bool(usage_dict.get("has_cache_telemetry", False)),
+                "input_token_accounting": usage_dict.get("input_token_accounting", "total_includes_cache"),
                 "thinking_tokens": usage_dict.get("thinking_tokens", 0) or 0,
                 "thinking_budget": usage_dict.get("thinking_budget", 0) or 0,
+                # Task 159 C1.2: per-call list of cache chunks skipped due to
+                # ABSENT upstream branches (default empty). Trace 2.1.0 (E.1)
+                # surfaces this so analyze-cache --from-trace can attribute
+                # cache discrepancies to runtime branch skips.
+                "cache_chunks_skipped": list(prep_res.get("__cache_chunks_skipped__", [])),
             }
             # Adapter populates cost_usd from LiteLLM's response_cost (None
             # when LiteLLM has no pricing data for the model).
@@ -470,6 +987,22 @@ class LLMNode(Node):
         else:
             # Empty dict per spec when usage unavailable
             shared["llm_usage"] = {}
+
+        # LLMNode-specific prompt-cache miss observation. This uses provider
+        # telemetry after the call, not tokenizer work in the hot path. It
+        # preserves earlier warnings via setdefault; the empty-response warning
+        # below intentionally overwrites this observational warning when both
+        # fire because empty response is the critical failure signal.
+        # node_id is a compiler-set dynamic attribute (compilation/compiler.py:299).
+        node_id = getattr(self, "node_id", None)
+        observed_usage = shared.get("llm_usage")
+        if isinstance(observed_usage, dict):
+            _emit_observed_below_min_cache_warning(
+                shared=shared,
+                node_id=node_id,
+                model=prep_res.get("model") or self.params.get("model") or "",
+                llm_usage=observed_usage,
+            )
 
         # Surface adapter warnings (e.g. empty-response trap on reasoning
         # models) into __warnings__ so JSON consumers see them and the
@@ -481,8 +1014,6 @@ class LLMNode(Node):
         # Consumers normalize it with core.diagnostic.normalize_runtime_warning
         # so legacy string warnings and structured LLM warnings can coexist.
         warnings_list = exec_res.get("warnings") or []
-        # node_id is a compiler-set dynamic attribute (compilation/compiler.py:299).
-        node_id = getattr(self, "node_id", None)
         if warnings_list and node_id is not None:
             # In v1 the adapter emits at most one warning per call. If a
             # future case needs multiple, change the contract to a list value.
@@ -509,6 +1040,9 @@ class LLMNode(Node):
                     model=exec_res.get("model"),
                 )
                 error_dict = _error_dict_from_exception(err)
+                # Task 159 C1.2 cross-layer co-edit (cache_chunks_skipped) —
+                # wrap at the caller. ``prep_res`` is this method's arg.
+                error_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
                 # Preserve raw response for downstream fallback parsing —
                 # contract preserved from the previous behavior. Usage was
                 # captured above (the call succeeded; only parsing failed),
@@ -546,7 +1080,13 @@ class LLMNode(Node):
 
         ``preserve_usage=True`` keeps ``shared["llm_usage"]`` intact for
         the JSON-parse path (the call itself succeeded; usage was captured
-        before parsing). All other error paths zero it out.
+        before parsing). All other error paths zero it out — EXCEPT for
+        Task 159's ``cache_chunks_skipped`` channel, which is preserved
+        from ``exec_res["usage"]`` so the trace event for the failure
+        still records runtime branch-skips (cross-layer co-edit; the
+        wrap at the four error sites in ``_call_llm`` / ``exec`` /
+        ``exec_fallback`` / ``post()`` populates this field on the
+        err_dict, and this seam is what threads it into shared).
         """
         shared["error"] = exec_res.get("error", "Unknown error")
         error_class = exec_res.get("error_class")
@@ -558,7 +1098,17 @@ class LLMNode(Node):
         if not response_already_set:
             shared["response"] = ""
         if not preserve_usage:
-            shared["llm_usage"] = {}
+            # Task 159 C1.2 — preserve cache_chunks_skipped from the err_dict
+            # when zeroing the rest of llm_usage. The four error sites wrap
+            # the err_dict's ``usage`` keyset with this field; this seam
+            # threads it into shared so trace 2.1.0 records runtime branch
+            # skips even on failure paths. Without this preservation, the
+            # wraps at the four call sites are dead code.
+            cache_chunks_skipped = exec_res.get("usage", {}).get("cache_chunks_skipped", [])
+            if cache_chunks_skipped:
+                shared["llm_usage"] = {"cache_chunks_skipped": list(cache_chunks_skipped)}
+            else:
+                shared["llm_usage"] = {}
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle errors after all retries exhausted.
@@ -577,4 +1127,8 @@ class LLMNode(Node):
         for what's already a string-typed concept across providers.
         """
         model = prep_res.get("model", "unknown")
-        return _error_dict_for_generic_failure(model, exc, self.max_retries)
+        err_dict = _error_dict_for_generic_failure(model, exc, self.max_retries)
+        # Task 159 C1.2 cross-layer co-edit (cache_chunks_skipped) — wrap at
+        # the caller, not the builder. ``prep_res`` is this method's arg.
+        err_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
+        return err_dict

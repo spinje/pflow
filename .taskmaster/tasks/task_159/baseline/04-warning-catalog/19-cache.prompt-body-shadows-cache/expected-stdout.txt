@@ -1,0 +1,198 @@
+{
+  "format_version": "4.1",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 1,
+    "heuristic": 0,
+    "total": 1
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "no_trace",
+      "excluded_nodes": []
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 1,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 1,
+    "actionable_opportunities": 1,
+    "warnings_count": 0,
+    "info_count": 1,
+    "total_llm_nodes_estimated": 1,
+    "total_llm_invocations_estimated": 1,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 12005,
+    "total_cacheable_tokens_estimated": 6000,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "ir_default_model": null,
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "summarize",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 1,
+    "sub_workflow_llm_node_count": 0,
+    "sub_workflow_rollup": null,
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>"
+  },
+  "blocking_errors": [
+    {
+      "rank": 1,
+      "warning_id": "cache.prompt-body-duplicates-cache",
+      "node_id": "summarize",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Node 'summarize' duplicates cached chunks in the prompt body \u2014 the cache stores these values at 0.1\u00d7 rate but the body sends them inline at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
+      "suggestions": [
+        "Remove the listed `${...}` references from the prompt body \u2014 the cached chunks already supply these values via the system prompt."
+      ]
+    }
+  ],
+  "other_blocking_errors": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.first-call-write-penalty",
+      "node_id": "summarize",
+      "estimated_savings_usd": 0.004499999999999997,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "summarize: only call to anthropic/claude-sonnet-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0045/run)",
+      "suggestions": [
+        "Remove `prompt_cache:` from summarize (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-sonnet-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ]
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "summarize",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 12005,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 50,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": [
+        "article"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 0,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "info",
+      "message": "summarize: only call to anthropic/claude-sonnet-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0045/run)",
+      "source": "cache_analyzer",
+      "id": "cache.first-call-write-penalty",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Remove `prompt_cache:` from summarize (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-sonnet-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ],
+      "node_id": "summarize",
+      "context": {
+        "model": "anthropic/claude-sonnet-4-5",
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "savings_usd": 0.004499999999999997,
+        "category": "cache_advisory",
+        "path": "nodes[id=summarize].prompt_cache"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "error",
+      "message": "Node 'summarize' duplicates cached chunks in the prompt body \u2014 the cache stores these values at 0.1\u00d7 rate but the body sends them inline at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
+      "source": "validator",
+      "id": "cache.prompt-body-duplicates-cache",
+      "title": "Cache Failure",
+      "suggestions": [
+        "Remove the listed `${...}` references from the prompt body \u2014 the cached chunks already supply these values via the system prompt."
+      ],
+      "node_id": "summarize",
+      "context": {
+        "overlapping_pairs": [
+          {
+            "chunk_name": "article",
+            "body_ref": "article"
+          }
+        ],
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "overlap_lines": "  - cached `${article}` AND inline `${article}`",
+        "category": "cache_failure",
+        "path": "nodes[id=summarize].params.prompt"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    }
+  ],
+  "notes": []
+}

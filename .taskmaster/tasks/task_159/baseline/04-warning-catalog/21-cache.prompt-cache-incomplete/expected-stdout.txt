@@ -1,0 +1,265 @@
+{
+  "format_version": "4.1",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 2,
+    "heuristic": 0,
+    "total": 2
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "no_trace",
+      "excluded_nodes": []
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 2,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 2,
+    "warnings_count": 1,
+    "info_count": 1,
+    "total_llm_nodes_estimated": 2,
+    "total_llm_invocations_estimated": 2,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 24003,
+    "total_cacheable_tokens_estimated": 12000,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "ir_default_model": null,
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "draft",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "review",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 2,
+    "sub_workflow_llm_node_count": 0,
+    "sub_workflow_rollup": null,
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md a=<value> b=<value>"
+  },
+  "blocking_errors": [],
+  "other_blocking_errors": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.prompt-cache-incomplete",
+      "node_id": null,
+      "estimated_savings_usd": 0.0324,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Workflow `<BASELINE_CASE_DIR>/workflow.pflow.md` declares `## Cache` but 2 LLM node(s) reference shared cache chunks without declaring them in their own `prompt_cache:`. Each affected call sends those chunks uncached, missing the 0.1x input-cost reuse.\n\nAffected nodes:\n- `draft` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]\n- `review` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]",
+      "suggestions": [
+        "Apply both edits together \u2014 declaring without cleaning sends the same content twice.",
+        "First, remove the listed `${var}` references (or rewrite to literal text) so the chunks aren't sent twice.",
+        "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order."
+      ]
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.unused-chunk",
+      "node_id": null,
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Cache chunk 'b' is declared in ## Cache but no node references it via prompt_cache:.",
+      "suggestions": [
+        "Remove 'b' from ## Cache, OR reference it from a node's `- prompt_cache: [b]`."
+      ]
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "draft",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 12002,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 50,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": [
+        "a"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "review",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 12001,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 50,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": [
+        "a"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 0,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "warning",
+      "message": "Cache chunk 'b' is declared in ## Cache but no node references it via prompt_cache:.",
+      "source": "validator",
+      "id": "cache.unused-chunk",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Remove 'b' from ## Cache, OR reference it from a node's `- prompt_cache: [b]`."
+      ],
+      "context": {
+        "category": "cache_warning",
+        "chunk_name": "b",
+        "path": "cache.items[name=b]",
+        "source_line": 30,
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "Workflow `<BASELINE_CASE_DIR>/workflow.pflow.md` declares `## Cache` but 2 LLM node(s) reference shared cache chunks without declaring them in their own `prompt_cache:`. Each affected call sends those chunks uncached, missing the 0.1x input-cost reuse.\n\nAffected nodes:\n- `draft` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]\n- `review` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]",
+      "source": "cache_analyzer",
+      "id": "cache.prompt-cache-incomplete",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Apply both edits together \u2014 declaring without cleaning sends the same content twice.",
+        "First, remove the listed `${var}` references (or rewrite to literal text) so the chunks aren't sent twice.",
+        "Then extend `prompt_cache:` to include the missing chunks. The corrected list is shown per-node and preserves the `## Cache` declaration order."
+      ],
+      "context": {
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "workflow_basename": "workflow.pflow.md",
+        "affected_node_count": 2,
+        "node_findings": [
+          {
+            "node_id": "draft",
+            "missing_chunks": [
+              "b"
+            ],
+            "missing_chunks_csv": "`b`",
+            "corrected_prompt_cache": [
+              "a",
+              "b"
+            ],
+            "corrected_prompt_cache_inline": "[a, b]",
+            "prompt_body_cleanup": [
+              "b"
+            ],
+            "prompt_body_cleanup_csv": "${b}",
+            "rep_model": "anthropic/claude-sonnet-4-5",
+            "missing_chunks_tokens": 6000
+          },
+          {
+            "node_id": "review",
+            "missing_chunks": [
+              "b"
+            ],
+            "missing_chunks_csv": "`b`",
+            "corrected_prompt_cache": [
+              "a",
+              "b"
+            ],
+            "corrected_prompt_cache_inline": "[a, b]",
+            "prompt_body_cleanup": [
+              "b"
+            ],
+            "prompt_body_cleanup_csv": "${b}",
+            "rep_model": "anthropic/claude-sonnet-4-5",
+            "missing_chunks_tokens": 6000
+          }
+        ],
+        "node_findings_block": "Affected nodes:\n- `draft` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]\n- `review` (model: anthropic/claude-sonnet-4-5):\n    1. Remove from prompt body: ${b}\n    2. Set prompt_cache: [a, b]",
+        "below_threshold_clause": "",
+        "savings_usd": 0.0324,
+        "category": "cache_advisory",
+        "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md]"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    }
+  ],
+  "notes": []
+}

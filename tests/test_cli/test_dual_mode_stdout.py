@@ -48,6 +48,7 @@ def _run_pflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+@pytest.mark.e2e
 class TestStdoutRedirectLabel:
     """When stdout is not a TTY, the ``Workflow output (desc):`` label is suppressed."""
 
@@ -119,6 +120,7 @@ class TestStdoutRedirectLabel:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+@pytest.mark.e2e
 class TestMultiOutputAmbiguity:
     """Multi-declared outputs + no marker + no ``-o`` → warn and emit first."""
 
@@ -261,6 +263,7 @@ class TestMultiOutputAmbiguity:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+@pytest.mark.e2e
 class TestStdoutValidator:
     """The validator enforces at-most-one ``stdout: true`` per workflow."""
 

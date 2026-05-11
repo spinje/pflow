@@ -9,6 +9,7 @@ from pflow.execution.formatters.output_utils import (
     _find_in_namespaces,
     _is_valid_output_value,
     find_auto_output,
+    find_only_output,
 )
 
 
@@ -233,66 +234,51 @@ class TestFindAutoOutput:
         assert key == "result"
         assert value is False
 
-    def test_preferred_key_wins_over_priority_keys_at_root(self):
-        """GH #344 regression guard: preferred_key beats priority-key match at root.
-
-        When the user explicitly targets a node via --only, the engine's
-        resolved declared outputs may land at root with a priority-key name
-        (e.g. 'result') from an UNRELATED upstream node. Without
-        preferred_key, find_auto_output returns that unrelated value;
-        with it, the user's target wins.
-        """
-        shared = {
-            # Unrelated upstream declared output at root — priority search would win this
-            "result": ["unrelated", "upstream", "data"],
-            # User's actual target — batch node's output namespace
-            "process-all": {"results": [{"result": "hello"}, {"result": "world"}], "count": 2},
-        }
-        key, value = find_auto_output(shared, preferred_key="process-all")
-        assert key == "process-all"
-        assert value == {"results": [{"result": "hello"}, {"result": "world"}], "count": 2}
-
-    def test_preferred_key_missing_falls_to_priority_search(self):
-        """preferred_key pointing to a missing key falls through to priority search."""
-        shared = {"result": "priority value"}
-        key, value = find_auto_output(shared, preferred_key="nonexistent")
-        assert key == "result"
-        assert value == "priority value"
-
-    def test_preferred_key_invalid_value_falls_to_priority_search(self):
-        """preferred_key pointing to None/empty falls through to priority search."""
-        shared = {
-            "target": None,
-            "result": "priority value",
-        }
-        key, value = find_auto_output(shared, preferred_key="target")
-        assert key == "result"
-        assert value == "priority value"
-
-    def test_preferred_key_none_preserves_default_behavior(self):
-        """preferred_key=None (default) behaves exactly like no preferred_key."""
-        shared = {"result": "R", "response": "S"}
-        key_no, value_no = find_auto_output(shared)
-        key_none, value_none = find_auto_output(shared, preferred_key=None)
-        assert (key_no, value_no) == (key_none, value_none)
-        assert key_no == "result"
-
-    def test_preferred_key_dict_value_is_returned(self):
-        """preferred_key works for dict values (common case: batch node namespace)."""
-        shared = {
-            "result": "scalar",
-            "batch-node": {"results": [1, 2, 3], "count": 3},
-        }
-        key, value = find_auto_output(shared, preferred_key="batch-node")
-        assert key == "batch-node"
-        assert value == {"results": [1, 2, 3], "count": 3}
-
     def test_dict_value_at_root_is_returned(self):
         """Dict values at root level are valid outputs (not just namespaces)."""
         shared = {"result": {"key": "value"}}
         key, value = find_auto_output(shared)
         assert key == "result"
         assert value == {"key": "value"}
+
+
+class TestFindOnlyOutput:
+    """Tests for target-scoped --only output selection."""
+
+    def test_flat_target_unwraps_stdout(self):
+        shared = {"fetch": {"stdout": "target stdout", "exit_code": 0}}
+        key, value = find_only_output(shared, "fetch")
+        assert key == "stdout"
+        assert value == "target stdout"
+
+    def test_flat_target_with_no_priority_key_returns_full_namespace(self):
+        namespace = {"items": [1, 2, 3], "count": 3}
+        shared = {"fetch": namespace}
+        key, value = find_only_output(shared, "fetch")
+        assert key == "fetch"
+        assert value == namespace
+
+    def test_dotted_target_returns_root_namespace(self):
+        namespace = {"results": [{"result": "hello"}], "count": 1}
+        shared = {"child": namespace, "result": "unrelated declared output"}
+        key, value = find_only_output(shared, "child.fetch")
+        assert key == "child"
+        assert value == namespace
+
+    def test_unrelated_root_result_does_not_shadow_target(self):
+        shared = {
+            "result": "root result should not win",
+            "fetch": {"stdout": "target stdout"},
+        }
+        key, value = find_only_output(shared, "fetch")
+        assert key == "stdout"
+        assert value == "target stdout"
+
+    def test_missing_target_returns_none(self):
+        shared = {"result": "root result should not win"}
+        key, value = find_only_output(shared, "fetch")
+        assert key is None
+        assert value is None
 
 
 class TestAutoDetectionWarning:
@@ -311,11 +297,11 @@ class TestAutoDetectionWarning:
 
     def test_only_node_falls_through_to_auto_detect_when_declared_outputs_unresolvable(self, capsys):
         """REGRESSION GUARD: --only on a node whose output isn't referenced by any
-        declared output must still emit *something* to stdout via auto-detection.
+        declared output must still emit the targeted node's output to stdout.
 
-        Before the fallback was added, the CLI's ``elif`` declared-output branch
-        returned False silently and the ``else`` auto-detect branch was never
-        reached (elif/else are mutually exclusive), leaving stdout empty.
+        Before target-scoped --only routing, the CLI's declared-output branch
+        could return False silently and never reach a useful target output,
+        leaving stdout empty.
         """
         from pflow.cli.workflow_output import _handle_text_output
 
@@ -331,7 +317,10 @@ class TestAutoDetectionWarning:
         captured = capsys.readouterr()
         # Auto-detected value MUST reach stdout — this is the silent regression we fix
         assert "target-node-value" in captured.out
-        # No noisy stderr note — the --only indicator line already establishes context
+        assert (
+            "cli: --only active — streaming auto-detected key 'stdout' from target 'upstream' to stdout."
+            in captured.err
+        )
         assert "Declared outputs unresolvable" not in captured.err
         assert "No outputs declared" not in captured.err
 
@@ -344,9 +333,8 @@ class TestAutoDetectionWarning:
         declared outputs. The first (becomes stdout target) references a
         downstream node and fails to resolve under --only. The second is
         named 'result' and references an upstream node that DID run, so it
-        resolves at root. Without preferred_key, find_auto_output's priority
-        search returns the unrelated 'result' value instead of the user's
-        actual target (the batch namespace).
+        resolves at root. The dedicated --only selector must ignore that
+        unrelated root value and return the target batch namespace.
         """
         from pflow.cli.workflow_output import _handle_text_output
 
@@ -378,11 +366,13 @@ class TestAutoDetectionWarning:
         assert '"count": 2' in captured.out  # batch namespace structure
         # Critically: the shadowing value MUST NOT reach stdout
         assert "NOT" not in captured.out
-        # No noisy stderr note under --only — the --only indicator already establishes context
+        assert (
+            "cli: --only active — streaming auto-detected key 'process-all' from target 'process-all.echo' to stdout."
+        ) in captured.err
         assert "Declared outputs unresolvable" not in captured.err
 
-    def test_only_node_without_declared_outputs_shows_no_outputs_warning(self, capsys):
-        """CORRECTNESS: --only on workflow without outputs falls through to auto-detection."""
+    def test_only_node_without_target_output_warns_with_target_context(self, capsys):
+        """CORRECTNESS: --only never lets unrelated root values shadow the target."""
         from pflow.cli.workflow_output import _handle_text_output
 
         shared = {
@@ -393,7 +383,14 @@ class TestAutoDetectionWarning:
         _handle_text_output(shared, output_key=None, workflow_ir={"nodes": []}, verbose=False)
 
         captured = capsys.readouterr()
-        assert "No outputs declared" in captured.err
+        assert captured.out == ""
+        # Substring check — the post-fix message also enumerates concrete
+        # ``-o`` candidates from shared storage (covered by
+        # ``test_only_no_output_enumerates_available_keys``).
+        assert (
+            "cli: --only target 'fetch' produced no output. Pass -o <key> to select a specific shared-store key."
+        ) in captured.err
+        assert "No outputs declared" not in captured.err
         assert "Declared outputs skipped" not in captured.err
 
     def test_print_mode_suppresses_warning(self, capsys):
@@ -406,3 +403,35 @@ class TestAutoDetectionWarning:
         captured = capsys.readouterr()
         assert "No outputs declared" not in captured.err
         assert "auto-detected" not in captured.err
+
+    def test_only_no_output_enumerates_available_keys(self, capsys):
+        """CORRECTNESS: --only miss surfaces routable ``-o`` candidates so the
+        agent's suggested next action is concretely actionable. Internal keys
+        (leading underscore, including ``__execution__``) are filtered.
+
+        Mutation contract: removing the enumeration in
+        ``_emit_only_output``'s no-output branch makes ``Available
+        shared-store keys:`` disappear from the error.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        # ``fetch`` namespace is missing → ``find_only_output`` returns None,
+        # firing the no-output path. Other top-level keys exist as `-o`
+        # candidates the agent can pivot to.
+        shared = {
+            "__execution__": {"only_node": "fetch"},
+            "result": "some value",
+            "extract": {"response": "extracted"},
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir={"nodes": []}, verbose=False)
+
+        captured = capsys.readouterr()
+        err = captured.err
+        # Suggestion + concrete candidates must both appear.
+        assert "produced no output" in err, err
+        assert "Available shared-store keys:" in err, err
+        # Routable top-level keys surfaced.
+        assert "result" in err
+        assert "extract" in err
+        # Internal keys filtered.
+        assert "__execution__" not in err

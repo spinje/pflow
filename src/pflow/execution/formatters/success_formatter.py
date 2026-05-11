@@ -173,28 +173,28 @@ def _collect_outputs(
         and workflow_ir["outputs"]
         and not shared_storage.get("__execution__", {}).get("only_node")
     ):
-        # Collect ALL declared outputs (skip when --only is active — declared outputs
-        # reference downstream nodes that didn't execute; use auto-detection instead)
+        # Collect ALL declared outputs. --only is handled in the next branch
+        # because its stdout contract is target-scoped, not full-run scoped.
         declared = workflow_ir["outputs"]
 
         for output_name in declared:
             if output_name in shared_storage:
                 result[output_name] = parse_json_or_original(shared_storage[output_name])
 
+    elif only_node := shared_storage.get("__execution__", {}).get("only_node"):
+        # --only is target-scoped: declared full-run outputs and unrelated
+        # root priority keys must not shadow the requested node/sub-workflow.
+        from pflow.execution.formatters.output_utils import find_only_output
+
+        key_found, value = find_only_output(shared_storage, only_node if isinstance(only_node, str) else None)
+        if key_found:
+            result[key_found] = parse_json_or_original(value)
+
     else:
-        # Auto-detect output (handles both --only and no-declared-outputs cases).
-        # find_auto_output is namespace-aware: looks inside node namespace dicts
-        # for common output keys, so it finds the target node's stdout/result/response.
-        # Under --only, pass the target's root segment as preferred_key so the
-        # user's explicit target wins over unrelated resolved declared outputs
-        # at root (GH #344).
+        # Auto-detect output for full runs without declared outputs.
         from pflow.execution.formatters.output_utils import find_auto_output
 
-        # Only dotted --only passes preferred_key — flat --only relies on
-        # priority-key unwrap for clean scalar output from leaf nodes.
-        only_node = shared_storage.get("__execution__", {}).get("only_node")
-        preferred_key = only_node.split(".", 1)[0] if isinstance(only_node, str) and "." in only_node else None
-        key_found, value = find_auto_output(shared_storage, preferred_key=preferred_key)
+        key_found, value = find_auto_output(shared_storage)
         if key_found:
             result[key_found] = parse_json_or_original(value)
 

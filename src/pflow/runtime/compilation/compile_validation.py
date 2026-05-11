@@ -97,7 +97,7 @@ def _get_template_resolution_mode(ir_dict: dict[str, Any]) -> str:
     return template_resolution_mode
 
 
-def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any]) -> None:
+def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any], workflow_path: str | None = None) -> None:
     """Validate data flow at compile time (cycles, forward refs, non-existent node refs).
 
     Passes check_inputs=False because the compiler has initial_params containing
@@ -110,8 +110,19 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any]) -> None:
     that the pre-execution validator produces — instead of flattening them into
     a single bullet-list message.
 
+    ``workflow_path`` is threaded through so cache-namespaced findings emitted
+    via ``make_diagnostic`` (cache.invalid-on-non-llm, cache.prompt-body-*,
+    llm.thinking-temperature-mismatch) carry the real path in
+    ``context["affected_workflow"]`` rather than the ``"<unknown>"`` placeholder.
+    Mirrors the threading convention at every other validation call site
+    (validator.py:278, analyze.py:_run_full_validation through the full
+    ``WorkflowValidator.validate`` pipeline).
+
     Args:
         ir_dict: The workflow IR dictionary
+        workflow_path: Resolved workflow path for diagnostic attribution; ``None``
+            when unavailable (e.g., inline-IR test paths) — diagnostics fall
+            back to the ``"<unknown>"`` placeholder.
 
     Raises:
         CompilationError: If data flow validation finds errors
@@ -119,7 +130,7 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any]) -> None:
     from pflow.core.diagnostic import Severity
     from pflow.core.workflow.data_flow import validate_data_flow
 
-    data_flow_diagnostics = validate_data_flow(ir_dict, check_inputs=False)
+    data_flow_diagnostics = validate_data_flow(ir_dict, check_inputs=False, workflow_path=workflow_path)
     errors = [diagnostic for diagnostic in data_flow_diagnostics if diagnostic.severity == Severity.ERROR]
     if errors:
         summary = f"Data flow validation failed ({len(errors)} error{'s' if len(errors) != 1 else ''})"
@@ -157,8 +168,12 @@ def _prepare_compilation(
         logger.debug("IR validation failed", extra={"phase": "validation"}, exc_info=True)
         raise
 
-    # Data flow validation — prevents compiler producing Flows with cycles
-    _validate_data_flow_at_compile_time(ir_dict)
+    # Data flow validation — prevents compiler producing Flows with cycles.
+    # ``_pflow_workflow_file`` is set by Runner / WorkflowExecutor before the
+    # compiler runs; threaded through so cache-namespaced findings carry the
+    # real path rather than the ``"<unknown>"`` placeholder.
+    workflow_path = initial_params.get("_pflow_workflow_file")
+    _validate_data_flow_at_compile_time(ir_dict, workflow_path=str(workflow_path) if workflow_path else None)
 
     # Template resolution mode (reads IR or settings, writes to initial_params)
     template_resolution_mode = _get_template_resolution_mode(ir_dict)

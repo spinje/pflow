@@ -8,6 +8,7 @@ ${identifier} with optional path traversal (${data.field.subfield}).
 import json
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from pflow.core.json_utils import try_parse_json
@@ -328,25 +329,32 @@ class TemplateResolver:
 
     @staticmethod
     def _get_dict_value(value: Any, key: str) -> tuple[bool, Any]:
-        """Get a key from a dict, with JSON string auto-parsing.
+        """Get a key from a dict-like value, with JSON string auto-parsing.
 
         Tries to access value[key], auto-parsing JSON strings if needed.
 
+        Accepts any ``collections.abc.Mapping`` — not just ``dict`` — so
+        dict-like proxies (notably ``runtime/engine/namespaced_store.NamespacedSharedStore``,
+        which engine wraps ``shared`` in for ``node._run`` calls) work for
+        dotted-path resolution. Without this, every ``${node.field}`` reference
+        resolved through such a proxy silently echoes the literal template —
+        Task 159 cache rendering hit this on its prep-side re-resolution path.
+
         Args:
-            value: Dict, JSON string, or other value
+            value: Mapping, JSON string, or other value
             key: Key to access
 
         Returns:
             Tuple of (success, result) where success indicates if key was found
         """
-        # Direct dict access
-        if isinstance(value, dict) and key in value:
+        # Mapping access (dict, NamespacedSharedStore, MappingProxyType, ...)
+        if isinstance(value, Mapping) and key in value:
             return True, value[key]
 
         # JSON string auto-parsing
         if isinstance(value, str):
             parsed = TemplateResolver._try_parse_json_for_traversal(value)
-            if isinstance(parsed, dict) and key in parsed:
+            if isinstance(parsed, Mapping) and key in parsed:
                 return True, parsed[key]
 
         return False, None

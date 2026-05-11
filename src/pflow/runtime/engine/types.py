@@ -8,6 +8,8 @@ through the shared store, not through these types.
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from pflow.core.cache_render import CacheBlockIR
+
 
 @dataclass
 class TemplateConfig:
@@ -44,6 +46,10 @@ class NodeConfig:
     namespaced: bool  # Whether node outputs are namespaced
     interface_metadata: Optional[dict[str, Any]]  # Registry interface for type validation
     cache_enabled: bool = True  # Whether to use memoization cache (per-node opt-out)
+    # Task 159: per-node prompt-cache subset (declaration order, frozen tuple).
+    # Empty tuple = no opt-in (DD#19, byte-identical to absent).
+    prompt_cache_items: tuple[str, ...] = ()
+    prewarm: bool = False  # Task 159: per-node serialize-first-then-fan-out opt-in.
 
 
 @dataclass
@@ -58,3 +64,6 @@ class CompiledWorkflow:
     resolved_defaults: dict[str, Any] = field(default_factory=dict)  # From prepare_inputs
     env_param_names: set[str] = field(default_factory=set)
     template_resolution_mode: str = "strict"
+    # Task 159: workflow-level ## Cache IR. Frozen + tuple items so it is safe
+    # to share across parallel sub-workflow invocations via _compiled_workflow_cache.
+    cache_block: Optional[CacheBlockIR] = None

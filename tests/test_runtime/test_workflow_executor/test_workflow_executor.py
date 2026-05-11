@@ -400,6 +400,30 @@ class TestExecErrorActionDetection:
         assert "no successor edge matches" in msg
         assert "child.pflow.md" in msg
 
+    def test_extract_child_error_from_diagnostic_warning_uses_message(self):
+        """Diagnostic-shaped child warnings render the human message, not a dataclass repr."""
+        from pflow.core.diagnostic import Diagnostic, Severity
+        from pflow.runtime.node_state import FAILURE_CATEGORY_ROUTING, mark_node_failed
+
+        child_storage = {
+            "__execution__": {"failed_node": "router"},
+            "router": {"result": "some_value"},
+            "__warnings__": {
+                "router": Diagnostic(
+                    severity=Severity.WARNING,
+                    source="cache_analyzer",
+                    id="cache.below-min-tokens",
+                    message="router: declared cache did not fire",
+                )
+            },
+        }
+        mark_node_failed(child_storage, "router", category=FAILURE_CATEGORY_ROUTING)
+
+        msg = WorkflowExecutor._extract_child_error(child_storage, "child.pflow.md")
+
+        assert "router: declared cache did not fire" in msg
+        assert "Diagnostic(" not in msg
+
 
 class TestTemplateRefSubWorkflowValidation:
     """Pin the invariant that every IR reaching compile_workflow has been validated.

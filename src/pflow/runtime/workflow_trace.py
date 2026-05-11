@@ -1,5 +1,6 @@
 """Detailed trace collection for workflow debugging."""
 
+import hashlib
 import json
 import logging
 import re
@@ -14,7 +15,36 @@ from pflow.core.diagnostic import Diagnostic
 logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
-TRACE_FORMAT_VERSION = "2.0.0"
+TRACE_FORMAT_VERSION = "2.2.0"
+
+
+def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
+    """Compose a trace filename whose hash prefix encodes ``workflow_path``.
+
+    Filename schema: ``workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json``
+    where ``wf_hash`` is the first 8 hex chars of ``md5(workflow_path or "")``.
+
+    The hash makes ``analyze-cache`` autoload O(matching-traces) instead of
+    O(directory-size): the reader globs by the same hash prefix to narrow
+    candidates before reading any file's contents. Filename collisions across
+    distinct workflows are guarded by a contents-level ``workflow_path``
+    re-check at read time.
+
+    Collision class for ``workflow_path=None``/empty: ``wf_hash`` is
+    ``d41d8cd9`` (md5 of empty string), so all None-path traces share that
+    prefix. Production paths always pass a real value (file path or
+    ``ir-hash:<md5>`` for inline runs); test fixtures and report-generation
+    tools doing prefix-based discovery should expect this collision class
+    and use the contents-level re-check as the discriminator.
+    """
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", workflow_name)[:30]
+    safe_name = re.sub(r"-+", "-", safe_name).strip("-")
+
+    wf_hash = hashlib.md5((workflow_path or "").encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+
+    if safe_name and safe_name != "workflow":
+        return f"workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json"
+    return f"workflow-trace-{wf_hash}-{timestamp}.json"
 
 
 @dataclass
@@ -48,20 +78,6 @@ class _LLMSummaryAccumulator:
         model = call.get("model")
         if model:
             self.models.add(model)
-
-    def merge_sub(self, sub: dict[str, Any]) -> None:
-        self.total_calls += sub.get("total_calls", 0)
-        self.total_tokens += sub.get("total_tokens", 0)
-        self.total_input_tokens += sub.get("total_input_tokens", 0)
-        self.total_output_tokens += sub.get("total_output_tokens", 0)
-        # Child contributes its priced cost (whether reported as total_cost_usd
-        # or partial_cost_usd) and any unavailable models.
-        if sub.get("total_cost_usd") is not None:
-            self.priced_cost += sub["total_cost_usd"]
-        elif sub.get("partial_cost_usd") is not None:
-            self.priced_cost += sub["partial_cost_usd"]
-        self.unavailable_models.update(sub.get("unavailable_models", []))
-        self.models.update(sub.get("models_used", []))
 
     def as_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -117,24 +133,63 @@ class WorkflowTraceCollector:
     Captures node execution data, template resolutions, per-node outputs,
     and LLM interactions. Saves traces to ~/.pflow/debug/ for analysis.
 
-    Format 2.0.0 changes:
-    - Removed shared_before/shared_after (O(n²) full-store snapshots)
-    - Added node_params, template_resolutions, node_output per event
-    - Tree-structured: batch_items and sub_workflow_events are nested
-    - No value truncation (only internal key filtering and binary replacement)
+    Format ``2.x`` shape:
+
+    - Tree-structured events with ``node_params``, ``template_resolutions``,
+      ``node_output``, ``batch_items``, ``sub_workflow_events``.
+    - No value truncation (only internal key filtering and binary replacement).
+    - Top-level ``workflow_path`` (resolved file path or ``ir-hash:<md5>``
+      for inline runs).
+    - Per-event cache-correlation fields on LLM events: ``cache_key``,
+      ``cache_source``, ``cache_age_sec``, ``cache_chunks_skipped``
+      (flow through ``llm_call`` via the ``llm_usage`` channel).
+    - Per-event ``llm_system`` capturing the effective system content
+      the LLM saw — ``str`` for plain system params, ``list[dict]`` for
+      cache-rendered prefixes (with provider-specific ``cache_control``
+      markers), absent when no system content was provided. Captured via
+      the adapter's ``trace_hook`` ``before_call`` event; sourced from
+      ``prep_res["system_blocks"]`` when prep built one, else
+      ``prep_res["system"]``.
+
+    Consumer rule: gate on ``format_version.startswith("2.")``. New
+    additive fields are forward-compatible with that gate.
     """
 
-    def __init__(self, workflow_name: str = "workflow"):
+    def __init__(
+        self,
+        workflow_name: str = "workflow",
+        *,
+        workflow_path: str | None = None,
+    ):
         """Initialize the trace collector.
 
         Args:
-            workflow_name: Name of the workflow being traced
+            workflow_name: Name of the workflow being traced (display label;
+                used for the trace filename and the saved trace's
+                ``workflow_name`` field).
+            workflow_path: Canonical path identifier for the workflow (Task
+                159 trace 2.1.0). For file-based runs, the resolved file
+                path. For inline runs, the synthetic
+                ``"ir-hash:<32-char-md5>"`` from
+                ``execution/runner._synthesize_inline_workflow_id`` —
+                symmetric with how ``MemoizationCache.workflow_path``
+                already scopes inline-run rows. Defaults to ``None`` so
+                existing test fixtures continue to construct without
+                changes; production paths set it from
+                ``shared["_pflow_workflow_file"]`` / inline-id synthesis.
+                The saved trace JSON always emits ``workflow_path``
+                unconditionally (``null`` when not set).
         """
         self.workflow_name = workflow_name
+        self.workflow_path = workflow_path
         self.execution_id = str(uuid.uuid4())
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
         self.llm_prompts: dict[str, str] = {}  # populated by trace_hook fired from the adapter; keyed by node_id
+        # 2.2.0: effective system content (cache-rendered prefix or plain
+        # system string) captured by the same trace_hook on before_call.
+        # ``None``/missing system params produce no entry.
+        self.llm_systems: dict[str, str | list[dict[str, Any]]] = {}
         self.json_output: dict[str, Any] | None = None  # Store final JSON output if generated
         self.execution_warnings: list[dict[str, Any]] | None = None  # Runtime warnings
 
@@ -232,6 +287,17 @@ class WorkflowTraceCollector:
         if isinstance(prompt, str):
             event["llm_prompt"] = prompt  # No truncation
 
+        # 2.2.0: surface the effective system content. Lookup mirrors prompt:
+        # trace_hook capture wins; node_output fallback covers parallel batch
+        # workers (LLMNode.post writes shared["system"] per item).
+        system = self.llm_systems.get(node_id)
+        if system is None and isinstance(node_output, dict):
+            candidate = node_output.get("system")
+            if isinstance(candidate, (str, list)):
+                system = candidate
+        if system is not None:
+            event["llm_system"] = system  # No truncation
+
         # Look for response in node_output
         response = node_output.get("response") if isinstance(node_output, dict) else None
         if isinstance(response, str):
@@ -250,46 +316,27 @@ class WorkflowTraceCollector:
     def _collect_llm_calls_from_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Recursively collect llm_call dicts from tree-structured events.
 
-        NOTE: Keep tree traversal in sync with _collect_llm_summary() — same structure.
-
-        Invariant: batch items have EITHER llm_call (leaf items — direct LLM execution)
-        OR events (sub-workflow items — containing their own llm_call entries), never both.
-        LLM nodes produce llm_call; WorkflowExecutor nodes produce events. If both were
-        present, this method would double-count. Verified by construction in _capture_item_trace.
-
-        Args:
-            events: List of trace events (may contain nested batch_items/sub_workflow_events)
-
-        Returns:
-            Flat list of llm_call dicts
+        Skips cached events at every tier (top-level, batch_items,
+        sub_workflow_events) via
+        ``TraceTree.iter_llm_leaves(descend_cached_subtrees=False)``. This is
+        more aggressive than the pre-1fabde31 hand-rolled walker, which only
+        filtered top-level cached events. The new behavior is correct for
+        cost-summary purposes: cached items contributed $0 this run regardless
+        of nesting tier.
         """
+        from pflow.core.trace_tree import TraceTree
+
+        tree = TraceTree(events=tuple(events), format_version=TRACE_FORMAT_VERSION)
         calls: list[dict[str, Any]] = []
-
-        for event in events:
-            if event.get("cached"):
-                continue  # Cached nodes incurred no cost this run
-
-            if "llm_call" in event:
-                call = dict(event["llm_call"])
-                call["node_id"] = event.get("node_id", "unknown")
-                call["duration_ms"] = event.get("duration_ms", 0)
-                calls.append(call)
-
-            # Recurse into batch items
-            for item in event.get("batch_items", []):
-                if "llm_call" in item:
-                    call = dict(item["llm_call"])
-                    call["node_id"] = event.get("node_id", "unknown")
-                    call["batch_item_index"] = item.get("index", 0)
-                    calls.append(call)
-                # Recurse into nested events within batch items (sub-workflow)
-                calls.extend(self._collect_llm_calls_from_events(item.get("events", [])))
-
-            # Recurse into sub-workflow events
-            sub_events = event.get("sub_workflow_events", [])
-            if sub_events:
-                calls.extend(self._collect_llm_calls_from_events(sub_events))
-
+        for leaf in tree.iter_llm_leaves(descend_cached_subtrees=False):
+            if leaf.llm_call is None:
+                continue
+            call = dict(leaf.llm_call)
+            call["node_id"] = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
+            call["duration_ms"] = leaf.event.get("duration_ms", 0)
+            if leaf.tier == "batch_item":
+                call["batch_item_index"] = leaf.event.get("index", 0)
+            calls.append(call)
         return calls
 
     def _sanitize_for_json(self, data: Any) -> Any:
@@ -433,31 +480,20 @@ class WorkflowTraceCollector:
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """Recursively collect LLM call data from tree-structured events.
 
-        NOTE: Keep tree traversal in sync with _collect_llm_calls_from_events() — same structure.
-        See that method's docstring for the batch item llm_call/events mutual exclusivity invariant.
-
-        Cost contract mirrors ``MetricsCollector.calculate_costs``: when any
-        observed call has ``cost_usd: None`` (LiteLLM has no pricing data for
-        that model — Ollama, custom endpoints, brand-new models),
-        ``total_cost_usd`` is ``None`` and the summary carries
-        ``partial_cost_usd`` (sum of priced calls only) + ``unavailable_models``
-        + ``pricing_available: False``. When all priced, ``total_cost_usd`` is
-        the float total and ``pricing_available: True``.
+        Cached events are filtered at every tier via
+        ``TraceTree.iter_llm_leaves(descend_cached_subtrees=False)`` — top-level
+        cached events AND cached batch_items / sub_workflow_events are excluded
+        from the summary. Pre-1fabde31 the hand-rolled walker only filtered
+        top-level cached events; the new behavior is correct because cached
+        items paid $0 this run regardless of nesting tier.
         """
+        from pflow.core.trace_tree import TraceTree
+
         agg = _LLMSummaryAccumulator()
-        for event in events:
-            if event.get("cached"):
-                continue  # Cached nodes incurred no cost this run
-            if "llm_call" in event:
-                agg.add_leaf(event["llm_call"])
-            for item in event.get("batch_items", []):
-                if "llm_call" in item:
-                    agg.add_leaf(item["llm_call"])
-                # Sub-workflow item with nested events (mutually exclusive with llm_call)
-                agg.merge_sub(self._collect_llm_summary(item.get("events", [])))
-            sub_events = event.get("sub_workflow_events", [])
-            if sub_events:
-                agg.merge_sub(self._collect_llm_summary(sub_events))
+        tree = TraceTree(events=tuple(events), format_version=TRACE_FORMAT_VERSION)
+        for leaf in tree.iter_llm_leaves(descend_cached_subtrees=False):
+            if leaf.llm_call is not None:
+                agg.add_leaf(dict(leaf.llm_call))
         return agg.as_dict()
 
     def save_to_file(self) -> Path:
@@ -470,19 +506,8 @@ class WorkflowTraceCollector:
         trace_dir = Path.home() / ".pflow" / "debug"
         trace_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate filename with timestamp and workflow name
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-
-        # Sanitize workflow name for filename (keep only alphanumeric and hyphens, limit length)
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", self.workflow_name)[:30]
-        # Remove multiple consecutive hyphens and strip leading/trailing hyphens
-        safe_name = re.sub(r"-+", "-", safe_name).strip("-")
-
-        # Create filename with workflow name if available, otherwise just "workflow"
-        if safe_name and safe_name != "workflow":
-            filename = f"workflow-trace-{safe_name}-{timestamp}.json"
-        else:
-            filename = f"workflow-trace-{timestamp}.json"
+        filename = format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
         filepath = trace_dir / filename
 
         # Calculate total duration
@@ -503,6 +528,11 @@ class WorkflowTraceCollector:
             "format_version": TRACE_FORMAT_VERSION,
             "execution_id": self.execution_id,
             "workflow_name": self.workflow_name,
+            # Task 159 trace 2.1.0: emitted unconditionally. None when the
+            # caller didn't set it (test fixtures, legacy harnesses); the
+            # production paths (``execution/runner.py``,
+            # ``runtime/workflow_executor.py``) always provide a value.
+            "workflow_path": self.workflow_path,
             "start_time": self.start_time.isoformat(),
             "end_time": datetime.now().isoformat(),
             "duration_ms": round(duration_ms, 2),
@@ -550,5 +580,12 @@ class WorkflowTraceCollector:
                 prompt = event.get("prompt")
                 if isinstance(prompt, str):
                     self.llm_prompts[node_id] = prompt
+                # 2.2.0: capture the effective system content (cache-rendered
+                # list[dict] when prep built one, else plain string). ``None``
+                # — i.e. caller passed no system — produces no entry, so the
+                # event omits ``llm_system`` rather than carrying null.
+                system = event.get("system")
+                if isinstance(system, (str, list)):
+                    self.llm_systems[node_id] = system
 
         return hook

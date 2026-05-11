@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from pflow.core.diagnostic import Severity
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
@@ -1208,6 +1210,7 @@ def test_example_coalesce_mixed_absent_failed_emits_summary_fix():
 # --- GH #240 + #250 end-to-end regression tests ---
 
 
+@pytest.mark.trace_files
 def test_loop_recovery_trace_reports_success_end_to_end(tmp_path):
     """GH #240 — loop recovery: visit 1 fails, visit 2 succeeds → trace aggregation
     reports Status: success and failed_node_ids is empty.

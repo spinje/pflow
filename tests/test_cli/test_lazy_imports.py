@@ -17,6 +17,10 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
+pytestmark = pytest.mark.e2e
+
 
 def test_litellm_not_imported_by_cli_main(uv_exe, prepared_subprocess_env):
     """Importing the CLI entry point must not pull in litellm.

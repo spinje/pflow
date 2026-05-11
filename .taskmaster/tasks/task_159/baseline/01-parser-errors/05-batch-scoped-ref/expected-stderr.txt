@@ -1,0 +1,8 @@
+Executing workflow (1 nodes):
+
+Error: Validation Error
+
+Cache chunk 'item.text' references '${item.text}', which is batch-scoped (varies across calls referencing the same chunk). batch references like ${item.X} and any descendants are not valid in '## Cache' — only stable values (workflow inputs and step outputs) may be cached.
+  At: cache.items[name=item.text].var:17
+
+  → Remove the batch-scoped reference from '## Cache' and put the dynamic value directly in the node's prompt instead.

@@ -1,0 +1,64 @@
+<BASELINE_CASE_DIR>/.run-home/report
+
+--- summary.md ---
+# Execution Report: workflow
+
+- Status: success
+- Duration: 7.8s
+- Nodes: 2
+- LLM calls: 2
+- Tokens: 12,083 in / 378 out
+- Total cost: $0.0013
+- Models: gemini/gemini-2.5-flash
+- Generated: <TIMESTAMP>
+
+## Pipeline
+
+| # | Node | Type | Time | Cost | Status |
+|---|------|------|------|------|--------|
+| 1 | answer-a | LLMNode | 4918ms | $0.0006 | ok |
+| 2 | answer-b | LLMNode | 2824ms | $0.0007 | ok |
+
+*Full trace: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/fixtures/live-gemini-translation.trace.json*
+--- 01-answer-a.md ---
+# answer-a
+
+- Type: LLMNode
+- Time: 4918ms
+- Status: success
+- Model: gemini/gemini-2.5-flash
+- Tokens: 6,043 in / 182 out
+- Thinking: 151 tokens
+- Paid this run: $0.0006
+- max_tokens: 200
+
+## Cached System
+
+```json
+[
+  {
+    "type": "text",
+    "text": "<cached system text elided: live trace contains long stable reference>",
+    "cache_control": {
+      "type": "ephemeral",
+      "ttl": "300s"
+    }
+  }
+]
+```
+
+## Cache telemetry
+
+- Cache write: 0 tokens
+- Cache read: 6,024 tokens
+- Cache key: <HASH:32>
+
+## Prompt
+
+Question: Summarize the reference document in three sentences.
+
+Answer using the reference document.
+
+## Response
+
+This document is a stable reference document. It explicitly states that it is about "the topic at hand." This declaration is repeated consistently throughout the entire text.

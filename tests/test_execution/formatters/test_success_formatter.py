@@ -1087,18 +1087,46 @@ class TestFindAutoOutputNamespaceAware:
         assert key == "result"
         assert value == "clean declared output"
 
+    def test_mcp_json_only_uses_target_scoped_output_selection(self):
+        """--only JSON output unwraps the target node, not unrelated root data."""
+        shared = {
+            "__execution__": {"only_node": "fetch"},
+            "result": "unrelated root result",
+            "fetch": {"stdout": "target stdout", "exit_code": 0},
+        }
+        workflow_ir = {
+            "outputs": {"result": {"source": "${downstream.stdout}"}},
+        }
+        output = format_execution_success(shared, workflow_ir, metrics_collector=None)
+
+        assert output["result"] == {"stdout": "target stdout"}
+
+    def test_mcp_json_full_run_declared_outputs_remain_unchanged(self):
+        """Full-run JSON output still emits all declared outputs."""
+        shared = {
+            "alpha": "A",
+            "beta": "B",
+            "fetch": {"stdout": "raw node stdout"},
+        }
+        workflow_ir = {
+            "outputs": {
+                "alpha": {"source": "${fetch.stdout}"},
+                "beta": {"source": "${other.stdout}"},
+            },
+        }
+        output = format_execution_success(shared, workflow_ir, metrics_collector=None)
+
+        assert output["result"] == {"alpha": "A", "beta": "B"}
+
     def test_mcp_json_dotted_only_returns_target_namespace(self):
         """GH #344 regression guard: MCP JSON output for dotted --only on a
         batch sub-workflow must return the target's namespace, not a shadowing
         declared output at root.
 
-        The ``_collect_outputs`` path (used by ``format_execution_success`` to
-        build the ``result`` field in JSON/MCP responses) must pass
-        ``preferred_key`` to ``find_auto_output`` when --only is dotted, so the
-        user's explicit target wins over unrelated resolved declared outputs.
+        ``format_execution_success`` must use target-scoped ``find_only_output``
+        when --only is active, so the user's explicit target wins over
+        unrelated resolved declared outputs.
         """
-        from pflow.execution.formatters.success_formatter import _collect_outputs
-
         shared = {
             "__execution__": {"only_node": "process-all.echo"},
             # Unrelated upstream declared output that resolved at root
@@ -1112,7 +1140,8 @@ class TestFindAutoOutputNamespaceAware:
         workflow_ir = {
             "outputs": {"result": {"source": "${upstream.stdout}"}},
         }
-        outputs = _collect_outputs(shared, workflow_ir, output_key=None)
+        output = format_execution_success(shared, workflow_ir, metrics_collector=None)
+        outputs = output["result"]
 
         # The target namespace must be what we return — not the shadowing 'result'
         assert "process-all" in outputs

@@ -55,7 +55,7 @@ The repo has four distinct patterns for getting a workflow into a test. Each tes
 | **1. Inline IR dict** → `WorkflowRunner().run(ir_dict, ...)` | Compiler + engine + runner | ~5-10ms | **Default.** Testing IR shapes, internal invariants, compiler behavior, parameterized edge cases, anything where the parser isn't part of the system under test |
 | **2. `tmp_path` fixture** (via `tests/shared/markdown_utils.py`) → `runner.run(str(path), ...)` | Parser + full in-process pipeline | ~20-30ms | When the scenario needs a real file but the content is test-specific and not reusable |
 | **3. Committed fixture** under `examples/error-handling/` (or similar) → `runner.run(str(fixture_path), ...)` | Parser + full in-process pipeline + renderer text surface | ~10-20ms | **See decision rule below** |
-| **4. Real subprocess** → `subprocess.run([pflow, ...])` | Real CLI surface: stderr routing, `logger.*`, exit codes, progress streaming | 300-500ms | CLI-surface behavior that CliRunner can't reach. See `test_progress_streaming_subprocess.py` |
+| **4. Real subprocess** → `subprocess.run([pflow, ...])` | Real CLI surface: stderr routing, `logger.*`, exit codes, progress streaming | 300-500ms | CLI-surface behavior that CliRunner can't reach. Mark as `e2e`. See `test_progress_streaming_subprocess.py` |
 
 ### Decision rule for committed fixtures (Pattern 3)
 
@@ -98,18 +98,21 @@ Pattern 3's cost is fixture drift: someone edits a fixture "to fix a typo" and s
 
 These run automatically for every test — you do NOT need to set them up:
 - **`mock_llm_client`**: Patches `pflow.core.llm_client.complete` (and each consumer module's `complete` binding) with `MockLLMClient`. Returns `AdapterResponse` instances. **Skips** tests in `/llm/` directories (they use real APIs when `RUN_LLM_TESTS=1`).
-- **`isolate_pflow_config`**: Creates isolated `tmp_path/.pflow/` dir, redirects `Registry`, `SettingsManager`, `MCPServerManager`, and `WorkflowManager` to temp paths. **Pre-populates registry with all core nodes.**
+- **`isolate_pflow_config`**: Creates isolated `tmp_path/.pflow/` dir, redirects `Registry`, `SettingsManager`, `MCPServerManager`, and `WorkflowManager` to temp paths. Default `Registry()` loads precomputed core nodes from memory to avoid per-test registry JSON writes.
+- **`disable_trace_file_writes_by_default`**: Makes `WorkflowTraceCollector.save_to_file()` a no-op unless the test is marked `trace_files`. In-memory `ExecutionResult.trace` still exists; only disk writes to `.pflow/debug` are suppressed.
 
 **Surprise**: `isolate_pflow_config` gives every test a registry with all core nodes already loaded. If you need an **empty** registry, create one with an explicit temp path.
+
+**Important**: the default isolated `registry_path` may not exist on disk. This is intentional. Tests that assert registry persistence must create `Registry(explicit_tmp_path)` or write the default `registry_path` themselves.
 
 **Tip**: `isolate_pflow_config` yields a dict with keys `pflow_dir`, `registry_path`, `settings_path`, `mcp_servers_path`, `workflows_path`. Capture it to inspect or manipulate isolated paths:
 ```python
 def test_something(isolate_pflow_config):
     paths = isolate_pflow_config
-    assert paths["registry_path"].exists()
+    assert paths["pflow_dir"].exists()
 ```
 
-**Performance**: Registry scan happens ONCE per session (~0.2s), not per test. First test in isolation pays this cost.
+**Performance**: Registry scan happens ONCE per session (~0.2s), not per test. Default tests use the precomputed nodes in memory; this avoids writing hundreds of ~48K `registry.json` files during a full run.
 
 ### LLM Mock Resolution Chain
 
@@ -153,6 +156,8 @@ def test_something(mock_llm_client):
 Registered in `pyproject.toml`:
 - **`serial`**: Tests that must run sequentially (deselect with `-m "not serial"`)
 - **`integration`**: Tests that spawn subprocesses
+- **`e2e`**: Real process, shell-pipe, external CLI boundary, or other slow environment-boundary tests. Excluded from default `make test`; run with `make test-e2e`.
+- **`trace_files`**: Tests that need real workflow trace JSON files. Without this marker, `save_to_file()` is a no-op under pytest.
 
 Other markers used across the suite:
 - `@pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), ...)` — gates real LLM API tests
@@ -163,8 +168,10 @@ Other markers used across the suite:
 
 | Command | Workers | What it excludes |
 |---------|---------|-----------------|
-| `make test` | `-n 4` | `test_llm_integration.py` |
+| `make test` | `-n 4` | `test_llm_integration.py`, `e2e` |
 | `make test-debug` | sequential | Same exclusions |
+| `make test-e2e` | `-n 4 --dist=worksteal` | Non-`e2e`, LLM integration |
+| `make test-all-local` | `-n 4 --dist=worksteal` | `test_llm_integration.py` only |
 | `make test-llm` | sequential | Only runs LLM-specific tests |
 | `make test-all` | `-n 4` | Nothing — runs everything |
 | `make test-with-skipped` | sequential | Nothing — shows skip reasons |
@@ -185,6 +192,10 @@ def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
 ```
 
 **Rule: ONE subprocess test per bug/feature is usually enough.** Use unit tests for edge cases (1000x faster).
+
+**Marker rule**: real subprocess / pipe / shell-boundary CLI tests must be marked `e2e` so they do not run in default `make test`. Use in-process `CliRunner` or `WorkflowRunner` tests for the broad matrix, and keep subprocess tests as narrow contract pins.
+
+**Trace rule**: do not rely on trace files unless the test is marked `trace_files`. If the test only needs runtime trace events, assert on `result.trace.events`; if it needs serialized JSON, add `@pytest.mark.trace_files`.
 
 For timeout-sensitive tests (e.g., hang detection), you can use minimal inline setup to avoid fixture overhead:
 ```python
@@ -317,7 +328,44 @@ def test_warns(caplog):
 ### 18. Rewritten Tests That Assert Less Are Regression Signals
 When rewriting tests during a refactor, if the new test asserts LESS than the original, the new implementation likely dropped behavior — the old test wasn't over-specified. Investigate before weakening the assertion.
 
-### 19. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
+### 19. Synthetic Fixtures Matching Buggy Code
+
+Tests that construct trace events / workflow IRs by hand can pass
+against buggy production code if the fixture happens to encode the
+bug-compatible shape. Symptom: tests are green, the bug fires in
+production, agents trust green tests over real-world output.
+
+**Defenses that work in this codebase:**
+
+- **Builder/producer shape parity tests.** `TraceFixtureBuilder` ships
+  with `TestTraceFixtureBuilderShapeParity` (`tests/test_core/test_trace_tree.py`)
+  that drives a real `WorkflowTraceCollector` and asserts the builder's
+  output keys match the producer's keys. If the builder drifts, every
+  test using it fails noisily.
+- **Committed-fixture drift detection.** `tests/fixtures/cache_analysis/_generate.py`
+  is the single source of truth for committed JSON fixtures;
+  `test_committed_cache_analysis_fixtures_match_generator_output`
+  fails when committed JSON drifts from generator output. The failure
+  message includes the regen command verbatim.
+- **Subprocess CLI integration tests.** End-to-end via `pflow ...` on
+  real-shape fixtures (e.g.,
+  `test_analyze_cache_rolls_up_three_deep_sub_workflow_costs`)
+  catches the integration class that unit tests miss.
+- **Verification specialist passes** with real CLI on real workflows
+  (e.g., the gemini-smoke fixture set under `scratchpads/`). Manual
+  but high-leverage; the bugs that hit Task 159 across 4+ phases were
+  found here, not by the test suite.
+
+**Defense that didn't earn its keep and was removed:** per-test
+`@mutation_contract` markers + `make mutation-audit` verifier.
+Operational data across 4 cleanup phases on `feat/prompt-caching`:
+1 real bug caught, 6+ line-shift drifts requiring mechanical updates,
+32 stale contracts at peak. The infrastructure was deleted because
+the maintenance cost exceeded the catch rate. Future test-fidelity
+efforts should reinforce the four defenses above rather than
+reintroduce per-test markers.
+
+### 20. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
 Unit tests that mock the boundary you're testing will pass while the real pipeline breaks. When a feature crosses ≥2 layers (e.g. shared store → engine → runner → formatter), write at least one test that runs through `WorkflowRunner().run()` and inspects `result.shared_after` / `result.diagnostics` end-to-end. Failure modes that this catches:
 - Engine archives data correctly but the runner drops `shared_store` on the exception path
 - Diagnostic context is populated correctly but the renderer never consumes it

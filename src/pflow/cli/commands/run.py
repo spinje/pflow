@@ -22,7 +22,7 @@ from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
-from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
+from pflow.core.exceptions import ReportGenerationError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
@@ -158,6 +158,8 @@ def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> No
                     _echo_trace(ctx, f"📋 Execution report: {report_dir}")
                     if only_node:
                         _echo_target_node_path(ctx, report_dir, workflow_trace.events, only_node)
+            except ReportGenerationError as report_err:
+                click.echo(f"Failed to generate report: {report_err}", err=True)
             except Exception as report_err:
                 logger.error("Failed to generate report: %s", report_err, exc_info=True)
 
@@ -304,7 +306,6 @@ def _display_execution_result(
 ) -> None:
     """Display execution result and set exit code."""
     from pflow.cli.error_output import output_error
-    from pflow.core.workflow.status import WorkflowStatus
 
     if result.success:
         _handle_workflow_success(
@@ -318,8 +319,6 @@ def _display_execution_result(
             metrics_collector=result.metrics,
             verbose=verbose,
         )
-        if result.status == WorkflowStatus.DEGRADED:
-            ctx.exit(2)
     else:
         _emit_failure_tag(ctx, result.metrics)
 
@@ -584,6 +583,16 @@ def _validate_dry_run_flag_combination(
         )
 
 
+def _validate_report_dir_before_execution(report_dir: str | None) -> None:
+    """Refuse unsafe explicit report output before running workflow side effects."""
+    if report_dir is None:
+        return
+
+    from pflow.core.trace_report import validate_report_output_dir
+
+    validate_report_output_dir(report_dir, allow_unmarked_existing=False)
+
+
 def _validate_and_prepare_workflow_params(
     ctx: click.Context,
     workflow_ir: dict[str, Any],
@@ -818,7 +827,16 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
 )
 @click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
 @click.option("--dry-run", "dry_run", is_flag=True, help="Build execution plan without invoking side effects")
-@click.option("--cache/--no-cache", default=True, help="Enable/disable memoization cache (default: enabled)")
+@click.option(
+    "--cache/--no-cache",
+    default=True,
+    help=(
+        "Enable/disable pflow's local memoization layer (default: enabled). "
+        "Does NOT disable LLM provider prompt caching declared via "
+        "`prompt_cache:` / `## Cache` (those fire regardless). "
+        "See `pflow guide prompt-caching` for the two-layer model."
+    ),
+)
 @click.option(
     "--only",
     "only_node",
@@ -860,6 +878,7 @@ def run(
             report_flag=report_flag,
             report_dir=report_dir,
         )
+        _validate_report_dir_before_execution(report_dir)
         ctx.obj["dry_run"] = dry_run
         ctx.obj["report"] = report_dir or ("auto" if report_enabled else None)
         ctx.obj["cache"] = cache

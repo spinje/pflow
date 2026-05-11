@@ -221,6 +221,7 @@ def _skip_uv_sandbox_panic(result: subprocess.CompletedProcess) -> None:
         pytest.skip("uv subprocess panics in this sandbox before pflow starts")
 
 
+@pytest.mark.e2e
 class TestCliEndToEnd:
     """End-to-end smoke: CLI renders the extras error via the diagnostic pipeline.
 

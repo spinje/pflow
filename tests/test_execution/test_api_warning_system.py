@@ -3,6 +3,7 @@
 import json
 import time
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.execution.executor_service import build_error_list
 from pflow.runtime.engine.api_warning_detector import detect_api_warning
 from pflow.runtime.engine.instrumentation import handle_api_warning
@@ -192,6 +193,32 @@ class TestErrorFormattingSurfacesWarnings:
         errors = build_error_list(False, "error", shared)
         assert len(errors) >= 1
         assert "Repository not found" in errors[0].message
+
+    def test_diagnostic_warning_message_reaches_error_list(self):
+        """Last-resort __warnings__ fallback handles Diagnostic values cleanly."""
+        shared = {
+            "__execution__": {
+                "completed_nodes": ["llm-call"],
+                "node_actions": {"llm-call": "error"},
+                "node_hashes": {},
+                "failed_node": "llm-call",
+            },
+            "__warnings__": {
+                "llm-call": Diagnostic(
+                    severity=Severity.WARNING,
+                    source="cache_analyzer",
+                    id="cache.below-min-tokens",
+                    message="llm-call: declared cache did not fire",
+                )
+            },
+            "llm-call": {"response": ""},
+        }
+
+        errors = build_error_list(False, "error", shared)
+
+        assert len(errors) >= 1
+        assert "declared cache did not fire" in errors[0].message
+        assert "Diagnostic(" not in errors[0].message
 
     def test_mcp_null_error_with_nested_data_error(self):
         """MCP response {"error": null, "data": {"error": "X"}} must surface "X".

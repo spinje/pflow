@@ -126,8 +126,9 @@ Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, 
 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
-- **Format 2.0.0**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events`
-- **LLM prompt capture**: Engine.run installs `self.trace` into `shared["__trace_collector__"]`; LLMNode.prep resolves a per-node `trace_hook` via `collector.get_trace_hook(node_id)` and threads it explicitly through the inner ThreadPoolExecutor. The hook writes to `self.llm_prompts[node_id]`; `_add_llm_data` reads from there. Save+restore around `engine.run` swaps in child collectors for sub-workflows so child LLM calls land in the child's `llm_prompts` dict.
+- **Format 2.x shape**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events`. Top-level `workflow_path` (resolved file path or `ir-hash:<md5>` for inline runs — symmetric with `MemoizationCache.workflow_path` scoping). Per-event cache-correlation fields on LLM events: `cache_key` / `cache_source` (`"memo" | "in_process"`) / `cache_age_sec` / `cache_chunks_skipped` flowing through `event["llm_call"]` via the existing `llm_usage` channel. Per-event `llm_system` carrying the effective system content the LLM saw — `str` for plain system params, `list[dict]` for cache-rendered prefixes (with provider-specific `cache_control` markers). Sourced from `prep_res["system_blocks"]` when prep built one, else `prep_res["system"]`; captured via the adapter's `trace_hook` `before_call` event. Surfaced in `--report` per-node markdown as `## Cached System` (before `## Prompt` to match API call order; list shape emits a fenced JSON block so `cache_control` markers stay visible). Cache-metadata fields are gated by `_should_write_cache_metadata(node_type_name)` — currently allowlisted to `LLMNode` only; ClaudeCodeNode is INTENTIONALLY excluded (its cache tokens come from the SDK, a different cache layer). Consumer rule: gate on `format_version.startswith("2.")` — additive minor bumps are forward-compat. Batch parity: `LLMNode.post()` mirrors prompt + effective system into `shared["prompt"]` / `shared["system"]` so per-item batch traces capture them; `batch_executor._capture_item_trace` pair-copies `system → llm_system` (accepts `(str, list)`).
+- Per-event `event["node_id"]` and `event["llm_call"]["model"]` are consumed by `cache_analysis.analyze._trace_aligns_with_ir` for auto-load drift detection. The existing trace shape is sufficient; no producer-side fingerprint or format bump is required for that consumer.
+- **LLM prompt + system capture**: Engine.run installs `self.trace` into `shared["__trace_collector__"]`; LLMNode.prep resolves a per-node `trace_hook` via `collector.get_trace_hook(node_id)` and threads it explicitly through the inner ThreadPoolExecutor. The hook writes to `self.llm_prompts[node_id]` AND `self.llm_systems[node_id]`; `_add_llm_data` reads from both. Save+restore around `engine.run` swaps in child collectors for sub-workflows so child LLM calls land in the child's dicts.
 - **Batch item tracing**: via `_batch_trace` shared-store accumulator (GIL-safe for parallel)
 - **Sub-workflow tracing**: Child collectors created by `WorkflowExecutor`, events embedded as `sub_workflow_events`
 - **Per-node aggregation rule — "last event per `node_id` = final state"**: Status determination and the `failed_node_ids` list (written to the trace file by `save_to_file`) both derive from `final_events_by_node(events)` (module-level helper, also imported by `core/trace_report.py::_collect_errors`). Loop recovery records two events for the same node_id; only the later one counts for workflow-level aggregation. Single source of truth — if the rule changes, it changes in one place. See GH #240.
@@ -166,12 +167,50 @@ shared["__failures__"] = {
 # System keys
 shared["__trace_collector__"] = WorkflowTraceCollector
 shared["__progress_callback__"] = func
-shared["__warnings__"] = {}               # Node warnings → DEGRADED status
+shared["__warnings__"] = {}               # Node warnings → DEGRADED status.
+                                          # Values may be legacy strings,
+                                          # structured warning dicts, or
+                                          # Diagnostic instances. Consumers use
+                                          # normalize_runtime_warning(), except
+                                          # runner._extract_runtime_warnings
+                                          # preserves Diagnostic values as-is.
 shared["__cache_hits__"] = []             # Nodes served from cache
 shared["__template_errors__"] = {}        # Permissive mode errors
 shared["__mcp_pool__"] = MCPConnectionPool
 shared["__memoization_cache__"] = MemoizationCache
 shared["__index__"] = int                 # 0-based batch item index
+shared["__pflow_cache_render__"] = MappingProxyType[node_id, CacheRenderContext]
+                                          # Task 159 B3.2: per-workflow cache rendering map.
+                                          # Read-only proxy over a dict keyed by node_id.
+                                          # Engine-installed at WorkflowEngine.run() entry,
+                                          # save+restore mirrors __trace_collector__. Restore
+                                          # from absent writes _EMPTY_CACHE_RENDER (a frozen
+                                          # empty proxy), NEVER None. Consumers use the
+                                          # canonical (shared.get(K) or {}).get(node_id)
+                                          # defensive pattern. NOT in _PROPAGATED_KEYS — each
+                                          # .pflow.md scopes its own ## Cache (DD#12); leaking
+                                          # parent → child would break cache scoping AND the
+                                          # CacheBlockIR freeze guarantee.
+                                          #
+                                          # UNSUPPORTED COMBO (v1): a sub-workflow with
+                                          # `storage_mode: shared` writes directly to the
+                                          # parent's root store (NamespacedSharedStore.__setitem__
+                                          # at namespaced_store.py:51 makes __*__ keys bypass
+                                          # the namespace). Two parallel batch items each
+                                          # running a `storage_mode: shared` sub-workflow that
+                                          # has its own ## Cache block both invoke
+                                          # WorkflowEngine.run's save/restore on the SAME parent
+                                          # root, and the restore order across worker threads
+                                          # is non-deterministic (last-finished worker wins).
+                                          # Each child reads its own installed value during
+                                          # execution (correct), but the parent's value AFTER
+                                          # the batch is whichever child restored last. Today
+                                          # no consumer reads parent's cache_render after a
+                                          # parallel batch completes, so this is silent-but-
+                                          # benign. If a future code path adds such a consumer,
+                                          # add a runtime guard at engine.run entry rejecting
+                                          # the combination. Also see plan-doc DD#12 and
+                                          # progress-log Segment 2 for the full rationale.
 
 # Nested workflow keys
 shared["_pflow_depth"] = int

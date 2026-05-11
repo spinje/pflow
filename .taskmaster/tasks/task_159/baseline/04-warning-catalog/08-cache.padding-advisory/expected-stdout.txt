@@ -1,0 +1,40 @@
+# Cache Analysis: generated-padding.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/04-warning-catalog/08-cache.padding-advisory/.run-home/generated-padding.pflow.md
+
+  Workflow: 2 LLM nodes using anthropic/claude-opus-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  1 recommended action
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/04-warning-catalog/08-cache.padding-advisory/.run-home/generated-padding.pflow.md a=<value> b=<value> c=<value>
+
+## Recommended actions (1, ordered by impact)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Padding advisory — extend `prompt_cache:` on consumer to hit upstream cache  saves ~$0.05/run
+     consumer
+     consumer: `prompt_cache:` subset doesn't start at position 1 of the ## Cache declaration. Extending it to ['a', 'b', 'c'] would let this node hit cached writes from upstream nodes at 0.1× input cost. (saves $0.05/run)
+     → Extend `prompt_cache:` to `['a', 'b', 'c']` to gain prefix-cache hits from upstream writes.
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+  Showing 1 of 2 LLM nodes; low-signal rows hidden (--all-rows shows everything).
+
+  node      model                      input  cached_now  could_cache  ratio  calls  notes
+  -----------------------------------------------------------------------------------
+
+  consumer  anthropic/claude-opus-4-5  6,004           —        6,000   100%      —  padding-advisory
+
+  Hidden: 1 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
+
+  Token estimate confidence:
+    · Projected input tokens for: consumer.

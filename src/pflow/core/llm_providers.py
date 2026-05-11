@@ -19,6 +19,12 @@ class ProviderInfo:
     provider's actual aliasing (e.g. LiteLLM's Gemini path checks both
     ``GEMINI_API_KEY`` and ``GOOGLE_API_KEY``); the canonical entry is
     what pflow surfaces as the recommended setup target.
+
+    Cache-token accounting is intentionally NOT represented here. LiteLLM's
+    response shape can vary by provider version and trace vintage; pflow
+    normalizes usage with ``core.llm_usage.normalize_litellm_usage_tokens()``
+    at the adapter/analyzer boundary instead of trusting static provider
+    metadata for arithmetic.
     """
 
     name: str

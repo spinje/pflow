@@ -23,7 +23,7 @@ If execution succeeds, present results concisely. Do not re-run.
 
 Run Options:
   --only <node>         Run just this node (upstream cached, downstream skipped)
-  --no-cache            Force fresh execution (bypass cache)
+  --no-cache            Bypass pflow memo-cache reads
   --report              Generate per-node execution report
   -o, --output-key <key>  Extract specific output
   --validate-only       Validate without executing
@@ -50,6 +50,9 @@ Features — when the user says X, load topic Y:
                    → "if X then Y", "handle failures", "retry on error"
   sub-workflows    Reusable sub-workflow composition
                    → "reuse this", "same validation as X"
+  prompt-caching   Provider prompt caching, ## Cache, prompt_cache:
+                   → "cache prompts", "reduce LLM cost", "speed up retries"
+                   Alias accepted: `pflow guide caching`
 
 Start here:
   core             Framework fundamentals — how to design and build workflows

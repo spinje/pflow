@@ -1,0 +1,40 @@
+# Cache Analysis: smoke-with-cache.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/_shared/workflows/smoke-with-cache.pflow.md
+
+  Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  2 recommended actions
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/_shared/workflows/smoke-with-cache.pflow.md context=<value> question_a=<value> question_b=<value>
+
+## Recommended actions (2)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Cache content below provider minimum on answer-a                    savings unavailable
+     answer-a
+     answer-a: declared cache content is ~1 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider
+     → Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from answer-a since the cache won't fire as declared.
+
+  2. Cache content below provider minimum on answer-b                    savings unavailable
+     answer-b
+     answer-b: declared cache content is ~1 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider
+     → Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from answer-b since the cache won't fire as declared.
+
+## Per-call cache report
+  Actual cache ratios from declared `prompt_cache:` subsets.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+
+  node      model                        input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------
+
+  answer-a  anthropic/claude-sonnet-4-5     16           —            1     6%      —  below-min-tokens
+  answer-b  anthropic/claude-sonnet-4-5     16           —            1     6%      —  below-min-tokens

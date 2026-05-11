@@ -75,6 +75,7 @@ def _save_broken_workflow(home_dir, name: str) -> None:
     (workflow_dir / f"{name}.pflow.md").write_text(PARSE_ERROR_WORKFLOW)
 
 
+@pytest.mark.e2e
 class TestDescribeParseError:
     """Primary guards for GH #292 — pflow describe must not crash with a traceback."""
 
@@ -219,6 +220,7 @@ class TestBoundaryNarrowCatch:
             cli.commands.pop("__test_pflow_error__", None)
 
 
+@pytest.mark.e2e
 class TestRunCommandUnchanged:
     """Regression guard: run has its own boundary; the group boundary must not interfere."""
 

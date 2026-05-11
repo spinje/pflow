@@ -289,6 +289,16 @@ pflow -p workflow.pflow.md | jq '.data'
 
 Suppresses the "Workflow output:" header, the execution summary, and stderr warnings. Data still goes to stdout (same as default mode). Useful for piping into tools that should only see the result.
 
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Workflow completed, including runs that completed with warnings (`status: "degraded"`) |
+| `1` | Workflow failed |
+| `130` | Workflow interrupted |
+
+Runtime warnings remain visible in stderr, JSON output, traces, and reports; they do not make a completed workflow a process failure.
+
 ## Validation mode
 
 Validate a workflow without running it:
@@ -396,17 +406,19 @@ The `--only` flag runs the workflow through the named node and stops. Upstream n
 pflow ./workflow.pflow.md --only process-data
 ```
 
+Without `-o`, `--only` streams the targeted node or sub-workflow result to stdout instead of the workflow's full-run outputs. Pass `-o <key>` when you need a specific named output.
+
 This is how agents iterate on a specific node without re-running the full workflow.
 
-### Bypass caching
+### Bypass memo cache reads
 
-Use `--no-cache` to force fresh execution. Cache writes still happen, so the next run without `--no-cache` benefits from the results:
+Use `--no-cache` to bypass pflow memo-cache reads, so nodes execute again. Memo cache writes still happen, so the next run without `--no-cache` benefits from the results:
 
 ```bash
 pflow ./workflow.pflow.md --no-cache
 ```
 
-Use this when a node has external side effects (API calls, file writes) that should always run, or when cached results seem stale.
+Use this when a node has external side effects (API calls, file writes) that should run again, or when memoized results seem stale. It does not disable LLM provider prompt caching declared with `## Cache` / `prompt_cache:`, OpenAI automatic prompt caching, or Gemini implicit caching.
 
 ### Per-node opt-out
 
@@ -450,6 +462,10 @@ pflow report ~/.pflow/debug/workflow-trace-my-workflow-20260323-160000.json
 ```
 
 Reports include rendered prompts, responses, cost data, error summaries with fix suggestions, and anomaly warnings.
+
+Report output directories are replaced as generated snapshots. Custom report
+directories must be empty or already contain pflow's `.pflow-report.json`
+marker.
 
 Disable traces with `--no-trace` for faster execution (the `--report` flag overrides `--no-trace`).
 

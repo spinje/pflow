@@ -27,6 +27,23 @@ def test_example():
 - Use `runner.isolated_filesystem()` for file operations
 - CliRunner always returns False for `isatty()` — can't test interactive prompts
 - Don't use real workflow names — may trigger direct execution attempt
+- CliRunner tests do not write trace files by default under pytest. If the test
+  asserts `pflow report`, trace serialization, or `.pflow/debug` contents, mark
+  it with `@pytest.mark.trace_files`.
+
+## Real Subprocess CLI Tests
+
+Use a real subprocess only for behavior that CliRunner cannot observe:
+
+- stderr/stdout byte separation
+- progress streaming before process exit
+- logger output interleaving
+- shell pipe behavior
+- true process exit-code behavior
+
+Mark these tests `@pytest.mark.e2e`. Default `make test` excludes `e2e`;
+`make test-e2e` runs them separately. Keep one subprocess regression per
+bug/feature and cover edge cases in faster in-process tests.
 
 ## If Tests Hang
 

@@ -1,0 +1,8 @@
+Dry-run for workflow.pflow.md: 1 nodes
+
+  ─── nothing cached — full run ───
+  ▸ scoring  [LLM]   ≈ $? (no history)
+
+Summary: 0 cached · 1 would execute (1 LLM)
+  (1 LLM node without cost history)
+  (1 node without duration history)

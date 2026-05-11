@@ -93,16 +93,21 @@ def validate_workflow_templates(
 
     # Extract all templates from workflow
     all_templates = _extract_all_templates(workflow_ir)
+    cache_templates = _extract_cache_templates_for_unused_check(workflow_ir)
 
-    if all_templates:
+    if all_templates or cache_templates:
         logger.debug(
-            f"Found {len(all_templates)} template variables to validate", extra={"templates": sorted(all_templates)}
+            f"Found {len(all_templates)} node-param + {len(cache_templates)} cache template(s) to validate",
+            extra={"templates": sorted(all_templates), "cache_templates": sorted(cache_templates)},
         )
     else:
         logger.debug("No template variables found in workflow")
 
-    # Check for unused inputs
-    unused_input_diagnostics = _validate_unused_inputs(workflow_ir, all_templates)
+    # Check for unused inputs — the union ensures inputs declared ONLY for use
+    # in ``## Cache`` aren't flagged as unused. Cache vars don't flow through
+    # ``validate_template_paths`` below (their resolution is handled by
+    # ``core/workflow/data_flow.py::_validate_cache_block`` with richer messages).
+    unused_input_diagnostics = _validate_unused_inputs(workflow_ir, all_templates | cache_templates)
     diagnostics.extend(unused_input_diagnostics)
 
     # If no templates exist anywhere in the workflow, most template passes can
@@ -351,6 +356,50 @@ def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:  # noqa: C9
             if items_template:
                 extract_from_value(items_template, node_id, "batch.items")
 
+    return templates
+
+
+def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> set[str]:
+    """Extract template variables from the workflow-level ``## Cache`` block.
+
+    Cache chunks reference workflow inputs / step outputs via their ``var``
+    field; without registering these the unused-input check (``_validate_unused_inputs``)
+    would flag inputs declared ONLY for use inside ``## Cache`` as unused —
+    spurious ERROR even when the input IS used in cache.
+
+    Cache vars are validated FOR RESOLUTION in
+    ``core/workflow/data_flow.py::_validate_cache_block``, which emits richer
+    "Cache chunk 'X' references..." diagnostics with similar-name suggestions
+    and source-line metadata. The path-validation pass (``validate_template_paths``)
+    in this package MUST NOT receive cache vars — it would emit a parallel
+    generic "Template variable ${X} has no valid source" diagnostic and the
+    user gets two errors for the same problem.
+
+    Split-extractor contract: keep this function's output OUT of the
+    ``all_templates`` set passed to ``validate_template_paths`` and friends.
+    Only ``_validate_unused_inputs`` consumes the union.
+    """
+    templates: set[str] = set()
+    cache_block = workflow_ir.get("cache")
+    if not isinstance(cache_block, dict):
+        return templates
+    cache_items = cache_block.get("items")
+    if not isinstance(cache_items, list):
+        return templates
+    for item in cache_items:
+        if not isinstance(item, dict):
+            continue
+        var = item.get("var")
+        if not isinstance(var, str) or not var:
+            continue
+        # Apply the same coalesce-split as node-param templates so a
+        # hypothetical ``${a ?? b}`` chunk var (parser doesn't allow this in v1
+        # but a programmatic IR could) is still split into operands for
+        # the unused-input check.
+        if "??" in var:
+            templates.update(TemplateResolver.split_coalesce_operands(var))
+        else:
+            templates.add(var)
     return templates
 
 

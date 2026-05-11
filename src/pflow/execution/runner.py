@@ -1,8 +1,6 @@
 """Shared workflow execution runner for CLI and MCP entry points."""
 
 import contextlib
-import hashlib
-import json
 import logging
 import time
 from dataclasses import replace
@@ -26,6 +24,7 @@ from pflow.core.exceptions import (
 )
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
+from pflow.core.workflow_id import synthesize_inline_workflow_id
 
 from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
@@ -33,24 +32,11 @@ from .workflow_resolver import resolve_workflow
 logger = logging.getLogger(__name__)
 
 
-def _synthesize_inline_workflow_id(ir: dict[str, Any]) -> str:
-    """Produce a stable synthetic `_pflow_workflow_file` for inline runs.
-
-    SQL `WHERE workflow_path = NULL` matches zero rows (NULL semantics), so
-    writing NULL falls back to the unscoped read path — pooling cache
-    history across unrelated inline workflows. A content hash gives each
-    distinct inline IR its own scope without requiring a real filesystem
-    path.
-
-    Hashes the RAW parsed IR (pre file-reference resolution, pre defaults
-    fill) so the identifier represents what the caller submitted, not what
-    the runner derived. Cache-key invalidation already handles file-content
-    changes via `resolved_params` hashing; the `workflow_path` scope just
-    needs to partition across distinct inline submissions.
-    """
-    canonical = json.dumps(ir, sort_keys=True, default=str, separators=(",", ":"))
-    digest = hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
-    return f"ir-hash:{digest}"
+# Backward-compat alias: the helper moved to ``core/workflow_id.py`` so the
+# analyzer can import it without crossing the ``core/`` ← ``execution/`` layer
+# boundary. Tests and module-private callers under this prefix continue to
+# work unchanged.
+_synthesize_inline_workflow_id = synthesize_inline_workflow_id
 
 
 class WorkflowRunner:
@@ -123,7 +109,15 @@ class WorkflowRunner:
             metrics_collector = MetricsCollector()
             metrics_collector.record_workflow_start()
 
-            trace_collector = WorkflowTraceCollector(workflow_name=workflow_name or resolved.file_path or "unnamed")
+            # Task 159 E.1 trace 2.1.0: ``workflow_path`` is the canonical
+            # identifier. File-based runs use the resolved path; inline runs
+            # synthesize a stable ``ir-hash:<md5>`` (symmetric with
+            # ``MemoizationCache.workflow_path`` scoping for inline rows).
+            trace_workflow_path = resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)
+            trace_collector = WorkflowTraceCollector(
+                workflow_name=workflow_name or resolved.file_path or "unnamed",
+                workflow_path=trace_workflow_path,
+            )
 
             mcp_pool = MCPConnectionPool()
             cache = MemoizationCache(read_enabled=config.cache_enabled)
@@ -160,7 +154,12 @@ class WorkflowRunner:
         params: dict[str, Any],
         diagnostics: list[Diagnostic],
     ) -> ResolvedWorkflow:
-        """Resolve, inject file path, resolve file refs, enrich defaults, validate."""
+        """Resolve, inject file path, enrich defaults, validate.
+
+        File reference resolution happens inside ``resolve_workflow()`` at the
+        IR-load boundary (see ``execution/workflow_resolver.py``). The Runner
+        never re-resolves; ``ResolvedWorkflow.ir`` is the canonical resolved IR.
+        """
         resolved = self._resolve(workflow)
         diagnostics.extend(resolved.diagnostics)
 
@@ -175,8 +174,6 @@ class WorkflowRunner:
             params.setdefault("_pflow_workflow_file", resolved.file_path)
         else:
             params.setdefault("_pflow_workflow_file", _synthesize_inline_workflow_id(resolved.ir))
-
-        self._resolve_file_references(resolved.ir, params)
 
         # Fill declared input names so validation doesn't flag them as missing.
         # Only needs to know WHICH inputs will be available, not their final values.
@@ -320,7 +317,9 @@ class WorkflowRunner:
             if file_path:
                 params["_pflow_workflow_file"] = file_path
 
-            self._resolve_file_references(ir, params)
+            # File resolution happens inside resolve_workflow() at the IR-load
+            # boundary. ``ir`` is already fully resolved by the time we get
+            # here. See ``execution/workflow_resolver.py`` module docstring.
 
             from pflow.core.validation_utils import generate_dummy_parameters
 
@@ -414,7 +413,47 @@ class WorkflowRunner:
         if validation_diags:
             plan = replace(plan, diagnostics=[*plan.diagnostics, *validation_diags])
 
+        # Task 159 F3.3: append the dry-run cache nudge when actionable
+        # opportunities exist (silent on optimal plans). Per DD#36, --dry-run
+        # runs the FULL analytical pass — same analysis as `pflow analyze-cache`.
+        cache_nudge = self._build_cache_nudge(resolved, params, workflow_name)
+        if cache_nudge is not None:
+            plan = replace(plan, diagnostics=[*plan.diagnostics, cache_nudge])
+
         return plan
+
+    def _build_cache_nudge(
+        self,
+        resolved: ResolvedWorkflow,
+        params: dict[str, Any],
+        workflow_name: str,
+    ) -> Diagnostic | None:
+        """Run analyze() + summarize() to produce the dry-run cache nudge.
+
+        Returns ``None`` when the cache plan is optimal (no actionable
+        opportunities). On any analyzer-internal failure, log + return None
+        — the nudge is advisory and must NEVER fail the dry-run.
+        """
+        try:
+            from pathlib import Path
+
+            from pflow.core.cache_analysis import analyze, summarize_from_analysis
+
+            base_path = Path(resolved.file_path).parent if resolved.file_path else None
+            analysis = analyze(
+                resolved.ir,
+                parameters=params,
+                workflow_path=resolved.file_path or workflow_name,
+                base_path=base_path,
+                # Don't auto-load traces in --dry-run path — keeps latency
+                # bounded; agents who want trace-correlated nudges run
+                # `pflow analyze-cache --from-trace` directly.
+                auto_load_trace=False,
+            )
+            return summarize_from_analysis(analysis)
+        except Exception:
+            logger.debug("Cache nudge generation failed; skipping", exc_info=True)
+            return None
 
     # --- Internal helpers ---
 
@@ -429,23 +468,6 @@ class WorkflowRunner:
             normalize_ir(ir)
             return ResolvedWorkflow(ir=ir, source="direct", file_path=None)
         return resolve_workflow(workflow)
-
-    def _resolve_file_references(self, ir: dict[str, Any], params: dict[str, Any]) -> None:
-        """Resolve external file references in IR."""
-        import yaml
-
-        from pflow.core.file_resolver import get_base_dir, resolve_file_references
-
-        base_dir = get_base_dir(params)
-        try:
-            resolve_file_references(ir, base_dir)
-        except (FileNotFoundError, yaml.YAMLError) as e:
-            raise CompilationError(
-                message=str(e),
-                phase="file_resolution",
-                details={"error": str(e)},
-                suggestion="Check that the file path is correct and relative to the workflow file.",
-            ) from e
 
     def _validate(self, ir: dict[str, Any], params: dict[str, Any]) -> list[Diagnostic]:
         """Run WorkflowValidator once. Returns validation warnings."""
@@ -549,6 +571,14 @@ class WorkflowRunner:
         warnings: list[Diagnostic] = []
         failures = shared_store.get("__failures__", {})
         for node_id, raw_message in shared_store.get("__warnings__", {}).items():
+            if isinstance(raw_message, Diagnostic):
+                # Catalog-emitted Diagnostic. Preserve as-is and bypass the
+                # recovery/api_warning classifier plus canned suggestions:
+                # the Diagnostic already carries id, severity, category,
+                # suggestions, and path context end-to-end.
+                warnings.append(raw_message if raw_message.node_id else replace(raw_message, node_id=node_id))
+                continue
+
             message, warning_context = normalize_runtime_warning(raw_message)
             failure = failures.get(node_id)
             is_recovery = (
@@ -609,8 +639,6 @@ class WorkflowRunner:
                     node_id,
                 )
                 continue
-
-            from dataclasses import replace
 
             warning = replace(attached, severity=Severity.WARNING)
             if not warning.node_id:

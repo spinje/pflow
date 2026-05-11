@@ -5,6 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 GUIDE_DIR = Path(__file__).parent
+PROMPT_CACHING_TOPIC = "prompt-caching"
+
+# Backward-compatible topic aliases. Keep aliases out of auto-detection and
+# menu text so generated guide pointers use the clearest public topic name.
+_TOPIC_ALIASES: dict[str, str] = {
+    "caching": PROMPT_CACHING_TOPIC,
+}
 
 # Node types that don't map 1:1 to guide topic names.
 _NODE_TYPE_TO_TOPIC: dict[str, str] = {
@@ -61,9 +68,10 @@ def compose_guide(args: list[str]) -> str:
     for arg in args:
         detected = _resolve_arg(arg)
         for topic in detected:
-            if topic not in seen:
-                topics.append(topic)
-                seen.add(topic)
+            canonical_topic = _canonical_topic(topic)
+            if canonical_topic not in seen:
+                topics.append(canonical_topic)
+                seen.add(canonical_topic)
 
     parts: list[str] = []
     for topic in topics:
@@ -102,12 +110,13 @@ def detect_topics_from_ir(ir: dict) -> list[str]:
     """Detect guide topics from a parsed workflow IR.
 
     Walks nodes and edges to determine which guide topics are relevant.
-    Only returns topics that have corresponding guide files.
+    Only returns topics that have corresponding guide files. Does not walk
+    into sub-workflow files; see ``_topics_from_workflow_file`` for tree walking.
     """
     topics: set[str] = set()
     available = set(list_topics())
 
-    for node in ir.get("nodes", []):
+    for node in ir.get("nodes") or []:
         node_type = node.get("type", "")
 
         # Map node type to guide topic
@@ -124,8 +133,18 @@ def detect_topics_from_ir(ir: dict) -> list[str]:
         if node.get("batch") is not None:
             topics.add("batch")
 
+        # Caching detection: per-node opt-in. Presence (not truthiness): an
+        # author who writes ``prewarm: false`` is engaging with the feature
+        # and should still see the guide.
+        if node.get("prompt_cache") is not None or node.get("prewarm") is not None:
+            topics.add(PROMPT_CACHING_TOPIC)
+
+    # Caching detection: top-level ``## Cache`` block.
+    if ir.get("cache") is not None:
+        topics.add(PROMPT_CACHING_TOPIC)
+
     # Branching detection via non-default edge actions
-    for edge in ir.get("edges", []):
+    for edge in ir.get("edges") or []:
         action = edge.get("action", "default")
         if action != "default":
             topics.add("branching")
@@ -147,12 +166,13 @@ def _resolve_arg(arg: str) -> list[str]:
 
     # Known topic name (wins over saved workflow names)
     if _resolve_topic_path(arg) is not None:
-        return [arg]
+        return [_canonical_topic(arg)]
 
-    # Saved workflow name
-    ir = _try_load_saved_workflow(arg)
-    if ir is not None:
-        return detect_topics_from_ir(ir)
+    # Saved workflow name — route through the file walker so sub-workflows
+    # are walked the same way as for an explicit file path.
+    saved_path = _try_get_saved_workflow_path(arg)
+    if saved_path is not None:
+        return _topics_from_workflow_file(saved_path)
 
     # Unknown — return as-is so compose_guide raises a clear error
     return [arg]
@@ -160,6 +180,7 @@ def _resolve_arg(arg: str) -> list[str]:
 
 def _resolve_topic_path(topic: str) -> Path | None:
     """Find the markdown file for a topic name, or None."""
+    topic = _canonical_topic(topic)
     if topic == "core":
         path = GUIDE_DIR / "core.md"
         return path if path.exists() else None
@@ -172,8 +193,18 @@ def _resolve_topic_path(topic: str) -> Path | None:
     return None
 
 
+def _canonical_topic(topic: str) -> str:
+    """Return the preferred topic name for a user-supplied topic or alias."""
+    return _TOPIC_ALIASES.get(topic, topic)
+
+
 def _topics_from_workflow_file(path_str: str) -> list[str]:
-    """Parse a workflow file and detect topics from its IR."""
+    """Parse a workflow file and detect topics from its IR + sub-workflows.
+
+    Root parse errors raise :class:`GuideError`; descendant parse / load
+    errors fail-soft with a stderr warning so a broken sub-workflow doesn't
+    block the parent's guide.
+    """
     from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
     path = Path(path_str)
@@ -186,36 +217,78 @@ def _topics_from_workflow_file(path_str: str) -> list[str]:
 
     try:
         result = parse_markdown(path.read_text(encoding="utf-8"))
-        topics = detect_topics_from_ir(result.ir)
-        if not topics:
-            raise GuideError(
-                f"No guide topics detected in {path_str} "
-                f"(workflow has no recognizable node types).\n"
-                f"Use explicit topics instead: `pflow guide <topics...>`"
-            )
-        return topics
     except MarkdownParseError as e:
         raise GuideError(
             f"Failed to parse workflow {path_str}: {e}\nUse explicit topics instead: `pflow guide <topics...>`"
         ) from e
 
+    topics = _collect_topics(result.ir, base=path.parent, seen={str(path.resolve())})
+    if not topics:
+        raise GuideError(
+            f"No guide topics detected in {path_str} "
+            f"(workflow has no recognizable node types).\n"
+            f"Use explicit topics instead: `pflow guide <topics...>`"
+        )
+    return sorted(topics)
 
-def _try_load_saved_workflow(name: str) -> dict | None:
-    """Try to load a saved workflow's IR.
 
-    Returns None only when the workflow doesn't exist.
-    Raises :class:`GuideError` when the workflow exists but is broken.
+def _collect_topics(ir: dict, *, base: Path, seen: set[str]) -> set[str]:
+    """Walk an IR and its sub-workflows, accumulating topics.
+
+    Fails-soft on broken descendants and on cycles: emits a stderr warning
+    and continues so the parent's topic detection isn't silently truncated.
+    """
+    import click
+
+    from pflow.core.exceptions import WorkflowNotFoundError
+    from pflow.core.markdown_parser import MarkdownParseError
+    from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
+
+    topics = set(detect_topics_from_ir(ir))
+    for node in ir.get("nodes") or []:
+        if node.get("type") != "workflow":
+            continue
+        try:
+            child = resolve_sub_workflow(node.get("params") or {}, base_path=base)
+        except (FileNotFoundError, ValueError, MarkdownParseError, WorkflowNotFoundError) as e:
+            click.echo(
+                f"Warning: skipped sub-workflow during topic detection ({node.get('id', '?')}): {e}",
+                err=True,
+            )
+            continue
+        if child is None or child.path is None:
+            continue
+        resolved = str(child.path.resolve())
+        if resolved in seen:
+            click.echo(
+                f"Warning: cycle detected during topic detection at {resolved}",
+                err=True,
+            )
+            continue
+        seen.add(resolved)
+        topics |= _collect_topics(child.ir, base=child.path.parent, seen=seen)
+    return topics
+
+
+def _try_get_saved_workflow_path(name: str) -> str | None:
+    """Resolve a saved workflow name to its on-disk entry-point path.
+
+    Returns None when the workflow doesn't exist (so callers fall through
+    to the unknown-topic error path).  Raises :class:`GuideError` when the
+    workflow exists but failed to load — preserving the rich validation-
+    error path from ``WorkflowManager.load_ir``.
     """
     try:
         from pflow.core.exceptions import WorkflowNotFoundError
         from pflow.core.workflow.manager import WorkflowManager
 
         wm = WorkflowManager()
-        return wm.load_ir(name)
+        wm.load_ir(name)  # validate existence + integrity (raises on load failure)
+        return wm.get_path(name)
     except WorkflowNotFoundError:
         return None
     except Exception as e:
-        # Preserve structured diagnostics — WorkflowValidationError now carries
+        # Preserve structured diagnostics — WorkflowValidationError carries
         # validation_errors (task 153 shape), str(e) is just the summary.
         from pflow.core.exceptions import WorkflowValidationError
 

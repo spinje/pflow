@@ -100,11 +100,13 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 **Error handling philosophy — producers are self-describing**: validators, exceptions, and runtime events all construct `Diagnostic` objects at the detection site. Never flatten structured data (paths, fuzzy matches, available fields, suggestions) into string messages for downstream code to reverse-engineer. CLI, JSON, and MCP all flow through the same `format_diagnostic()` pipeline — the only place rendering happens.
 
-**`Diagnostic.__hash__` excludes `context`, `title`, and `suggestions`** — load-bearing. Child workflow diagnostics flow through two independent paths (validation-time and runtime) that produce semantically-identical errors with potentially-different enrichment. Dedup only collapses them if identity ignores the display-only fields. Adding `context` to the hash silently breaks sub-workflow warning dedup. Hash identity tuple: `(severity, source, node_id, message)` — keep it that way.
+**`Diagnostic.__hash__` excludes `context`, `title`, and `suggestions`** — load-bearing. Child workflow diagnostics flow through two independent paths (validation-time and runtime) that produce semantically-identical errors with potentially-different enrichment. Dedup only collapses them if identity ignores the display-only fields. Adding `context` to the hash silently breaks sub-workflow warning dedup. Hash identity tuple: `(severity, source, node_id, id or message)` — keep it that way. When `id` is `None` (legacy/un-migrated diagnostics, all today's code paths), the tuple falls back to `message`-keyed dedup, preserving sub-workflow warning dedup byte-for-byte. When `id` is set (cache-namespaced diagnostics introduced in Task 159), `id` is the dedup key and message variants for the same warning collapse correctly. Adding `id` to the tuple unconditionally would break legacy dedup — the conditional fallback (`id or message`) is what makes the change null-safe.
 
 ### diagnostic.py
 
-`Diagnostic` dataclass, `Severity` enum, dedup, exception conversion. Identity (eq/hash) is `severity + source + node_id + message` only — context, title, suggestions are display data. Use `deduplicate_diagnostics()` for collections.
+`Diagnostic` dataclass, `Severity` enum, dedup, exception conversion. Identity (eq/hash) is `(severity, source, node_id, id or message)` — context, title, suggestions are display data. When `id` is `None` the tuple falls back to `message` (preserving sub-workflow dedup byte-for-byte); when `id` is set (cache-namespaced diagnostics from Task 159) it becomes the dedup key. Use `deduplicate_diagnostics()` for collections.
+
+`normalize_runtime_warning()` accepts all three `__warnings__` value shapes: legacy strings, structured dicts (`kind`/`text`/`context`), and `Diagnostic` instances. The Diagnostic branch preserves catalog `id`, `severity`, and suggestions in the returned context so runtime fallback paths can render a clean message without losing typed metadata.
 
 **`CATEGORY_TITLES`** maps diagnostic categories to human-readable titles. Used by both `executor_service.py` (error categorization) and `diagnostic_render.py` (error title rendering). Lives here because it's a data constant, not rendering logic.
 
@@ -275,6 +277,14 @@ Two-phase execution pattern for AI agents: (1) execute node → return structure
 ### trace_report.py
 
 Generates navigable markdown report directories from trace files. `generate_report(trace_path, output_path, only_node, total_nodes)` → `~/.pflow/reports/{name}/` with `summary.md` + per-node files (`01-node-id.md`). Batch/sub-workflow nodes get directories with nested files.
+
+**Snapshot contract**: a report directory is one coherent generated artifact for
+one trace. `generate_report()` renders into a temporary sibling directory,
+writes `.pflow-report.json`, then replaces the target directory as a unit. Do
+not append/update report files in place. Explicit output paths must be missing,
+empty, or already marked with `.pflow-report.json`; auto
+`~/.pflow/reports/{name}` paths are pflow-managed and may replace old unmarked
+directories for migration.
 
 **`--only` context**: When `only_node` and `total_nodes` are provided, summary shows `Nodes: N/M (--only 'X', K skipped)` instead of just `Nodes: N`. Only executed nodes get report files (skipped nodes aren't in the trace).
 

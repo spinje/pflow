@@ -1,0 +1,27 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/02-validator-errors/04-prompt-cache-empty-list/workflow.pflow.md
+
+  Workflow: 1 LLM node using anthropic/claude-haiku-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  1 recommended action
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/02-validator-errors/04-prompt-cache-empty-list/workflow.pflow.md article=<value>
+
+## Recommended actions (1)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Unused cache chunk — remove `article` from ## Cache                 savings unavailable
+     workflow.pflow.md
+     Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.
+     → Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`.
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.

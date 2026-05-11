@@ -70,6 +70,7 @@ pflow's node system is built on `BaseNode` and `Node` (~90 lines in `src/pflow/c
 ```bash
 make install                    # Install dependencies and pre-commit hooks
 make test                      # Run all tests with pytest
+make test-e2e                  # Run e2e tests with pytest
 make check                     # Run all quality checks (lint, type check, etc.)
 ```
 
@@ -227,6 +228,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 
 **Next**
 - Task 159: Prompt Caching
+- Task 160: Cache Analysis Architectural Refactor
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**

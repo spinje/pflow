@@ -1,0 +1,103 @@
+---
+title: "pflow analyze-cache"
+description: "Find prompt caching opportunities and predict savings"
+icon: "database"
+---
+
+## Usage
+
+```bash
+pflow analyze-cache <WORKFLOW> [PARAMS...]
+pflow analyze-cache <WORKFLOW> [PARAMS...] --format=json
+pflow analyze-cache <WORKFLOW> --from-trace <TRACE_PATH>
+```
+
+`pflow analyze-cache` reads a workflow file (or saved workflow name), finds LLM calls that share static context, and emits recommendations: which values to add to a `## Cache` block, which nodes should opt in, and projected cost savings.
+
+It runs in three modes depending on what data it can find:
+
+| Mode | Triggers when | Output emphasis |
+|------|---------------|-----------------|
+| **Greenfield** | Workflow has no `## Cache` block | Detection + paste-ready suggested block |
+| **Steady-state** | Workflow has `## Cache` declared | Per-chunk usage, validation, padding advisories |
+| **Trace-driven** | A 2.x trace was loaded (auto or `--from-trace`) | Predicted vs actual cache ratios with root-cause attribution |
+
+Inputs are optional. When omitted, token estimates fall back to lower-fidelity sources (memo cache → tokenizer → character heuristic) and the confidence label reflects that. Required inputs that aren't supplied surface as a single info note rather than blocking the analysis.
+
+## Examples
+
+```bash
+# Analyze a workflow file (auto-loads matching trace from ~/.pflow/debug/)
+pflow analyze-cache ./song-creator.pflow.md
+
+# Skip auto-load, analyze fresh
+pflow analyze-cache ./song-creator.pflow.md --no-trace-autoload
+
+# Compare predicted to actual using an explicit trace
+pflow analyze-cache ./song-creator.pflow.md \
+  --from-trace ~/.pflow/debug/workflow-trace-abc12345-song-creator-20260507.json
+
+# JSON output for agent consumption
+pflow analyze-cache ./song-creator.pflow.md --format=json
+
+# Show every node, not just rows with warnings or low cache ratios
+pflow analyze-cache ./song-creator.pflow.md --all-rows
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format=text\|json` | `text` | Human-readable text or stable JSON for agents |
+| `--from-trace <path>` | - | Explicit trace file (any 2.x format). Overrides auto-load |
+| `--no-trace-autoload` | off | Skip the most-recent matching trace from `~/.pflow/debug/` |
+| `--all-rows` | off | Show every LLM node in the per-call table; default hides clean rows |
+
+`--from-trace` and `--no-trace-autoload` are mutually exclusive.
+
+## Output
+
+Text output is organized into sections that appear when non-empty:
+
+| Section | What it shows |
+|---------|---------------|
+| Header | Workflow path, scale (LLM call count, models in use), confidence label |
+| Summary | Current cost per run, projected cost with caching, projected rerun cost (within TTL) |
+| Recommended actions | Numbered (ordered by impact when at least one action has a positive savings figure; unordered when no model is resolved or all savings are unavailable). Each item carries a stable warning ID and the edit to apply. |
+| Suggested ## Cache block | Paste-ready block for greenfield mode, with starter prose for each chunk |
+| Sub-workflow boundaries | Cross-file findings: rename detection, prose mismatches, value-flow opportunities |
+| Per-call cache report | Table of LLM nodes with model, tokens, cacheable, ratio, confidence |
+| Notes | Per-invocation scoping notes, mixed-model context, fallback hints |
+
+JSON output (`--format=json`) emits the same data with stable field names and `format_version` for consumer version-gating. See `pflow analyze_cache` MCP tool for the full schema.
+
+## Confidence labels
+
+The header shows an aggregate confidence label based on what data was available:
+
+| Label | Meaning |
+|-------|---------|
+| `high_from_trace` | Token counts read from a runtime trace — actual numbers |
+| `medium_from_memo` | Token counts from prior runs via the memo cache |
+| `low_no_data` | Token counts estimated from the prompt template via tokenizer |
+
+Per-row counts include their own `data_source` so you can tell which rows have real data vs estimates.
+
+## Stable warning IDs
+
+Findings carry namespaced IDs (e.g., `cache.shared-context-undeclared`, `cache.batch-prewarm-recommended`, `cache.below-min-tokens`). The full catalog and what each ID means is in the [Prompt caching how-it-works](/how-it-works/prompt-caching) guide.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Analysis succeeded (warnings still surface in output) |
+| `1` | Workflow couldn't be parsed or resolved |
+| `2` | Invalid flag combination (e.g., `--from-trace` + `--no-trace-autoload`) |
+
+Warnings never make the command exit non-zero — they're advisory by design. An agent that wants to gate on findings inspects `warnings[].severity == "error"` in the JSON output.
+
+## Related
+
+- [Prompt caching how-it-works](/how-it-works/prompt-caching) — what the `## Cache` block does and when to use it
+- [LLM node reference](/reference/nodes/llm) — `prompt_cache:` and `prewarm:` field documentation

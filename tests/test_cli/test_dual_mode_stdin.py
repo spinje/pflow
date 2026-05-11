@@ -286,6 +286,7 @@ class TestDualModeStdinBehavior:
         assert "data" in result.output.lower()  # Missing required input 'data'
 
 
+@pytest.mark.e2e
 class TestRealShellIntegration:
     """Test actual shell behavior using subprocess for true integration.
 
@@ -366,6 +367,7 @@ class TestBinaryAndLargeStdinBehavior:
     - Focus on user-visible behavior when handling different stdin types
     """
 
+    @pytest.mark.e2e
     def test_binary_stdin_shows_appropriate_warning(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that binary stdin produces appropriate user feedback."""
         # Create a simple workflow using shell node
@@ -462,6 +464,7 @@ class TestBinaryAndLargeStdinBehavior:
         assert output_file.read_text() == large_data, "Large data should be written correctly"
 
 
+@pytest.mark.e2e
 class TestWorkflowChaining:
     """Test workflow chaining via Unix pipes.
 

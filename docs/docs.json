@@ -83,6 +83,7 @@
               "reference/cli/save",
               "reference/cli/guide",
               "reference/cli/probe",
+              "reference/cli/analyze-cache",
               "reference/cli/skill",
               "reference/cli/mcp",
               "reference/cli/settings"
@@ -120,7 +121,8 @@
         "icon": "lightbulb",
         "pages": [
           "how-it-works/template-variables",
-          "how-it-works/batch-processing"
+          "how-it-works/batch-processing",
+          "how-it-works/prompt-caching"
         ]
       },
       {

@@ -23,6 +23,7 @@ Fundamental patterns — start here:
 - **error-handling.pflow.md** — Action-based routing for error recovery
 - **proxy-mappings.pflow.md** — Shared store interface adaptation
 - **stdin-echo.pflow.md** — Receiving input from Unix pipes
+- **prompt-caching.pflow.md** — `## Cache` block + per-node `prompt_cache:` for LLM provider prompt caching
 
 ### advanced/
 Complex workflows with companion `.md` explanations:

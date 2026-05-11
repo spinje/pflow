@@ -1,0 +1,101 @@
+{
+  "_coverage": {
+    "examples/batch-test-parallel.pflow.md": [
+      "batch",
+      "batch-parallel",
+      "batch-max-concurrent"
+    ],
+    "examples/batch-test.pflow.md": [
+      "batch",
+      "batch-sequential",
+      "batch-default-config"
+    ],
+    "examples/bundling/parent-with-sub.pflow.md": [
+      "workflow-node",
+      "sub-workflow"
+    ],
+    "examples/core/conditional-branching.pflow.md": [
+      "branching",
+      "code-node",
+      "next-routing"
+    ],
+    "examples/core/minimal.pflow.md": [
+      "plain",
+      "single-node",
+      "static-params-only"
+    ],
+    "examples/core/simple-pipeline.pflow.md": [
+      "plain",
+      "multi-step",
+      "static-params-only",
+      "non-llm-types"
+    ],
+    "examples/core/template-variables.pflow.md": [
+      "template-params",
+      "multiple-required-inputs"
+    ],
+    "examples/test-worktree.pflow.md": [
+      "cache-false",
+      "llm-node",
+      "shell-templates"
+    ],
+    "examples/test_llm_templates.pflow.md": [
+      "llm-node",
+      "template-params",
+      "llm-defaults"
+    ]
+  },
+  "_meta": {
+    "purpose": "Task 159 B3 regression baseline. Workflows WITHOUT prompt_cache:/## Cache must produce byte-identical hashes pre- and post-Task-159 B3 patches. Drift indicates a silent stale-cache regression (DD#19).",
+    "regen_command": "uv run python scripts/generate_config_hash_baseline.py",
+    "warning": "DO NOT regenerate without human review of the change. Silent regeneration encodes the bug as expected."
+  },
+  "examples/batch-test-parallel.pflow.md": {
+    "fetch_users": "9d8e0a7e0a8f2ca8eba842bd961e09dc",
+    "greet_users": "e960bc36b8e4c3b2058095069dc39483"
+  },
+  "examples/batch-test.pflow.md": {
+    "fetch_users": "9d8e0a7e0a8f2ca8eba842bd961e09dc",
+    "greet_users": "e960bc36b8e4c3b2058095069dc39483"
+  },
+  "examples/bundling/parent-with-sub.pflow.md": {
+    "process": "a0258a8b489a4f93011dfb17b8400a71"
+  },
+  "examples/core/conditional-branching.pflow.md": {
+    "classify": "6127b55e2028038d063552e1358e430b",
+    "done": "33c830618882bc975db4e0ef6ccd85de",
+    "fetch-data": "33c830618882bc975db4e0ef6ccd85de",
+    "handle-error": "33c830618882bc975db4e0ef6ccd85de",
+    "process-large": "33c830618882bc975db4e0ef6ccd85de",
+    "process-small": "33c830618882bc975db4e0ef6ccd85de"
+  },
+  "examples/core/minimal.pflow.md": {
+    "hello": "80e3ea4292c595e7855f201104877802"
+  },
+  "examples/core/simple-pipeline.pflow.md": {
+    "copier": "3df75e7825255c6cfccf276f3958bbc5",
+    "reader": "ed18b88e1e0314e4ad03d86f30b4142b",
+    "writer": "80e3ea4292c595e7855f201104877802"
+  },
+  "examples/core/template-variables.pflow.md": {
+    "api_caller": "a322a8efeb04ef6f43ef1044590afe02",
+    "copier": "f8e2a75e2a7f33eb7ae2ffaaa5744a1e",
+    "notifier": "259262147cc1800ec0b94dac7fc38b29",
+    "reader": "c64dc5795b242d70d852c35f9250cc2b",
+    "writer": "0ad13978f47208978f692b089405acba"
+  },
+  "examples/test-worktree.pflow.md": {
+    "analyze_task": "6b7726ecbb52b25c62c94c7c1d19330f",
+    "create_worktree": "5970edf0ffb46be72f2ad84e1c3898cb",
+    "get_directory": "33c830618882bc975db4e0ef6ccd85de",
+    "git_current_branch": "33c830618882bc975db4e0ef6ccd85de",
+    "git_status": "33c830618882bc975db4e0ef6ccd85de",
+    "launch_claude": "c229bbc280915c68f142c05d177a7fd9",
+    "launch_cursor": "68774f66623f5f1a58b444bfd3a010d7",
+    "output_status": "778888ef88576e23889c73f24c24d38c",
+    "remove_existing_worktree": "b12c05c948994d17d102e0590c757bad"
+  },
+  "examples/test_llm_templates.pflow.md": {
+    "generate": "64b4044c0fc4dd32f552317fe81c4db7"
+  }
+}

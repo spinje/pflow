@@ -78,7 +78,7 @@ Stateless executor. No per-node instance state.
 3. Walks graph: `_execute_node` per node, follows `curr.successors.get(action or "default")`
 4. On unmatched action: `_handle_no_successor` checks if step 17.5 already archived the node; if so, preserves the existing failure record and only writes a routing hint to `__warnings__`. Otherwise rolls back success bookkeeping, archives as `routing_error` via `mark_node_failed`, AND calls `self.trace.mark_last_event_failed(node_id, error=...)` to flip the already-recorded trace event so trace state agrees with `__failures__` (GH #250). The trace-flip call happens only in the non-error-action branch — the error-action branch is already correct because `is_error_action=True` caused step 16 to record `success=False`.
 5. On `--only`: writes `shared["_pflow_child_only_node"] = child_only` before target sub-workflow execution (cleaned up after). Stops after target, sets `__execution__["only_node"]` to the full dotted path.
-6. On success: calls `populate_declared_outputs` (skipped on error or `--only`)
+6. On success: calls `populate_declared_outputs`. Under `--only`, resolvable declared outputs may still be populated, while unresolvable outputs from skipped downstream nodes are ignored. CLI/JSON output routing must still treat `--only` as target-scoped and must not prefer these full-run declared outputs.
 
 ### `_execute_node(node, config, shared) → str`
 
@@ -129,6 +129,16 @@ This carries engine-owned execution metadata (currently duration; extendable to 
 - **Readers must be absent-tolerant.** Pre-existing cache entries (from before this feature) don't have the key. Code that consumes it (e.g. `plan.py::_read_stats_from_output`) returns `None` cleanly.
 - **`apply_memo_hit` strips the key when restoring to `shared[node_id]`.** A fresh execution would never produce the key in live shared state, so restoring it would make cached vs fresh paths observably differ (template resolution, equality, trace output).
 - **Display-site filtering**: `node_output_formatter.py` and `trace_report.py` filter `_`-prefixed keys when iterating output dicts so reserved keys don't leak into agent-visible output (`-p/--print`, `--structure`, `--report`, MCP node-run text).
+
+### Trace 2.1.0 cache-metadata augmentation (Task 159 E.1)
+
+Cache primitives gained keyword-only kwargs to thread trace 2.1.0 fields through the existing `llm_usage` channel without a sidecar dict:
+
+- **`apply_memo_hit(..., *, node_type_name: str, cache_key: str | None = None, created_at: float | None = None)`**: when `_should_write_cache_metadata(node_type_name)` returns True (currently only `LLMNode`), augments the restored `llm_usage` with `cache_source="memo"`, `cache_key`, and `cache_age_sec = time.time() - created_at`. Three production callers, all kept in sync: `engine.py:_execute_node` step-5, `instrumentation.py::check_memo_cache`, `execution/plan.py::_cached_memo_entry`.
+- **`write_memo_cache(..., *, node_type_name: str, duration_ms=...)`** (`node_type_name` is REQUIRED): when the gate fires, augments `llm_usage["cache_key"]` BEFORE persisting so the trace event for THIS run records the key the entry was written under. Single production caller at `engine.py:_execute_node` step 13.
+- **`handle_cached_execution`**: when the gate fires, augments `llm_usage["cache_source"] = "in_process"` (no `cache_key`, no `cache_age_sec` — in-process hits are memory-only and intra-run).
+- **`memo_cache_lookup` returns 3-tuple** `(action, output, created_at_epoch)` instead of 2-tuple. Callers thread `created_at` through to `apply_memo_hit` for `cache_age_sec` computation.
+- **Allowlist semantics in `_should_write_cache_metadata`**: `LLMNode` only. ClaudeCodeNode is INTENTIONALLY excluded — its `cache_creation_input_tokens` / `cache_read_input_tokens` come from the Claude SDK and reflect SDK-side caching (a different cache layer). Mixing pflow's memo `cache_key` / `cache_source` with SDK cache tokens would mislead agents reading the trace. Adding a new LLM-producing node type that participates in pflow's memo cache requires extending this gate alongside the new node type's `post()` implementation.
 
 ### `_execute_single_node(node, config, shared) → (action, last_resolutions, template_errors)`
 

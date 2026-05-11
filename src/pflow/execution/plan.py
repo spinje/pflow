@@ -44,7 +44,7 @@ from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import resolve_batch_items
-from pflow.runtime.engine.engine import is_clean_termination, parse_only_path
+from pflow.runtime.engine.engine import build_cache_render_dict, is_clean_termination, parse_only_path
 from pflow.runtime.engine.instrumentation import apply_memo_hit, enforce_loop_guard
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.template_resolution import resolve_templates
@@ -259,7 +259,7 @@ def _build_plan_with_shared(
 
     this_only, child_only = parse_only_path(only_node)
 
-    shared = _create_planner_shared(compiled, params, cache, _parent_workflow_file)
+    shared = create_planner_shared(compiled, params, cache, _parent_workflow_file)
     visited_paths = list(_visited_paths) if _visited_paths else []
     workflow_path = shared.get("_pflow_workflow_file")
 
@@ -291,6 +291,7 @@ def _build_plan_with_shared(
             entries=entries,
             summary=_summarize(entries, cost_basis="upper_bound" if branched else "exact"),
             diagnostics=diagnostics,
+            workflow_path=workflow_path,
         )
         return plan, shared
 
@@ -349,6 +350,7 @@ def _build_plan_with_shared(
         entries=state.entries,
         summary=_summarize(state.entries, cost_basis=state.cost_basis),
         diagnostics=state.diagnostics,
+        workflow_path=workflow_path,
     )
     return plan, shared
 
@@ -369,21 +371,19 @@ def _advance(
     transitions are acted on — the main loop in `build_plan` never branches
     on `Transition` itself.
     """
-    match decision.kind:
-        case Transition.STOP:
-            return None
-        case Transition.ROUTING_ERROR:
-            routing_entry, routing_diag = _routing_error_entry(node_id, config, decision.action, curr.successors)
-            state.entries.append(routing_entry)
-            state.diagnostics.append(routing_diag)
-            return None
-        case Transition.BOUNDARY:
-            _apply_boundary(curr, compiled, cache, node_id, state)
-            return None
-        case Transition.FOLLOW:
-            return _apply_follow(curr, node_id, decision.action, state)
-        case _:
-            raise AssertionError(f"unhandled walker transition: {decision.kind!r}")
+    if decision.kind == Transition.STOP:
+        return None
+    if decision.kind == Transition.ROUTING_ERROR:
+        routing_entry, routing_diag = _routing_error_entry(node_id, config, decision.action, curr.successors)
+        state.entries.append(routing_entry)
+        state.diagnostics.append(routing_diag)
+        return None
+    if decision.kind == Transition.BOUNDARY:
+        _apply_boundary(curr, compiled, cache, node_id, state)
+        return None
+    if decision.kind == Transition.FOLLOW:
+        return _apply_follow(curr, node_id, decision.action, state)
+    raise AssertionError(f"unhandled walker transition: {decision.kind!r}")
 
 
 def _apply_boundary(
@@ -461,7 +461,7 @@ def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None) -> 
             )
 
 
-def _create_planner_shared(
+def create_planner_shared(
     compiled: CompiledWorkflow,
     params: dict[str, Any],
     cache: MemoizationCache,
@@ -472,7 +472,17 @@ def _create_planner_shared(
     Matches the shape the engine expects under `__execution__`, so
     `plan_node()` and `apply_memo_hit()` can operate on it without
     special-casing.
+
+    Task 159 B3.2: also installs ``__pflow_cache_render__`` (per-workflow
+    ``CacheRenderContext`` map) wrapped in ``MappingProxyType``, mirroring
+    ``WorkflowEngine.run``. Without this install, the planner's ``plan_node``
+    sees ``None`` for the cache render dict and produces a ``config_hash``
+    that excludes prompt-cache content — diverging from the engine's hash
+    for cache-using workflows. The drift would silently mislead
+    ``pflow run --dry-run`` predictions on workflows declaring ``## Cache``.
     """
+    from types import MappingProxyType
+
     shared: dict[str, Any] = {**params}
     shared.update(compiled.resolved_defaults)
     shared["__memoization_cache__"] = cache
@@ -484,9 +494,13 @@ def _create_planner_shared(
         "node_visit_counts": {},
     }
     shared["__cache_hits__"] = []
+    shared["__pflow_cache_render__"] = MappingProxyType(build_cache_render_dict(compiled))
     if parent_workflow_file:
         shared["_pflow_workflow_file"] = parent_workflow_file
     return shared
+
+
+_create_planner_shared = create_planner_shared
 
 
 def _routing_error_entry(
@@ -799,7 +813,7 @@ def _plan_standard_node(
     if planned.template_exception is not None:
         return _template_error_entry(config, planned.template_exception)
     if planned.status == "cache_disabled":
-        return _cache_disabled_entry(config, cache, workflow_path)
+        return _cache_disabled_entry(config, planned, cache, workflow_path)
     if planned.status == "cached_memo":
         return _cached_memo_entry(config, planned, shared, cache)
     if planned.status == "cached_in_process":
@@ -839,6 +853,7 @@ def _template_error_entry(config: NodeConfig, exc: BaseException) -> PlanEntry:
 
 def _cache_disabled_entry(
     config: NodeConfig,
+    planned: NodePlan,
     cache: MemoizationCache,
     workflow_path: str | None,
 ) -> PlanEntry:
@@ -848,7 +863,9 @@ def _cache_disabled_entry(
     from prior runs are attached. `cache: false` means "don't use the cache
     for hit decisions"; it does NOT mean "hide history from the agent".
     """
-    return _execute_entry(config, cache, cause="cache_disabled", workflow_path=workflow_path)
+    return _execute_entry(
+        config, cache, cause="cache_disabled", cache_key=planned.cache_key, workflow_path=workflow_path
+    )
 
 
 def _cached_memo_entry(
@@ -865,12 +882,16 @@ def _cached_memo_entry(
             planned.cached_action,
             planned.cached_output,
             planned.config_hash,
+            node_type_name=config.node_type_name,
+            cache_key=planned.cache_key,
+            created_at=planned.cached_created_at,
         )
     return PlanEntry(
         node_id=config.node_id,
         node_type=config.node_type_name,
         status="cached",
         cause="hash_match",
+        cache_key=planned.cache_key,
         action=planned.cached_action or "default",
         age_sec=_cache_age(planned.cache_key, cache),
     )
@@ -883,6 +904,7 @@ def _cached_in_process_entry(config: NodeConfig, planned: NodePlan) -> PlanEntry
         node_type=config.node_type_name,
         status="cached",
         cause="hash_match",
+        cache_key=planned.cache_key,
         action=planned.cached_action or "default",
         age_sec=None,
     )
@@ -893,6 +915,7 @@ def _execute_entry(
     cache: MemoizationCache,
     *,
     cause: Literal["no_cache_match", "downstream", "template_error", "cache_disabled"],
+    cache_key: str | None = None,
     diagnostic: Diagnostic | None = None,
     workflow_path: str | None = None,
 ) -> PlanEntry:
@@ -910,6 +933,7 @@ def _execute_entry(
         node_type=config.node_type_name,
         status="execute",
         cause=cause,
+        cache_key=cache_key,
         last_cost_usd=last_cost,
         last_duration_ms=last_duration,
         last_run_age_sec=last_age,
@@ -929,7 +953,14 @@ def _miss_entry(
     cause: Literal["no_cache_match", "template_error"] = (
         "template_error" if permissive_diag is not None else "no_cache_match"
     )
-    return _execute_entry(config, cache, cause=cause, diagnostic=permissive_diag, workflow_path=workflow_path)
+    return _execute_entry(
+        config,
+        cache,
+        cause=cause,
+        cache_key=planned.cache_key,
+        diagnostic=permissive_diag,
+        workflow_path=workflow_path,
+    )
 
 
 def _cache_age(cache_key: str | None, cache: MemoizationCache) -> float | None:
@@ -1233,6 +1264,7 @@ def _attach_sub_workflow_warnings(plan: Plan, warnings: list[Diagnostic] | tuple
         entries=plan.entries,
         summary=plan.summary,
         diagnostics=[*plan.diagnostics, *warnings],
+        workflow_path=plan.workflow_path,
     )
 
 
@@ -1755,6 +1787,7 @@ def _aggregate_batch_child_plans(
         entries=synthetic_entries,
         summary=summary,
         diagnostics=all_diagnostics,
+        workflow_path=child_plans[0].workflow_path,
     )
 
 

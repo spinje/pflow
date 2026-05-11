@@ -1,0 +1,15 @@
+Executing workflow (1 nodes):
+
+Error: Cache Failure [cache.invalid-on-non-llm]
+
+Node 'echo' is type: shell but declares prompt_cache — this field is only valid on type: llm nodes.
+  At: node 'echo', nodes[id=echo]
+  Node type: shell
+
+  → Remove the invalid declaration (prompt_cache) from echo, OR move the LLM logic into a type: llm node.
+
+See also: pflow guide prompt-caching
+
+⚠️ Warnings:
+  ⚠ [cache.unused-chunk] Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.
+    → Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`.

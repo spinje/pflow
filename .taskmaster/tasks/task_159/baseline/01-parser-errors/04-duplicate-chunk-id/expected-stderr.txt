@@ -1,0 +1,6 @@
+Error: Parse Error
+
+Duplicate cache chunk identifier 'article'.
+  At: line 19
+
+  → Each ${var} can only appear once in a '## Cache' block. Remove the duplicate ${article} reference.

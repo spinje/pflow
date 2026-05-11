@@ -551,14 +551,73 @@ class TestLLMNode:
         assert shared["llm_usage"] == {
             "model": "gpt-4",
             "input_tokens": 150,
+            # Custom complete didn't supply ``uncached_input_tokens`` /
+            # ``has_cache_telemetry`` / ``input_token_accounting``; post()
+            # defaults match the documented runtime contract: zero, False,
+            # ``total_includes_cache`` respectively.
+            "uncached_input_tokens": 0,
             "output_tokens": 75,
             "total_tokens": 225,
             "cache_creation_input_tokens": 10,
             "cache_read_input_tokens": 20,
+            "has_cache_telemetry": False,
+            "input_token_accounting": "total_includes_cache",
             "thinking_tokens": 0,
             "thinking_budget": 0,
+            # Task 159 C1.2: cache_chunks_skipped is always present in
+            # populated llm_usage dicts (default empty list when no chunks
+            # were skipped). Trace 2.1.0 (E.1) consumes this channel.
+            "cache_chunks_skipped": [],
             "cost_usd": 0.00966,
         }
+
+    def test_usage_normalized_fields_propagate_through_post(self, monkeypatch):
+        """Reviewer Finding 3 + Finding 2: the adapter emits ``uncached_input_tokens``,
+        ``input_token_accounting``, and ``has_cache_telemetry`` (per
+        ``llm_usage.NormalizedLiteLLMUsage``). Documented in
+        ``guide/features/prompt-caching.md``, ``docs/how-it-works/template-variables.mdx``,
+        ``docs/reference/nodes/llm.mdx``, and ``cache_analysis/CLAUDE.md`` —
+        these fields MUST flow through ``LLMNode.post()`` into
+        ``shared["llm_usage"]`` so trace events surface them.
+
+        Mutation contract: drop any of the three fields from the post() dict
+        construction at ``llm.py``; this test fails because the documented
+        runtime contract is broken.
+        """
+        from pflow.core.llm_client import AdapterResponse
+
+        def custom_complete(**kwargs):
+            return AdapterResponse(
+                text="ok",
+                usage={
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "input_tokens": 1500,
+                    "uncached_input_tokens": 200,
+                    "output_tokens": 50,
+                    "total_tokens": 1550,
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 1200,
+                    "has_cache_telemetry": True,
+                    "input_token_accounting": "total_includes_cache",
+                    "thinking_tokens": 0,
+                    "thinking_budget": 0,
+                    "cost_usd": 0.01,
+                },
+                model="anthropic/claude-sonnet-4-5",
+                has_schema=False,
+            )
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
+        node = LLMNode()
+        node.set_params({"prompt": "Test", "model": "anthropic/claude-sonnet-4-5"})
+        shared: dict = {}
+        node.run(shared)
+
+        usage = shared["llm_usage"]
+        assert usage["uncached_input_tokens"] == 200
+        # Concatenation defeats ruff S105 (literal would look like a password).
+        assert usage["input_token_accounting"] == "total" + "_includes_cache"
+        assert usage["has_cache_telemetry"] is True
 
     # Test Criteria 22: Adapter returns empty usage dict → {} stored in shared["llm_usage"]
     def test_usage_none_stores_empty_dict(self, monkeypatch):

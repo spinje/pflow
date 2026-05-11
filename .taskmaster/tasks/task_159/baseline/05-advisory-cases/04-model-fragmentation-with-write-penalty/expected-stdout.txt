@@ -1,0 +1,283 @@
+{
+  "format_version": "4.1",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "low_no_data",
+  "estimate_confidence_coverage": {
+    "trace": 0,
+    "memo": 0,
+    "estimator": 2,
+    "heuristic": 0,
+    "total": 2
+  },
+  "trace_path": null,
+  "summary": {
+    "actually_paid_usd": null,
+    "actually_paid_tier": "unavailable",
+    "no_cache_hypothetical_usd": null,
+    "first_run_with_cache_hypothetical_usd": null,
+    "rerun_within_ttl_hypothetical_usd": null,
+    "first_run_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "rerun_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": null,
+      "pct_of_baseline": null,
+      "kind": "unavailable",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": "no_trace",
+      "excluded_nodes": []
+    },
+    "trace_coverage": "none",
+    "evidence_scope": "static_analysis",
+    "trace_llm_nodes_static": 2,
+    "trace_llm_nodes_executed": 0,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 3,
+    "warnings_count": 1,
+    "info_count": 2,
+    "total_llm_nodes_estimated": 2,
+    "total_llm_invocations_estimated": 2,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 12006,
+    "total_cacheable_tokens_estimated": 12000,
+    "models_in_use": [
+      "anthropic/claude-haiku-4-5",
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "ir_default_model": null,
+    "observed_models_in_trace": [],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "summarize",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "node_path": "translate",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      }
+    ],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 2,
+    "sub_workflow_llm_node_count": 0,
+    "sub_workflow_rollup": null,
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>"
+  },
+  "blocking_errors": [],
+  "other_blocking_errors": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.heterogeneous-models-fragment-cache",
+      "node_id": null,
+      "estimated_savings_usd": 0.0225,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "Workflow declares cached chunks shared across 2 exact models (anthropic/claude-haiku-4-5, anthropic/claude-sonnet-4-5). Each model has a separate cache namespace; bytes are written 2x instead of 1x. (saves $0.02/run)\n  - anthropic/claude-haiku-4-5 (1 node): translate\n  - anthropic/claude-sonnet-4-5 (1 node): summarize",
+      "suggestions": [
+        "Consolidate to one exact model so all calls share one cache namespace, OR",
+        "Ensure each model has enough calls in the workflow to amortize its own cache write."
+      ]
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.first-call-write-penalty",
+      "node_id": "summarize",
+      "estimated_savings_usd": 0.004499999999999997,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "summarize: only call to anthropic/claude-sonnet-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0045/run)",
+      "suggestions": [
+        "Remove `prompt_cache:` from summarize (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-sonnet-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ]
+    },
+    {
+      "rank": 3,
+      "warning_id": "cache.first-call-write-penalty",
+      "node_id": "translate",
+      "estimated_savings_usd": 0.0015000000000000005,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "translate: only call to anthropic/claude-haiku-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0015/run)",
+      "suggestions": [
+        "Remove `prompt_cache:` from translate (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-haiku-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ]
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "summarize",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6004,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": [
+        "article"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    },
+    {
+      "node_path": "translate",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-haiku-4-5",
+      "is_batch": false,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 6002,
+      "output_tokens_estimated": null,
+      "output_data_source": "unavailable",
+      "cacheable_tokens_estimated": 6000,
+      "cache_ratio_pct": 100,
+      "cache_creation_input_tokens": null,
+      "cache_read_input_tokens": null,
+      "data_source": "estimator",
+      "cacheable_data_source": "parameters",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": [
+        "article"
+      ],
+      "model_is_heterogeneous": false,
+      "cost_usd": null,
+      "cost_data_source": "recomputed",
+      "did_not_execute_in_trace": false,
+      "observed_models": [],
+      "observed_call_count": 0
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 0,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "warning",
+      "message": "Workflow declares cached chunks shared across 2 exact models (anthropic/claude-haiku-4-5, anthropic/claude-sonnet-4-5). Each model has a separate cache namespace; bytes are written 2x instead of 1x. (saves $0.02/run)\n  - anthropic/claude-haiku-4-5 (1 node): translate\n  - anthropic/claude-sonnet-4-5 (1 node): summarize",
+      "source": "cache_analyzer",
+      "id": "cache.heterogeneous-models-fragment-cache",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Consolidate to one exact model so all calls share one cache namespace, OR",
+        "Ensure each model has enough calls in the workflow to amortize its own cache write."
+      ],
+      "context": {
+        "shared_chunks": [
+          "article"
+        ],
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "savings_usd": 0.0225,
+        "model_group_count": 2,
+        "models_csv": "anthropic/claude-haiku-4-5, anthropic/claude-sonnet-4-5",
+        "model_groups": [
+          {
+            "model": "anthropic/claude-haiku-4-5",
+            "node_paths": [
+              "translate"
+            ],
+            "node_count": 1,
+            "cache_creation_cost_usd": 0.007500000000000001
+          },
+          {
+            "model": "anthropic/claude-sonnet-4-5",
+            "node_paths": [
+              "summarize"
+            ],
+            "node_count": 1,
+            "cache_creation_cost_usd": 0.0225
+          }
+        ],
+        "model_groups_lines": "  - anthropic/claude-haiku-4-5 (1 node): translate\n  - anthropic/claude-sonnet-4-5 (1 node): summarize",
+        "category": "cache_warning",
+        "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md]"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "translate: only call to anthropic/claude-haiku-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0015/run)",
+      "source": "cache_analyzer",
+      "id": "cache.first-call-write-penalty",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Remove `prompt_cache:` from translate (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-haiku-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ],
+      "node_id": "translate",
+      "context": {
+        "model": "anthropic/claude-haiku-4-5",
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "savings_usd": 0.0015000000000000005,
+        "category": "cache_advisory",
+        "path": "nodes[id=translate].prompt_cache"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "info",
+      "message": "summarize: only call to anthropic/claude-sonnet-4-5 in this workflow with `prompt_cache:` declared. The cache_creation premium has no subsequent reads to amortize; removing the declaration would avoid the premium. (saves $0.0045/run)",
+      "source": "cache_analyzer",
+      "id": "cache.first-call-write-penalty",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Remove `prompt_cache:` from summarize (single-call write penalty), OR",
+        "Add more calls to anthropic/claude-sonnet-4-5 elsewhere in the workflow so the cache_creation cost amortizes."
+      ],
+      "node_id": "summarize",
+      "context": {
+        "model": "anthropic/claude-sonnet-4-5",
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "savings_usd": 0.004499999999999997,
+        "category": "cache_advisory",
+        "path": "nodes[id=summarize].prompt_cache"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    }
+  ],
+  "notes": []
+}

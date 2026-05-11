@@ -1,0 +1,36 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/04-warning-catalog/12-cache.discrepancy/workflow.pflow.md
+
+  Workflow: 1 LLM node using anthropic/claude-sonnet-4-5
+  Evidence: complete trace (1 LLM nodes executed)
+
+## Summary
+
+  Actually paid:               ~$0.0058 (trace)
+  Cost without caching:        ~$0.0058
+  Cost on rerun (within TTL):  ~$0.0058
+  Actual savings (this run):    adds ~<$0.0001 vs no-cache, 1% of no-cache cost
+  Rerun delta (projected):      no meaningful cost change
+
+  1 recommended action
+
+## Recommended actions (1)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Cache hit discrepancy on gen — Upstream value changed between predicted run and actual run  savings unavailable
+     gen
+     gen in workflow (trace: workflow.pflow.md): predicted hit (bytes diverged at runtime), actual 0% read — root cause: Upstream value changed between predicted run and actual run
+     → Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.
+
+## Per-call cache report
+  Projected cache ratios from prior run data.
+    · cached_now: tokens that went through cache this run.
+    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
+    · — means the column does not apply to this row's tier.
+
+  node  model                        input  cached_now  could_cache  ratio  calls  notes
+  ---------------------------------------------------------------------------------
+
+  gen   anthropic/claude-sonnet-4-5  1,800           —            ?     ?%      1  single call; no repeated cache use observed; discrepancy

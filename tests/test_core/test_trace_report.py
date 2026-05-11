@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pflow.core.exceptions import ReportGenerationError
 from pflow.core.trace_report import (
     _build_batch_item_file,
     _build_batch_item_summary,
@@ -18,6 +19,7 @@ from pflow.core.trace_report import (
     _build_output_lookup,
     _build_summary,
     _collect_errors,
+    _compute_batch_item_cost,
     _compute_event_cost,
     _compute_outlier_threshold,
     _detect_anomalies,
@@ -26,10 +28,13 @@ from pflow.core.trace_report import (
     _find_notable_items,
     _format_cost,
     _item_filename,
+    _replace_report_dir,
     _slugify_label,
     _suggest_template_fixes,
     generate_report,
+    validate_report_output_dir,
 )
+from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 # --- Fixtures ---
 
@@ -98,6 +103,12 @@ class TestGenerateReport:
         assert report_dir is not None
         assert report_dir.is_dir()
         assert (report_dir / "summary.md").exists()
+        marker = json.loads((report_dir / ".pflow-report.json").read_text())
+        assert marker["format"] == "pflow.report"
+        assert marker["format_version"] == 1
+        assert marker["workflow_name"] == "test-workflow"
+        assert marker["trace_path"] == str(trace_file)
+        assert marker["trace_format_version"] == "2.0.0"
 
     def test_creates_per_node_files(self, tmp_path: Path) -> None:
         trace = _make_trace(
@@ -197,6 +208,262 @@ class TestGenerateReport:
 
         assert report_dir is not None
         assert report_dir == tmp_path / ".pflow" / "reports" / "test-workflow"
+
+    def test_regenerating_report_removes_stale_top_level_pages(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(
+            json.dumps(
+                _make_trace(
+                    nodes=[
+                        _make_event(node_id="fetch"),
+                        _make_event(node_id="transform"),
+                    ]
+                )
+            )
+        )
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="fetch")])))
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "02-transform.md").exists()
+
+        report_dir = generate_report(second_trace_file, str(report_path))
+
+        assert report_dir == report_path
+        assert (report_path / "01-fetch.md").exists()
+        assert not (report_path / "02-transform.md").exists()
+
+    def test_regenerating_report_removes_stale_nested_pages(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_batch = _make_event(
+            node_id="batch",
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "a",
+                    "success": True,
+                    "duration_ms": 50,
+                    "events": [
+                        _make_event(node_id="child-a"),
+                        _make_event(node_id="child-b"),
+                    ],
+                },
+                {
+                    "index": 1,
+                    "item": "b",
+                    "success": True,
+                    "duration_ms": 60,
+                    "events": [_make_event(node_id="child-c")],
+                },
+            ],
+        )
+        second_batch = _make_event(
+            node_id="batch",
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "a",
+                    "success": True,
+                    "duration_ms": 50,
+                    "events": [_make_event(node_id="child-a")],
+                },
+            ],
+        )
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(json.dumps(_make_trace(nodes=[first_batch])))
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[second_batch])))
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "01-batch" / "item-0-a" / "02-child-b.md").exists()
+        assert (report_path / "01-batch" / "item-1-b").exists()
+
+        generate_report(second_trace_file, str(report_path))
+
+        assert (report_path / "01-batch" / "item-0-a" / "01-child-a.md").exists()
+        assert not (report_path / "01-batch" / "item-0-a" / "02-child-b.md").exists()
+        assert not (report_path / "01-batch" / "item-1-b").exists()
+
+    def test_regenerating_report_handles_leaf_to_container_shape_change(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="process")])))
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(
+            json.dumps(
+                _make_trace(
+                    nodes=[
+                        _make_event(
+                            node_id="process",
+                            sub_workflow_events=[_make_event(node_id="inner")],
+                        )
+                    ]
+                )
+            )
+        )
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "01-process.md").exists()
+
+        generate_report(second_trace_file, str(report_path))
+
+        assert not (report_path / "01-process.md").exists()
+        assert (report_path / "01-process" / "01-inner.md").exists()
+
+    def test_regenerating_report_handles_container_to_leaf_shape_change(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(
+            json.dumps(
+                _make_trace(
+                    nodes=[
+                        _make_event(
+                            node_id="process",
+                            sub_workflow_events=[_make_event(node_id="inner")],
+                        )
+                    ]
+                )
+            )
+        )
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="process")])))
+
+        generate_report(first_trace_file, str(report_path))
+        assert (report_path / "01-process").is_dir()
+
+        generate_report(second_trace_file, str(report_path))
+
+        assert not (report_path / "01-process").exists()
+        assert (report_path / "01-process.md").exists()
+
+    def test_explicit_non_empty_unmarked_directory_is_refused(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        report_path.mkdir()
+        existing = report_path / "notes.md"
+        existing.write_text("do not replace")
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+
+        with pytest.raises(ReportGenerationError, match="without \\.pflow-report\\.json"):
+            generate_report(trace_file, str(report_path))
+
+        assert existing.read_text() == "do not replace"
+        assert not (report_path / "summary.md").exists()
+
+    def test_explicit_invalid_marker_is_refused(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        report_path.mkdir()
+        (report_path / ".pflow-report.json").write_text("{not-json")
+        existing = report_path / "old.md"
+        existing.write_text("old")
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+
+        with pytest.raises(ReportGenerationError, match="invalid \\.pflow-report\\.json"):
+            generate_report(trace_file, str(report_path))
+
+        assert existing.read_text() == "old"
+        assert not (report_path / "summary.md").exists()
+
+    def test_auto_unmarked_existing_directory_is_replaced_for_migration(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        report_path = tmp_path / ".pflow" / "reports" / "test-workflow"
+        report_path.mkdir(parents=True)
+        (report_path / "stale.md").write_text("stale")
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="fresh")])))
+
+        report_dir = generate_report(trace_file, "auto")
+
+        assert report_dir == report_path
+        assert not (report_path / "stale.md").exists()
+        assert (report_path / ".pflow-report.json").exists()
+        assert (report_path / "01-fresh.md").exists()
+
+    def test_existing_target_file_is_refused(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report"
+        report_path.write_text("not a directory")
+
+        with pytest.raises(ReportGenerationError, match="not a directory"):
+            validate_report_output_dir(report_path, allow_unmarked_existing=False)
+
+    def test_existing_symlink_target_is_refused(self, tmp_path: Path) -> None:
+        target = tmp_path / "target"
+        target.mkdir()
+        report_path = tmp_path / "report-link"
+        report_path.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(ReportGenerationError, match="symlink"):
+            validate_report_output_dir(report_path, allow_unmarked_existing=False)
+
+    def test_render_failure_preserves_previous_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import pflow.core.trace_report as trace_report_module
+
+        report_path = tmp_path / "report"
+        first_trace_file = tmp_path / "first.json"
+        first_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="old")])))
+        second_trace_file = tmp_path / "second.json"
+        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="new")])))
+
+        generate_report(first_trace_file, str(report_path))
+        old_summary = (report_path / "summary.md").read_text()
+
+        def fail_write_node_files(
+            _events: list[dict[str, Any]],
+            _parent_dir: Path,
+            node_index: int,
+        ) -> int:
+            _ = node_index
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(trace_report_module, "_write_node_files", fail_write_node_files)
+
+        with pytest.raises(RuntimeError, match="render exploded"):
+            generate_report(second_trace_file, str(report_path))
+
+        assert (report_path / "summary.md").read_text() == old_summary
+        assert (report_path / "01-old.md").exists()
+        assert not (report_path / "01-new.md").exists()
+        assert not list(tmp_path.glob(".report.tmp-*"))
+
+    def test_replacement_failure_restores_previous_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        report_path = tmp_path / "report"
+        report_path.mkdir()
+        old_file = report_path / "old.md"
+        old_file.write_text("old")
+        temp_path = tmp_path / ".report.tmp-test"
+        temp_path.mkdir()
+        (temp_path / "new.md").write_text("new")
+
+        original_rename = Path.rename
+
+        def fail_second_rename(self: Path, target: str | Path) -> Path:
+            if self == temp_path and Path(target) == report_path:
+                raise OSError("second rename failed")
+            return original_rename(self, target)
+
+        monkeypatch.setattr(Path, "rename", fail_second_rename)
+
+        with pytest.raises(ReportGenerationError, match="Failed to replace report directory"):
+            _replace_report_dir(report_path, temp_path)
+
+        assert report_path.is_dir()
+        assert (report_path / "old.md").read_text() == "old"
+        assert not (report_path / "new.md").exists()
+        assert temp_path.exists()
 
 
 # --- _build_summary() ---
@@ -327,7 +594,40 @@ class TestBuildNodeFile:
         md = _build_node_file(event)
         assert "- Model: gpt-4" in md
         assert "- Tokens: 1,000 in / 200 out" in md
-        assert "- Cost: $0.0420" in md
+        assert "- Paid this run: $0.0420" in md
+
+    def test_cached_llm_metadata_splits_paid_and_historical_cost(self) -> None:
+        builder = TraceFixtureBuilder()
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07)
+
+        md = _build_node_file(event)
+
+        assert "- Status: success [cached]" in md
+        assert "- Source model: anthropic/claude-sonnet-4-5" in md
+        assert "- Source tokens: 1,000 in / 100 out" in md
+        assert "- Paid this run: $0.0000" in md
+        assert "- Historical source cost: $0.0700" in md
+        assert "- Cost: $0.0700" not in md
+
+    def test_cached_llm_metadata_omits_historical_cost_when_absent(self) -> None:
+        builder = TraceFixtureBuilder()
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07)
+        event["llm_call"]["cost_usd"] = None
+
+        md = _build_node_file(event)
+
+        assert "- Paid this run: $0.0000" in md
+        assert "Historical source cost" not in md
+
+    def test_in_process_cached_llm_metadata_uses_non_historical_source_cost_label(self) -> None:
+        builder = TraceFixtureBuilder()
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07, cache_source="in_process")
+
+        md = _build_node_file(event)
+
+        assert "- Paid this run: $0.0000" in md
+        assert "- Source call cost: $0.0700" in md
+        assert "Historical source cost" not in md
 
     def test_template_resolutions_prompt(self) -> None:
         event = _make_event(
@@ -451,6 +751,274 @@ class TestBuildNodeFile:
         assert "## Resolved Parameters" in md
         assert "api.example.com" in md
 
+    # --- 2.2.0: ## Cached System rendering ---
+
+    def test_cached_system_string_shape_renders_section(self) -> None:
+        """Plain-string llm_system renders as text under the section heading."""
+        event = _make_event(
+            llm_system="You are a helpful assistant.",
+            llm_prompt="Answer the question.",
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "You are a helpful assistant." in md
+
+    def test_cached_system_list_of_blocks_renders_json_block(self) -> None:
+        """list[dict] llm_system emits a fenced JSON block preserving the
+        ``cache_control`` marker shape so agents can verify it."""
+        event = _make_event(
+            llm_system=[
+                {"type": "text", "text": "Background"},
+                {"type": "text", "text": "Reference", "cache_control": {"type": "ephemeral"}},
+            ],
+            llm_prompt="Answer the question.",
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "```json" in md
+        assert "cache_control" in md
+        assert "ephemeral" in md
+
+    def test_cached_system_section_appears_before_prompt_section(self) -> None:
+        """API call order is system → user; the report mirrors that order."""
+        event = _make_event(
+            llm_system="System content",
+            template_resolutions={
+                "prompt": {"template": "Hi", "resolved": "Hi there"},
+            },
+        )
+        md = _build_node_file(event)
+        cached_idx = md.index("## Cached System")
+        prompt_idx = md.index("## Prompt")
+        assert cached_idx < prompt_idx
+
+    def test_cached_system_with_skipped_chunks(self) -> None:
+        """``cache_chunks_skipped`` from llm_call surfaces under the section
+        as a single quoted line."""
+        event = _make_event(
+            llm_system=[{"type": "text", "text": "Reference"}],
+            llm_call={"cache_chunks_skipped": ["foo", "bar"]},
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "Skipped chunks (resolved as ABSENT): foo, bar" in md
+
+    def test_cached_system_omitted_when_field_absent(self) -> None:
+        """No ``llm_system`` field → no ``## Cached System`` heading."""
+        event = _make_event(
+            template_resolutions={"prompt": {"template": "Hi", "resolved": "Hi"}},
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" not in md
+
+    def test_cached_system_no_skipped_chunks_line_when_empty(self) -> None:
+        """Empty ``cache_chunks_skipped`` → no skipped-chunks line."""
+        event = _make_event(
+            llm_system="Plain system",
+            llm_call={"cache_chunks_skipped": []},
+        )
+        md = _build_node_file(event)
+        assert "## Cached System" in md
+        assert "Skipped chunks" not in md
+
+
+class TestCacheTelemetrySection:
+    """Trace report per-call cache telemetry rendering."""
+
+    def test_renders_section_when_cache_creation_nonzero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 1500,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc123",
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" in md
+        assert "Cache write: 1,500 tokens" in md
+        assert "Cache read: 0 tokens" in md
+        assert "Cache key: abc123" in md
+
+    def test_renders_section_when_cache_read_nonzero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_key": "def456",
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" in md
+        assert "Cache read: 8,062 tokens" in md
+
+    def test_omitted_when_no_cache_signal(self) -> None:
+        """Plain LLM call without cache activity suppresses the section."""
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_key": "xyz",
+                "cache_chunks_skipped": [],
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" not in md
+
+    def test_omitted_when_no_llm_call(self) -> None:
+        event = _make_event()
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" not in md
+
+    def test_cached_replay_heading_tag_appears(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_source": "memo",
+                "cache_key": "abc",
+                "cache_age_sec": 559.99,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry (cached result reused from prior run)" in md
+        assert "Result age: 560s" in md
+
+    def test_cached_replay_heading_tag_does_not_leak_pflow_vocabulary(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_source": "memo",
+                "cache_key": "abc",
+                "cache_age_sec": 559.99,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "memo" not in md.lower()
+        assert "in_process" not in md.lower()
+
+    def test_in_process_replay_heading_does_not_claim_prior_run(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 8062,
+                "cache_source": "in_process",
+                "cache_key": "abc",
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry (cached result reused)" in md
+        assert "prior run" not in md
+        assert "in_process" not in md
+
+    def test_section_appears_between_cached_system_and_prompt(self) -> None:
+        event = _make_event(
+            llm_system="System content",
+            llm_call={
+                "cache_creation_input_tokens": 1500,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc",
+            },
+            template_resolutions={"prompt": {"template": "Hi", "resolved": "Hi there"}},
+        )
+        md = _build_node_file(event)
+
+        cached_idx = md.index("## Cached System")
+        telemetry_idx = md.index("## Cache telemetry")
+        prompt_idx = md.index("## Prompt")
+        assert cached_idx < telemetry_idx < prompt_idx
+
+    def test_renders_when_chunks_skipped_present(self) -> None:
+        event = _make_event(
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc",
+                "cache_chunks_skipped": ["foo"],
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cache telemetry" in md
+
+    def test_renders_when_cached_system_present_even_with_zero_tokens(self) -> None:
+        """When the workflow opted into caching (llm_system present) but the
+        provider didn't fire (e.g., sub-threshold), the section must still
+        render so agents see the silent no-op."""
+        event = _make_event(
+            llm_system=[{"type": "text", "text": "Reference"}],
+            llm_call={
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_key": "abc",
+                "cache_chunks_skipped": [],
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "## Cached System" in md
+        assert "## Cache telemetry" in md
+        assert "Cache write: 0 tokens" in md
+        assert "Cache read: 0 tokens" in md
+
+    def test_renders_in_batch_item_file(self) -> None:
+        """Batch items reuse _format_resolutions; cache telemetry must
+        propagate to per-item .md files. Pins the contract against future
+        refactors that move batch-item rendering off the shared helper."""
+        from pflow.core.trace_report import _build_batch_item_file
+
+        parent_event = _make_event(node_id="batch-parent", node_type="LLMNode")
+        item = {
+            "index": 0,
+            "duration_ms": 50,
+            "success": True,
+            "llm_call": {
+                "cache_creation_input_tokens": 1500,
+                "cache_read_input_tokens": 0,
+                "cache_key": "item-0",
+            },
+        }
+        md = _build_batch_item_file(item, parent_event)
+
+        assert "## Cache telemetry" in md
+        assert "Cache write: 1,500 tokens" in md
+
+    def test_thinking_tokens_renders_in_metadata_when_nonzero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "model": "anthropic/claude-haiku-4-5",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "thinking_tokens": 1024,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "- Thinking: 1,024 tokens" in md
+        assert "## Cache telemetry" not in md
+
+    def test_thinking_tokens_omitted_in_metadata_when_zero(self) -> None:
+        event = _make_event(
+            llm_call={
+                "model": "anthropic/claude-haiku-4-5",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "thinking_tokens": 0,
+            },
+        )
+        md = _build_node_file(event)
+
+        assert "Thinking" not in md
+
 
 # --- _build_node_summary() ---
 
@@ -533,7 +1101,35 @@ class TestBuildBatchItemFile:
         }
         md = _build_batch_item_file(item, parent)
         assert "- Tokens: 800 in / 150 out" in md
-        assert "- Cost: $0.0100" in md
+        assert "- Paid this run: $0.0100" in md
+
+    def test_cached_item_splits_paid_and_historical_cost(self) -> None:
+        parent = _make_event(node_id="batch", node_type="LLMNode")
+        item = {
+            "index": 0,
+            "success": True,
+            "cached": True,
+            "duration_ms": 0,
+            "node_output": {"response": "ok"},
+            "llm_call": {
+                "model": "anthropic/claude-sonnet-4-5",
+                "input_tokens": 1000,
+                "output_tokens": 100,
+                "cost_usd": 0.03,
+                "cache_source": "memo",
+                "cache_key": "fixture-cache-key",
+                "cache_age_sec": 30.0,
+            },
+        }
+
+        md = _build_batch_item_file(item, parent)
+
+        assert "- Status: success [cached]" in md
+        assert "- Source model: anthropic/claude-sonnet-4-5" in md
+        assert "- Source tokens: 1,000 in / 100 out" in md
+        assert "- Paid this run: $0.0000" in md
+        assert "- Historical source cost: $0.0300" in md
+        assert "- Cost: $0.0300" not in md
 
     def test_item_with_template_resolutions(self) -> None:
         parent = _make_event(node_id="process")
@@ -719,11 +1315,12 @@ class TestComputeEventCost:
         # 0.01 + 0.02 + 0.03 = 0.06
         assert result == pytest.approx(0.06)
 
-    def test_compute_event_cost_on_batch_item_directly(self) -> None:
+    def test_compute_batch_item_cost_recurses_into_events(self) -> None:
         """Cost computed on a batch item dict (not parent event).
 
         This is the path used by _build_node_summary's items table.
-        Batch items store child events under "events", not "sub_workflow_events".
+        Batch items store child events under "events", not "sub_workflow_events"
+        — so they get a dedicated entry point that knows the shape difference.
         """
         batch_item = {
             "index": 0,
@@ -742,7 +1339,7 @@ class TestComputeEventCost:
                 ),
             ],
         }
-        result = _compute_event_cost(batch_item)
+        result = _compute_batch_item_cost(batch_item)
         assert result == pytest.approx(0.39)
 
 
@@ -1696,6 +2293,21 @@ class TestRuntimeWarningsInSummary:
         md = _build_summary(trace)
         assert "node-a" in md
         assert "node-b" in md
+
+    def test_runtime_warning_with_id_and_suggestions_rendered(self) -> None:
+        trace = _make_trace(
+            warnings=[
+                {
+                    "node_id": "draft",
+                    "id": "cache.below-min-tokens",
+                    "message": "draft: declared cache did not fire",
+                    "suggestions": ["Increase cache content above 1024 tokens."],
+                },
+            ]
+        )
+        md = _build_summary(trace)
+        assert "[cache.below-min-tokens] **draft**: draft: declared cache did not fire" in md
+        assert "  - Increase cache content above 1024 tokens." in md
 
 
 # --- Item counts in pipeline status (Issue 6) ---
