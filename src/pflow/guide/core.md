@@ -394,6 +394,9 @@ Caching is automatic — unchanged nodes return instantly on re-run. Use this:
 - `cache: false` on a node — permanently opt out for nodes reading runtime state (date, git branch, env vars)
 - `pflow report` — when errors aren't enough, inspect per-node resolved inputs and outputs
 
+Provider prompt caching: if many LLM calls reuse the same long context, run
+`pflow analyze-cache workflow.pflow.md`, then follow `pflow guide prompt-caching`.
+
 ```bash
 # Re-run just one node (upstream cached, downstream skipped)
 pflow ./workflow.pflow.md --only node-name

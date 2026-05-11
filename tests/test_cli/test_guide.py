@@ -89,6 +89,9 @@ def test_compose_core_only() -> None:
 
 def test_core_no_cache_wording_distinguishes_provider_prompt_cache() -> None:
     result = compose_guide(["core"])
+    assert "Provider prompt caching: if many LLM calls reuse the same long context" in result
+    assert "pflow analyze-cache workflow.pflow.md" in result
+    assert "pflow guide prompt-caching" in result
     assert "`--no-cache` — bypass pflow memo-cache reads" in result
     assert "provider prompt caching may still apply" in result
     assert "does not disable LLM" in result
@@ -160,6 +163,15 @@ def test_compose_no_core_auto_included() -> None:
     assert "---" in result
     # core.md content should not appear
     assert "Step Order vs Templates" not in result
+
+
+def test_llm_guide_points_to_prompt_caching_without_duplication() -> None:
+    result = compose_guide(["llm"])
+    assert "pflow analyze-cache workflow.pflow.md" in result
+    assert "pflow guide prompt-caching" in result
+    assert "`prompt_cache: [chunk_name]`" in result
+    assert "`prewarm: true`" in result
+    assert "Allowed values are exactly `5m` and `1h`" not in result
 
 
 def test_compose_deduplicates_topics() -> None:

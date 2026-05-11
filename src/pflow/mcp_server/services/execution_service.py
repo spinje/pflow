@@ -360,7 +360,7 @@ class ExecutionService(BaseService):
         workflow: Any,
         parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Analyze a workflow's cache plan; return the JSON shape that mirrors
+        """Analyze a workflow's prompt cache plan; return the JSON shape that mirrors
         ``pflow analyze-cache --format=json`` byte-for-byte.
 
         Per Task 152 MCP-parity invariant: every shared formatter has two call

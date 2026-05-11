@@ -81,7 +81,7 @@ def analyze_cache(
     no_trace_autoload: bool,
     all_rows: bool,
 ) -> None:
-    """Analyze a workflow's cache plan; emit recommendations and discrepancies.
+    """Analyze a workflow's prompt cache plan; shows recommendations and discrepancies.
 
     Examples:
 

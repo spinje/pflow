@@ -80,6 +80,21 @@ class PflowCLI(click.Group):
         # format_options on Group also calls format_commands internally
         self.format_options(ctx, formatter)
 
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        commands: list[tuple[str, click.Command]] = []
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is None or cmd.hidden:
+                continue
+            commands.append((subcommand, cmd))
+
+        if not commands:
+            return
+
+        rows = [(subcommand, cmd.get_short_help_str(limit=10_000)) for subcommand, cmd in commands]
+        with formatter.section("Commands"):
+            formatter.write_dl(rows)
+
 
 def _setup_signals() -> None:
     """Configure signal handlers for all commands."""

@@ -21,6 +21,12 @@ def test_main_command_help():
     assert "skill" in result.output
     assert "guide" in result.output
     assert "probe" in result.output
+    assert "Analyze a workflow's prompt cache plan; emit recommendations" in result.output
+    assert "and discrepancies." in result.output
+    assert "Analyze a workflow's prompt cache plan; emit recommendations..." not in result.output
+    assert "Manage pflow settings — credentials, LLM models, and node" in result.output
+    assert "filtering." in result.output
+    assert "Manage pflow settings — credentials, LLM models, and..." not in result.output
 
 
 # REMOVED: Tests for old workflow collection behavior
