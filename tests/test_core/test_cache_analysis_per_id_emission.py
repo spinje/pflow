@@ -1648,9 +1648,10 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
     assert row.cacheable_tokens_estimated == 120
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
-            name="concept",
+            child_input_name="concept",
             tokens_per_call=60,
             model="anthropic/claude-haiku-4-5",
+            parent_value_expr="concept",
         ),
     )
     assert any(d.id == "cache.sub-workflow-cache-undeclared" for d in result.warnings)
@@ -1737,8 +1738,12 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
     assert row.cacheable_data_source == "cross_workflow_projection"
     assert row.cacheable_tokens_estimated == 100
     assert row.cross_workflow_inputs == (
-        CrossWorkflowInputContribution(name="a", tokens_per_call=30, model="anthropic/claude-haiku-4-5"),
-        CrossWorkflowInputContribution(name="b", tokens_per_call=20, model="anthropic/claude-haiku-4-5"),
+        CrossWorkflowInputContribution(
+            child_input_name="a", tokens_per_call=30, model="anthropic/claude-haiku-4-5", parent_value_expr="a"
+        ),
+        CrossWorkflowInputContribution(
+            child_input_name="b", tokens_per_call=20, model="anthropic/claude-haiku-4-5", parent_value_expr="b"
+        ),
     )
 
 

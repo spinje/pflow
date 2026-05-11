@@ -1681,7 +1681,9 @@ def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: 
 
 
 def _format_cross_workflow_inputs_note(inputs: tuple[CrossWorkflowInputContribution, ...]) -> str:
-    names = tuple(item.name if isinstance(item, CrossWorkflowInputContribution) else str(item) for item in inputs)
+    names = tuple(
+        item.child_input_name if isinstance(item, CrossWorkflowInputContribution) else str(item) for item in inputs
+    )
     if len(names) <= 3:
         return f"cacheable inputs: {', '.join(names)}"
     return f"cacheable inputs: {', '.join(names[:3])}, +{len(names) - 3} more"

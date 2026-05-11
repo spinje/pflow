@@ -11664,3 +11664,48 @@ Verification:
 - Baseline harness: 67 passed, 0 drifted (6 regenerated).
 - Near-full sandbox-safe suite: 3,255 passed.
 - Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.
+
+## 2026-05-11 — Task 159 — cross_workflow_inputs naming + data-flow surfacing
+
+Unifies the parent→child input naming across the analyzer surfaces and adds
+data-flow context inside recommended actions for renamed inputs.
+
+`CrossWorkflowInputContribution`: renamed `name` → `child_input_name`, added
+`parent_value_expr: str | None`. `_apply_cross_workflow_projection` sets both
+fields and sorts by `child_input_name` (alphabetical, stable).
+
+Per-call row's `cacheable inputs:` note now uses child input names matching
+the Recommended actions section — eliminates the prior naming divergence
+(parent expr in the row, child name in the action) that forced fresh agents
+to mentally map the two views.
+
+Recommended action body adds a `flows in from parent as `${parent_value_expr}` `
+sub-line under each renamed input bullet (`_parent_origin_clause` helper).
+Same-name passthroughs render unchanged. Restores the parent→child data-flow
+visibility lost when Shape δ suppressed rename diagnostics from text, scoped
+to where it's actionable (inside the action the agent is reading to apply
+the fix). Rename diagnostic stays JSON/raw-only per the Shape δ decision.
+
+Multi-consumer and single-consumer body branches now both call extracted
+helpers (`_format_per_consumer_input_lines`, `_format_single_consumer_input_lines`).
+Eliminates the lockstep duplication and satisfies C901 without `noqa`.
+
+JSON `per_call[].cross_workflow_inputs[*]`: renamed `name` → `child_input_name`,
+added `parent_value_expr`. Same-minor pre-merge shape correction (4.1 line in
+version history).
+
+Known limitation carried forward: `_aggregate_sub_workflow_cache_candidates_by_child`
+deduplicates to one parent per `(child_workflow, child_input_name)` via lex
+tiebreak. When two parent expressions converge on the same child input, only
+the lex-smallest renders. Not exercised by current baselines; flagged for a
+possible follow-up if it surfaces in real workflows.
+
+Verification:
+
+- Focused cache-analysis suite: 638 passed (+1 new unit test for
+  `_parent_origin_clause` with verified mutation contract: flipping the
+  equality check fails the test).
+- Baseline harness: 67 passed, 0 drifted (1 regenerated:
+  `10-live-recordings/05-gemini-lyrics-generator`).
+- Default test suite: 6,552 passed, 1 skipped.
+- Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.

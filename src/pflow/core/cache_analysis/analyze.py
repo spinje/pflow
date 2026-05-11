@@ -89,11 +89,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CrossWorkflowInputContribution:
-    """One cross-workflow value contributing to a per-call row projection."""
+    """One cross-workflow value contributing to a per-call row projection.
 
-    name: str
+    Carries both the child-side input name (what the agent declares in the
+    child's ``## Cache``) and the parent-side value expression (where the
+    value originates upstream). Renderers pick whichever name fits the
+    context — the per-call row uses ``child_input_name``; the action body
+    surfaces ``parent_value_expr`` when it differs from the child name.
+    """
+
+    child_input_name: str
     tokens_per_call: int | None
     model: str
+    parent_value_expr: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1912,11 +1920,12 @@ def _apply_cross_workflow_projection(
         "cross_workflow_projection",
         tuple(
             CrossWorkflowInputContribution(
-                name=candidate.parent_value_expr,
+                child_input_name=candidate.child_input_name,
+                parent_value_expr=candidate.parent_value_expr,
                 tokens_per_call=candidate.estimated_tokens_per_call,
                 model=model,
             )
-            for candidate in row_candidates
+            for candidate in sorted(row_candidates, key=lambda c: c.child_input_name)
         ),
     )
 
@@ -4647,7 +4656,7 @@ def _tokens_from_cross_workflow_rows(
         for contribution in row.cross_workflow_inputs:
             if not isinstance(contribution, CrossWorkflowInputContribution):
                 continue
-            if contribution.name == candidate.parent_value_expr:
+            if contribution.child_input_name == candidate.child_input_name:
                 return contribution.tokens_per_call
     return None
 
@@ -4761,34 +4770,27 @@ def _format_grouped_body_block(
         )
         lines.append("Per-consumer cache prefix (what the provider sees per call):")
         for projection in projections:
-            lines.append(
-                f"  Node `{projection.consumer_node_id}` "
-                f"({_format_tokens_phrase(projection.per_call_prefix_tokens)} per call — "
-                f"{_threshold_relation(projection.per_call_prefix_tokens, projection.threshold)} "
-                f"{projection.threshold:,}-token minimum):"
-            )
-            for input_name in projection.consumed_inputs:
-                candidate = candidates_by_input[input_name]
-                refs = _per_input_var_refs(candidate, cw_result).get(projection.consumer_node_id, ())
-                lines.append(
-                    f"    • `{input_name}` {_format_nullable_tokens(tokens_per_input.get(input_name))} — "
-                    f"uses {_format_var_refs(refs, fallback=input_name)}"
+            lines.extend(
+                _format_per_consumer_input_lines(
+                    projection=projection,
+                    candidates_by_input=candidates_by_input,
+                    tokens_per_input=tokens_per_input,
+                    cw_result=cw_result,
                 )
+            )
     else:
         lines.append(
             f"{input_phrase.capitalize()} {_flow_verb(input_count)} in from parent {parent_label}: "
             f"{_format_tokens_phrase(per_call_max)} per call ({threshold_clause})."
         )
         lines.append("Template variables to remove:")
-        for candidate in group.candidates:
-            refs_by_node = _per_input_var_refs(candidate, cw_result)
-            refs = tuple(ref for node_refs in refs_by_node.values() for ref in node_refs)
-            consumer_text = ", ".join(f"`{node_id}`" for node_id in candidate.child_node_ids)
-            lines.append(
-                f"  • `{candidate.child_input_name}` "
-                f"{_format_nullable_tokens(tokens_per_input.get(candidate.child_input_name))} — "
-                f"node(s) {consumer_text} use {_format_var_refs(refs, fallback=candidate.child_input_name)}"
+        lines.extend(
+            _format_single_consumer_input_lines(
+                candidates=group.candidates,
+                tokens_per_input=tokens_per_input,
+                cw_result=cw_result,
             )
+        )
 
     if case == "model_switch":
         alternatives = anthropic_models_at_threshold(_MODEL_SWITCH_BAND)
@@ -4813,6 +4815,69 @@ def _format_grouped_body_block(
 
 def _threshold_relation(tokens: int, threshold: int) -> str:
     return "above" if tokens >= threshold else "below"
+
+
+def _parent_origin_clause(candidate: _SubWorkflowCacheCandidate) -> str | None:
+    """Sub-line text naming the parent expression when it differs from the child input name.
+
+    Surfaces parent→child data flow inside the action body for renamed inputs.
+    Returns ``None`` for same-name passthroughs (no signal to add) and for
+    multi-ref/literal parent values where ``parent_value_expr`` is empty.
+    """
+    expr = candidate.parent_value_expr
+    if not expr or expr == candidate.child_input_name:
+        return None
+    return f"flows in from parent as `${{{expr}}}`"
+
+
+def _format_per_consumer_input_lines(
+    *,
+    projection: _GroupedConsumerProjection,
+    candidates_by_input: dict[str, _SubWorkflowCacheCandidate],
+    tokens_per_input: dict[str, int | None],
+    cw_result: Any,
+) -> list[str]:
+    """Render input bullets under one consumer-node heading in the multi-consumer case."""
+    lines = [
+        f"  Node `{projection.consumer_node_id}` "
+        f"({_format_tokens_phrase(projection.per_call_prefix_tokens)} per call — "
+        f"{_threshold_relation(projection.per_call_prefix_tokens, projection.threshold)} "
+        f"{projection.threshold:,}-token minimum):"
+    ]
+    for input_name in projection.consumed_inputs:
+        candidate = candidates_by_input[input_name]
+        refs = _per_input_var_refs(candidate, cw_result).get(projection.consumer_node_id, ())
+        lines.append(
+            f"    • `{input_name}` {_format_nullable_tokens(tokens_per_input.get(input_name))} — "
+            f"uses {_format_var_refs(refs, fallback=input_name)}"
+        )
+        origin = _parent_origin_clause(candidate)
+        if origin is not None:
+            lines.append(f"        {origin}")
+    return lines
+
+
+def _format_single_consumer_input_lines(
+    *,
+    candidates: tuple[_SubWorkflowCacheCandidate, ...],
+    tokens_per_input: dict[str, int | None],
+    cw_result: Any,
+) -> list[str]:
+    """Render input bullets when the group has a single consumer node."""
+    lines: list[str] = []
+    for candidate in candidates:
+        refs_by_node = _per_input_var_refs(candidate, cw_result)
+        refs = tuple(ref for node_refs in refs_by_node.values() for ref in node_refs)
+        consumer_text = ", ".join(f"`{node_id}`" for node_id in candidate.child_node_ids)
+        lines.append(
+            f"  • `{candidate.child_input_name}` "
+            f"{_format_nullable_tokens(tokens_per_input.get(candidate.child_input_name))} — "
+            f"node(s) {consumer_text} use {_format_var_refs(refs, fallback=candidate.child_input_name)}"
+        )
+        origin = _parent_origin_clause(candidate)
+        if origin is not None:
+            lines.append(f"      {origin}")
+    return lines
 
 
 def _count_phrase(count: int, singular: str) -> str:

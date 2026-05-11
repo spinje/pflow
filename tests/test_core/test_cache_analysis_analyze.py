@@ -6098,3 +6098,45 @@ def test_analyze_aggregates_dynamic_batches_into_one_note_via_production_path(tm
     assert "create-songs" in aggregated
     # Negative — pre-B-4 per-batch wording must NOT appear in multi-batch case.
     assert "Workflow batch fetch-sources in" not in aggregated
+
+
+def test_parent_origin_clause_surfaces_rename_and_hides_passthrough() -> None:
+    """Lock the rename-vs-passthrough contract for the action body's data-flow sub-line.
+
+    The renderer adds a "flows in from parent as `${expr}`" line under each input
+    bullet ONLY when the parent-side value expression and child-side input name
+    diverge. Same-name passthroughs add no signal (suffix would be visual noise);
+    multi-ref/literal parent values produce no parent_value_expr (None) and also
+    suppress the suffix.
+
+    Mutation contracts:
+      - Flip the equality check (``expr == child_input_name``) to ``!=`` →
+        same-name case fires; this test fails.
+      - Drop the ``not expr`` guard → None/empty case returns ``"flows in from
+        parent as `${None}`"`` or similar; this test fails.
+    """
+    from pflow.core.cache_analysis.analyze import _parent_origin_clause, _SubWorkflowCacheCandidate
+
+    def _make(parent_value_expr: str | None, child_input_name: str) -> _SubWorkflowCacheCandidate:
+        return _SubWorkflowCacheCandidate(
+            parent_workflow="parent.pflow.md",
+            parent_value_expr=parent_value_expr or "",
+            parent_node_id="p",
+            line_in_parent=1,
+            child_workflow="child.pflow.md",
+            child_input_name=child_input_name,
+            child_count=1,
+            child_node_ids=("c",),
+        )
+
+    # Rename: names differ → suffix surfaces the parent-side expression.
+    rename = _make(parent_value_expr="write-lyrics.response", child_input_name="lyrics")
+    assert _parent_origin_clause(rename) == "flows in from parent as `${write-lyrics.response}`"
+
+    # Passthrough: same name on both sides → no suffix (would be visual noise).
+    passthrough = _make(parent_value_expr="concept_brief", child_input_name="concept_brief")
+    assert _parent_origin_clause(passthrough) is None
+
+    # Multi-ref / literal parent value: parent_value_expr is empty → no suffix.
+    opaque = _make(parent_value_expr="", child_input_name="lyrics")
+    assert _parent_origin_clause(opaque) is None

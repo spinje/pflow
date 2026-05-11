@@ -51,6 +51,13 @@ Version history (``JSON_FORMAT_VERSION``):
   and ``per_call[].cross_workflow_inputs`` is added for rows whose
   ``could_cache`` value comes from parent-declared values flowing into a
   child workflow.
+- ``"4.1"`` — cross_workflow_inputs naming + data-flow surfacing (same minor,
+  pre-merge shape correction): ``per_call[].cross_workflow_inputs[*]``
+  renamed ``name`` → ``child_input_name`` and added ``parent_value_expr``
+  (``string | null``). Text per-call row's ``cacheable inputs:`` note now
+  uses child input names, alphabetized; recommended action body surfaces
+  parent expressions on a ``flows in from parent as `${...}` `` sub-line
+  for renamed inputs only.
 - ``"4.1"`` — sub-workflow cache recommendation grouping (same minor, pre-merge
   shape correction): ``cache.sub-workflow-cache-undeclared`` now emits one
   diagnostic per child workflow. Its context uses ``inputs[]``, ``case``, and
