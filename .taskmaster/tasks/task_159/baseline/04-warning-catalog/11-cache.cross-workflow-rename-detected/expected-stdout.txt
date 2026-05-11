@@ -208,7 +208,7 @@
           "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md].nodes[id=child].inputs[name=creative_brief]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       }
     ],
@@ -237,7 +237,7 @@
         "path": "nodes[id=parent_use].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -261,7 +261,7 @@
         "path": "nodes[id=summarize].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -284,7 +284,7 @@
         "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md].nodes[id=child].inputs[name=creative_brief]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

@@ -87,10 +87,10 @@ class CacheWarningSpec:
     nullable_cost_keys: frozenset[str] = frozenset()
     headline_template: str = ""
     # Routes the rendered "See also: pflow guide X" hint per entry. Defaults
-    # to ``("caching",)`` because the catalog is historically cache-scoped;
+    # to ``("prompt-caching",)`` because the catalog is historically cache-scoped;
     # entries pointing elsewhere (e.g. the ``llm.*`` thinking-temperature
     # check) override.
-    see_also: tuple[str, ...] = ("caching",)
+    see_also: tuple[str, ...] = ("prompt-caching",)
     # Findings whose reliability requires a complete trace. When the analyzer
     # classifies trace coverage as ``"truncated"`` (workflow died mid-run),
     # diagnostics with this flag are filtered. IR-derived findings (the
@@ -643,7 +643,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "Inline the prompt template on `{node_id}`: replace `${{{var_ref}}}` "
             "with the literal prompt content, with stable bytes BEFORE per-call "
             "dynamic references.",
-            "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern.",
+            "See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern.",
         ),
         path_template="nodes[id={node_id}].prompt",
         headline_template=("Prompt opaque to static analysis on {node_id} — refactor inline for cache detection"),

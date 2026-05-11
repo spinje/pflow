@@ -164,7 +164,7 @@
         "path": "nodes[id=summarize].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -190,7 +190,7 @@
         "path": "nodes[id=summarize].params.prompt"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

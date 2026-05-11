@@ -148,7 +148,7 @@
         "path": "nodes[id=scoring].prompt"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

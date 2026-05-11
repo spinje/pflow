@@ -645,7 +645,7 @@ def _append_summary_counts(summary_lines: list[str], analysis: CacheAnalysis) ->
         summary_lines.append(f"  {' + '.join(parts)}")
     if has_truncation_note:
         summary_lines.append(
-            "  Cost-projection findings suppressed because the trace is truncated (workflow did not finish)."
+            "  Trace-dependent optimization recommendations suppressed because the trace is truncated (workflow did not finish)."
         )
 
 

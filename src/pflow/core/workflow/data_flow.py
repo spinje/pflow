@@ -774,7 +774,7 @@ def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fi
             "node_type": node_type,
             "path": f"nodes[id={node_id}]",
         },
-        see_also=["caching"],
+        see_also=["prompt-caching"],
     )
 
 
@@ -809,7 +809,7 @@ def _make_order_mismatch_diagnostic(node_id: str, declared: list[str], actual: l
             "actual_str": actual_str,
             "path": f"nodes[id={node_id}].prompt_cache",
         },
-        see_also=["caching"],
+        see_also=["prompt-caching"],
     )
 
 
@@ -1150,5 +1150,5 @@ def _make_unused_chunk_diagnostic(chunk_name: str, source_line: int | None = Non
             f"Remove '{chunk_name}' from ## Cache, OR reference it from a node's `- prompt_cache: [{chunk_name}]`."
         ],
         context=context,
-        see_also=["caching"],
+        see_also=["prompt-caching"],
     )

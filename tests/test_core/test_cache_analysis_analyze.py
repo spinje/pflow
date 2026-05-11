@@ -697,7 +697,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
     text = render_text(result)
     assert "Evidence: trace truncated (1 of 2 LLM nodes executed)" in text
     assert "Trace-backed costs below cover executed nodes only." in text
-    assert "Cost-projection findings suppressed because the trace is truncated" in text
+    assert "Trace-dependent optimization recommendations suppressed because the trace is truncated" in text
 
 
 def test_truncated_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
@@ -968,7 +968,7 @@ def test_complete_trace_with_conditional_dispatch_keeps_ir_findings(tmp_path: Pa
     text = render_text(result)
     assert "Evidence: complete trace (1 of 2 LLM nodes executed; 1 not reached for these inputs)" in text
     # Suppression note must NOT appear on complete coverage.
-    assert "Cost-projection findings suppressed" not in text
+    assert "Trace-dependent optimization recommendations suppressed" not in text
 
 
 def test_truncated_trace_filters_first_call_write_penalty_only(tmp_path: Path) -> None:

@@ -31,7 +31,7 @@ JSON shape (emitted via ``Diagnostic.to_dict()`` with
             "first_run_delta_kind": "savings",
             "rerun_delta_kind": "savings"
         },
-        "see_also": ["caching"]
+        "see_also": ["prompt-caching"]
     }
 """
 
@@ -111,7 +111,7 @@ def summarize_from_analysis(analysis: CacheAnalysis) -> Diagnostic | None:
             "first_run_delta_kind": summary.first_run_delta.kind,
             "rerun_delta_kind": summary.rerun_delta.kind,
         },
-        see_also=["caching"],
+        see_also=["prompt-caching"],
     )
 
 

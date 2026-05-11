@@ -5,6 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 GUIDE_DIR = Path(__file__).parent
+PROMPT_CACHING_TOPIC = "prompt-caching"
+
+# Backward-compatible topic aliases. Keep aliases out of auto-detection and
+# menu text so generated guide pointers use the clearest public topic name.
+_TOPIC_ALIASES: dict[str, str] = {
+    "caching": PROMPT_CACHING_TOPIC,
+}
 
 # Node types that don't map 1:1 to guide topic names.
 _NODE_TYPE_TO_TOPIC: dict[str, str] = {
@@ -61,9 +68,10 @@ def compose_guide(args: list[str]) -> str:
     for arg in args:
         detected = _resolve_arg(arg)
         for topic in detected:
-            if topic not in seen:
-                topics.append(topic)
-                seen.add(topic)
+            canonical_topic = _canonical_topic(topic)
+            if canonical_topic not in seen:
+                topics.append(canonical_topic)
+                seen.add(canonical_topic)
 
     parts: list[str] = []
     for topic in topics:
@@ -129,11 +137,11 @@ def detect_topics_from_ir(ir: dict) -> list[str]:
         # author who writes ``prewarm: false`` is engaging with the feature
         # and should still see the guide.
         if node.get("prompt_cache") is not None or node.get("prewarm") is not None:
-            topics.add("caching")
+            topics.add(PROMPT_CACHING_TOPIC)
 
     # Caching detection: top-level ``## Cache`` block.
     if ir.get("cache") is not None:
-        topics.add("caching")
+        topics.add(PROMPT_CACHING_TOPIC)
 
     # Branching detection via non-default edge actions
     for edge in ir.get("edges") or []:
@@ -158,7 +166,7 @@ def _resolve_arg(arg: str) -> list[str]:
 
     # Known topic name (wins over saved workflow names)
     if _resolve_topic_path(arg) is not None:
-        return [arg]
+        return [_canonical_topic(arg)]
 
     # Saved workflow name — route through the file walker so sub-workflows
     # are walked the same way as for an explicit file path.
@@ -172,6 +180,7 @@ def _resolve_arg(arg: str) -> list[str]:
 
 def _resolve_topic_path(topic: str) -> Path | None:
     """Find the markdown file for a topic name, or None."""
+    topic = _canonical_topic(topic)
     if topic == "core":
         path = GUIDE_DIR / "core.md"
         return path if path.exists() else None
@@ -182,6 +191,11 @@ def _resolve_topic_path(topic: str) -> Path | None:
             return path
 
     return None
+
+
+def _canonical_topic(topic: str) -> str:
+    """Return the preferred topic name for a user-supplied topic or alias."""
+    return _TOPIC_ALIASES.get(topic, topic)
 
 
 def _topics_from_workflow_file(path_str: str) -> list[str]:

@@ -134,7 +134,7 @@
          anthropic/claude-opus-4
          anthropic/claude-sonnet-4
          anthropic/claude-sonnet-3-7
-       These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide caching`.
+       These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide prompt-caching`.
      → Then: apply steps (1)(2)(3) above.
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
      → Edit: song-creator/reviews/review-ai-tells.pflow.md
@@ -153,7 +153,7 @@
          anthropic/claude-opus-4
          anthropic/claude-sonnet-4
          anthropic/claude-sonnet-3-7
-       These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide caching`.
+       These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide prompt-caching`.
      → Then: apply steps (1)(2)(3) above.
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
      → Edit: song-creator/reviews/review-cliche.pflow.md
@@ -169,7 +169,7 @@
      generate-chorus-options in chorus-chooser.pflow.md
      generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
      → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
-     → See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern.
+     → See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern.
 
 ## Per-call cache report
   Actual cache ratios from declared `prompt_cache:` subsets.

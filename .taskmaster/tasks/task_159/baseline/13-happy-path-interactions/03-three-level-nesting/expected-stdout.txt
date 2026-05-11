@@ -195,7 +195,7 @@
           "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].nodes[id=grandchild].inputs[name=entities]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       }
     ],
@@ -219,7 +219,7 @@
           "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].cache.items[name=article]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       }
     ],
@@ -246,7 +246,7 @@
         "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].nodes[id=grandchild].inputs[name=entities]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -268,7 +268,7 @@
         "path": "workflows[path=<BASELINE_CASE_DIR>/level2/level2.pflow.md].cache.items[name=article]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

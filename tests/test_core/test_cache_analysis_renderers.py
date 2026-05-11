@@ -1053,7 +1053,7 @@ def test_text_truncated_trace_labels_executed_scope() -> None:
     assert "Cost on rerun (executed, within TTL):" in text
     assert "Showing 1 executed LLM node; 1 unexecuted row hidden (--all-rows shows everything)." in text
     assert "all-clean rows hidden" not in text
-    assert "Cost-projection findings suppressed because the trace is truncated" in text
+    assert "Trace-dependent optimization recommendations suppressed because the trace is truncated" in text
 
 
 def test_json_truncated_trace_exposes_evidence_scope_and_observed_models(tmp_path: Path) -> None:

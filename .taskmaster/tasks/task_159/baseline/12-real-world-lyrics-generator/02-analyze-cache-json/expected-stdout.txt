@@ -415,7 +415,7 @@
       "message": "generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.",
       "suggestions": [
         "Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.",
-        "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern."
+        "See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern."
       ]
     }
   ],
@@ -1076,7 +1076,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_direction]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1099,7 +1099,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=architecture]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1122,7 +1122,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_brief]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1145,7 +1145,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1168,7 +1168,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=creative_direction]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1191,7 +1191,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1214,7 +1214,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1237,7 +1237,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1260,7 +1260,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1283,7 +1283,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1306,7 +1306,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1329,7 +1329,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1352,7 +1352,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1375,7 +1375,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1398,7 +1398,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1421,7 +1421,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       },
       {
@@ -1444,7 +1444,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       }
     ],
@@ -1529,7 +1529,7 @@
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       }
     ]
@@ -1543,7 +1543,7 @@
       "title": "Cache Advisory",
       "suggestions": [
         "Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.",
-        "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern."
+        "See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern."
       ],
       "node_id": "generate-chorus-options",
       "context": {
@@ -1554,7 +1554,7 @@
         "path": "nodes[id=generate-chorus-options].prompt"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1593,7 +1593,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_direction]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1616,7 +1616,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=architecture]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1639,7 +1639,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=choose-chorus].inputs[name=creative_brief]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1662,7 +1662,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1685,7 +1685,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=creative_direction]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1708,7 +1708,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1731,7 +1731,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1754,7 +1754,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1777,7 +1777,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=song_architecture]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1800,7 +1800,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=emotional-reviews].inputs[name=lyrics]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1823,7 +1823,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1846,7 +1846,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1869,7 +1869,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1892,7 +1892,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1915,7 +1915,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1938,7 +1938,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=song_architecture]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -1961,7 +1961,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md].nodes[id=craft-reviews].inputs[name=creative_direction]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -2043,7 +2043,7 @@
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

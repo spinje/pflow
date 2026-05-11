@@ -575,7 +575,7 @@ class TestLLMNode:
         """Reviewer Finding 3 + Finding 2: the adapter emits ``uncached_input_tokens``,
         ``input_token_accounting``, and ``has_cache_telemetry`` (per
         ``llm_usage.NormalizedLiteLLMUsage``). Documented in
-        ``guide/features/caching.md``, ``docs/how-it-works/template-variables.mdx``,
+        ``guide/features/prompt-caching.md``, ``docs/how-it-works/template-variables.mdx``,
         ``docs/reference/nodes/llm.mdx``, and ``cache_analysis/CLAUDE.md`` —
         these fields MUST flow through ``LLMNode.post()`` into
         ``shared["llm_usage"]`` so trace events surface them.

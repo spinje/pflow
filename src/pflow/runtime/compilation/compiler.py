@@ -418,7 +418,7 @@ def _build_cache_block(ir_dict: dict[str, Any]) -> Optional[CacheBlockIR]:
         raise CompilationError(
             f"Top-level `cache` must be a mapping; got {type(cache_ir).__name__}: {cache_ir!r}",
             phase="validation",
-            suggestion="Declare ## Cache with `- ttl:` and a ```cache code block (see pflow guide caching).",
+            suggestion="Declare ## Cache with `- ttl:` and a ```cache code block (see pflow guide prompt-caching).",
         )
     items = tuple(_build_cache_chunk(item) for item in cache_ir.get("items", []))
     return CacheBlockIR(

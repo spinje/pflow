@@ -231,7 +231,7 @@
         "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -253,7 +253,7 @@
         "path": "nodes[id=translate].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -275,7 +275,7 @@
         "path": "nodes[id=summarize].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

@@ -117,7 +117,7 @@
       "message": "summarize: prompt is `${shape.result}`, assembled by `shape` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.",
       "suggestions": [
         "Inline the prompt template on `summarize`: replace `${shape.result}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.",
-        "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern."
+        "See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern."
       ]
     }
   ],
@@ -163,7 +163,7 @@
       "title": "Cache Advisory",
       "suggestions": [
         "Inline the prompt template on `summarize`: replace `${shape.result}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.",
-        "See `pflow guide caching` (Python-assembled prompts section) for the refactor pattern."
+        "See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern."
       ],
       "node_id": "summarize",
       "context": {
@@ -174,7 +174,7 @@
         "path": "nodes[id=summarize].prompt"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {

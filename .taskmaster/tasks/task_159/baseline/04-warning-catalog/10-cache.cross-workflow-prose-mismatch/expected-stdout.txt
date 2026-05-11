@@ -208,7 +208,7 @@
           "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md].cache.items[name=shared]"
         },
         "see_also": [
-          "caching"
+          "prompt-caching"
         ]
       }
     ],
@@ -236,7 +236,7 @@
         "path": "nodes[id=parent_use].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -260,7 +260,7 @@
         "path": "nodes[id=summarize].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -282,7 +282,7 @@
         "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md].cache.items[name=shared]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

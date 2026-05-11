@@ -8,7 +8,7 @@ Node 'echo' is type: shell but declares prompt_cache — this field is only vali
 
   → Remove the invalid declaration (prompt_cache) from echo, OR move the LLM logic into a type: llm node.
 
-See also: pflow guide caching
+See also: pflow guide prompt-caching
 
 ⚠️ Warnings:
   ⚠ [cache.unused-chunk] Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.

@@ -778,7 +778,7 @@ def analyze(
         warnings = _filter_trace_dependent_warnings(warnings)
         suggested_blocks = []
         notes.append(
-            "Cost-projection findings suppressed because the trace is truncated "
+            "Trace-dependent optimization recommendations suppressed because the trace is truncated "
             "(workflow did not finish); per-call rows show executed trace evidence only."
         )
 
@@ -4802,7 +4802,7 @@ def _format_grouped_body_block(
             lines.append(f"    anthropic/{model}{suffix}")
         lines.append(
             "  These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. "
-            "Switching providers changes base inference cost — see `pflow guide caching`."
+            "Switching providers changes base inference cost — see `pflow guide prompt-caching`."
         )
         lines.append("→ Then: apply steps (1)(2)(3) above.")
         lines.append(

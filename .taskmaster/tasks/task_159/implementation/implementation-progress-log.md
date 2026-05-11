@@ -11775,3 +11775,23 @@ because they all touched one or two files in lockstep.
   Diff is exclusively the four UX improvements above.
 - Default test suite: 6,592 passed, 1 skipped, 3 deselected.
 - Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.
+
+## 2026-05-11 — Task 159 — Prompt-caching guide topic polish
+
+Current staged guide polish renames the public guide topic from `caching` to
+`prompt-caching`, while keeping `pflow guide caching` as an alias. All cache
+diagnostic `see_also` pointers and prose links now point agents at
+`pflow guide prompt-caching`, and workflow auto-detection emits the canonical
+topic name.
+
+The guide content was rewritten around first-contact agent actions: run
+`pflow analyze-cache`, read `## Recommended actions`, avoid repeating cached
+values in prompt bodies, and use the analyzer's paste-ready edits. The guide
+now includes a compact second findings table for cache IDs that link to it but
+were missing from the common-findings list (`cache.order-mismatch`,
+`cache.invalid-on-non-llm`, `cache.unused-chunk`, `cache.padding-advisory`,
+`cache.prewarm-no-prefix`, `cache.consolidate-to-root-recommended`,
+`cache.heterogeneous-models-fragment-cache`,
+`cache.first-call-write-penalty`, `cache.cross-workflow-prose-mismatch`, and
+`cache.discrepancy`). `cache.cross-workflow-rename-detected` is documented as
+informational so the Shape δ text-suppression decision does not regress.

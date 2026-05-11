@@ -834,7 +834,7 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
         "Enable/disable pflow's local memoization layer (default: enabled). "
         "Does NOT disable LLM provider prompt caching declared via "
         "`prompt_cache:` / `## Cache` (those fire regardless). "
-        "See `pflow guide caching` for the two-layer model."
+        "See `pflow guide prompt-caching` for the two-layer model."
     ),
 )
 @click.option(

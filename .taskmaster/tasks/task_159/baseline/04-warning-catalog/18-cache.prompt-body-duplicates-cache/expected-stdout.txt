@@ -155,7 +155,7 @@
         "path": "nodes[id=summarize].params.prompt"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

@@ -152,7 +152,7 @@
         "path": "nodes[id=scoring].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

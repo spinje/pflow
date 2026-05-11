@@ -61,6 +61,8 @@ def test_list_topics_includes_features() -> None:
     assert "batch" in topics
     assert "branching" in topics
     assert "sub-workflows" in topics
+    assert "prompt-caching" in topics
+    assert "caching" not in topics
 
 
 def test_list_topics_core_is_first() -> None:
@@ -93,11 +95,55 @@ def test_core_no_cache_wording_distinguishes_provider_prompt_cache() -> None:
     assert "all caches" not in result
 
 
-def test_caching_guide_documents_allowed_ttl_values() -> None:
-    result = compose_guide(["caching"])
+def test_prompt_caching_guide_documents_allowed_ttl_values() -> None:
+    result = compose_guide(["prompt-caching"])
     assert "Allowed values are exactly `5m` and `1h`" in result
     assert "Omit `ttl`" in result
     assert "default `5m` behavior" in result
+
+
+def test_caching_topic_alias_resolves_to_prompt_caching() -> None:
+    assert compose_guide(["caching"]) == compose_guide(["prompt-caching"])
+
+
+def test_prompt_caching_guide_does_not_repeat_cached_values_in_quick_start() -> None:
+    result = compose_guide(["prompt-caching"])
+    assert 'prompt: "Pick a creative direction for the cached concept."' in result
+    assert 'prompt: "Pick a creative direction for: ${concept}"' not in result
+
+
+def test_prompt_caching_guide_code_examples_use_required_annotations() -> None:
+    result = compose_guide(["prompt-caching"])
+    assert "rubric: str" in result
+    assert "dataset: list" in result
+    assert "result: list =" in result
+
+
+def test_prompt_caching_guide_avoids_internal_analyzer_vocabulary() -> None:
+    result = compose_guide(["prompt-caching"])
+    assert "Tier 2" not in result
+    assert "static walkers" not in result
+    assert "canonical source:" not in result
+    assert "Renames" not in result
+
+
+def test_prompt_caching_guide_covers_cache_ids_that_link_to_it() -> None:
+    """Cache diagnostics that point here should be searchable by exact ID."""
+    result = compose_guide(["prompt-caching"])
+    for warning_id in [
+        "cache.order-mismatch",
+        "cache.invalid-on-non-llm",
+        "cache.unused-chunk",
+        "cache.padding-advisory",
+        "cache.prewarm-no-prefix",
+        "cache.consolidate-to-root-recommended",
+        "cache.heterogeneous-models-fragment-cache",
+        "cache.first-call-write-penalty",
+        "cache.cross-workflow-prose-mismatch",
+        "cache.discrepancy",
+        "cache.cross-workflow-rename-detected",
+    ]:
+        assert warning_id in result
 
 
 def test_compose_multiple_topics_preserves_order() -> None:
@@ -436,31 +482,32 @@ def test_detect_returns_sorted() -> None:
 
 
 def test_detect_caching_via_top_level_cache_block() -> None:
-    """Top-level ``## Cache`` block parses into ``ir["cache"]`` → caching topic."""
+    """Top-level ``## Cache`` block parses into ``ir["cache"]`` → prompt-caching topic."""
     ir = {
         "nodes": [{"id": "n", "type": "llm", "params": {}}],
         "edges": [],
         "cache": {"ttl": "5m", "items": [{"name": "doc", "var": "doc"}]},
     }
-    assert "caching" in detect_topics_from_ir(ir)
+    assert "prompt-caching" in detect_topics_from_ir(ir)
+    assert "caching" not in detect_topics_from_ir(ir)
 
 
 def test_detect_caching_via_prompt_cache() -> None:
-    """A node with ``prompt_cache: [...]`` → caching topic."""
+    """A node with ``prompt_cache: [...]`` → prompt-caching topic."""
     ir = {
         "nodes": [{"id": "n", "type": "llm", "params": {}, "prompt_cache": ["doc"]}],
         "edges": [],
     }
-    assert "caching" in detect_topics_from_ir(ir)
+    assert "prompt-caching" in detect_topics_from_ir(ir)
 
 
 def test_detect_caching_via_prewarm_true() -> None:
-    """A node with ``prewarm: true`` → caching topic."""
+    """A node with ``prewarm: true`` → prompt-caching topic."""
     ir = {
         "nodes": [{"id": "n", "type": "llm", "params": {}, "prewarm": True}],
         "edges": [],
     }
-    assert "caching" in detect_topics_from_ir(ir)
+    assert "prompt-caching" in detect_topics_from_ir(ir)
 
 
 def test_detect_caching_via_prewarm_false_still_fires() -> None:
@@ -471,7 +518,7 @@ def test_detect_caching_via_prewarm_false_still_fires() -> None:
         "nodes": [{"id": "n", "type": "llm", "params": {}, "prewarm": False}],
         "edges": [],
     }
-    assert "caching" in detect_topics_from_ir(ir)
+    assert "prompt-caching" in detect_topics_from_ir(ir)
 
 
 def test_detect_no_caching_for_workflow_without_signals() -> None:
@@ -480,7 +527,7 @@ def test_detect_no_caching_for_workflow_without_signals() -> None:
         "nodes": [{"id": "n", "type": "llm", "params": {"model": "x"}}],
         "edges": [],
     }
-    assert "caching" not in detect_topics_from_ir(ir)
+    assert "prompt-caching" not in detect_topics_from_ir(ir)
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +541,7 @@ def _write_pflow(path: Path, body: str) -> None:
 
 def test_compose_walks_into_sub_workflow_files_for_topics(tmp_path: Path) -> None:
     """Parent workflow with a ``workflow:`` node pointing at a child that
-    declares caching → parent's ``pflow guide`` surfaces ``caching``."""
+    declares prompt caching → parent's ``pflow guide`` surfaces ``prompt-caching``."""
     child = tmp_path / "child.pflow.md"
     _write_pflow(
         child,

@@ -194,7 +194,7 @@
         "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     },
     {
@@ -257,7 +257,7 @@
         "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md]"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

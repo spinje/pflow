@@ -191,7 +191,7 @@
         "path": "nodes[id=priced].prompt_cache"
       },
       "see_also": [
-        "caching"
+        "prompt-caching"
       ]
     }
   ],

@@ -8,4 +8,4 @@ Node 'summarize' prompt_cache order doesn't match ## Cache declaration
   fix:       reorder the `prompt_cache:` field to match ## Cache declaration order
   At: node 'summarize', nodes[id=summarize].prompt_cache
 
-See also: pflow guide caching
+See also: pflow guide prompt-caching
