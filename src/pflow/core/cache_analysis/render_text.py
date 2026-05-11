@@ -1029,20 +1029,20 @@ def _display_path_from_cwd(path: str) -> str:
 
 
 def _display_edit_target(path: str, *, root_workflow_path: str) -> str:
-    """Return a compact path for prose that points at a file to edit."""
+    """Return a path for prose that points at a file to edit.
+
+    Anchored at the invocation cwd: the agent's cwd is the only frame they
+    can navigate paths from reliably. Anchoring at the analyzed workflow's
+    directory produced shorter strings but they were invalid from the
+    agent's actual cwd (e.g. ``chorus-chooser/...`` when the agent ran
+    analyze-cache from project root). The basename short-circuit is kept
+    for self-references — ``Edit chorus-chooser.pflow.md`` reads cleaner
+    than the full path when prose context already established the workflow.
+    """
     if not path or path.startswith("ir-hash:") or "/" not in path:
         return path
     if path == root_workflow_path:
         return _workflow_filename(path)
-
-    root_dir = os.path.dirname(root_workflow_path)
-    if root_dir:
-        try:
-            rel = os.path.relpath(path, root_dir)
-        except ValueError:
-            rel = ""
-        if rel and rel != "." and not rel.startswith(".."):
-            return rel
     return _display_path_from_cwd(path)
 
 
@@ -1719,14 +1719,12 @@ def _short_observed_model_name(model: str) -> str:
 def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     """Emit a paste-ready block of per-child ``pflow analyze-cache`` commands.
 
-    B-3: 15 absolute paths × ~200 chars each was the loudest noise block in
-    real-world output. Compress by emitting one ``cd <parent-dir>`` line then
-    relative child paths — children of a workflow naturally live under or
-    near the parent's directory, so the relpath form is short and the block
-    stays paste-runnable line-by-line.
-
-    Falls back to absolute paths when the workflow_path has no directory
-    component (bare filename or ``ir-hash:`` synthetic key for inline IR).
+    Each line is a self-contained ``pflow analyze-cache <path>`` runnable
+    from the invocation cwd. We never emit ``cd``: agents fire parallel
+    Bash calls and cannot reliably share cwd state across invocations,
+    and even sequentially the agent's cwd tracker is the only frame they
+    can navigate paths from. Paths render cwd-relative when the workflow
+    lives under cwd, absolute otherwise.
     """
     rollup = analysis.summary.sub_workflow_rollup
     if rollup is None:
@@ -1739,14 +1737,8 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
         "",
         "  Sub-workflow opportunities don't surface here — run analyze-cache per child:",
     ]
-    parent_dir = os.path.dirname(analysis.workflow_path)
-    if parent_dir:
-        lines.append(f"    cd {_display_path_from_cwd(parent_dir)}")
-        for entry in llm_bearing:
-            lines.append(f"    pflow analyze-cache {os.path.relpath(entry.workflow_path, parent_dir)}")
-    else:
-        for entry in llm_bearing:
-            lines.append(f"    pflow analyze-cache {entry.workflow_path}")
+    for entry in llm_bearing:
+        lines.append(f"    pflow analyze-cache {_display_path_from_cwd(entry.workflow_path)}")
     return "\n".join(lines)
 
 

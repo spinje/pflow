@@ -33,7 +33,7 @@
      chorus-chooser.pflow.md
      Three values flow in but no consumer node has a resolved model — cannot compute the cache threshold.
      → Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.
-     → Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
 
   2. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
@@ -69,21 +69,20 @@
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    cd .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator
-    pflow analyze-cache analyze-source/analyze-source.pflow.md
-    pflow analyze-cache concept-chooser/concept-chooser.pflow.md
-    pflow analyze-cache enforce-diversity/enforce-diversity.pflow.md
-    pflow analyze-cache song-creator/chorus-chooser/chorus-chooser.pflow.md
-    pflow analyze-cache song-creator/reviews/review-accuracy.pflow.md
-    pflow analyze-cache song-creator/reviews/review-ai-tells.pflow.md
-    pflow analyze-cache song-creator/reviews/review-cliche.pflow.md
-    pflow analyze-cache song-creator/reviews/review-emotional-architecture.pflow.md
-    pflow analyze-cache song-creator/reviews/review-genre.pflow.md
-    pflow analyze-cache song-creator/reviews/review-imagery.pflow.md
-    pflow analyze-cache song-creator/reviews/review-narrative.pflow.md
-    pflow analyze-cache song-creator/reviews/review-rhyme.pflow.md
-    pflow analyze-cache song-creator/reviews/review-stranger-summary.pflow.md
-    pflow analyze-cache song-creator/song-creator.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
 
 ## Notes
 

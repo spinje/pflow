@@ -2716,6 +2716,42 @@ def test_text_recommended_action_suggestion_uses_relative_child_edit_path(
     assert str(child_path) not in text
 
 
+def test_text_edit_target_anchors_at_cwd_not_at_workflow_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edit-target paths render relative to the invocation cwd, not relative
+    to the analyzed workflow's directory. The agent's cwd is the only frame
+    they can navigate paths from — anchoring at the workflow's directory
+    produced strings that were invalid from the agent's actual cwd.
+
+    Fixture diverges the two anchors: cwd is ``tmp_path`` and the analyzed
+    workflow lives at ``tmp_path/deep/sub/lyrics-generator.pflow.md``. The
+    workflow-dir anchor would produce ``song-creator/chorus-chooser/...``;
+    the cwd anchor produces ``deep/sub/song-creator/chorus-chooser/...``.
+
+    Mutation contract: revert ``_display_edit_target`` to the workflow-dir
+    primary anchor; the assertion on the cwd-relative path fails because
+    the shorter workflow-dir-relative form re-appears instead.
+    """
+    monkeypatch.chdir(tmp_path)
+    root_path = tmp_path / "deep" / "sub" / "lyrics-generator.pflow.md"
+    child_path = tmp_path / "deep" / "sub" / "song-creator" / "chorus-chooser" / "chorus-chooser.pflow.md"
+    child_path.parent.mkdir(parents=True)
+    root_path.parent.mkdir(parents=True, exist_ok=True)
+
+    text = render_text(
+        _make_analysis(
+            rows=[_row("draft", 30)],
+            workflow_path=str(root_path),
+            warnings=[_make_sub_workflow_cache_diag("choose-chorus", "concept", str(child_path))],
+        )
+    )
+
+    assert "→ Edit: deep/sub/song-creator/chorus-chooser/chorus-chooser.pflow.md" in text
+    assert "→ Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md" not in text
+
+
 def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> None:
     """CP5 #3 — section renamed from 'Cross-workflow alignment (Tier 2)' to
     'Sub-workflow boundaries' so agents don't have to know what 'Tier 2' is.
@@ -4002,12 +4038,11 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
     assert "### child.pflow.md (called by call-child)" in text
     assert "(1 in parent.pflow.md, 1 in 1 sub-workflow)" in text
     assert "## Per-child analyze-cache commands" in text
-    # B-3: paste-ready block uses ``cd <parent-dir>`` + relative child paths.
-    assert "    cd /abs" in text
-    assert "pflow analyze-cache child.pflow.md" in text
-    # The full-absolute legacy form must NOT appear — that was the noisy
-    # shape this fix replaces.
-    assert "pflow analyze-cache /abs/child.pflow.md" not in text
+    # Self-contained commands only — no `cd`. Paths render cwd-relative
+    # when the workflow lives under cwd, absolute otherwise; here the
+    # workflow is outside the test's cwd so the absolute form renders.
+    assert "    cd " not in text
+    assert "pflow analyze-cache /abs/child.pflow.md" in text
 
 
 def test_render_text_drill_in_omitted_for_single_workflow() -> None:
@@ -4016,26 +4051,36 @@ def test_render_text_drill_in_omitted_for_single_workflow() -> None:
     assert "(called by" not in text
 
 
-def test_render_text_drill_in_uses_relpath_for_subdirectory_children() -> None:
-    """B-3: when children live in subdirectories of the parent, relative
-    paths preserve the directory structure under one ``cd`` line.
+def test_render_text_drill_in_emits_cwd_relative_path_when_workflow_under_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-child drill-in renders paths cwd-relative when the workflow
+    lives under the invocation cwd. Self-contained commands runnable from
+    the agent's cwd — no ``cd``.
 
-    Mutation contract: emit absolute paths in the loop; this test fails
-    because the relpath form (``sub/child.pflow.md``) is missing and the
-    absolute form (``/abs/parent/sub/child.pflow.md``) appears.
+    Mutation contract: revert ``_render_sub_workflow_drill_in`` to the
+    ``cd <parent>`` + relpath shape; the ``cd`` substring re-appears and
+    the self-contained ``pflow analyze-cache parent/sub/child.pflow.md``
+    line goes missing.
     """
+    monkeypatch.chdir(tmp_path)
+    parent_path = tmp_path / "parent" / "parent.pflow.md"
+    child_path = tmp_path / "parent" / "sub" / "child.pflow.md"
+    child_path.parent.mkdir(parents=True)
+
     rows = [
-        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent/parent.pflow.md"}),
-        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/parent/sub/child.pflow.md"}),
+        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": str(parent_path)}),
+        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": str(child_path)}),
     ]
-    base = _make_analysis(rows=rows, workflow_path="/abs/parent/parent.pflow.md")
+    base = _make_analysis(rows=rows, workflow_path=str(parent_path))
     rollup = SubWorkflowRollup(
-        workflows_included=("/abs/parent/sub/child.pflow.md",),
+        workflows_included=(str(child_path),),
         max_depth_walked=1,
         truncated=False,
         per_workflow=(
             SubWorkflowRollupEntry(
-                workflow_path="/abs/parent/sub/child.pflow.md",
+                workflow_path=str(child_path),
                 called_by_node_id="call-child",
                 llm_node_count=1,
                 actually_paid_usd=0.07,
@@ -4050,9 +4095,10 @@ def test_render_text_drill_in_uses_relpath_for_subdirectory_children() -> None:
         "summary": AnalysisSummary(**{**base.summary.__dict__, "sub_workflow_rollup": rollup}),
     })
     text = render_text(analysis, all_rows=True)
-    assert "    cd /abs/parent" in text
-    assert "pflow analyze-cache sub/child.pflow.md" in text
-    assert "/abs/parent/sub/child.pflow.md" not in text
+
+    assert "    cd " not in text
+    assert "pflow analyze-cache parent/sub/child.pflow.md" in text
+    assert str(child_path) not in text
 
 
 def test_render_text_drill_in_filters_zero_llm_node_children() -> None:
@@ -4097,7 +4143,7 @@ def test_render_text_drill_in_filters_zero_llm_node_children() -> None:
     text = render_text(analysis, all_rows=True)
 
     # Drill-in lists only the LLM-bearing child.
-    assert "pflow analyze-cache llm-child.pflow.md" in text
+    assert "pflow analyze-cache /abs/llm-child.pflow.md" in text
     assert "mcp-only-child.pflow.md" not in text
     # Breakdown count says "1 sub-workflow", not "2 sub-workflows".
     assert "in 1 sub-workflow)" in text
@@ -5139,3 +5185,38 @@ def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells(text, "greenfield")
     assert cells[4] == "?"
+
+
+def test_renderer_never_emits_cd_commands() -> None:
+    """pflow never tells agents to ``cd``: every suggested command must run
+    from the invocation cwd.
+
+    Agents fire parallel Bash calls and cannot reliably share cwd state
+    across invocations; even sequentially the agent's cwd tracker is the
+    only frame they can navigate paths from. To point at a file or a
+    workflow, use ``_display_path_from_cwd`` to get a cwd-relative (or
+    absolute, when outside cwd) path. To point at an edit target, use
+    ``_display_edit_target``. Both already anchor at cwd.
+
+    Mutation contract: re-add a ``lines.append(f"    cd ...")`` shape to
+    any renderer module under ``cache_analysis/``; this test fails because
+    the literal string ``"    cd "`` reappears in production rendering
+    source.
+    """
+    cache_analysis_dir = Path(__file__).resolve().parents[2] / "src" / "pflow" / "core" / "cache_analysis"
+    forbidden = re.compile(r'["\']\s{0,8}cd\s+[^"\']*["\']')
+    offenders: list[str] = []
+    for source_file in sorted(cache_analysis_dir.glob("*.py")):
+        text = source_file.read_text()
+        # Strip triple-quoted docstrings/comments so historical references
+        # explaining WHY we don't emit cd don't trip the check.
+        stripped = re.sub(r'""".*?"""', "", text, flags=re.DOTALL)
+        stripped = re.sub(r"'''.*?'''", "", stripped, flags=re.DOTALL)
+        for line_no, line in enumerate(stripped.splitlines(), 1):
+            code, _, _ = line.partition("#")
+            if forbidden.search(code):
+                offenders.append(f"{source_file.name}:{line_no}: {line.strip()}")
+    assert not offenders, (
+        "Renderer emits ``cd`` commands; agents cannot track cwd state across calls. "
+        "Use ``_display_path_from_cwd`` for cwd-relative paths instead:\n  " + "\n  ".join(offenders)
+    )

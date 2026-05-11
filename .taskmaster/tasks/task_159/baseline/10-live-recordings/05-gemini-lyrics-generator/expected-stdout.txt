@@ -46,7 +46,7 @@
          • `concept` ~5,331 tokens — uses `${concept.core_idea}`, `${concept.title}`
          • `creative_brief` ~4,829 tokens — uses `${creative_brief}`
              flows in from parent as `${concept_brief}`
-     → Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
 
   2. Batch prewarm not declared — add `- prewarm: true` to score-choruses  saves ~$0.04/run
      score-choruses in chorus-chooser.pflow.md
@@ -63,7 +63,7 @@
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~474 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${write-lyrics.response}`
-     → Edit: song-creator/reviews/review-emotional-architecture.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
 
   4. Sub-workflow cache undeclared in review-accuracy.pflow.md — declare 3 inputs  saves ~$0.0076/run
      review-accuracy.pflow.md
@@ -74,7 +74,7 @@
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~285 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${extract-emotional-lyrics.result.lyrics}`
-     → Edit: song-creator/reviews/review-accuracy.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
 
   5. Sub-workflow cache undeclared in review-genre.pflow.md — declare 3 inputs  saves ~$0.0063/run
      review-genre.pflow.md
@@ -86,7 +86,7 @@
            flows in from parent as `${extract-emotional-lyrics.result.lyrics}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-genre.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
 
   6. Sub-workflow cache undeclared in review-rhyme.pflow.md — declare 3 inputs  saves ~$0.0063/run
      review-rhyme.pflow.md
@@ -98,7 +98,7 @@
            flows in from parent as `${extract-emotional-lyrics.result.lyrics}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-rhyme.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
 
   7. Sub-workflow cache undeclared in review-imagery.pflow.md — declare 2 inputs  saves ~$0.0044/run
      review-imagery.pflow.md
@@ -108,7 +108,7 @@
            flows in from parent as `${write-lyrics.response}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-imagery.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
 
   8. Sub-workflow cache undeclared in review-narrative.pflow.md — declare 2 inputs  saves ~$0.0044/run
      review-narrative.pflow.md
@@ -118,7 +118,7 @@
            flows in from parent as `${write-lyrics.response}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-narrative.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
 
   9. Sub-workflow cache undeclared in review-ai-tells.pflow.md — declare 2 inputs  savings available with model switch
      review-ai-tells.pflow.md
@@ -137,7 +137,7 @@
        These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide prompt-caching`.
      → Then: apply steps (1)(2)(3) above.
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
-     → Edit: song-creator/reviews/review-ai-tells.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
 
   10. Sub-workflow cache undeclared in review-cliche.pflow.md — declare 2 inputs  savings available with model switch
      review-cliche.pflow.md
@@ -156,14 +156,14 @@
        These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide prompt-caching`.
      → Then: apply steps (1)(2)(3) above.
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
-     → Edit: song-creator/reviews/review-cliche.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
 
   11. Sub-workflow cache undeclared in review-stranger-summary.pflow.md — declare 1 input  not yet cacheable
      review-stranger-summary.pflow.md
      One value `lyrics` ~474 tokens per call, below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5).
      → Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.
      → Verify: confirm ~474 tokens is the realistic per-call size.
-     → Edit: song-creator/reviews/review-stranger-summary.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
 
   12. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
@@ -236,21 +236,20 @@
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    cd .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator
-    pflow analyze-cache analyze-source/analyze-source.pflow.md
-    pflow analyze-cache concept-chooser/concept-chooser.pflow.md
-    pflow analyze-cache enforce-diversity/enforce-diversity.pflow.md
-    pflow analyze-cache song-creator/chorus-chooser/chorus-chooser.pflow.md
-    pflow analyze-cache song-creator/reviews/review-accuracy.pflow.md
-    pflow analyze-cache song-creator/reviews/review-ai-tells.pflow.md
-    pflow analyze-cache song-creator/reviews/review-cliche.pflow.md
-    pflow analyze-cache song-creator/reviews/review-emotional-architecture.pflow.md
-    pflow analyze-cache song-creator/reviews/review-genre.pflow.md
-    pflow analyze-cache song-creator/reviews/review-imagery.pflow.md
-    pflow analyze-cache song-creator/reviews/review-narrative.pflow.md
-    pflow analyze-cache song-creator/reviews/review-rhyme.pflow.md
-    pflow analyze-cache song-creator/reviews/review-stranger-summary.pflow.md
-    pflow analyze-cache song-creator/song-creator.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
 
 ## Notes
 

@@ -31,13 +31,12 @@
          • `article` ~3,207 tokens — uses `${article.title}`
        Node `translate` (~3,207 tokens per call — above 1,024-token minimum):
          • `article` ~3,207 tokens — uses `${article.body}`
-     → Edit: sub/child.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath/sub/child.pflow.md
 
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    cd .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath
-    pflow analyze-cache sub/child.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath/sub/child.pflow.md
 
 ## Notes
 
