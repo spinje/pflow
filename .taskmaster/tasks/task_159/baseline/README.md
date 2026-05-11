@@ -30,7 +30,7 @@ for the initial construction findings.
 | Surface 01 — parser errors (10 cases) | ✅ done; 1 finding (F-01) |
 | Surface 02 — validator errors (8 cases) | ✅ done |
 | Surface 03 — analyze-cache modes (8 cases, compressed from 17) | ✅ done |
-| Surface 04 — warning catalog (22 cases: 21 IDs + subpath variant) | ✅ done; 16/22 trigger target ID; 6 non-trigger cases intentionally lock current silence |
+| Surface 04 — warning catalog (22 cases: 21 IDs + subpath variant) | ✅ done; 19/22 trigger target ID; 3 non-trigger cases intentionally lock current silence |
 | Surface 05 — advisory cases (5 cases) | ✅ done |
 | **Surface 06 — dry-run nudge (3 cases)** | ✅ done; positive nudge, optimal silence, and structural cache error |
 | **Surface 10 — live recordings (2 cases)** | ✅ partial; Gemini translation + real lyrics-generator trace committed |
@@ -118,7 +118,7 @@ cases. The remaining original Surface 11 variants (`with-fixture-trace` and
 example dry-run footer) are optional because trace mode is covered by Surface
 03/10 and dry-run behavior is covered by Surface 06.
 
-### Surface 04 — Warning catalog (22/22 cases captured; 16 trigger target ID)
+### Surface 04 — Warning catalog (22/22 cases captured; 19 trigger target ID)
 
 | # | ID | Triggered |
 |---|---|---|
@@ -130,13 +130,13 @@ example dry-run footer) are optional because trace mode is covered by Surface
 | 05b | cache.sub-workflow-cache-undeclared-subpath | ✓ |
 | 06 | cache.batch-prewarm-recommended | ⏭ (intentional silence fixture) |
 | 07 | cache.dynamic-before-static | ⏭ (intentional silence fixture) |
-| 08 | cache.padding-advisory | ⏭ (intentional silence fixture) |
+| 08 | cache.padding-advisory | ✓ |
 | 09 | cache.below-min-tokens | ✓ |
 | 10 | cache.cross-workflow-prose-mismatch | ✓ |
 | 11 | cache.cross-workflow-rename-detected | ✓ |
-| 12 | cache.discrepancy | ⏭ (intentional silence fixture) |
+| 12 | cache.discrepancy | ✓ |
 | 13 | cache.prewarm-no-prefix | ✓ |
-| 14 | cache.consolidate-to-root-recommended | ⏭ (intentional silence fixture) |
+| 14 | cache.consolidate-to-root-recommended | ✓ |
 | 15 | cache.heterogeneous-models-fragment-cache | ✓ |
 | 16 | cache.first-call-write-penalty | ✓ |
 | 17 | cache.opaque-prompt | ✓ |
@@ -145,7 +145,7 @@ example dry-run footer) are optional because trace mode is covered by Surface
 | 20 | llm.thinking-temperature-mismatch | ✓ |
 | 21 | cache.prompt-cache-incomplete | ✓ |
 
-The 6 untriggered cases STILL serve as regression gates: they capture the
+The 3 untriggered cases STILL serve as regression gates: they capture the
 analyzer's current output on the fixture; if a code change makes one of these
 IDs start firing on the existing fixture, the case fails, surfacing the
 behavior change for review.

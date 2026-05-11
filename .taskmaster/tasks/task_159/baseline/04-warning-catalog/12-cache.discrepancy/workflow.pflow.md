@@ -1,31 +1,28 @@
-# Discrepancy TODO
+# Cache Discrepancy
 
-## Inputs
-
-### x
-
-TODO.
-
-- type: string
-- required: true
+Minimal workflow for a trace-backed memo-key discrepancy. The command creates
+an empty memo database so the analyzer predicts the node's current memo key,
+then feeds a trace with a different recorded key.
 
 ## Steps
 
-### noop
+### gen
 
-Noop placeholder.
+Generate from a stable literal prompt.
 
-- type: shell
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- max_tokens: 80
 
-```shell command
-echo ok
+```prompt
+Generate a deterministic answer from the stable prompt.
 ```
 
 ## Outputs
 
-### result
+### answer
 
-Result.
+Generated answer.
 
-- source: ${noop.response}
+- source: ${gen.response}
 - type: string

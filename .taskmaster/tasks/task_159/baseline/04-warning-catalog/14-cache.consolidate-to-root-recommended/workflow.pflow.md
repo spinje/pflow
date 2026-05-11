@@ -24,7 +24,7 @@ ${concept.title}
 
 ## Steps
 
-### writer
+### writer-a
 
 Use both sub-paths.
 
@@ -36,11 +36,24 @@ Use both sub-paths.
 Write something.
 ```
 
+### writer-b
+
+Use the same sub-paths again so the fixture focuses on consolidation, not a
+single-call write penalty.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt_cache: [concept.core_idea, concept.title]
+
+```prompt
+Write a second version.
+```
+
 ## Outputs
 
 ### output
 
 Result.
 
-- source: ${writer.response}
+- source: ${writer-a.response}
 - type: string

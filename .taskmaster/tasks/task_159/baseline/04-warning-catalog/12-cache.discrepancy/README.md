@@ -1,12 +1,17 @@
-# 12-cache.discrepancy — TODO
+# 12 — cache.discrepancy
 
-**Status**: not yet implemented in this baseline.
+**Surface**: 04-warning-catalog
 
-**Trigger**: requires a recorded trace where the analyzer's predicted memo
-config-hash diverges from the actual `event["cache_key"]` written by the
-engine. Either (a) trace from a workflow whose IR was edited between runs,
-or (b) trace from a workflow with a known prediction-vs-actual gap.
+**Triggers**: `pflow analyze-cache --from-trace` receives a 2.x trace whose
+LLM event has cache telemetry and a memo cache key that differs from the key
+the current workflow planner predicts for the same node.
 
-**Implementing agent for surfaces 06+**: extend by recording a workflow run,
-editing the IR, recording a second run, then `analyze-cache --from-trace
-<second-trace>` to surface the discrepancy.
+**Expected behavior**: Text output surfaces a `cache.discrepancy` recommended
+action in plain English: the analyzer predicted a hit, the trace read 0%, and
+the likely root cause is that upstream bytes changed between the prediction
+and the traced run. The Notes section must not expose planner internals.
+
+**Mutation contract**: if Task 160 breaks the moved prediction/diagnosis path,
+or drops key-mismatch discrepancies while refactoring `predict.py` /
+`diagnose.py`, this case fails because the rendered discrepancy action
+disappears or changes shape.
