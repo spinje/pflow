@@ -183,7 +183,9 @@ def get_model_pricing(model: str) -> ModelPricing | None:
     if not model:
         return None
     try:
-        import litellm
+        from pflow.core.litellm_runtime import import_litellm
+
+        litellm = import_litellm()
     except ImportError:
         logger.debug("litellm import failed during pricing lookup", exc_info=True)
         return None

@@ -51,7 +51,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -82,7 +82,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code != 0
@@ -115,7 +115,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         # Should succeed - rg no match is OK
@@ -138,7 +138,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -166,7 +166,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code != 0
@@ -190,7 +190,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -217,7 +217,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code != 0
@@ -246,7 +246,7 @@ class TestSmartHandlingStderrCheck:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code != 0
@@ -291,7 +291,7 @@ class TestSmartHandlingKnownLimitations:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         # KNOWN LIMITATION: This incorrectly succeeds because:
@@ -325,7 +325,7 @@ class TestSmartHandlingJsonOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code == 0
@@ -353,7 +353,7 @@ class TestSmartHandlingJsonOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code == 0

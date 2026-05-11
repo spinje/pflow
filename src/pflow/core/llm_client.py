@@ -322,8 +322,9 @@ def complete(
         {"event": "before_call", "model": model, "prompt": prompt, "system": system},
     )
 
-    # Lazy litellm import — see module docstring at top. First call pays
-    # ~700ms; subsequent calls resolve from sys.modules instantly.
+    # Lazy litellm import via pflow's runtime-policy seam — see module
+    # docstring at top and src/pflow/core/litellm_runtime.py. First call
+    # pays ~700ms; subsequent calls resolve from sys.modules instantly.
     # Setting suppress_debug_info every call is idempotent and cheaper
     # than gating on a flag.
     #
@@ -332,7 +333,9 @@ def complete(
     # exception base directly because litellm's exception classes inherit
     # from it (NOT from ``litellm.exceptions.OpenAIError`` — that is a
     # separate sibling class). See module docstring.
-    import litellm
+    from pflow.core.litellm_runtime import import_litellm
+
+    litellm = import_litellm()
     import openai
 
     litellm.suppress_debug_info = True
@@ -464,8 +467,11 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
        subclasses can be added explicitly to the transient branch above.
     """
     # Lazy imports — only called from complete()'s except handler, so both
-    # modules are already in sys.modules by the time we reach here.
-    import litellm.exceptions as le
+    # modules are already in sys.modules by the time we reach here. Route
+    # through pflow's runtime-policy seam regardless (idempotent).
+    from pflow.core.litellm_runtime import import_litellm_exceptions
+
+    le = import_litellm_exceptions()
     import openai
 
     # Capture the raw provider/LiteLLM exception text once so every typed
@@ -600,7 +606,9 @@ def _extract_missing_package(exc: BaseException) -> str | None:
 
 def _classify_transient_kind(exc: Exception) -> LLMTransientKind:
     """Return a stable discriminator for retryable LiteLLM failures."""
-    import litellm.exceptions as le
+    from pflow.core.litellm_runtime import import_litellm_exceptions
+
+    le = import_litellm_exceptions()
     import openai
 
     if isinstance(exc, le.Timeout):
@@ -1081,9 +1089,11 @@ def _maybe_normalize_anthropic_1h_cost(
         return cost_usd
 
     # Look up the per-token input rate from LiteLLM's pricing table. Lazy
-    # import keeps adapter import-cheap.
+    # import via pflow's runtime-policy seam keeps adapter import-cheap.
     try:
-        import litellm
+        from pflow.core.litellm_runtime import import_litellm
+
+        litellm = import_litellm()
     except ImportError:
         return cost_usd
     model_cost = getattr(litellm, "model_cost", None)

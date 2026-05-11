@@ -270,7 +270,7 @@ Draft from the cached context.
 
 def test_analyze_cache_text_format_default(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path)])
     assert result.exit_code == 0
     assert "Cache Analysis" in result.output
@@ -281,7 +281,7 @@ def test_analyze_cache_json_format(tmp_path: Path) -> None:
     from pflow.core.cache_analysis import JSON_FORMAT_VERSION
 
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0
     payload = _json_payload(result.output)
@@ -308,7 +308,7 @@ def test_analyze_cache_json_error_envelope_on_workflow_not_found(tmp_path: Path)
     """
     import json as _json
 
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     missing_workflow = tmp_path / "does-not-exist.pflow.md"
     result = runner.invoke(cli, ["analyze-cache", str(missing_workflow), "--format=json"], catch_exceptions=False)
     assert result.exit_code != 0
@@ -323,7 +323,7 @@ def test_analyze_cache_json_error_envelope_on_workflow_not_found(tmp_path: Path)
 
 def test_analyze_cache_json_splits_blocking_errors_from_recommended_actions(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _ORDER_MISMATCH_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0, result.output
     payload = _json_payload(result.output)
@@ -337,7 +337,7 @@ def test_analyze_cache_json_splits_blocking_errors_from_recommended_actions(tmp_
 
 def test_analyze_cache_json_scopes_validator_findings_to_workflow_path(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _ORDER_MISMATCH_WITH_OVERLAP_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code == 0, result.output
     payload = _json_payload(result.output)
@@ -363,7 +363,7 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     heuristic. ``"hi"`` tokenizes well below 1024 (sonnet min).
     """
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     # CRITICAL: analyze-cache uses positional `key=value` params via
     # @click.argument("params", nargs=-1) — there is no --inputs flag.
     result = runner.invoke(
@@ -380,7 +380,7 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
 
 def test_analyze_cache_json_includes_heterogeneous_model_fragmentation(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _MIXED_MODEL_CACHE_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         cli,
         ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 5000}"],
@@ -394,7 +394,7 @@ def test_analyze_cache_json_includes_heterogeneous_model_fragmentation(tmp_path:
 
 def test_analyze_cache_json_includes_first_call_write_penalty(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _SINGLE_CALL_CACHE_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         cli,
         ["analyze-cache", str(workflow_path), "--format=json", f"context={'stable ' * 5000}"],
@@ -410,7 +410,7 @@ def test_analyze_cache_rolls_up_sub_workflow_costs_via_subprocess() -> None:
     """End-to-end fixture: current cost comes from parent + child trace leaves."""
     workflow_path = Path("tests/fixtures/cache_analysis/parent.pflow.md")
     trace_path = Path("tests/fixtures/cache_analysis/parent-child-trace.json")
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
 
     result = runner.invoke(
         cli,
@@ -445,7 +445,7 @@ def test_analyze_cache_rolls_up_three_deep_sub_workflow_costs() -> None:
     """
     workflow_path = Path("tests/fixtures/cache_analysis/parent-3deep.pflow.md")
     trace_path = Path("tests/fixtures/cache_analysis/parent-child-grandchild-trace.json")
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
 
     result = runner.invoke(
         cli,
@@ -484,7 +484,7 @@ def test_analyze_cache_does_not_cross_pollinate_subset_groups() -> None:
     """Parent and child both use node id ``draft``; JSON keeps scoped rows separate."""
     workflow_path = Path("tests/fixtures/cache_analysis/parent.pflow.md")
     trace_path = Path("tests/fixtures/cache_analysis/parent-child-trace.json")
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
 
     result = runner.invoke(
         cli,
@@ -513,7 +513,7 @@ def test_analyze_cache_renders_grouped_per_call_table_with_drill_in() -> None:
     """End-to-end text UX: grouped child rows plus drill-in commands."""
     workflow_path = Path("tests/fixtures/cache_analysis/parent.pflow.md")
     trace_path = Path("tests/fixtures/cache_analysis/parent-child-trace.json")
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
 
     result = runner.invoke(
         cli,
@@ -540,14 +540,14 @@ def test_analyze_cache_renders_grouped_per_call_table_with_drill_in() -> None:
 
 
 def test_workflow_path_not_found(tmp_path: Path) -> None:
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(tmp_path / "missing.pflow.md")])
     assert result.exit_code != 0
 
 
 def test_explicit_from_trace_missing_path_exits_nonzero(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         cli,
         [
@@ -565,7 +565,7 @@ def test_explicit_from_trace_invalid_json_exits_nonzero(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
     bad_trace = tmp_path / "bad.json"
     bad_trace.write_text("{not valid json", encoding="utf-8")
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--from-trace", str(bad_trace)])
     assert result.exit_code != 0
 
@@ -578,7 +578,7 @@ def test_conflicting_flags_exits_nonzero(tmp_path: Path) -> None:
         json.dumps({"format_version": "2.1.0", "workflow_path": str(workflow_path)}),
         encoding="utf-8",
     )
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         cli,
         [
@@ -611,7 +611,7 @@ def test_internal_analyzer_crash_exits_nonzero_no_silent_json(tmp_path: Path, mo
 
     monkeypatch.setattr(pflow.core.cache_analysis, "analyze", _boom)
 
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])
     assert result.exit_code != 0
     # Output must NEVER contain ``format_version`` on the crash path —
@@ -629,7 +629,7 @@ def test_internal_analyzer_crash_exits_nonzero_no_silent_json(tmp_path: Path, mo
 
 def test_all_rows_flag_passed_through(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--all-rows"])
     assert result.exit_code == 0
 
@@ -642,13 +642,13 @@ def test_all_rows_flag_passed_through(tmp_path: Path) -> None:
 def test_inputs_are_optional(tmp_path: Path) -> None:
     """Workflow declares input 'topic' but analyze-cache runs without supplying it."""
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path)])
     assert result.exit_code == 0
 
 
 def test_explicit_inputs_accepted(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "topic=climate change"])
     assert result.exit_code == 0

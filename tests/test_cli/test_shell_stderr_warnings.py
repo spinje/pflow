@@ -43,7 +43,7 @@ class TestShellStderrWarnings:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         # Should succeed (exit code 0)
@@ -77,7 +77,7 @@ class TestShellStderrWarnings:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -105,7 +105,7 @@ class TestShellStderrWarnings:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         # Command failed
@@ -140,7 +140,7 @@ class TestShellStderrWarnings:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -175,7 +175,7 @@ class TestWorkflowLevelStderrIndicator:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -207,7 +207,7 @@ class TestWorkflowLevelStderrIndicator:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -243,7 +243,7 @@ class TestWorkflowLevelStderrIndicator:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         assert result.exit_code == 0
@@ -280,7 +280,7 @@ class TestStderrInJsonOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code == 0
@@ -333,7 +333,7 @@ class TestPipelineFailureScenario:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         # Workflow succeeds (exit code 0)

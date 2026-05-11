@@ -55,7 +55,7 @@ class TestWorkflowOutputsNamespaced:
             write_workflow_file(workflow_ir, Path(workflow_file))
 
             # Run the workflow
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(cli, [workflow_file])
 
             # Verify execution succeeded
@@ -90,7 +90,7 @@ class TestWorkflowOutputsNamespaced:
             write_workflow_file(workflow_ir, Path(workflow_file))
 
             # Run with JSON output format
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(cli, ["--output-format", "json", workflow_file])
 
             # Verify execution succeeded
@@ -139,7 +139,7 @@ class TestWorkflowOutputsNamespaced:
             write_workflow_file(workflow_ir, Path(workflow_file))
 
             # Test 1: text format routes the stdout-marked output
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(cli, [workflow_file])
 
             assert result.exit_code == 0, f"Failed with output: {result.output}"

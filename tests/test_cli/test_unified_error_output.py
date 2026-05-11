@@ -120,7 +120,7 @@ class TestUnifiedErrorJsonShape:
 
     def test_file_not_found(self, tmp_path: Path) -> None:
         """Passing a nonexistent .pflow.md path produces not_found category."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         nonexistent = str(tmp_path / "does-not-exist.pflow.md")
 
         result = runner.invoke(main, ["--output-format", "json", nonexistent])
@@ -136,7 +136,7 @@ class TestUnifiedErrorJsonShape:
         bad_file = tmp_path / "bad.pflow.md"
         bad_file.write_text("# My Workflow\n\nSome description but no steps section.\n")
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(bad_file)])
 
         assert result.exit_code != 0
@@ -160,7 +160,7 @@ class TestUnifiedErrorJsonShape:
         workflow_path = tmp_path / "validation-error.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
@@ -184,7 +184,7 @@ class TestUnifiedErrorJsonShape:
         workflow_path = tmp_path / "exec-error.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
@@ -196,7 +196,7 @@ class TestUnifiedErrorJsonShape:
 
     def test_json_extension_error(self, tmp_path: Path) -> None:
         """Passing a .json file path produces not_found category (migration message)."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         json_path = str(tmp_path / "old-format.json")
 
         result = runner.invoke(main, ["--output-format", "json", json_path])
@@ -289,7 +289,7 @@ class TestStructuredFieldPreservation:
             tmp_path / "test.pflow.md",
         )
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         # Invoke WITHOUT providing the required "data" parameter
         result = runner.invoke(main, ["--output-format", "json", str(tmp_path / "test.pflow.md")])
 
@@ -320,7 +320,7 @@ class TestCoreRegression:
         Regression: before the unified pipeline, WorkflowNotFoundError was caught
         and displayed as plain text even in JSON mode.
         """
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         nonexistent = str(tmp_path / "nonexistent-workflow.pflow.md")
 
         result = runner.invoke(main, ["--output-format", "json", nonexistent])
@@ -336,7 +336,7 @@ class TestCoreRegression:
         Regression: before unification, the error field was sometimes a dict
         with 'type' and 'message' keys instead of a flat string.
         """
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         nonexistent = str(tmp_path / "nonexistent.pflow.md")
 
         result = runner.invoke(main, ["--output-format", "json", nonexistent])

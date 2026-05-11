@@ -134,7 +134,7 @@ class TestWorkflowOutputHandling:
 
     def test_workflow_with_declared_outputs(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that workflow-declared outputs are printed."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         # Create a workflow with declared outputs
         workflow = {
@@ -170,7 +170,7 @@ class TestWorkflowOutputHandling:
         self, mock_registry_instance, mock_compile, mock_validate_ir
     ):
         """Test that workflows without declared outputs still work with hardcoded keys."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         # Create a workflow WITHOUT declared outputs
         workflow = {
@@ -202,7 +202,11 @@ class TestWorkflowOutputHandling:
         self, mock_registry_instance, mock_compile, mock_validate_ir
     ):
         """Regression for GH #194: workflow data must go to stdout, not stderr."""
-        runner = click.testing.CliRunner()
+        # mix_stderr=False: under click 8.1 (transitive pin from litellm 1.83.x),
+        # CliRunner defaults to mix_stderr=True which merges stderr into stdout
+        # and defeats the `... not in result.stderr` assertion below. Click 8.2
+        # flipped the default; 8.3+ removed the kwarg.
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -254,7 +258,7 @@ class TestWorkflowOutputHandling:
 
     def test_output_key_override(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that --output-key flag overrides both declared outputs and hardcoded keys."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -300,7 +304,7 @@ class TestWorkflowOutputHandling:
         output warnings can fire — tested separately in
         ``test_multi_output_without_marker_raises_ambiguity_error``.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -328,10 +332,10 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--verbose", workflow_file])
 
             assert result.exit_code == 0
-            # Should warn about the missing declared output
-            assert "expected_output" in result.output
-            assert "but none could be resolved" in result.output
-            # Should show success message since no output was produced
+            # Should warn about the missing declared output (warning → stderr)
+            assert "expected_output" in result.stderr
+            assert "but none could be resolved" in result.stderr
+            # Should show success message since no output was produced (success → stdout)
             assert "Workflow executed successfully" in result.output
         finally:
             Path(workflow_file).unlink()
@@ -343,7 +347,7 @@ class TestWorkflowOutputHandling:
         output after the first. The marker makes the author's intent explicit
         and the routing deterministic.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -390,7 +394,7 @@ class TestWorkflowOutputHandling:
         `-o <name>`, `--output-format json`). The first declared output
         streams to stdout so existing callers keep working.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -435,7 +439,7 @@ class TestWorkflowOutputHandling:
         sourced from an upstream node that did execute; old flat --only routing
         could stream that root declared output instead of the requested target.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -513,7 +517,7 @@ class TestWorkflowOutputHandling:
         self, mock_registry_instance, mock_compile, mock_validate_ir
     ):
         """``-p`` suppresses the multi-output warning, matching Task 134's auto-detect behavior."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -547,7 +551,7 @@ class TestWorkflowOutputHandling:
         self, mock_registry_instance, mock_compile, mock_validate_ir
     ):
         """Regression: ambiguity error is text-mode-only; JSON emits all outputs."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -589,7 +593,7 @@ class TestWorkflowOutputHandling:
         outputs for MCP clients, CI pipelines, and workflow chaining — the
         exact silent-data-loss shape this feature exists to prevent.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -632,7 +636,7 @@ class TestWorkflowOutputHandling:
         OutputController at construction to simulate a real interactive terminal
         where the description label is useful context.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -663,9 +667,9 @@ class TestWorkflowOutputHandling:
                 result = runner.invoke(main, ["--verbose", workflow_file])
 
             assert result.exit_code == 0
-            # Header appears in TTY mode
-            assert "Workflow output (The final processed result):" in result.output
-            # And the actual output
+            # Header appears in TTY mode (routed to stderr)
+            assert "Workflow output (The final processed result):" in result.stderr
+            # And the actual output (goes to stdout)
             assert "Processing complete" in result.output
         finally:
             Path(workflow_file).unlink()
@@ -677,7 +681,7 @@ class TestWorkflowOutputHandling:
         value elsewhere (in the file/pipe) reads as "empty output" to both
         humans and agents. The fix: skip the label on non-TTY stdout.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -707,7 +711,7 @@ class TestWorkflowOutputHandling:
 
     def test_fallback_key_priority_order(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that fallback keys are checked in the correct order."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         # Test the priority: result > response > output > text > data > stdout
         test_cases = [
@@ -741,7 +745,7 @@ class TestWorkflowOutputHandling:
 
     def test_no_output_shows_success_message(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that workflows with no output show success message."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -775,7 +779,7 @@ class TestWorkflowOutputHandling:
 
     def test_output_key_not_found_warning(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test warning when specified --output-key is not found."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -796,16 +800,16 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--output-key", "nonexistent_key", workflow_file])
 
             assert result.exit_code == 0
-            # Should warn about missing key
-            assert "Warning - output key 'nonexistent_key' not found in shared store" in result.output
-            # Should still show success message
+            # Should warn about missing key (warning → stderr)
+            assert "Warning - output key 'nonexistent_key' not found in shared store" in result.stderr
+            # Should still show success message (success → stdout)
             assert "Workflow executed successfully" in result.output
         finally:
             Path(workflow_file).unlink()
 
     def test_declared_outputs_override_hardcoded_keys(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that declared outputs take precedence over hardcoded fallback keys."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -840,7 +844,7 @@ class TestWorkflowOutputHandling:
 
     def test_empty_outputs_declaration_falls_back(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that empty outputs declaration falls back to hardcoded keys."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -873,7 +877,7 @@ class TestWorkflowOutputHandling:
         catches subtle regressions like trailing whitespace, prefix/suffix
         corruption, or any other byte the substring check would miss.
         """
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         # Each entry: (declared output dict, the Python value we expect
         # to round-trip back from json.loads(stdout)). Strings are tested
@@ -925,7 +929,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_single_declared_output(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that JSON format correctly returns a single declared output."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -957,7 +961,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_multiple_declared_outputs(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that JSON format includes ALL declared outputs."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1004,7 +1008,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_with_output_key(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that --output-key works with JSON format."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1046,7 +1050,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_empty_result(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that no matching outputs returns empty JSON object."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1082,7 +1086,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_fallback_keys(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that JSON format uses hardcoded fallback keys when no outputs declared."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1116,7 +1120,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_complex_types(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that JSON format handles arrays, objects, numbers, booleans correctly."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1169,7 +1173,7 @@ class TestWorkflowOutputHandling:
 
     def test_text_format_unchanged(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that text format (default) still works as before."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1202,7 +1206,7 @@ class TestWorkflowOutputHandling:
 
     def test_format_case_insensitive(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that output format is case-insensitive."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1235,7 +1239,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_with_verbose(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that verbose warnings don't break JSON output."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1268,7 +1272,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_binary_data(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that binary data is handled gracefully in JSON format."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         # Create a mock binary data
         binary_data = b"\x00\x01\x02\x03\xff\xfe\xfd"
@@ -1306,7 +1310,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_null_values(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that null/None values are handled correctly in JSON format."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",
@@ -1339,7 +1343,7 @@ class TestWorkflowOutputHandling:
 
     def test_json_format_missing_declared_outputs_partial(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test JSON format when some declared outputs are missing."""
-        runner = click.testing.CliRunner()
+        runner = click.testing.CliRunner(mix_stderr=False)
 
         workflow = {
             "ir_version": "0.1.0",

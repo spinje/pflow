@@ -41,7 +41,7 @@ class TestShellStderrDisplay:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--verbose", str(workflow_path)])
 
         assert result.exit_code != 0
@@ -69,7 +69,11 @@ class TestShellStderrDisplay:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        # mix_stderr=False: under click 8.1 (transitive pin from litellm 1.83.x),
+        # CliRunner defaults to mix_stderr=True which merges stderr into stdout
+        # and breaks json.loads(result.stdout). Click 8.2 flipped the default;
+        # 8.3+ removed the kwarg.
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
@@ -105,7 +109,7 @@ class TestShellStderrDisplay:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--verbose", str(workflow_path)])
 
         assert result.exit_code != 0
@@ -135,7 +139,7 @@ class TestShellStderrDisplay:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--verbose", str(workflow_path)])
 
         assert result.exit_code != 0

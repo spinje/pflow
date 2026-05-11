@@ -31,7 +31,7 @@ dependencies = [
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
     "claude-agent-sdk>=0.1.17", # Claude Agent SDK for agentic development node
     "PyYAML>=6.0.0", # YAML parsing for markdown workflow format params and frontmatter
-    "litellm==1.82.6", # Provider-unified LLM client (the sole LLM seam — see src/pflow/core/llm_client.py). Pinned <1.83 because 1.83.x hard-pins click==8.1.8 (3 CliRunner stderr-separation tests fail under 8.1's mix_stderr=True default). Upgrade tracked in GH #368 — fix is small (CliRunner(mix_stderr=False) in the 3 tests) and unblocks Opus 4.7 thinking-mode reasoning_effort upstream.
+    "litellm==1.83.14", # Provider-unified LLM client (the sole LLM seam — see src/pflow/core/llm_client.py and src/pflow/core/litellm_runtime.py). Pinned exactly: 1.83.x transitively pins click==8.1.8 (accepted; the 3 affected CliRunner stderr-separation tests explicitly pass mix_stderr=False), and the bundled pricing-map backup contains claude-opus-4-7 so offline cache-analysis stays deterministic. See GH #384 (offline pricing map) and GH #368 (Opus 4.7 thinking-mode reasoning_effort follow-up).
     "openai>=1.0", # Already a transitive dep via litellm; declared directly because the LLM adapter catches `openai.OpenAIError` (the real base of LiteLLM's exception hierarchy — see src/pflow/core/llm_client.py). 1.0 is the floor where the modern openai exception hierarchy stabilized.
 ]
 
@@ -177,4 +177,7 @@ ignore = [
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["PyYAML"]  # PyYAML used by markdown parser via lazy import.
+DEP002 = [
+    "PyYAML",  # PyYAML used by markdown parser via lazy import.
+    "litellm", # litellm is imported via importlib.import_module("litellm") through pflow.core.litellm_runtime (see GH #384 — deterministic offline pricing-map default). deptry can't see runtime string imports.
+]

@@ -45,7 +45,7 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
@@ -96,7 +96,7 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code == 0
@@ -127,7 +127,7 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         # First run - no cache
         result1 = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
@@ -160,13 +160,14 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         # If the signature was wrong, we'd get a TypeError
         # The fact that we get a clean exit with error means signature is correct
         assert result.exit_code != 0
-        assert "error" in result.output.lower() or "failed" in result.output.lower()
+        # Error/failure messages route to stderr (mix_stderr=False keeps streams separate).
+        assert "error" in result.stderr.lower() or "failed" in result.stderr.lower()
 
     def test_json_error_output_structure(self, tmp_path):
         """JSON error output should have consistent structure.
@@ -182,7 +183,7 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
@@ -233,14 +234,14 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, [str(workflow_path)])
 
         # Should fail (either in validation or execution)
         assert result.exit_code != 0
 
-        # Error message should mention the problematic template
-        assert "producer" in result.output or "output" in result.output
+        # Error message should mention the problematic template (routed to stderr).
+        assert "producer" in result.stderr or "output" in result.stderr
 
     def test_graceful_handling_when_no_enhanced_data(self, tmp_path):
         """Should handle errors gracefully even without enhanced error data."""
@@ -253,7 +254,7 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
 
         # Test both text and JSON modes
         for output_format in ["text", "json"]:
@@ -270,7 +271,8 @@ class TestEnhancedErrorOutput:
                 output = json.loads(result.stdout)
                 assert output["success"] is False
             else:
-                assert "error" in result.output.lower() or "failed" in result.output.lower()
+                # Error/failure messages route to stderr.
+                assert "error" in result.stderr.lower() or "failed" in result.stderr.lower()
 
     def test_execution_steps_include_timing_info(self, tmp_path):
         """Execution steps should include duration_ms for completed nodes."""
@@ -285,7 +287,7 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code == 0
@@ -322,7 +324,7 @@ class TestEnhancedErrorOutput:
         workflow_path = tmp_path / "test.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0

@@ -356,9 +356,14 @@ def _llm_usage_field_from_memo(
 
 
 def _from_estimator(model: str, text: str) -> int:
-    """Lazy-import LiteLLM and call its model-aware tokenizer."""
-    import litellm
+    """Lazy-import LiteLLM and call its model-aware tokenizer.
 
+    Routes through pflow's runtime-policy seam so the deterministic
+    offline pricing-map default is applied.
+    """
+    from pflow.core.litellm_runtime import import_litellm
+
+    litellm = import_litellm()
     return int(litellm.token_counter(model=model, text=text))
 
 
