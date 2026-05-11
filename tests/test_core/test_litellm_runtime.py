@@ -18,8 +18,8 @@ litellm) is covered separately in ``tests/test_cli/test_lazy_imports.py``.
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -34,7 +34,7 @@ def test_configure_sets_env_var_when_unset(monkeypatch: pytest.MonkeyPatch) -> N
 
     configure_litellm_defaults()
 
-    assert os_environ_get(ENV_VAR) == "True"
+    assert os.environ.get(ENV_VAR) == "True"
 
 
 def test_configure_respects_user_provided_value(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,7 +45,7 @@ def test_configure_respects_user_provided_value(monkeypatch: pytest.MonkeyPatch)
 
     configure_litellm_defaults()
 
-    assert os_environ_get(ENV_VAR) == "False"
+    assert os.environ.get(ENV_VAR) == "False"
 
 
 def test_configure_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,7 +57,7 @@ def test_configure_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     configure_litellm_defaults()
     configure_litellm_defaults()
 
-    assert os_environ_get(ENV_VAR) == "True"
+    assert os.environ.get(ENV_VAR) == "True"
 
 
 def test_import_litellm_sets_env_var_and_returns_module(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,7 +67,7 @@ def test_import_litellm_sets_env_var_and_returns_module(monkeypatch: pytest.Monk
 
     litellm = import_litellm()
 
-    assert os_environ_get(ENV_VAR) == "True"
+    assert os.environ.get(ENV_VAR) == "True"
     # Returned module is the real litellm package
     assert litellm.__name__ == "litellm"
     # Sanity: model_cost was populated at import time
@@ -81,18 +81,25 @@ def test_import_litellm_exceptions_returns_exceptions_module(monkeypatch: pytest
 
     exc_mod = import_litellm_exceptions()
 
-    assert os_environ_get(ENV_VAR) == "True"
+    assert os.environ.get(ENV_VAR) == "True"
     assert exc_mod.__name__ == "litellm.exceptions"
     # Sanity: a known exception class exists
     assert hasattr(exc_mod, "AuthenticationError")
 
 
-def test_importing_helper_module_does_not_import_litellm() -> None:
+@pytest.mark.e2e
+def test_importing_helper_module_does_not_import_litellm(
+    uv_exe: str,
+    prepared_subprocess_env: dict[str, str],
+) -> None:
     """The helper itself must stay lightweight — only ``importlib.import_module``
     inside helper functions touches litellm, never module-scope import.
 
     Subprocess test to guarantee a clean ``sys.modules`` baseline regardless
-    of what the parent test process has already imported.
+    of what the parent test process has already imported. Uses the same
+    ``uv run python -c ...`` pattern as ``tests/test_cli/test_lazy_imports.py``
+    so both lazy-import contracts (helper-level here, CLI-level there) run
+    under identical isolation.
     """
     code = (
         "import sys\n"
@@ -100,18 +107,13 @@ def test_importing_helper_module_does_not_import_litellm() -> None:
         "leaked = [k for k in sys.modules if k == 'litellm' or k.startswith('litellm.')]\n"
         "assert not leaked, f'litellm leaked into sys.modules via helper import: {leaked}'\n"
     )
-    result = subprocess.run(  # noqa: S603 — fixture-free; arg list is fully literal
-        [sys.executable, "-c", code],
+    result = subprocess.run(  # noqa: S603 — fixture-controlled args, mirrors test_lazy_imports.py
+        [uv_exe, "run", "python", "-c", code],
+        env=prepared_subprocess_env,
         capture_output=True,
         check=False,
     )
     assert result.returncode == 0, f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}"
-
-
-def os_environ_get(name: str) -> str | None:
-    import os
-
-    return os.environ.get(name)
 
 
 # ---------------------------------------------------------------------------

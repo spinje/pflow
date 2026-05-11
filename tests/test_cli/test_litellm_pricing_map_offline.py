@@ -101,7 +101,9 @@ def test_analyze_cache_does_not_attempt_remote_model_cost_map(
         env=env,
         capture_output=True,
         check=False,
-        timeout=30,
+        # LiteLLM's httpx.get uses a 5s timeout. 10s gives 2x headroom on slow
+        # CI while surfacing regressions ~3x faster than the previous 30s.
+        timeout=10,
     )
 
     stderr = result.stderr.decode("utf-8", errors="replace")
