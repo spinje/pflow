@@ -1,6 +1,6 @@
 # Task 159 Baseline — Index
 
-**72 runnable cases** captured across 10 surfaces (01–05, 10, 12–15).
+**75 runnable cases** captured across 11 surfaces (01–06, 10, 12–15).
 `PLAN.md`, `RECORDING.md`, and the audit files are historical context; the
 filesystem plus `./verify.sh` are the current source of truth. Read
 [PLAN.md](./PLAN.md) for the original strategy and [FINDINGS.md](./FINDINGS.md)
@@ -32,22 +32,23 @@ for the initial construction findings.
 | Surface 03 — analyze-cache modes (8 cases, compressed from 17) | ✅ done |
 | Surface 04 — warning catalog (22 cases: 21 IDs + subpath variant) | ✅ done; 16/22 trigger target ID; 6 non-trigger cases intentionally lock current silence |
 | Surface 05 — advisory cases (5 cases) | ✅ done |
+| **Surface 06 — dry-run nudge (3 cases)** | ✅ done; positive nudge, optimal silence, and structural cache error |
 | **Surface 10 — live recordings (2 cases)** | ✅ partial; Gemini translation + real lyrics-generator trace committed |
 | **Surface 12 — real-world lyrics-generator (5 cases)** | ✅ done; 3 findings (F-03, F-04, F-05) |
 | **Surface 13 — happy-path interactions (4 cases)** | ✅ done |
 | **Surface 14 — Pitfall #19 defenses (3 cases)** | ✅ done |
 | **Surface 15 — run flag interactions (5 cases)** | ✅ done; `--only`, `--report`, partial traces, and dry-run/report conflict |
-| Surface 06 — dry-run nudge | ⏭ TODO (continue from PLAN.md §6.F) |
 | Surface 07 — hash invariants | ⏭ TODO |
 | Surface 08 — `--no-cache` flag | ⏭ TODO |
 | Surface 09 — `--help` and guide | ⏭ TODO |
-| Surface 11 — end-to-end UX | ⏭ TODO |
+| Surface 11 — end-to-end UX | ⏭ partially covered by Surface 03 (`examples/core/prompt-caching.pflow.md` text/json/all-rows); remaining variants optional |
 
 > **Note on numbering**: surfaces 12–15 were added AFTER 01–05 because the
 > Task 159 review surfaced their need (real-world integration, happy-path
 > interactions, Pitfall #19 defenses, and run-flag/report interactions — all
-> critical, none in the original PLAN). Surfaces 06–09 and 11 remain optional
-> follow-up work; surface 10 is partially complete despite the older
+> critical, none in the original PLAN). Surfaces 07–09 remain optional
+> follow-up work. Surface 11's highest-value reference-example analysis cases
+> are already covered by Surface 03; surface 10 is partially complete despite the older
 > RECORDING.md wording.
 
 > **Out of scope**: trace format 2.0.0 backcompat. The user has confirmed
@@ -81,6 +82,7 @@ baseline/
 ├── 03-analyze-cache-modes/            (8 cases)
 ├── 04-warning-catalog/                (22 cases)
 ├── 05-advisory-cases/                 (5 cases)
+├── 06-dry-run-nudge/                  (3 cases)
 ├── 10-live-recordings/                (2 cases)
 ├── 12-real-world-lyrics-generator/    (5 cases)
 ├── 13-happy-path-interactions/        (4 cases)
@@ -108,6 +110,13 @@ baseline/
 01-greenfield-text · 02-greenfield-json · 03-steady-state-text ·
 04-steady-state-json · 05-trace-from-trace · 06-no-trace-autoload ·
 07-json-error-envelope-unknown-workflow · 08-all-rows-flag
+
+`03-steady-state-text`, `04-steady-state-json`, and `08-all-rows-flag` run
+`examples/core/prompt-caching.pflow.md` directly. These cover the original
+Surface 11 reference-example text/json/all-rows scenarios without duplicating
+cases. The remaining original Surface 11 variants (`with-fixture-trace` and
+example dry-run footer) are optional because trace mode is covered by Surface
+03/10 and dry-run behavior is covered by Surface 06.
 
 ### Surface 04 — Warning catalog (22/22 cases captured; 16 trigger target ID)
 
@@ -148,6 +157,14 @@ behavior change for review.
 03-prewarm-explicit-true-no-warning (silence captured) ·
 04-model-fragmentation-with-write-penalty (co-emission captured) ·
 05-cost-projection-excludes-heterogeneous-cohort (cohort exclusions captured)
+
+### Surface 06 — Dry-run nudge (3/3 pass)
+
+01-actionable-shared-context-nudge (`--dry-run` emits
+`cache.opportunities-available`) ·
+02-optimal-workflow-silent (already optimal workflows stay quiet) ·
+03-structural-cache-error-blocks (`cache.order-mismatch` blocks dry-run before
+planning)
 
 ### Surface 10 — Live recordings (2/2 pass)
 
