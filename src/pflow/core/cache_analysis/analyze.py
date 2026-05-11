@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -590,20 +590,6 @@ def analyze(
 
     trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
     ir_default_model = get_default_workflow_model()
-    # Auto-load only: if the workflow's current root-level LLM context drifted
-    # from the trace's recorded context, fall back to greenfield analysis and
-    # surface a note so agents can see why the auto-loaded trace was rejected.
-    # Mirrors the misalignment-fallback notes-entry pattern below; honest-
-    # unmeasurable convention — drift IS the measurement, not silent skip.
-    # Explicit ``--from-trace`` bypasses this gate.
-    if trace_path is None and trace_data is not None and not _trace_aligns_with_ir(trace_data, workflow_ir):
-        notes.append(
-            "Auto-loaded trace's root LLM context drifted from the current workflow "
-            "(renamed/added/removed root LLM nodes, or model swap); ignored. "
-            "Pass `--from-trace <path>` to use a specific trace anyway."
-        )
-        trace_data = None
-        used_trace_path = None
 
     cache_block = workflow_ir.get("cache")
     declared_chunks = _extract_declared_chunks(cache_block)
@@ -688,6 +674,20 @@ def analyze(
         )
         per_call_rows = per_call_result.rows
         warnings = per_call_result.warnings
+
+    # Per-node model-drift detection. Replaces the prior whole-trace drift gate
+    # (deleted): structural drift (renamed/added/removed nodes) now degrades
+    # per-row via ``PerCallRow.data_source``; only model drift needs explicit
+    # disclosure because ``_resolve_effective_row_model`` declares "trace wins"
+    # and projections would silently use stale pricing.
+    drift_note = _detect_per_node_model_drift(
+        per_call_rows,
+        getattr(cw_result, "irs_by_workflow", {}) or {ctx.workflow_path: dict(ctx.workflow_ir)},
+        ir_default_model,
+    )
+    if drift_note is not None:
+        notes.append(drift_note)
+
     # Root-only by design: suggested-block, padding, and consolidate advisories
     # edit the analyzed file's ## Cache block. Child workflow recommendations
     # are exposed through the per-call rollup plus renderer drill-in commands
@@ -949,91 +949,6 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
     return None, None
 
 
-def _trace_aligns_with_ir(trace_data: Mapping[str, Any], workflow_ir: Mapping[str, Any]) -> bool:
-    """Return whether an auto-loaded trace matches the current root LLM IR.
-
-    The comparison is intentionally explicit instead of fingerprint based:
-    root-level LLM node ids must match exactly, and statically-known IR models
-    must be present in the trace's observed root models. Templated IR models
-    are excluded because runtime batch values are not knowable from the IR
-    alone.
-    """
-    trace_node_ids, trace_models = _collect_root_trace_llm_context(trace_data)
-    if not trace_node_ids:
-        return True
-
-    if trace_node_ids != _collect_ir_llm_node_ids(workflow_ir):
-        return False
-
-    ir_models = _collect_ir_static_llm_models(workflow_ir)
-    return not ir_models or ir_models <= trace_models
-
-
-def _collect_root_trace_llm_context(trace_data: Mapping[str, Any]) -> tuple[set[str], set[str]]:
-    """Collect root-level executed LLM ``(node_id, model)`` context.
-
-    Cached subtrees and sub-workflow descendants are excluded because this gate
-    is only deciding whether a root workflow should auto-load a trace that
-    actually ran for the same root LLM context.
-    """
-    from pflow.core.trace_tree import TraceTree
-
-    try:
-        tree = TraceTree.from_dict(trace_data)
-    except (TypeError, ValueError):
-        return set(), set()
-
-    node_ids: set[str] = set()
-    models: set[str] = set()
-    for leaf in tree.iter_llm_leaves(
-        descend_sub_workflows=False,
-        descend_cached_subtrees=False,
-    ):
-        node_id = leaf.owner_node_id if leaf.tier == "batch_item" else leaf.event_node_id
-        if node_id and node_id != "unknown":
-            node_ids.add(node_id)
-        call = leaf.llm_call
-        if call is None:
-            continue
-        model = call.get("model")
-        if isinstance(model, str) and model:
-            models.add(normalize_model_name(model))
-    return node_ids, models
-
-
-def _collect_ir_llm_node_ids(workflow_ir: Mapping[str, Any]) -> set[str]:
-    """Collect root LLM node ids from the current parent workflow IR."""
-    out: set[str] = set()
-    for node in workflow_ir.get("nodes", []) or []:
-        if not _is_llm_node(node):
-            continue
-        node_id = node.get("id")
-        if isinstance(node_id, str) and node_id:
-            out.add(node_id)
-    return out
-
-
-def _collect_ir_static_llm_models(workflow_ir: Mapping[str, Any]) -> set[str]:
-    """Collect statically resolvable root LLM models from current IR."""
-    out: set[str] = set()
-    has_unspecified = False
-    for node in workflow_ir.get("nodes", []) or []:
-        if not _is_llm_node(node):
-            continue
-        explicit = node.get("params", {}).get("model") or node.get("model")
-        if isinstance(explicit, str) and "${" in explicit:
-            continue
-        if explicit:
-            out.add(normalize_model_name(str(explicit)))
-        else:
-            has_unspecified = True
-    if has_unspecified:
-        default = get_default_workflow_model()
-        if default:
-            out.add(normalize_model_name(default))
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Pipeline helpers (lift complexity out of ``analyze()``)
 # ---------------------------------------------------------------------------
@@ -1047,10 +962,10 @@ def _resolve_trace_data(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Load trace data via explicit path or autoload, returning ``(data, path)``.
 
-    The auto-load result may be discarded by the drift gate in ``analyze()``
-    (immediately after the call site) when current IR's root LLM context
-    differs from the trace's recorded context. Explicit ``trace_path`` is
-    never gated.
+    Trace validity is enforced per-row via ``PerCallRow.data_source`` — rows
+    without a matching trace event fall through to memo/estimator/heuristic.
+    Per-node model drift (trace recorded with a different model than the
+    current IR resolves to) surfaces via the model-drift Notes detector below.
     """
     if trace_path is not None:
         return _load_trace_explicit(trace_path, notes), str(trace_path)
@@ -1067,6 +982,103 @@ def _extract_declared_chunks(cache_block: Any) -> list[str]:
     if not isinstance(items, list):
         return []
     return [item.get("name", "") for item in items if isinstance(item, dict) and item.get("name")]
+
+
+def _resolve_ir_static_model_for_node(
+    node: Mapping[str, Any] | None,
+    default_model: str | None,
+) -> str | None:
+    """Return the IR-static model for a single LLM node, or ``None`` if unresolvable.
+
+    Templated ``${var}`` models return ``None`` (heterogeneous batch — model
+    varies per item; comparing against trace would be meaningless). Missing
+    explicit model falls back to the workflow default.
+    """
+    if node is None:
+        return None
+    explicit = node.get("params", {}).get("model") or node.get("model")
+    if isinstance(explicit, str) and "${" in explicit:
+        return None
+    if explicit:
+        return normalize_model_name(str(explicit))
+    if default_model:
+        return normalize_model_name(default_model)
+    return None
+
+
+def _row_model_drift(
+    row: PerCallRow,
+    irs_by_workflow: Mapping[str, Mapping[str, Any]],
+    default_model: str | None,
+) -> tuple[str, str] | None:
+    """Return ``(trace_model, ir_model)`` if this row has drift, else ``None``.
+
+    Skip conditions (all return ``None``): heterogeneous row, ambiguous or
+    missing trace model, missing workflow_path/IR, templated or absent
+    IR-static model, normalized models equal.
+    """
+    if row.model_is_heterogeneous or len(row.observed_models) != 1:
+        return None
+    trace_model = normalize_model_name(row.observed_models[0])
+    if not trace_model or row.workflow_path is None:
+        return None
+    ir = irs_by_workflow.get(row.workflow_path)
+    if ir is None:
+        return None
+    ir_node = next(
+        (n for n in (ir.get("nodes") or []) if isinstance(n, dict) and n.get("id") == row.node_path),
+        None,
+    )
+    ir_model = _resolve_ir_static_model_for_node(ir_node, default_model)
+    if ir_model is None or ir_model == trace_model:
+        return None
+    return trace_model, ir_model
+
+
+def _detect_per_node_model_drift(
+    per_call_rows: Sequence[PerCallRow],
+    irs_by_workflow: Mapping[str, Mapping[str, Any]],
+    default_model: str | None,
+) -> str | None:
+    """Detect per-node model drift between trace and current IR.
+
+    Compares each per-call row's single trace-observed model against the
+    IR-static model for that node. Returns one grouped Notes string when any
+    drift is found, else ``None``.
+
+    Why this matters: ``_resolve_effective_row_model`` declares "trace wins"
+    so ``row.model`` and downstream projections use trace-side pricing. If the
+    workflow's model changed after the trace was recorded, projections silently
+    misprice. Actually-paid (from recorded ``cost_usd``) is correct regardless.
+    """
+    drifts: list[tuple[str, str, str]] = []  # (node_id, trace_model, ir_model)
+    seen: set[tuple[str | None, str]] = set()
+    for row in per_call_rows:
+        key = (row.workflow_path, row.node_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        drift = _row_model_drift(row, irs_by_workflow, default_model)
+        if drift is not None:
+            drifts.append((row.node_path, drift[0], drift[1]))
+
+    if not drifts:
+        return None
+
+    if len(drifts) == 1:
+        node_id, trace_model, ir_model = drifts[0]
+        return (
+            f"Trace was recorded with model `{trace_model}` for node `{node_id}`; "
+            f"current workflow declares `{ir_model}`. Actually-paid is correct; "
+            f"cost projections use trace-side pricing. Re-record a trace to refresh."
+        )
+
+    items = ", ".join(f"`{node_id}` ({trace_model} → {ir_model})" for node_id, trace_model, ir_model in drifts)
+    return (
+        f"Trace was recorded with different models than current workflow for "
+        f"{len(drifts)} nodes: {items}. Actually-paid is correct; "
+        f"cost projections use trace-side pricing. Re-record a trace to refresh."
+    )
 
 
 def _extract_cache_ttl(cache_block: Any) -> str | None:

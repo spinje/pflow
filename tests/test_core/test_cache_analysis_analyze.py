@@ -2280,18 +2280,34 @@ def test_autoload_finds_2_1_0_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert result.trace_path == str(path)
 
 
-def test_autoload_skips_when_trace_models_differ_from_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_uses_trace_and_warns_when_model_drifts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-node model drift: trace is consumed; a Notes entry discloses the
+    drift. Replaces the prior whole-trace rejection contract.
+
+    Mutation contract: deleting ``_detect_per_node_model_drift`` or its call
+    site causes ``"recorded with model" in note`` to fail because no drift
+    note is emitted.
+    """
     builder = TraceFixtureBuilder()
-    result, _ = _autoload_analysis(
+    result, trace_path = _autoload_analysis(
         tmp_path,
         monkeypatch,
         workflow_ir={"nodes": [_llm_ir_node(model="anthropic/claude-haiku-4-5")]},
         trace_nodes=[builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
     )
-    assert result.trace_path is None
+    assert result.trace_path == str(trace_path)
+    drift_notes = [n for n in result.notes if "recorded with model" in n]
+    assert len(drift_notes) == 1
+    assert "gemini" in drift_notes[0]
+    assert "anthropic" in drift_notes[0]
 
 
-def test_autoload_skips_when_root_node_ids_differ_from_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_uses_trace_when_root_node_renamed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Structural drift: IR's new node has no trace event; per-row degrades
+    via ``data_source``. Trace IS still loaded so other rows (none here) can
+    use it. The orthogonal "did_not_execute_in_trace" gate at analyze.py
+    discards the whole trace because the IR's lone node never executed —
+    that's a separate mechanism, not the prior drift gate."""
     builder = TraceFixtureBuilder()
     result, _ = _autoload_analysis(
         tmp_path,
@@ -2299,10 +2315,15 @@ def test_autoload_skips_when_root_node_ids_differ_from_ir(tmp_path: Path, monkey
         workflow_ir={"nodes": [_llm_ir_node("ask-question")]},
         trace_nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
     )
+    # The "did_not_execute_in_trace" gate discards; not the drift gate.
     assert result.trace_path is None
+    # No drift Notes — different node ids, not a model change.
+    assert not any("recorded with model" in n for n in result.notes)
 
 
-def test_autoload_skips_when_root_node_added_in_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_uses_trace_when_root_node_added(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Structural drift: added node has no trace event. ``did_not_execute_in_trace``
+    gate discards the trace (orthogonal to drift detection)."""
     builder = TraceFixtureBuilder()
     result, _ = _autoload_analysis(
         tmp_path,
@@ -2311,11 +2332,21 @@ def test_autoload_skips_when_root_node_added_in_ir(tmp_path: Path, monkeypatch: 
         trace_nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
     )
     assert result.trace_path is None
+    assert not any("recorded with model" in n for n in result.notes)
 
 
-def test_autoload_skips_when_root_node_removed_in_ir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_uses_trace_when_root_node_removed_orphans_ignored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structural drift: trace has orphan events the IR no longer references.
+    Per-row mechanism ignores orphans. Trace IS loaded because the IR's
+    remaining node DID execute in the trace.
+
+    Mutation contract: restore the deleted drift gate (``_trace_aligns_with_ir``)
+    → set inequality of {ask} vs {ask, summarize} fires → assertion fails."""
     builder = TraceFixtureBuilder()
-    result, _ = _autoload_analysis(
+    result, trace_path = _autoload_analysis(
         tmp_path,
         monkeypatch,
         workflow_ir={"nodes": [_llm_ir_node("ask")]},
@@ -2324,7 +2355,8 @@ def test_autoload_skips_when_root_node_removed_in_ir(tmp_path: Path, monkeypatch
             builder.llm_event("summarize", model="anthropic/claude-haiku-4-5"),
         ],
     )
-    assert result.trace_path is None
+    assert result.trace_path == str(trace_path)
+    assert not any("recorded with model" in n for n in result.notes)
 
 
 def test_autoload_returns_trace_when_models_and_node_ids_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2432,17 +2464,28 @@ def test_autoload_includes_default_model_in_ir_set(tmp_path: Path, monkeypatch: 
     assert result.trace_path == str(trace_path)
 
 
-def test_autoload_skips_when_default_model_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_uses_trace_and_warns_when_default_model_changed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default-model drift (IR has no explicit per-node model; workflow default
+    changed since trace was recorded): trace is consumed; Notes entry mentions
+    both old and new model. Replaces the prior whole-trace rejection contract.
+    """
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     builder = TraceFixtureBuilder()
-    result, _ = _autoload_analysis(
+    result, trace_path = _autoload_analysis(
         tmp_path,
         monkeypatch,
         workflow_ir={"nodes": [_llm_ir_node(model=None)]},
         trace_nodes=[builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
     )
-    assert result.trace_path is None
+    assert result.trace_path == str(trace_path)
+    drift_notes = [n for n in result.notes if "recorded with model" in n]
+    assert len(drift_notes) == 1
+    assert "gemini" in drift_notes[0]
+    assert "anthropic" in drift_notes[0]
 
 
 def test_autoload_normalizes_provider_prefix_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2456,7 +2499,10 @@ def test_autoload_normalizes_provider_prefix_variants(tmp_path: Path, monkeypatc
     assert result.trace_path == str(trace_path)
 
 
-def test_autoload_excludes_cached_events_from_drift_signal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autoload_handles_cached_orphan_events(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cached events for nodes the IR no longer references are orphans —
+    per-row mechanism ignores them. The root row matches the live event; trace
+    is loaded with no drift Notes."""
     builder = TraceFixtureBuilder()
     result, trace_path = _autoload_analysis(
         tmp_path,
@@ -2471,9 +2517,49 @@ def test_autoload_excludes_cached_events_from_drift_signal(tmp_path: Path, monke
         ],
     )
     assert result.trace_path == str(trace_path)
+    assert not any("recorded with model" in n for n in result.notes)
+
+
+def test_autoload_does_not_falsely_reject_workflow_batch_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REGRESSION (Bug 1, lyrics-generator field report): a trace containing a
+    ``type: workflow`` batch event whose batch items contain sub-workflow LLM
+    events must NOT be falsely rejected. The prior drift gate over-collected
+    these batch-item LLMs into its "root" set via ``TraceTree.walk``'s
+    unconditional batch_items descent, producing set inequality vs the parent
+    IR's root LLM nodes — rejecting every non-trivial run of any workflow-batch.
+
+    Mutation contract: restore the deleted drift gate without the tier filter
+    → ``analyze-sources``'s sub-workflow ``analyze`` LLM events leak into the
+    root set → ``{ask, analyze} != {ask}`` → trace rejected → trace_path is None.
+    """
+    builder = TraceFixtureBuilder()
+    workflow_batch = builder.homogeneous_workflow_batch_event(
+        "analyze-sources",
+        workflow_path="/abs/child.pflow.md",
+        items=[
+            ("source-1", [builder.llm_event("analyze", model="anthropic/claude-haiku-4-5")]),
+            ("source-2", [builder.llm_event("analyze", model="anthropic/claude-haiku-4-5")]),
+        ],
+    )
+    result, trace_path = _autoload_analysis(
+        tmp_path,
+        monkeypatch,
+        workflow_ir={"nodes": [_llm_ir_node("ask")]},
+        trace_nodes=[
+            builder.llm_event("ask", model="anthropic/claude-haiku-4-5"),
+            workflow_batch,
+        ],
+    )
+    assert result.trace_path == str(trace_path)
+    assert not any("recorded with model" in n for n in result.notes)
 
 
 def test_autoload_ignores_sub_workflow_llm_events(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sub-workflow LLM events stay scoped to their sub-workflow's per-call
+    rows; they don't influence root-level model-drift detection."""
     builder = TraceFixtureBuilder()
     result, trace_path = _autoload_analysis(
         tmp_path,
@@ -2489,9 +2575,12 @@ def test_autoload_ignores_sub_workflow_llm_events(tmp_path: Path, monkeypatch: p
         ],
     )
     assert result.trace_path == str(trace_path)
+    assert not any("recorded with model" in n for n in result.notes)
 
 
-def test_explicit_from_trace_bypasses_drift_check(tmp_path: Path) -> None:
+def test_explicit_from_trace_loads_regardless_of_model(tmp_path: Path) -> None:
+    """Explicit ``--from-trace`` always loads the trace; model drift surfaces
+    via the Notes entry (same path as auto-load now that the gate is gone)."""
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
     trace_path.write_text(
@@ -2509,24 +2598,24 @@ def test_explicit_from_trace_bypasses_drift_check(tmp_path: Path) -> None:
         auto_load_trace=False,
     )
     assert result.trace_path == str(trace_path)
+    drift_notes = [n for n in result.notes if "recorded with model" in n]
+    assert len(drift_notes) == 1
 
 
-def test_autoload_drift_rejected_trace_appends_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Drift-rejected auto-loaded traces surface a notes entry explaining why
-    analyze-cache fell back to greenfield. Mirrors the misalignment-fallback
-    notes-entry pattern; agents reading the output can see that a stale trace
-    was rejected and how to override (``--from-trace <path>``).
+def test_autoload_model_drift_appends_notes_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-node model drift on auto-loaded traces surfaces a Notes entry naming
+    the trace-side and IR-side models. The trace IS still consumed — projections
+    use trace-side pricing, but actually-paid stays correct.
 
-    Mutation contract: removing the notes.append in the drift-rejection branch
-    of ``analyze()`` causes ``drifted.notes == baseline.notes`` and the new
-    drift-note assertions both fail. Renaming the autoload-skip-silently
-    behavior here is the explicit contract change for #16; the prior
-    silent-skip variant of this test (test_autoload_silent_skip_no_notes_appended)
-    encoded the bug as the contract.
+    Mutation contract: removing the ``notes.append(drift_note)`` call site in
+    ``analyze()`` causes ``drift_notes`` to be empty and the assertions fail.
+    Renaming this from the prior whole-trace-rejection contract is intentional:
+    Bug 1 (workflow-batch tier leakage in the drift gate) made the rejection
+    a false positive on any workflow using ``type: workflow`` batches.
     """
     builder = TraceFixtureBuilder()
     workflow_ir = {"nodes": [_llm_ir_node(model="anthropic/claude-haiku-4-5")]}
-    drifted, _ = _autoload_analysis(
+    drifted, trace_path = _autoload_analysis(
         tmp_path,
         monkeypatch,
         workflow_ir=workflow_ir,
@@ -2534,15 +2623,15 @@ def test_autoload_drift_rejected_trace_appends_note(tmp_path: Path, monkeypatch:
     )
     baseline = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
 
-    assert drifted.trace_path is None
-    # Drift rejection adds at least one note above the baseline.
+    # Trace is consumed (not rejected).
+    assert drifted.trace_path == str(trace_path)
+    # Drift adds at least one note above the baseline.
     assert len(drifted.notes) > len(baseline.notes)
-    drift_notes = [n for n in drifted.notes if n not in baseline.notes]
+    drift_notes = [n for n in drifted.notes if "recorded with model" in n]
     assert len(drift_notes) == 1
     note = drift_notes[0]
-    # WHAT: drift detected on auto-load; HOW: override via --from-trace.
-    assert "drift" in note.lower()
-    assert "--from-trace" in note
+    assert "gemini" in note
+    assert "anthropic" in note
 
 
 def test_autoload_skips_unparseable_files_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

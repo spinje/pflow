@@ -11710,7 +11710,11 @@ Verification:
 - Default test suite: 6,552 passed, 1 skipped.
 - Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.
 
-## 2026-05-11 — Task 159 — Fresh-eyes quick-win bundle (4 polish fixes)
+## 2026-05-11 — PR Merged
+
+Per was merged, the following entires are done as self-contained PRs:
+
+## 2026-05-11 — Task 159 Followups — Fresh-eyes quick-win bundle (4 polish fixes)
 
 Four small UX fixes after a fresh-eyes read of the canonical lyrics-generator
 capture. Each had a different root cause and could land independently; bundled
@@ -11795,3 +11799,203 @@ were missing from the common-findings list (`cache.order-mismatch`,
 `cache.first-call-write-penalty`, `cache.cross-workflow-prose-mismatch`, and
 `cache.discrepancy`). `cache.cross-workflow-rename-detected` is documented as
 informational so the Shape δ text-suppression decision does not regress.
+
+## 2026-05-11 — Task 159 Followups — Bug 1 fix: delete whole-trace drift detector
+
+Field-report Bug 1: `pflow analyze-cache` silently rejected an auto-loaded
+trace as "root LLM context drifted" and fell through to greenfield analysis,
+under-counting savings by ~60× on the lyrics-generator workflow.
+
+### Root cause investigation
+
+Parallel pflow-codebase-searcher subagents established three findings:
+
+1. **The drift detector was producing false positives.** `_collect_root_trace_llm_context`
+   called `iter_llm_leaves(descend_sub_workflows=False, descend_cached_subtrees=False)`,
+   but `TraceTree.walk` (`core/trace_tree.py:153-190`) descends `batch_items`
+   unconditionally. For `type: workflow` batches, each batch item IS a
+   sub-workflow execution whose LLM events live under `item["events"]`, so the
+   "root" collector pulled sub-workflow LLMs into the root set. On the
+   lyrics-generator, `analyze-sources` (workflow-batch over `analyze-source`)
+   leaked `analyze` and 9 other sub-workflow LLM ids into a set that should
+   have contained only `{curate-briefs, evaluate-songs}`. Set inequality →
+   reject → greenfield. **Any non-trivial successful run of any workflow-batch
+   triggers this.**
+
+2. **Per-row mechanism already handles structural drift cleanly.** Row build
+   is IR-driven (`analyze.py:1471-1506`). Missing trace events produce
+   `cost_value=None`, `did_not_execute_in_trace=True`, fall through to
+   estimator. Orphan trace events (in trace, not in IR) get indexed but
+   unused. The discrepancy stage explicitly skips them
+   (`analyze.py:5449-5456`). No crashes, no misattribution.
+
+3. **The drift detector was load-bearing for ONE narrow scenario only**:
+   per-node `params.model:` literal change with a statically-resolvable new
+   model. `_resolve_effective_row_model` (`analyze.py:1933-1947`) declares
+   "trace wins when present and unambiguous," so `row.model` and downstream
+   projections use trace-side pricing. If the workflow's model changed after
+   the trace was recorded, projections silently misprice (actually-paid stays
+   correct — it reads recorded `cost_usd` directly).
+
+### Architectural reasoning (top 10% codebases lens)
+
+The pre-fix architecture had **two layered validity mechanisms**:
+- Coarse-grained whole-trace drift gate (this fix removes it).
+- Fine-grained per-row `data_source` mechanism (already correct, unchanged).
+
+Fine-grained is the right model — same pattern as per-file fingerprints in
+rustc/cargo, action-level caching in bazel, per-test invalidation in pytest.
+AI agents reading the code in 6 months see **one** validity mechanism, not
+two overlapping ones; adding new analyzer features no longer needs to reason
+about whether some new field affects whole-trace acceptance.
+
+Retry/fall-through to older traces was considered (`analyze.py:_autoload_trace`
+sorts reverse by filename; the rejection branch could iterate) but rejected
+on principle: if the newest matching trace shows drift, older traces were
+recorded against even older workflow versions and show *more* drift, not
+less. Retry would only "succeed" in pathological cases (model toggled X →
+Y → X). Real usage is monotonic.
+
+### Implementation
+
+**Deletions** (~80 lines):
+- `_trace_aligns_with_ir` (predicate)
+- `_collect_root_trace_llm_context` (the buggy tier-leaking collector)
+- `_collect_ir_llm_node_ids`
+- `_collect_ir_static_llm_models`
+- The rejection branch at `analyze()` immediately after `_resolve_trace_data`.
+
+**Additions** (~30 lines):
+- `_resolve_ir_static_model_for_node(node, default_model) -> str | None` —
+  per-node helper. Returns the static model from `params.model:` or
+  `model:`, falls back to workflow default, returns `None` for templated
+  `${var}` models.
+- `_row_model_drift(row, irs_by_workflow, default_model) -> tuple | None` —
+  per-row drift extraction. Skip conditions returned as `None` (heterogeneous
+  row, ambiguous/missing trace model, missing IR, templated IR model).
+  Decomposed out of the main function to keep C901 under threshold (the
+  alternative would have been a `# noqa: C901` suppression; CLAUDE.md
+  guidance is to decompose first).
+- `_detect_per_node_model_drift(per_call_rows, irs_by_workflow, default_model) -> str | None` —
+  walks per-call rows, accumulates drifts, emits a single grouped Notes
+  string. Single-drift form names the trace and IR models inline; multi-drift
+  form enumerates `node_id (trace → ir)` tuples.
+
+Wired into `analyze()` after the per-row build (after the second coarse gate's
+rebuild path so drift is evaluated on the FINAL per-call rows). Notes entry
+wording:
+
+> Trace was recorded with model `X` for node `N`; current workflow declares
+> `Y`. Actually-paid is correct; cost projections use trace-side pricing.
+> Re-record a trace to refresh.
+
+### Test surgery (10 tests)
+
+The grep for helper-name references returned no hits — the tests reference
+drift behavior via the public `analyze()` API, not internal helpers. Five
+tests locked the prior whole-trace-rejection contract; updated:
+
+- `test_autoload_skips_when_trace_models_differ_from_ir` →
+  `test_autoload_uses_trace_and_warns_when_model_drifts`. Asserts trace IS
+  loaded AND model-drift Notes fires.
+- `test_autoload_skips_when_root_node_ids_differ_from_ir` →
+  `test_autoload_uses_trace_when_root_node_renamed`. Asserts the rejection
+  still happens but via the orthogonal `did_not_execute_in_trace` gate
+  (analyze.py:661-689), not the deleted drift gate.
+- `test_autoload_skips_when_root_node_added_in_ir` →
+  `test_autoload_uses_trace_when_root_node_added`. Same as above.
+- `test_autoload_skips_when_root_node_removed_in_ir` →
+  `test_autoload_uses_trace_when_root_node_removed_orphans_ignored`.
+  Trace IS loaded; orphan in trace ignored per-row. The mutation contract
+  (restore the deleted gate → set inequality fires → assertion fails)
+  is documented in the test docstring.
+- `test_autoload_skips_when_default_model_changed` →
+  `test_autoload_uses_trace_and_warns_when_default_model_changed`.
+- `test_autoload_drift_rejected_trace_appends_note` →
+  `test_autoload_model_drift_appends_notes_entry`. Migrated from
+  "rejection + specific Notes" to "loaded + model-drift Notes".
+
+Three tests that survived as-is but had stale framing in their names:
+
+- `test_autoload_excludes_cached_events_from_drift_signal` →
+  `test_autoload_handles_cached_orphan_events`. Cached events for orphan
+  node ids are now handled by the per-row mechanism, not the deleted gate.
+- `test_explicit_from_trace_bypasses_drift_check` →
+  `test_explicit_from_trace_loads_regardless_of_model`. The "bypass" concept
+  doesn't exist post-fix — explicit and auto load identically.
+- `test_autoload_ignores_sub_workflow_llm_events` kept (still locks correct
+  behavior — sub-workflow events don't generate root-level rows).
+
+**New regression test for the actual lyrics-generator false positive**:
+`test_autoload_does_not_falsely_reject_workflow_batch_trace` builds a trace
+with a `homogeneous_workflow_batch_event` whose batch items contain
+sub-workflow LLM events. Mutation contract documented in docstring: restore
+the deleted gate without the (also-deleted) tier filter → leaks `analyze`
+into root set → `{ask, analyze} != {ask}` → rejection → test fails.
+
+### Tacit knowledge
+
+**Second coarse gate still exists** at `analyze.py:661-689` (now ~657-684
+post-deletion). If any row has `did_not_execute_in_trace=True`, the analyzer
+rebuilds with `trace_data=None`. This is the gate that now fires for the
+renamed/added-node test cases. Worth examining in a follow-up — it's also
+coarser than necessary; per-row data_source could mark individual rows as
+estimator while keeping matched rows as trace. Out of scope for Bug 1.
+
+**Notes entry vs catalog warning**: emitted as a Notes string (free-form
+list[str]) rather than a structured `cache.model-drifted` catalog warning
+(`warning_catalog.py`). DD#29 makes catalog IDs an agent-facing API requiring
+design review; Notes is fine for v1. Promote to catalog if it becomes a
+recurring agent question or if JSON consumers need structured access.
+
+**Why we did NOT add fall-through to older traces**: older traces are
+monotonically less aligned with the current workflow (recorded against older
+versions). Falling back swaps one stale trace for a staler one. The retry
+idea only made sense as a band-aid for the gate; with the gate gone, autoload
+returns newest-matching and the per-row mechanism handles everything else.
+
+**`row.model` is trace-side when trace populated `observed_models`**, IR-side
+otherwise. The drift detector specifically compares against IR-static models
+(reusing the deleted `_collect_ir_static_llm_models` logic per-node), not
+against `row.model` directly — that would be self-referential when trace is
+present.
+
+**Three trace silencing scenarios remain after this fix**:
+1. `did_not_execute_in_trace` gate (analyze.py:661-689) — see above.
+2. Per-row data_source fall-through to estimator for unmatched events
+   (intentional, correct).
+3. The auto-loaded trace's `workflow_path` not matching the analyzed file
+   (filtered at autoload time via filename hash; correct).
+
+### Verification
+
+- Focused autoload + workflow_batch + model_drift tests: 26 passed.
+- Full cache-analysis suite (`tests/test_core/test_cache_analysis_*.py` +
+  `tests/test_cli/test_analyze_cache.py`): 536 passed.
+- Baseline harness: 75/75 passed, 0 drifted, 0 harness errors.
+- Near-full sandbox-safe test suite (`uv run pytest -m "not e2e"`): 6,563
+  passed, 10 skipped, 41 deselected.
+- Quality: `ruff check`, `ruff format --check`, `mypy src/pflow/core/cache_analysis`
+  all clean on touched files.
+
+### What's next (other High-severity field-report bugs, not in this commit)
+
+- **Bug 2** (Summary vs per-call table contradict): summary gates savings on
+  `declared_prompt_cache`; table's `could_cache` shows `cross_workflow_projection`
+  evidence. Same `PerCallRow`, opposite filters. The opportunity surfaces in
+  `cache.sub-workflow-cache-undeclared` recommended actions but not in the
+  summary headline. Fix shape is disclosure (label the gate, reference
+  Recommended actions), not arithmetic. Independent of Bug 1.
+- **Bug 3** (SchemaValidationError on validated workflows): discrepancy
+  prediction stage `_build_predict_scaffold` (`analyze.py:5271-5305`) compiles
+  child workflows with the cross-workflow walker's partial params, not
+  dummy-padded params like `WorkflowValidator._validate_one_child_call`. When
+  walker can't resolve an input (from upstream sub-workflow output),
+  `prepare_inputs` raises `SchemaValidationError`, caught and demoted to a
+  bare-type Notes entry. Fix: merge walker params with
+  `generate_dummy_parameters` and preserve `exc.message`/`exc.path` in the
+  skip note.
+- **Second coarse gate** (`analyze.py:661-689`): same architectural smell as
+  Bug 1's drift gate. Worth folding into a follow-up that lets partial-trace
+  rows render with per-row `data_source` instead of discarding the whole
+  trace.
