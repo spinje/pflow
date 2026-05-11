@@ -23,7 +23,7 @@
     (2) Add the input as a named entry under the child workflow's ## Cache section.
     (3) Reference that named entry in `prompt_cache:` on each consumer node.
 
-  1. Sub-workflow cache undeclared in child.pflow.md — declare 1 input(s)  saves ~$0.02/run
+  1. Sub-workflow cache undeclared in child.pflow.md — declare 1 input   saves ~$0.02/run
      child.pflow.md
      1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.
      Per-consumer cache prefix (what the provider sees per call):

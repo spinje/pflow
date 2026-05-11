@@ -142,7 +142,7 @@ _SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = "{body_block}"
 # Per-id, catalog-driven; the renderer reads these without knowing the IDs.
 _SHARED_CONTEXT_WORKFLOW_HEADLINE = "Shared context undeclared — declare {shared_chunks_short} in ## Cache"
 _SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE = (
-    "Sub-workflow cache undeclared in {child_workflow_basename} — declare {affected_input_count} input(s)"
+    "Sub-workflow cache undeclared in {child_workflow_basename} — declare {affected_input_count} {inputs_phrase}"
 )
 
 # cache.below-min-tokens has two evidence tiers with different remediation
@@ -1112,6 +1112,12 @@ def make_diagnostic(
     if "node_count" in context_kwargs:
         format_dict["nodes_phrase"] = "node" if context_kwargs["node_count"] == 1 else "nodes"
 
+    # Pluralize "input(s)" in the sub-workflow-cache-undeclared headline.
+    # The "(s)" reads as a typo to fresh agents; pick singular/plural at
+    # dispatch so the template substitutes the resolved noun.
+    if "affected_input_count" in context_kwargs:
+        format_dict["inputs_phrase"] = "input" if context_kwargs["affected_input_count"] == 1 else "inputs"
+
     selected_message_template = _select_message_template(
         warning_id=warning_id,
         spec=spec,
@@ -1290,6 +1296,13 @@ def resolve_headline_for(diag: Diagnostic) -> str:
     # cache.shared-context-undeclared; cheap unconditional derivation.
     if "shared_chunks" in ctx:
         ctx.setdefault("shared_chunks_short", _format_chunks_short(ctx["shared_chunks"]))
+
+    # Mirror ``inputs_phrase`` pluralization for the
+    # cache.sub-workflow-cache-undeclared headline. ``make_diagnostic`` writes
+    # this into its local ``format_dict`` but not into ``diag.context``; the
+    # headline renderer needs the same derivation to substitute the placeholder.
+    if "affected_input_count" in ctx:
+        ctx.setdefault("inputs_phrase", "input" if ctx["affected_input_count"] == 1 else "inputs")
 
     try:
         return template.format(**ctx)

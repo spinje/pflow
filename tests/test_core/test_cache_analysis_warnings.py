@@ -290,6 +290,71 @@ def test_make_diagnostic_invalid_on_non_llm_dedup() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Headline pluralization
+# ---------------------------------------------------------------------------
+
+
+def test_sub_workflow_cache_undeclared_headline_pluralizes_input_count() -> None:
+    """The `cache.sub-workflow-cache-undeclared` headline used to render
+    ``declare N input(s)`` regardless of count. Fresh agents read ``declare 1
+    input(s)`` as a typo. The catalog now interpolates ``{inputs_phrase}``,
+    derived from ``affected_input_count`` at both ``make_diagnostic`` time and
+    ``resolve_headline_for`` time.
+
+    Mutation contract: remove the ``inputs_phrase`` derivation in
+    ``resolve_headline_for`` and the singular-count assertion fails (the
+    headline silently renders empty due to the KeyError-safe fallback).
+    """
+    from pflow.core.cache_analysis.warning_catalog import resolve_headline_for
+
+    base_inputs = [
+        {
+            "child_input_name": "lyrics",
+            "parent_value_expr": "lyrics",
+            "parent_workflow": "parent.pflow.md",
+            "parent_node_id": "call-child",
+            "line_in_parent": 1,
+            "tokens_estimated": 500,
+            "consumer_node_ids": ["review"],
+            "consumer_node_ids_csv": "`review`",
+        }
+    ]
+
+    singular = make_diagnostic(
+        "cache.sub-workflow-cache-undeclared",
+        affected_workflow="child.pflow.md",
+        child_workflow="child.pflow.md",
+        child_workflow_basename="child.pflow.md",
+        affected_input_count=1,
+        inputs=base_inputs,
+        body_block="(body)",
+        case="refactor",
+        savings_usd=None,
+    )
+    plural = make_diagnostic(
+        "cache.sub-workflow-cache-undeclared",
+        affected_workflow="child.pflow.md",
+        child_workflow="child.pflow.md",
+        child_workflow_basename="child.pflow.md",
+        affected_input_count=3,
+        inputs=base_inputs * 3,
+        body_block="(body)",
+        case="actionable",
+        savings_usd=0.01,
+    )
+
+    singular_headline = resolve_headline_for(singular)
+    plural_headline = resolve_headline_for(plural)
+
+    assert "declare 1 input" in singular_headline
+    assert "input(s)" not in singular_headline
+    assert "1 inputs" not in singular_headline  # not pluralized for count==1
+
+    assert "declare 3 inputs" in plural_headline
+    assert "input(s)" not in plural_headline
+
+
+# ---------------------------------------------------------------------------
 # make_diagnostic — error paths
 # ---------------------------------------------------------------------------
 

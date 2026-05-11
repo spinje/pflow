@@ -29,7 +29,7 @@
     (2) Add the input as a named entry under the child workflow's ## Cache section.
     (3) Reference that named entry in `prompt_cache:` on each consumer node.
 
-  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 input(s)  unmeasurable
+  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 inputs  unmeasurable
      chorus-chooser.pflow.md
      Three values flow in but no consumer node has a resolved model — cannot compute the cache threshold.
      → Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.

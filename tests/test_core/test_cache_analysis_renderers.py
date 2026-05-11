@@ -2211,7 +2211,10 @@ def test_text_unavailable_row_notes_below_min_cross_workflow_candidate() -> None
     text = render_text(_make_analysis(rows=[row], warnings=[diag]))
 
     assert "review" in text
-    assert "below cache minimum (case=refactor): lyrics ~474" in text
+    assert "below cache minimum: lyrics ~474" in text
+    # Internal classification taxonomy (`case=...`) does not leak to agent-facing text.
+    assert "case=refactor" not in text
+    assert "case=model_switch" not in text
     assert "no stable" not in text
 
 
@@ -2598,9 +2601,14 @@ def test_text_recommended_actions_render_savings_with_adaptive_precision() -> No
     assert savings_unavailable_count >= 2, (
         f"expected ≥2 'savings unavailable' (None + below-display); got {savings_unavailable_count}"
     )
-    # Batch prewarm renders the aggregate batch/workflow-run unit explicitly.
-    assert "saves ~$0.42/workflow run" in text
-    assert "saves ~$0.42/run" not in text
+    # Batch prewarm renders the per-run dollar tag with the same `/run` unit
+    # the rest of the analyzer uses; the `/workflow run` qualifier was retired
+    # because both branches express savings per pflow run and the divergent
+    # label read as inconsistent. The aggregate-batch nuance lives in the
+    # action body ("projected savings are aggregate for the batch, not per
+    # item.") so the headline doesn't need to encode it.
+    assert "saves ~$0.42/run" in text
+    assert "saves ~$0.42/workflow run" not in text
     assert "-$0.42/run" not in text
     # Bug D regression: NO "-$0.00/run" placeholder anywhere. (Note: a broad
     # "$0.00" check would false-trigger on "$0.0012" — match the precise
@@ -3564,9 +3572,12 @@ def test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_pro
     })
     text = render_text(_make_analysis(rows=[row]))
     assert "Token estimate confidence:" in text
-    assert "select-chorus: savings projected from shared inputs" in text
+    assert "select-chorus: savings projected from values flowing in" in text
     assert "See Recommended actions for the per-boundary fix." in text
     assert "Sub-workflow boundaries" not in text
+    # Pre-fix wording falsely implied the parent had cache declarations; the
+    # whole point of the row is that nothing is declared yet.
+    assert "shared inputs declared in parent workflow" not in text
     # Cleanup-first guidance lives in Recommended actions (the bullet routes
     # the agent there); the footer no longer duplicates that prose.
     assert "static prefix repeated across observed calls" not in text
@@ -3640,7 +3651,7 @@ def test_per_call_confidence_footer_renders_multi_line_bullet_block() -> None:
     assert "  Token estimate confidence:\n" in text
     # Each tier is its own indented bullet.
     assert "    · score-choruses: savings projected from a stable prompt prefix" in text
-    assert "    · select-chorus: savings projected from shared inputs" in text
+    assert "    · select-chorus: savings projected from values flowing in" in text
     # Old semicolon-chained form is gone.
     assert "Token estimate confidence: score-choruses" not in text
 

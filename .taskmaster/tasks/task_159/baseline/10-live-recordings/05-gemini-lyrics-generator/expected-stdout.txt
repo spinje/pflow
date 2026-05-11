@@ -34,7 +34,7 @@
     (2) Add the input as a named entry under the child workflow's ## Cache section.
     (3) Reference that named entry in `prompt_cache:` on each consumer node.
 
-  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 input(s)  saves ~$0.21/run
+  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 inputs  saves ~$0.21/run
      chorus-chooser.pflow.md
      Three values flow in from parent song-creator.pflow.md, used by 2 consumer nodes.
      Per-consumer cache prefix (what the provider sees per call):
@@ -48,13 +48,13 @@
              flows in from parent as `${concept_brief}`
      → Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md
 
-  2. Batch prewarm not declared — add `- prewarm: true` to score-choruses  saves ~$0.04/workflow run
+  2. Batch prewarm not declared — add `- prewarm: true` to score-choruses  saves ~$0.04/run
      score-choruses in chorus-chooser.pflow.md
      score-choruses: stable ~1061-token prompt prefix repeats across 136 batch calls. Prewarming writes the prefix once, then lets the remaining calls read it from cache; projected savings are aggregate for the batch, not per item.
      → Add `- prewarm: true` to score-choruses to opt in.
      → OR add `- prewarm: false` to score-choruses to opt out explicitly (suppresses this warning).
 
-  3. Sub-workflow cache undeclared in review-emotional-architecture.pflow.md — declare 3 input(s)  saves ~$0.0078/run
+  3. Sub-workflow cache undeclared in review-emotional-architecture.pflow.md — declare 3 inputs  saves ~$0.0078/run
      review-emotional-architecture.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~7,225 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -65,7 +65,7 @@
            flows in from parent as `${write-lyrics.response}`
      → Edit: song-creator/reviews/review-emotional-architecture.pflow.md
 
-  4. Sub-workflow cache undeclared in review-accuracy.pflow.md — declare 3 input(s)  saves ~$0.0076/run
+  4. Sub-workflow cache undeclared in review-accuracy.pflow.md — declare 3 inputs  saves ~$0.0076/run
      review-accuracy.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~7,036 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -76,7 +76,7 @@
            flows in from parent as `${extract-emotional-lyrics.result.lyrics}`
      → Edit: song-creator/reviews/review-accuracy.pflow.md
 
-  5. Sub-workflow cache undeclared in review-genre.pflow.md — declare 3 input(s)  saves ~$0.0063/run
+  5. Sub-workflow cache undeclared in review-genre.pflow.md — declare 3 inputs  saves ~$0.0063/run
      review-genre.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~5,837 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -88,7 +88,7 @@
            flows in from parent as `${song-architecture.response}`
      → Edit: song-creator/reviews/review-genre.pflow.md
 
-  6. Sub-workflow cache undeclared in review-rhyme.pflow.md — declare 3 input(s)  saves ~$0.0063/run
+  6. Sub-workflow cache undeclared in review-rhyme.pflow.md — declare 3 inputs  saves ~$0.0063/run
      review-rhyme.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~5,837 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -100,7 +100,7 @@
            flows in from parent as `${song-architecture.response}`
      → Edit: song-creator/reviews/review-rhyme.pflow.md
 
-  7. Sub-workflow cache undeclared in review-imagery.pflow.md — declare 2 input(s)  saves ~$0.0044/run
+  7. Sub-workflow cache undeclared in review-imagery.pflow.md — declare 2 inputs  saves ~$0.0044/run
      review-imagery.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~4,104 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -110,7 +110,7 @@
            flows in from parent as `${song-architecture.response}`
      → Edit: song-creator/reviews/review-imagery.pflow.md
 
-  8. Sub-workflow cache undeclared in review-narrative.pflow.md — declare 2 input(s)  saves ~$0.0044/run
+  8. Sub-workflow cache undeclared in review-narrative.pflow.md — declare 2 inputs  saves ~$0.0044/run
      review-narrative.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~4,104 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -120,7 +120,7 @@
            flows in from parent as `${song-architecture.response}`
      → Edit: song-creator/reviews/review-narrative.pflow.md
 
-  9. Sub-workflow cache undeclared in review-ai-tells.pflow.md — declare 2 input(s)  savings available with model switch
+  9. Sub-workflow cache undeclared in review-ai-tells.pflow.md — declare 2 inputs  savings available with model switch
      review-ai-tells.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~2,207 tokens per call (below gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -139,7 +139,7 @@
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
      → Edit: song-creator/reviews/review-ai-tells.pflow.md
 
-  10. Sub-workflow cache undeclared in review-cliche.pflow.md — declare 2 input(s)  savings available with model switch
+  10. Sub-workflow cache undeclared in review-cliche.pflow.md — declare 2 inputs  savings available with model switch
      review-cliche.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~2,207 tokens per call (below gemini/gemini-2.5-flash's 4,096-token cache minimum).
      Template variables to remove:
@@ -158,7 +158,7 @@
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
      → Edit: song-creator/reviews/review-cliche.pflow.md
 
-  11. Sub-workflow cache undeclared in review-stranger-summary.pflow.md — declare 1 input(s)  not yet cacheable
+  11. Sub-workflow cache undeclared in review-stranger-summary.pflow.md — declare 1 input  not yet cacheable
      review-stranger-summary.pflow.md
      One value `lyrics` ~474 tokens per call, below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5).
      → Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.
@@ -219,7 +219,7 @@
   review                   gemini/gemini-2.5-flash   13,760           —        8,828    64%      4  cacheable inputs: creative_direction, lyrics
 
 ### review-stranger-summary.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash    6,467           —            ?     ?%      4  below cache minimum (case=refactor): lyrics ~474
+  review                   gemini/gemini-2.5-flash    6,467           —            ?     ?%      4  below cache minimum: lyrics ~474
 
 ### concept-chooser.pflow.md (called by choose-concepts)
   generate-concepts        gemini/gemini-2.5-flash    5,166           —            ?     ?%      4  batch_items=4; no stable 4,096-token repeated prefix found
@@ -231,7 +231,7 @@
 
   Token estimate confidence:
     · score-choruses: savings projected from a stable prompt prefix repeated across observed calls. Declare prompt_cache to confirm.
-    · select-chorus, 8 review nodes: savings projected from shared inputs declared in parent workflow(s). See Recommended actions for the per-boundary fix.
+    · select-chorus, 8 review nodes: savings projected from values flowing in from parent workflow(s). See Recommended actions for the per-boundary fix.
 
 ## Per-child analyze-cache commands
 

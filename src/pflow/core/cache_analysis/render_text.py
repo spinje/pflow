@@ -1126,8 +1126,8 @@ def _format_action_savings(action: RecommendedAction) -> str:
     if value is None or value < 0.0001:
         return "savings unavailable"
     if value < 0.01:
-        return f"saves ~${value:.4f}/workflow run"
-    return f"saves ~${value:.2f}/workflow run"
+        return f"saves ~${value:.4f}/run"
+    return f"saves ~${value:.2f}/run"
 
 
 def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
@@ -1426,7 +1426,7 @@ def _unavailable_notes_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | N
             consumer_ids = input_dict.get("consumer_node_ids", [])
             if not isinstance(tokens, int) or not input_name or not isinstance(consumer_ids, list):
                 continue
-            note = f"below cache minimum (case={case}): {input_name} ~{tokens:,}"
+            note = f"below cache minimum: {input_name} ~{tokens:,}"
             for node_id in consumer_ids:
                 notes_by_node.setdefault((str(child_workflow), str(node_id)), []).append(note)
     return notes_by_node
@@ -1834,8 +1834,8 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
         )
     if cross_workflow_nodes:
         bullets.append(
-            f"{_format_node_list(cross_workflow_nodes)}: savings projected from shared inputs "
-            "declared in parent workflow(s). See Recommended actions for the per-boundary fix."
+            f"{_format_node_list(cross_workflow_nodes)}: savings projected from values flowing in "
+            "from parent workflow(s). See Recommended actions for the per-boundary fix."
         )
     if not bullets:
         return None
