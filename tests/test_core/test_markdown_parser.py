@@ -743,6 +743,224 @@ class TestYAMLParamParsing:
         assert "Status: Success" in data["text"]
         assert data["metadata"] == {"source": "ci"}
 
+    def test_yaml_block_scalar_literal_preserves_blank_lines(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### check
+
+            Checks the rubric against each chorus.
+
+            - type: llm
+            - prompt: |
+                Use this rubric:
+                ${rubric}
+
+                Score this chorus:
+                ${item.text}
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["prompt"] == ("Use this rubric:\n${rubric}\n\nScore this chorus:\n${item.text}")
+        # The blank-separated content must NOT leak into the description.
+        assert node["purpose"] == "Checks the rubric against each chorus."
+
+    def test_yaml_folded_scalar_preserves_blank_lines(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### check
+
+            Folded scalar test.
+
+            - type: llm
+            - prompt: >
+                First paragraph that
+                folds onto one line.
+
+                Second paragraph after
+                a blank line.
+        """)
+        result = parse_markdown(content)
+        prompt = result.ir["nodes"][0]["params"]["prompt"]
+        # Folded scalar joins lines within a paragraph with spaces and keeps the
+        # blank-line separator between paragraphs.
+        assert prompt == "First paragraph that folds onto one line.\nSecond paragraph after a blank line."
+
+    def test_plain_multiline_scalar_preserves_blank_lines(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### check
+
+            Plain multi-line scalar.
+
+            - type: llm
+            - prompt:
+                Line A.
+
+                Line B after blank.
+        """)
+        result = parse_markdown(content)
+        # Plain (unquoted) multi-line scalars fold whitespace per YAML rules,
+        # but the blank line is preserved as a paragraph break (\n).
+        prompt = result.ir["nodes"][0]["params"]["prompt"]
+        assert "Line A." in prompt
+        assert "Line B after blank." in prompt
+        # Blank-separated content must NOT leak into the description.
+        assert result.ir["nodes"][0]["purpose"] == "Plain multi-line scalar."
+
+    def test_block_scalar_with_blank_lines_in_non_prompt_params(self) -> None:
+        content = _md("""\
+            # Test
+
+            Blank lines in non-prompt params.
+
+            ## Steps
+
+            ### shell-step
+
+            Runs a multi-line shell command.
+
+            - type: shell
+            - command: |
+                echo "first"
+
+                echo "after blank"
+
+            ### http-step
+
+            Sends a multi-line JSON body.
+
+            - type: http
+            - url: https://example.com
+            - body: |
+                {"a": 1}
+
+                {"b": 2}
+        """)
+        result = parse_markdown(content)
+        nodes = {n["id"]: n for n in result.ir["nodes"]}
+        assert nodes["shell-step"]["params"]["command"] == 'echo "first"\n\necho "after blank"'
+        assert nodes["shell-step"]["purpose"] == "Runs a multi-line shell command."
+        assert nodes["http-step"]["params"]["body"] == '{"a": 1}\n\n{"b": 2}'
+        assert nodes["http-step"]["purpose"] == "Sends a multi-line JSON body."
+
+    def test_block_scalar_blank_lines_in_inputs_and_outputs(self) -> None:
+        content = _md("""\
+            # Test
+
+            Multi-line description fields in Inputs and Outputs.
+
+            ## Inputs
+
+            ### my-input
+
+            Wrapper prose.
+
+            - type: string
+            - description: |
+                Paragraph one.
+
+                Paragraph two.
+
+            ## Steps
+
+            ### run
+
+            Does the thing.
+
+            - type: shell
+            - command: echo hi
+
+            ## Outputs
+
+            ### result
+
+            Wrapper prose for the output.
+
+            - source: ${run.stdout}
+            - description: |
+                First line.
+
+                Second line.
+        """)
+        result = parse_markdown(content)
+        assert result.ir["inputs"]["my-input"]["description"] == "Paragraph one.\n\nParagraph two."
+        assert result.ir["outputs"]["result"]["description"] == "First line.\n\nSecond line."
+
+    def test_block_scalar_followed_by_another_bullet(self) -> None:
+        content = _md("""\
+            # Test
+
+            Block scalar followed by another bullet.
+
+            ## Steps
+
+            ### check
+
+            Checks something.
+
+            - type: llm
+            - prompt: |
+                Line A.
+
+                Line B.
+
+            - model: claude-haiku-4-5
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        # _flush_yaml_item strips trailing blanks before yaml.safe_load, so the
+        # value carries no trailing newline regardless of how many blanks
+        # separate this block from the next bullet.
+        assert node["params"]["prompt"] == "Line A.\n\nLine B."
+        assert node["params"]["model"] == "claude-haiku-4-5"
+
+    def test_single_line_item_between_block_scalars_uses_fast_path(self) -> None:
+        # Regression guard: trailing-blank-strip in _flush_yaml_item must keep
+        # single-line items on the _coerce_yaml_scalar path so intentional
+        # divergences from PyYAML (e.g., for octal/hex) survive.
+        content = _md("""\
+            # Test
+
+            Mixed single-line and multi-line items with blank-line padding.
+
+            ## Steps
+
+            ### check
+
+            Checks something.
+
+            - type: llm
+            - prompt: |
+                Some prompt.
+
+            - model: claude-haiku-4-5
+
+            - max-retries: 010
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["prompt"] == "Some prompt."
+        assert node["params"]["model"] == "claude-haiku-4-5"
+        # `_coerce_yaml_scalar` keeps "010" as the literal string "010"; PyYAML's
+        # yaml.safe_load would parse it as int 8 (octal). The fast path must run.
+        assert node["params"]["max-retries"] == 10  # _coerce_yaml_scalar coerces decimal ints
+        # (If this ever returned 8, the fast path was bypassed.)
+
     def test_yaml_block_scalar_in_batch_code_block(self) -> None:
         content = _md("""\
             # Test

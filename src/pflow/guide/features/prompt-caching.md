@@ -151,23 +151,25 @@ Longer TTL writes cost more, so prefer the analyzer recommendation when unsure.
 For `type: llm` nodes with `batch:`, add `prewarm: true` when the analyzer
 recommends it:
 
-```markdown
+````markdown
 ### score-each-chorus
 
 Score every chorus against the rubric.
 
 - type: llm
 - prewarm: true
-- prompt: |
-    Use this rubric:
-    ${rubric}
-
-    Score this chorus:
-    ${item.text}
 - batch:
     items: ${choruses}
     parallel: true
+
+```prompt
+Use this rubric:
+${rubric}
+
+Score this chorus:
+${item.text}
 ```
+````
 
 Without `prewarm`, parallel batch items can all try to write the same provider
 cache prefix at once. With `prewarm`, the first item writes the prefix, then
@@ -231,12 +233,14 @@ Inline the stable prompt prefix in the LLM node.
 - type: llm
 - batch:
     items: ${prepare-items.result}
-- prompt: |
-    Use this rubric:
-    ${rubric}
 
-    Process this:
-    ${item.input_text}
+```prompt
+Use this rubric:
+${rubric}
+
+Process this:
+${item.input_text}
+```
 ````
 
 If each per-item prompt has different structure, different ordering, or
