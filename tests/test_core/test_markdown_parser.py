@@ -956,10 +956,11 @@ class TestYAMLParamParsing:
         node = result.ir["nodes"][0]
         assert node["params"]["prompt"] == "Some prompt."
         assert node["params"]["model"] == "claude-haiku-4-5"
-        # `_coerce_yaml_scalar` keeps "010" as the literal string "010"; PyYAML's
-        # yaml.safe_load would parse it as int 8 (octal). The fast path must run.
-        assert node["params"]["max-retries"] == 10  # _coerce_yaml_scalar coerces decimal ints
-        # (If this ever returned 8, the fast path was bypassed.)
+        # `_coerce_yaml_scalar` coerces "010" to decimal int 10 (Python int());
+        # yaml.safe_load would parse it as int 8 (YAML 1.1 octal). The fast path
+        # must run, so a result of 8 here would mean the strip-trailing-blanks
+        # change pushed this single-line item onto the multi-line parse path.
+        assert node["params"]["max-retries"] == 10
 
     def test_yaml_block_scalar_in_batch_code_block(self) -> None:
         content = _md("""\

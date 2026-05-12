@@ -324,8 +324,11 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         # Trailing blank lines were collected speculatively during continuation —
         # they're only meaningful between content lines of a multi-line item.
         # Stripping keeps single-line items on the _coerce_yaml_scalar fast path
-        # and is lossless for multi-line items (yaml.safe_load chomps trailing
-        # newlines for `|` block scalars by default).
+        # and is lossless for default-chomping (`|`, `>`) block scalars, which
+        # yaml.safe_load clips to a single trailing newline anyway.
+        # Caveat: keep-chomping variants (`|+`, `>+`) would normally preserve all
+        # trailing blanks as part of the scalar's value; this strip drops them.
+        # Accepted edge case — no shipped `.pflow.md` uses `|+`/`>+`.
         while yaml_current_item_lines and yaml_current_item_lines[-1].strip() == "":
             yaml_current_item_lines.pop()
         if yaml_current_item_lines and current_entity is not None:
