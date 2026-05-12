@@ -1313,11 +1313,14 @@ def test_trace_mode_folds_excluded_passthrough_into_projections() -> None:
     assert "Cost on rerun (within TTL):  ~$2.34" in text
     # The old standalone Excluded line is GONE in the folded case.
     assert "Excluded from analysis:" not in text
-    # Footnote names the pass-through node + amount + honest framing.
-    assert "~$0.27 of the above is pass-through for generate-chorus-options" in text
+    # Footnote names the excluded node + amount + honest framing (Bug 13: no
+    # "pass-through" jargon; "couldn't be analyzed" is the agent-readable form).
+    assert "~$0.27 of the above was paid by generate-chorus-options" in text
+    assert "couldn't be analyzed for cache savings" in text
     assert "model varies per call" in text
-    assert "projected savings unavailable" in text
-    assert "real savings could be higher if model+content combos repeat" in text
+    assert "Caching may still apply at runtime" in text
+    # Negative assertion: lock the jargon-free wording.
+    assert "pass-through" not in text
 
 
 def test_trace_mode_falls_back_to_excluded_line_when_excluded_cost_unknown() -> None:
@@ -1351,7 +1354,8 @@ def test_trace_mode_falls_back_to_excluded_line_when_excluded_cost_unknown() -> 
     # Original no-cache value (priced cohort, unchanged) — NOT folded.
     assert "Cost without caching:        ~$2.16" in text
     # No footnote in this branch — nothing was folded.
-    assert "of the above is pass-through" not in text
+    assert "was paid by" not in text
+    assert "pass-through" not in text
 
 
 def test_trace_mode_no_exclusions_renders_clean_cost_block() -> None:
@@ -1364,7 +1368,8 @@ def test_trace_mode_no_exclusions_renders_clean_cost_block() -> None:
     analysis = _make_analysis(actually_paid=2.31, no_cache=2.53)
     text = render_text(analysis)
     assert "Excluded from analysis:" not in text
-    assert "of the above is pass-through" not in text
+    assert "was paid by" not in text
+    assert "pass-through" not in text
     assert "Cost without caching:        ~$2.53" in text
 
 
@@ -1399,9 +1404,13 @@ def test_trace_mode_folds_multi_node_exclusions_into_footnote() -> None:
     text = render_text(analysis)
     # Folded no-cache: $1.20 + $0.10 + $0.05 = $1.35.
     assert "Cost without caching:        ~$1.35" in text
-    # Footnote names both nodes.
-    assert "~$0.15 of the above is pass-through for: alpha, beta" in text
-    assert "projected savings unavailable" in text
+    # Footnote names both nodes inline with their exclusion reason
+    # (Bug 13: no "pass-through" jargon; inline reasons are agent-readable).
+    assert "~$0.15 of the above was paid by nodes that couldn't be analyzed" in text
+    assert "alpha (model varies per call)" in text
+    assert "beta (no pricing data for model)" in text
+    # Negative assertion: lock the jargon-free wording.
+    assert "pass-through" not in text
     # No standalone Excluded line.
     assert "Excluded from analysis:" not in text
 
@@ -3910,8 +3919,11 @@ def test_text_header_keeps_medium_from_memo_with_coverage() -> None:
         "estimate_confidence_coverage": {"trace": 0, "memo": 2, "estimator": 0, "heuristic": 0, "total": 2},
     })
     text = render_text(analysis)
-    assert "Confidence: medium_from_memo" in text
+    # Bug 15: enum is replaced with plain English; JSON keeps the raw label.
+    assert "Confidence: medium — token counts from memoized prior runs" in text
     assert "(2 of 2 nodes)" in text
+    # Negative assertion: no analyzer-internal taxonomy leaks to text.
+    assert "medium_from_memo" not in text
 
 
 def test_text_header_suppresses_confidence_when_redundant_with_evidence() -> None:
@@ -3944,8 +3956,10 @@ def test_text_header_suppresses_confidence_when_redundant_with_evidence() -> Non
     # Evidence still emitted (carries the same info actionably).
     assert "complete trace (2 LLM nodes executed)" in text
     # Confidence suppressed — the redundant tautology is gone.
-    assert "Confidence: high_from_trace" not in text
+    assert "Confidence: high" not in text
     assert "(2 of 2 nodes)" not in text
+    # Negative assertion: enum doesn't leak even when line is present elsewhere.
+    assert "high_from_trace" not in text
 
 
 def test_text_header_keeps_confidence_when_unreached_nodes_present() -> None:
@@ -3973,7 +3987,9 @@ def test_text_header_keeps_confidence_when_unreached_nodes_present() -> None:
     # Evidence says X executed; Z not reached.
     assert "not reached" in text
     # Confidence still emitted — the denominators are different.
-    assert "Confidence: high_from_trace" in text
+    # Bug 15: enum → plain text.
+    assert "Confidence: high — token counts from this run's trace" in text
+    assert "high_from_trace" not in text
 
 
 def test_text_header_keeps_confidence_for_truncated_trace() -> None:
@@ -3999,7 +4015,9 @@ def test_text_header_keeps_confidence_for_truncated_trace() -> None:
     })
     text = render_text(analysis)
     assert "trace truncated" in text
-    assert "Confidence: high_from_trace" in text
+    # Bug 15: enum → plain text.
+    assert "Confidence: high — token counts from this run's trace" in text
+    assert "high_from_trace" not in text
 
 
 # ---------------------------------------------------------------------------

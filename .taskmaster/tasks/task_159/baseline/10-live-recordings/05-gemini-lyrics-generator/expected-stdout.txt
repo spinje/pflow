@@ -13,7 +13,7 @@
   Cost without caching:        ~$2.42
   Cost on rerun (within TTL):  ~$2.34
 
-  · ~$0.27 of the above is pass-through for generate-chorus-options (model varies per call — projected savings unavailable; real savings could be higher if model+content combos repeat).
+  · ~$0.27 of the above was paid by generate-chorus-options but couldn't be analyzed for cache savings (model varies per call). Caching may still apply at runtime if its content repeats across calls.
   Actual savings (this run):    saves ~$0.11/run vs no-cache, 5% of no-cache cost
   Rerun delta (projected):      saves ~$0.09/run on rerun, 4% of no-cache cost
 
@@ -52,7 +52,7 @@
      score-choruses in chorus-chooser.pflow.md
      score-choruses: stable ~1061-token prompt prefix repeats across 136 batch calls. Prewarming writes the prefix once, then lets the remaining calls read it from cache; projected savings are aggregate for the batch, not per item.
      → Add `- prewarm: true` to score-choruses to opt in.
-     → OR add `- prewarm: false` to score-choruses to opt out explicitly (suppresses this warning).
+     → OR add `- prewarm: false` to score-choruses to silence this recommendation (use when you've decided not to prewarm — `false` is a marker for the analyzer, not a runtime toggle).
 
   3. Sub-workflow cache undeclared in review-emotional-architecture.pflow.md — declare 3 inputs  saves ~$0.0078/run
      review-emotional-architecture.pflow.md
@@ -192,7 +192,7 @@
   generate-suno-prompt     gemini/gemini-2.5-flash   13,776       7,909            —    57%      4
 
 ### lyrics-generator.pflow.md
-  curate-briefs            gemini/gemini-2.5-flash   54,752           —            ?     ?%      4  no stable 4,096-token repeated prefix found
+  curate-briefs            gemini/gemini-2.5-flash   54,752           —          412     1%      4
 
 ### review-accuracy.pflow.md (called by craft-reviews)
   review                   gemini/gemini-2.5-flash   34,481           —       28,144    82%      4  cacheable inputs: concept_brief, creative_direction, lyrics
@@ -230,7 +230,7 @@
   Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 
   Token estimate confidence:
-    · score-choruses: savings projected from a stable prompt prefix repeated across observed calls. Declare prompt_cache to confirm.
+    · score-choruses, curate-briefs: savings projected from a stable prompt prefix repeated across the batch. Declare prompt_cache to confirm.
     · select-chorus, 8 review nodes: savings projected from values flowing in from parent workflow(s). See Recommended actions for the per-boundary fix.
 
 ## Per-child analyze-cache commands

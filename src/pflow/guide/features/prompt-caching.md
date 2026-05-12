@@ -149,13 +149,14 @@ of silently rounding an unsupported value.
 
 ## Batch Nodes
 
-For `type: llm` nodes with `batch:`, add `prewarm: true` when the analyzer
-recommends it:
+For `type: llm` nodes with `batch:`, add `prewarm: true` when the stable
+text before the first per-item reference is large enough for the provider's
+prompt cache minimum (1k–4k tokens depending on the model):
 
 ````markdown
 ### score-each-chorus
 
-Score every chorus against the rubric.
+Score every chorus against a multi-page rubric.
 
 - type: llm
 - prewarm: true
@@ -164,24 +165,50 @@ Score every chorus against the rubric.
     parallel: true
 
 ```prompt
-Use this rubric:
+You are evaluating song choruses against the rubric below.
+
 ${rubric}
+
+---
 
 Score this chorus:
 ${item.text}
 ```
 ````
 
-Without `prewarm`, parallel batch items can all try to write the same provider
-cache prefix at once. With `prewarm`, the first item writes the prefix, then
-the remaining items fan out as reads.
+`${rubric}` here is a placeholder for substantial stable text — detailed
+scoring criteria, reference materials, etc. — repeated identically across
+every batch call. With `prewarm`, the first item writes that prefix to the
+provider's cache, then the remaining items fan out as reads.
 
-Prompt cache analysis sees through `- inputs:` indirection: a batch LLM node
-that maps batch-item fields onto template variables, such as
-`concept_md: ${item.concept_md}`, is analyzed identically to one using
-`${item.concept_md}` directly. Reusable `.prompt.md` files using indirected
-refs receive accurate prewarm, shared-context, and partial-declaration
-recommendations.
+**The cache prefix ends at the first per-item reference.** Everything
+before `${item.text}` — including static refs like `${rubric}` — is
+resolved into the cached prefix. If you mix per-item refs into the middle,
+the cached prefix is cut short, so put `${item.X}` content last.
+
+If the analyzer doesn't recommend `prewarm: true`, adding it won't help —
+the static prefix is below the provider's minimum or doesn't exist.
+
+`prewarm: false` is a **marker for the analyzer**, not a runtime toggle —
+runtime treats it the same as omitting the field. Use it to record that you've
+considered prewarming and decided against it; the analyzer will then stop
+recommending it on that node.
+
+### Combining `## Cache` with prewarm
+
+`## Cache` (declared chunks) and `prewarm: true` (auto batch-prefix) are
+**orthogonal** — they place cache markers in different message regions and
+can fire together. Pick by the shape of your workflow:
+
+- **Only `prewarm: true`** when the stable bytes are confined to one batch
+  node's template and don't appear elsewhere in the workflow.
+- **Only `## Cache` + `prompt_cache: [chunk]`** when a value (rubric,
+  reference document, instructions) is used by **multiple LLM nodes** that
+  should share the cache, but no individual node is a batch.
+- **Both** when a batch node uses a shared value AND has additional stable
+  instruction text before the first per-item ref — declare the shared
+  value in `## Cache` so other nodes also cache it, and add `prewarm: true`
+  so the extra template text caches across batch items.
 
 ## Python-Assembled Prompts
 

@@ -769,3 +769,117 @@ each item bites on first principles otherwise.
   on the analyze result) rather than introducing a new baseline case —
   baselines require CLI parameter passing for object inputs, which is
   operationally heavy for what is a unit-test-shaped invariant.
+
+## 2026-05-12 — Task 159 Followups — Prompt-caching guide finalization
+
+Followup pass on `src/pflow/guide/features/prompt-caching.md` after the
+Bug 11 / 13 / 15 bundle landed and after verification work on prewarm ×
+`## Cache` interaction (see
+`scratchpads/experiments/prewarm-cache-interaction/FINDINGS.md`).
+
+Three targeted edits to the Batch Nodes section:
+
+- **Replaced the misleading example.** The previous `score-each-chorus`
+  example used a tiny rubric placeholder (~15 tokens) without saying
+  prewarm needs ≥1k–4k tokens to fire. Rewrote with a multi-paragraph
+  rubric placeholder + an explicit size note. The cache-boundary rule
+  now appears in prose right under the example: "The cache prefix ends
+  at the first per-item reference. Everything before `${item.text}` —
+  including static refs like `${rubric}` — is resolved into the cached
+  prefix. If you mix per-item refs into the middle, the cached prefix
+  is cut short, so put `${item.X}` content last." (Concept 4 from the
+  field report — the highest-yield optimization pattern in the
+  lyrics-generator session, previously documented nowhere.)
+- **Deleted the `- inputs:` indirection paragraph.** The paragraph
+  defensively explained why a previously-fixed bug (PR #390) now works.
+  An agent reading it gains nothing actionable; an agent NOT using
+  `- inputs:` is confused by it. The runtime behavior the paragraph
+  described is correct and remains correct — the documentation just
+  doesn't need to assure agents of it.
+- **Added a "Combining `## Cache` with prewarm" subsection.** Three
+  bullet decision-rule: "only prewarm" / "only `## Cache`" / "both"
+  based on workflow shape. The combined case is verified mechanically
+  (both render paths fire independently — `_build_user_message_blocks`
+  for prewarm, `_build_system_blocks` for declared cache — producing
+  two cache_control markers per call within Anthropic's 4-marker limit).
+
+### Files
+
+- `src/pflow/guide/features/prompt-caching.md` — Batch Nodes section
+  rewrite (size guidance + revised example + boundary rule + combining
+  subsection); `- inputs:` paragraph removed.
+- `.taskmaster/tasks/task_159/baseline/12-real-world-lyrics-generator/04-guide-auto-detect/expected-stdout.txt`
+  regenerated to match.
+
+### Verification
+
+- `pflow guide prompt-caching` renders the section as expected.
+- Guide test suite: 61 passed.
+- Baseline harness: 5 passed, 0 drifted after the one-case
+  regeneration.
+
+### Out of scope / known followups
+
+Verification of the rewrite (`scratchpads/experiments/prewarm-cache-interaction/FINDINGS.md`)
+surfaced 3 analyzer projection bugs that should be addressed
+separately:
+
+- **Bug A (HIGH)** — interleaved per-item ref: analyzer reports 100%
+  cache ratio because `_estimate_batch_prefix_cacheable_tokens` returns
+  cohort tokens (`prefix × call_count`) and the downstream clamp
+  `min(cohort, input_per_call)` always loses to `input_per_call` for
+  batch_size ≥ 2.
+- **Bug B (HIGH)** — prewarm-only below provider min is silent:
+  `below_min_tokens_detector` gates on `declared_prompt_cache` being
+  non-empty, so auto-batch-prefix below threshold doesn't warn.
+- **Bug C (MEDIUM)** — combined prewarm + declared: prewarm's
+  contribution is invisible in `cacheable_tokens_estimated` (the two
+  evidence tiers are mutually exclusive in `_prefer_batch_prefix_cacheable_tokens`).
+
+The cache rendering layer itself is correct (verified via direct code
+read + classifier isolation tests); these bugs only affect the
+analyzer's projection numbers, not what actually goes on the wire.
+
+## 2026-05-12 — Task 159 Followups — Bug 11 / 13 / 15 wording bundle
+
+Three small wording fixes targeting analyzer-internal jargon in agent-facing
+text. Bundled because each was a localized string change; no logic affected.
+
+- **Bug 11 — `prewarm: false` reads as a behavior toggle.** Catalog suggestion
+  for `cache.batch-prewarm-recommended` (`warning_catalog.py:337`) rewritten
+  from "opt out explicitly (suppresses this warning)" to "silence this
+  recommendation (use when you've decided not to prewarm — `false` is a marker
+  for the analyzer, not a runtime toggle)." Added a 4-line clarification under
+  Batch Nodes in `src/pflow/guide/features/prompt-caching.md` so agents
+  arriving from the guide see the same framing.
+- **Bug 13 — "pass-through" jargon.** `_format_passthrough_footnote`
+  rewritten to lead with "~$X of the above was paid by {node} but couldn't be
+  analyzed for cache savings ({reason})" and follow with "Caching may still
+  apply at runtime if its content repeats across calls." Multi-node form
+  inlines the per-node reason rather than CSV-only.
+- **Bug 15 — `medium_from_memo` enum leaks to text.** Header Confidence line
+  now renders plain English: `Confidence: medium — token counts from
+  memoized prior runs (N of N nodes)` / `Confidence: high — token counts
+  from this run's trace (N of N nodes)`. JSON `estimate_confidence` keeps the
+  raw enum for machine consumers.
+
+### Files
+
+- `src/pflow/core/cache_analysis/warning_catalog.py` — Bug 11 suggestion.
+- `src/pflow/core/cache_analysis/render_text.py` — Bug 13
+  `_format_passthrough_footnote` + Bug 15 new `_format_confidence_line`.
+- `src/pflow/guide/features/prompt-caching.md` — Bug 11 paragraph.
+- `tests/test_core/test_cache_analysis_renderers.py` — 4 wording assertion
+  updates + 4 negative assertions locking out `pass-through`,
+  `medium_from_memo`, `high_from_trace`.
+- `tests/test_core/test_cache_analysis_analyze.py` — 1 assertion migration.
+
+### Verification
+
+- Focused cache-analysis + CLI suite: 411 passed.
+- Baseline harness: 72 passed, 3 drifted (all 3 pre-existing on HEAD —
+  parser-error TTL wording; verified by stash-and-rerun). Regenerated
+  `10-live-recordings/05-gemini-lyrics-generator` and
+  `12-real-world-lyrics-generator/04-guide-auto-detect` to bundle these
+  changes with the stale-but-correct guide updates from earlier sweeps.
+- Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.

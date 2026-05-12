@@ -1300,11 +1300,13 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     assert "Cost without caching:" in text
     assert "Cost without caching (projected subset):" not in text
     # Old standalone Excluded line is gone in the folded path; the
-    # excluded node + reason move into the pass-through footnote.
+    # excluded node + reason move into the cost-exclusion footnote
+    # (Bug 13: "pass-through" jargon replaced with plain language).
     assert "Excluded from analysis:" not in text
-    assert "of the above is pass-through for generate" in text
+    assert "of the above was paid by generate" in text
+    assert "couldn't be analyzed for cache savings" in text
     assert "model varies per call" in text  # now in the footnote
-    assert "projected savings unavailable" in text
+    assert "pass-through" not in text
     assert "Actual savings (this run):" in text
     # The savings line no longer inlines (excludes ...); the cohort context
     # is in the footnote below.

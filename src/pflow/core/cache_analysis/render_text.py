@@ -208,8 +208,25 @@ def _render_header(analysis: CacheAnalysis) -> str:
         confidence_says_full_trace = label == "high_from_trace" and source_count == total_rows
         suppress = evidence_complete_all_executed and confidence_says_full_trace
         if not suppress:
-            lines.append(f"  Confidence: {label} ({source_count} of {total_rows} nodes)")
+            lines.append(_format_confidence_line(label, source_count, total_rows))
     return "\n".join(lines)
+
+
+def _format_confidence_line(label: str, source_count: int, total_rows: int) -> str:
+    """Render the Confidence header line in plain English.
+
+    The raw enum values (``medium_from_memo`` / ``high_from_trace``) leak
+    analyzer-internal taxonomy to agents reading the text output. Replace
+    with a tier word + plain-English source phrase. JSON keeps the enum
+    in ``estimate_confidence`` for machine consumers.
+    """
+    if label == "high_from_trace":
+        source = "token counts from this run's trace"
+        tier = "high"
+    else:  # medium_from_memo — the only other label that reaches this branch
+        source = "token counts from memoized prior runs"
+        tier = "medium"
+    return f"  Confidence: {tier} — {source} ({source_count} of {total_rows} nodes)"
 
 
 def _llm_bearing_rollup_entries(
@@ -412,11 +429,14 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
 
 
 def _format_passthrough_footnote(s: AnalysisSummary, excluded_total: float) -> str | None:
-    """Footnote naming the excluded nodes folded into the projection lines.
+    """Footnote naming nodes whose paid cost is included above but excluded
+    from cache-savings projections.
 
-    Wording is deliberately jargon-free and accurate: caching CAN apply to
-    these calls when a model+content combo coincidentally repeats across
-    them — what's unavailable is the static projection, not caching itself.
+    "Pass-through" jargon was confusing for fresh agents (Bug 13); the
+    rewrite leads with what the amount represents and why no projection is
+    available. Caching may still apply at the provider level when model +
+    content combinations repeat across calls — that's surfaced as a follow-up
+    sentence rather than the first clause.
     """
     if not s.projection_exclusions:
         return None
@@ -429,15 +449,17 @@ def _format_passthrough_footnote(s: AnalysisSummary, excluded_total: float) -> s
         e = sorted_exclusions[0]
         reason = _EXCLUSION_REASON_LABELS.get(e.reason, e.reason)
         return (
-            f"  · {amount} of the above is pass-through for {e.node_path} "
-            f"({reason} — projected savings unavailable; real savings could "
-            "be higher if model+content combos repeat)."
+            f"  · {amount} of the above was paid by {e.node_path} but couldn't be "
+            f"analyzed for cache savings ({reason}). Caching may still apply at "
+            "runtime if its content repeats across calls."
         )
-    node_csv = ", ".join(e.node_path for e in sorted_exclusions)
+    node_csv = ", ".join(
+        f"{e.node_path} ({_EXCLUSION_REASON_LABELS.get(e.reason, e.reason)})" for e in sorted_exclusions
+    )
     return (
-        f"  · {amount} of the above is pass-through for: {node_csv} "
-        "(projected savings unavailable; real savings could be higher if "
-        "model+content combos repeat)."
+        f"  · {amount} of the above was paid by nodes that couldn't be analyzed "
+        f"for cache savings: {node_csv}. Caching may still apply at runtime if "
+        "their content repeats across calls."
     )
 
 

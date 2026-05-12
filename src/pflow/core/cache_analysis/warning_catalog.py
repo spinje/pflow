@@ -334,7 +334,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         suggestions_template=(
             "Add `- prewarm: true` to {node_id} to opt in.",
-            "OR add `- prewarm: false` to {node_id} to opt out explicitly (suppresses this warning).",
+            "OR add `- prewarm: false` to {node_id} to silence this recommendation (use when you've decided not to prewarm — `false` is a marker for the analyzer, not a runtime toggle).",
         ),
         path_template="nodes[id={node_id}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
