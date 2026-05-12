@@ -265,6 +265,30 @@ def test_gemini_auto_batch_prefix_marker_uses_seconds(mock_llm_client) -> None:
     assert blocks[0]["cache_control"] == {"type": "ephemeral", "ttl": "300s"}
 
 
+def test_gemini_auto_batch_prefix_marker_uses_dynamic_ttl_seconds(mock_llm_client) -> None:
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node(
+        "score-choruses",
+        model=GEMINI,
+        resolved_prompt="Rubric: brief\n\nScore: hello",
+    )
+    shared: dict[str, Any] = {}
+    _install_cache_render(
+        shared,
+        "score-choruses",
+        _ctx_batch(
+            unresolved_prompt="Rubric: brief\n\nScore: ${item.text}",
+            ttl="11m",
+        ),
+    )
+
+    node.run(shared)
+
+    blocks = mock_llm_client.call_history_full[-1]["user_message_blocks"]
+    assert blocks is not None
+    assert blocks[0]["cache_control"] == {"type": "ephemeral", "ttl": "660s"}
+
+
 # --- Combined: declared cache + auto-batch-prefix → both markers fire ------
 
 

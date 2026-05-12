@@ -18,7 +18,10 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any
 
+import pytest
+
 from pflow.core.cache_render import CacheBlockIR, CacheChunkIR, CacheRenderContext
+from pflow.core.exceptions import UnsupportedCacheTTLError
 from pflow.nodes.llm import LLMNode
 
 ANTHROPIC = "anthropic/claude-sonnet-4-5"
@@ -115,6 +118,24 @@ def test_anthropic_ttl_1h_emits_marker_with_ttl(mock_llm_client) -> None:
 
     sent = mock_llm_client.call_history_full[-1]["system"]
     assert sent[-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_anthropic_dynamic_minute_ttl_raises_structured_error(mock_llm_client) -> None:
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node("write-lyrics")
+    shared = {"concept": "a song about courage"}
+    _install_cache_render(
+        shared,
+        "write-lyrics",
+        _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",), ttl="11m"),
+    )
+
+    with pytest.raises(UnsupportedCacheTTLError) as excinfo:
+        node.run(shared)
+
+    diag = excinfo.value.to_diagnostics()[0]
+    assert diag.id == "cache.unsupported-provider-ttl"
+    assert diag.context["ttl_seconds"] == 660
 
 
 # --- Order, content, and chunk structure -----------------------------------
@@ -643,6 +664,7 @@ def test_build_cache_control_marker_anthropic_1h() -> None:
     from pflow.core.cache_render import _build_cache_control_marker
 
     assert _build_cache_control_marker("anthropic", "1h") == {"type": "ephemeral", "ttl": "1h"}
+    assert _build_cache_control_marker("anthropic", "60m") == {"type": "ephemeral", "ttl": "1h"}
 
 
 def test_build_cache_control_marker_unknown_provider_emits_bare() -> None:
@@ -659,7 +681,7 @@ def test_build_cache_control_marker_unknown_provider_emits_bare() -> None:
 GEMINI = "gemini/gemini-2.5-flash"
 
 
-def test_gemini_default_ttl_emits_bare_ephemeral_marker(mock_llm_client) -> None:
+def test_gemini_default_ttl_emits_300s_marker(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=GEMINI)
     shared = {"concept": "a song about courage"}
@@ -672,7 +694,7 @@ def test_gemini_default_ttl_emits_bare_ephemeral_marker(mock_llm_client) -> None
     node.run(shared)
 
     sent = mock_llm_client.call_history_full[-1]["system"]
-    assert sent[-1]["cache_control"] == {"type": "ephemeral"}
+    assert sent[-1]["cache_control"] == {"type": "ephemeral", "ttl": "300s"}
 
 
 def test_gemini_ttl_5m_emits_300s_marker(mock_llm_client) -> None:
@@ -709,10 +731,35 @@ def test_gemini_ttl_1h_emits_3600s_marker(mock_llm_client) -> None:
     assert sent[-1]["cache_control"] == {"type": "ephemeral", "ttl": "3600s"}
 
 
+@pytest.mark.parametrize(
+    ("ttl", "wire_ttl"),
+    [
+        ("1m", "60s"),
+        ("11m", "660s"),
+        ("55m", "3300s"),
+        ("60m", "3600s"),
+    ],
+)
+def test_gemini_dynamic_minute_ttl_emits_seconds_marker(mock_llm_client, ttl: str, wire_ttl: str) -> None:
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node("write-lyrics", model=GEMINI)
+    shared = {"concept": "a song about courage"}
+    _install_cache_render(
+        shared,
+        "write-lyrics",
+        _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl=ttl),
+    )
+
+    node.run(shared)
+
+    sent = mock_llm_client.call_history_full[-1]["system"]
+    assert sent[-1]["cache_control"] == {"type": "ephemeral", "ttl": wire_ttl}
+
+
 def test_build_cache_control_marker_gemini_default() -> None:
     from pflow.core.cache_render import _build_cache_control_marker
 
-    assert _build_cache_control_marker("gemini", None) == {"type": "ephemeral"}
+    assert _build_cache_control_marker("gemini", None) == {"type": "ephemeral", "ttl": "300s"}
 
 
 def test_build_cache_control_marker_gemini_5m_seconds_suffix() -> None:
@@ -725,6 +772,7 @@ def test_build_cache_control_marker_gemini_1h_seconds_suffix() -> None:
     from pflow.core.cache_render import _build_cache_control_marker
 
     assert _build_cache_control_marker("gemini", "1h") == {"type": "ephemeral", "ttl": "3600s"}
+    assert _build_cache_control_marker("gemini", "60m") == {"type": "ephemeral", "ttl": "3600s"}
 
 
 # Note: the Gemini multi-marker collapse test (when Phase D auto-batch-prefix
@@ -842,6 +890,22 @@ def test_openai_prompt_cache_retention_24h_for_ttl_1h(mock_llm_client) -> None:
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="1h"),
+    )
+
+    node.run(shared)
+
+    options = mock_llm_client.call_history_full[-1]["model_options"]
+    assert options.get("prompt_cache_retention") == "24h"
+
+
+def test_openai_prompt_cache_retention_24h_for_ttl_60m(mock_llm_client) -> None:
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node("write-lyrics", model=OPENAI)
+    shared = {"concept": "a song"}
+    _install_cache_render(
+        shared,
+        "write-lyrics",
+        _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="60m"),
     )
 
     node.run(shared)

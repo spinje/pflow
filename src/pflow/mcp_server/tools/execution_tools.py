@@ -495,6 +495,7 @@ async def analyze_cache(
       - cache.cross-workflow-rename-detected
       - cache.discrepancy
       - cache.invalid-on-non-llm
+      - cache.unsupported-provider-ttl
       - cache.prewarm-no-prefix
       - cache.consolidate-to-root-recommended
       - cache.heterogeneous-models-fragment-cache

@@ -70,6 +70,13 @@ def test_parses_valid_cache_block_with_multiple_chunks() -> None:
     assert names == ["concept", "concept_brief", "chorus-chooser.winning_chorus"]
 
 
+@pytest.mark.parametrize("ttl", ["1m", "2m", "11m", "55m", "60m", "1h"])
+def test_parses_supported_cache_ttl_values(ttl: str) -> None:
+    body = f"- ttl: {ttl}\n\n```cache\nx\n${{a}}\n```"
+    result = parse_markdown(_wrap(body))
+    assert result.ir["cache"]["ttl"] == ttl
+
+
 def test_chunk_identifier_strips_template_braces() -> None:
     body = "```cache\nFoo:\n${a-b.c_d}\n```"
     result = parse_markdown(_wrap(body))
@@ -122,8 +129,9 @@ def test_chunks_carry_source_line_metadata() -> None:
 # ------------------------------------------------------------------------------
 
 
-def test_invalid_ttl_value_rejected() -> None:
-    body = "- ttl: 30m\n\n```cache\nx\n${a}\n```"
+@pytest.mark.parametrize("ttl", ["0m", "61m", "2h", "90s", "1.5m", "3600s", "5 min"])
+def test_invalid_ttl_value_rejected(ttl: str) -> None:
+    body = f"- ttl: {ttl}\n\n```cache\nx\n${{a}}\n```"
     with pytest.raises(MarkdownParseError, match="ttl"):
         parse_markdown(_wrap(body))
 

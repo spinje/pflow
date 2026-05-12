@@ -51,6 +51,7 @@ from pflow.core.cache_render import (  # noqa: F401 — see docstring.
     _resolve_static_prefix_for_cache,
     deterministic_serialize,
 )
+from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.llm_capabilities import anthropic_models_at_threshold, get_min_cache_tokens
 from pflow.core.llm_config import get_default_workflow_model
@@ -1069,11 +1070,19 @@ def _extract_declared_chunks(cache_block: Any) -> list[str]:
 
 
 def _extract_cache_ttl(cache_block: Any) -> str | None:
-    """Read the validated TTL from a ``## Cache`` block (``"5m"`` / ``"1h"``)."""
+    """Read the validated TTL from a ``## Cache`` block."""
     if not isinstance(cache_block, dict):
         return None
     ttl_value = cache_block.get("ttl")
-    return ttl_value if ttl_value in ("5m", "1h") else None
+    if ttl_value is None:
+        return None
+    if not isinstance(ttl_value, str):
+        return None
+    try:
+        parse_cache_ttl(ttl_value)
+    except ValueError:
+        return None
+    return ttl_value
 
 
 def _edge_child_paths(cw_result: Any) -> dict[str, str]:
@@ -5582,22 +5591,13 @@ def _attribute_root_cause(
             {},
         )
 
-    effective_ttl = ttl
-    if effective_ttl is None and provider is not None and provider.name in {"anthropic", "openai", "gemini"}:
-        effective_ttl = "5m"
-
     if cache_age_sec is not None:
         age = float(cache_age_sec)
-        if effective_ttl == "5m" and age >= 300:
+        effective_ttl = parse_cache_ttl(ttl)
+        if age >= effective_ttl.seconds:
             return (
                 "ttl_expiry",
-                f"Cache entry was {age:.0f}s old (>= 5m TTL); upstream write expired",
-                {"affected_workflow": leaf_workflow_path or "<root>"},
-            )
-        if effective_ttl == "1h" and age >= 3600:
-            return (
-                "ttl_expiry",
-                f"Cache entry was {age:.0f}s old (>= 1h TTL)",
+                f"Cache entry was {age:.0f}s old (>= {effective_ttl.label} TTL); upstream write expired",
                 {"affected_workflow": leaf_workflow_path or "<root>"},
             )
 

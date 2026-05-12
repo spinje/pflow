@@ -8,6 +8,7 @@ import logging
 import re
 from typing import Any, Optional
 
+from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl, unsupported_cache_ttl_message
 from pflow.core.diagnostic import (
     CACHE_FAILURE_CATEGORY,
     CACHE_WARNING_CATEGORY,
@@ -651,6 +652,14 @@ def _validate_cache_block(  # noqa: C901
 
         # STEP 3a: per-node ``prompt_cache:`` semantic checks.
         prompt_cache: list[str] = list(prompt_cache_val) if prompt_cache_val else []
+        if (prompt_cache or prewarm_val is True) and cache_block_well_formed:
+            cache_ttl = cache_block.get("ttl") if isinstance(cache_block, dict) else None
+            _emit_unsupported_provider_ttl_diagnostic(
+                node=node,
+                node_id=node_id,
+                cache_ttl=cache_ttl,
+                diagnostics=diagnostics,
+            )
         if not prompt_cache:
             continue
 
@@ -775,6 +784,65 @@ def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fi
             "path": f"nodes[id={node_id}]",
         },
         see_also=["prompt-caching"],
+    )
+
+
+def _emit_unsupported_provider_ttl_diagnostic(
+    *,
+    node: dict[str, Any],
+    node_id: str,
+    cache_ttl: Any,
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Reject literal provider/TTL combinations pflow cannot honor.
+
+    Templated or omitted models defer to runtime, where the compiler has
+    resolved templates and default model injection has already happened.
+    """
+    if cache_ttl is not None and not isinstance(cache_ttl, str):
+        return
+    try:
+        parsed = parse_cache_ttl(cache_ttl)
+    except ValueError:
+        return
+
+    params = node.get("params")
+    if not isinstance(params, dict):
+        return
+    model = params.get("model")
+    if not isinstance(model, str) or _is_templated(model):
+        return
+
+    from pflow.core.llm_providers import detect_provider
+
+    provider = detect_provider(model)
+    provider_name = provider.name if provider else None
+    if is_cache_ttl_supported_by_provider(provider_name, cache_ttl):
+        return
+
+    provider_label = provider_name or "unknown provider"
+    diagnostics.append(
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Cache Failure",
+            node_id=node_id,
+            id="cache.unsupported-provider-ttl",
+            message=unsupported_cache_ttl_message(node_id=node_id, provider_name=provider_name, ttl=cache_ttl),
+            suggestions=[
+                "Use '- ttl: 5m' or '- ttl: 1h' on the workflow ## Cache block.",
+                "Use a Gemini model for cached LLM nodes that need minute-level TTLs.",
+            ],
+            context={
+                "category": CACHE_FAILURE_CATEGORY,
+                "path": f"nodes[id={node_id}].params.model",
+                "provider": provider_label,
+                "model": model,
+                "ttl": parsed.label,
+                "ttl_seconds": parsed.seconds,
+            },
+            see_also=["prompt-caching"],
+        )
     )
 
 

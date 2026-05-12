@@ -100,7 +100,8 @@ def test_core_no_cache_wording_distinguishes_provider_prompt_cache() -> None:
 
 def test_prompt_caching_guide_documents_allowed_ttl_values() -> None:
     result = compose_guide(["prompt-caching"])
-    assert "Allowed values are exactly `5m` and `1h`" in result
+    assert "`1m` through `60m`" in result
+    assert "`1h` is accepted as an alias for `60m`" in result
     assert "Omit `ttl`" in result
     assert "default `5m` behavior" in result
 
@@ -171,7 +172,7 @@ def test_llm_guide_points_to_prompt_caching_without_duplication() -> None:
     assert "pflow guide prompt-caching" in result
     assert "`prompt_cache: [chunk_name]`" in result
     assert "`prewarm: true`" in result
-    assert "Allowed values are exactly `5m` and `1h`" not in result
+    assert "`1m` through `60m`" not in result
 
 
 def test_compose_deduplicates_topics() -> None:

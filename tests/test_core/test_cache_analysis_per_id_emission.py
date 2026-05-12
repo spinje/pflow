@@ -2596,6 +2596,52 @@ def test_discrepancy_fires_for_ttl_expiry_with_implicit_default(tmp_path: Path) 
     assert diag.context["affected_invocations"] == 1
 
 
+def test_discrepancy_uses_dynamic_ttl_seconds(tmp_path: Path) -> None:
+    fresh_trace = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "gemini/gemini-2.5-flash",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 659,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+    workflow_ir = {"cache": {"ttl": "11m", "items": []}, "nodes": []}
+
+    fresh = analyze(workflow_ir, workflow_path="parent.pflow.md", trace_path=fresh_trace, memo_cache=None)
+    fresh_discrepancy = next(d for d in fresh.warnings if d.id == "cache.discrepancy")
+    assert fresh_discrepancy.context is not None
+    assert fresh_discrepancy.context["root_cause"] != "ttl_expiry"
+
+    expired_trace = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "gemini/gemini-2.5-flash",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 660,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+
+    expired = analyze(workflow_ir, workflow_path="parent.pflow.md", trace_path=expired_trace, memo_cache=None)
+    diag = next(d for d in expired.warnings if d.id == "cache.discrepancy")
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "ttl_expiry"
+    assert ">= 11m TTL" in diag.context["root_cause_summary"]
+
+
 def test_discrepancy_fires_for_chunk_skipped_with_dotted_path(tmp_path: Path) -> None:
     trace_path = _write_trace(
         tmp_path,

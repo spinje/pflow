@@ -130,21 +130,22 @@ dynamic per-item text should come after stable instructions and cached chunks.
 
 ## TTL
 
-Default TTL is 5 minutes. Allowed values are exactly `5m` and `1h`; other TTLs
-are rejected. Omit `ttl` for the default `5m` behavior.
+Default TTL is 5 minutes. Omit `ttl` for the default `5m` behavior, or set
+`1m` through `60m`; `1h` is accepted as an alias for `60m`.
 
 ````markdown
 ## Cache
 
-- ttl: 1h
+- ttl: 11m
 
 ```cache
 ...
 ```
 ````
 
-Use `1h` when later calls or reruns will read the same prefix within an hour.
-Longer TTL writes cost more, so prefer the analyzer recommendation when unsure.
+Gemini supports minute-level TTLs through pflow. Anthropic and OpenAI only
+support pflow's discrete `5m` and `1h` behaviors today; pflow errors instead
+of silently rounding an unsupported value.
 
 ## Batch Nodes
 
@@ -300,6 +301,7 @@ cache-shape advisories:
 |---|---|
 | `cache.order-mismatch` | Reorder `prompt_cache: [...]` to match the order of chunks in `## Cache`. |
 | `cache.invalid-on-non-llm` | Remove `prompt_cache:` or `prewarm:` from non-LLM nodes; those fields only apply to `type: llm`. |
+| `cache.unsupported-provider-ttl` | Use `5m`/`1h`, or switch cached LLM nodes to Gemini for minute-level TTLs. |
 | `cache.unused-chunk` | Remove the unused chunk from `## Cache`, or add it to a node's `prompt_cache: [...]` list. |
 | `cache.padding-advisory` | Extend the node's `prompt_cache: [...]` list to include the earlier chunks the analyzer suggests. |
 | `cache.prewarm-no-prefix` | Move stable instructions before the first `${item...}` reference, or remove `prewarm: true`. |

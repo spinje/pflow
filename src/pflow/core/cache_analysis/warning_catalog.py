@@ -5,7 +5,7 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-22 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
+23 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
 ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
@@ -122,6 +122,12 @@ _INVALID_ON_NON_LLM_MESSAGE = (
     "{is_or_are_capitalized} only valid on type: llm nodes."
 )
 
+_UNSUPPORTED_PROVIDER_TTL_MESSAGE = (
+    "Node '{node_id}' uses {provider} but ## Cache ttl is '{ttl}'. "
+    "{provider} prompt caching through pflow does not support minute-level TTLs. "
+    "Use '- ttl: 5m' or '- ttl: 1h', or switch cached LLM nodes to Gemini."
+)
+
 # cache.unused-chunk — shipped by data_flow.py:892 (_make_unused_chunk_diagnostic)
 _UNUSED_CHUNK_MESSAGE = (
     "Cache chunk '{chunk_name}' is declared in ## Cache but no node references it via prompt_cache:."
@@ -221,6 +227,25 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="nodes[id={node_id}]",
         headline_template="Cache field on non-LLM node — remove {invalid_fields_csv} from {node_id}",
+    ),
+    "cache.unsupported-provider-ttl": CacheWarningSpec(
+        severity=Severity.ERROR,
+        source="validator",
+        category=CACHE_FAILURE_CATEGORY,
+        message_template=_UNSUPPORTED_PROVIDER_TTL_MESSAGE,
+        required_context_keys=(
+            ("node_id", str),
+            ("provider", str),
+            ("model", str),
+            ("ttl", str),
+            ("ttl_seconds", int),
+        ),
+        suggestions_template=(
+            "Use '- ttl: 5m' or '- ttl: 1h' on the workflow ## Cache block.",
+            "Use a Gemini model for cached LLM nodes that need minute-level TTLs.",
+        ),
+        path_template="nodes[id={node_id}].params.model",
+        headline_template="Unsupported cache TTL for {provider} — change TTL or switch {node_id} to Gemini",
     ),
     # === Analytical tier (emitted by analyze-cache / --dry-run only) ===
     "cache.shared-context-undeclared": CacheWarningSpec(
@@ -790,6 +815,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     # priority here is belt-and-suspenders for ordering ERRORs among themselves).
     "cache.order-mismatch": 5,
     "cache.invalid-on-non-llm": 5,
+    "cache.unsupported-provider-ttl": 5,
     "cache.prompt-body-duplicates-cache": 5,
     "llm.thinking-temperature-mismatch": 5,
     # Sub-path shadow is WARNING but more actionable than cache.unused-chunk —

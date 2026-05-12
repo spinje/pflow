@@ -189,6 +189,16 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
+        "cache.unsupported-provider-ttl": (
+            "X",
+            {
+                "provider": "anthropic",
+                "model": "anthropic/claude-sonnet-4-5",
+                "ttl": "11m",
+                "ttl_seconds": 660,
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
         "cache.prewarm-no-prefix": (
             "score",
             {"batch_alias": "item", "first_dynamic_position": 0, "affected_workflow": "x.pflow.md"},
@@ -400,6 +410,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     Producers covered:
     - ``validate_data_flow`` → ``cache.order-mismatch``,
       ``cache.unused-chunk``, ``cache.invalid-on-non-llm``,
+      ``cache.unsupported-provider-ttl``,
       ``cache.prompt-body-duplicates-cache``,
       ``cache.prompt-body-shadows-cache``
     - ``analyze`` → ``cache.below-min-tokens``, ``cache.prewarm-no-prefix``
@@ -501,6 +512,30 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     # V6 combined-diagnostic shape: invalid_fields list survives JSON.
     assert payload["context"]["invalid_fields"] == ["prompt_cache"]
     seen_ids.add("cache.invalid-on-non-llm")
+
+    # cache.unsupported-provider-ttl: minute-level TTL on a cached non-Gemini node.
+    unsupported_provider_ttl_ir: dict[str, Any] = {
+        "inputs": {"a": {"type": "string"}},
+        "cache": {
+            "ttl": "11m",
+            "items": [{"name": "a", "var": "a", "prose_before": "A:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "gen",
+                "type": "llm",
+                "prompt_cache": ["a"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "go"},
+            }
+        ],
+        "edges": [],
+    }
+    diags = validate_data_flow(unsupported_provider_ttl_ir, check_inputs=False)
+    found = [d for d in diags if d.id == "cache.unsupported-provider-ttl"]
+    assert found, f"validate_data_flow did not emit cache.unsupported-provider-ttl: ids={[d.id for d in diags]}"
+    payload = _round_trip(found[0])
+    assert payload["context"]["ttl_seconds"] == 660
+    seen_ids.add("cache.unsupported-provider-ttl")
 
     # --- analyzer-emitted ids (analyze.py) -------------------------------
     # cache.below-min-tokens: a node opts into a small declared cache —
