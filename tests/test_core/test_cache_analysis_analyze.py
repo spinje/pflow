@@ -1840,6 +1840,206 @@ def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block
     assert "cache.below-min-tokens" not in {d.id for d in result.warnings}
 
 
+def test_per_call_row_body_plus_chunks_invariant() -> None:
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"bundle": {"type": "object"}},
+        "cache": {"items": [{"name": "bundle", "var": "bundle", "prose_before": "Bundle:\n"}]},
+        "nodes": [
+            {
+                "id": "cached",
+                "type": "llm",
+                "prompt_cache": ["bundle"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Tiny field: ${bundle.tiny_field}"},
+            },
+            {
+                "id": "plain",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "No cache here."},
+            },
+        ],
+        "edges": [],
+    }
+    result = analyze(
+        workflow_ir,
+        parameters={"bundle": {"tiny_field": "ok", "big": "padding " * 3000}},
+        workflow_path="x",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    assert result.per_call
+    for row in result.per_call:
+        assert row.body_tokens_estimated + row.chunk_tokens_estimated == row.input_tokens_estimated
+        assert row.body_tokens_estimated >= 0
+
+
+def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: Path) -> None:
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"bundle": {"type": "object"}},
+        "cache": {"items": [{"name": "bundle", "var": "bundle", "prose_before": "Bundle:\n"}]},
+        "nodes": [
+            {
+                "id": "use-tiny-field",
+                "type": "llm",
+                "prompt_cache": ["bundle"],
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "The tiny field is ${bundle.tiny_field}.",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path="x",
+        nodes=[
+            _llm_trace_event(
+                "use-tiny-field",
+                model="anthropic/claude-sonnet-4-5",
+                input_tokens=6_000,
+                output_tokens=5,
+                cost_usd=0.001,
+            )
+        ],
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"bundle": {"tiny_field": "ok", "big": "padding " * 6000}},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    warning = next(d for d in result.warnings if d.id == "cache.prompt-body-shadows-cache")
+
+    assert warning.context["shadowed_chunk_names"] == ("bundle",)
+    assert warning.context["body_only_cost_usd_per_call"] > 0
+    assert warning.context["with_cache_cost_usd_per_call"] > warning.context["body_only_cost_usd_per_call"]
+
+    # End-to-end: enrichment context propagates through action build into the
+    # rendered text. Closes the gap left by the renderer-only unit test that
+    # bypasses the enrichment pipeline. Mutation contract: drop
+    # ``context=dict(ctx)`` in ``view_helpers._build_actions`` -> the
+    # cost-comparison line never reaches text output -> assertion fails.
+    from pflow.core.cache_analysis.render_text import render_text
+
+    rendered = render_text(result)
+    assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field`" in rendered
+    assert "would drop per-call cost" in rendered
+    assert "compares against inlining the full chunk uncached" in rendered
+
+
+def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> None:
+    from pflow.core.cache_analysis.cost_estimation import (
+        _per_call_first_run_with_cache_cost,
+        get_model_pricing,
+    )
+
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"bundle": {"type": "object"}},
+        "cache": {
+            "ttl": "1h",
+            "items": [{"name": "bundle", "var": "bundle", "prose_before": "Bundle:\n"}],
+        },
+        "nodes": [
+            {
+                "id": "use-tiny-field",
+                "type": "llm",
+                "prompt_cache": ["bundle"],
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "The tiny field is ${bundle.tiny_field}.",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path="x",
+        nodes=[
+            _llm_trace_event(
+                "use-tiny-field",
+                model="anthropic/claude-sonnet-4-5",
+                input_tokens=6_000,
+                output_tokens=5,
+                cost_usd=0.001,
+            )
+        ],
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"bundle": {"tiny_field": "ok", "big": "padding " * 6000}},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    row = next(row for row in result.per_call if row.node_path == "use-tiny-field")
+    pricing = get_model_pricing(row.model)
+    assert pricing is not None
+    assert row.output_tokens_estimated is not None
+    warning = next(d for d in result.warnings if d.id == "cache.prompt-body-shadows-cache")
+
+    expected_1h = _per_call_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="1h")
+    default_5m = _per_call_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="5m")
+    assert warning.context["with_cache_cost_usd_per_call"] == pytest.approx(expected_1h)
+    assert warning.context["with_cache_cost_usd_per_call"] > default_5m
+
+
+def test_shadow_warning_unenriched_when_pricing_unavailable(tmp_path: Path) -> None:
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "inputs": {"bundle": {"type": "object"}},
+        "cache": {"items": [{"name": "bundle", "var": "bundle", "prose_before": "Bundle:\n"}]},
+        "nodes": [
+            {
+                "id": "use-tiny-field",
+                "type": "llm",
+                "prompt_cache": ["bundle"],
+                "params": {
+                    "model": "not-a-real-provider/not-a-real-model",
+                    "prompt": "The tiny field is ${bundle.tiny_field}.",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path="x",
+        nodes=[
+            _llm_trace_event(
+                "use-tiny-field",
+                model="not-a-real-provider/not-a-real-model",
+                input_tokens=6_000,
+                output_tokens=5,
+                cost_usd=0.001,
+            )
+        ],
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"bundle": {"tiny_field": "ok", "big": "padding " * 6000}},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    warning = next(d for d in result.warnings if d.id == "cache.prompt-body-shadows-cache")
+
+    assert "body_only_cost_usd_per_call" not in warning.context
+    assert "with_cache_cost_usd_per_call" not in warning.context
+    assert "shadowed_chunk_names" not in warning.context
+
+
 def test_total_input_tokens_trace_total_style_keeps_prompt_tokens() -> None:
     """Trace event where ``input_tokens`` already includes cache portions."""
     from pflow.core.cache_analysis.analyze import _estimate_row_tokens
@@ -1850,7 +2050,7 @@ def test_total_input_tokens_trace_total_style_keeps_prompt_tokens() -> None:
         "cache_read_input_tokens": 0,
         "output_tokens": 50,
     }
-    input_tokens, source, _output, _output_source = _estimate_row_tokens(
+    input_tokens, _chunk_tokens, source, _output, _output_source = _estimate_row_tokens(
         model="anthropic/claude-sonnet-4-5",
         resolved_prompt="ignored",
         memo_cache=None,
@@ -1876,7 +2076,7 @@ def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
         "cache_read_input_tokens": 1500,
         "output_tokens": 50,
     }
-    input_tokens, source, _output, _output_source = _estimate_row_tokens(
+    input_tokens, _chunk_tokens, source, _output, _output_source = _estimate_row_tokens(
         model="gemini/gemini-1.5-flash",
         resolved_prompt="ignored",
         memo_cache=None,
@@ -1899,7 +2099,7 @@ def test_total_input_tokens_trace_split_style_adds_cache_portions() -> None:
         "cache_read_input_tokens": 1500,
         "output_tokens": 10,
     }
-    input_tokens, source, _output, _output_source = _estimate_row_tokens(
+    input_tokens, _chunk_tokens, source, _output, _output_source = _estimate_row_tokens(
         model="anthropic/claude-sonnet-4-5",
         resolved_prompt="ignored",
         memo_cache=None,

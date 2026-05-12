@@ -78,6 +78,12 @@ Version history (``JSON_FORMAT_VERSION``):
   ``"actually_paid_priced_cohort_usd"`` to disambiguate. Pre-fix,
   ``actual_vs_no_cache_delta.kind`` was ``"unavailable"`` whenever any
   exclusion existed even when math was possible.
+- ``"4.1"`` — Bug 4 disclosure fields (additive, same minor):
+  ``per_call[].chunk_tokens_estimated`` and derived
+  ``per_call[].body_tokens_estimated`` added. ``cache.prompt-body-shadows-cache``
+  diagnostics may carry optional analyzer-emitted context keys
+  ``body_only_cost_usd_per_call``, ``with_cache_cost_usd_per_call``, and
+  ``shadowed_chunk_names`` when pricing and output tokens are known.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning

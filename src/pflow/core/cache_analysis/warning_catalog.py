@@ -709,6 +709,11 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
     # patterns (e.g. cache the parent dict, use selected sub-paths inline)
     # but the typical case is mistaken duplication. Consolidated per node
     # for the same reason as the duplicates ID.
+    # Analyzer-tier may add optional cost-disclosure context when
+    # direction='cache_contains_body' fires and pricing/output tokens are known:
+    # ``body_only_cost_usd_per_call``, ``with_cache_cost_usd_per_call``, and
+    # ``shadowed_chunk_names``. They are intentionally absent from
+    # ``required_context_keys`` because validator-only callers cannot price.
     "cache.prompt-body-shadows-cache": CacheWarningSpec(
         severity=Severity.WARNING,
         source="validator",

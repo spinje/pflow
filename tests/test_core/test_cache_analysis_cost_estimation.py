@@ -34,6 +34,9 @@ import pflow.core.cache_analysis.cost_estimation as cost_estimation_module
 from pflow.core.cache_analysis.analyze import PerCallRow, ProjectionExclusion, analyze
 from pflow.core.cache_analysis.cost_estimation import (
     ModelPricing,
+    _aggregate_with_cache_projection,
+    _per_call_body_only_cost,
+    _per_call_first_run_with_cache_cost,
     _pricing_from_dict,
     compute_actually_paid,
     compute_projections,
@@ -63,6 +66,35 @@ def _row(
         data_source="estimator",
         declared_prompt_cache=declared_prompt_cache,
     )
+
+
+def test_per_call_body_only_cost_excludes_chunks() -> None:
+    row = PerCallRow(**{
+        **_row(input_tokens=1_200).__dict__,
+        "chunk_tokens_estimated": 1_000,
+    })
+    pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
+
+    assert _per_call_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
+
+
+def test_per_call_first_run_with_cache_cost_matches_single_row_projection() -> None:
+    row = PerCallRow(**{
+        **_row(
+            input_tokens=1_200,
+            cacheable_tokens=1_000,
+            declared_prompt_cache=["bundle"],
+            is_batch=True,
+            batch_size=3,
+        ).__dict__,
+        "chunk_tokens_estimated": 1_000,
+    })
+    pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
+
+    per_row = _per_call_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
+    projection = _aggregate_with_cache_projection([(row, pricing, 3)], ttl="5m")
+
+    assert projection == pytest.approx(per_row)
 
 
 def _write_trace(tmp_path: Path, workflow_path: str, nodes: list[dict[str, Any]]) -> Path:

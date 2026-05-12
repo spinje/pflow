@@ -946,9 +946,45 @@ def _render_action_list(
 
 
 def _format_action_suggestions(action: RecommendedAction, *, workflow_path: str) -> list[str]:
-    return [
+    lines: list[str] = []
+    if action.warning_id == "cache.prompt-body-shadows-cache":
+        lines.extend(_format_shadow_cache_cost_comparison(action))
+    lines.extend(
         f"     → {_replace_action_scope_as_edit_target(suggestion, action, workflow_path)}"
         for suggestion in action.suggestions
+    )
+    return lines
+
+
+def _format_shadow_cache_cost_comparison(action: RecommendedAction) -> list[str]:
+    """Render cost evidence for prompt-body/cache sub-path shadow warnings."""
+    body_only = action.context.get("body_only_cost_usd_per_call")
+    with_cache = action.context.get("with_cache_cost_usd_per_call")
+    shadowed = action.context.get("shadowed_chunk_names") or ()
+    node_id = action.context.get("node_id") or action.node_id
+    if not isinstance(body_only, (int, float)) or not isinstance(with_cache, (int, float)):
+        return []
+    if not isinstance(node_id, str) or not isinstance(shadowed, (list, tuple)) or not shadowed:
+        return []
+
+    body_value = float(body_only)
+    cache_value = float(with_cache)
+    body_str = _format_dollar_amount(body_value)
+    cache_str = _format_dollar_amount(cache_value)
+    ratio_phrase = ""
+    if body_value > 0:
+        ratio = cache_value / body_value
+        if ratio >= 2.0:
+            ratio_phrase = f" — caching is {ratio:.0f}× more expensive than removing the declaration"
+
+    chunks_csv = ", ".join(f"`{chunk}`" for chunk in shadowed)
+    return [
+        f"     → Removing `prompt_cache:` for {chunks_csv} from `{node_id}` "
+        f"would drop per-call cost from {cache_str} to {body_str}{ratio_phrase}.",
+        "       The body only references a sub-path of the cached value; the rest is sent to the model "
+        "but unused by your prompt.",
+        "       Note: the summary's 'saves N%' compares against inlining the full chunk uncached — "
+        "a different baseline than your body actually uses.",
     ]
 
 

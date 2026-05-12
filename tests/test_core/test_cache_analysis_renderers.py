@@ -2322,6 +2322,28 @@ def test_text_recommended_actions_single_workflow_omits_scope_suffix() -> None:
     assert "rewrite in " not in text
 
 
+def test_shadow_warning_text_renders_cost_comparison_with_ratio() -> None:
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warning = make_diagnostic(
+        "cache.prompt-body-shadows-cache",
+        node_id="use-tiny-field",
+        shadowing_pairs=[{"chunk_name": "bundle", "body_ref": "bundle.tiny_field", "direction": "cache_contains_body"}],
+        overlap_lines="  - cached `${bundle}` overlaps inline `${bundle.tiny_field}` (cache_contains_body)",
+        affected_workflow="/abs/x.pflow.md",
+    )
+    warning.context["body_only_cost_usd_per_call"] = 3.1e-6
+    warning.context["with_cache_cost_usd_per_call"] = 4.96e-4
+    warning.context["shadowed_chunk_names"] = ("bundle",)
+
+    text = render_text(_make_analysis(warnings=[warning]))
+
+    assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field` would drop per-call cost" in text
+    assert "160\u00d7 more expensive" in text
+    assert "The body only references a sub-path of the cached value" in text
+    assert "compares against inlining the full chunk uncached" in text
+
+
 def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> None:
     """JSON keeps both the symbol and its workflow location for consumers that
     dispatch on same-id nodes across parent/child workflows.

@@ -12374,3 +12374,115 @@ here.
 - Defensive sanity cap on `_cost_delta` percentage — deliberately not
   added. The math is structurally correct after the scope fix; sprinkling
   defensive guards on outputs invites future regressions to pass silently.
+
+## 2026-05-12 — Task 159 — Bug 4 fix: body-only cost disclosure for shadowed cache chunks
+
+Implemented the `cache_contains_body` disclosure path without changing summary
+math. `PerCallRow` now carries `chunk_tokens_estimated` and derives
+`body_tokens_estimated`; JSON emits both. `_estimate_row_tokens` returns the
+chunk/body split while preserving `input_tokens_estimated` as the billed total,
+including trace rows by separately tokenizing declared chunks and clamping to
+the normalized input total.
+
+Analyzer-tier enrichment now mutates only `cache.prompt-body-shadows-cache`
+diagnostics whose `shadowing_pairs[].direction == "cache_contains_body"` and
+whose row has pricing plus output tokens. The text renderer prepends the
+body-only vs with-cache cost comparison before the catalog suggestion; JSON
+gets the optional context keys automatically. `RecommendedAction` now carries
+a context snapshot because renderers build actions from diagnostics and the
+cost evidence lives in diagnostic context, not in the catalog template.
+
+Plan deviations, with reasons:
+
+- Enrichment helper accepts `(rows, warnings, output_tokens_by_node)` rather
+  than a partially constructed `CacheAnalysis`. Same mutation boundary, less
+  artificial object construction before summary exists.
+- `_per_call_first_run_with_cache_cost` mirrors
+  `_aggregate_with_cache_projection` for static batches: one write, then read
+  rates for remaining invocations. The plan pseudocode multiplied every batch
+  invocation by write rate, which would diverge from the existing projection
+  primitive.
+- Manual `/private/tmp` reproducer file was not committed/kept; sandbox
+  tooling rejected apply-patch writes outside the repo, and the production-
+  shape tests cover the cost-enrichment path with trace output tokens.
+
+Verification:
+
+- New focused tests: 6 passed.
+- Cache-analysis + analyze-cache CLI suite: 655 passed.
+- Baseline harness with project-local `.venv/bin/uv`: 73 passed, 2 drifted.
+  Remaining drifts are unrelated/pre-existing: guide auto-detect markdown
+  formatting and `15-run-flag-interactions/03-report-with-only` sandbox
+  `/dev/fd` behavior. Intended JSON drifts were regenerated and are limited
+  to the additive per-call body/chunk fields.
+- Near-full sandbox-safe suite: 6,607 passed, 19 skipped after excluding
+  four subprocess tests that call `/opt/homebrew/bin/uv` and panic before
+  Python starts in this sandbox.
+- `ruff check`, `ruff format --check`, and focused `mypy
+  src/pflow/core/cache_analysis/` clean.
+
+### 2026-05-12 follow-up — TTL threading + manual repro
+
+Closed the two loose ends from post-implementation review.
+
+- Shadow-warning cost enrichment now prices with the row's workflow TTL, not
+  `None`. The analyzer builds `ttl_by_workflow` from `cw_result.irs_by_workflow`
+  so sub-workflow rows use their own `## Cache` TTL. Added a regression test
+  proving Anthropic `ttl: 1h` warning context uses the 1h write-rate multiplier
+  and is greater than the 5m/default figure.
+- Manual Bug 4 cost-disclosure verification completed with an input-backed
+  `/private/tmp` workflow plus trace fixture. The original plan's literal
+  `prompt_cache: [bundle]` with cache `${make-bundle.result}` conflicts with
+  the current parser invariant (`chunk.name == chunk.var_expr`), and code-node
+  outputs are not available to greenfield analysis. The manual repro therefore
+  used `bundle` as an input JSON string so the analyzer had resolved chunk
+  bytes, plus `--from-trace` for output tokens. Output showed the expected
+  cost-comparison lines while the summary remained on the inline-full-chunk
+  baseline.
+
+Verification after follow-up:
+
+- Focused shadow/cost tests: 6 passed.
+- Cache-analysis + analyze-cache CLI suite: 656 passed.
+- Near-full sandbox-safe suite: 6,608 passed, 19 skipped.
+- Baseline harness with project-local `.venv/bin/uv`: 73 passed, 2 drifted
+  (same unrelated guide/report drifts as before).
+- `ruff check`, `ruff format --check`, and focused `mypy
+  src/pflow/core/cache_analysis/` clean.
+
+### 2026-05-12 follow-up #2 — review-driven cleanup + end-to-end coverage
+
+Tacit knowledge surfaced by post-implementation review; preserved here because
+each item bites on first principles otherwise.
+
+- **Lyrics-generator does NOT fire `cache.prompt-body-shadows-cache`.** Its
+  `## Cache` chunks declare exactly the paths the body uses (matching, not
+  parent paths), so `cache_contains_body` never triggers despite the workflow
+  being full of object inputs and sub-path-style references. The canonical
+  text baselines at `12-real-world-lyrics-generator/01,03` are correct to
+  remain unchanged by Bug 4. Don't regenerate them expecting drift.
+- **The ratio phrase is load-bearing, not cosmetic.** For Bug 4-scale rows
+  both costs floor at `~<$0.0001` via `_format_dollar_amount`. Without the
+  `caching is Nx more expensive` clause the warning reads as "X vs X" and
+  the 160-300x signal disappears. Preserve the ratio computation in
+  `_format_shadow_cache_cost_comparison` when touching the renderer.
+- **`_cache_ttl_by_workflow` must seed `result[None]` with the fallback
+  TTL.** Inline/synthesized workflows surface rows with `workflow_path=None`;
+  without the `setdefault(None, fallback_ttl)` line, an Anthropic `ttl: 1h`
+  declaration silently reverts to the default 5m write rate for those rows.
+  Pure tuple-key map keyed by string paths is not enough.
+- **`_output_tokens_for_row` once had a string-key fallback that never
+  fired** because the map is built with tuple keys only. Removed; type
+  narrowed to `Mapping[tuple[str | None, str], int | None]`. If a future
+  change adds string keys, the fallback must come back AND the type widen
+  in lockstep.
+- **End-to-end coverage of the enrichment chain lives in the existing
+  production-shape test**, not in a baseline case.
+  `test_shadow_warning_enriched_with_costs_when_cache_contains_body` runs
+  the full `analyze() → enrich → _build_actions → render_text` pipeline and
+  asserts on the rendered output. New end-to-end tests for similar
+  enrichment-style features should follow this pattern (call `render_text`
+  on the analyze result) rather than introducing a new baseline case —
+  baselines require CLI parameter passing for object inputs, which is
+  operationally heavy for what is a unit-test-shaped invariant.
+

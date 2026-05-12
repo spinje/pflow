@@ -227,6 +227,8 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "is_batch": row.is_batch,
         "batch_size_estimated": row.batch_size_estimated,
         "input_tokens_estimated": row.input_tokens_estimated,
+        "chunk_tokens_estimated": row.chunk_tokens_estimated,
+        "body_tokens_estimated": row.body_tokens_estimated,
         "output_tokens_estimated": row.output_tokens_estimated,
         "output_data_source": row.output_data_source,
         "cacheable_tokens_estimated": row.cacheable_tokens_estimated,

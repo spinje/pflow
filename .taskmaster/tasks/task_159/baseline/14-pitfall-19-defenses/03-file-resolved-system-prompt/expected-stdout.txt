@@ -106,6 +106,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 12000,
+      "chunk_tokens_estimated": 6000,
+      "body_tokens_estimated": 6000,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": 6000,

@@ -267,6 +267,40 @@ def _per_call_no_cache_cost(row: PerCallRow, pricing: ModelPricing, output_token
     return float(invocations) * (row.input_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
 
 
+def _per_call_body_only_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
+    """Cost of one call if ``## Cache`` declarations were removed from this node.
+
+    The model receives only the resolved prompt body; declared chunks disappear
+    instead of being inlined uncached. This is the body-only baseline used for
+    ``cache.prompt-body-shadows-cache`` disclosure.
+    """
+    invocations = _invocation_count(row)
+    return float(invocations) * (row.body_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
+
+
+def _per_call_first_run_with_cache_cost(
+    row: PerCallRow,
+    pricing: ModelPricing,
+    output_tokens: int,
+    *,
+    ttl: str | None,
+) -> float:
+    """Cost of this row with declared cache on the first workflow run.
+
+    Mirrors ``_aggregate_with_cache_projection`` for a one-row cohort: one
+    cache write, then cache reads for additional static-batch invocations.
+    """
+    invocations = _invocation_count(row)
+    cacheable = row.cacheable_tokens_estimated or 0
+    non_cacheable = max(0, row.input_tokens_estimated - cacheable)
+    write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
+    total = 0.0
+    for index in range(invocations):
+        rate = write_rate if index == 0 else pricing.cache_read_rate
+        total += cacheable * rate + non_cacheable * pricing.input_rate + output_tokens * pricing.output_rate
+    return total
+
+
 def _per_call_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int | None) -> float | None:
     """Cost of one call with all cacheable tokens at read rate.
 
@@ -633,6 +667,8 @@ __all__ = [
     "ProjectionBreakdown",
     "_aggregate_no_cache_cost",
     "_aggregate_with_cache_projection",
+    "_per_call_body_only_cost",
+    "_per_call_first_run_with_cache_cost",
     "compute_actually_paid",
     "compute_projections",
     "get_model_pricing",

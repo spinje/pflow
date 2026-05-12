@@ -198,12 +198,21 @@ class PerCallRow:
     # row stays node-scoped while these fields preserve exact-model truth.
     observed_models: tuple[str, ...] = ()
     observed_call_count: int = 0
+    # Resolved declared ``## Cache`` chunk content included in
+    # ``input_tokens_estimated``. Consumers that need prompt-body-only costs
+    # derive them from the total instead of maintaining a second total.
+    chunk_tokens_estimated: int = 0
     # Stage 0.3 (Task 159): the inline ``warnings: tuple[str, ...]`` field was
     # vestigial — single production producer never populated it; renderer
     # fallbacks at ``render_text.py:497, 617`` and the JSON ``per_call.warnings``
     # key were dead. Per-row inline warning markers are derived at render time
     # from ``analysis.warnings`` filtered by node_id (see
     # ``render_text._render_per_call``).
+
+    @property
+    def body_tokens_estimated(self) -> int:
+        """Resolved prompt-body tokens, excluding declared cache chunk content."""
+        return self.input_tokens_estimated - self.chunk_tokens_estimated
 
 
 @dataclass(frozen=True)
@@ -255,6 +264,7 @@ class RecommendedAction:
     # message (safety net for diagnostics not yet catalog-driven).
     headline: str = ""
     suggestions: tuple[str, ...] = ()
+    context: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -790,6 +800,16 @@ def analyze(
 
     # --- Confidence aggregation (STRICT per DD#34) ---------------------------
     confidence, coverage = _aggregate_confidence(per_call_rows)
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None] = {
+        (row.workflow_path, row.node_path): row.output_tokens_estimated for row in per_call_rows
+    }
+    ttl_by_workflow = _cache_ttl_by_workflow(cw_result, fallback_workflow_path=lookup_path, fallback_cache=cache_block)
+    _enrich_shadow_warnings_with_costs(
+        rows=per_call_rows,
+        warnings=warnings,
+        output_tokens_by_node=output_tokens_by_node,
+        ttl_by_workflow=ttl_by_workflow,
+    )
 
     scope_workflow_paths = _scope_workflow_paths(scope_mismatch, lookup_path, per_call_rows)
 
@@ -1188,6 +1208,30 @@ def _extract_cache_ttl(cache_block: Any) -> str | None:
     except ValueError:
         return None
     return ttl_value
+
+
+def _cache_ttl_by_workflow(
+    cw_result: Any,
+    *,
+    fallback_workflow_path: str,
+    fallback_cache: Any,
+) -> Mapping[str | None, str | None]:
+    """Map workflow path to its own cache TTL for row-scoped pricing.
+
+    Inline / synthesized workflows surface as rows with ``workflow_path=None``;
+    their TTL falls back to the analyzed workflow's cache block so Anthropic
+    1h declarations don't silently revert to the default write rate.
+    """
+    irs_by_workflow = getattr(cw_result, "irs_by_workflow", {}) or {}
+    result: dict[str | None, str | None] = {}
+    for workflow_path, workflow_ir in irs_by_workflow.items():
+        cache_block = workflow_ir.get("cache") if isinstance(workflow_ir, dict) else None
+        result[str(workflow_path)] = _extract_cache_ttl(cache_block)
+    fallback_ttl = _extract_cache_ttl(fallback_cache)
+    if fallback_workflow_path not in result:
+        result[fallback_workflow_path] = fallback_ttl
+    result.setdefault(None, fallback_ttl)
+    return result
 
 
 def _edge_child_paths(cw_result: Any) -> dict[str, str]:
@@ -1640,6 +1684,116 @@ def _build_call_counts_by_node(ctx: AnalysisContext, cw_result: Any) -> dict[tup
     return counts
 
 
+def _enrich_shadow_warnings_with_costs(
+    *,
+    rows: Sequence[PerCallRow],
+    warnings: Sequence[Diagnostic],
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None],
+    ttl_by_workflow: Mapping[str | None, str | None],
+) -> None:
+    """Attach body-only vs with-cache per-call costs to shadow warnings.
+
+    The validator owns the structural finding. Analyzer-tier enrichment adds
+    cost evidence only when pricing and output tokens are known; otherwise the
+    warning remains a pure structural suggestion.
+    """
+    rows_by_key = {(row.workflow_path, row.node_path): row for row in rows}
+    for diag in warnings:
+        _enrich_one_shadow_warning(
+            diag=diag,
+            rows=rows,
+            rows_by_key=rows_by_key,
+            output_tokens_by_node=output_tokens_by_node,
+            ttl_by_workflow=ttl_by_workflow,
+        )
+
+
+def _enrich_one_shadow_warning(
+    *,
+    diag: Diagnostic,
+    rows: Sequence[PerCallRow],
+    rows_by_key: Mapping[tuple[str | None, str], PerCallRow],
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None],
+    ttl_by_workflow: Mapping[str | None, str | None],
+) -> None:
+    from .cost_estimation import (
+        _per_call_body_only_cost,
+        _per_call_first_run_with_cache_cost,
+        get_model_pricing,
+    )
+
+    if diag.id != "cache.prompt-body-shadows-cache" or diag.context is None:
+        return
+    context = diag.context
+    cache_contains_body_pairs = _cache_contains_body_pairs(context.get("shadowing_pairs"))
+    node_id = context.get("node_id") or diag.node_id
+    if not cache_contains_body_pairs or not isinstance(node_id, str):
+        return
+    row = _row_for_shadow_warning(
+        rows=rows,
+        rows_by_key=rows_by_key,
+        affected_workflow=context.get("affected_workflow"),
+        node_id=node_id,
+    )
+    if row is None or not row.model:
+        return
+    pricing = get_model_pricing(row.model)
+    output_tokens = _output_tokens_for_row(row, output_tokens_by_node)
+    shadowed_chunks = _shadowed_chunk_names(cache_contains_body_pairs)
+    if pricing is None or output_tokens is None or not shadowed_chunks:
+        return
+
+    context["body_only_cost_usd_per_call"] = _per_call_body_only_cost(row, pricing, output_tokens)
+    context["with_cache_cost_usd_per_call"] = _per_call_first_run_with_cache_cost(
+        row,
+        pricing,
+        output_tokens,
+        ttl=_ttl_for_row(row, ttl_by_workflow),
+    )
+    context["shadowed_chunk_names"] = shadowed_chunks
+
+
+def _ttl_for_row(row: PerCallRow, ttl_by_workflow: Mapping[str | None, str | None]) -> str | None:
+    return ttl_by_workflow.get(row.workflow_path)
+
+
+def _output_tokens_for_row(
+    row: PerCallRow,
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None],
+) -> int | None:
+    return output_tokens_by_node.get((row.workflow_path, row.node_path))
+
+
+def _cache_contains_body_pairs(raw_pairs: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_pairs, list):
+        return []
+    return [pair for pair in raw_pairs if isinstance(pair, dict) and pair.get("direction") == "cache_contains_body"]
+
+
+def _row_for_shadow_warning(
+    *,
+    rows: Sequence[PerCallRow],
+    rows_by_key: Mapping[tuple[str | None, str], PerCallRow],
+    affected_workflow: Any,
+    node_id: str,
+) -> PerCallRow | None:
+    workflow_path = affected_workflow if isinstance(affected_workflow, str) else None
+    row = rows_by_key.get((workflow_path, node_id))
+    if row is not None:
+        return row
+    return next((candidate for candidate in rows if candidate.node_path == node_id), None)
+
+
+def _shadowed_chunk_names(pairs: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    return tuple(
+        sorted({
+            str(pair["chunk_name"])
+            for pair in pairs
+            if isinstance(pair.get("chunk_name"), str) and pair.get("chunk_name")
+        })
+    )
+
+
 @dataclass(frozen=True)
 class _RowCrossWorkflowCandidate:
     """Per-row cache opportunity from a cross-workflow boundary."""
@@ -1870,7 +2024,7 @@ def _build_per_call_row(
     declared_subset = node.get("prompt_cache") or None
     if declared_subset is not None and not isinstance(declared_subset, list):
         declared_subset = None
-    input_tokens, source, output_tokens, output_source = _estimate_row_tokens(
+    input_tokens, chunk_tokens, source, output_tokens, output_source = _estimate_row_tokens(
         model=model,
         resolved_prompt=resolved_prompt,
         memo_cache=memo_cache,
@@ -1893,6 +2047,7 @@ def _build_per_call_row(
             output_tokens=output_tokens,
             observed_call_count=observed_call_count,
         )
+        chunk_tokens = min(chunk_tokens, input_tokens)
 
     # Tiered cacheable estimation (mirrors ``estimate_tokens`` /
     # ``estimate_output_tokens``). Trace beats memo/parameters; honest
@@ -1983,6 +2138,7 @@ def _build_per_call_row(
         is_batch=is_batch,
         batch_size_estimated=batch_size,
         input_tokens_estimated=input_tokens,
+        chunk_tokens_estimated=chunk_tokens,
         cacheable_tokens_estimated=cacheable_with_clamp,
         cache_ratio_pct=ratio,
         data_source=source,
@@ -2114,7 +2270,7 @@ def _estimate_row_tokens(
     trace_llm_call: dict[str, Any] | None,
     declared_subset: list[str] | None = None,
     ctx: AnalysisContext | None = None,
-) -> tuple[int, str, int | None, str]:
+) -> tuple[int, int, str, int | None, str]:
     """Estimate input/output tokens for one workflow-scoped row.
 
     ``input_tokens`` is the LLM-billed total — prompt body PLUS cache content.
@@ -2135,6 +2291,20 @@ def _estimate_row_tokens(
             cache_read_input_tokens=int(trace_llm_call.get("cache_read_input_tokens") or 0),
         )
         input_tokens = normalized_usage.input_tokens
+        if declared_subset and ctx is not None and model:
+            chunk_tokens = min(
+                _tokenize_declared_cache_chunks(
+                    declared_subset=declared_subset,
+                    workflow_ir=ctx.workflow_ir,
+                    model=model,
+                    memo_cache=memo_cache,
+                    workflow_path=workflow_path,
+                    ctx=ctx,
+                ),
+                input_tokens,
+            )
+        else:
+            chunk_tokens = 0
         source = "trace"
     else:
         input_tokens, source = estimate_tokens(
@@ -2146,8 +2316,9 @@ def _estimate_row_tokens(
             workflow_path=workflow_path,
             has_unresolved_refs=has_unresolved,
         )
+        chunk_tokens = 0
         if declared_subset and ctx is not None and model:
-            input_tokens += _tokenize_declared_cache_chunks(
+            chunk_tokens = _tokenize_declared_cache_chunks(
                 declared_subset=declared_subset,
                 workflow_ir=ctx.workflow_ir,
                 model=model,
@@ -2155,6 +2326,7 @@ def _estimate_row_tokens(
                 workflow_path=workflow_path,
                 ctx=ctx,
             )
+            input_tokens += chunk_tokens
     if trace_llm_call is not None and isinstance(trace_llm_call.get("output_tokens"), int):
         output_tokens: int | None = int(trace_llm_call["output_tokens"])
         output_source = "trace"
@@ -2165,7 +2337,7 @@ def _estimate_row_tokens(
             node_id=node_id,
             workflow_path=workflow_path,
         )
-    return input_tokens, source, output_tokens, output_source
+    return input_tokens, chunk_tokens, source, output_tokens, output_source
 
 
 def _tokenize_declared_cache_chunks(

@@ -217,6 +217,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
                 message=d.message or "",
                 headline=headline,
                 suggestions=tuple(d.suggestions or ()),
+                context=dict(ctx),
             )
         )
     return actions
