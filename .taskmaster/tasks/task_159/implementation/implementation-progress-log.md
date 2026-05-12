@@ -12093,3 +12093,33 @@ Verification:
   skips for upstream node-output refs remain (correctly — those are
   honest `template_exception` cases for nodes whose templates touch
   runtime values like `${some-node.results}`).
+
+## 2026-05-12 — Task 159 — Bug 3 post-implementation review
+
+Reviewed `a15ca15d` against the root-cause findings. Verdict: solid,
+surgical fix; no correctness issues. Architecture mirrors
+`WorkflowValidator._validate_one_child_call` (placeholder padding +
+`_pflow_workflow_file` injection); the truly-cold-vs-partial split at
+`_predict_one_workflow` is the correct conceptual line.
+
+Load-bearing insight the fix gets right: a node can be tainted by a
+dummied input WITHOUT mentioning it directly, because
+`cache.prompt-body-duplicates-cache` forbids inlining `${var}` when
+declared as a cache chunk — so the only path from node to dummied input
+is `prompt_cache: [name] → chunk var → root`. Without
+`_dummied_cache_chunks` + `_node_prompt_cache_touches` the
+lyrics-generator case would produce placeholder-tainted predictions
+that silently never match the trace (worse than the original bug).
+Locked by `test_node_references_any_detects_cache_chunk_chain`'s
+mutation contract.
+
+Minor observations (none blocking):
+
+- `_predict_node_cache_key` is dead after the return-shape change
+  (docstring says "kept for test callers" but no current callers).
+- `_walk_strings` walks dict values only, not keys — correct in
+  practice (pflow IR places templates in values), worth a docstring
+  sentence.
+- `_dummied_cache_chunks` handles dotted-path/bracket `var:` shapes
+  the parser invariant currently rules out (`chunk.name == chunk.var_expr`,
+  `markdown_parser.py:1754`) — over-general but cheap insurance.
