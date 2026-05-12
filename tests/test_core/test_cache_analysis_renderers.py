@@ -3531,7 +3531,7 @@ def test_per_call_confidence_footer_flags_batch_exemplar_projections() -> None:
 def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_projection() -> None:
     """Batch-prefix projection is structurally different from the parameters-tier
     batch exemplar case: no batch item content participates in the projection.
-    The footer message must say "static prefix repeated across observed calls",
+    The footer message must say "static prefix repeated across the batch",
     NOT "first batch item as a representative sample" — the latter would be a
     factual misrepresentation of what the analyzer measured.
 
@@ -3550,7 +3550,7 @@ def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_proje
     text = render_text(_make_analysis(rows=[row]))
     assert "Token estimate confidence:" in text
     assert (
-        "score-choruses: savings projected from a stable prompt prefix repeated across observed calls. "
+        "score-choruses: savings projected from a stable prompt prefix repeated across the batch. "
         "Declare prompt_cache to confirm."
     ) in text
     assert "first batch item as a representative sample" not in text
@@ -3581,7 +3581,7 @@ def test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_pro
     assert "shared inputs declared in parent workflow" not in text
     # Cleanup-first guidance lives in Recommended actions (the bullet routes
     # the agent there); the footer no longer duplicates that prose.
-    assert "static prefix repeated across observed calls" not in text
+    assert "static prefix repeated across the batch" not in text
 
 
 def test_per_call_confidence_footer_aggregates_duplicate_node_names() -> None:

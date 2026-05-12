@@ -23,7 +23,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -57,6 +56,7 @@ from pflow.core.llm_capabilities import anthropic_models_at_threshold, get_min_c
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import detect_provider, normalize_model_name
 from pflow.core.llm_usage import normalize_litellm_usage_tokens
+from pflow.core.prompt_refs import PromptRef, classify_prompt_refs, first_per_item_position
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.core.workflow_id import synthesize_inline_workflow_id
@@ -2160,6 +2160,15 @@ def _extract_unique_refs(prompt: str) -> list[str]:
     return refs
 
 
+def _node_inputs(node: dict[str, Any]) -> Mapping[str, Any] | None:
+    """Return an LLM node's ``params.inputs`` mapping, if present."""
+    params = node.get("params")
+    if not isinstance(params, Mapping):
+        return None
+    inputs = params.get("inputs")
+    return inputs if isinstance(inputs, Mapping) else None
+
+
 def _build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[str, Any]:
     """Build a synthetic shared store keyed by root node ids for ``refs``."""
     shared: dict[str, Any] = {}
@@ -2228,20 +2237,18 @@ def _per_node_warnings(
     # the first batch-scoped reference. Detected by inspecting the unresolved
     # template at position 0.
     #
-    # Boundary regex MUST match the runtime gate at ``nodes/llm/llm.py``
-    # (``re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)")``) so analyzer
-    # and runtime agree on what counts as batch-scoped — both ``${item.field}``
-    # and ``${item[0].field}`` are batch references. Earlier dot-only matcher
-    # silently missed every ``${alias[N]...}`` workflow (CR-1430 C1).
+    # Boundary classification MUST match the runtime gate at
+    # ``nodes/llm/llm.py`` so analyzer and runtime agree on what counts as
+    # batch-scoped, including refs indirected through ``params.inputs``.
     prewarm = node.get("prewarm")
     batch = node.get("batch")
     if prewarm is True and isinstance(batch, dict):
         alias = str(batch.get("as", "item"))
         prompt = node.get("params", {}).get("prompt", "") or ""
         if isinstance(prompt, str):
-            pattern = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)")
-            match = pattern.search(prompt)
-            if match is not None and match.start() == 0:
+            node_inputs = _node_inputs(node)
+            first = first_per_item_position(prompt, alias, node_inputs)
+            if first == 0:
                 diagnostics.append(
                     make_diagnostic(
                         "cache.prewarm-no-prefix",
@@ -2275,17 +2282,23 @@ def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> lis
     uses_existing_prefix_evidence = False
     prefix_tokens: int | None = None
     dynamic_tokens: int | None = None
-    if row.cacheable_data_source == "batch_prefix" and row.cacheable_tokens_estimated:
+    # Row-level greenfield batch-prefix evidence is clamped against per-call
+    # input tokens, so only observed rows can safely be reused here. The
+    # earlier affected_calls gate already rejected 0/1-call rows; >= 2 is the
+    # minimum observed row count that can carry reusable batch-prefix evidence.
+    # Greenfield recommendations compute the prefix directly below.
+    if row.observed_call_count >= 2 and row.cacheable_data_source == "batch_prefix" and row.cacheable_tokens_estimated:
         uses_existing_prefix_evidence = True
         prefix_tokens = round(row.cacheable_tokens_estimated / affected_calls)
         input_tokens_per_call = round(row.input_tokens_estimated / affected_calls)
         dynamic_tokens = max(0, input_tokens_per_call - prefix_tokens)
     else:
-        match = _first_batch_scoped_template_ref(prompt, alias)
-        if match is None or match.start() == 0:
+        node_inputs = _node_inputs(node)
+        first = first_per_item_position(prompt, alias, node_inputs)
+        if first is None or first == 0:
             return []
-        prefix_tokens = estimate_tokens(row.model, prompt[: match.start()])[0]
-        dynamic_tokens = estimate_tokens(row.model, prompt[match.start() :])[0]
+        prefix_tokens = estimate_tokens(row.model, prompt[:first])[0]
+        dynamic_tokens = estimate_tokens(row.model, prompt[first:])[0]
     if not uses_existing_prefix_evidence and prefix_tokens < get_min_cache_tokens(row.model):
         return []
 
@@ -2327,7 +2340,13 @@ def _dynamic_before_static_warnings(
         if affected_calls < 2:
             return []
         alias = str(batch.get("as", "item"))
-        finding = _find_batch_static_tail_after_dynamic(prompt=prompt, model=row.model, batch_alias=alias)
+        node_inputs = _node_inputs(node)
+        finding = _find_batch_static_tail_after_dynamic(
+            prompt=prompt,
+            model=row.model,
+            batch_alias=alias,
+            node_inputs=node_inputs,
+        )
         if finding is None:
             return []
         return [
@@ -2357,25 +2376,25 @@ def _dynamic_before_static_warnings(
         return []
 
     declared = set(declared_chunks)
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-        var_expr = match.group(1)
-        operands = TemplateResolver.split_coalesce_operands(var_expr)
-        if any(operand in declared for operand in operands):
+    node_inputs = _node_inputs(node)
+    refs = classify_prompt_refs(prompt, batch_alias=None, node_inputs=node_inputs)
+    for index, ref in enumerate(refs):
+        if any(path in declared for path in ref.operand_paths):
             continue
 
-        cacheable_tokens = estimate_tokens(row.model, prompt[match.end() :])[0]
+        cacheable_tokens = estimate_tokens(row.model, prompt[ref.end :])[0]
         if cacheable_tokens < get_min_cache_tokens(row.model):
             break
 
         affected_calls = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
-        tokens_before = estimate_tokens(row.model, prompt[: match.start()])[0]
+        tokens_before = estimate_tokens(row.model, prompt[: ref.position])[0]
         return [
             make_diagnostic(
                 "cache.dynamic-before-static",
                 node_id=row.node_path,
                 affected_workflow=row.workflow_path,
-                dynamic_ref=var_expr,
-                dynamic_line=1 + prompt[: match.start()].count("\n"),
+                dynamic_ref=ref.raw_expr,
+                dynamic_line=1 + prompt[: ref.position].count("\n"),
                 cacheable_tokens=cacheable_tokens,
                 affected_calls=affected_calls,
                 savings_usd=_estimate_token_savings_usd(row.model, cacheable_tokens, affected_calls),
@@ -2384,8 +2403,8 @@ def _dynamic_before_static_warnings(
                 min_cache_tokens=get_min_cache_tokens(row.model),
                 model=row.model,
                 tokens_before_dynamic=tokens_before,
-                template_refs_after_dynamic=len(list(TemplateResolver.TEMPLATE_PATTERN.finditer(prompt, match.end()))),
-                static_tail_excerpt=_static_excerpt(prompt[match.end() :]),
+                template_refs_after_dynamic=len(refs) - index - 1,
+                static_tail_excerpt=_static_excerpt(prompt[ref.end :]),
             )
         ]
     return []
@@ -2396,52 +2415,39 @@ def _find_batch_static_tail_after_dynamic(
     prompt: str,
     model: str,
     batch_alias: str,
+    node_inputs: Mapping[str, Any] | None = None,
 ) -> _PromptStaticTailFinding | None:
     """Find a local-batch dynamic ref followed by enough literal stable text."""
-    matches = list(TemplateResolver.TEMPLATE_PATTERN.finditer(prompt))
-    for index, match in enumerate(matches):
-        var_expr = match.group(1)
-        operands = TemplateResolver.split_coalesce_operands(var_expr)
-        if not any(_is_batch_scoped_operand(operand, batch_alias) for operand in operands):
+    refs = list(classify_prompt_refs(prompt, batch_alias, node_inputs))
+    for index, ref in enumerate(refs):
+        if not ref.is_per_item:
             continue
 
-        literal_tail = _literal_spans_after_template(prompt, matches, index)
+        literal_tail = _literal_spans_after_template(prompt, refs, index)
         stable_tail_tokens = estimate_tokens(model, literal_tail)[0]
         if stable_tail_tokens < get_min_cache_tokens(model):
             return None
         return _PromptStaticTailFinding(
-            dynamic_ref=var_expr,
-            dynamic_line=1 + prompt[: match.start()].count("\n"),
+            dynamic_ref=ref.raw_expr,
+            dynamic_line=1 + prompt[: ref.position].count("\n"),
             stable_tail_tokens=stable_tail_tokens,
-            tokens_before_dynamic=estimate_tokens(model, prompt[: match.start()])[0],
-            template_refs_after_dynamic=len(matches) - index - 1,
+            tokens_before_dynamic=estimate_tokens(model, prompt[: ref.position])[0],
+            template_refs_after_dynamic=len(refs) - index - 1,
             static_tail_excerpt=_static_excerpt(literal_tail),
         )
     return None
 
 
-def _first_batch_scoped_template_ref(prompt: str, batch_alias: str) -> re.Match[str] | None:
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-        operands = TemplateResolver.split_coalesce_operands(match.group(1))
-        if any(_is_batch_scoped_operand(operand, batch_alias) for operand in operands):
-            return match
-    return None
-
-
-def _is_batch_scoped_operand(operand: str, batch_alias: str) -> bool:
-    return operand == batch_alias or operand.startswith(f"{batch_alias}.") or operand.startswith(f"{batch_alias}[")
-
-
 def _literal_spans_after_template(
     prompt: str,
-    matches: list[re.Match[str]],
+    refs: list[PromptRef],
     dynamic_match_index: int,
 ) -> str:
     spans: list[str] = []
-    cursor = matches[dynamic_match_index].end()
-    for match in matches[dynamic_match_index + 1 :]:
-        spans.append(prompt[cursor : match.start()])
-        cursor = match.end()
+    cursor = refs[dynamic_match_index].end
+    for ref in refs[dynamic_match_index + 1 :]:
+        spans.append(prompt[cursor : ref.position])
+        cursor = ref.end
     spans.append(prompt[cursor:])
     return "".join(spans)
 
@@ -2548,18 +2554,26 @@ def _estimate_batch_prefix_cacheable_tokens(
     declared_subset: list[str] | None,
     observed_call_count: int,
 ) -> int | None:
-    """Estimate repeated static prefix tokens before the first batch-item ref."""
+    """Estimate repeated static prefix tokens before the first batch-item ref.
+
+    Uses observed call count when available, otherwise falls back to static
+    ``batch.items`` length for greenfield static-list batches.
+    """
     batch = node.get("batch")
-    if declared_subset or not isinstance(batch, dict) or observed_call_count < 2:
+    if declared_subset or not isinstance(batch, dict):
+        return None
+    affected_call_count = observed_call_count or (_estimate_batch_size(batch) or 0)
+    if affected_call_count < 2:
         return None
     alias = str(batch.get("as", "item"))
-    match = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)").search(resolved_prompt)
-    if match is None or match.start() == 0:
+    node_inputs = _node_inputs(node)
+    boundary = first_per_item_position(resolved_prompt, alias, node_inputs)
+    if boundary is None or boundary == 0:
         return None
-    prefix_tokens = estimate_tokens(model, resolved_prompt[: match.start()])[0]
+    prefix_tokens = estimate_tokens(model, resolved_prompt[:boundary])[0]
     if prefix_tokens <= 0:
         return None
-    return prefix_tokens * observed_call_count
+    return prefix_tokens * affected_call_count
 
 
 def _prefer_batch_prefix_cacheable_tokens(
@@ -2877,8 +2891,9 @@ def _collect_llm_template_references(workflow_ir: dict[str, Any]) -> tuple[dict[
             continue
         batch_aliases = _batch_aliases(node)
         seen_in_node: set[str] = set()
-        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-            for ref in TemplateResolver.split_coalesce_operands(match.group(1)):
+        node_inputs = _node_inputs(node)
+        for classified_ref in classify_prompt_refs(prompt, batch_alias=None, node_inputs=node_inputs):
+            for ref in classified_ref.operand_paths:
                 if _is_batch_scoped_ref(ref, batch_aliases) or ref in seen_in_node:
                     continue
                 seen_in_node.add(ref)
@@ -2909,8 +2924,9 @@ def _collect_llm_template_root_references(
             continue
         batch_aliases = _batch_aliases(node)
         seen_names: set[str] = set()
-        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+        node_inputs = _node_inputs(node)
+        for ref in classify_prompt_refs(prompt, batch_alias=None, node_inputs=node_inputs):
+            for operand in ref.operand_paths:
                 if _is_batch_scoped_ref(operand, batch_aliases):
                     continue
                 matched_var = _longest_var_prefix_match(operand, vars_)
@@ -3641,8 +3657,9 @@ def _node_referenced_cache_names(node: dict[str, Any], var_to_name: dict[str, st
         return set()
     node_refs: set[str] = set()
     batch_aliases = _batch_aliases(node)
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+    node_inputs = _node_inputs(node)
+    for ref in classify_prompt_refs(prompt, batch_alias=None, node_inputs=node_inputs):
+        for operand in ref.operand_paths:
             if _is_batch_scoped_ref(operand, batch_aliases):
                 continue
             matched_var = _longest_var_prefix_match(operand, var_to_name.keys())
@@ -5053,16 +5070,14 @@ def _collect_llm_nodes_referencing_path(ir: dict[str, Any], template_path: str) 
         node_id = node.get("id")
         if not isinstance(node_id, str) or not node_id or node_id in ids:
             continue
-        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-                # Match exact path OR dotted-prefix (``${creative.direction}``
-                # references the ``creative`` chunk identifier when keyed by root).
-                if operand == template_path or operand.startswith(f"{template_path}."):
-                    ids.append(node_id)
-                    break
-            else:
-                continue
-            break  # each LLM node listed at most once
+        node_inputs = _node_inputs(node)
+        refs = classify_prompt_refs(prompt, batch_alias=None, node_inputs=node_inputs)
+        if any(
+            operand == template_path or operand.startswith(f"{template_path}.")
+            for ref in refs
+            for operand in ref.operand_paths
+        ):
+            ids.append(node_id)
     return ids
 
 

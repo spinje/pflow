@@ -13,6 +13,7 @@ lazy-import runtime symbols inside function bodies.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Union
 
@@ -51,13 +52,16 @@ class CacheRenderContext:
     **Parallel-batch safety is by frozen-attribute construction, NOT by the
     outer MappingProxyType wrap.** ``MappingProxyType`` only blocks mutation
     of the outer ``dict[node_id, CacheRenderContext]`` keys; it does NOT
-    deep-freeze field values. Today every field is immutable by construction:
+    deep-freeze field values. Today every field is immutable by construction
+    (``node_inputs`` is wrapped in ``MappingProxyType`` by the producer):
     ``cache_block: CacheBlockIR`` (frozen, tuple items), ``subset: tuple``,
     ``prewarm: bool``, ``unresolved_batch_prompt: str``, ``batch_alias: str``.
     A future contributor adding a non-immutable field (e.g., a memo dict for
     resolved-chunk reuse) would silently introduce a parallel-batch race.
     Add only immutable fields here, or wrap mutable fields in their own
-    immutable container.
+    immutable container. Producers MUST wrap ``node_inputs`` in
+    ``MappingProxyType``; raw dicts type-check but violate this freeze
+    invariant.
     """
 
     cache_block: CacheBlockIR | None
@@ -65,6 +69,7 @@ class CacheRenderContext:
     prewarm: bool
     unresolved_batch_prompt: str | None
     batch_alias: str | None
+    node_inputs: Mapping[str, Any] | None = None
 
 
 # --- Sentinel for branch-absent chunks -------------------------------------
