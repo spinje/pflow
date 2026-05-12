@@ -23,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from pflow.core.cache_ttl import cache_ttl_syntax_hint, is_valid_cache_ttl
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.suggestion_utils import find_similar_items
@@ -151,9 +152,9 @@ _SECTION_DISPLAY_NAMES: dict[_SectionType, str] = {
 # block content is parsed for ${var} chunks rather than handed to a node param.
 _CACHE_BLOCK_TAG = "cache"
 
-# Allowed values for the ``- ttl:`` parameter on ``## Cache``. Per DD#7, only
-# the two locked durations are valid in v1; everything else is a syntax error.
-_CACHE_TTL_VALUES: frozenset[str] = frozenset({"5m", "1h"})
+# Allowed values for the ``- ttl:`` parameter on ``## Cache`` are validated
+# through ``core.cache_ttl`` so parser/schema/rendering/analyzer share one
+# interpretation.
 
 # Pattern matching ``${...}`` template references inside the cache code block.
 # Inner content is a single match group with no nested braces — pflow has no
@@ -189,7 +190,7 @@ _SECTION_SYNTAX_HINTS: dict[_SectionType, str] = {
     _SectionType.CACHE: (
         "Cache uses section-level params + a single tagged code block:\n\n"
         "    ## Cache\n\n"
-        "    - ttl: 5m       # optional; default 5m, also accepts 1h\n\n"
+        "    - ttl: 5m       # optional; default 5m, accepts 1m..60m or 1h\n\n"
         "    ```cache\n"
         "    Description of the value:\n\n"
         "    ${concept}\n\n"
@@ -475,13 +476,13 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                     raise MarkdownParseError(
                         f"'{key}:' is not a valid parameter for '## Cache'. Only '- ttl:' is supported in v1.",
                         line=line_num,
-                        suggestion="Valid keys: '- ttl: 5m' (default) or '- ttl: 1h' (extended).",
+                        suggestion=f"Valid key: {cache_ttl_syntax_hint()}",
                     )
-                if value not in _CACHE_TTL_VALUES:
+                if not is_valid_cache_ttl(value):
                     raise MarkdownParseError(
-                        f"Invalid '- ttl:' value '{value}'. Must be '5m' or '1h'.",
+                        f"Invalid '- ttl:' value '{value}'. Must be '1m' through '60m' or '1h'.",
                         line=line_num,
-                        suggestion=("Use '- ttl: 5m' (default 5-minute cache) or '- ttl: 1h' (extended 1-hour cache)."),
+                        suggestion=cache_ttl_syntax_hint(),
                     )
                 if cache_section.ttl is not None:
                     raise MarkdownParseError(
@@ -1762,7 +1763,7 @@ def _parse_cache_code_block(content: str, base_line: int) -> list[_CacheChunk]:
 def _build_cache_dict(cache_section: _CacheSection) -> dict[str, Any]:
     """Build the IR ``cache`` field from the parsed cache section.
 
-    Shape matches the IR schema (B2.2): ``{"ttl": "5m"|"1h"|None, "items":
+    Shape matches the IR schema (B2.2): ``{"ttl": "1m".."60m"|"1h"|None, "items":
     [{"name", "var", "prose_before", "_source_line"}, ...], "_source_line"}``.
 
     Parser invariant: ``chunk.name == chunk.var_expr`` for every parsed chunk.

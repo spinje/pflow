@@ -883,8 +883,9 @@ def test_text_suggested_block_intro_explains_starter_prose_audience() -> None:
 def test_text_suggested_block_documents_ttl_allowed_values() -> None:
     """Suggested blocks should tell agents the complete accepted TTL vocabulary.
 
-    The parser rejects any value other than ``5m`` or ``1h``; surfacing that
-    beside the generated ``- ttl:`` line prevents authoring-time guesses.
+    The parser rejects provider wire strings and out-of-range durations;
+    surfacing the accepted pflow syntax beside the generated ``- ttl:`` line
+    prevents authoring-time guesses.
     """
     from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
 
@@ -907,7 +908,7 @@ def test_text_suggested_block_documents_ttl_allowed_values() -> None:
     text = render_text(analysis)
 
     assert "  - ttl: 5m" in text
-    assert "`ttl` accepts only `5m` or `1h`" in text
+    assert "`ttl` accepts `1m` through `60m`; `1h` is also accepted." in text
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 """Tests for cache-related IR schema additions (Task 159 B2.2).
 
 Schema is the SINGLE source of truth for cache-block shape per the V5 fix
-(Round 4 plan refinement): top-level ``cache`` is an object with ``ttl`` enum
-(``5m`` | ``1h``), ``items`` array of {name, var, prose_before}; per-node
+(Round 4 plan refinement): top-level ``cache`` is an object with minute-level
+``ttl`` syntax, ``items`` array of {name, var, prose_before}; per-node
 ``prompt_cache: list[str]`` and ``prewarm: bool`` are additive properties on
 EVERY node type (semantic ``invalid-on-non-llm`` rejection lives in B2.3
 data_flow validation, not the schema).
@@ -51,6 +51,17 @@ def test_valid_cache_block_with_1h_ttl_passes() -> None:
     validate_ir(ir)
 
 
+@pytest.mark.parametrize("ttl", ["1m", "2m", "11m", "55m", "60m"])
+def test_valid_cache_block_with_minute_ttl_passes(ttl: str) -> None:
+    ir = _minimal_workflow(
+        cache={
+            "ttl": ttl,
+            "items": [{"name": "x", "var": "x", "prose_before": ""}],
+        }
+    )
+    validate_ir(ir)
+
+
 def test_valid_cache_block_without_ttl_passes() -> None:
     """Default-TTL workflows omit ``ttl`` — schema must accept absence."""
     ir = _minimal_workflow(cache={"items": [{"name": "x", "var": "x", "prose_before": ""}]})
@@ -71,10 +82,11 @@ def test_valid_cache_block_with_source_line_metadata_passes() -> None:
     validate_ir(ir)
 
 
-def test_invalid_ttl_value_rejected_at_schema() -> None:
+@pytest.mark.parametrize("ttl", ["", "0m", "61m", "2h", "90s", "1.5m", "3600s", "5 min"])
+def test_invalid_ttl_value_rejected_at_schema(ttl: str) -> None:
     ir = _minimal_workflow(
         cache={
-            "ttl": "30m",  # not in enum
+            "ttl": ttl,
             "items": [{"name": "x", "var": "x", "prose_before": ""}],
         }
     )

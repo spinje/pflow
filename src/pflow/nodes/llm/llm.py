@@ -24,7 +24,8 @@ from pflow.core.cache_render import (
     _resolve_chunk_value,
     _resolve_static_prefix_for_cache,
 )
-from pflow.core.exceptions import LLMCallError, LLMTransientError
+from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
+from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
 from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_providers import detect_provider
 from pflow.core.llm_reasoning_map import (
@@ -258,9 +259,26 @@ def _build_openai_cache_kwargs(
     }
     # DD#37: workflow ttl=1h → OpenAI prompt_cache_retention="24h" (closest
     # discrete bucket above 1h; default ``in_memory`` is 5-10 min idle).
-    if cache_ttl == "1h":
+    if cache_ttl is not None and parse_cache_ttl(cache_ttl).seconds == 3600:
         cache_kwargs["prompt_cache_retention"] = "24h"
     return cache_kwargs
+
+
+def _ensure_provider_supports_cache_ttl(
+    *,
+    provider_name: str | None,
+    ttl: str | None,
+    node_id: str | None,
+    model: str,
+) -> None:
+    if is_cache_ttl_supported_by_provider(provider_name, ttl):
+        return
+    raise UnsupportedCacheTTLError(
+        node_id=node_id or "<unknown>",
+        provider_name=provider_name,
+        ttl=ttl,
+        model=model,
+    )
 
 
 def _emit_prewarm_disabled_warning(
@@ -451,6 +469,10 @@ def _build_user_message_blocks(
     provider = detect_provider(model)
     provider_name = provider.name if provider else None
     ttl = cache_ctx.cache_block.ttl if cache_ctx.cache_block else None
+    # System-block rendering validates the same provider/TTL pair when
+    # prompt_cache is non-empty. Keep this check here for prewarm-only batch
+    # nodes, where the cache marker is rendered in the user-message split.
+    _ensure_provider_supports_cache_ttl(provider_name=provider_name, ttl=ttl, node_id=node_id, model=model)
     return [
         {
             "type": "text",
@@ -517,6 +539,7 @@ def _assemble_cache_prep(
         cache_ctx=cache_ctx,
         shared=shared,
         model=model,
+        node_id=node_id,
     )
     user_message_blocks = _build_user_message_blocks(
         cache_ctx=cache_ctx,
@@ -543,6 +566,7 @@ def _build_system_blocks(
     cache_ctx: CacheRenderContext | None,
     shared: dict[str, Any],
     model: str,
+    node_id: str | None = None,
 ) -> tuple[list[dict[str, Any]] | None, list[str]]:
     """Render the cached system prefix as structured content blocks.
 
@@ -602,6 +626,12 @@ def _build_system_blocks(
 
     provider = detect_provider(model)
     provider_name = provider.name if provider else None
+    _ensure_provider_supports_cache_ttl(
+        provider_name=provider_name,
+        ttl=cache_ctx.cache_block.ttl,
+        node_id=node_id,
+        model=model,
+    )
     blocks[-1]["cache_control"] = _build_cache_control_marker(
         provider_name,
         cache_ctx.cache_block.ttl,

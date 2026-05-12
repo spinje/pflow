@@ -44,7 +44,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 22 entries (21 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 23 entries (22 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -67,10 +67,12 @@ def test_catalog_size_matches_v1_inventory() -> None:
     - ``cache.prompt-cache-incomplete`` (Task 159 polish: partial per-node
       `prompt_cache:` declarations inside workflows that already declare
       `## Cache`)
+    - ``cache.unsupported-provider-ttl`` (Gemini dynamic-TTL follow-up:
+      provider capability validation for minute-level TTLs)
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 22
+    assert len(CACHE_WARNING_CATALOG) == 23
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -113,6 +115,7 @@ def test_source_split_validator_vs_cache_analyzer() -> None:
         "cache.order-mismatch",
         "cache.unused-chunk",
         "cache.invalid-on-non-llm",
+        "cache.unsupported-provider-ttl",
         # Task 159 follow-up: prompt-body / prompt_cache overlap detection
         # routes through ``data_flow.py`` (validator) when prompt_cache is
         # declared and overlaps the prompt body.
@@ -732,6 +735,14 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "invalid_fields_csv": "prompt_cache",
             "is_or_are": "is",
             "plural_s": "",
+        },
+        "cache.unsupported-provider-ttl": {
+            "node_id": "X",
+            "affected_workflow": "x.pflow.md",
+            "provider": "anthropic",
+            "model": "anthropic/claude-sonnet-4-5",
+            "ttl": "11m",
+            "ttl_seconds": 660,
         },
         "cache.prewarm-no-prefix": {
             "node_id": "score",

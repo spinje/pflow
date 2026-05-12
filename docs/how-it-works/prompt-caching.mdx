@@ -63,10 +63,11 @@ Out-of-order subsets are a hard error at validation time — providers cache by 
 
 | Value | Meaning | When to use |
 |-------|---------|-------------|
-| `5m` (default) | Provider's standard cache duration | Most workflows; matches typical run time |
-| `1h` | Anthropic 1-hour cache, Gemini 3600s, OpenAI 24h retention | Long-running workflows or reruns within an hour |
+| `5m` (default) | pflow's default cache duration | Most workflows; matches typical run time |
+| `1m`-`60m` | Gemini minute-level cache duration, capped at 1 hour | Gemini workflows that need a specific retention window |
+| `1h` | Alias for `60m`; Anthropic 1-hour cache, Gemini 3600s, OpenAI 24h retention | Long-running workflows or reruns within an hour |
 
-`1h` writes cost roughly 2× the standard write rate on Anthropic, so it pays off when the cached prefix gets read at least 3 times within the hour.
+Anthropic and OpenAI only support pflow's discrete `5m` and `1h` behaviors today. pflow errors instead of silently rounding unsupported minute-level TTLs. `1h` writes cost roughly 2× the standard write rate on Anthropic, so it pays off when the cached prefix gets read at least 3 times within the hour.
 
 ## Minimum tokens
 

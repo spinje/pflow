@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Literal
 
+from pflow.core.cache_ttl import build_unsupported_cache_ttl_diagnostic, unsupported_cache_ttl_message
 from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
 from pflow.core.llm_providers import detect_provider, extract_provider_prefix
 
@@ -130,6 +131,27 @@ class WorkflowValidationError(PflowError):
                 title="Validation Error",
                 source="validation",
                 context={"category": "validation"},
+            )
+        ]
+
+
+class UnsupportedCacheTTLError(PflowError):
+    """Raised when a resolved LLM provider cannot honor the workflow cache TTL."""
+
+    def __init__(self, *, node_id: str, provider_name: str | None, ttl: str | None, model: str | None = None) -> None:
+        self.node_id = node_id
+        self.provider_name = provider_name
+        self.ttl = ttl
+        self.model = model
+        super().__init__(unsupported_cache_ttl_message(node_id=node_id, provider_name=provider_name, ttl=ttl))
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            build_unsupported_cache_ttl_diagnostic(
+                node_id=self.node_id,
+                provider_name=self.provider_name,
+                ttl=self.ttl,
+                model=self.model,
             )
         ]
 

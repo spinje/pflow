@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
 
 from .analyze import PerCallRow, ProjectionExclusion
@@ -248,7 +249,7 @@ def _write_rate_for_ttl(pricing: ModelPricing, ttl: str | None, model: str) -> f
     of LiteLLM's 1.25x default. For all other providers / TTLs, return the
     LiteLLM-reported ``cache_creation_rate`` unchanged.
     """
-    if ttl != "1h":
+    if parse_cache_ttl(ttl).seconds != 3600:
         return pricing.cache_creation_rate
     provider = detect_provider(model)
     if provider is not None and provider.name == "anthropic":
@@ -323,8 +324,8 @@ def compute_projections(
             (or bare ``node_path -> output_tokens | None`` for legacy callers)
             from ``estimate_output_tokens``. ``None`` for nodes lacking
             memo/trace data (greenfield).
-        ttl: ``"5m"`` or ``"1h"`` from ``workflow_ir["cache"]["ttl"]``, or
-            ``None`` for provider default.
+        ttl: pflow TTL syntax from ``workflow_ir["cache"]["ttl"]``, or
+            ``None`` for pflow's default ``5m``.
 
     Math (per row):
 

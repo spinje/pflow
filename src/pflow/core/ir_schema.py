@@ -71,6 +71,7 @@ import jsonschema
 from jsonschema import Draft7Validator
 from jsonschema import ValidationError as JsonSchemaValidationError
 
+from pflow.core.cache_ttl import CACHE_TTL_PATTERN
 from pflow.core.exceptions import SchemaValidationError as ValidationError
 from pflow.core.types import CANONICAL_TYPES
 
@@ -313,10 +314,11 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
             "properties": {
                 "ttl": {
                     "type": "string",
-                    "enum": ["5m", "1h"],
+                    "pattern": CACHE_TTL_PATTERN,
                     "description": (
-                        "Cache TTL: 5m (provider default) or 1h (extended; opt-in only — "
-                        "writes cost 2x on Anthropic, breakeven at 3+ reads)."
+                        "Cache TTL: 1m through 60m, or 1h as an alias for 60m. "
+                        "Omit for pflow's default 5m behavior. Provider validation "
+                        "rejects unsupported minute-level TTLs."
                     ),
                 },
                 "items": {
