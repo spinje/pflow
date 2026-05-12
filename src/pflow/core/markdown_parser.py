@@ -321,6 +321,16 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     def _flush_yaml_item() -> None:
         """Flush the current YAML item to the current entity."""
         nonlocal in_yaml_continuation, yaml_current_item_lines, yaml_current_item_start_line
+        # Trailing blank lines were collected speculatively during continuation —
+        # they're only meaningful between content lines of a multi-line item.
+        # Stripping keeps single-line items on the _coerce_yaml_scalar fast path
+        # and is lossless for default-chomping (`|`, `>`) block scalars, which
+        # yaml.safe_load clips to a single trailing newline anyway.
+        # Caveat: keep-chomping variants (`|+`, `>+`) would normally preserve all
+        # trailing blanks as part of the scalar's value; this strip drops them.
+        # Accepted edge case — no shipped `.pflow.md` uses `|+`/`>+`.
+        while yaml_current_item_lines and yaml_current_item_lines[-1].strip() == "":
+            yaml_current_item_lines.pop()
         if yaml_current_item_lines and current_entity is not None:
             current_entity.yaml_items.append("\n".join(yaml_current_item_lines))
             current_entity.yaml_item_lines.append(yaml_current_item_start_line)
@@ -490,14 +500,17 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         # --- Inside an entity: YAML params, prose ---
         if current_entity is not None:
             # YAML continuation tracking
+            #
+            # A line continues the current multi-line item if it is blank OR
+            # indented at/past the bullet's content column. Blank lines are
+            # preserved so `|`/`>` block scalars containing blank-line separators
+            # (per YAML semantics) round-trip correctly through yaml.safe_load.
+            # Trailing blanks are stripped by _flush_yaml_item.
             if in_yaml_continuation:
-                # Check if this line is a continuation (indented beyond the - level)
-                if line and line.strip() != "":
-                    # Calculate leading whitespace
-                    content_start = len(line) - len(line.lstrip())
-                    if content_start >= yaml_indent_level:
-                        yaml_current_item_lines.append(line)
-                        continue
+                content_start = len(line) - len(line.lstrip())
+                if line.strip() == "" or content_start >= yaml_indent_level:
+                    yaml_current_item_lines.append(line)
+                    continue
                 # Not a continuation — flush and fall through
                 _flush_yaml_item()
 
@@ -513,9 +526,10 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 in_yaml_continuation = True
                 continue
 
-            # Blank line
+            # Blank line outside YAML continuation — ignored.
+            # Blank lines during continuation are consumed by the continuation
+            # branch above (preserving them inside multi-line block scalars).
             if stripped == "":
-                _flush_yaml_item()
                 continue
 
             # Prose line
