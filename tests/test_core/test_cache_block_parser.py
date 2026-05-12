@@ -129,7 +129,7 @@ def test_chunks_carry_source_line_metadata() -> None:
 # ------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("ttl", ["0m", "61m", "2h", "90s", "1.5m", "3600s", "5 min"])
+@pytest.mark.parametrize("ttl", ['""', "0m", "61m", "2h", "90s", "1.5m", "3600s", "5 min"])
 def test_invalid_ttl_value_rejected(ttl: str) -> None:
     body = f"- ttl: {ttl}\n\n```cache\nx\n${{a}}\n```"
     with pytest.raises(MarkdownParseError, match="ttl"):

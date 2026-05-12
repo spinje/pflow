@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Literal
 
-from pflow.core.cache_ttl import parse_cache_ttl, unsupported_cache_ttl_message
-from pflow.core.diagnostic import CACHE_FAILURE_CATEGORY, LLM_FAILURE_CATEGORY, Diagnostic, Severity
+from pflow.core.cache_ttl import build_unsupported_cache_ttl_diagnostic, unsupported_cache_ttl_message
+from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
 from pflow.core.llm_providers import detect_provider, extract_provider_prefix
 
 # Typed discriminators for LLMCallError subclasses. Carried as Literal so
@@ -146,29 +146,12 @@ class UnsupportedCacheTTLError(PflowError):
         super().__init__(unsupported_cache_ttl_message(node_id=node_id, provider_name=provider_name, ttl=ttl))
 
     def to_diagnostics(self) -> list[Diagnostic]:
-        parsed = parse_cache_ttl(self.ttl)
-        provider_label = self.provider_name or "unknown provider"
         return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                source="validator",
-                title="Cache Failure",
+            build_unsupported_cache_ttl_diagnostic(
                 node_id=self.node_id,
-                id="cache.unsupported-provider-ttl",
-                message=str(self),
-                suggestions=[
-                    "Use '- ttl: 5m' or '- ttl: 1h' on the workflow ## Cache block.",
-                    "Use a Gemini model for cached LLM nodes that need minute-level TTLs.",
-                ],
-                context={
-                    "category": CACHE_FAILURE_CATEGORY,
-                    "path": f"nodes[id={self.node_id}].params.model",
-                    "provider": provider_label,
-                    "model": self.model,
-                    "ttl": parsed.label,
-                    "ttl_seconds": parsed.seconds,
-                },
-                see_also=["prompt-caching"],
+                provider_name=self.provider_name,
+                ttl=self.ttl,
+                model=self.model,
             )
         ]
 

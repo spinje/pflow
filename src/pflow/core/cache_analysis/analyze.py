@@ -5593,8 +5593,13 @@ def _attribute_root_cause(
 
     if cache_age_sec is not None:
         age = float(cache_age_sec)
-        effective_ttl = parse_cache_ttl(ttl)
-        if age >= effective_ttl.seconds:
+        provider_name = getattr(provider, "name", None)
+        effective_ttl = None
+        if ttl is not None:
+            effective_ttl = parse_cache_ttl(ttl)
+        elif provider_name in {"anthropic", "openai", "gemini"}:
+            effective_ttl = parse_cache_ttl(None)
+        if effective_ttl is not None and age >= effective_ttl.seconds:
             return (
                 "ttl_expiry",
                 f"Cache entry was {age:.0f}s old (>= {effective_ttl.label} TTL); upstream write expired",

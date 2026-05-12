@@ -1,5 +1,7 @@
 """Test the data flow validation module."""
 
+from typing import Any
+
 import pytest
 
 from pflow.core.diagnostic_render import format_diagnostic
@@ -10,21 +12,31 @@ def _data_flow_error_messages(workflow_ir: dict) -> list[str]:
     return [format_diagnostic(diagnostic) for diagnostic in validate_data_flow(workflow_ir)]
 
 
-def _cache_ttl_workflow(*, ttl: str, model: str, prompt_cache: list[str] | None = None) -> dict:
+def _cache_ttl_workflow(
+    *,
+    ttl: str,
+    model: str,
+    prompt_cache: list[str] | None = None,
+    prewarm: bool | None = None,
+    batch: dict[str, object] | None = None,
+) -> dict:
+    node: dict[str, Any] = {
+        "id": "gen",
+        "type": "llm",
+        "prompt_cache": ["a"] if prompt_cache is None else prompt_cache,
+        "params": {"model": model, "prompt": "Use cached A."},
+    }
+    if prewarm is not None:
+        node["prewarm"] = prewarm
+    if batch is not None:
+        node["batch"] = batch
     return {
         "inputs": {"a": {"type": "string"}},
         "cache": {
             "ttl": ttl,
             "items": [{"name": "a", "var": "a", "prose_before": "A:\n"}],
         },
-        "nodes": [
-            {
-                "id": "gen",
-                "type": "llm",
-                "prompt_cache": ["a"] if prompt_cache is None else prompt_cache,
-                "params": {"model": model, "prompt": "Use cached A."},
-            }
-        ],
+        "nodes": [node],
         "edges": [],
     }
 
@@ -55,6 +67,33 @@ def test_dynamic_cache_ttl_ignored_when_no_provider_cache_marker() -> None:
         check_inputs=False,
     )
     assert "cache.unsupported-provider-ttl" not in {diag.id for diag in diagnostics}
+
+
+def test_dynamic_cache_ttl_ignored_for_non_batch_prewarm_without_prompt_cache() -> None:
+    diagnostics = validate_data_flow(
+        _cache_ttl_workflow(
+            ttl="11m",
+            model="anthropic/claude-sonnet-4-5",
+            prompt_cache=[],
+            prewarm=True,
+        ),
+        check_inputs=False,
+    )
+    assert "cache.unsupported-provider-ttl" not in {diag.id for diag in diagnostics}
+
+
+def test_dynamic_cache_ttl_rejected_for_batch_prewarm_without_prompt_cache() -> None:
+    diagnostics = validate_data_flow(
+        _cache_ttl_workflow(
+            ttl="11m",
+            model="anthropic/claude-sonnet-4-5",
+            prompt_cache=[],
+            prewarm=True,
+            batch={"items": ["a", "b"]},
+        ),
+        check_inputs=False,
+    )
+    assert "cache.unsupported-provider-ttl" in {diag.id for diag in diagnostics}
 
 
 class TestBuildExecutionOrder:

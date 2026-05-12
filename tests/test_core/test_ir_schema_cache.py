@@ -82,7 +82,7 @@ def test_valid_cache_block_with_source_line_metadata_passes() -> None:
     validate_ir(ir)
 
 
-@pytest.mark.parametrize("ttl", ["0m", "61m", "2h", "90s", "1.5m", "3600s", "5 min"])
+@pytest.mark.parametrize("ttl", ["", "0m", "61m", "2h", "90s", "1.5m", "3600s", "5 min"])
 def test_invalid_ttl_value_rejected_at_schema(ttl: str) -> None:
     ir = _minimal_workflow(
         cache={

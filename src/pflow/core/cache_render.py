@@ -184,14 +184,19 @@ def _build_cache_control_marker(provider_name: str | None, ttl: str | None) -> d
       ``ttl: "5m"`` — only ``"1h"`` is documented). ``"1h"`` →
       ``{"type": "ephemeral", "ttl": "1h"}``.
     - **Gemini**: always sends an explicit seconds-suffix TTL, including
-      omitted pflow TTL as ``"300s"``. LiteLLM's Vertex translation requires
-      seconds notation with ``s`` suffix.
+      omitted pflow TTL as ``"300s"``. This keeps the default path and
+      dynamic-TTL path on one wire shape; LiteLLM's Vertex translation uses
+      seconds notation with an ``s`` suffix for explicit TTLs.
     - **OpenAI / unknown / out-of-vocab**: ``{"type": "ephemeral"}``
       unconditionally. ``cache_control`` markers are no-ops on OpenAI
       (auto-cache only); the bare marker is emitted for shape consistency
       (the LiteLLM call body matches across providers). The dedicated
       OpenAI knobs (``prompt_cache_key``, ``prompt_cache_retention``) flow
       through ``model_options`` from the LLMNode prep path (C3).
+
+    Invalid TTLs intentionally fail here instead of degrading to a bare
+    marker: schema/validator paths should catch malformed values before
+    rendering, and silently dropping explicit TTL intent would hide bad IR.
 
     Returns a fresh dict on every call so callers can safely mutate / store.
     """

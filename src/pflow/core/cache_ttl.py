@@ -6,9 +6,12 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
+from pflow.core.diagnostic import CACHE_FAILURE_CATEGORY, Diagnostic, Severity
+
 DEFAULT_CACHE_TTL_SECONDS: Final[int] = 300
 MAX_CACHE_TTL_SECONDS: Final[int] = 3600
-_TTL_RE: Final = re.compile(r"^([1-9]|[1-5][0-9]|60)m$|^1h$")
+CACHE_TTL_PATTERN: Final = r"^(([1-9]|[1-5][0-9]|60)m|1h)$"
+_TTL_RE: Final = re.compile(CACHE_TTL_PATTERN)
 _DISCRETE_PROVIDER_SECONDS: Final = {DEFAULT_CACHE_TTL_SECONDS, MAX_CACHE_TTL_SECONDS}
 
 
@@ -77,6 +80,39 @@ def unsupported_cache_ttl_message(
         f"Node '{node_id}' uses {provider_label} but ## Cache ttl is '{parsed.label}'. "
         f"{provider_label} prompt caching through pflow does not support minute-level TTLs. "
         "Use '- ttl: 5m' or '- ttl: 1h', or switch cached LLM nodes to Gemini."
+    )
+
+
+def build_unsupported_cache_ttl_diagnostic(
+    *,
+    node_id: str,
+    provider_name: str | None,
+    ttl: str | None,
+    model: str | None = None,
+) -> Diagnostic:
+    """Build the canonical unsupported-provider TTL diagnostic."""
+    parsed = parse_cache_ttl(ttl)
+    provider_label = provider_name or "unknown provider"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Cache Failure",
+        node_id=node_id,
+        id="cache.unsupported-provider-ttl",
+        message=unsupported_cache_ttl_message(node_id=node_id, provider_name=provider_name, ttl=ttl),
+        suggestions=[
+            "Use '- ttl: 5m' or '- ttl: 1h' on the workflow ## Cache block.",
+            "Use a Gemini model for cached LLM nodes that need minute-level TTLs.",
+        ],
+        context={
+            "category": CACHE_FAILURE_CATEGORY,
+            "path": f"nodes[id={node_id}].params.model",
+            "provider": provider_label,
+            "model": model,
+            "ttl": parsed.label,
+            "ttl_seconds": parsed.seconds,
+        },
+        see_also=["prompt-caching"],
     )
 
 

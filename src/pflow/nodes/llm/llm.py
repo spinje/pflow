@@ -469,6 +469,9 @@ def _build_user_message_blocks(
     provider = detect_provider(model)
     provider_name = provider.name if provider else None
     ttl = cache_ctx.cache_block.ttl if cache_ctx.cache_block else None
+    # System-block rendering validates the same provider/TTL pair when
+    # prompt_cache is non-empty. Keep this check here for prewarm-only batch
+    # nodes, where the cache marker is rendered in the user-message split.
     _ensure_provider_supports_cache_ttl(provider_name=provider_name, ttl=ttl, node_id=node_id, model=model)
     return [
         {

@@ -2596,6 +2596,29 @@ def test_discrepancy_fires_for_ttl_expiry_with_implicit_default(tmp_path: Path) 
     assert diag.context["affected_invocations"] == 1
 
 
+def test_discrepancy_does_not_apply_default_ttl_to_unknown_provider(tmp_path: Path) -> None:
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "openrouter/anthropic/claude-sonnet-4-5",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 301,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
+    assert diag.context is not None
+    assert diag.context["root_cause"] != "ttl_expiry"
+
+
 def test_discrepancy_uses_dynamic_ttl_seconds(tmp_path: Path) -> None:
     fresh_trace = _write_trace(
         tmp_path,
