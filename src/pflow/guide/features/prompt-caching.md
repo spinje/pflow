@@ -176,6 +176,13 @@ Without `prewarm`, parallel batch items can all try to write the same provider
 cache prefix at once. With `prewarm`, the first item writes the prefix, then
 the remaining items fan out as reads.
 
+Prompt cache analysis sees through `- inputs:` indirection: a batch LLM node
+that maps batch-item fields onto template variables, such as
+`concept_md: ${item.concept_md}`, is analyzed identically to one using
+`${item.concept_md}` directly. Reusable `.prompt.md` files using indirected
+refs receive accurate prewarm, shared-context, and partial-declaration
+recommendations.
+
 ## Python-Assembled Prompts
 
 Prompt caching works best when stable prompt text is visible in the LLM node's

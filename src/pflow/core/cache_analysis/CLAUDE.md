@@ -64,6 +64,10 @@ Refactor planned to split `analyze.py` into a thin orchestrator plus `stages/` a
 - **Discrepancy detection** (`_emit_discrepancy_diagnostics`, `_predict_cache_keys`): compile workflow + simulate planner + compare to trace.
 - **Summary builders**: aggregation glue scattered between the orchestrator and the per-call cluster.
 
+**Prompt ref classification**: `pflow.core.prompt_refs.classify_prompt_refs` is the canonical helper for "what does this `${X}` point to?" Every cache-analysis detector that walks `${...}` refs in an LLM prompt body should consume it. As of v0.13, production consumers cover prefix detection, prewarm detection, dynamic-before-static, batch static tail, cross-workflow LLM-consumer detection, greenfield shared-context discovery, prompt-cache-incomplete partial-declaration detection, and the runtime auto-batch-prefix path in `nodes/llm/llm.py`.
+
+LLM `- inputs:` mappings are first-class for prompt-cache analysis. A prompt ref `${X}` mapped through `node["params"]["inputs"]` to `${item.Y}` is per-item; mapped to `${some_node.Z}` it is static. The classifier dealiases one level to match the runtime inputs-first resolution contract in `runtime/engine/template_resolution.py`; dict-valued `inputs:` entries are not recursively dealiased and pass through unchanged. Historical references to `_first_batch_scoped_template_ref` or `_is_batch_scoped_operand` should be replaced with `classify_prompt_refs` or `first_per_item_position`.
+
 **`_run_full_validation` is the analyzer's validation seam.** It calls the same `WorkflowValidator.validate()` pipeline as run, validate-only, and save, then enriches root diagnostics with `context["affected_workflow"]` for cross-workflow scoping. Domain focus is preserved after validation: ERRORs surface universally, while advisory actions and headline counts filter to provider prompt-cache findings.
 
 ### context.py

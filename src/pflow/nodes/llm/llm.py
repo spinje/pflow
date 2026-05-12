@@ -34,6 +34,7 @@ from pflow.core.llm_reasoning_map import (
     map_reasoning_options,
 )
 from pflow.core.node import Node
+from pflow.core.prompt_refs import first_per_item_position
 
 logger = logging.getLogger(__name__)
 
@@ -387,8 +388,6 @@ def _build_user_message_blocks(
     the same logical value, so cache hits fire reliably across calls. See
     ``_resolve_static_prefix_for_cache`` docstring + B3.3 plan section.
     """
-    import re
-
     if cache_ctx is None:
         return None
     if not cache_ctx.prewarm:
@@ -425,11 +424,10 @@ def _build_user_message_blocks(
         )
         return None
 
-    pattern = re.compile(r"\$\{" + re.escape(alias) + r"(\.|\[)")
-    match = pattern.search(unresolved)
-    if match is None:
+    boundary = first_per_item_position(unresolved, alias, cache_ctx.node_inputs)
+    if boundary is None:
         return None
-    cut = match.start()
+    cut = boundary
     if cut == 0:
         # No static portion — boundary at position 0.
         return None

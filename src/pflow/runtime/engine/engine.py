@@ -100,15 +100,23 @@ def _make_cache_render_context(
     """
     unresolved = None
     alias = None
+    node_inputs = None
     if config.batch_config and config.template_config:
         unresolved = config.template_config.template_params.get("prompt")
         alias = config.batch_config.item_alias
+        raw_inputs = config.template_config.template_params.get("inputs")
+        if isinstance(raw_inputs, Mapping):
+            # Snapshot + freeze for parallel-batch safety. CacheRenderContext
+            # is shared by batch workers, so the immutability contract is
+            # explicit even though template_params is compile-time data.
+            node_inputs = MappingProxyType(dict(raw_inputs))
     return CacheRenderContext(
         cache_block=cache_block,
         subset=config.prompt_cache_items,
         prewarm=config.prewarm,
         unresolved_batch_prompt=unresolved,
         batch_alias=alias,
+        node_inputs=node_inputs,
     )
 
 

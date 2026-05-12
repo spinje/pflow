@@ -295,6 +295,41 @@ Calls the LLM with an external prompt file.
     )
 
 
+@pytest.mark.parametrize(
+    ("prompt", "node_inputs", "expected_found"),
+    [
+        ("text ${concept} text", None, True),
+        ("text ${concept_md} text", {"concept_md": "${concept}"}, True),
+        ("text ${concept_md} text", None, False),
+        ("text ${concept_md.title} text", {"concept_md": "${concept}"}, True),
+    ],
+)
+def test_collect_llm_nodes_referencing_path_handles_inputs_indirection(
+    prompt: str,
+    node_inputs: dict[str, str] | None,
+    expected_found: bool,
+) -> None:
+    """Mutation contract: removing classifier dealiasing misses indirect cases."""
+    from pflow.core.cache_analysis.analyze import _collect_llm_nodes_referencing_path
+
+    params: dict[str, object] = {"prompt": prompt}
+    if node_inputs is not None:
+        params["inputs"] = node_inputs
+    child_ir = {
+        "nodes": [
+            {
+                "id": "consume",
+                "type": "llm",
+                "params": params,
+            }
+        ]
+    }
+
+    consumers = _collect_llm_nodes_referencing_path(child_ir, "concept")
+
+    assert consumers == (["consume"] if expected_found else [])
+
+
 def test_resolve_sub_workflow_cross_workflow_walker_sees_resolved_prompts(tmp_path: Path) -> None:
     """End-to-end gate: cross-workflow walker via the primitive sees inlined prompts.
 

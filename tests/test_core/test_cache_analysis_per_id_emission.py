@@ -20,6 +20,7 @@ from pflow.core.cache_analysis.analyze import CrossWorkflowInputContribution, an
 from pflow.core.cache_analysis.cost_estimation import ModelPricing
 from pflow.core.cache_analysis.render_text import render_text
 from pflow.core.file_resolver import resolve_file_references
+from pflow.core.markdown_parser import parse_markdown
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 from pflow.core.workflow.validator import WorkflowValidator
 
@@ -119,6 +120,27 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
     workflow_ir["nodes"][0]["prewarm"] = False
     opted_out = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
     assert "cache.batch-prewarm-recommended" not in {d.id for d in opted_out.warnings}
+
+
+def test_inputs_indirection_does_not_suppress_prewarm_recommendation() -> None:
+    """Mutation contract: removing prompt-ref dealiasing loses batch_prefix evidence."""
+    fixture = Path(__file__).parents[1] / "fixtures" / "cache_analysis" / "inputs_indirection_batch.pflow.md"
+    workflow_ir = parse_markdown(fixture.read_text(encoding="utf-8")).ir
+
+    result = analyze(
+        workflow_ir,
+        parameters={},
+        workflow_path=str(fixture),
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    warning_ids = {warning.id for warning in result.warnings}
+    assert "cache.batch-prewarm-recommended" in warning_ids
+    row = next(row for row in result.per_call if row.node_path == "score")
+    assert row.cacheable_data_source == "batch_prefix"
+    assert row.cacheable_tokens_estimated is not None
+    assert row.cacheable_tokens_estimated > 0
 
 
 def test_batch_static_tail_after_dynamic_emits_recommended_action() -> None:
@@ -272,6 +294,29 @@ def test_dynamic_before_static_treats_coalesce_as_static_when_any_operand_is_dec
         ],
     }
     result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.dynamic-before-static" not in {d.id for d in result.warnings}
+
+
+def test_dynamic_before_static_treats_indirected_declared_chunk_as_static() -> None:
+    """Mutation contract: comparing raw prompt aliases to declared chunks emits a false warning."""
+    workflow_ir = {
+        "cache": {"items": [{"name": "extract.response", "var": "extract.response", "prose_before": "Extract:\n"}]},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["extract.response"],
+                "params": {
+                    "inputs": {"data": "${extract.response}"},
+                    "prompt": "${data}\n" + ("stable " * 60),
+                },
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
     assert "cache.dynamic-before-static" not in {d.id for d in result.warnings}
 
 

@@ -1826,11 +1826,11 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
     if batch_prefix_nodes:
         # Distinct from the batch-exemplar case above: this projection scans
         # the prompt's static prefix (bytes before the first per-item ref)
-        # and multiplies by observed call count. No item content participates,
-        # so the message must not claim sampling.
+        # and multiplies by observed call count or static batch size. No item
+        # content participates, so the message must not claim sampling.
         bullets.append(
             f"{_format_node_list(batch_prefix_nodes)}: savings projected from a stable prompt prefix "
-            "repeated across observed calls. Declare prompt_cache to confirm."
+            "repeated across the batch. Declare prompt_cache to confirm."
         )
     if cross_workflow_nodes:
         bullets.append(
