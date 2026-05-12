@@ -278,7 +278,7 @@ class TraceTree:
         """
         if include_cached:
             return self._sum_leaves(self.iter_llm_leaves((event,)))
-        return self._sum_actual_cost_events(self.iter_actual_cost_events((event,)))
+        return self.sum_actual_cost_events(self.iter_actual_cost_events((event,)))
 
     def cost_for_node(self, node_id: str, *, include_cached: bool = False) -> tuple[float | None, str]:
         """Return recorded cost for one top-level node, excluding sub-workflows.
@@ -290,7 +290,7 @@ class TraceTree:
             return None, "unavailable"
         if include_cached:
             return self._sum_leaves(self.iter_llm_leaves((event,), descend_sub_workflows=False))
-        return self._sum_actual_cost_events(self.iter_actual_cost_events((event,), descend_sub_workflows=False))
+        return self.sum_actual_cost_events(self.iter_actual_cost_events((event,), descend_sub_workflows=False))
 
     def cost_for_batch_item(self, item: Mapping[str, Any], *, include_cached: bool = False) -> tuple[float | None, str]:
         """Return recorded cost for one batch item dict.
@@ -318,7 +318,7 @@ class TraceTree:
                 leaves.extend(we for we in self.walk((sub_event,), _tier="sub_workflow_descendant") if we.has_llm_call)
             return self._sum_leaves(leaves)
 
-        return self._sum_actual_cost_events(
+        return self.sum_actual_cost_events(
             self._iter_actual_cost_batch_item(
                 item,
                 owner_node_id=str(item.get("node_id", item.get("index", "?"))),
@@ -343,7 +343,7 @@ class TraceTree:
         )
         if include_cached:
             return self._sum_leaves(leaves)
-        return self._sum_actual_cost_events(
+        return self.sum_actual_cost_events(
             self.iter_actual_cost_events(
                 descend_sub_workflows=descend_sub_workflows,
                 edges=edges,
@@ -445,7 +445,7 @@ class TraceTree:
                 )
 
     @staticmethod
-    def _sum_actual_cost_events(events: Iterable[WalkEvent]) -> tuple[float | None, str]:
+    def sum_actual_cost_events(events: Iterable[WalkEvent]) -> tuple[float | None, str]:
         total = 0.0
         found_any = False
         has_unpriced = False

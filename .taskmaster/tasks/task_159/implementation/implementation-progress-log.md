@@ -12123,3 +12123,254 @@ Minor observations (none blocking):
 - `_dummied_cache_chunks` handles dotted-path/bracket `var:` shapes
   the parser invariant currently rules out (`chunk.name == chunk.var_expr`,
   `markdown_parser.py:1754`) — over-general but cheap insurance.
+
+## 2026-05-12 — Task 159 — Bug 5 fix: sub-workflow scope mismatch in actually-paid sum
+
+Field-report Bug 5 (verified isolated repro in
+`scratchpads/experiments/bug-5-scope-mismatch-{parent,child}.pflow.md`):
+`pflow analyze-cache <child> --from-trace <parent-trace>` rendered nonsense
+ratios like `adds ~$0.0048 vs no-cache, 130178% of no-cache cost` because
+``actually_paid_usd`` summed every LLM cost in the parent trace while
+``no_cache_hypothetical_usd`` was scoped to the analyzed child's IR rows.
+
+### Root cause investigation
+
+Three parallel `pflow-codebase-searcher` subagents + reading `trace_tree.py`
+directly established:
+
+1. **`compute_actually_paid`** (`cost_estimation.py:574-602`) called
+   `trace.total_cost(descend_sub_workflows=True, ...)` which summed every LLM
+   leaf in the trace via `iter_actual_cost_events` → `_sum_actual_cost_events`.
+   No `workflow_path` filter applied; events outside the analyzed cohort
+   contributed.
+2. **`no_cache_hypothetical_usd`** (`cost_estimation.py:365-367`) iterated
+   ``analysis.per_call`` rows scoped to the analyzed workflow's IR (rooted at
+   ``lookup_path`` via `cw_result.irs_by_workflow`). Cohort: child only.
+3. **Walker `workflow_path` parameter is attribution propagation, not a
+   filter** — initial subagent finding asserted "every walker filters by
+   workflow_path." Verified false by reading `trace_tree.py:106-210`:
+   walkers yield every event unconditionally; `WalkEvent.workflow_path` is
+   metadata threaded down for downstream attribution. The Plan agent caught
+   the misread before I committed code.
+4. **`_cost_delta` has no sanity cap** (`analyze.py:6156-6183`) — when
+   numerator (parent total) is plugged in as `compared_value` and
+   denominator (child slice) as `baseline_value`, the percentage blows up.
+   Top-10% codebases trust their math after the cohort fix; the cap would
+   paper over future scope bugs.
+
+### Architectural reasoning
+
+The codebase's established pattern (`iter_llm_leaves`, `iter_actual_cost_events`,
+`walk`) accepts a `workflow_path` kwarg that propagates as attribution. ONLY
+`total_cost` did not — so `compute_actually_paid` was the single consumer
+unable to express scope intent. Initial plan was "scope at TraceTree
+construction" (analogous to Path 1's `resolve_workflow` boundary fix), but
+the Plan-agent review surfaced that walker behavior is attribution-only and
+the codebase already had a per-method scope convention. The right shape was
+to extend that existing pattern, not introduce a new one.
+
+Filter location chosen at the consumer (`compute_actually_paid`), not inside
+the walker:
+
+- Walker stays general; only the cost-aggregation site needs scope policy.
+- New consumers don't have to remember to filter — they get tree-wide
+  semantics by default, opt into scoping when relevant.
+- One place to test the filter contract.
+
+### Implementation
+
+**`src/pflow/core/trace_tree.py`** (~5 LOC):
+
+- Renamed `_sum_actual_cost_events` → `sum_actual_cost_events` (4 internal
+  callers + 1 new cross-module consumer). The underscore-by-convention was
+  not load-bearing; the method is a useful primitive when working with
+  filtered iterators.
+
+**`src/pflow/core/cache_analysis/cost_estimation.py`** (~10 LOC):
+
+- Added keyword-only `scope_workflow_paths: frozenset[str] | None = None`
+  to `compute_actually_paid`. When set, iterate `iter_actual_cost_events`
+  + filter `we.workflow_path in scope` + sum via `sum_actual_cost_events`.
+  When `None`, today's tree-wide behavior preserved exactly.
+
+**`src/pflow/core/cache_analysis/analyze.py`** (~50 LOC across three helpers):
+
+- `_resolve_trace_scope(trace_data, lookup_path, notes) -> (seed, mismatch)`:
+  Determines whether the trace was recorded for a different workflow than
+  the one being analyzed AND chooses the walker seed correctly:
+  - **Paths refer to the same workflow** (per path normalization): returns
+    `(lookup_path, False)`. Walker seed matches row workflow_paths
+    byte-exactly so per-row attribution works.
+  - **Different workflows** (genuine Bug 5 case): returns
+    `(trace's stored path, True)`. Walker seed is the trace's actual root
+    so top-level parent events get attributed to the parent (not the
+    analyzed child). The `True` flag activates per-workflow scope
+    filtering and emits the disclosure Note.
+- `_scope_workflow_paths(scope_mismatch, lookup_path, rows) -> frozenset | None`:
+  Builds the scope set as `{lookup_path} ∪ {row.workflow_path}` when
+  mismatched; returns `None` for tree-wide sum otherwise. Both helpers
+  pulled out to keep `analyze()` under C901's complexity threshold.
+- `_workflow_paths_refer_to_same(a, b)`: byte-exact short-circuit, then
+  `os.path.realpath` for filesystem paths, with `ir-hash:` synthetic ids
+  compared byte-exact (they cannot be resolved as filesystem paths).
+
+Three call sites in `analyze()` and `_emit_discrepancy_diagnostics` now seed
+walkers with `trace_root_workflow_path` (from `_resolve_trace_scope`) instead
+of `lookup_path` directly. The seed only differs from `lookup_path` when
+scope mismatch is detected; otherwise behavior is identical.
+
+### Tests
+
+Two new production-shape tests (Pitfall #19) at
+`tests/test_core/test_cache_analysis_analyze.py`:
+
+- `test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent`:
+  parent runs $1.00 padding LLM batch + invokes tiny $0.005 child 3× via
+  `homogeneous_workflow_batch_event`. Pre-fix: `actually_paid` was ~$1.015
+  (parent total). Post-fix: ~$0.015 (child's 3 invocations). Disclosure
+  Note appears. Mutation contract: revert the filter in
+  `compute_actually_paid` → assertion fails (jumps to parent total).
+- `test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow`:
+  parent IR + parent trace + child sub-workflow. Tree-wide sum: $0.15
+  (parent's $0.05 + child's $0.10). No scope-mismatch Note. Mutation
+  contract: unconditionally pass non-None scope_workflow_paths → tree-wide
+  sum broken → assertion fails.
+
+One existing test updated:
+`test_analyze_end_to_end_current_cost_honors_recorded_trace_cost` was
+relying on the pre-fix bug — it used a hardcoded `ir-hash:fake` trace
+workflow_path that intentionally mismatched the synthesized lookup_path.
+Updated to pass `workflow_path="ir-hash:fake"` so the trace aligns with
+the analyzed identity; the test's intent ("trace cost flows through to
+summary") is preserved without depending on the bug.
+
+### Stage 2 — disclosure wording + trace fixture portability
+
+After the initial code review (user noticed several baseline anomalies),
+fixed two derived problems:
+
+**Wording**: original Notes line "Trace was recorded for `X`; figures
+scoped to events attributable to `Y`..." was ambiguous — "was recorded
+for" could be parsed as "this analyze command recorded a trace" instead
+of "the trace file you passed was previously recorded for X."
+Rewrote to:
+
+> "The trace file references workflow `<X>`, which differs from the
+> analyzed workflow `<Y>`; cost figures show only events attributable
+> to the analyzed workflow and its sub-workflows."
+
+"References" is unambiguously passive — describes the file's stored
+value, not an action taken by the command.
+
+**Trace fixture portability**: three committed baseline trace fixtures
+(`sample-2.1.0-trace.json`, `live-gemini-translation.trace.json`,
+`live-gemini-lyrics-generator.trace.json`) stored absolute
+`workflow_path` values from an older worktree
+(`pflow-feat-prompt-caching`). After the Bug 5 fix, this triggered
+scope-mismatch detection in baselines — `actually_paid` dropped to
+unavailable, `curate-briefs` row hidden from per-call table, etc.
+
+Changed each fixture's root `workflow_path` to a project-relative path
+(e.g., `.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md`).
+Path normalization via `os.path.realpath` resolves the relative path
+against the baseline runner's cwd (`BASELINE_REPO_ROOT`) → matches the
+analyzed workflow's absolute path → `_workflow_paths_refer_to_same`
+returns True → scope filter doesn't activate → baselines pass with no
+expected-stdout changes.
+
+### Walker seed correction — the path-identity subtlety
+
+Initial attempt normalized the walker seed via `os.path.realpath`
+unconditionally so that relative trace paths would produce events with
+absolute attribution matching row keys. This broke inline tests where
+`workflow_path="x"` (non-canonical, intentionally simple). Row keys had
+`"x"`; walker emitted `realpath("x") = cwd/x`. Mismatch.
+
+Final shape (correct): use `lookup_path` as the walker seed when paths
+refer to the same workflow (so row keys match what the walker emits);
+use the trace's stored path only when scope genuinely differs (so
+top-level parent events get attributed to the parent, not the analyzed
+child). This preserves row-matching for both:
+
+- Inline tests (`lookup_path = "x"`, trace stores `"x"`): seed = `"x"`,
+  rows = `"x"`, match.
+- Baseline tests (`lookup_path = absolute`, trace stores relative path
+  that resolves to same): seed = `absolute lookup_path`, rows =
+  `absolute`, match.
+- Bug 5 case (`lookup_path = child`, trace stores parent): seed =
+  `parent`, top-level events tagged with parent. Rows have child path.
+  Top-level events filtered out of `actually_paid` via scope set
+  `{child} ∪ child's reachable workflows`. Child's sub-workflow events
+  get attribution from batch_item / edges → match child rows.
+
+### Verification
+
+- Bug 5 repro at HEAD:
+  - Pre-fix: `adds ~$0.0048 vs no-cache, 130178% of no-cache cost`.
+  - Post-fix: `Actually paid: ~<$0.0001 (trace)`, `Actual savings: no
+    meaningful cost change`. Disclosure Note names the parent trace.
+- Focused cache-analysis + CLI + trace_tree suite: 690 passed.
+- `make test` (default, `-m "not e2e"`): 6,583 passed, 1 skipped.
+- Baseline harness: 74 passed, 1 drifted
+  (`12-real-world-lyrics-generator/04-guide-auto-detect` — pre-existing
+  unrelated drift, verified via `git stash` comparison).
+- Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.
+
+### Tacit knowledge
+
+**Walker `workflow_path` is attribution, not filter.** `iter_*` methods
+yield every event in the tree; `WalkEvent.workflow_path` is metadata
+propagated through `edges` (and per-event fields on batch items / sub-
+workflow events). Filtering by `workflow_path` happens at the consumer
+(or doesn't happen at all). When extending these walkers, do not assume
+the kwarg is a filter — it sets the seed for top-level events that lack
+explicit attribution.
+
+**Path identity is byte-exact at most key boundaries.** The per-row
+`(workflow_path, node_id)` index does byte-exact lookup. `cw_result`
+keys are byte-exact. The only normalized comparison is in
+`_workflow_paths_refer_to_same` (used in `_resolve_trace_scope`). If
+you change the walker seed to a normalized form, downstream per-row
+matching breaks unless you ALSO normalize row workflow_paths — which
+ripples into cw_result, file resolution, and a lot of test fixtures.
+The chosen design avoids this by picking the seed at the boundary
+(use `lookup_path` when paths refer to same; trace's raw value
+otherwise) so byte-exact downstream matching keeps working.
+
+**Trace fixtures should use project-relative paths.** Absolute paths
+record the worktree they were generated in and silently break the
+moment that worktree is renamed/moved. The portable shape is
+`.taskmaster/.../*.pflow.md` (resolved against the baseline runner's
+`BASELINE_REPO_ROOT` cwd at test time). For future trace fixtures,
+either record with relative paths or post-process to relative after
+generation.
+
+**The Plan agent caught a load-bearing misread.** First Explore agent
+asserted "every walker filters by workflow_path; consumers already
+thread it" — which made the fix look like "just add the missing param
+to `total_cost`." The Plan agent reviewed and noted the walker code
+yields every event unconditionally. Verified by reading
+`trace_tree.py:106-210` directly. If I'd shipped the fix as initially
+designed (just add `workflow_path` to `total_cost`), the bug would not
+have been fixed AND parent-analyzing-parent baselines would have
+silently regressed. Reading the actual code beat subagent summaries
+here.
+
+**Out of scope / follow-ups**:
+
+- `_build_trace_execution_index` (`analyze.py:1129`) and sub-workflow
+  rollup pollution: same scope-pollution potential as
+  `compute_actually_paid`. Seed correction helps (top-level parent
+  events now attributed to parent), but the rollup's
+  `current_cost_by_workflow` could still contain entries for workflow
+  paths outside the analyzed scope. Not reported as a symptom yet;
+  deferred until real cases surface.
+- Auto-load gate at `analyze.py:933` keeps strict byte-exact comparison
+  with `data.get("workflow_path") != workflow_path`. Could relax to
+  use `_workflow_paths_refer_to_same` so traces stored with relative
+  paths auto-load correctly. Not done because autoload's purpose is
+  silent zero-friction default; relaxing creates a new failure mode
+  (incorrect autoload pick) for marginal benefit.
+- Defensive sanity cap on `_cost_delta` percentage — deliberately not
+  added. The math is structurally correct after the scope fix; sprinkling
+  defensive guards on outputs invites future regressions to pass silently.

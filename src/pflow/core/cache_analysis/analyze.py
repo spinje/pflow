@@ -591,6 +591,8 @@ def analyze(
     trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
     ir_default_model = get_default_workflow_model()
 
+    trace_root_workflow_path, scope_mismatch = _resolve_trace_scope(trace_data, lookup_path, notes)
+
     cache_block = workflow_ir.get("cache")
     declared_chunks = _extract_declared_chunks(cache_block)
 
@@ -604,7 +606,7 @@ def analyze(
     if dynamic_batch_note is not None:
         notes.append(dynamic_batch_note)
     edge_child_paths = _edge_child_paths(cw_result)
-    trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
+    trace_index = _build_trace_execution_index(trace_data, trace_root_workflow_path, edge_child_paths)
     parameters_by_workflow = _build_parameters_by_workflow(
         cw_result,
         parameters or {},
@@ -649,6 +651,9 @@ def analyze(
         notes.append("Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis.")
         trace_data = None
         used_trace_path = None
+        # trace_data is None here; the function short-circuits, but pass
+        # ``lookup_path`` (not trace_root_workflow_path) so the unused seed
+        # value matches the no-trace conceptual scope.
         trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
         parameters_by_workflow = _build_parameters_by_workflow(
             cw_result,
@@ -786,6 +791,8 @@ def analyze(
     # --- Confidence aggregation (STRICT per DD#34) ---------------------------
     confidence, coverage = _aggregate_confidence(per_call_rows)
 
+    scope_workflow_paths = _scope_workflow_paths(scope_mismatch, lookup_path, per_call_rows)
+
     summary = _build_summary(
         per_call_rows,
         warnings,
@@ -793,6 +800,7 @@ def analyze(
         ctx=ctx,
         edge_child_paths=edge_child_paths,
         ir_default_model=ir_default_model,
+        scope_workflow_paths=scope_workflow_paths,
     )
     summary = replace(
         summary,
@@ -972,6 +980,91 @@ def _resolve_trace_data(
     if auto_load_trace:
         return _autoload_trace(lookup_path, notes)
     return None, None
+
+
+def _resolve_trace_scope(
+    trace_data: dict[str, Any] | None,
+    lookup_path: str,
+    notes: list[str],
+) -> tuple[str, bool]:
+    """Determine the trace's root workflow path and whether scope is mismatched.
+
+    Bug 5: when a trace was recorded for a parent workflow that invoked the
+    analyzed workflow as a sub-workflow, the trace's ``workflow_path`` is the
+    parent's. Top-level events seeded with the analyzed workflow's path
+    look like they belong to the analyzed workflow (which they don't), so
+    cost summation includes them — producing the bug's nonsense ratios.
+
+    Returns ``(trace_root_workflow_path, scope_mismatch)``:
+
+    - When the trace's stored path refers to the same workflow as
+      ``lookup_path`` (relative vs absolute representations of the same
+      file): returns ``(lookup_path, False)``. Walker seed matches row
+      workflow_paths byte-exactly so per-row attribution works.
+    - When the trace's stored path refers to a different workflow: returns
+      ``(trace's stored path, True)``. Walker seed is the trace's actual
+      root so top-level events get correctly attributed to the parent
+      (not the analyzed child). The ``True`` flag activates per-workflow
+      scope filtering in ``compute_actually_paid`` and emits a Notes
+      disclosure.
+
+    Path identity uses ``_workflow_paths_refer_to_same`` (resolves relative
+    vs absolute via ``os.path.realpath``; ``ir-hash:`` synthetic ids
+    compare byte-exact).
+    """
+    raw_trace_root = (trace_data.get("workflow_path") if trace_data else None) or lookup_path
+    if trace_data is None or _workflow_paths_refer_to_same(raw_trace_root, lookup_path):
+        return lookup_path, False
+    notes.append(
+        f"The trace file references workflow `{raw_trace_root}`, which differs from the "
+        f"analyzed workflow `{lookup_path}`; cost figures show only events attributable "
+        f"to the analyzed workflow and its sub-workflows."
+    )
+    return raw_trace_root, True
+
+
+def _scope_workflow_paths(
+    scope_mismatch: bool,
+    lookup_path: str,
+    per_call_rows: list[PerCallRow],
+) -> frozenset[str] | None:
+    """Build the scope set for ``compute_actually_paid``'s event filter.
+
+    Returns ``None`` when trace root matches the analyzed workflow — preserves
+    tree-wide sum (today's common-case behavior). Returns the set of workflow
+    paths reachable from the analyzed workflow (the analyzed path plus every
+    statically-known child's path, derived from per-call rows) when scope
+    mismatch was detected; events with paths outside this set get filtered.
+    """
+    if not scope_mismatch:
+        return None
+    return frozenset({lookup_path} | {r.workflow_path for r in per_call_rows if r.workflow_path is not None})
+
+
+def _workflow_paths_refer_to_same(a: str | None, b: str | None) -> bool:
+    """Best-effort equality for workflow paths in scope-mismatch detection.
+
+    Handles three shapes:
+
+    - **Same string**: trivially equal.
+    - **Synthetic inline ids** (``ir-hash:<md5>``): compared as strings; never
+      normalized as filesystem paths.
+    - **Filesystem paths**: relative vs absolute can refer to the same file
+      (trace stores cwd-relative path; analyzer is called with absolute).
+      ``os.path.realpath`` resolves both to canonical absolute form without
+      requiring the file to exist.
+
+    Empty / None / mixed-shape values are treated as different.
+    """
+    if not a or not b:
+        return a == b
+    if a == b:
+        return True
+    if a.startswith("ir-hash:") or b.startswith("ir-hash:"):
+        return False
+    import os
+
+    return os.path.realpath(a) == os.path.realpath(b)
 
 
 def _extract_declared_chunks(cache_block: Any) -> list[str]:
@@ -5636,7 +5729,12 @@ def _emit_discrepancy_diagnostics(
         trace_tree = TraceTree.from_dict(trace_data)
     except ValueError:
         return []
-    for leaf in trace_tree.iter_llm_leaves(edges=edge_child_paths, workflow_path=workflow_path):
+    # Bug 5 fix: seed the walker with the trace's actual root workflow_path so
+    # that top-level events get attributed to whoever produced them rather than
+    # being mis-attributed to the analyzed workflow. When trace was recorded
+    # for the analyzed workflow itself, this is a no-op.
+    trace_root = trace_data.get("workflow_path") or workflow_path
+    for leaf in trace_tree.iter_llm_leaves(edges=edge_child_paths, workflow_path=trace_root):
         node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
         event = dict(leaf.event)
         leaf_workflow_path = leaf.workflow_path or workflow_path
@@ -5927,6 +6025,7 @@ def _build_summary(
     ctx: AnalysisContext | None = None,
     edge_child_paths: dict[str, str] | None = None,
     ir_default_model: str | None = None,
+    scope_workflow_paths: frozenset[str] | None = None,
 ) -> AnalysisSummary:
     """Aggregate per-call rows + warning counts into the spec's summary block.
 
@@ -5999,6 +6098,7 @@ def _build_summary(
         rows,
         trace=ctx.trace if ctx is not None else None,
         edges=edge_child_paths,
+        scope_workflow_paths=scope_workflow_paths,
     )
 
     # Partial flag: actually-paid trace_partial OR projection partial. The

@@ -577,29 +577,39 @@ def compute_actually_paid(
     *,
     trace: TraceTree | None = None,
     edges: Mapping[str, str] | None = None,
+    scope_workflow_paths: frozenset[str] | None = None,
 ) -> ActuallyPaidCost:
     """Trace-driven recorded cost (the "actually paid" figure).
 
     Two paths:
 
     - **Trace path** (preferred when ``trace`` is provided):
-      ``TraceTree.total_cost(descend_sub_workflows=True, include_cached=False, edges=...)``
-      is the canonical sum — includes batch items and sub-workflow LLM
-      descendants. Used by ``_build_summary``.
+      ``TraceTree.iter_actual_cost_events(...)`` walked and summed via
+      ``TraceTree.sum_actual_cost_events`` — includes batch items and
+      sub-workflow LLM descendants. Used by ``_build_summary``.
     - **Row fallback** (when ``trace=None``): sum ``row.cost_usd`` across
       ``rows``. Useful for callers that have rows but no TraceTree handle
       (mostly tests). Heterogeneous-batch rows contribute their ``cost_usd``
       since trace recorded it.
 
+    ``scope_workflow_paths`` (Bug 5 fix): when set, only trace events whose
+    threaded ``WalkEvent.workflow_path`` is in the set contribute. The set
+    should be the analyzed workflow path plus its statically-known child
+    workflow paths so that ``actually_paid`` addresses the same cohort as
+    ``no_cache_hypothetical_usd`` (which is IR-scoped). When ``None``,
+    tree-wide sum is preserved — correct for parent-trace + parent-analyze.
+
     Returns ``(None, "unavailable")`` when no cost data was found in either
     path. Cached events contribute 0.0 explicitly per the trace contract.
     """
     if trace is not None:
-        total, tier_str = trace.total_cost(
+        events = trace.iter_actual_cost_events(
             descend_sub_workflows=True,
-            include_cached=False,
             edges=edges or {},
         )
+        if scope_workflow_paths is not None:
+            events = (we for we in events if we.workflow_path in scope_workflow_paths)
+        total, tier_str = trace.sum_actual_cost_events(events)
         return ActuallyPaidCost(total_usd=total, tier=CostTier(tier_str))
 
     # Row fallback: sum row.cost_usd. Each row's cost_usd was already

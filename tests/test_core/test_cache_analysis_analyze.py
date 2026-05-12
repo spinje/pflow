@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -4556,6 +4557,10 @@ def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
     try:
         analysis = analyze(
             workflow_ir,
+            # Match the trace's synthetic ``workflow_path`` so the bug-5 scope
+            # filter does NOT activate (it correctly fires on mismatch — but
+            # this test verifies trace cost flows through, not scoping).
+            workflow_path="ir-hash:fake",
             trace_path=Path(trace_file),
             auto_load_trace=False,
         )
@@ -6229,3 +6234,151 @@ def test_parent_origin_clause_surfaces_rename_and_hides_passthrough() -> None:
     # Multi-ref / literal parent value: parent_value_expr is empty → no suffix.
     opaque = _make(parent_value_expr="", child_input_name="lyrics")
     assert _parent_origin_clause(opaque) is None
+
+
+def test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 5 regression: analyzing a child with a parent-scope trace must scope
+    "Actually paid" to the child's slice, not sum the parent's total.
+
+    Reproduction shape mirrors ``scratchpads/experiments/bug-5-scope-mismatch-*``:
+    parent runs an expensive padding LLM batch + invokes a tiny child once. Today
+    (pre-fix) ``actually_paid`` returned the parent's total ($1.005) instead of
+    the child's slice (~$0.005), producing nonsensical percentage ratios like
+    "130,178% of no-cache cost" downstream.
+
+    Mutation contract:
+      - Revert ``compute_actually_paid`` to call ``trace.total_cost(...)`` without
+        ``scope_workflow_paths`` → assertion on the scoped value fails (jumps to
+        the parent total).
+      - Drop the disclosure Note emission in ``analyze.py`` → assertion on
+        ``analysis.notes`` containing the scope-mismatch text fails.
+    """
+    child_path = tmp_path / "bug5-child.pflow.md"
+    parent_path = str(tmp_path / "bug5-parent.pflow.md")
+    child_ir = {
+        "nodes": [
+            {
+                "id": "tiny-llm",
+                "type": "llm",
+                "params": {"prompt": "say ok", "model": "anthropic/claude-sonnet-4-5"},
+            }
+        ]
+    }
+
+    builder = TraceFixtureBuilder()
+    # Parent's expensive padding LLM costs $1.00; child's tiny LLM costs $0.005,
+    # invoked 3x via a homogeneous workflow batch (mirrors the production bug-5
+    # repro shape — parent's `child-batch` over `bug-5-scope-mismatch-child`).
+    # If actually_paid is tree-wide, it returns $1.015; if scoped to the child,
+    # it returns $0.015.
+    padding = builder.llm_event("padding-llm", cost_usd=1.00, input_tokens=10_000, output_tokens=100)
+    child_event_a = builder.llm_event("tiny-llm", cost_usd=0.005, input_tokens=100, output_tokens=10)
+    child_event_b = builder.llm_event("tiny-llm", cost_usd=0.005, input_tokens=100, output_tokens=10)
+    child_event_c = builder.llm_event("tiny-llm", cost_usd=0.005, input_tokens=100, output_tokens=10)
+    child_batch = builder.homogeneous_workflow_batch_event(
+        "child-batch",
+        workflow_path=str(child_path),
+        items=[("a", [child_event_a]), ("b", [child_event_b]), ("c", [child_event_c])],
+    )
+    # Newer traces carry an explicit per-item ``workflow_path`` field; add it so
+    # the analyzer can attribute child events without parent→child edges in
+    # ``cw_result`` (which is rooted at the child when child is the analyzed wf).
+    for item in child_batch["batch_items"]:
+        item["workflow_path"] = str(child_path)
+    trace_dict = builder.trace(parent_path, [padding, child_batch])
+    trace_file = tmp_path / "parent-trace.json"
+    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+
+    # Analyze the CHILD with the parent's trace.
+    result = analyze(
+        child_ir,
+        workflow_path=str(child_path),
+        trace_path=trace_file,
+        memo_cache=None,
+    )
+
+    # Actually paid must be the child's slice (3 * $0.005 = $0.015), NOT parent
+    # total ($1.015). Pre-fix, this returned ~$1.015 → 6700% delta nonsense.
+    assert result.summary.actually_paid_usd is not None
+    assert result.summary.actually_paid_usd == pytest.approx(0.015, abs=1e-6)
+
+    # Disclosure Note must name both paths and use unambiguous wording
+    # (describes the trace file's stored value, not an action taken).
+    scope_notes = [n for n in result.notes if "trace file references workflow" in n]
+    assert len(scope_notes) == 1, f"expected exactly one scope-mismatch note, got: {result.notes}"
+    assert parent_path in scope_notes[0] or os.path.realpath(parent_path) in scope_notes[0]
+    assert str(child_path) in scope_notes[0]
+
+
+def test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 5 regression-gate: when analyzing a workflow with its own trace
+    (today's common case), ``actually_paid`` MUST remain a tree-wide sum
+    (parent + children). Verifies the scope filter is correctly bypassed
+    when ``trace.workflow_path == lookup_path``.
+
+    Mutation contract:
+      - Unconditionally pass a non-None ``scope_workflow_paths`` (i.e., drop
+        the ``trace_root != lookup_path`` gate) → tree-wide sum is lost; the
+        $0.10 child cost gets filtered out; assertion fails.
+    """
+    import pflow.core.cache_analysis.cross_workflow as cross_module
+    from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+    child_path = tmp_path / "child.pflow.md"
+    child_ir = {
+        "nodes": [
+            {
+                "id": "child-llm",
+                "type": "llm",
+                "params": {"prompt": "child", "model": "anthropic/claude-sonnet-4-5"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    parent_ir = {
+        "nodes": [
+            {
+                "id": "parent-llm",
+                "type": "llm",
+                "params": {"prompt": "parent", "model": "anthropic/claude-sonnet-4-5"},
+            },
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {}},
+            },
+        ],
+    }
+    parent_path = str(tmp_path / "parent.pflow.md")
+    builder = TraceFixtureBuilder()
+    parent_llm = builder.llm_event("parent-llm", cost_usd=0.05, input_tokens=100, output_tokens=10)
+    child_llm = builder.llm_event("child-llm", cost_usd=0.10, input_tokens=100, output_tokens=10)
+    child_wf = builder.workflow_event("call-child", [child_llm], workflow_path=str(child_path))
+    trace_dict = builder.trace(parent_path, [parent_llm, child_wf])
+    trace_file = tmp_path / "parent-trace.json"
+    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+
+    result = analyze(
+        parent_ir,
+        workflow_path=parent_path,
+        trace_path=trace_file,
+        memo_cache=None,
+    )
+
+    # Tree-wide sum: parent's $0.05 + child's $0.10 = $0.15.
+    assert result.summary.actually_paid_usd == pytest.approx(0.15)
+
+    # No scope-mismatch Note should appear when trace root matches.
+    assert not any("trace file references workflow" in n for n in result.notes), (
+        f"unexpected scope-mismatch note when trace.workflow_path == lookup_path: {result.notes}"
+    )
