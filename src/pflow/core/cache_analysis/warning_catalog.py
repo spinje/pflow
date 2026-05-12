@@ -17,8 +17,8 @@ detect exact-model cache namespace fragmentation and lone cache writes) +
 detect cross-node cache fragmentation caused by divergent ``system:`` strings) +
 ``cache.sub-workflow-cache-undeclared`` (Stage 2 follow-up: sub-workflows need
 their own cache declarations). The base 14 covers the 9 from
-spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2, dispatch
-over ``root_cause`` enum), ``cache.invalid-on-non-llm`` (Round 3, validator-
+spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2),
+``cache.invalid-on-non-llm`` (Round 3, validator-
 reach gap closure for non-LLM nodes), ``cache.prewarm-no-prefix`` (Round 3,
 prewarm-without-static-prefix advisory), ``cache.consolidate-to-root-
 recommended`` (CP3, sub-paths below threshold that would cross when
@@ -170,8 +170,11 @@ _BELOW_MIN_TOKENS_DISPATCH = {
 
 
 def _basename_for_workflow(path: str) -> str:
-    """Strip directory components for compact rendering. Non-paths pass through."""
-    return path.rsplit("/", 1)[-1] if "/" in path else path
+    """Strip directory components and the workflow suffix for compact rendering."""
+    name = path.rsplit("/", 1)[-1] if "/" in path else path
+    if name.endswith(".pflow.md"):
+        return name[: -len(".pflow.md")]
+    return name
 
 
 CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
@@ -468,32 +471,17 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         severity=Severity.INFO,
         source="cache_analyzer",
         category=CACHE_ADVISORY_CATEGORY,
-        # ``predicted_label`` distinguishes "hit" (predicted_key == actual_key),
-        # "hit (bytes diverged at runtime)" (planner expected a hit; trace's
-        # cache_key didn't match), and "miss" (no predicted_key). Bug F fix:
-        # the prior template "predicted hit_ratio {predicted_pct}%" implied we
-        # MEASURED a hit ratio, but ``predicted_pct`` is binary (100 if planner
-        # produced a cache_key, 0 otherwise) — different concept from the
-        # actual measured hit ratio. ``predicted_pct`` stays in the context
-        # for JSON consumers that read raw values; the rendered message uses
-        # the explicit label.
-        message_template=(
-            "{node_id} in {workflow_path_short} (trace: {trace_path}): predicted {predicted_label}, "
-            "actual {actual_pct}% read — root cause: {root_cause_summary}"
-        ),
+        message_template="{node_id} in {workflow_path_short}: {root_cause_summary}",
         required_context_keys=(
             ("node_id", str),
-            ("trace_path", str),
             ("workflow_path_short", str),
-            ("predicted_pct", int),
-            ("predicted_label", str),
-            ("actual_pct", int),
             ("root_cause", str),
             ("root_cause_summary", str),
+            ("suggestion", str),
         ),
-        suggestions_template=(),  # DISPATCHED on root_cause — see CACHE_DISCREPANCY_*
+        suggestions_template=("{suggestion}",),
         path_template="nodes[id={node_id}]",
-        nullable_cost_keys=frozenset({"cache_age_sec", "predicted_cache_key", "actual_cache_key"}),
+        nullable_cost_keys=frozenset({"predicted_cache_key", "actual_cache_key"}),
         headline_template="Cache hit discrepancy on {node_id} — {root_cause_summary}",
     ),
     "cache.prewarm-no-prefix": CacheWarningSpec(
@@ -839,47 +827,6 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# cache.discrepancy dispatch — three module-level constants per F1 plan
-# ---------------------------------------------------------------------------
-
-
-CACHE_DISCREPANCY_ACTION_TEMPLATES: dict[str, str] = {
-    "ttl_expiry": "Consider `- ttl: 1h` on the {affected_workflow} ## Cache block.",
-    "key_mismatch": (
-        "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction."
-    ),
-    "parallel_write_race": "Add `- prewarm: true` to the batch node to serialize the first write.",
-    "chunk_skipped": (
-        "Cache chunk `{skipped_chunk}` was skipped at runtime (branch absent); "
-        "declaration is correct but rendered subset is shorter."
-    ),
-    "unknown": (
-        "Cannot attribute discrepancy to root cause '{root_cause}' (not in known "
-        "set: ttl_expiry|key_mismatch|parallel_write_race|chunk_skipped); inspect "
-        "the trace events for {node_id} manually."
-    ),
-}
-
-
-CACHE_DISCREPANCY_REQUIRED_CONTEXT: dict[str, tuple[tuple[str, type], ...]] = {
-    "ttl_expiry": (("affected_workflow", str),),
-    "key_mismatch": (),
-    "parallel_write_race": (),
-    "chunk_skipped": (("skipped_chunk", str),),
-    "unknown": (),
-}
-
-
-CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
-    "ttl_expiry": ("suggested_ttl", "affected_workflow"),
-    "key_mismatch": ("upstream_value_changed",),
-    "parallel_write_race": ("recommended_fix",),
-    "chunk_skipped": ("skipped_chunk", "branch_node"),
-    "unknown": ("raw_root_cause",),
-}
-
-
 # Reserved nudge ID — emitted by summarize() per spec line 307; lives outside
 # the catalog because it isn't a finding the analyzer surfaces in `warnings[]`.
 CACHE_OPPORTUNITIES_NUDGE_ID: Final[str] = "cache.opportunities-available"
@@ -985,56 +932,6 @@ def _validate_required(
             )
 
 
-def _dispatch_discrepancy(
-    *, format_dict: dict[str, Any], context_kwargs: dict[str, Any]
-) -> tuple[list[str], dict[str, Any]]:
-    """cache.discrepancy: dispatch on root_cause and build typed payload.
-
-    Returns ``(suggestions, action_payload)``. The caller stores the payload
-    on ``context["root_cause_action"]`` so agents reading the JSON output
-    dispatch on typed data, not regex-parsed prose.
-    """
-    root_cause = context_kwargs["root_cause"]
-    template = CACHE_DISCREPANCY_ACTION_TEMPLATES.get(root_cause)
-    if template is None:
-        # Unknown enum — log and fall through to the 'unknown' template so
-        # the agent sees the rejected value, not silent degradation.
-        logger.warning(
-            "cache.discrepancy emitted with unrecognized root_cause %r — using fallback action template",
-            root_cause,
-        )
-        template = CACHE_DISCREPANCY_ACTION_TEMPLATES["unknown"]
-        action_payload: dict[str, Any] = {"raw_root_cause": root_cause}
-    else:
-        # Validate per-cause required keys (KeyError if missing).
-        for key, _ in CACHE_DISCREPANCY_REQUIRED_CONTEXT[root_cause]:
-            if key not in context_kwargs:
-                raise KeyError(
-                    f"make_diagnostic('cache.discrepancy', root_cause={root_cause!r}) missing required key '{key}'."
-                )
-        # Build the typed payload per the schema map.
-        if root_cause == "ttl_expiry":
-            action_payload = {
-                "suggested_ttl": "1h",
-                "affected_workflow": context_kwargs["affected_workflow"],
-            }
-        elif root_cause == "key_mismatch":
-            action_payload = {"upstream_value_changed": True}
-        elif root_cause == "parallel_write_race":
-            action_payload = {"recommended_fix": "prewarm:true"}
-        elif root_cause == "chunk_skipped":
-            action_payload = {
-                "skipped_chunk": context_kwargs["skipped_chunk"],
-                # Optional — analyzer may not always identify the branching node.
-                "branch_node": context_kwargs.get("branch_node"),
-            }
-        else:  # safety net — shouldn't fire because we hit the unknown branch above
-            action_payload = {"raw_root_cause": root_cause}
-
-    suggestions = [template.format(**format_dict)]
-    return suggestions, action_payload
-
-
 def _select_message_template(
     *,
     warning_id: str,
@@ -1080,9 +977,6 @@ def make_diagnostic(
     context fields regardless of whether the human-rendered message references
     them.
 
-    Special case for ``cache.discrepancy``: the helper dispatches on
-    ``context_kwargs["root_cause"]`` and assembles the per-cause typed payload
-    at ``context["root_cause_action"]``.
     """
     if warning_id not in CACHE_WARNING_CATALOG:
         raise KeyError(f"Unknown cache warning ID: {warning_id!r}. Catalog has {len(CACHE_WARNING_CATALOG)} entries.")
@@ -1156,23 +1050,12 @@ def make_diagnostic(
         format_dict=format_dict,
     )
 
-    # cache.discrepancy → dispatch; everything else → straight format.
-    if warning_id == "cache.discrepancy":
-        suggestions, action_payload = _dispatch_discrepancy(format_dict=format_dict, context_kwargs=context_kwargs)
-        message = spec.message_template.format(**format_dict)
-        path = spec.path_template.format(**format_dict)
-        # Build context: passthrough fidelity + category + typed action payload.
-        context: dict[str, Any] = dict(context_kwargs)
-        context["category"] = spec.category
-        context["root_cause_action"] = action_payload
-        context["path"] = path
-    else:
-        message = selected_message_template.format(**format_dict)
-        suggestions = [s.format(**format_dict) for s in spec.suggestions_template]
-        path = spec.path_template.format(**format_dict)
-        context = dict(context_kwargs)
-        context["category"] = spec.category
-        context["path"] = path
+    message = selected_message_template.format(**format_dict)
+    suggestions = [s.format(**format_dict) for s in spec.suggestions_template]
+    path = spec.path_template.format(**format_dict)
+    context = dict(context_kwargs)
+    context["category"] = spec.category
+    context["path"] = path
 
     # Headline rendering is now sourced via ``resolve_headline_for(diag)`` at
     # render time (catalog-as-SSoT). The make_diagnostic path no longer writes
@@ -1347,9 +1230,6 @@ def resolve_headline_for(diag: Diagnostic) -> str:
 
 
 __all__ = [
-    "CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS",
-    "CACHE_DISCREPANCY_ACTION_TEMPLATES",
-    "CACHE_DISCREPANCY_REQUIRED_CONTEXT",
     "CACHE_OPPORTUNITIES_NUDGE_ID",
     "CACHE_WARNING_CATALOG",
     "DEFAULT_RECOMMENDED_ACTION_PRIORITY",

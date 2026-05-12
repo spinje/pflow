@@ -276,7 +276,7 @@ def test_branch_absent_chunk_silently_skipped(mock_llm_client) -> None:
 def test_branch_absent_records_skipped_chunk_in_llm_usage(mock_llm_client) -> None:
     """``cache_chunks_skipped`` is exposed via shared['llm_usage'] so the
     trace 2.1.0 channel (E.1) can attribute discrepancies to runtime branch
-    skips (vs TTL expiry, key mismatch, parallel-write race)."""
+    skips (vs key mismatch)."""
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared: dict[str, Any] = {"a": "alpha-value"}

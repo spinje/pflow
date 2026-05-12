@@ -883,3 +883,50 @@ text. Bundled because each was a localized string change; no logic affected.
   `12-real-world-lyrics-generator/04-guide-auto-detect` to bundle these
   changes with the stale-but-correct guide updates from earlier sweeps.
 - Touched-file `ruff check`, `ruff format --check`, focused `mypy` clean.
+
+## 2026-05-12 — Task 159 Followups — Bug 8 fix: delete broken TTL discrepancy attribution
+
+Removed `ttl_expiry` from `cache.discrepancy` because the analyzer only had
+`cache_age_sec` from pflow's memo cache, not provider prompt-cache age. The
+old recommendation (`Consider - ttl: 1h`) was therefore aimed at the wrong
+cache layer. Discrepancy attribution now has two structural branches:
+`chunk_skipped` and `key_mismatch`; events with missing actual/predicted keys
+are silently skipped and rely on the existing prediction-skip notes.
+
+Retired the `cache.discrepancy` dispatch maps and `make_diagnostic` special
+case. The catalog row now uses the same flat `suggestions_template` path as
+other warnings, and JSON format moved `4.1 -> 4.2` because per-diagnostic
+context no longer carries `trace_path`, `predicted_pct`, `predicted_label`,
+`actual_pct`, or `cache_age_sec`.
+
+Deviations / learnings:
+
+- `_ensure_discrepancy_workflow_scope` already backfilled
+  `workflow_path_short`, but `_basename_for_workflow` did not strip
+  `.pflow.md`. Updated that helper instead of re-adding duplicate
+  call-site fields; it is only used for discrepancy scope.
+- The JSON version bump intentionally drifted every JSON baseline, not only
+  the discrepancy case. Regenerated the version line across JSON baselines;
+  remaining baseline drift is unrelated pre-existing parser TTL wording plus
+  the sandbox `/dev/fd` report case.
+- No provider-TTL expiry detection ships here. Follow-up issue to file after
+  merge: **Detect provider prompt-cache TTL expiry from trace timestamps**.
+  It should use per-prefix write/read timestamps and add a new catalog ID
+  after DD#29 review.
+
+History references preserved as append-only context: task spec lines
+`task-159.md:274, 492-499`; implementation-progress-log entries
+`733, 1822, 5088, 6012, 6046, 6076`; recommendations plan lines
+`fix-plans/recommendations-section-plan.md:91, 482, 571, 575, 612, 613, 700, 804`.
+
+Verification:
+
+- Focused cache-analysis + CLI suite: 652 passed.
+- Baseline harness after expected JSON/version updates: 71 passed, 4 drifted
+  (all unrelated/pre-existing: three parser TTL wording cases and
+  `15-run-flag-interactions/03-report-with-only` sandbox `/dev/fd` drift).
+- Near-full sandbox-safe suite: first run exposed 4 additional
+  `/opt/homebrew/bin/uv` subprocess panics; rerun excluding those sandbox-only
+  tests plus the known skill exclusions passed: 6,678 passed, 19 skipped.
+- `ruff check`, `ruff format --check`, and focused `mypy
+  src/pflow/core/cache_analysis` clean.

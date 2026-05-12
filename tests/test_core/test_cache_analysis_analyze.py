@@ -6047,13 +6047,13 @@ def test_format_fidelity_skip_note_is_single_source_of_truth() -> None:
     """Fix 8 follow-up: every "we couldn't verify cache fidelity here" note
     in the discrepancy stage routes through ``_format_fidelity_skip_note``.
     Locks the wording in one place so future drift across the 9 emit sites
-    is impossible — change the prefix or the TTL/chunk-skip tail here, and
+    is impossible — change the prefix or the chunk-skip tail here, and
     every downstream note inherits the change.
 
     Mutation contract:
     - Change the prefix string ("Cache fidelity check skipped for") → every
       production note using the helper diverges from this test's substring.
-    - Drop the "TTL expiry and chunk-skip detection still apply." tail →
+    - Drop the "Chunk-skip detection still applies." tail →
       the final substring assertion fails.
     - Inline the helper at any emit site (bypassing the SSoT) → those notes
       drift from the rest; the integration tests for that site fail.
@@ -6063,8 +6063,7 @@ def test_format_fidelity_skip_note_is_single_source_of_truth() -> None:
     # Default (applicable=True): "skipped for" prefix.
     note = _format_fidelity_skip_note("x.pflow.md", "workflow failed to compile")
     assert note == (
-        "Cache fidelity check skipped for x.pflow.md: workflow failed to "
-        "compile. TTL expiry and chunk-skip detection still apply."
+        "Cache fidelity check skipped for x.pflow.md: workflow failed to compile. Chunk-skip detection still applies."
     )
 
     # applicable=False switches to "not applicable to" — for cases like
@@ -6073,7 +6072,7 @@ def test_format_fidelity_skip_note_is_single_source_of_truth() -> None:
     not_applicable = _format_fidelity_skip_note("x.pflow.md.draft", "this node has `cache: false`", applicable=False)
     assert "Cache fidelity check not applicable to x.pflow.md.draft" in not_applicable
     assert "`cache: false`" in not_applicable
-    assert "TTL expiry and chunk-skip detection still apply" in not_applicable
+    assert "Chunk-skip detection still applies" in not_applicable
 
     # Negative: no old jargon ever appears via this helper.
     for output in (note, not_applicable):
@@ -6085,7 +6084,7 @@ def test_format_fidelity_skip_note_is_single_source_of_truth() -> None:
 def test_skipped_workflows_note_single_renders_plain_english() -> None:
     """Fix 8 follow-up: single-workflow skip case routes through the
     ``_format_fidelity_skip_note`` helper. No jargon prefix; plain English
-    target + reason; consistent TTL/chunk-skip tail.
+    target + reason; consistent chunk-skip tail.
 
     Mutation contract: drop the ``len(paths) == 1`` branch → this test fails
     (renders the multi-summary phrasing for one workflow).
@@ -6096,8 +6095,8 @@ def test_skipped_workflows_note_single_renders_plain_english() -> None:
     # Plain-English framing with the workflow named.
     assert "Cache fidelity check skipped for song-creator.pflow.md" in note
     assert "weren't supplied as parameters" in note
-    # Consistent fallback tail (TTL expiry / chunk-skip detection still apply).
-    assert "TTL expiry and chunk-skip detection still apply" in note
+    # Consistent fallback tail.
+    assert "Chunk-skip detection still applies" in note
     # No jargon.
     assert "Discrepancy detection" not in note
     assert "predicted-key matching" not in note
@@ -6132,7 +6131,7 @@ def test_skipped_workflows_note_multi_collapses_to_summary() -> None:
     assert "Pass concrete" in note
     assert "<input>=<value>" in note
     # Consistent fallback tail.
-    assert "TTL expiry and chunk-skip detection still apply" in note
+    assert "Chunk-skip detection still applies" in note
     # No jargon.
     assert "Discrepancy detection" not in note
     assert "Observable-field attributions" not in note
@@ -6162,8 +6161,8 @@ def test_predict_cache_keys_memo_empty_note_uses_plain_english() -> None:
 
     The original "Discrepancy detection: predicted-key matching unavailable
     (memo cache empty — predicted-key matching needs prior memo cache entries
-    to compare against). Observable-field attributions (TTL expiry, chunk
-    skipped) still apply." packs four internal terms ("Discrepancy detection",
+    to compare against). Observable-field attributions (chunk skipped)
+    still apply." packs four internal terms ("Discrepancy detection",
     "predicted-key matching", "Observable-field attributions", "memo cache")
     into one sentence. A fresh agent reading it cold can't derive any action.
 

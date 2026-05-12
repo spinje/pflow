@@ -1097,7 +1097,7 @@ cache-shape advisories:
 | `cache.heterogeneous-models-fragment-cache` | Use one exact model for nodes that should share a cache, or accept that each model writes its own cache. |
 | `cache.first-call-write-penalty` | Remove `prompt_cache:` from one-off calls when no later call reads that cache. |
 | `cache.cross-workflow-prose-mismatch` | Use the same prose around the cached value in both workflows when you want cross-file cache reuse. |
-| `cache.discrepancy` | In trace mode, compare the reported cause: TTL expiry, skipped chunks, or runtime value changes. |
+| `cache.discrepancy` | In trace mode, compare the reported cause: skipped chunks or runtime value changes. |
 
 `cache.cross-workflow-rename-detected` is informational. Different variable
 names alone do not break provider cache hits; edit names only when it improves

@@ -5463,8 +5463,8 @@ def _format_fidelity_skip_note(target: str, reason: str, *, applicable: bool = T
     Every skip-note in the discrepancy stage describes the same shape: the
     analyzer wanted to compare predicted cache_keys against trace evidence
     for a specific target (workflow or workflow.node), couldn't, and falls
-    back to reporting explicit cache events (TTL expiry, chunk-skipped)
-    from the trace. The framing is jargon-free and consistent across all
+    back to reporting explicit skipped-chunk events from the trace. The
+    framing is jargon-free and consistent across all
     9 emit sites so an agent reading the Notes section never has to map
     "Discrepancy detection: predicted-key matching" → "cache fidelity
     check" by themselves.
@@ -5477,7 +5477,7 @@ def _format_fidelity_skip_note(target: str, reason: str, *, applicable: bool = T
     returns. The wording lives in this one place to prevent that drift.
     """
     prefix = "Cache fidelity check skipped for" if applicable else "Cache fidelity check not applicable to"
-    return f"{prefix} {target}: {reason}. TTL expiry and chunk-skip detection still apply."
+    return f"{prefix} {target}: {reason}. Chunk-skip detection still applies."
 
 
 def _format_skipped_workflows_note(paths: list[str]) -> str:
@@ -5541,8 +5541,8 @@ def _predict_one_workflow(
     # node for any node whose templates or referenced cache chunks touch
     # a padded slot — its predicted cache_key would be placeholder-
     # tainted and never match the trace. Per-node skip is silent;
-    # observable-field attribution (TTL expiry, chunk-skipped) covers any
-    # real miss on those nodes.
+    # skipped-chunk attribution covers real branch-absent misses on those
+    # nodes.
     padded_params, dummied_keys = _pad_inputs_for_prediction(params, declared_inputs)
     dummied_chunks = _dummied_cache_chunks(ir, dummied_keys)
     scaffold = _build_predict_scaffold(ir, padded_params, ctx.memo_cache, workflow_path)
@@ -5878,7 +5878,6 @@ def _emit_discrepancy_diagnostics(
     cw_result: Any,
     notes: list[str],
 ) -> list[Diagnostic]:
-    workflow_ir = dict(ctx.workflow_ir)
     trace_data = ctx.trace_data
     if trace_data is None:
         return []
@@ -5914,67 +5913,28 @@ def _emit_discrepancy_diagnostics(
         if not isinstance(llm_call, dict):
             continue
 
-        cache_create = int(llm_call.get("cache_creation_input_tokens") or 0)
-        cache_read = int(llm_call.get("cache_read_input_tokens") or 0)
         chunks_skipped = llm_call.get("cache_chunks_skipped")
-        # When cache wasn't engaged at all the discrepancy machinery has
-        # nothing to compare — UNLESS a chunk was skipped, which is exactly
-        # the reason the cache disengaged in the first place. Skipping that
-        # case would make `chunk_skipped` attribution unreachable for the
-        # branch-absent scenario it was designed for.
-        if cache_create == 0 and cache_read == 0 and not chunks_skipped:
-            continue
-
         actual_key = llm_call.get("cache_key") or event.get("cache_key")
-        cache_age_sec = llm_call.get("cache_age_sec") or event.get("cache_age_sec")
         predicted_key = _predicted_key_for_event(predicted_keys, workflow_path=leaf_workflow_path, node_id=node_id)
 
-        actual_pct = _safe_pct(cache_read, cache_read + cache_create)
-        predicted_pct = 100 if predicted_key is not None else 0
-        predicted_label = _compute_predicted_label(predicted_key, actual_key)
-
-        if predicted_key is None and not (chunks_skipped or (cache_age_sec is not None and float(cache_age_sec) > 300)):
-            # Cache engaged but we have no predicted_key AND no observable
-            # signal. Skip — per-node skip notes from ``_predict_cache_keys``
-            # already explain why prediction was unavailable for nodes in the
-            # analyzed IR; events outside the IR (typically batch sub-workflow
-            # per-item children with runtime-only context) are surfaced via
-            # the per-child analyze-cache commands section.
-            continue
-        if predicted_key is not None and abs(predicted_pct - actual_pct) < 5:
+        # Skip when there is no discrepancy to surface. Missing key cases are
+        # covered by prediction skip notes from ``_predict_cache_keys`` rather
+        # than by noisy observable-only discrepancy attributions.
+        if not chunks_skipped and (actual_key is None or predicted_key is None or predicted_key == actual_key):
             continue
 
-        # Bug 9 fix: TTL must come from the leaf event's workflow file —
-        # mixed parent/child TTLs (parent ``ttl: 1h``, child ``ttl: 5m``)
-        # would otherwise attribute child cache-age=600s as fresh against
-        # the parent's hour-long window, missing the child's actual expiry.
-        leaf_ir = (cw_result.irs_by_workflow.get(leaf_workflow_path) if leaf_workflow_path else None) or workflow_ir
-        root_cause, summary, extra = _attribute_root_cause(
-            cache_age_sec=cache_age_sec,
+        root_cause, summary, suggestion, extra = _attribute_root_cause(
             chunks_skipped=chunks_skipped,
-            predicted_key=predicted_key,
-            actual_key=actual_key,
-            ttl=_extract_cache_ttl(leaf_ir.get("cache")),
-            provider=detect_provider(llm_call.get("model")),
-            node_id=node_id,
-            leaf_workflow_path=leaf_workflow_path or workflow_path,
-            predicted_pct=predicted_pct,
-            actual_pct=actual_pct,
         )
         context_extra = dict(extra)
         context_extra.setdefault("affected_workflow", leaf_workflow_path or "<root>")
-        context_extra.setdefault("workflow_path_short", _workflow_short_name(leaf_workflow_path or "<root>"))
         diagnostics.append(
             make_diagnostic(
                 "cache.discrepancy",
                 node_id=node_id,
-                trace_path=str(trace_data.get("workflow_path") or "<unknown>"),
-                predicted_pct=predicted_pct,
-                predicted_label=predicted_label,
-                actual_pct=actual_pct,
                 root_cause=root_cause,
                 root_cause_summary=summary,
-                cache_age_sec=cache_age_sec,
+                suggestion=suggestion,
                 predicted_cache_key=predicted_key,
                 actual_cache_key=actual_key,
                 **context_extra,
@@ -5998,99 +5958,30 @@ def _predicted_key_for_event(
     return predicted_keys.get((workflow_path, node_id))
 
 
-def _workflow_short_name(path: str) -> str:
-    if "/" in path:
-        path = path.rsplit("/", 1)[-1]
-    if path.endswith(".pflow.md"):
-        return path[: -len(".pflow.md")]
-    return path
+def _attribute_root_cause(*, chunks_skipped: Any) -> tuple[str, str, str, dict[str, Any]]:
+    """Attribute a discrepancy event to one of two structural causes.
 
+    Returns ``(root_cause, summary, suggestion, extra_context)``.
 
-def _compute_predicted_label(predicted_key: str | None, actual_key: Any) -> str:
-    """Compute a human-readable label for the planner's prediction.
-
-    Bug F fix — ``predicted_pct`` is binary (100 if planner produced a
-    cache_key, 0 otherwise) and rendering it as ``"predicted hit_ratio 100%"``
-    is misleading: it sounds like a measured hit ratio. The label
-    distinguishes:
-
-    - ``"miss"`` — planner couldn't produce a cache_key (BFS-downstream,
-      heterogeneous batch, partial inputs); discrepancy attribution falls back
-      to observable signals.
-    - ``"hit (bytes diverged at runtime)"`` — both keys are present AND
-      different (e.g., upstream value changed between analyzer-time and the
-      traced run). Triggers ``key_mismatch`` attribution downstream.
-    - ``"hit"`` — predicted_key is set; the actual_key either matches OR was
-      not recorded by the trace (older fixtures, future schema changes).
-      Treating "actual_key absent" as a match avoids false-positive
-      "diverged" rendering on traces that simply lack the field.
-    """
-    if predicted_key is None:
-        return "miss"
-    if actual_key is not None and predicted_key != actual_key:
-        return "hit (bytes diverged at runtime)"
-    return "hit"
-
-
-def _attribute_root_cause(
-    *,
-    cache_age_sec: Any,
-    chunks_skipped: Any,
-    predicted_key: str | None,
-    actual_key: Any,
-    ttl: str | None,
-    provider: Any,
-    node_id: str,
-    leaf_workflow_path: str | None,
-    predicted_pct: int,
-    actual_pct: int,
-) -> tuple[str, str, dict[str, Any]]:
-    """Classify discrepancy root cause for one trace event.
-
-    ``leaf_workflow_path`` is the workflow file the leaf event belongs to —
-    parent for top-level events, child path for sub-workflow descendants.
-    The ``affected_workflow`` field is set from this so agents see the
-    workflow whose ``## Cache`` block actually needs editing, not the
-    analyzed root. Renderer scope-suppression at ``view_helpers.py`` then
-    composes correctly with Bug 1's per-node scope rendering.
+    The caller's gate guarantees we are only invoked when there is a
+    discrepancy to attribute: ``chunks_skipped`` is truthy, or both keys are
+    set and differ. No ``unknown`` fallback is reachable in this shape.
     """
     if chunks_skipped:
         skipped = str(chunks_skipped[0])
         return (
             "chunk_skipped",
             f"Cache chunk {skipped!r} skipped at runtime (branch absent)",
+            (
+                f"Cache chunk `{skipped}` was skipped at runtime (branch absent); "
+                "declaration is correct but rendered subset is shorter."
+            ),
             {"skipped_chunk": skipped},
         )
-    if chunks_skipped is None:
-        return (
-            "unknown",
-            f"Cache chunks-skipped field absent on this trace event "
-            f"(predicted={predicted_pct}%, actual={actual_pct}%); cannot attribute for {node_id}",
-            {},
-        )
-
-    if cache_age_sec is not None:
-        age = float(cache_age_sec)
-        provider_name = getattr(provider, "name", None)
-        effective_ttl = None
-        if ttl is not None:
-            effective_ttl = parse_cache_ttl(ttl)
-        elif provider_name in {"anthropic", "openai", "gemini"}:
-            effective_ttl = parse_cache_ttl(None)
-        if effective_ttl is not None and age >= effective_ttl.seconds:
-            return (
-                "ttl_expiry",
-                f"Cache entry was {age:.0f}s old (>= {effective_ttl.label} TTL); upstream write expired",
-                {"affected_workflow": leaf_workflow_path or "<root>"},
-            )
-
-    if predicted_key is not None and predicted_key != actual_key:
-        return ("key_mismatch", "Upstream value changed between predicted run and actual run", {})
-
     return (
-        "unknown",
-        f"Cannot attribute discrepancy to known causes "
-        f"(predicted={predicted_pct}%, actual={actual_pct}%); inspect trace events for {node_id}",
+        "key_mismatch",
+        "Upstream value changed between predicted run and actual run",
+        "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.",
         {},
     )
 

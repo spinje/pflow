@@ -28,15 +28,12 @@ from pflow.core.cache_analysis.warning_catalog import (
 # Minimal context kwargs per ID — copy of test_cache_analysis_warnings.py's
 # helper, kept here so this coverage test is self-contained.
 _DISCREPANCY_BASE = {
-    "trace_path": "songs[1]",
-    "predicted_pct": 80,
-    "predicted_label": "hit",
-    "actual_pct": 20,
-    "root_cause_summary": "auto",
-    "cache_age_sec": None,
+    "workflow_path_short": "workflow",
+    "root_cause_summary": "Upstream value changed between predicted run and actual run",
+    "suggestion": "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.",
     "predicted_cache_key": None,
     "actual_cache_key": None,
-    "affected_workflow": "x.pflow.md",
+    "affected_workflow": "workflow.pflow.md",
 }
 
 
@@ -340,7 +337,7 @@ def test_opportunities_nudge_id_NOT_in_catalog() -> None:
     [
         # Simple flat context (list-of-strings).
         "cache.order-mismatch",
-        # Nested dispatch payload — highest complexity in the catalog.
+        # Discrepancy diagnostic with nullable cache-key context.
         "cache.discrepancy",
         # V6 combined-diagnostic shape (invalid_fields: list[str]).
         "cache.invalid-on-non-llm",
@@ -945,7 +942,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     _round_trip(found[0])
     seen_ids.add("cache.cross-workflow-prose-mismatch")
 
-    # cache.discrepancy: 2.1.0 trace event with observable TTL-expiry fields.
+    # cache.discrepancy: 2.1.0 trace event with skipped cache chunk.
     trace_path = tmp_path / "trace.json"
     trace_path.write_text(
         json.dumps({
@@ -958,8 +955,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
                         "model": "anthropic/claude-sonnet-4-5",
                         "cache_creation_input_tokens": 100,
                         "cache_read_input_tokens": 0,
-                        "cache_age_sec": 301,
-                        "cache_chunks_skipped": [],
+                        "cache_chunks_skipped": ["concept"],
                     },
                 }
             ],

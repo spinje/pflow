@@ -21,7 +21,7 @@
 
   1. Cache hit discrepancy on gen — Upstream value changed between predicted run and actual run  savings unavailable
      gen
-     gen in workflow (trace: workflow.pflow.md): predicted hit (bytes diverged at runtime), actual 0% read — root cause: Upstream value changed between predicted run and actual run
+     gen in workflow: Upstream value changed between predicted run and actual run
      → Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.
 
 ## Per-call cache report

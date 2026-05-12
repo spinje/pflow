@@ -854,7 +854,7 @@ common-path, then JSON/lower-priority).
 - **What**: `pflow analyze-cache <missing-path> --format=json` returns:
   ```json
   {
-    "format_version": "4.1",
+    "format_version": "4.2",
     "error": {
       "id": "analyze-cache.workflow-resolution-failed",
       "message": "Workflow '...' not found"
@@ -879,14 +879,14 @@ common-path, then JSON/lower-priority).
 - **What**: The trace-from-trace case Notes section emits two
   long, jargon-heavy lines:
   ```
-  · Discrepancy detection: predicted-key matching unavailable (workflow has no run history). Observable-field attributions (TTL expiry, chunk skipped) still apply.
+  · Discrepancy detection: predicted-key matching unavailable (workflow has no run history). Observable-field attributions (chunk skipped) still apply.
   · Discrepancy detection: skipped attribution for 2 trace event(s) with no predicted cache_key and no observable signal. Per-node skip reasons (above, when present) explain why prediction was unavailable for the affected nodes; this count covers events whose nodes were not in the analyzed IR (typically batch sub-workflow per-item children with runtime-only context).
   ```
 - **Repro**: `03-analyze-cache-modes/05-trace-from-trace/expected-stdout.txt:29-30`.
 - **Impact**: The note's intent is "I couldn't attribute 2 events
   because they were batch sub-workflow per-item children." That's
   one short sentence, not 3. An agent has to parse "predicted-key
-  matching", "observable-field attributions", "TTL expiry, chunk
+  matching", "observable-field attributions", "chunk
   skipped" — all internal jargon.
 - **Suggestion**: shorten to:
   ```

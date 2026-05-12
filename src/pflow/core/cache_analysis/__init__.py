@@ -84,10 +84,16 @@ Version history (``JSON_FORMAT_VERSION``):
   diagnostics may carry optional analyzer-emitted context keys
   ``body_only_cost_usd_per_call``, ``with_cache_cost_usd_per_call``, and
   ``shadowed_chunk_names`` when pricing and output tokens are known.
+- ``"4.2"`` — Bug 8 discrepancy correction: ``cache.discrepancy`` diagnostic
+  context drops the stale rendered-prediction fields
+  ``trace_path``/``predicted_pct``/``predicted_label``/``actual_pct``/
+  ``cache_age_sec``. The root-cause shape is now limited to
+  ``chunk_skipped`` and ``key_mismatch``.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning
-bump minor; field-shape removal bumps major.
+and per-warning diagnostic-context changes bump minor; typed top-level field
+removals bump major.
 """
 
 from __future__ import annotations
@@ -99,7 +105,7 @@ from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
 
-JSON_FORMAT_VERSION: Final[str] = "4.1"
+JSON_FORMAT_VERSION: Final[str] = "4.2"
 """Version string emitted as the first key by ``render_json``.
 
 Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.

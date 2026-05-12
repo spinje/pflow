@@ -2675,7 +2675,7 @@ def test_text_notes_shorten_workflow_paths_in_prose() -> None:
     workflow_path = "/abs/project/workflows/root.pflow.md"
     child_path = "/abs/project/workflows/sub/child.pflow.md"
     notes = [
-        f"Cache fidelity check skipped for {child_path}.draft: a template reference couldn't be resolved at analysis time. TTL expiry and chunk-skip detection still apply."
+        f"Cache fidelity check skipped for {child_path}.draft: a template reference couldn't be resolved at analysis time. Chunk-skip detection still applies."
     ]
     row = PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": child_path})
     text = render_text(_make_analysis(rows=[row], workflow_path=workflow_path, notes=notes))
@@ -4348,15 +4348,11 @@ def test_discrepancy_message_includes_workflow_scope() -> None:
     diag = make_diagnostic(
         "cache.discrepancy",
         node_id="draft",
-        trace_path="/trace.json",
         workflow_path_short="child",
         affected_workflow="/abs/child.pflow.md",
-        predicted_pct=100,
-        predicted_label="hit",
-        actual_pct=0,
         root_cause="key_mismatch",
         root_cause_summary="Upstream value changed",
-        cache_age_sec=None,
+        suggestion="Re-run analyze-cache.",
         predicted_cache_key="a",
         actual_cache_key="b",
     )

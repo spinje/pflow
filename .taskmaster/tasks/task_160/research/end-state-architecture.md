@@ -60,7 +60,7 @@ Source line ranges verified against the file at HEAD of `feat/prompt-caching` br
 | 8 | Cache validator findings glue (`_cache_validator_findings`, `_cache_items`, `_cache_item_names`) | 2035–2080 | ~46 | stays in `analyze.py` |
 | 9 | Cross-workflow analytical stage (`_build_cross_workflow_findings`, `_cross_workflow_prose_mismatches`, `_ValueFlowCandidate`, `_value_flow_candidate`, `_build_destinations_for_group`, `_emit_value_flow_groups`, `_count_llm_nodes_referencing_path`, `_items_by_name`, `_iter_llm_events`) | 2134–2500 | ~367 | **`stages/cross_workflow.py`** |
 | 10 | Discrepancy — predict half (`_predict_cache_keys`, `_predict_one_workflow`, `_PredictScaffold`, `_build_predict_scaffold`, `_predict_node_with_scaffold`, `_predict_node_cache_key`, `_enumerate_compiled_bare_nodes`, `_is_llm_node`) | ~2502–2780 | ~280 | **`stages/discrepancy/predict.py`** |
-| 11 | Discrepancy — diagnose half (`_emit_discrepancy_diagnostics`, `_predicted_key_for_event`, `_compute_predicted_label`, `_attribute_root_cause`, `_aggregate_and_cap_discrepancies`) | ~2780–3028 | ~247 | **`stages/discrepancy/diagnose.py`** |
+| 11 | Discrepancy — diagnose half (`_emit_discrepancy_diagnostics`, `_predicted_key_for_event`, `_attribute_root_cause`, `_aggregate_and_cap_discrepancies`) | ~2780–3028 | ~247 | **`stages/discrepancy/diagnose.py`** |
 | 12 | Summary builders (scattered): `_build_trace_execution_index`, `_build_sub_workflow_rollup`, `_has_cross_workflow_truncation`, `_count_llm_nodes`, `_build_parameters_by_workflow`, `_resolve_child_input_value`, `_aggregate_confidence`, `_build_summary`, `_unavailable_models_by_workflow`, `_safe_pct_or_none`, `_maybe_append_gemini_note`, `_GEMINI_TELEMETRY_NOTE` | 759–961, 3035–3192, 3194–3211, 3243–3270 | ~250 | **`stages/summary.py`** |
 | — | `_build_recommended_actions` (compatibility shim that delegates to `view_helpers`) | 3219–3235 | ~17 | **DELETE** — callers import from `rendering/views.py` directly |
 | — | `_workflow_short_name` (duplicate of `render_text.py:721`) | 2911 | small | **DELETE** — single canonical version lives in `rendering/views.py` |
@@ -109,7 +109,7 @@ A complete audit of which private symbols each test file imports from `analyze.p
 | Test file | Private imports from analyze.py | Other private |
 |---|---|---|
 | `test_cache_analysis_analyze.py` | `_aggregate_confidence`, `_build_summary`, `_maybe_append_gemini_note`, `_estimate_row_tokens` (×3), `_build_recommended_actions` (×5), `_build_parameters_by_workflow` | `_render_summary` (×4), `_format_cost` (×2) from render_text |
-| `test_cache_analysis_per_id_emission.py` | `_compute_predicted_label`, `_build_predict_scaffold`, `_predict_cache_keys` (×3), `_iter_llm_events` (×2), `_aggregate_and_cap_discrepancies` (×3), `_build_parameters_by_workflow`, `_predict_node_cache_key` | — |
+| `test_cache_analysis_per_id_emission.py` | `_build_predict_scaffold`, `_predict_cache_keys` (×3), `_iter_llm_events` (×2), `_aggregate_and_cap_discrepancies` (×3), `_build_parameters_by_workflow`, `_predict_node_cache_key` | `_attribute_root_cause` simplified to 2-branch shape; `_compute_predicted_label` deleted (see Bug 8 fix). |
 | `test_cache_analysis_cost_estimation.py` | — | `_pricing_from_dict` from cost_estimation |
 | `test_cache_analysis_token_estimation.py` | — | `_find_llm_event` from token_estimation |
 | `test_cache_analysis_warnings.py` | — | `_compute_distribution_clause` from warning_catalog |

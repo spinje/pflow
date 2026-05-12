@@ -1134,7 +1134,7 @@ def _analysis_workflow_paths(analysis: CacheAnalysis) -> set[str]:
         paths.update(entry.workflow_path for entry in rollup.per_workflow)
     for diag in analysis.warnings:
         context = diag.context or {}
-        for key in ("affected_workflow", "parent_workflow", "child_workflow", "trace_path"):
+        for key in ("affected_workflow", "parent_workflow", "child_workflow"):
             value = context.get(key)
             if isinstance(value, str):
                 paths.add(value)
