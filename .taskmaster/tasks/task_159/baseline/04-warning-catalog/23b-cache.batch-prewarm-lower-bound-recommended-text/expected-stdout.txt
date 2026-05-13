@@ -1,0 +1,29 @@
+# Cache Analysis: workflow.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/04-warning-catalog/23b-cache.batch-prewarm-lower-bound-recommended-text/workflow.pflow.md
+
+  Workflow: 1 LLM node, ~3 invocations using anthropic/claude-sonnet-4-5
+
+## Summary
+
+  Cost per run:                unavailable
+
+  1 recommended action
+
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/04-warning-catalog/23b-cache.batch-prewarm-lower-bound-recommended-text/workflow.pflow.md context=<value>
+
+## Recommended actions (1, ordered by impact)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Batch prewarm opportunity (lower bound) — verify upstream refs and add `- prewarm: true` to scoring  savings at least ~$0.0066/run
+     scoring
+     scoring: at least ~1216 measurable stable tokens precede `${item.X}`. Unresolved refs (context.detail) may make the actual prefix larger, but only if their values repeat across batch items at runtime.
+     → Run once with `--report` (or pass missing upstream inputs) to verify the full prefix; then the analyzer can measure it and produce a confident recommendation.
+     → If you've confirmed the upstream refs are stable across batch items, add `- prewarm: true` to scoring.
+     → Trade-off: `prewarm: true` serializes the first batch item, adding roughly one item's wall-clock latency per run. Measure end-to-end duration before committing on latency-sensitive workflows.
+
+## Notes
+
+  · Per-call cache report hidden — workflow has no run data yet. Run once, then re-run analyze-cache for real per-node token estimates and cacheable projections.

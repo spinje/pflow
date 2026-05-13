@@ -118,6 +118,17 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
+        "cache.batch-prewarm-lower-bound-recommended": (
+            "score",
+            {
+                "measurable_tokens": 1200,
+                "batch_alias": "item",
+                "unresolved_refs": ("a", "b"),
+                "savings_lower_bound_usd": 0.02,
+                "batch_size": 12,
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
         "cache.dynamic-before-static": (
             "score",
             {
@@ -675,6 +686,29 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.batch-prewarm-recommended: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.batch-prewarm-recommended")
+
+    # cache.batch-prewarm-lower-bound-recommended: measurable stable bytes in
+    # the prefix clear the analyzer-patched provider minimum, but an unresolved
+    # upstream ref prevents confident exact measurement.
+    lower_bound_ir: dict[str, Any] = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "priced/model",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": ("stable " * 20) + "${missing.upstream}\n${item.text}"},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(lower_bound_ir, workflow_path=str(tmp_path / "lower-bound.pflow.md"), auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.batch-prewarm-lower-bound-recommended"]
+    assert found, (
+        f"analyze did not emit cache.batch-prewarm-lower-bound-recommended: ids={[d.id for d in analysis.warnings]}"
+    )
+    _round_trip(found[0])
+    seen_ids.add("cache.batch-prewarm-lower-bound-recommended")
 
     # cache.consolidate-to-root-recommended: brownfield path. Workflow declares
     # ``## Cache`` with two SUB-PATH chunks (``concept.title``, ``concept.core_idea``)

@@ -38,7 +38,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 24 entries (23 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 25 entries (24 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -65,11 +65,14 @@ def test_catalog_size_matches_v1_inventory() -> None:
       provider capability validation for minute-level TTLs)
     - ``cache.batch-prewarm-below-min`` (Task 159 follow-up: prewarm batches
       whose static prefix is below the provider minimum; warns that the
-      cache marker will silently no-op at the provider).
+      cache marker will silently no-op at the provider)
+    - ``cache.batch-prewarm-lower-bound-recommended`` (Task 159 follow-up:
+      restores prewarm advice when the measurable stable prefix clears the
+      provider minimum but unresolved upstream refs require verification).
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 24
+    assert len(CACHE_WARNING_CATALOG) == 25
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -284,6 +287,58 @@ def test_make_diagnostic_batch_prewarm_below_min_omits_provider_clause_when_note
         provider_note="",
     )
     assert diag.message.endswith("minimum of 1024")
+
+
+def test_make_diagnostic_batch_prewarm_lower_bound_recommended() -> None:
+    """Lower-bound prewarm advice renders measurable tokens and unresolved refs.
+
+    Mutation contract: pass ``unresolved_refs`` as a string or omit the CSV
+    derivation; this test fails because the message would render comma-separated
+    characters or the raw tuple instead of ``a, b``.
+    """
+    diag = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        measurable_tokens=1200,
+        batch_alias="item",
+        unresolved_refs=("a", "b"),
+        savings_lower_bound_usd=0.02,
+        batch_size=12,
+    )
+
+    assert diag.severity == Severity.WARNING
+    assert diag.id == "cache.batch-prewarm-lower-bound-recommended"
+    assert "at least ~1200" in diag.message
+    assert "${item.X}" in diag.message
+    assert "a, b" in diag.message
+    assert "a,  , b" not in diag.message
+    suggestions_blob = "\n".join(diag.suggestions or ())
+    assert "--report" in suggestions_blob
+    assert "prewarm: true" in suggestions_blob
+    assert "wall-clock" in suggestions_blob
+
+
+def test_make_diagnostic_batch_prewarm_lower_bound_savings_unavailable() -> None:
+    """Nullable lower-bound savings is valid catalog data.
+
+    Mutation contract: forget ``savings_lower_bound_usd`` in nullable_cost_keys;
+    this test fails because ``make_diagnostic`` rejects the unavailable-cost
+    case before renderers can say "savings at least unknown".
+    """
+    diag = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        measurable_tokens=1200,
+        batch_alias="item",
+        unresolved_refs=("a",),
+        savings_lower_bound_usd=None,
+        batch_size=12,
+    )
+
+    assert diag.context is not None
+    assert diag.context["savings_lower_bound_usd"] is None
 
 
 def test_make_diagnostic_padding_advisory_with_savings() -> None:
@@ -668,6 +723,15 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "prefix_tokens_estimated": 2100,
             "savings_pct": 89,
             "savings_usd": 0.12,
+        },
+        "cache.batch-prewarm-lower-bound-recommended": {
+            "node_id": "score",
+            "affected_workflow": "x.pflow.md",
+            "measurable_tokens": 1200,
+            "batch_alias": "item",
+            "unresolved_refs": ("a", "b"),
+            "savings_lower_bound_usd": 0.02,
+            "batch_size": 12,
         },
         "cache.dynamic-before-static": {
             "node_id": "score",

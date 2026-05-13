@@ -150,10 +150,71 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent(tmp_path: Path
     assert diag.context["batch_size"] == 34
     assert diag.context["prefix_tokens_estimated"] == 100
     assert diag.context["savings_pct"] == 89
+    assert "cache.batch-prewarm-lower-bound-recommended" not in {d.id for d in result.warnings}
 
     workflow_ir["nodes"][0]["prewarm"] = False
     opted_out = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
     assert "cache.batch-prewarm-recommended" not in {d.id for d in opted_out.warnings}
+
+
+def test_batch_prewarm_lower_bound_recommended_fires_when_measurable_prefix_clears_min() -> None:
+    """Unresolved refs inside the prefix no longer suppress all prewarm advice.
+
+    The measurable stable bytes clear the provider minimum; the unresolved
+    upstream ref is named so the agent knows what to verify with ``--report``.
+    Mutation contract: restore the exact-or-nothing
+    ``prefix_tokens is None -> return []`` gate; this test fails because the
+    lower-bound diagnostic disappears.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "as": "item"},
+                "params": {"prompt": ("stable " * 20) + "${missing.context}\n${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    warning_ids = {warning.id for warning in result.warnings}
+    assert "cache.batch-prewarm-recommended" not in warning_ids
+    assert "cache.batch-prewarm-lower-bound-recommended" in warning_ids
+    diag = next(warning for warning in result.warnings if warning.id == "cache.batch-prewarm-lower-bound-recommended")
+    assert diag.context is not None
+    assert diag.context["measurable_tokens"] >= 10
+    assert diag.context["unresolved_refs"] == ["missing.context"]
+    text = render_text(result)
+    assert "savings at least unknown" in text
+    assert "--report" in text
+
+
+def test_batch_prewarm_lower_bound_recommended_silent_when_measurable_prefix_below_min() -> None:
+    """A lower-bound below the provider minimum proves no actionable prewarm
+    advice yet; unresolved refs may help, but the analyzer cannot count them
+    without a real run.
+
+    Mutation contract: emit whenever unresolved refs exist; this test fails
+    because the lower-bound diagnostic appears for a sub-threshold prefix.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": "short ${missing.context}\n${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    warning_ids = {warning.id for warning in result.warnings}
+    assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
+    assert "cache.batch-prewarm-recommended" not in warning_ids
 
 
 def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min() -> None:

@@ -2814,6 +2814,45 @@ def test_batch_prewarm_recommended_discloses_wall_clock_tradeoff() -> None:
     assert "cache_read_input_tokens" not in text
 
 
+def test_batch_prewarm_lower_bound_renders_at_least_savings_and_verification() -> None:
+    """Lower-bound recommendations must not look like confident savings.
+
+    Mutation contract: route the diagnostic through the default savings
+    formatter; this test fails because the text says ``saves`` or
+    ``savings unavailable`` instead of the lower-bound wording.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    priced = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="score",
+        affected_workflow="/abs/wf.pflow.md",
+        measurable_tokens=1200,
+        batch_alias="item",
+        unresolved_refs=("concept.core_idea",),
+        savings_lower_bound_usd=0.012,
+        batch_size=8,
+    )
+    unpriced = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="review",
+        affected_workflow="/abs/wf.pflow.md",
+        measurable_tokens=1300,
+        batch_alias="item",
+        unresolved_refs=("concept.genre",),
+        savings_lower_bound_usd=None,
+        batch_size=8,
+    )
+
+    text = render_text(_make_analysis(warnings=[priced, unpriced]))
+
+    assert "savings at least ~$0.01/run" in text
+    assert "savings at least unknown" in text
+    assert "Run once with `--report`" in text
+    assert "Unresolved refs (concept.core_idea)" in text
+    assert "saves ~$0.01/run" not in text
+
+
 def test_batch_prewarm_below_min_renders_prewarm_remediation_not_declared_cache() -> None:
     """The new ``cache.batch-prewarm-below-min`` ID must render the
     prewarm-specific remediation path (restructure the prompt, OR remove

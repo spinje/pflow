@@ -406,6 +406,208 @@ def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix() -> None:
     assert "cache.batch-prewarm-recommended" not in action_ids
 
 
+def test_analyze_cache_emits_lower_bound_prewarm_advisory_when_measurable_clears_min(tmp_path: Path) -> None:
+    """CLI integration: unresolved prefix refs can still produce lower-bound
+    prewarm advice when the measurable prefix clears the provider minimum.
+
+    Mutation contract: keep the old exact-or-nothing prewarm gate; this test
+    fails because the lower-bound warning/action disappears from JSON.
+    """
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Lower Bound Prewarm
+
+The stable literal prefix is long enough even before the unresolved upstream ref.
+
+## Inputs
+
+### missing
+
+Optional upstream object; intentionally omitted in this test.
+
+- type: object
+- required: false
+
+## Steps
+
+### score
+
+Score each item.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- batch:
+    items:
+      - text: alpha
+      - text: bravo
+      - text: charlie
+    as: item
+- prompt: |
+"""
+        + ("    stable " * 1800)
+        + """
+    ${missing.context}
+    ${item.text}
+""",
+    )
+
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--no-trace-autoload", "--format=json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    warning_ids = {warning.get("id") for warning in payload["warnings"]}
+    action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
+    assert "cache.batch-prewarm-lower-bound-recommended" in warning_ids
+    assert "cache.batch-prewarm-lower-bound-recommended" in action_ids
+    warning = next(
+        warning for warning in payload["warnings"] if warning["id"] == "cache.batch-prewarm-lower-bound-recommended"
+    )
+    assert warning["context"]["unresolved_refs"] == ["missing.context"]
+    assert "at least" in warning["message"]
+    action = next(
+        action
+        for action in payload["recommended_actions"]
+        if action["warning_id"] == "cache.batch-prewarm-lower-bound-recommended"
+    )
+    assert "verify" in " ".join(action["suggestions"]).lower()
+
+
+def test_analyze_cache_suppresses_lower_bound_advisory_when_measurable_below_min(tmp_path: Path) -> None:
+    """CLI integration: unresolved refs alone are not enough for advice.
+
+    Mutation contract: emit lower-bound diagnostics without checking the
+    measurable token minimum; this test fails because a one-word prefix becomes
+    a recommendation.
+    """
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Lower Bound Below Min
+
+The measurable prefix is too short.
+
+## Inputs
+
+### missing
+
+Optional upstream object; intentionally omitted in this test.
+
+- type: object
+- required: false
+
+## Steps
+
+### score
+
+Score each item.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- batch:
+    items:
+      - text: alpha
+      - text: bravo
+    as: item
+- prompt: |
+    short
+    ${missing.context}
+    ${item.text}
+""",
+    )
+
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--no-trace-autoload", "--format=json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    warning_ids = {warning.get("id") for warning in payload["warnings"]}
+    action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
+    assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
+    assert "cache.batch-prewarm-recommended" not in action_ids
+
+
+def test_analyze_cache_lower_bound_does_not_fire_when_confident_path_succeeds(tmp_path: Path) -> None:
+    """CLI integration: exact batch-prefix evidence keeps the confident ID.
+
+    Mutation contract: always emit the lower-bound ID for batch prefixes; this
+    test fails because the confident ``cache.batch-prewarm-recommended`` action
+    is replaced or duplicated.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Confident Batch Prewarm
+
+The prefix is fully measurable and trace-backed.
+
+## Steps
+
+### score
+
+Score each item.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- batch:
+    items:
+      - text: alpha
+      - text: bravo
+      - text: charlie
+      - text: delta
+    as: item
+- prompt: |
+"""
+        + ("    stable " * 1200)
+        + """
+    ${item.text}
+""",
+    )
+    trace_path = tmp_path / "trace.json"
+    builder = TraceFixtureBuilder()
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=str(workflow_path),
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "anthropic/claude-sonnet-4-5",
+                                    "input_tokens": 1300,
+                                    "output_tokens": 5,
+                                    "total_tokens": 1305,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(4)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "--from-trace", str(trace_path), "--format=json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    warning_ids = {warning.get("id") for warning in payload["warnings"]}
+    action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
+    assert "cache.batch-prewarm-recommended" in warning_ids
+    assert "cache.batch-prewarm-recommended" in action_ids
+    assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
+
+
 def test_analyze_cache_suppresses_dynamic_before_static_on_unmeasurable_suffix(tmp_path: Path) -> None:
     """CLI integration: dynamic-before-static needs a measurable suffix.
 

@@ -13,6 +13,7 @@ from pflow.core.cache_analysis.token_estimation import (
     estimate_cacheable_tokens,
     estimate_tokens,
     tokenize_prompt_region,
+    tokenize_prompt_region_lower_bound,
 )
 
 # ---------------------------------------------------------------------------
@@ -427,6 +428,136 @@ def test_tokenize_prompt_region_returns_none_when_resolved_value_contains_litera
     """
     ctx = _analysis_ctx({"text": "literal ${still.template}"})
     assert tokenize_prompt_region("${text}", model="", ctx=ctx) is None
+
+
+# ---------------------------------------------------------------------------
+# tokenize_prompt_region_lower_bound — advisory prompt-slice tokenization
+# ---------------------------------------------------------------------------
+
+
+def test_lower_bound_returns_zero_for_empty_region() -> None:
+    """Behavior: empty cacheable regions have no measurable bytes.
+
+    History: lower-bound advisories distinguish zero stable bytes from unknown
+    stable bytes so prewarm-no-prefix and below-min diagnostics remain
+    mutually exclusive. Mutation contract: route empty input through template
+    resolution; this test fails if empty regions stop returning ``(0, ())``.
+    """
+    assert tokenize_prompt_region_lower_bound("", model="", ctx=_analysis_ctx({})) == (0, ())
+
+
+def test_lower_bound_returns_int_when_no_refs() -> None:
+    """Behavior: literal regions use the same tokenizer as the exact helper.
+
+    History: literal-only batch prefixes should stay on the confident path.
+    Mutation contract: synthesize unresolved metadata for literal text; this
+    test fails because no refs exist to verify.
+    """
+    text = "abcd efgh"
+    assert tokenize_prompt_region_lower_bound(text, model="", ctx=_analysis_ctx({})) == (
+        estimate_tokens("", text)[0],
+        (),
+    )
+
+
+def test_lower_bound_returns_int_and_empty_tuple_when_all_refs_resolve() -> None:
+    """Behavior: fully resolved regions are measured exactly.
+
+    History: the advisory must not compete with confident recommendations when
+    the exact path can prove the prefix size. Mutation contract: collect refs
+    before resolution as unresolved; this test fails because ``${topic}``
+    remains in the unresolved tuple.
+    """
+    ctx = _analysis_ctx({"topic": "abcd efgh"})
+    assert tokenize_prompt_region_lower_bound("Use ${topic}", model="", ctx=ctx) == (3, ())
+
+
+def test_lower_bound_strips_unresolved_refs_and_returns_them() -> None:
+    """Behavior: unresolved placeholders count as zero bytes.
+
+    History: score-choruses has stable prompt spans plus upstream refs the
+    greenfield analyzer cannot see. Mutation contract: count literal
+    ``${missing.ref}`` bytes; this test fails because the measurable count
+    exceeds the stripped-text count.
+    """
+    ctx = _analysis_ctx({"known": "KKKK"})
+    measured, unresolved = tokenize_prompt_region_lower_bound(
+        "AAAA ${known} BBBB ${missing.ref} CCCC",
+        model="",
+        ctx=ctx,
+    )
+    assert measured == estimate_tokens("", "AAAA KKKK BBBB  CCCC")[0]
+    assert unresolved == ("missing.ref",)
+
+
+def test_lower_bound_returns_zero_when_resolution_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Behavior: resolver exceptions produce a conservative zero.
+
+    History: lower-bound numbers must never be inflated by partial work after a
+    template resolver failure. Mutation contract: fall back to tokenizing the
+    raw region on exception; this test fails because measurable tokens become
+    positive instead of zero.
+    """
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    def _boom(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("synthetic resolver failure")
+
+    monkeypatch.setattr(TemplateResolver, "resolve_template", staticmethod(_boom))
+    assert tokenize_prompt_region_lower_bound("Use ${known} and ${missing}", model="", ctx=_analysis_ctx({})) == (
+        0,
+        ("known", "missing"),
+    )
+
+
+def test_lower_bound_handles_dict_valued_single_ref() -> None:
+    """Behavior: non-string resolved values serialize before counting.
+
+    History: exact tokenization already serializes dict-valued simple refs; the
+    lower-bound sibling must preserve that contract. Mutation contract: require
+    resolved values to be strings; this test fails because dict refs become
+    unresolved instead of measurable.
+    """
+    ctx = _analysis_ctx({"payload": {"b": 2, "a": 1}})
+    assert tokenize_prompt_region_lower_bound("${payload}", model="", ctx=ctx) == (3, ())
+
+
+def test_lower_bound_handles_coalesce_with_fallback() -> None:
+    """Behavior: coalesce fallbacks resolve through the shared-store builder.
+
+    History: fallback refs are real prompt bytes when available. Mutation
+    contract: build the synthetic store from only the first coalesce operand;
+    this test fails because ``${missing ?? fallback}`` remains unresolved.
+    """
+    ctx = _analysis_ctx({"fallback": "abcd efgh"})
+    assert tokenize_prompt_region_lower_bound("${missing ?? fallback}", model="", ctx=ctx) == (2, ())
+
+
+def test_lower_bound_handles_indirected_per_item_ref() -> None:
+    """Behavior: unresolved indirect aliases are listed, not guessed.
+
+    History: this helper intentionally does not mirror batch-alias dealiasing;
+    it only reports what the analysis context can resolve. Mutation contract:
+    silently drop unresolved refs; this test fails because the verification
+    target disappears.
+    """
+    measured, unresolved = tokenize_prompt_region_lower_bound("Intro ${X}", model="", ctx=_analysis_ctx({}))
+    assert measured == estimate_tokens("", "Intro ")[0]
+    assert unresolved == ("X",)
+
+
+def test_lower_bound_counts_literal_spans_between_unresolved_refs() -> None:
+    """Behavior: all measurable literal spans survive stripping.
+
+    History: lower-bound prewarm advice should not collapse to zero merely
+    because more than one upstream ref is unavailable. Mutation contract:
+    return zero whenever any unresolved ref remains; this test fails because
+    literal A/B/C spans are measurable and should count.
+    """
+    region = "literal A ${miss1} literal B ${miss2} literal C"
+    measured, unresolved = tokenize_prompt_region_lower_bound(region, model="", ctx=_analysis_ctx({}))
+    assert measured == estimate_tokens("", "literal A  literal B  literal C")[0]
+    assert unresolved == ("miss1", "miss2")
 
 
 # ---------------------------------------------------------------------------

@@ -79,6 +79,7 @@ from .token_estimation import (
     estimate_output_tokens,
     estimate_tokens,
     tokenize_prompt_region,
+    tokenize_prompt_region_lower_bound,
 )
 from .token_estimation import (
     build_shared_store_for_refs as _build_shared_store_for_refs,
@@ -2639,9 +2640,50 @@ def _batch_prewarm_recommendations(
             return []
         prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
         dynamic_tokens = tokenize_prompt_region(prompt[first:], model=row.model, ctx=ctx)
-        if prefix_tokens is None or dynamic_tokens is None:
+    if prefix_tokens is not None and dynamic_tokens is not None:
+        return _confident_batch_prewarm_recommendation(
+            row=row,
+            affected_calls=affected_calls,
+            prefix_tokens=prefix_tokens,
+            dynamic_tokens=dynamic_tokens,
+        )
+
+    if prefix_tokens is None and not uses_existing_prefix_evidence:
+        measurable_tokens, unresolved_refs = tokenize_prompt_region_lower_bound(
+            prompt[:first],
+            model=row.model,
+            ctx=ctx,
+        )
+        if measurable_tokens < get_min_cache_tokens(row.model) or not unresolved_refs:
             return []
-    if not uses_existing_prefix_evidence and prefix_tokens < get_min_cache_tokens(row.model):
+        return [
+            make_diagnostic(
+                "cache.batch-prewarm-lower-bound-recommended",
+                node_id=row.node_path,
+                affected_workflow=row.workflow_path,
+                measurable_tokens=measurable_tokens,
+                batch_alias=alias,
+                unresolved_refs=unresolved_refs,
+                savings_lower_bound_usd=_estimate_token_savings_usd(
+                    row.model,
+                    measurable_tokens,
+                    affected_calls - 1,
+                ),
+                batch_size=affected_calls,
+            )
+        ]
+
+    return []
+
+
+def _confident_batch_prewarm_recommendation(
+    *,
+    row: PerCallRow,
+    affected_calls: int,
+    prefix_tokens: int,
+    dynamic_tokens: int,
+) -> list[Diagnostic]:
+    if prefix_tokens < get_min_cache_tokens(row.model):
         return []
 
     savings_ratio = ((affected_calls - 1) * 1.15 * prefix_tokens) / (

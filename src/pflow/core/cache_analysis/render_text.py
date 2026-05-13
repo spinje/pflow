@@ -1206,6 +1206,8 @@ def _format_action_savings(action: RecommendedAction) -> str:
             return "unmeasurable"
         if "below the smallest provider cache minimum" in action.message:
             return "not yet cacheable"
+    if action.warning_id == "cache.batch-prewarm-lower-bound-recommended":
+        return _format_lower_bound_action_savings(action.context.get("savings_lower_bound_usd"))
     if action.warning_id != "cache.batch-prewarm-recommended":
         return _format_savings_usd(action.estimated_savings_usd)
     value = action.estimated_savings_usd
@@ -1214,6 +1216,14 @@ def _format_action_savings(action: RecommendedAction) -> str:
     if value < 0.01:
         return f"saves ~${value:.4f}/run"
     return f"saves ~${value:.2f}/run"
+
+
+def _format_lower_bound_action_savings(value: object) -> str:
+    if not isinstance(value, (int, float)) or value < 0.0001:
+        return "savings at least unknown"
+    if value < 0.01:
+        return f"savings at least ~${value:.4f}/run"
+    return f"savings at least ~${value:.2f}/run"
 
 
 def _render_suggested_blocks(analysis: CacheAnalysis) -> str:

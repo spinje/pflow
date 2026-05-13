@@ -1991,3 +1991,57 @@ Verification:
   passed, 1 known sandbox drift (`15-run-flag-interactions/03-report-with-only`).
 - `ruff check`, `ruff format --check`, and `mypy src/pflow/core/cache_analysis/`
   clean.
+
+## 2026-05-13 — Task 159 Followups — lower-bound batch-prewarm advisory
+
+Implemented `cache.batch-prewarm-lower-bound-recommended`. The analyzer now has
+`tokenize_prompt_region_lower_bound(...)`, which resolves what it can, strips
+unresolved `${...}` placeholders, and returns `(measurable_tokens,
+unresolved_refs)`. `_batch_prewarm_recommendations` keeps the confident path
+exact-only, then emits the lower-bound advisory only when the measurable prefix
+alone clears the provider minimum and unresolved refs remain.
+
+Key points:
+
+- Added catalog/rendering/action projection support for
+  `savings_lower_bound_usd` with "savings at least ..." wording and explicit
+  `--report` verification guidance before adding `prewarm: true`. This is the
+  Bug 17 wall-clock safety valve: unresolved refs may be stable, but prewarm
+  still serializes the first item.
+- Normalized `unresolved_refs` to a JSON list in diagnostic context while the
+  tokenizer returns a tuple. Reason: `Diagnostic.to_dict()` round-trip tests
+  require JSON-stable payloads; leaving a tuple in context serializes back as a
+  list and breaks the machine contract.
+- Kept site 4/site 5/cross-workflow paths exact-only. Those are load-bearing
+  measurement paths, not advisory ranking paths; lower-bound advice there would
+  mix "what can be safely measured" with "what might be worth trying."
+
+Plan deviations with reasons:
+
+- Did not restore the live lyrics-generator `score-choruses` action. Current
+  code measures its lower bound at ~1,002 tokens, while
+  `gemini/gemini-2.5-flash` uses the explicit cachedContents minimum of 4,096
+  tokens. Emitting the advisory would contradict the provider-minimum gate and
+  overstate the opportunity. `10-live-recordings/05-gemini-lyrics-generator`
+  therefore remains byte-identical and was verified, not regenerated.
+- Did not update the existing inputs-indirection test to expect the new ID.
+  That fixture's prefix is exactly measurable; only the dynamic tail is
+  unresolved. The plan's own branch says `prefix_tokens is not None` and
+  `dynamic_tokens is None` should preserve the current short-circuit.
+- Added a new `04-warning-catalog/23-cache.batch-prewarm-lower-bound-recommended`
+  baseline instead of changing the lyrics baseline, so the new ID has
+  end-to-end JSON coverage without fabricating the real-world canary.
+
+Verification:
+
+- Focused cache-analysis/CLI/per-ID suite: 631 passed.
+- `04-warning-catalog` baseline surface regenerated and verified with sandbox
+  `uv run` wrapper: 24 passed, 0 drifted; live lyrics case 05 verified clean.
+- Manual smoke: E3 still emits `cache.batch-prewarm-below-min`; bug-16
+  indirection still reports `cacheable_tokens_estimated: null` and no fabricated
+  confident prewarm action.
+- Broad sandbox-safe suite passed after excluding the documented Homebrew-`uv`
+  subprocess panics plus four same-class subprocess tests:
+  6,750 passed, 19 skipped.
+- `ruff check`, `ruff format --check`, and `mypy src/pflow/core/cache_analysis/`
+  clean.
