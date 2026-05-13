@@ -33,16 +33,14 @@
      → Replace [concept.core_idea, concept.title] with [concept] in the ## Cache block and in every node's `prompt_cache:` list that currently references any of those sub-paths. Trade-off: each call sends the entire `concept` value (~6017 tokens) instead of just the sub-paths it references; cache write costs 1.25× input rate, reads cost 0.1×, so consolidation pays off after the first read.
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
-    · cached_now: tokens that went through cache this run.
-    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
-    · — means the column does not apply to this row's tier.
+  How to read each row:
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
 
-  node      model                        input  cached_now  could_cache  ratio  calls  notes
-  -------------------------------------------------------------------------------------
+  node      model                        input  could_cache  ratio  notes
+  ------------------------------------------------------------------
 
-  writer-b  anthropic/claude-sonnet-4-5      9           —            4    44%      —  below-min-tokens
-  writer-a  anthropic/claude-sonnet-4-5      7           —            4    57%      —  below-min-tokens
+  writer-b  anthropic/claude-sonnet-4-5      9            4    44%  below-min-tokens
+  writer-a  anthropic/claude-sonnet-4-5      7            4    57%  below-min-tokens
 
   Token estimate confidence:
     · Projected input tokens for: writer-b, writer-a.

@@ -2,7 +2,7 @@
   "format_version": "2.2.0",
   "execution_id": "df9a604e-f6a9-40fb-ba87-76f7b4d04b8c",
   "workflow_name": "workflow",
-  "workflow_path": "/Users/andfal/projects/pflow-feat-prompt-caching/.taskmaster/tasks/task_159/baseline/10-live-recordings/03-gemini-translation/workflow.pflow.md",
+  "workflow_path": ".taskmaster/tasks/task_159/baseline/10-live-recordings/03-gemini-translation/workflow.pflow.md",
   "start_time": "2026-05-08T21:51:23.168060",
   "end_time": "2026-05-08T21:51:30.927260",
   "duration_ms": 7759.17,

@@ -415,6 +415,16 @@ async def analyze_cache(
         values like ``article=<value>``). ``null`` for inline IR or
         ``ir-hash:`` lookup keys. Surfaced on unavailable-cost branches so
         agents see the exact command that lights up cost figures.
+      - ``trace_final_status`` (string | null): outcome of the run that
+        produced the loaded trace; one of ``"success"`` / ``"degraded"`` /
+        ``"failed"``. ``null`` when no trace was loaded. Auto-load prefers
+        ``"success"``/``"degraded"`` over ``"failed"`` — when a newer failed
+        trace was skipped or an older successful one was selected, a Notes
+        entry names both files.
+      - ``trace_recorded_at`` (string | null): ISO 8601 ``start_time`` from
+        the trace JSON, indicating when the run that produced the loaded
+        trace started. ``null`` when no trace was loaded or the trace
+        predates 2.1.0 (lacks ``start_time``).
 
     Sub-workflow rollup entries carry the same four primitives at child
     scope.
@@ -473,10 +483,12 @@ async def analyze_cache(
     For ``cache.sub-workflow-cache-undeclared``, agents should read
     ``context.case`` (``actionable`` / ``model_switch`` / ``refactor`` /
     ``unmeasurable``), ``context.inputs[]`` (per incoming value with
-    ``child_input_name``, ``parent_value_expr``, ``tokens_estimated``, and
-    ``consumer_node_ids``), ``context.body_block`` (text-ready guidance), and
-    ``context.savings_usd``. Older per-input top-level fields such as
-    ``child_input_name`` and ``below_threshold_clause`` are no longer emitted.
+    ``child_cache_ref`` as the child ``## Cache`` entry to add,
+    ``child_input_name`` as the boundary input name, ``parent_cache_ref``,
+    ``parent_value_expr``, ``tokens_estimated``, and ``consumer_node_ids``),
+    ``context.body_block`` (text-ready guidance), and ``context.savings_usd``.
+    Older per-input top-level fields such as ``child_input_name`` and
+    ``below_threshold_clause`` are no longer emitted.
 
     **``warnings[].id`` shape**: either one of these cache catalog entries or
     ``None`` for un-IDed validator findings. Use ``severity`` for
@@ -485,6 +497,7 @@ async def analyze_cache(
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared
+      - cache.shared-context-undeclared-conditional
       - cache.sub-workflow-cache-undeclared
       - cache.prompt-cache-incomplete
       - cache.batch-prewarm-recommended
@@ -497,6 +510,8 @@ async def analyze_cache(
       - cache.invalid-on-non-llm
       - cache.unsupported-provider-ttl
       - cache.prewarm-no-prefix
+      - cache.batch-prewarm-below-min
+      - cache.batch-prewarm-lower-bound-recommended
       - cache.consolidate-to-root-recommended
       - cache.heterogeneous-models-fragment-cache
       - cache.first-call-write-penalty

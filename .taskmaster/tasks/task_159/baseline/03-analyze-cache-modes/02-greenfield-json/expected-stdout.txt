@@ -1,5 +1,5 @@
 {
-  "format_version": "4.1",
+  "format_version": "4.2",
   "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -45,14 +45,16 @@
       "excluded_nodes": []
     },
     "trace_coverage": "none",
+    "trace_final_status": null,
+    "trace_recorded_at": null,
     "evidence_scope": "static_analysis",
     "trace_llm_nodes_static": 3,
     "trace_llm_nodes_executed": 0,
     "trace_unexecuted_llm_rows": [],
     "blocking_errors": 0,
-    "actionable_opportunities": 0,
+    "actionable_opportunities": 1,
     "warnings_count": 0,
-    "info_count": 0,
+    "info_count": 1,
     "total_llm_nodes_estimated": 3,
     "total_llm_invocations_estimated": 3,
     "dynamic_batch_node_count": 0,
@@ -95,7 +97,20 @@
   },
   "blocking_errors": [],
   "other_blocking_errors": [],
-  "recommended_actions": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.shared-context-undeclared-conditional",
+      "node_id": null,
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+      "message": "Used by 3 LLM nodes. Chunks: article. Resolved values are below the provider cache minimum (\u22654,096 tokens; this is the highest minimum across these nodes); caching will only fire if runtime values are larger.",
+      "suggestions": [
+        "Re-run with a representative value (e.g. `article=@./real-input.md`) and re-run analyze-cache to confirm whether caching fires.",
+        "If runtime values typically reach \u22654,096 tokens, declare `article` in `## Cache` and add `prompt_cache: [article]` to: summarize, tag, translate."
+      ]
+    }
+  ],
   "suggested_blocks": [],
   "per_call": [
     {
@@ -105,6 +120,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 7,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 7,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": 1,
@@ -129,6 +146,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 7,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 7,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": 1,
@@ -153,6 +172,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 9,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 9,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": 1,
@@ -177,8 +198,36 @@
     "prose_mismatches": [],
     "value_flow_opportunities": []
   },
-  "warnings": [],
-  "notes": [
-    "Suggested-blocks: shared refs were found, but at least one assigned LLM node is below the provider cache threshold under current model/token evidence; no paste-ready provider-cache edit is actionable yet."
-  ]
+  "warnings": [
+    {
+      "severity": "info",
+      "message": "Used by 3 LLM nodes. Chunks: article. Resolved values are below the provider cache minimum (\u22654,096 tokens; this is the highest minimum across these nodes); caching will only fire if runtime values are larger.",
+      "source": "cache_analyzer",
+      "id": "cache.shared-context-undeclared-conditional",
+      "title": "Cache Advisory",
+      "suggestions": [
+        "Re-run with a representative value (e.g. `article=@./real-input.md`) and re-run analyze-cache to confirm whether caching fires.",
+        "If runtime values typically reach \u22654,096 tokens, declare `article` in `## Cache` and add `prompt_cache: [article]` to: summarize, tag, translate."
+      ],
+      "context": {
+        "node_count": 3,
+        "shared_chunks": [
+          "article"
+        ],
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+        "min_tokens": 4096,
+        "affected_nodes": [
+          "summarize",
+          "tag",
+          "translate"
+        ],
+        "category": "cache_advisory",
+        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md]"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    }
+  ],
+  "notes": []
 }

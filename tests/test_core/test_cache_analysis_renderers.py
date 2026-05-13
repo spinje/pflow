@@ -45,6 +45,7 @@ def _make_analysis(
     warnings: list[Diagnostic] | None = None,
     notes: list[str] | None = None,
     actually_paid: float | None = None,
+    actually_paid_tier: CostTier | None = None,
     no_cache: float | None = None,
     first_run_with_cache: float | None = None,
     rerun: float | None = None,
@@ -54,6 +55,9 @@ def _make_analysis(
     actual_delta_unavailable_reason: str | None = None,
     workflow_path: str = "/abs/x.pflow.md",
     ir_default_model: str | None = None,
+    trace_path: str | None = None,
+    trace_final_status: str | None | type(Ellipsis) = Ellipsis,
+    trace_recorded_at: str | None | type(Ellipsis) = Ellipsis,
 ) -> CacheAnalysis:
     """Construct a renderable analysis with atomic cost primitives.
 
@@ -110,10 +114,14 @@ def _make_analysis(
             "heuristic": 0,
             "total": len(rows),
         },
-        trace_path=None,
+        trace_path=trace_path,
         summary=AnalysisSummary(
             actually_paid_usd=actually_paid,
-            actually_paid_tier=CostTier.TRACE if actually_paid is not None else CostTier.UNAVAILABLE,
+            actually_paid_tier=(
+                actually_paid_tier
+                if actually_paid_tier is not None
+                else (CostTier.TRACE if actually_paid is not None else CostTier.UNAVAILABLE)
+            ),
             no_cache_hypothetical_usd=no_cache,
             first_run_with_cache_hypothetical_usd=first_run_with_cache,
             rerun_within_ttl_hypothetical_usd=rerun,
@@ -146,6 +154,23 @@ def _make_analysis(
             # Builder doesn't model declared inputs, so the command shape
             # is the no-inputs variant.
             suggested_run_command=_format_workflow_run_command(workflow_path, None),
+            # Mirrors production: when a trace contributed evidence
+            # (``actually_paid is not None``), default the trace status to
+            # "success" + an arbitrary recorded timestamp unless the test
+            # opted in to a specific value (including explicit None).
+            # Ellipsis sentinel distinguishes "caller didn't specify" from
+            # "caller wants None" — needed by tests exercising the
+            # legacy-trace-missing-timestamp path.
+            trace_final_status=(
+                cast(str | None, trace_final_status)
+                if trace_final_status is not Ellipsis
+                else ("success" if actually_paid is not None else None)
+            ),
+            trace_recorded_at=(
+                cast(str | None, trace_recorded_at)
+                if trace_recorded_at is not Ellipsis
+                else ("2026-04-29T12:00:00" if actually_paid is not None else None)
+            ),
         ),
         suggested_blocks=(),
         per_call=tuple(rows),
@@ -582,6 +607,68 @@ def test_text_renders_unavailable_cost_explicitly_not_zero() -> None:
     assert "unavailable" in text.lower()
 
 
+def test_text_render_shows_trace_header_line_when_loaded() -> None:
+    """Bug 1 follow-up: when a trace was loaded, the header includes a
+    ``Trace: <filename> (<status>, recorded <ts>)`` line so the agent can
+    see which trace produced the evidence without inspecting JSON output.
+
+    Mutation contract: deleting the ``if analysis.trace_path is not None``
+    branch in ``_render_header`` removes the line → assertion fails.
+    """
+    analysis = _make_analysis(
+        actually_paid=2.18,
+        no_cache=0.84,
+        rerun=0.42,
+        trace_path="/home/user/.pflow/debug/workflow-trace-abc12345-lyrics-generator-20260511-153228.json",
+        trace_final_status="success",
+        trace_recorded_at="2026-05-11T15:32:28.123456",
+    )
+    text = render_text(analysis)
+    assert "Trace: workflow-trace-abc12345-lyrics-generator-20260511-153228.json" in text
+    assert "(success, recorded 2026-05-11 15:32)" in text
+
+
+def test_text_render_omits_trace_header_when_no_trace_loaded() -> None:
+    """When ``trace_path`` is None (greenfield or autoload-rejected), no
+    ``Trace:`` line appears."""
+    analysis = _make_analysis(trace_path=None)
+    text = render_text(analysis)
+    assert "Trace:" not in text
+
+
+def test_text_render_trace_header_drops_recorded_suffix_when_timestamp_missing() -> None:
+    """Defensive: legacy traces from before 2.1.0 may lack ``start_time``.
+    The ``Trace:`` line still renders, just without the ``recorded ...``
+    suffix."""
+    analysis = _make_analysis(
+        actually_paid=2.18,
+        no_cache=0.84,
+        rerun=0.42,
+        trace_path="/abs/trace.json",
+        trace_final_status="success",
+        trace_recorded_at=None,
+    )
+    text = render_text(analysis)
+    assert "Trace: trace.json (success)" in text
+    assert "recorded" not in text.split("Trace:")[1].split("\n")[0]
+
+
+def test_text_render_trace_header_shows_failed_status_honestly() -> None:
+    """Bug 10 cousin: when autoload picked a failed trace (no success
+    existed), the agent learns the status in the header — not just the
+    Notes section."""
+    analysis = _make_analysis(
+        actually_paid=2.18,
+        no_cache=0.84,
+        rerun=0.42,
+        trace_path="/abs/workflow-trace-bad.json",
+        trace_final_status="failed",
+        trace_recorded_at="2026-05-11T16:30:27",
+    )
+    text = render_text(analysis)
+    assert "Trace: workflow-trace-bad.json (failed, recorded 2026-05-11 16:30)" in text
+
+
 def test_text_renders_partial_cost_with_marker() -> None:
     text = render_text(
         _make_analysis(
@@ -952,6 +1039,29 @@ def _per_call_cells(text: str, node_path: str) -> list[str]:
     raise AssertionError(f"expected per-call row for {node_path!r} in:\n{text}")
 
 
+def _per_call_cells_by_header(text: str, node_path: str) -> dict[str, str]:
+    headers: list[str] | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("node  "):
+            headers = re.split(r" {2,}", stripped)
+            continue
+        if headers is not None and line.lstrip().startswith(f"{node_path}  "):
+            cells = re.split(r" {2,}", stripped, maxsplit=len(headers) - 1)
+            if len(cells) < len(headers):
+                cells.extend([""] * (len(headers) - len(cells)))
+            return dict(zip(headers, cells, strict=True))
+    raise AssertionError(f"expected per-call row for {node_path!r} in:\n{text}")
+
+
+def _per_call_header(text: str) -> list[str]:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("node  "):
+            return re.split(r" {2,}", stripped)
+    raise AssertionError(f"expected per-call header in:\n{text}")
+
+
 def test_text_default_hides_clean_rows_above_80_pct() -> None:
     rows = [_row("clean1", 90), _row("clean2", 95), _row("dirty", 30)]
     text = render_text(_make_analysis(rows=rows))
@@ -1255,13 +1365,16 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
 
     text = render_text(analysis)
 
-    assert "Actually paid:               ~$0.05 (trace)" in text
-    assert "Actually paid:               ~$0.05 (partial) (trace)" not in text
-    # Label is bare ``Actually paid:`` — the value's tier annotation
-    # (``(trace)`` / ``(trace_partial)``) carries the tier signal; ``(trace)``
-    # on the label too would be redundant. Truncated branch keeps
-    # ``(executed trace)`` because "executed" is the unique signal there.
-    assert "Actually paid (trace):" not in text
+    assert "Actually paid:               ~$0.05 (from trace)" in text
+    assert "Actually paid:               ~$0.05 (partial) (from trace)" not in text
+    # Label is bare ``Actually paid:`` — the value's parenthetical
+    # (``(from trace)`` / ``(from partial trace)``) carries the tier
+    # signal; repeating it on the label would be redundant. Truncated
+    # branch keeps ``(executed trace)`` because "executed" is the unique
+    # signal there. Raw snake_case enum values (``trace_partial``) must
+    # NOT leak into stdout.
+    assert "Actually paid (from trace):" not in text
+    assert "trace_partial" not in text
     # Excluded node + reason render even without a dollar figure (cost is None).
     assert "Excluded from analysis:      generate: no pricing data for model" in text
     # Cohort qualifiers on no-cache/rerun labels are gone — the explicit
@@ -1271,7 +1384,7 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
     assert "Cost on rerun (within TTL):" in text
     assert "Cost on rerun (within TTL, projected subset):" not in text
     # Savings line is bare ``unavailable`` — the excluded line above explains why.
-    assert "Actual savings (this run):    unavailable" in text
+    assert "Actual cost delta (this run): unavailable" in text
     assert "unavailable (projection excludes" not in text
     assert "Actual trace delta:" not in text
 
@@ -1313,11 +1426,14 @@ def test_trace_mode_folds_excluded_passthrough_into_projections() -> None:
     assert "Cost on rerun (within TTL):  ~$2.34" in text
     # The old standalone Excluded line is GONE in the folded case.
     assert "Excluded from analysis:" not in text
-    # Footnote names the pass-through node + amount + honest framing.
-    assert "~$0.27 of the above is pass-through for generate-chorus-options" in text
+    # Footnote names the excluded node + amount + honest framing (Bug 13: no
+    # "pass-through" jargon; "couldn't be analyzed" is the agent-readable form).
+    assert "~$0.27 of the above was paid by generate-chorus-options" in text
+    assert "couldn't be analyzed for cache savings" in text
     assert "model varies per call" in text
-    assert "projected savings unavailable" in text
-    assert "real savings could be higher if model+content combos repeat" in text
+    assert "Caching may still apply at runtime" in text
+    # Negative assertion: lock the jargon-free wording.
+    assert "pass-through" not in text
 
 
 def test_trace_mode_falls_back_to_excluded_line_when_excluded_cost_unknown() -> None:
@@ -1351,7 +1467,8 @@ def test_trace_mode_falls_back_to_excluded_line_when_excluded_cost_unknown() -> 
     # Original no-cache value (priced cohort, unchanged) — NOT folded.
     assert "Cost without caching:        ~$2.16" in text
     # No footnote in this branch — nothing was folded.
-    assert "of the above is pass-through" not in text
+    assert "was paid by" not in text
+    assert "pass-through" not in text
 
 
 def test_trace_mode_no_exclusions_renders_clean_cost_block() -> None:
@@ -1364,7 +1481,8 @@ def test_trace_mode_no_exclusions_renders_clean_cost_block() -> None:
     analysis = _make_analysis(actually_paid=2.31, no_cache=2.53)
     text = render_text(analysis)
     assert "Excluded from analysis:" not in text
-    assert "of the above is pass-through" not in text
+    assert "was paid by" not in text
+    assert "pass-through" not in text
     assert "Cost without caching:        ~$2.53" in text
 
 
@@ -1399,9 +1517,13 @@ def test_trace_mode_folds_multi_node_exclusions_into_footnote() -> None:
     text = render_text(analysis)
     # Folded no-cache: $1.20 + $0.10 + $0.05 = $1.35.
     assert "Cost without caching:        ~$1.35" in text
-    # Footnote names both nodes.
-    assert "~$0.15 of the above is pass-through for: alpha, beta" in text
-    assert "projected savings unavailable" in text
+    # Footnote names both nodes inline with their exclusion reason
+    # (Bug 13: no "pass-through" jargon; inline reasons are agent-readable).
+    assert "~$0.15 of the above was paid by nodes that couldn't be analyzed" in text
+    assert "alpha (model varies per call)" in text
+    assert "beta (no pricing data for model)" in text
+    # Negative assertion: lock the jargon-free wording.
+    assert "pass-through" not in text
     # No standalone Excluded line.
     assert "Excluded from analysis:" not in text
 
@@ -1463,15 +1585,17 @@ def test_greenfield_no_cache_keeps_partial_qualifier_no_other_signal() -> None:
 
 
 def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -> None:
-    """Fix B: ``_per_call_scope_explainer`` returns a multi-line bullet block
-    (lead sentence + 3 bullets) instead of a 60-word run-on. The prior
-    "divide by calls for per-call values" advice was structurally wrong
-    after Pass A2 normalized static-list batch trace rows to per-call
-    units; the blanket guidance is dropped rather than caveated.
+    """``_per_call_scope_explainer`` returns a multi-line block — a "How to
+    read each row:" header plus two column bullets, each explaining its own
+    placeholders inline (``?`` / ``—``). The prior "divide by calls for
+    per-call values" advice was structurally wrong after Pass A2 normalized
+    static-list batch trace rows to per-call units, and the prior
+    ``"tier"`` phrasing leaked internal vocabulary into stdout.
 
     Mutation contract: revert the function to return a single string with
     the run-on text → the multi-line shape assertions fail AND the
-    ``divide by calls`` negative assertion fails.
+    ``divide by calls`` negative assertion fails. Re-introduce ``"tier"``
+    in the prose → the negative assertion below fires.
     """
     rows = [
         PerCallRow(
@@ -1488,24 +1612,43 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
             cacheable_data_source="trace",
             observed_call_count=4,
         ),
+        PerCallRow(
+            node_path="rewrite",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=2000,
+            cacheable_tokens_estimated=1200,
+            cache_ratio_pct=60,
+            data_source="trace",
+            declared_prompt_cache=None,
+            workflow_path="/abs/x.pflow.md",
+            cacheable_data_source="memo",
+            observed_call_count=4,
+        ),
     ]
     analysis = _make_analysis(rows=rows, actually_paid=0.10, no_cache=0.20)
 
     text = render_text(analysis)
 
-    # Lead sentence and bullets each on their own line — standalone substrings.
-    assert "Actual cache ratios from declared `prompt_cache:` subsets." in text
-    assert "· cached_now: tokens that went through cache this run." in text
+    # Header and column bullets each on their own line — standalone substrings.
+    assert "How to read each row:" in text
+    assert "· cached_now: tokens served from cache during this run (requires trace)." in text
     assert (
-        "· could_cache: tokens that could be cached if you declare/extend prompt_cache:; "
-        "? means no cacheable chunk could be projected."
+        "· could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. "
+        "`?` if not projectable statically."
     ) in text
-    assert "· — means the column does not apply to this row's tier." in text
     # Run-on form with semicolon separators must NOT appear.
-    assert "cached_now: tokens that went through cache this run; could_cache:" not in text
+    assert "cached_now: tokens served from cache during this run; could_cache:" not in text
     # The wrong-after-Pass-A2 advice is gone.
     assert "divide by calls" not in text
     assert "Numbers aggregate across all calls" not in text
+    # The prior "tier" jargon and "sibling column" abstraction must NOT leak.
+    assert "this row's tier" not in text
+    assert "sibling column" not in text
+    # The collapsed block replaces the old steady-state / greenfield split.
+    assert "Actual cache ratios from declared" not in text
+    assert "Projected cache ratios from prior run data" not in text
 
 
 def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
@@ -1548,7 +1691,7 @@ def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
 
 def test_static_mode_per_call_table_renders_em_dash_for_calls_column_e2e() -> None:
     """Fix C end-to-end: when ``evidence_scope == "static_analysis"`` the
-    rendered per-call table emits ``—`` in the calls column for every row.
+    rendered per-call table hides the calls column entirely.
     The ``calls=0`` rendering previously masqueraded as "this node never
     runs" for fresh agents running ``pflow analyze-cache`` on a sub-
     workflow standalone (which is what ``## Per-child analyze-cache
@@ -1582,16 +1725,13 @@ def test_static_mode_per_call_table_renders_em_dash_for_calls_column_e2e() -> No
 
     text = render_text(analysis)
     lines = text.splitlines()
+    header = _per_call_header(text)
+    assert "calls" not in header
     # Locate the per-call data row (after `node`/`---` header lines).
     data_lines = [line for line in lines if "generate" in line and "anthropic" in line]
     assert data_lines, f"per-call data row missing — text was:\n{text}"
     row_text = data_lines[0]
-    # Em-dash present in the calls column position. The `—` symbol is
-    # ASCII-distinct from the `cached_now` em-dash earlier in the row, so
-    # this assertion catches the calls-column substitution specifically
-    # via its trailing position in the row (followed only by an empty
-    # notes column).
-    assert row_text.rstrip().endswith("—"), f"expected calls column to render as '—' in static mode, got:\n{row_text!r}"
+    assert "  0" not in row_text
 
 
 def test_header_discloses_ir_default_when_overridden_by_trace(
@@ -1672,18 +1812,17 @@ def test_actual_savings_delta_first_in_trace_mode(
     )
 
     text = render_text(analysis)
-    assert "Actual savings (this run):" in text
+    assert "Actual cost delta (this run):" in text
     assert "First-run delta" not in text
-    # The row label "Actual savings (this run):" already says "actual";
-    # the inner _format_delta label was simplified from "actual vs no-cache"
-    # to "vs no-cache" so the rendered value reads as "saves $X/run vs
-    # no-cache, Y% of baseline" rather than the doubled-"actual" form.
+    # The row label is a neutral delta, so the inner _format_delta label stays
+    # "vs no-cache" and the rendered value reads as "saves/adds $X vs
+    # no-cache" rather than leaking an internal "actual vs no-cache" phrase.
     # Mutation contract: revert _format_delta label arg back to
     # "actual vs no-cache" → this assertion fails.
     assert "actual vs no-cache" not in text
     assert "vs no-cache" in text
     lines = text.splitlines()
-    actual_idx = next(i for i, line in enumerate(lines) if "Actual savings (this run):" in line)
+    actual_idx = next(i for i, line in enumerate(lines) if "Actual cost delta (this run):" in line)
     rerun_idx = next(i for i, line in enumerate(lines) if "Rerun delta (projected):" in line)
     assert actual_idx < rerun_idx
 
@@ -1763,8 +1902,8 @@ def test_actual_savings_label_replaces_actual_trace_delta_both_sites(
     unavailable_text = render_text(unavailable)
     assert "Actual trace delta:" not in priced_text
     assert "Actual trace delta:" not in unavailable_text
-    assert "Actual savings (this run):" in priced_text
-    assert "Actual savings (this run):" in unavailable_text
+    assert "Actual cost delta (this run):" in priced_text
+    assert "Actual cost delta (this run):" in unavailable_text
 
 
 def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
@@ -1773,8 +1912,8 @@ def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
 ) -> None:
     """Truncated trace mode (Option B): first-run delta is dropped, rerun
     uses ``(projected)`` suffix (not ``(executed)``), and the actual savings
-    label stays unqualified — no ``(executed)`` decoration. The actual
-    savings line itself still renders because L-12 work computes the delta
+    label stays unqualified — no ``(executed)`` decoration. The actual cost
+    delta line itself still renders because L-12 work computes the delta
     over the executed subset when pricing is otherwise available.
     """
     from pflow.core.cache_analysis.analyze import analyze
@@ -1806,8 +1945,8 @@ def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
     # otherwise available — no projection_exclusions, so the delta is
     # priced and the line renders. The label stays unqualified —
     # "(executed)" is not appended.
-    assert "Actual savings (this run):" in text
-    assert "Actual savings (this run, executed):" not in text
+    assert "Actual cost delta (this run):" in text
+    assert "Actual cost delta (this run, executed):" not in text
     # Option B: First-run delta is dropped from trace mode (any coverage).
     assert "First-run delta" not in text
     # Rerun delta carries the (projected) suffix in trace mode; the
@@ -1820,7 +1959,7 @@ def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
 
 def test_first_run_delta_present_in_greenfield_mode() -> None:
     """Greenfield mode (no trace data) renders First-run + Rerun deltas as
-    projections. The Actual savings line is suppressed because there's no
+    projections. The actual cost delta line is suppressed because there's no
     ``actually_paid_usd`` to compare against. Mutation contract: route
     greenfield through ``_render_trace_deltas`` and this fails (no first-run
     line) or ``_render_greenfield_deltas`` swaps the labels.
@@ -1834,7 +1973,7 @@ def test_first_run_delta_present_in_greenfield_mode() -> None:
     text = render_text(analysis)
     assert "First-run delta:" in text
     assert "Rerun delta:" in text
-    assert "Actual savings" not in text
+    assert "Actual cost delta" not in text
     assert "(projected)" not in text  # greenfield labels stay unqualified
 
 
@@ -1883,7 +2022,7 @@ def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp
 
     Mutation contract: drop the ``no_cache > 0`` gate in ``analyze.py`` →
     ``_cost_delta`` returns unavailable without a reason → renderer's
-    elif branch doesn't fire → the ``Actual savings (this run):`` label
+    elif branch doesn't fire → the ``Actual cost delta (this run):`` label
     disappears from text → assertion fails.
     """
     from pflow.core.cache_analysis.analyze import analyze
@@ -1943,7 +2082,7 @@ def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp
     # Savings line is bare ``unavailable`` — the explicit ``Excluded from
     # analysis`` line in the cost block above carries the node + reason
     # context, so the savings line doesn't need to repeat it.
-    assert "Actual savings (this run):    unavailable" in text
+    assert "Actual cost delta (this run): unavailable" in text
     assert "unavailable (projection excludes" not in text
     # Excluded node + reason render in the cost block (no $ since trace
     # has cost on the heterogeneous row but the row is the only one in the
@@ -2219,6 +2358,74 @@ def test_text_unavailable_row_notes_below_min_cross_workflow_candidate() -> None
     assert "no stable" not in text
 
 
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param("anthropic/claude-sonnet-4-5", id="model-resolved"),
+        pytest.param("", id="model-unresolved"),
+    ],
+)
+def test_text_unavailable_row_notes_static_mode_zero_calls(model: str) -> None:
+    """Static-mode rows (no trace, ``observed_call_count == 0``) with an
+    unavailable projection had no fallback note before — the row rendered
+    ``cached_now: —``, ``could_cache: ?``, ``ratio: ?%``, ``calls: —`` with
+    an empty notes column. A fresh agent saw only placeholders with no
+    explanation and no next step.
+
+    The new fallback names the cause (``no trace recorded``) and the
+    unblocking action (``run with --report``). The note fires regardless
+    of whether the model resolved statically — the model column shows
+    ``<unresolved>`` or the model name; the action is identical.
+
+    The row passes the visibility filter via ``declared_prompt_cache`` —
+    static-mode lyrics-generator rows pass via the same path because
+    ``song-creator.pflow.md`` and friends declare cache that hasn't been
+    measured yet.
+
+    Mutation contract: remove the ``observed_call_count == 0`` branch from
+    ``_unavailable_could_cache_note`` → the note disappears.
+    """
+    row = PerCallRow(**{
+        **_row("write-lyrics", 0).__dict__,
+        "model": model,
+        "data_source": "estimator",
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+        "observed_call_count": 0,
+        "declared_prompt_cache": ("article",),
+    })
+
+    text = render_text(_make_analysis(rows=[row]))
+
+    assert "write-lyrics" in text
+    assert "no trace recorded — run with --report to populate this row" in text
+    # Existing fallbacks for ``observed_call_count`` of 1 or ≥2 must NOT fire here.
+    assert "single call" not in text
+    assert "no stable" not in text
+
+
+def test_text_cost_tier_annotation_renders_plain_english() -> None:
+    """``actually_paid_usd``'s tier parenthetical is rendered as plain
+    English via ``_TIER_LABELS`` so agents read ``(from trace)`` /
+    ``(from partial trace)`` rather than the raw snake_case enum value.
+
+    Mutation contract: revert ``_format_cost`` to pass ``tier_annotation``
+    through unchanged → the negative assertion on ``trace_partial`` fires.
+    """
+    analysis = _make_analysis(
+        actually_paid=0.05,
+        no_cache=0.10,
+        partial=True,
+        actually_paid_tier=CostTier.TRACE_PARTIAL,
+    )
+    text = render_text(analysis)
+
+    assert "(from partial trace)" in text
+    # Raw enum value must NOT leak.
+    assert "trace_partial" not in text
+
+
 def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findings() -> None:
     """When a finding has ``node_id is None`` AND ``affected_workflow`` set,
     the renderer surfaces the workflow basename on its scope line so
@@ -2320,6 +2527,28 @@ def test_text_recommended_actions_single_workflow_omits_scope_suffix() -> None:
     text = render_text(_make_analysis(warnings=warnings))
     assert "     rewrite\n" in f"{text}\n"
     assert "rewrite in " not in text
+
+
+def test_shadow_warning_text_renders_cost_comparison_with_ratio() -> None:
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    warning = make_diagnostic(
+        "cache.prompt-body-shadows-cache",
+        node_id="use-tiny-field",
+        shadowing_pairs=[{"chunk_name": "bundle", "body_ref": "bundle.tiny_field", "direction": "cache_contains_body"}],
+        overlap_lines="  - cached `${bundle}` overlaps inline `${bundle.tiny_field}` (cache_contains_body)",
+        affected_workflow="/abs/x.pflow.md",
+    )
+    warning.context["body_only_cost_usd_per_call"] = 3.1e-6
+    warning.context["with_cache_cost_usd_per_call"] = 4.96e-4
+    warning.context["shadowed_chunk_names"] = ("bundle",)
+
+    text = render_text(_make_analysis(warnings=[warning]))
+
+    assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field` would drop per-call cost" in text
+    assert "160\u00d7 more expensive" in text
+    assert "The body only references a sub-path of the cached value" in text
+    assert "compares against inlining the full chunk uncached" in text
 
 
 def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> None:
@@ -2621,6 +2850,131 @@ def test_text_recommended_actions_render_savings_with_adaptive_precision() -> No
     assert "[cache.batch-prewarm-recommended]" not in text
 
 
+def test_batch_prewarm_recommended_discloses_wall_clock_tradeoff() -> None:
+    """Bug 17: the prewarm recommendation surfaces the wall-clock trade-off
+    so agents can make an informed decision.
+
+    Pre-fix output framed ``prewarm: true`` as pure upside (``saves ~$X/run``)
+    with no mention that prewarm serializes the first batch item (~T(slowest)
+    extra wall-clock per run). For latency-sensitive workflows this could
+    make the recommendation a net loss.
+
+    A provider-specific Gemini implicit-cache caveat was considered and
+    rejected: it would need per-row model dispatch to apply cleanly, and
+    the "measure end-to-end duration" guidance in the wall-clock bullet
+    already covers the same reasoning agents would do on Gemini.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.batch-prewarm-recommended",
+        node_id="score",
+        affected_workflow="/abs/wf.pflow.md",
+        batch_size=8,
+        prefix_tokens_estimated=2000,
+        savings_pct=89,
+        savings_usd=0.42,
+    )
+
+    text = render_text(_make_analysis(warnings=[diag]))
+
+    # Positive: savings still rendered (Bug 17 doesn't suppress savings, just
+    # contextualizes them).
+    assert "saves ~$0.42/run" in text
+    # Positive: wall-clock trade-off is surfaced with the actionable hint.
+    assert "wall-clock" in text
+    assert "Measure end-to-end duration" in text
+    # Positive: the framing names this as a trade-off, not pure upside.
+    assert "Trade-off" in text
+    # Negative regression: the provider-specific implicit-cache caveat is
+    # NOT rendered. It used to fire unconditionally for every batch node;
+    # an agent reading it for an Anthropic workflow would treat the
+    # ``On Gemini, ...`` prefix as noise. Re-introducing the caveat
+    # requires per-row model dispatch, not a static suggestion bullet.
+    assert "implicit cache" not in text
+    assert "cache_read_input_tokens" not in text
+
+
+def test_batch_prewarm_lower_bound_renders_at_least_savings_and_verification() -> None:
+    """Lower-bound recommendations must not look like confident savings.
+
+    Mutation contract: route the diagnostic through the default savings
+    formatter; this test fails because the text says ``saves`` or
+    ``savings unavailable`` instead of the lower-bound wording.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    priced = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="score",
+        affected_workflow="/abs/wf.pflow.md",
+        measurable_tokens=1200,
+        batch_alias="item",
+        unresolved_refs=("concept.core_idea",),
+        savings_lower_bound_usd=0.012,
+        batch_size=8,
+    )
+    unpriced = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="review",
+        affected_workflow="/abs/wf.pflow.md",
+        measurable_tokens=1300,
+        batch_alias="item",
+        unresolved_refs=("concept.genre",),
+        savings_lower_bound_usd=None,
+        batch_size=8,
+    )
+
+    text = render_text(_make_analysis(warnings=[priced, unpriced]))
+
+    assert "savings at least ~$0.01/run" in text
+    assert "savings need verification" in text
+    assert "Run once with `--report`" in text
+    assert "Unresolved refs (concept.core_idea)" in text
+    assert "saves ~$0.01/run" not in text
+
+
+def test_batch_prewarm_below_min_renders_prewarm_remediation_not_declared_cache() -> None:
+    """The new ``cache.batch-prewarm-below-min`` ID must render the
+    prewarm-specific remediation path (restructure the prompt, OR remove
+    ``- prewarm: true``) — NOT the declared-cache remediation path
+    (``Increase cache content`` / ``remove prompt_cache:``).
+
+    Agents reading this ID have NO ``prompt_cache:`` declaration to remove,
+    so leaking declared-cache vocabulary would mislead.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score-choruses",
+        affected_workflow="/abs/wf.pflow.md",
+        model="anthropic/claude-sonnet-4-5",
+        prefix_tokens=27,
+        min_tokens=1024,
+        batch_alias="item",
+        provider_note="cache_control markers will silently no-op at the provider",
+    )
+
+    text = render_text(_make_analysis(warnings=[diag]))
+
+    # Headline + message render with the prewarm boundary vocabulary.
+    assert "Batch prewarm prefix below provider minimum" in text
+    assert "static prefix" in text
+    assert "${item.X}" in text
+    assert "1024" in text
+    # Provider note flows through.
+    assert "cache_control markers" in text
+    # Suggestions name the two prewarm remediation paths.
+    assert "Grow the static prefix" in text
+    assert "remove `- prewarm: true`" in text
+    # Negative regression: lock declared-cache vocabulary OUT of this code path.
+    # The agent has no ``prompt_cache:`` to remove; mentioning it would
+    # mislead about the remediation.
+    assert "Increase cache content" not in text
+    assert "remove `prompt_cache:`" not in text
+
+
 # ---------------------------------------------------------------------------
 # Text renderer — notes
 # ---------------------------------------------------------------------------
@@ -2644,7 +2998,7 @@ def test_text_notes_shorten_workflow_paths_in_prose() -> None:
     workflow_path = "/abs/project/workflows/root.pflow.md"
     child_path = "/abs/project/workflows/sub/child.pflow.md"
     notes = [
-        f"Cache fidelity check skipped for {child_path}.draft: a template reference couldn't be resolved at analysis time. TTL expiry and chunk-skip detection still apply."
+        f"Cache fidelity check skipped for {child_path}.draft: a template reference couldn't be resolved at analysis time. Chunk-skip detection still applies."
     ]
     row = PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": child_path})
     text = render_text(_make_analysis(rows=[row], workflow_path=workflow_path, notes=notes))
@@ -2714,6 +3068,42 @@ def test_text_recommended_action_suggestion_uses_relative_child_edit_path(
 
     assert "→ Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md" in text
     assert str(child_path) not in text
+
+
+def test_text_edit_target_anchors_at_cwd_not_at_workflow_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edit-target paths render relative to the invocation cwd, not relative
+    to the analyzed workflow's directory. The agent's cwd is the only frame
+    they can navigate paths from — anchoring at the workflow's directory
+    produced strings that were invalid from the agent's actual cwd.
+
+    Fixture diverges the two anchors: cwd is ``tmp_path`` and the analyzed
+    workflow lives at ``tmp_path/deep/sub/lyrics-generator.pflow.md``. The
+    workflow-dir anchor would produce ``song-creator/chorus-chooser/...``;
+    the cwd anchor produces ``deep/sub/song-creator/chorus-chooser/...``.
+
+    Mutation contract: revert ``_display_edit_target`` to the workflow-dir
+    primary anchor; the assertion on the cwd-relative path fails because
+    the shorter workflow-dir-relative form re-appears instead.
+    """
+    monkeypatch.chdir(tmp_path)
+    root_path = tmp_path / "deep" / "sub" / "lyrics-generator.pflow.md"
+    child_path = tmp_path / "deep" / "sub" / "song-creator" / "chorus-chooser" / "chorus-chooser.pflow.md"
+    child_path.parent.mkdir(parents=True)
+    root_path.parent.mkdir(parents=True, exist_ok=True)
+
+    text = render_text(
+        _make_analysis(
+            rows=[_row("draft", 30)],
+            workflow_path=str(root_path),
+            warnings=[_make_sub_workflow_cache_diag("choose-chorus", "concept", str(child_path))],
+        )
+    )
+
+    assert "→ Edit: deep/sub/song-creator/chorus-chooser/chorus-chooser.pflow.md" in text
+    assert "→ Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md" not in text
 
 
 def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> None:
@@ -2787,6 +3177,26 @@ def test_text_sub_workflow_cache_finding_emits_child_action_line() -> None:
     assert "share cached bytes across the boundary" not in text
     # Stage-1 UX pass: per-finding ``[cache.X]`` footer is gone.
     assert "[cache.sub-workflow-cache-undeclared]" not in text
+
+
+def test_indent_message_preserves_blank_lines() -> None:
+    """`_indent_message` must keep blank lines from the source message verbatim.
+
+    Several diagnostic message templates (notably
+    ``cache.prompt-cache-incomplete`` and the paste-ready ``## Cache`` block
+    rendered by ``cache.sub-workflow-cache-undeclared``) embed ``\\n\\n`` to
+    visually separate sections. If the renderer silently filters those out,
+    the catalog author's intent never reaches the agent.
+
+    Mutation contract: re-introduce ``if line.strip()`` in
+    ``_indent_message`` and the blank-indented row between the prose lines
+    disappears, this assertion fails.
+    """
+    from pflow.core.cache_analysis.render_text import _indent_message
+
+    rendered = _indent_message("alpha\n\nbeta", prefix=">>>")
+
+    assert rendered == [">>>alpha", ">>>", ">>>beta"]
 
 
 def test_text_sub_workflow_boundaries_omits_rename_diagnostics() -> None:
@@ -3551,7 +3961,7 @@ def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_proje
     assert "Token estimate confidence:" in text
     assert (
         "score-choruses: savings projected from a stable prompt prefix repeated across the batch. "
-        "Declare prompt_cache to confirm."
+        "Use `--report` to confirm with a real run."
     ) in text
     assert "first batch item as a representative sample" not in text
 
@@ -3691,9 +4101,218 @@ def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> 
         ),
     })
     text = render_text(_make_analysis(rows=[multi, single, many]))
-    assert "cacheable inputs: creative_direction, song_architecture" in text
-    assert "cacheable inputs: concept" not in text
-    assert "cacheable inputs: a, b, c, +1 more" in text
+    assert "cacheable values: creative_direction, song_architecture" in text
+    assert "cacheable values: concept" not in text
+    assert "cacheable values: a, b, c, +1 more" in text
+
+
+def test_per_call_hides_universally_empty_cache_columns_in_static_mode() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row("write-lyrics", 0).__dict__,
+            "model": "",
+            "input_tokens_estimated": 3684,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        }),
+        PerCallRow(**{
+            **_row("song-architecture", 0).__dict__,
+            "model": "",
+            "input_tokens_estimated": 2886,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        }),
+    ]
+
+    text = render_text(_make_analysis(rows=rows))
+
+    header = _per_call_header(text)
+    assert header == ["node", "model", "input", "notes"]
+    assert "cached_now" not in header
+    assert "could_cache" not in header
+    assert "ratio" not in header
+    assert "calls" not in header
+
+
+def test_per_call_keeps_all_columns_in_mixed_mode() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row("cached", 75).__dict__,
+            "data_source": "trace",
+            "declared_prompt_cache": ["prefix"],
+            "cacheable_data_source": "trace",
+            "observed_call_count": 2,
+        }),
+        PerCallRow(**{
+            **_row("projected", 25).__dict__,
+            "data_source": "trace",
+            "cacheable_data_source": "memo",
+            "observed_call_count": 2,
+        }),
+    ]
+
+    text = render_text(_make_analysis(rows=rows, actually_paid=0.01, no_cache=0.02))
+
+    assert _per_call_header(text) == [
+        "node",
+        "model",
+        "input",
+        "cached_now",
+        "could_cache",
+        "ratio",
+        "calls",
+        "notes",
+    ]
+    cached = _per_call_cells_by_header(text, "cached")
+    projected = _per_call_cells_by_header(text, "projected")
+    assert cached["cached_now"] == "7,500"
+    assert cached["could_cache"] == "—"
+    assert projected["cached_now"] == "—"
+    assert projected["could_cache"] == "2,500"
+
+
+def test_per_call_dedups_repeated_notes_into_footer() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row(f"n{i}", 0).__dict__,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        })
+        for i in range(3)
+    ]
+
+    text = render_text(_make_analysis(rows=rows))
+
+    assert "Per-call notes:" in text
+    assert "3 nodes lack trace data — run with --report to populate cache columns." in text
+    assert text.count("no trace recorded — run with --report to populate this row") == 0
+    assert _per_call_cells_by_header(text, "n0")["notes"] == ""
+
+
+def test_per_call_dedup_handles_row_with_dedup_note_plus_inline_note() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row(f"n{i}", 0).__dict__,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        })
+        for i in range(6)
+    ]
+    rows.append(
+        PerCallRow(**{
+            **_row("special", 0).__dict__,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        })
+    )
+    warning = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.dynamic-before-static",
+        node_id="special",
+        message="Dynamic before static.",
+    )
+
+    text = render_text(_make_analysis(rows=rows, warnings=[warning]))
+
+    assert "7 nodes lack trace data — run with --report to populate cache columns." in text
+    assert _per_call_cells_by_header(text, "special")["notes"] == "dynamic-before-static"
+
+
+def test_per_call_inline_renders_unique_notes() -> None:
+    row = PerCallRow(**{
+        **_row("unique", 0).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+
+    text = render_text(_make_analysis(rows=[row]))
+
+    assert "Per-call notes:" not in text
+    assert (
+        _per_call_cells_by_header(text, "unique")["notes"]
+        == "no trace recorded — run with --report to populate this row"
+    )
+
+
+def test_per_call_explainer_adapts_to_visible_columns() -> None:
+    projected = PerCallRow(**{
+        **_row("projected", 50).__dict__,
+        "declared_prompt_cache": ["prefix"],
+        "cacheable_data_source": "memo",
+    })
+    unavailable = PerCallRow(**{
+        **_row("unavailable", 0).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+
+    projected_text = render_text(_make_analysis(rows=[projected]))
+    unavailable_text = render_text(_make_analysis(rows=[unavailable]))
+
+    assert "cached_now: tokens served from cache during this run" not in projected_text
+    assert "could_cache: extra tokens" in projected_text
+    assert "cached_now: tokens served from cache during this run" not in unavailable_text
+    assert "could_cache: extra tokens" not in unavailable_text
+
+
+def test_per_call_explainer_returns_empty_when_no_cache_columns_visible() -> None:
+    row = PerCallRow(**{
+        **_row("unavailable", 0).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+
+    text = render_text(_make_analysis(rows=[row]))
+
+    assert "How to read each row:" not in text
+    assert "cached_now:" not in text
+    assert "could_cache:" not in text
+
+
+def test_per_call_calls_column_hidden_in_static_mode() -> None:
+    row = PerCallRow(**{
+        **_row("projected", 50).__dict__,
+        "cacheable_data_source": "memo",
+    })
+
+    static_text = render_text(_make_analysis(rows=[row]))
+    trace_text = render_text(_make_analysis(rows=[dataclasses.replace(row, data_source="trace")], actually_paid=0.01))
+
+    assert "calls" not in _per_call_header(static_text)
+    assert "calls" in _per_call_header(trace_text)
+
+
+def test_per_call_all_rows_can_reexpose_hidden_columns() -> None:
+    visible_row = PerCallRow(**{
+        **_row("visible", 30).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+    hidden_row = PerCallRow(**{
+        **_row("hidden", 90).__dict__,
+        "declared_prompt_cache": ["prefix"],
+        "cacheable_data_source": "trace",
+    })
+    analysis = _make_analysis(rows=[visible_row, hidden_row])
+
+    default_text = render_text(analysis)
+    all_rows_text = render_text(analysis, all_rows=True)
+
+    assert "cached_now" not in _per_call_header(default_text)
+    assert "cached_now" in _per_call_header(all_rows_text)
+    with pytest.raises(AssertionError):
+        _per_call_cells_by_header(default_text, "hidden")
+    assert _per_call_cells_by_header(all_rows_text, "hidden")["cached_now"] == "9,000"
 
 
 def test_per_call_table_divider_excludes_notes_column_width() -> None:
@@ -3770,53 +4389,56 @@ def test_text_pure_greenfield_hides_per_call_section_with_explanatory_note() -> 
     # Notes entry surfaces the explanatory message.
     assert "Per-call cache report hidden" in text
     assert "no run data yet" in text
-    # Mode-specific explainers must NOT render either (the section is gone).
+    # The collapsed explainer must NOT render (the section is gone).
+    assert "How to read each row:" not in text
+    # Legacy mode-specific explainer phrases must NOT render either.
     assert "Actual cache ratios" not in text
     assert "Projected cache ratios" not in text
     assert "No shared context detected" not in text
 
 
-def test_text_per_call_explainer_post_run_greenfield_says_projected() -> None:
-    """Option C: post-run greenfield workflows (no ``prompt_cache:`` declared
-    but rows have memo/trace data) show the "Projected cache ratios from prior
-    run data." explainer.
+def test_text_per_call_explainer_renders_unified_block_for_post_run_greenfield() -> None:
+    """The per-call explainer collapses post-run-greenfield and steady-state
+    into one shared "How to read each row:" block — both modes need the same
+    column documentation, and the prior split-leads (``"Actual cache ratios
+    from declared prompt_cache: subsets."`` vs ``"Projected cache ratios from
+    prior run data."``) required agents to understand the steady-state vs
+    greenfield distinction before they could read the table.
 
-    Two explainer modes survive Option C's row filter:
-    - **Steady-state** (any row has ``declared_prompt_cache``):
-      "Actual cache ratios from declared `prompt_cache:` subsets."
-    - **Post-run greenfield** (memo/trace rows, no declared):
-      "Projected cache ratios from prior run data."
-
-    The pure-greenfield "no shared context" branch was removed — those rows
-    are filtered out before reaching the explainer (see
-    ``test_text_pure_greenfield_hides_per_call_section_with_explanatory_note``).
-
-    Mutation test: invert ``is_steady_state`` detection or change the
-    post-run explainer string; this test fails because the wrong explainer
-    renders for a memo-data row with no declared subset.
+    Mutation test: re-introduce the split lead path → both post-run and
+    steady-state tests below fire because the new header is missing.
     """
     # ``_row("n1", 50)`` defaults to data_source="memo", declared_prompt_cache=None
-    # — the post-run greenfield path that survives the Option C filter.
-    rows = [_row("n1", 50)]
+    # — the post-run greenfield path.
+    rows = [PerCallRow(**{**_row("n1", 50).__dict__, "cacheable_data_source": "memo"})]
     text = render_text(_make_analysis(rows=rows))
     assert "## Per-call cache report" in text
-    assert "Projected cache ratios from prior run data." in text
-    # Other modes' explainers must NOT render here.
-    assert "Actual cache ratios" not in text
+    assert "How to read each row:" in text
+    # Old split-lead phrasings must NOT render.
+    assert "Actual cache ratios from declared" not in text
+    assert "Projected cache ratios from prior run data" not in text
     assert "No shared context detected" not in text
 
 
-def test_text_per_call_explainer_steady_state_says_actual_ratios() -> None:
-    """CP4 #7 — steady-state workflows (≥1 node has declared prompt_cache)
-    show the "Actual cache ratios" explainer.
+def test_text_per_call_explainer_renders_unified_block_for_steady_state() -> None:
+    """Same collapsed block applies when ≥1 node has declared ``prompt_cache``.
+    The new header doesn't differentiate steady-state vs greenfield because
+    the column documentation is identical for both — and the per-row data
+    already signals which mode this run is in (a populated ``cached_now``
+    means a trace fired).
 
-    Mutation test: invert the ``is_steady_state`` detection; this test fails.
+    Mutation test: re-introduce the ``is_steady_state`` branch → the negative
+    assertion on the old "Actual cache ratios" string fires.
     """
     rows = [_row("n1", 0), _row("n2", 75)]
-    rows[1] = PerCallRow(**{**rows[1].__dict__, "declared_prompt_cache": ["concept", "concept_brief"]})
+    rows[1] = PerCallRow(**{
+        **rows[1].__dict__,
+        "declared_prompt_cache": ["concept", "concept_brief"],
+        "cacheable_data_source": "memo",
+    })
     text = render_text(_make_analysis(rows=rows))
-    assert "Actual cache ratios" in text
-    assert "Current ratios" not in text or "pre-cache" not in text
+    assert "How to read each row:" in text
+    assert "Actual cache ratios" not in text
 
 
 def test_text_header_drops_low_no_data_confidence() -> None:
@@ -3852,8 +4474,11 @@ def test_text_header_keeps_medium_from_memo_with_coverage() -> None:
         "estimate_confidence_coverage": {"trace": 0, "memo": 2, "estimator": 0, "heuristic": 0, "total": 2},
     })
     text = render_text(analysis)
-    assert "Confidence: medium_from_memo" in text
+    # Bug 15: enum is replaced with plain English; JSON keeps the raw label.
+    assert "Confidence: medium — token counts from memoized prior runs" in text
     assert "(2 of 2 nodes)" in text
+    # Negative assertion: no analyzer-internal taxonomy leaks to text.
+    assert "medium_from_memo" not in text
 
 
 def test_text_header_suppresses_confidence_when_redundant_with_evidence() -> None:
@@ -3886,8 +4511,10 @@ def test_text_header_suppresses_confidence_when_redundant_with_evidence() -> Non
     # Evidence still emitted (carries the same info actionably).
     assert "complete trace (2 LLM nodes executed)" in text
     # Confidence suppressed — the redundant tautology is gone.
-    assert "Confidence: high_from_trace" not in text
+    assert "Confidence: high" not in text
     assert "(2 of 2 nodes)" not in text
+    # Negative assertion: enum doesn't leak even when line is present elsewhere.
+    assert "high_from_trace" not in text
 
 
 def test_text_header_keeps_confidence_when_unreached_nodes_present() -> None:
@@ -3915,7 +4542,9 @@ def test_text_header_keeps_confidence_when_unreached_nodes_present() -> None:
     # Evidence says X executed; Z not reached.
     assert "not reached" in text
     # Confidence still emitted — the denominators are different.
-    assert "Confidence: high_from_trace" in text
+    # Bug 15: enum → plain text.
+    assert "Confidence: high — token counts from this run's trace" in text
+    assert "high_from_trace" not in text
 
 
 def test_text_header_keeps_confidence_for_truncated_trace() -> None:
@@ -3941,7 +4570,9 @@ def test_text_header_keeps_confidence_for_truncated_trace() -> None:
     })
     text = render_text(analysis)
     assert "trace truncated" in text
-    assert "Confidence: high_from_trace" in text
+    # Bug 15: enum → plain text.
+    assert "Confidence: high — token counts from this run's trace" in text
+    assert "high_from_trace" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -4002,12 +4633,11 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
     assert "### child.pflow.md (called by call-child)" in text
     assert "(1 in parent.pflow.md, 1 in 1 sub-workflow)" in text
     assert "## Per-child analyze-cache commands" in text
-    # B-3: paste-ready block uses ``cd <parent-dir>`` + relative child paths.
-    assert "    cd /abs" in text
-    assert "pflow analyze-cache child.pflow.md" in text
-    # The full-absolute legacy form must NOT appear — that was the noisy
-    # shape this fix replaces.
-    assert "pflow analyze-cache /abs/child.pflow.md" not in text
+    # Self-contained commands only — no `cd`. Paths render cwd-relative
+    # when the workflow lives under cwd, absolute otherwise; here the
+    # workflow is outside the test's cwd so the absolute form renders.
+    assert "    cd " not in text
+    assert "pflow analyze-cache /abs/child.pflow.md" in text
 
 
 def test_render_text_drill_in_omitted_for_single_workflow() -> None:
@@ -4016,26 +4646,36 @@ def test_render_text_drill_in_omitted_for_single_workflow() -> None:
     assert "(called by" not in text
 
 
-def test_render_text_drill_in_uses_relpath_for_subdirectory_children() -> None:
-    """B-3: when children live in subdirectories of the parent, relative
-    paths preserve the directory structure under one ``cd`` line.
+def test_render_text_drill_in_emits_cwd_relative_path_when_workflow_under_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-child drill-in renders paths cwd-relative when the workflow
+    lives under the invocation cwd. Self-contained commands runnable from
+    the agent's cwd — no ``cd``.
 
-    Mutation contract: emit absolute paths in the loop; this test fails
-    because the relpath form (``sub/child.pflow.md``) is missing and the
-    absolute form (``/abs/parent/sub/child.pflow.md``) appears.
+    Mutation contract: revert ``_render_sub_workflow_drill_in`` to the
+    ``cd <parent>`` + relpath shape; the ``cd`` substring re-appears and
+    the self-contained ``pflow analyze-cache parent/sub/child.pflow.md``
+    line goes missing.
     """
+    monkeypatch.chdir(tmp_path)
+    parent_path = tmp_path / "parent" / "parent.pflow.md"
+    child_path = tmp_path / "parent" / "sub" / "child.pflow.md"
+    child_path.parent.mkdir(parents=True)
+
     rows = [
-        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent/parent.pflow.md"}),
-        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/parent/sub/child.pflow.md"}),
+        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": str(parent_path)}),
+        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": str(child_path)}),
     ]
-    base = _make_analysis(rows=rows, workflow_path="/abs/parent/parent.pflow.md")
+    base = _make_analysis(rows=rows, workflow_path=str(parent_path))
     rollup = SubWorkflowRollup(
-        workflows_included=("/abs/parent/sub/child.pflow.md",),
+        workflows_included=(str(child_path),),
         max_depth_walked=1,
         truncated=False,
         per_workflow=(
             SubWorkflowRollupEntry(
-                workflow_path="/abs/parent/sub/child.pflow.md",
+                workflow_path=str(child_path),
                 called_by_node_id="call-child",
                 llm_node_count=1,
                 actually_paid_usd=0.07,
@@ -4050,9 +4690,10 @@ def test_render_text_drill_in_uses_relpath_for_subdirectory_children() -> None:
         "summary": AnalysisSummary(**{**base.summary.__dict__, "sub_workflow_rollup": rollup}),
     })
     text = render_text(analysis, all_rows=True)
-    assert "    cd /abs/parent" in text
-    assert "pflow analyze-cache sub/child.pflow.md" in text
-    assert "/abs/parent/sub/child.pflow.md" not in text
+
+    assert "    cd " not in text
+    assert "pflow analyze-cache parent/sub/child.pflow.md" in text
+    assert str(child_path) not in text
 
 
 def test_render_text_drill_in_filters_zero_llm_node_children() -> None:
@@ -4097,7 +4738,7 @@ def test_render_text_drill_in_filters_zero_llm_node_children() -> None:
     text = render_text(analysis, all_rows=True)
 
     # Drill-in lists only the LLM-bearing child.
-    assert "pflow analyze-cache llm-child.pflow.md" in text
+    assert "pflow analyze-cache /abs/llm-child.pflow.md" in text
     assert "mcp-only-child.pflow.md" not in text
     # Breakdown count says "1 sub-workflow", not "2 sub-workflows".
     assert "in 1 sub-workflow)" in text
@@ -4262,15 +4903,11 @@ def test_discrepancy_message_includes_workflow_scope() -> None:
     diag = make_diagnostic(
         "cache.discrepancy",
         node_id="draft",
-        trace_path="/trace.json",
         workflow_path_short="child",
         affected_workflow="/abs/child.pflow.md",
-        predicted_pct=100,
-        predicted_label="hit",
-        actual_pct=0,
         root_cause="key_mismatch",
         root_cause_summary="Upstream value changed",
-        cache_age_sec=None,
+        suggestion="Re-run analyze-cache.",
         predicted_cache_key="a",
         actual_cache_key="b",
     )
@@ -5068,6 +5705,79 @@ def test_per_call_row_tokens_use_thousands_separator() -> None:
     assert "tokens=266728" not in text
 
 
+def test_below_provider_min_note_renders_for_projected_undeclared_rows() -> None:
+    """Projected undeclared cacheable bytes below the provider minimum need row context.
+
+    Mutation contract: removing the projected-tier predicate from
+    ``_below_provider_min_note_by_row_key`` makes this note leak to trace rows,
+    while removing the helper entirely makes this assertion fail.
+    """
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "parameters",
+        "declared_prompt_cache": None,
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert cells["notes"] == "below provider min (need ≥4,096 for this model)"
+
+
+def test_below_provider_min_note_silent_when_cache_declared() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "parameters",
+        "declared_prompt_cache": ["article"],
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert "below provider min" not in cells["notes"]
+
+
+def test_below_provider_min_note_silent_when_tokens_above_min() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 5000,
+        "cacheable_data_source": "parameters",
+        "declared_prompt_cache": None,
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert "below provider min" not in cells["notes"]
+
+
+def test_below_provider_min_note_silent_for_trace_tier() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "trace",
+        "declared_prompt_cache": None,
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert "below provider min" not in cells["notes"]
+
+
+def test_per_call_explainer_mentions_provider_minimum() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "parameters",
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    assert "Numbers below your model's provider minimum won't cache" in text
+
+
 def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
     """Tier 1 active provider-cache evidence renders in ``cached_now``.
 
@@ -5082,9 +5792,9 @@ def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
         "cacheable_data_source": "trace",
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "write-lyrics")
-    assert cells[3] == "213,382"
-    assert cells[4] == "—"
+    cells = _per_call_cells_by_header(text, "write-lyrics")
+    assert cells["cached_now"] == "213,382"
+    assert cells["could_cache"] == "—"
 
 
 def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
@@ -5100,9 +5810,9 @@ def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
         "cacheable_data_source": "memo",
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "score-choruses")
-    assert cells[3] == "—"
-    assert cells[4] == "213,382"
+    cells = _per_call_cells_by_header(text, "score-choruses")
+    assert "cached_now" not in cells
+    assert cells["could_cache"] == "213,382"
 
 
 def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
@@ -5119,9 +5829,9 @@ def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
         "cacheable_data_source": "trace",
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "rewrite-emotional")
-    assert cells[3] == "63,009"
-    assert cells[4] == "—"
+    cells = _per_call_cells_by_header(text, "rewrite-emotional")
+    assert cells["cached_now"] == "63,009"
+    assert cells["could_cache"] == "—"
 
 
 def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
@@ -5137,5 +5847,41 @@ def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
         "cache_ratio_pct": None,
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "greenfield")
-    assert cells[4] == "?"
+    cells = _per_call_cells_by_header(text, "greenfield")
+    assert "could_cache" not in cells
+    assert cells["notes"] == "no trace recorded — run with --report to populate this row"
+
+
+def test_renderer_never_emits_cd_commands() -> None:
+    """pflow never tells agents to ``cd``: every suggested command must run
+    from the invocation cwd.
+
+    Agents fire parallel Bash calls and cannot reliably share cwd state
+    across invocations; even sequentially the agent's cwd tracker is the
+    only frame they can navigate paths from. To point at a file or a
+    workflow, use ``_display_path_from_cwd`` to get a cwd-relative (or
+    absolute, when outside cwd) path. To point at an edit target, use
+    ``_display_edit_target``. Both already anchor at cwd.
+
+    Mutation contract: re-add a ``lines.append(f"    cd ...")`` shape to
+    any renderer module under ``cache_analysis/``; this test fails because
+    the literal string ``"    cd "`` reappears in production rendering
+    source.
+    """
+    cache_analysis_dir = Path(__file__).resolve().parents[2] / "src" / "pflow" / "core" / "cache_analysis"
+    forbidden = re.compile(r'["\']\s{0,8}cd\s+[^"\']*["\']')
+    offenders: list[str] = []
+    for source_file in sorted(cache_analysis_dir.glob("*.py")):
+        text = source_file.read_text()
+        # Strip triple-quoted docstrings/comments so historical references
+        # explaining WHY we don't emit cd don't trip the check.
+        stripped = re.sub(r'""".*?"""', "", text, flags=re.DOTALL)
+        stripped = re.sub(r"'''.*?'''", "", stripped, flags=re.DOTALL)
+        for line_no, line in enumerate(stripped.splitlines(), 1):
+            code, _, _ = line.partition("#")
+            if forbidden.search(code):
+                offenders.append(f"{source_file.name}:{line_no}: {line.strip()}")
+    assert not offenders, (
+        "Renderer emits ``cd`` commands; agents cannot track cwd state across calls. "
+        "Use ``_display_path_from_cwd`` for cwd-relative paths instead:\n  " + "\n  ".join(offenders)
+    )

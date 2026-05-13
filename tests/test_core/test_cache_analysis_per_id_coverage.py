@@ -28,15 +28,12 @@ from pflow.core.cache_analysis.warning_catalog import (
 # Minimal context kwargs per ID — copy of test_cache_analysis_warnings.py's
 # helper, kept here so this coverage test is self-contained.
 _DISCREPANCY_BASE = {
-    "trace_path": "songs[1]",
-    "predicted_pct": 80,
-    "predicted_label": "hit",
-    "actual_pct": 20,
-    "root_cause_summary": "auto",
-    "cache_age_sec": None,
+    "workflow_path_short": "workflow",
+    "root_cause_summary": "Upstream value changed between predicted run and actual run",
+    "suggestion": "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.",
     "predicted_cache_key": None,
     "actual_cache_key": None,
-    "affected_workflow": "x.pflow.md",
+    "affected_workflow": "workflow.pflow.md",
 }
 
 
@@ -57,6 +54,16 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
         "cache.shared-context-undeclared": (
             None,
             {"node_count": 3, "shared_chunks": ["concept"], "affected_workflow": "x.pflow.md", "savings_usd": 0.78},
+        ),
+        "cache.shared-context-undeclared-conditional": (
+            None,
+            {
+                "node_count": 2,
+                "shared_chunks": ["concept"],
+                "affected_workflow": "x.pflow.md",
+                "min_tokens": 2048,
+                "affected_nodes": ["draft", "review"],
+            },
         ),
         "cache.sub-workflow-cache-undeclared": (
             None,
@@ -118,6 +125,17 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "prefix_tokens_estimated": 2100,
                 "savings_pct": 89,
                 "savings_usd": 0.12,
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
+        "cache.batch-prewarm-lower-bound-recommended": (
+            "score",
+            {
+                "measurable_tokens": 1200,
+                "batch_alias": "item",
+                "unresolved_refs": ("a", "b"),
+                "savings_lower_bound_usd": 0.02,
+                "batch_size": 12,
                 "affected_workflow": "x.pflow.md",
             },
         ),
@@ -202,6 +220,17 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
         "cache.prewarm-no-prefix": (
             "score",
             {"batch_alias": "item", "first_dynamic_position": 0, "affected_workflow": "x.pflow.md"},
+        ),
+        "cache.batch-prewarm-below-min": (
+            "score",
+            {
+                "model": "anthropic/claude-sonnet-4-5",
+                "prefix_tokens": 27,
+                "min_tokens": 1024,
+                "batch_alias": "item",
+                "provider_note": "cache_control markers will silently no-op at the provider",
+                "affected_workflow": "x.pflow.md",
+            },
         ),
         "cache.consolidate-to-root-recommended": (
             None,
@@ -340,7 +369,7 @@ def test_opportunities_nudge_id_NOT_in_catalog() -> None:
     [
         # Simple flat context (list-of-strings).
         "cache.order-mismatch",
-        # Nested dispatch payload — highest complexity in the catalog.
+        # Discrepancy diagnostic with nullable cache-key context.
         "cache.discrepancy",
         # V6 combined-diagnostic shape (invalid_fields: list[str]).
         "cache.invalid-on-non-llm",
@@ -421,9 +450,15 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     from pflow.core.workflow.data_flow import validate_data_flow
 
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
     monkeypatch.setattr(
         analyze_module,
+        "estimate_tokens",
+        lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
+    )
+    monkeypatch.setattr(
+        token_estimation_module,
         "estimate_tokens",
         lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
     )
@@ -584,6 +619,30 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     _round_trip(found[0])
     seen_ids.add("cache.prewarm-no-prefix")
 
+    # cache.batch-prewarm-below-min: prewarm: true with a short static prefix
+    # before ${item.X}. The detector reads the real ``get_min_cache_tokens``
+    # from ``llm_capabilities`` (not the analyzer-patched stub at 10), so a
+    # ~5-token prefix on Sonnet-4-5 is honestly below the 1024 minimum.
+    batch_prewarm_below_min_ir: dict[str, Any] = {
+        "inputs": {"items": {"type": "list"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "Score this: ${item.text}"},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(batch_prewarm_below_min_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.batch-prewarm-below-min"]
+    assert found, f"analyze did not emit cache.batch-prewarm-below-min: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.batch-prewarm-below-min")
+
     # cache.batch-prewarm-recommended: batch with large static prefix, no
     # explicit prewarm decision.
     batch_recommended_ir: dict[str, Any] = {
@@ -598,11 +657,68 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         ],
         "edges": [],
     }
-    analysis = analyze(batch_recommended_ir)
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    batch_recommended_path = str(tmp_path / "batch-recommended.pflow.md")
+    batch_recommended_trace_path = tmp_path / "batch-recommended-trace.json"
+    builder = TraceFixtureBuilder()
+    batch_recommended_trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=batch_recommended_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "priced/model",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(34)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    analysis = analyze(
+        batch_recommended_ir, workflow_path=batch_recommended_path, trace_path=batch_recommended_trace_path
+    )
     found = [d for d in analysis.warnings if d.id == "cache.batch-prewarm-recommended"]
     assert found, f"analyze did not emit cache.batch-prewarm-recommended: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.batch-prewarm-recommended")
+
+    # cache.batch-prewarm-lower-bound-recommended: measurable stable bytes in
+    # the prefix clear the analyzer-patched provider minimum, but an unresolved
+    # upstream ref prevents confident exact measurement.
+    lower_bound_ir: dict[str, Any] = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "priced/model",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": ("stable " * 20) + "${missing.upstream}\n${item.text}"},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(lower_bound_ir, workflow_path=str(tmp_path / "lower-bound.pflow.md"), auto_load_trace=False)
+    found = [d for d in analysis.warnings if d.id == "cache.batch-prewarm-lower-bound-recommended"]
+    assert found, (
+        f"analyze did not emit cache.batch-prewarm-lower-bound-recommended: ids={[d.id for d in analysis.warnings]}"
+    )
+    _round_trip(found[0])
+    seen_ids.add("cache.batch-prewarm-lower-bound-recommended")
 
     # cache.consolidate-to-root-recommended: brownfield path. Workflow declares
     # ``## Cache`` with two SUB-PATH chunks (``concept.title``, ``concept.core_idea``)
@@ -761,7 +877,18 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         ],
         "edges": [],
     }
-    analysis = analyze(dynamic_ir)
+    from pflow.runtime.cache import MemoizationCache
+
+    dynamic_cache = MemoizationCache(db_path=tmp_path / "dynamic-cache.db")
+    dynamic_workflow_path = str(tmp_path / "dynamic.pflow.md")
+    dynamic_cache.put(
+        cache_key="creative-direction-key",
+        node_id="creative-direction",
+        workflow_path=dynamic_workflow_path,
+        action="default",
+        output={"response": "resolved direction " * 5000},
+    )
+    analysis = analyze(dynamic_ir, workflow_path=dynamic_workflow_path, memo_cache=dynamic_cache)
     found = [d for d in analysis.warnings if d.id == "cache.dynamic-before-static"]
     assert found, f"analyze did not emit cache.dynamic-before-static: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
@@ -824,6 +951,38 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.shared-context-undeclared: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.shared-context-undeclared")
+
+    # cache.shared-context-undeclared-conditional: same structural opportunity,
+    # but current resolved values are below the provider minimum. No suggested
+    # paste block is emitted; the advisory tells agents to retry with
+    # representative runtime values before editing.
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    conditional_ir: dict[str, Any] = {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "priced/model",
+                "params": {"prompt": "Draft ${article}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "priced/model",
+                "params": {"prompt": "Review ${article}."},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(conditional_ir, parameters={"article": "hi"}, workflow_path="conditional.pflow.md")
+    found = [d for d in analysis.warnings if d.id == "cache.shared-context-undeclared-conditional"]
+    assert found, (
+        f"analyze did not emit cache.shared-context-undeclared-conditional: ids={[d.id for d in analysis.warnings]}"
+    )
+    _round_trip(found[0])
+    seen_ids.add("cache.shared-context-undeclared-conditional")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
 
     # cache.prompt-cache-incomplete: workflow already declares ## Cache, but
     # each LLM node's prompt_cache omits a shared chunk it references.
@@ -945,7 +1104,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     _round_trip(found[0])
     seen_ids.add("cache.cross-workflow-prose-mismatch")
 
-    # cache.discrepancy: 2.1.0 trace event with observable TTL-expiry fields.
+    # cache.discrepancy: 2.1.0 trace event with skipped cache chunk.
     trace_path = tmp_path / "trace.json"
     trace_path.write_text(
         json.dumps({
@@ -958,8 +1117,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
                         "model": "anthropic/claude-sonnet-4-5",
                         "cache_creation_input_tokens": 100,
                         "cache_read_input_tokens": 0,
-                        "cache_age_sec": 301,
-                        "cache_chunks_skipped": [],
+                        "cache_chunks_skipped": ["concept"],
                     },
                 }
             ],

@@ -7,7 +7,7 @@ Error: Parse Error
 
     ## Cache
 
-    - ttl: 5m       # optional; default 5m, also accepts 1h
+    - ttl: 5m       # optional; default 5m, accepts 1m..60m or 1h
 
     ```cache
     Description of the value:

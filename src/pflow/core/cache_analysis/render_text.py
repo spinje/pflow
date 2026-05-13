@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import cast
 
 from pflow.core.diagnostic import Diagnostic
@@ -58,6 +59,19 @@ from .analyze import (
 )
 
 _HIDDEN_RATIO_THRESHOLD = 80
+_PER_CALL_COLUMNS: tuple[str, ...] = (
+    "node",
+    "model",
+    "input",
+    "cached_now",
+    "could_cache",
+    "ratio",
+    "calls",
+    "notes",
+)
+_ALWAYS_VISIBLE_PER_CALL_COLUMNS: frozenset[str] = frozenset({"node", "model", "input", "notes"})
+_LEFT_ALIGNED_PER_CALL_COLUMNS: frozenset[str] = frozenset({"node", "model", "notes"})
+_NO_TRACE_RECORDED_NOTE = "no trace recorded — run with --report to populate this row"
 
 # Plain-English labels for ``ProjectionExclusion.reason``. Surfaced inline
 # in the Summary block's "Excluded from analysis" line so a fresh agent
@@ -181,6 +195,13 @@ def _render_header(analysis: CacheAnalysis) -> str:
             )
         else:
             lines.append(f"  Evidence: complete trace ({s.trace_llm_nodes_executed} LLM nodes executed)")
+    # Trace transparency (Bug 1 follow-up): name the loaded trace file +
+    # outcome + recording timestamp whenever a trace was loaded. Fires for
+    # both autoload and ``--from-trace``. ``analysis.trace_path`` is the
+    # authoritative "was a trace loaded" signal — the rejection gate at
+    # ``analyze.py:683`` sets it to None when rebuilding to greenfield.
+    if analysis.trace_path is not None:
+        lines.append(_format_trace_header_line(analysis.trace_path, s))
     if s.observed_models_in_trace and s.ir_default_model and s.ir_default_model not in s.observed_models_in_trace:
         lines.append(f"  IR/settings declares: {s.ir_default_model} (overridden by trace evidence)")
     sub_line = _format_sub_workflow_breakdown_line(analysis)
@@ -208,8 +229,67 @@ def _render_header(analysis: CacheAnalysis) -> str:
         confidence_says_full_trace = label == "high_from_trace" and source_count == total_rows
         suppress = evidence_complete_all_executed and confidence_says_full_trace
         if not suppress:
-            lines.append(f"  Confidence: {label} ({source_count} of {total_rows} nodes)")
+            lines.append(_format_confidence_line(label, source_count, total_rows))
     return "\n".join(lines)
+
+
+def _format_confidence_line(label: str, source_count: int, total_rows: int) -> str:
+    """Render the Confidence header line in plain English.
+
+    The raw enum values (``medium_from_memo`` / ``high_from_trace``) leak
+    analyzer-internal taxonomy to agents reading the text output. Replace
+    with a tier word + plain-English source phrase. JSON keeps the enum
+    in ``estimate_confidence`` for machine consumers.
+    """
+    if label == "high_from_trace":
+        source = "token counts from this run's trace"
+        tier = "high"
+    else:  # medium_from_memo — the only other label that reaches this branch
+        source = "token counts from memoized prior runs"
+        tier = "medium"
+    return f"  Confidence: {tier} — {source} ({source_count} of {total_rows} nodes)"
+
+
+def _format_trace_header_line(trace_path: str, summary: AnalysisSummary) -> str:
+    """Render the ``Trace:`` header line for a loaded trace.
+
+    Shape: ``  Trace: <filename> (<status>, recorded <YYYY-MM-DD HH:MM>)``.
+    The ``recorded ...`` suffix is dropped when ``trace_recorded_at`` is None
+    (defensive — legacy traces from before 2.1.0 may lack ``start_time``).
+
+    The filename alone is the agent-visible identity; the rest of the
+    pflow ecosystem already exposes the directory (``~/.pflow/debug/``)
+    via ``pflow analyze-cache --help`` text and the trace-saved stderr
+    line at run time.
+    """
+    filename = Path(trace_path).name
+    status = summary.trace_final_status or "unknown"
+    recorded = _format_recorded_timestamp(summary.trace_recorded_at)
+    if recorded is None:
+        return f"  Trace: {filename} ({status})"
+    return f"  Trace: {filename} ({status}, recorded {recorded})"
+
+
+def _format_recorded_timestamp(iso: str | None) -> str | None:
+    """Convert ``start_time`` ISO 8601 to ``YYYY-MM-DD HH:MM`` for display.
+
+    Returns None on missing input or any parse failure — the caller drops
+    the "recorded ..." suffix when None.
+    """
+    if iso is None:
+        return None
+    # ISO format from ``workflow_trace.py:528`` is
+    # ``datetime.now().isoformat()`` → ``2026-05-11T15:32:28.123456``.
+    # Strip microseconds via the ``T`` split and slice minute-precision.
+    try:
+        date_part, time_part = iso.split("T", 1)
+        # ``time_part`` is HH:MM:SS[.fraction]; trim to HH:MM.
+        hhmm = time_part[:5]
+        if len(date_part) != 10 or len(hhmm) != 5 or hhmm[2] != ":":
+            return None
+        return f"{date_part} {hhmm}"
+    except (ValueError, AttributeError):
+        return None
 
 
 def _llm_bearing_rollup_entries(
@@ -412,11 +492,14 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
 
 
 def _format_passthrough_footnote(s: AnalysisSummary, excluded_total: float) -> str | None:
-    """Footnote naming the excluded nodes folded into the projection lines.
+    """Footnote naming nodes whose paid cost is included above but excluded
+    from cache-savings projections.
 
-    Wording is deliberately jargon-free and accurate: caching CAN apply to
-    these calls when a model+content combo coincidentally repeats across
-    them — what's unavailable is the static projection, not caching itself.
+    "Pass-through" jargon was confusing for fresh agents (Bug 13); the
+    rewrite leads with what the amount represents and why no projection is
+    available. Caching may still apply at the provider level when model +
+    content combinations repeat across calls — that's surfaced as a follow-up
+    sentence rather than the first clause.
     """
     if not s.projection_exclusions:
         return None
@@ -429,15 +512,17 @@ def _format_passthrough_footnote(s: AnalysisSummary, excluded_total: float) -> s
         e = sorted_exclusions[0]
         reason = _EXCLUSION_REASON_LABELS.get(e.reason, e.reason)
         return (
-            f"  · {amount} of the above is pass-through for {e.node_path} "
-            f"({reason} — projected savings unavailable; real savings could "
-            "be higher if model+content combos repeat)."
+            f"  · {amount} of the above was paid by {e.node_path} but couldn't be "
+            f"analyzed for cache savings ({reason}). Caching may still apply at "
+            "runtime if its content repeats across calls."
         )
-    node_csv = ", ".join(e.node_path for e in sorted_exclusions)
+    node_csv = ", ".join(
+        f"{e.node_path} ({_EXCLUSION_REASON_LABELS.get(e.reason, e.reason)})" for e in sorted_exclusions
+    )
     return (
-        f"  · {amount} of the above is pass-through for: {node_csv} "
-        "(projected savings unavailable; real savings could be higher if "
-        "model+content combos repeat)."
+        f"  · {amount} of the above was paid by nodes that couldn't be analyzed "
+        f"for cache savings: {node_csv}. Caching may still apply at runtime if "
+        "their content repeats across calls."
     )
 
 
@@ -667,7 +752,7 @@ def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
 def _render_trace_deltas(s: AnalysisSummary) -> list[str]:
     lines: list[str] = []
     actual = _format_delta(s.actual_vs_no_cache_delta, label="vs no-cache")
-    actual_label = "Actual savings (this run):"
+    actual_label = "Actual cost delta (this run):"
     if actual:
         lines.append(f"  {actual_label:29s} {actual}")
     elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:
@@ -729,6 +814,12 @@ def _format_unavailable_models(analysis: CacheAnalysis) -> str:
     return ", ".join(parts)
 
 
+_TIER_LABELS: dict[str, str] = {
+    "trace": "from trace",
+    "trace_partial": "from partial trace",
+}
+
+
 def _format_cost(
     value: float | None,
     partial: bool,
@@ -742,11 +833,15 @@ def _format_cost(
     agent doesn't have to scan ``models_in_use`` to find the culprit. The
     plural-count phrasing remains for N>1.
 
-    Optional ``tier_annotation`` (e.g. ``"trace"``, ``"trace_partial"``)
-    appended in parentheses so the agent sees the confidence tier when
-    rendering ``actually_paid_usd``. Empty string skips the suffix
-    (the no_cache / first_run / rerun projection lines stay unannotated —
-    they're hypotheticals; the tier-confidence concept doesn't apply).
+    Optional ``tier_annotation`` (a ``CostTier`` enum value like ``"trace"``
+    or ``"trace_partial"``) appended in parentheses as plain English via
+    ``_TIER_LABELS`` so the agent reads ``(from trace)`` / ``(from partial
+    trace)`` rather than the raw snake_case enum. Empty string skips the
+    suffix (the no_cache / first_run / rerun projection lines stay
+    unannotated — they're hypotheticals; the tier-confidence concept
+    doesn't apply). Unknown tier values fall through to the raw string,
+    preserving information if a new enum value reaches this code path
+    without a label mapping.
     """
     if value is None:
         if len(unavailable_models) == 1:
@@ -754,7 +849,8 @@ def _format_cost(
         if unavailable_models:
             return f"unavailable (all {len(unavailable_models)} models lack pricing data)"
         return "unavailable"
-    annotation = f" ({tier_annotation})" if tier_annotation else ""
+    label = _TIER_LABELS.get(tier_annotation, tier_annotation)
+    annotation = f" ({label})" if label else ""
     amount = _format_dollar_amount(value)
     if partial:
         # Partial — caller must already have appended " (partial — N of M ...)" to value.
@@ -872,7 +968,7 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
             "in the listed child workflow. Doing only some leaves the cache disabled:\n"
             "  (1) Remove the `${var}` references from each affected node's prompt. "
             "Leaving them re-sends the content uncached.\n"
-            "  (2) Add the input as a named entry under the child workflow's ## Cache section.\n"
+            "  (2) Add the listed values as named entries under the child workflow's ## Cache section.\n"
             "  (3) Reference that named entry in `prompt_cache:` on each consumer node."
         )
     return _render_action_list(
@@ -946,9 +1042,45 @@ def _render_action_list(
 
 
 def _format_action_suggestions(action: RecommendedAction, *, workflow_path: str) -> list[str]:
-    return [
+    lines: list[str] = []
+    if action.warning_id == "cache.prompt-body-shadows-cache":
+        lines.extend(_format_shadow_cache_cost_comparison(action))
+    lines.extend(
         f"     → {_replace_action_scope_as_edit_target(suggestion, action, workflow_path)}"
         for suggestion in action.suggestions
+    )
+    return lines
+
+
+def _format_shadow_cache_cost_comparison(action: RecommendedAction) -> list[str]:
+    """Render cost evidence for prompt-body/cache sub-path shadow warnings."""
+    body_only = action.context.get("body_only_cost_usd_per_call")
+    with_cache = action.context.get("with_cache_cost_usd_per_call")
+    shadowed = action.context.get("shadowed_chunk_names") or ()
+    node_id = action.context.get("node_id") or action.node_id
+    if not isinstance(body_only, (int, float)) or not isinstance(with_cache, (int, float)):
+        return []
+    if not isinstance(node_id, str) or not isinstance(shadowed, (list, tuple)) or not shadowed:
+        return []
+
+    body_value = float(body_only)
+    cache_value = float(with_cache)
+    body_str = _format_dollar_amount(body_value)
+    cache_str = _format_dollar_amount(cache_value)
+    ratio_phrase = ""
+    if body_value > 0:
+        ratio = cache_value / body_value
+        if ratio >= 2.0:
+            ratio_phrase = f" — caching is {ratio:.0f}× more expensive than removing the declaration"
+
+    chunks_csv = ", ".join(f"`{chunk}`" for chunk in shadowed)
+    return [
+        f"     → Removing `prompt_cache:` for {chunks_csv} from `{node_id}` "
+        f"would drop per-call cost from {cache_str} to {body_str}{ratio_phrase}.",
+        "       The body only references a sub-path of the cached value; the rest is sent to the model "
+        "but unused by your prompt.",
+        "       Note: the summary's 'saves N%' compares against inlining the full chunk uncached — "
+        "a different baseline than your body actually uses.",
     ]
 
 
@@ -977,9 +1109,13 @@ def _indent_message(message: str, *, prefix: str) -> list[str]:
     """Indent each line of a multi-line message under a recommendations bullet.
 
     Long messages render as multiple lines; the prefix keeps them visually
-    aligned with the rank line above.
+    aligned with the rank line above. Blank lines are preserved verbatim so
+    that diagnostics whose message templates embed `\\n\\n` between sections
+    (e.g. ``cache.prompt-cache-incomplete``'s intro vs. findings block, the
+    paste-ready ``## Cache`` block in ``cache.sub-workflow-cache-undeclared``)
+    render with the visual separation their authors intended.
     """
-    return [f"{prefix}{line}" for line in message.splitlines() if line.strip()]
+    return [f"{prefix}{line}" for line in message.splitlines()]
 
 
 def _replace_action_scope_in_prose(text: str, action: RecommendedAction, workflow_path: str) -> str:
@@ -1029,20 +1165,20 @@ def _display_path_from_cwd(path: str) -> str:
 
 
 def _display_edit_target(path: str, *, root_workflow_path: str) -> str:
-    """Return a compact path for prose that points at a file to edit."""
+    """Return a path for prose that points at a file to edit.
+
+    Anchored at the invocation cwd: the agent's cwd is the only frame they
+    can navigate paths from reliably. Anchoring at the analyzed workflow's
+    directory produced shorter strings but they were invalid from the
+    agent's actual cwd (e.g. ``chorus-chooser/...`` when the agent ran
+    analyze-cache from project root). The basename short-circuit is kept
+    for self-references — ``Edit chorus-chooser.pflow.md`` reads cleaner
+    than the full path when prose context already established the workflow.
+    """
     if not path or path.startswith("ir-hash:") or "/" not in path:
         return path
     if path == root_workflow_path:
         return _workflow_filename(path)
-
-    root_dir = os.path.dirname(root_workflow_path)
-    if root_dir:
-        try:
-            rel = os.path.relpath(path, root_dir)
-        except ValueError:
-            rel = ""
-        if rel and rel != "." and not rel.startswith(".."):
-            return rel
     return _display_path_from_cwd(path)
 
 
@@ -1076,7 +1212,7 @@ def _analysis_workflow_paths(analysis: CacheAnalysis) -> set[str]:
         paths.update(entry.workflow_path for entry in rollup.per_workflow)
     for diag in analysis.warnings:
         context = diag.context or {}
-        for key in ("affected_workflow", "parent_workflow", "child_workflow", "trace_path"):
+        for key in ("affected_workflow", "parent_workflow", "child_workflow"):
             value = context.get(key)
             if isinstance(value, str):
                 paths.add(value)
@@ -1120,6 +1256,8 @@ def _format_action_savings(action: RecommendedAction) -> str:
             return "unmeasurable"
         if "below the smallest provider cache minimum" in action.message:
             return "not yet cacheable"
+    if action.warning_id == "cache.batch-prewarm-lower-bound-recommended":
+        return _format_lower_bound_action_savings(action.context.get("savings_lower_bound_usd"))
     if action.warning_id != "cache.batch-prewarm-recommended":
         return _format_savings_usd(action.estimated_savings_usd)
     value = action.estimated_savings_usd
@@ -1128,6 +1266,14 @@ def _format_action_savings(action: RecommendedAction) -> str:
     if value < 0.01:
         return f"saves ~${value:.4f}/run"
     return f"saves ~${value:.2f}/run"
+
+
+def _format_lower_bound_action_savings(value: object) -> str:
+    if not isinstance(value, (int, float)) or value < 0.0001:
+        return "savings need verification"
+    if value < 0.01:
+        return f"savings at least ~${value:.4f}/run"
+    return f"savings at least ~${value:.2f}/run"
 
 
 def _render_suggested_blocks(analysis: CacheAnalysis) -> str:
@@ -1335,9 +1481,22 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # Full IDs stay in JSON for machine consumers (DD#27).
     warnings_by_node = _warnings_by_row_key(analysis)
     unavailable_notes_by_node = _unavailable_notes_by_row_key(analysis)
+    below_min_notes_by_node = _below_provider_min_note_by_row_key(analysis)
+    static_mode = analysis.summary.evidence_scope == "static_analysis"
+    visible_columns = _visible_per_call_columns(visible, static_mode=static_mode)
+    components_by_row = [
+        _cell_note_components(
+            row,
+            warnings_by_node.get((row.workflow_path, row.node_path), []),
+            unavailable_notes_by_node.get((row.workflow_path, row.node_path), []),
+            below_min_notes_by_node.get((row.workflow_path, row.node_path), []),
+        )
+        for row in visible
+    ]
+    deduped_components_by_row, per_call_notes = _collapse_no_trace_notes(components_by_row)
 
     lines = ["## Per-call cache report"]
-    explainer_lines = _per_call_scope_explainer(rows, analysis.summary.evidence_scope)
+    explainer_lines = _per_call_scope_explainer(analysis.summary.evidence_scope, visible_columns)
     for explainer_line in explainer_lines:
         lines.append(f"  {explainer_line}")
     if truncated_trace_default_view and len(visible) < len(rows):
@@ -1354,19 +1513,40 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
         )
     if visible:
         lines.append("")
-        _append_per_call_rows(lines, visible, warnings_by_node, unavailable_notes_by_node, analysis)
+        _append_per_call_rows(
+            lines,
+            visible,
+            warnings_by_node,
+            visible_columns=visible_columns,
+            deduped_components_by_row=deduped_components_by_row,
+            analysis=analysis,
+        )
+    _append_per_call_footer_blocks(lines, visible, hidden_count, per_call_notes)
+    return "\n".join(lines)
+
+
+def _append_per_call_footer_blocks(
+    lines: list[str],
+    visible: list[PerCallRow],
+    hidden_count: int,
+    per_call_notes: list[tuple[str, int]],
+) -> None:
+    notes_footer_lines = _render_per_call_notes_footer(per_call_notes)
+    if notes_footer_lines:
+        lines.append("")
+        for line in notes_footer_lines:
+            lines.append(f"  {line}")
+    footer_lines = _per_call_confidence_footer(visible)
+    if footer_lines is not None:
+        lines.append("")
+        for line in footer_lines:
+            lines.append(f"  {line}")
     if hidden_count > 0:
         lines.append("")
         lines.append(
             f"  Hidden: {hidden_count} low-signal nodes "
             "(no warnings or actionable cache projection; rerun with --all-rows)."
         )
-    footer_lines = _per_call_confidence_footer(visible)
-    if footer_lines is not None:
-        lines.append("")
-        for line in footer_lines:
-            lines.append(f"  {line}")
-    return "\n".join(lines)
 
 
 def _visible_per_call_rows(
@@ -1422,13 +1602,34 @@ def _unavailable_notes_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | N
             if not isinstance(input_dict, dict):
                 continue
             tokens = input_dict.get("tokens_estimated")
-            input_name = input_dict.get("child_input_name", "")
+            input_name = input_dict.get("child_cache_ref") or input_dict.get("child_input_name", "")
             consumer_ids = input_dict.get("consumer_node_ids", [])
             if not isinstance(tokens, int) or not input_name or not isinstance(consumer_ids, list):
                 continue
             note = f"below cache minimum: {input_name} ~{tokens:,}"
             for node_id in consumer_ids:
                 notes_by_node.setdefault((str(child_workflow), str(node_id)), []).append(note)
+    return notes_by_node
+
+
+def _below_provider_min_note_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | None, str], list[str]]:
+    """Per-row notes for projected cacheable tokens below the provider minimum."""
+    notes_by_node: dict[tuple[str | None, str], list[str]] = {}
+    projected_tiers = {"parameters", "memo", "batch_prefix", "cross_workflow_projection"}
+    for row in analysis.per_call:
+        if row.cacheable_data_source not in projected_tiers:
+            continue
+        if row.declared_prompt_cache:
+            continue
+        if row.cacheable_tokens_estimated is None:
+            continue
+        if not row.model:
+            continue
+        min_tokens = get_min_cache_tokens(row.model)
+        if row.cacheable_tokens_estimated >= min_tokens:
+            continue
+        key = (row.workflow_path, row.node_path)
+        notes_by_node.setdefault(key, []).append(f"below provider min (need ≥{min_tokens:,} for this model)")
     return notes_by_node
 
 
@@ -1440,35 +1641,39 @@ def _append_per_call_rows(
     lines: list[str],
     visible: list[PerCallRow],
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
+    *,
+    visible_columns: tuple[str, ...],
+    deduped_components_by_row: list[list[str]],
     analysis: CacheAnalysis | None = None,
 ) -> None:
     # In static-analysis mode (no trace evidence) every row's
-    # ``observed_call_count`` is 0 by construction. Rendering ``0`` in the
-    # ``calls`` column reads as "this node never runs" — a misleading signal
-    # for a workflow analyzed standalone (see ``## Per-child analyze-cache
-    # commands``, which instructs agents to run the analyzer on sub-workflows
-    # directly). Render ``—`` instead so the column means "no execution
-    # evidence" consistent with the ``cached_now`` column's ``—`` semantics.
+    # ``observed_call_count`` is 0 by construction. The calls column is hidden
+    # in that mode so agents do not misread "0" as "this node never runs".
     static_mode = analysis is not None and analysis.summary.evidence_scope == "static_analysis"
     widths = _compute_per_call_column_widths(
         visible,
         warnings_by_node,
-        unavailable_notes_by_node,
+        visible_columns=visible_columns,
+        deduped_components_by_row=deduped_components_by_row,
         static_mode=static_mode,
     )
+    left_aligned_indices = {
+        visible_columns.index(name) for name in _LEFT_ALIGNED_PER_CALL_COLUMNS if name in visible_columns
+    }
     header = _format_table_row(
-        ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"],
+        list(visible_columns),
         widths,
+        left_aligned_indices,
     )
     lines.append(header)
-    # Divider tracks the structured-column width (everything left of and
-    # including ``calls``). The trailing ``notes`` column is unbounded prose
-    # whose length should not stretch the divider — when one row has long
-    # observed=... or warning IDs, the divider would otherwise blow out
-    # ~160 chars and overshoot every other row visually.
+    # Divider tracks the structured-column width (everything left of the
+    # trailing ``notes`` column). Notes are unbounded prose; one long
+    # observed=... or warning-ID cell should not stretch the divider.
     lines.append("  " + "-" * _structured_columns_width(widths))
     lines.append("")
+    components_by_row_id = {
+        id(row): components for row, components in zip(visible, deduped_components_by_row, strict=True)
+    }
     grouped = _group_rows_by_workflow(visible)
     multiple_workflows = len(grouped) > 1
     for workflow_path, group_rows in grouped:
@@ -1479,8 +1684,10 @@ def _append_per_call_rows(
                 _format_per_call_row(
                     row,
                     warnings_by_node,
-                    unavailable_notes_by_node,
                     widths,
+                    visible_columns=visible_columns,
+                    deduped_components=components_by_row_id[id(row)],
+                    left_aligned_indices=left_aligned_indices,
                     static_mode=static_mode,
                 )
             )
@@ -1516,37 +1723,42 @@ def _format_workflow_group_heading(workflow_path: str | None, analysis: CacheAna
 def _format_per_call_row(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     widths: tuple[int, ...],
     *,
+    visible_columns: tuple[str, ...],
+    deduped_components: list[str],
+    left_aligned_indices: set[int],
     static_mode: bool = False,
 ) -> str:
     return _format_table_row(
         _per_call_cells(
             row,
             warnings_by_node,
-            unavailable_notes_by_node,
+            visible_columns=visible_columns,
+            deduped_components=deduped_components,
             static_mode=static_mode,
         ),
         widths,
+        left_aligned_indices,
     )
 
 
 def _compute_per_call_column_widths(
     rows: list[PerCallRow],
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     *,
+    visible_columns: tuple[str, ...],
+    deduped_components_by_row: list[list[str]],
     static_mode: bool = False,
 ) -> tuple[int, ...]:
-    headers = ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"]
-    widths = [len(header) for header in headers]
-    for row in rows:
+    widths = [len(header) for header in visible_columns]
+    for row, deduped_components in zip(rows, deduped_components_by_row):
         for index, cell in enumerate(
             _per_call_cells(
                 row,
                 warnings_by_node,
-                unavailable_notes_by_node,
+                visible_columns=visible_columns,
+                deduped_components=deduped_components,
                 static_mode=static_mode,
             )
         ):
@@ -1554,10 +1766,9 @@ def _compute_per_call_column_widths(
     return tuple(widths)
 
 
-def _format_table_row(cells: list[str], widths: tuple[int, ...]) -> str:
-    left_aligned = {0, 1, 7}
+def _format_table_row(cells: list[str], widths: tuple[int, ...], left_aligned_indices: set[int]) -> str:
     padded = [
-        cell.ljust(widths[index]) if index in left_aligned else cell.rjust(widths[index])
+        cell.ljust(widths[index]) if index in left_aligned_indices else cell.rjust(widths[index])
         for index, cell in enumerate(cells)
     ]
     # Trim trailing whitespace on the (left-aligned) notes column. Padding
@@ -1573,10 +1784,11 @@ def _structured_columns_width(widths: tuple[int, ...]) -> int:
     The notes column trails as unbounded prose; including it in the divider
     width would let one long row (e.g., ``observed=A,B,C; warning-id``)
     stretch the divider far beyond every other row's width. The divider
-    is sized to span ``node`` through ``calls``: indent (2) + sum(column
-    widths 0..6) + separators (2 chars between each of 7 columns = 12).
+    is sized to span every visible column before ``notes``: indent (2) +
+    sum(structured widths) + separators (2 chars between each structured
+    column).
     """
-    structured = widths[:7]
+    structured = widths[:-1]
     separators = 2 * max(0, len(structured) - 1)
     return 2 + sum(structured) + separators
 
@@ -1584,22 +1796,23 @@ def _structured_columns_width(widths: tuple[int, ...]) -> int:
 def _per_call_cells(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     *,
+    visible_columns: tuple[str, ...],
+    deduped_components: list[str],
     static_mode: bool = False,
 ) -> list[str]:
     inline_warnings = warnings_by_node.get((row.workflow_path, row.node_path), [])
-    unavailable_notes = unavailable_notes_by_node.get((row.workflow_path, row.node_path), [])
-    return [
-        row.node_path,
-        _cell_model(row),
-        _cell_input(row, inline_warnings),
-        _cell_cached_now(row),
-        _cell_could_cache(row),
-        _cell_ratio(row),
-        _cell_calls(row, static_mode=static_mode),
-        _cell_notes(row, inline_warnings, unavailable_notes),
-    ]
+    all_cells = {
+        "node": row.node_path,
+        "model": _cell_model(row),
+        "input": _cell_input(row, inline_warnings),
+        "cached_now": _cell_cached_now(row),
+        "could_cache": _cell_could_cache(row),
+        "ratio": _cell_ratio(row),
+        "calls": _cell_calls(row, static_mode=static_mode),
+        "notes": "; ".join(deduped_components),
+    }
+    return [all_cells[column] for column in visible_columns]
 
 
 def _cell_model(row: PerCallRow) -> str:
@@ -1647,18 +1860,55 @@ def _cell_ratio(row: PerCallRow) -> str:
 
 
 def _cell_calls(row: PerCallRow, *, static_mode: bool = False) -> str:
-    # Static-analysis mode means no trace evidence is available, so every
-    # row's ``observed_call_count`` is 0 by construction. Render ``—``
-    # instead of ``0`` so the column reads as "no execution evidence"
-    # rather than the misleading "this node never runs". In trace mode,
-    # ``observed_call_count == 0`` is a real signal (conditional branch
-    # not taken) and must render as ``0``.
+    # Static-analysis mode means no trace evidence is available. The calls
+    # column is normally hidden in that mode; this fallback preserves the
+    # old "no execution evidence" marker for direct helper callers.
     if static_mode:
         return "—"
     return str(row.observed_call_count)
 
 
-def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: list[str]) -> str:
+def _visible_per_call_columns(rows: list[PerCallRow], *, static_mode: bool) -> tuple[str, ...]:
+    """Compute the per-call table columns from the rows that will render.
+
+    Identity columns and notes are always present. Trace-backed reports keep
+    the established full table. Static reports hide columns that would carry
+    only placeholders, except for resolved declared-cache rows where
+    ``could_cache: ?`` is the useful signal that projection needs trace data.
+    """
+    if not static_mode:
+        return _PER_CALL_COLUMNS
+    has_real = {
+        "cached_now": any(
+            row.cacheable_data_source == "trace"
+            and bool(row.declared_prompt_cache)
+            and row.cacheable_tokens_estimated is not None
+            for row in rows
+        ),
+        "could_cache": any(
+            (
+                row.cacheable_data_source in {"memo", "parameters", "batch_prefix", "cross_workflow_projection"}
+                and row.cacheable_tokens_estimated is not None
+            )
+            or (bool(row.declared_prompt_cache) and bool(row.model) and not row.model_is_heterogeneous)
+            for row in rows
+        ),
+        "ratio": any(row.cache_ratio_pct is not None for row in rows),
+        "calls": not static_mode,
+    }
+    return tuple(
+        column
+        for column in _PER_CALL_COLUMNS
+        if column in _ALWAYS_VISIBLE_PER_CALL_COLUMNS or has_real.get(column, False)
+    )
+
+
+def _cell_note_components(
+    row: PerCallRow,
+    inline_warnings: list[str],
+    unavailable_notes: list[str],
+    below_min_notes: list[str],
+) -> list[str]:
     notes: list[str] = []
     if row.did_not_execute_in_trace:
         notes.append("[unexecuted]")
@@ -1676,17 +1926,63 @@ def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: 
         fallback_note = _unavailable_could_cache_note(row, inline_warnings, has_specific_note=bool(unavailable_notes))
         if fallback_note:
             notes.append(fallback_note)
+    notes.extend(below_min_notes)
     notes.extend(warning_id for warning_id in inline_warnings if warning_id != "opaque-prompt")
-    return "; ".join(notes)
+    return notes
+
+
+def _collapse_no_trace_notes(
+    components_per_row: list[list[str]],
+    *,
+    threshold: int = 2,
+) -> tuple[list[list[str]], list[tuple[str, int]]]:
+    """Move repeated no-trace notes from rows into a footer.
+
+    This intentionally collapses only ``_NO_TRACE_RECORDED_NOTE``. Other
+    repeated notes may carry row-specific meaning, so keeping them inline is
+    simpler and safer than a generic deduplication policy.
+    """
+    counts: dict[str, int] = {}
+    for components in components_per_row:
+        for component in dict.fromkeys(components):
+            counts[component] = counts.get(component, 0) + 1
+    deduped_components = [
+        component for component, count in counts.items() if count >= threshold and component == _NO_TRACE_RECORDED_NOTE
+    ]
+    if not deduped_components:
+        return [list(components) for components in components_per_row], []
+
+    deduped_set = set(deduped_components)
+    per_row = [
+        [component for component in components if component not in deduped_set] for components in components_per_row
+    ]
+    footer_entries = [(component, counts[component]) for component in deduped_components]
+    return per_row, footer_entries
+
+
+def _render_per_call_notes_footer(footer_entries: list[tuple[str, int]]) -> list[str]:
+    if not footer_entries:
+        return []
+    lines = ["Per-call notes:"]
+    for component, count in footer_entries:
+        if component == _NO_TRACE_RECORDED_NOTE:
+            node_word = "node" if count == 1 else "nodes"
+            lines.append(f"  · {count} {node_word} lack trace data — run with --report to populate cache columns.")
+        else:
+            lines.append(f"  · {count} rows: {component}")
+    return lines
 
 
 def _format_cross_workflow_inputs_note(inputs: tuple[CrossWorkflowInputContribution, ...]) -> str:
     names = tuple(
-        item.child_input_name if isinstance(item, CrossWorkflowInputContribution) else str(item) for item in inputs
+        (item.child_cache_ref or item.child_input_name)
+        if isinstance(item, CrossWorkflowInputContribution)
+        else str(item)
+        for item in inputs
     )
     if len(names) <= 3:
-        return f"cacheable inputs: {', '.join(names)}"
-    return f"cacheable inputs: {', '.join(names[:3])}, +{len(names) - 3} more"
+        return f"cacheable values: {', '.join(names)}"
+    return f"cacheable values: {', '.join(names[:3])}, +{len(names) - 3} more"
 
 
 def _unavailable_could_cache_note(
@@ -1699,10 +1995,14 @@ def _unavailable_could_cache_note(
         return None
     if row.model_is_heterogeneous or "opaque-prompt" in inline_warnings:
         return None
+    if row.observed_call_count == 0:
+        # Static-mode rows (no trace) had no fallback note before, leaving the
+        # row with `cached_now: —`, `could_cache: ?`, `ratio: ?%`, `calls: —`
+        # and a blank notes column. The agent saw only placeholders with no
+        # explanation or next step. Name the cause and the unblocking action.
+        return _NO_TRACE_RECORDED_NOTE
     if row.observed_call_count == 1:
         return "single call; no repeated cache use observed"
-    if row.observed_call_count < 2:
-        return None
     if not row.model:
         return "no stable repeated cache prefix found"
     return f"no stable {get_min_cache_tokens(row.model):,}-token repeated prefix found"
@@ -1719,14 +2019,12 @@ def _short_observed_model_name(model: str) -> str:
 def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     """Emit a paste-ready block of per-child ``pflow analyze-cache`` commands.
 
-    B-3: 15 absolute paths × ~200 chars each was the loudest noise block in
-    real-world output. Compress by emitting one ``cd <parent-dir>`` line then
-    relative child paths — children of a workflow naturally live under or
-    near the parent's directory, so the relpath form is short and the block
-    stays paste-runnable line-by-line.
-
-    Falls back to absolute paths when the workflow_path has no directory
-    component (bare filename or ``ir-hash:`` synthetic key for inline IR).
+    Each line is a self-contained ``pflow analyze-cache <path>`` runnable
+    from the invocation cwd. We never emit ``cd``: agents fire parallel
+    Bash calls and cannot reliably share cwd state across invocations,
+    and even sequentially the agent's cwd tracker is the only frame they
+    can navigate paths from. Paths render cwd-relative when the workflow
+    lives under cwd, absolute otherwise.
     """
     rollup = analysis.summary.sub_workflow_rollup
     if rollup is None:
@@ -1739,49 +2037,49 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
         "",
         "  Sub-workflow opportunities don't surface here — run analyze-cache per child:",
     ]
-    parent_dir = os.path.dirname(analysis.workflow_path)
-    if parent_dir:
-        lines.append(f"    cd {_display_path_from_cwd(parent_dir)}")
-        for entry in llm_bearing:
-            lines.append(f"    pflow analyze-cache {os.path.relpath(entry.workflow_path, parent_dir)}")
-    else:
-        for entry in llm_bearing:
-            lines.append(f"    pflow analyze-cache {entry.workflow_path}")
+    for entry in llm_bearing:
+        lines.append(f"    pflow analyze-cache {_display_path_from_cwd(entry.workflow_path)}")
     return "\n".join(lines)
 
 
-def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "static_analysis") -> list[str]:
+def _per_call_scope_explainer(
+    evidence_scope: str = "static_analysis",
+    visible_columns: tuple[str, ...] = _PER_CALL_COLUMNS,
+) -> list[str]:
     """Return multi-line explainer describing what the per-call columns mean.
 
-    Two modes that survive the Option C row filter:
+    Two modes:
 
-    - **Steady-state**: at least one row has ``declared_prompt_cache``.
-      Values reflect declared subsets.
-    - **Post-run greenfield**: rows have memo/trace data; values are projected
-      from real run history.
+    - **Truncated trace**: the trace covered only an executed subset.
+      Distinct lead because partial coverage changes how missing values
+      should be interpreted.
+    - **All other modes**: one shared block that names each column and
+      explains the ``?`` / ``—`` placeholders in the column they appear in.
 
-    Returned as ``list[str]`` so the caller can emit one indented line per
-    bullet — the prior single-line form packed four facts into a 60-word
-    run-on that agents skimmed past. The prior form also carried a
-    "divide by calls for per-call values" hint that became wrong after
-    static-list batch trace rows were normalized to per-call units; the
-    blanket advice is dropped here rather than caveated, since column-by-
-    column meaning is the agent-actionable signal.
+    Caller renders each string as its own line (indented at the call site).
+
+    The prior version split the all-other-modes case into "steady-state"
+    vs "post-run greenfield" leads with a four-bullet block whose last
+    line read ``"— means the column does not apply to this row's tier."``
+    That phrasing leaked pflow-internal vocabulary (``tier`` is shorthand
+    for the ``data_source`` / ``cacheable_data_source`` enum classification)
+    into stdout and forced agents to infer enum semantics to read ``—``.
+    The collapsed block explains each placeholder where it appears.
     """
     if evidence_scope == "truncated_trace_executed_subset":
         return ["Executed trace rows are evidence-only; unexecuted rows are marked when shown."]
-    is_steady_state = any(row.declared_prompt_cache is not None for row in rows)
-    lead = (
-        "Actual cache ratios from declared `prompt_cache:` subsets."
-        if is_steady_state
-        else "Projected cache ratios from prior run data."
-    )
-    return [
-        lead,
-        "  · cached_now: tokens that went through cache this run.",
-        "  · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.",
-        "  · — means the column does not apply to this row's tier.",
-    ]
+    bullets: list[str] = []
+    if "cached_now" in visible_columns:
+        bullets.append("cached_now: tokens served from cache during this run (requires trace).")
+    if "could_cache" in visible_columns:
+        bullets.append(
+            "could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. "
+            "`?` if not projectable statically. "
+            "Numbers below your model's provider minimum won't cache — see notes column."
+        )
+    if not bullets:
+        return []
+    return ["How to read each row:", *(f"  · {bullet}" for bullet in bullets)]
 
 
 def _format_node_list(node_paths: list[str]) -> str:
@@ -1830,7 +2128,7 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
         # content participates, so the message must not claim sampling.
         bullets.append(
             f"{_format_node_list(batch_prefix_nodes)}: savings projected from a stable prompt prefix "
-            "repeated across the batch. Declare prompt_cache to confirm."
+            "repeated across the batch. Use `--report` to confirm with a real run."
         )
     if cross_workflow_nodes:
         bullets.append(

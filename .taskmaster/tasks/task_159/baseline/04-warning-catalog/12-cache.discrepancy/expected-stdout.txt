@@ -3,13 +3,14 @@
 
   Workflow: 1 LLM node using anthropic/claude-sonnet-4-5
   Evidence: complete trace (1 LLM nodes executed)
+  Trace: discrepancy-trace.json (success, recorded 2026-05-11 10:00)
 
 ## Summary
 
-  Actually paid:               ~$0.0058 (trace)
+  Actually paid:               ~$0.0058 (from trace)
   Cost without caching:        ~$0.0058
   Cost on rerun (within TTL):  ~$0.0058
-  Actual savings (this run):    adds ~<$0.0001 vs no-cache, 1% of no-cache cost
+  Actual cost delta (this run): adds ~<$0.0001 vs no-cache, 1% of no-cache cost
   Rerun delta (projected):      no meaningful cost change
 
   1 recommended action
@@ -21,14 +22,13 @@
 
   1. Cache hit discrepancy on gen — Upstream value changed between predicted run and actual run  savings unavailable
      gen
-     gen in workflow (trace: workflow.pflow.md): predicted hit (bytes diverged at runtime), actual 0% read — root cause: Upstream value changed between predicted run and actual run
+     gen in workflow: Upstream value changed between predicted run and actual run
      → Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.
 
 ## Per-call cache report
-  Projected cache ratios from prior run data.
-    · cached_now: tokens that went through cache this run.
-    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
-    · — means the column does not apply to this row's tier.
+  How to read each row:
+    · cached_now: tokens served from cache during this run (requires trace).
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
 
   node  model                        input  cached_now  could_cache  ratio  calls  notes
   ---------------------------------------------------------------------------------

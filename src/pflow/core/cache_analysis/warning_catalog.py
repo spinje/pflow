@@ -5,7 +5,7 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-23 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
+26 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
 ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
@@ -16,9 +16,13 @@ detect exact-model cache namespace fragmentation and lone cache writes) +
 ``cache.system-prompts-fragment-cache`` (Task 159 PR #378 review-fix #5:
 detect cross-node cache fragmentation caused by divergent ``system:`` strings) +
 ``cache.sub-workflow-cache-undeclared`` (Stage 2 follow-up: sub-workflows need
-their own cache declarations). The base 14 covers the 9 from
-spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2, dispatch
-over ``root_cause`` enum), ``cache.invalid-on-non-llm`` (Round 3, validator-
+their own cache declarations) + ``cache.batch-prewarm-below-min`` and
+``cache.batch-prewarm-lower-bound-recommended`` (Task 159 follow-ups: prewarm
+threshold and lower-bound advisory gaps) + ``cache.shared-context-undeclared-
+conditional`` (Task 159 follow-up: shared context is structurally cacheable but
+current values are below provider minimums). The base 14 covers the 9 from
+spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2),
+``cache.invalid-on-non-llm`` (Round 3, validator-
 reach gap closure for non-LLM nodes), ``cache.prewarm-no-prefix`` (Round 3,
 prewarm-without-static-prefix advisory), ``cache.consolidate-to-root-
 recommended`` (CP3, sub-paths below threshold that would cross when
@@ -53,6 +57,8 @@ from pflow.core.diagnostic import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CACHE_DISCREPANCY_ROOT_CAUSES: Final[frozenset[str]] = frozenset({"chunk_skipped", "key_mismatch"})
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +154,7 @@ _SUB_WORKFLOW_CACHE_UNDECLARED_TEMPLATE = "{body_block}"
 # Per-id, catalog-driven; the renderer reads these without knowing the IDs.
 _SHARED_CONTEXT_WORKFLOW_HEADLINE = "Shared context undeclared — declare {shared_chunks_short} in ## Cache"
 _SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE = (
-    "Sub-workflow cache undeclared in {child_workflow_basename} — declare {affected_input_count} {inputs_phrase}"
+    "Sub-workflow cache undeclared in {child_workflow_basename} — add {affected_input_count} {inputs_phrase}"
 )
 
 # cache.below-min-tokens has two evidence tiers with different remediation
@@ -168,10 +174,24 @@ _BELOW_MIN_TOKENS_DISPATCH = {
     "observed": _BELOW_MIN_TOKENS_MESSAGE_OBSERVED,
 }
 
+# cache.batch-prewarm-below-min — analyzer-only counterpart for prewarm
+# declarations whose static prefix is below the provider minimum. Vocabulary
+# differs from ``cache.below-min-tokens`` because the remediation differs
+# (restructure the prompt or remove ``prewarm: true`` — not "add chunks to
+# ## Cache" or "remove ``prompt_cache:``").
+_BATCH_PREWARM_BELOW_MIN_MESSAGE = (
+    "{node_id}: the static prefix before the first `${{{batch_alias}.X}}` "
+    "reference is ~{prefix_tokens} tokens, below {model}'s minimum of "
+    "{min_tokens}{provider_clause}"
+)
+
 
 def _basename_for_workflow(path: str) -> str:
-    """Strip directory components for compact rendering. Non-paths pass through."""
-    return path.rsplit("/", 1)[-1] if "/" in path else path
+    """Strip directory components and the workflow suffix for compact rendering."""
+    name = path.rsplit("/", 1)[-1] if "/" in path else path
+    if name.endswith(".pflow.md"):
+        return name[: -len(".pflow.md")]
+    return name
 
 
 CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
@@ -267,6 +287,32 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template=_SHARED_CONTEXT_WORKFLOW_HEADLINE,
     ),
+    "cache.shared-context-undeclared-conditional": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        message_template=(
+            "Used by {node_count} LLM nodes. Chunks: {shared_chunks_csv}. "
+            "Resolved values are below the provider cache minimum "
+            "(≥{min_tokens:,} tokens; this is the highest minimum across these nodes); "
+            "caching will only fire if runtime values are larger."
+        ),
+        required_context_keys=(
+            ("node_count", int),
+            ("shared_chunks", list),
+            ("affected_workflow", str),
+            ("min_tokens", int),
+            ("affected_nodes", list),
+        ),
+        suggestions_template=(
+            "Re-run with a representative value (e.g. `{shared_chunks_first}=@./real-input.md`) and re-run analyze-cache to confirm whether caching fires.",
+            "If runtime values typically reach ≥{min_tokens:,} tokens, declare {shared_chunks_short} in `## Cache` and add `prompt_cache: [{shared_chunks_csv}]` to: {affected_nodes_csv}.",
+        ),
+        path_template="workflows[path={affected_workflow}]",
+        headline_template=(
+            "Shared context conditional — declare {shared_chunks_short} in ## Cache if runtime values reach ≥{min_tokens:,} tokens"
+        ),
+    ),
     "cache.sub-workflow-cache-undeclared": CacheWarningSpec(
         severity=Severity.INFO,
         source="cache_analyzer",
@@ -334,11 +380,48 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         suggestions_template=(
             "Add `- prewarm: true` to {node_id} to opt in.",
-            "OR add `- prewarm: false` to {node_id} to opt out explicitly (suppresses this warning).",
+            "Trade-off: `prewarm: true` runs the first batch item alone before "
+            "fanning out the rest, adding roughly one item's wall-clock latency "
+            "to every run. Measure end-to-end duration before committing on "
+            "latency-sensitive workflows.",
+            "OR add `- prewarm: false` to {node_id} to silence this recommendation (use when you've decided not to prewarm — `false` is a marker for the analyzer, not a runtime toggle).",
         ),
         path_template="nodes[id={node_id}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template="Batch prewarm not declared — add `- prewarm: true` to {node_id}",
+    ),
+    "cache.batch-prewarm-lower-bound-recommended": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=(
+            "{node_id}: at least ~{measurable_tokens} measurable stable tokens precede "
+            "`${{{batch_alias}.X}}`. Unresolved refs ({unresolved_refs_csv}) may make "
+            "the actual prefix larger, but only if their values repeat across batch "
+            "items at runtime."
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("measurable_tokens", int),
+            ("batch_alias", str),
+            ("unresolved_refs", tuple),
+            ("savings_lower_bound_usd", float),
+            ("batch_size", int),
+        ),
+        suggestions_template=(
+            "Run once with `--report` (or pass missing upstream inputs) to verify the "
+            "full prefix; then the analyzer can measure it and produce a confident "
+            "recommendation.",
+            "If you've confirmed the upstream refs are stable across batch items, add `- prewarm: true` to {node_id}.",
+            "Trade-off: `prewarm: true` serializes the first batch item, adding roughly "
+            "one item's wall-clock latency per run. Measure end-to-end duration before "
+            "committing on latency-sensitive workflows.",
+        ),
+        path_template="nodes[id={node_id}]",
+        nullable_cost_keys=frozenset({"savings_lower_bound_usd"}),
+        headline_template=(
+            "Batch prewarm opportunity (lower bound) — verify upstream refs and add `- prewarm: true` to {node_id}"
+        ),
     ),
     "cache.dynamic-before-static": CacheWarningSpec(
         severity=Severity.WARNING,
@@ -364,7 +447,9 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "Projected cache ratio after fix: {projected_ratio_pct}%.",
         ),
         path_template="nodes[id={node_id}].prompt",
-        nullable_cost_keys=frozenset({"savings_usd"}),
+        # Prefix/display fields can be None when refs before the dynamic
+        # boundary are unmeasurable; the stable suffix remains actionable.
+        nullable_cost_keys=frozenset({"savings_usd", "projected_ratio_pct", "tokens_before_dynamic"}),
         headline_template="Dynamic ref blocks caching on {node_id} — move `${{{dynamic_ref}}}` after stable content",
     ),
     "cache.padding-advisory": CacheWarningSpec(
@@ -468,32 +553,17 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         severity=Severity.INFO,
         source="cache_analyzer",
         category=CACHE_ADVISORY_CATEGORY,
-        # ``predicted_label`` distinguishes "hit" (predicted_key == actual_key),
-        # "hit (bytes diverged at runtime)" (planner expected a hit; trace's
-        # cache_key didn't match), and "miss" (no predicted_key). Bug F fix:
-        # the prior template "predicted hit_ratio {predicted_pct}%" implied we
-        # MEASURED a hit ratio, but ``predicted_pct`` is binary (100 if planner
-        # produced a cache_key, 0 otherwise) — different concept from the
-        # actual measured hit ratio. ``predicted_pct`` stays in the context
-        # for JSON consumers that read raw values; the rendered message uses
-        # the explicit label.
-        message_template=(
-            "{node_id} in {workflow_path_short} (trace: {trace_path}): predicted {predicted_label}, "
-            "actual {actual_pct}% read — root cause: {root_cause_summary}"
-        ),
+        message_template="{node_id} in {workflow_path_short}: {root_cause_summary}",
         required_context_keys=(
             ("node_id", str),
-            ("trace_path", str),
             ("workflow_path_short", str),
-            ("predicted_pct", int),
-            ("predicted_label", str),
-            ("actual_pct", int),
             ("root_cause", str),
             ("root_cause_summary", str),
+            ("suggestion", str),
         ),
-        suggestions_template=(),  # DISPATCHED on root_cause — see CACHE_DISCREPANCY_*
+        suggestions_template=("{suggestion}",),
         path_template="nodes[id={node_id}]",
-        nullable_cost_keys=frozenset({"cache_age_sec", "predicted_cache_key", "actual_cache_key"}),
+        nullable_cost_keys=frozenset({"predicted_cache_key", "actual_cache_key"}),
         headline_template="Cache hit discrepancy on {node_id} — {root_cause_summary}",
     ),
     "cache.prewarm-no-prefix": CacheWarningSpec(
@@ -518,6 +588,30 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="nodes[id={node_id}].prompt",
         headline_template="Prewarm has no static prefix on {node_id}",
+    ),
+    "cache.batch-prewarm-below-min": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=_BATCH_PREWARM_BELOW_MIN_MESSAGE,
+        required_context_keys=(
+            ("node_id", str),
+            ("model", str),
+            ("prefix_tokens", int),
+            ("min_tokens", int),
+            ("batch_alias", str),
+            ("provider_note", str),
+        ),
+        suggestions_template=(
+            "Grow the static prefix above {min_tokens} tokens — move shared "
+            "instructions, examples, or rubric content into the bytes before "
+            "`${{{batch_alias}.X}}` so the cached region clears the provider "
+            "threshold.",
+            "OR remove `- prewarm: true` from {node_id} — the prewarm marker will "
+            "not fire at the provider with a ~{prefix_tokens}-token prefix.",
+        ),
+        path_template="nodes[id={node_id}].prompt",
+        headline_template="Batch prewarm prefix below provider minimum on {node_id}",
     ),
     "cache.consolidate-to-root-recommended": CacheWarningSpec(
         severity=Severity.INFO,
@@ -709,6 +803,11 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
     # patterns (e.g. cache the parent dict, use selected sub-paths inline)
     # but the typical case is mistaken duplication. Consolidated per node
     # for the same reason as the duplicates ID.
+    # Analyzer-tier may add optional cost-disclosure context when
+    # direction='cache_contains_body' fires and pricing/output tokens are known:
+    # ``body_only_cost_usd_per_call``, ``with_cache_cost_usd_per_call``, and
+    # ``shadowed_chunk_names``. They are intentionally absent from
+    # ``required_context_keys`` because validator-only callers cannot price.
     "cache.prompt-body-shadows-cache": CacheWarningSpec(
         severity=Severity.WARNING,
         source="validator",
@@ -801,10 +900,12 @@ DEFAULT_RECOMMENDED_ACTION_PRIORITY: Final[int] = 100
 RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     # Tier 1 — actionable opportunities with concrete suggestions agents can apply.
     "cache.shared-context-undeclared": 10,
+    "cache.shared-context-undeclared-conditional": 10,
     "cache.sub-workflow-cache-undeclared": 10,
     "cache.prompt-cache-incomplete": 11,
     "cache.dynamic-before-static": 10,
     "cache.batch-prewarm-recommended": 10,
+    "cache.batch-prewarm-lower-bound-recommended": 10,
     "cache.heterogeneous-models-fragment-cache": 10,
     "cache.system-prompts-fragment-cache": 10,
     # Tier 2 — discrepancy attribution (only fires with trace; usually high-value).
@@ -825,53 +926,13 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.unused-chunk": 30,
     "cache.below-min-tokens": 30,
     "cache.prewarm-no-prefix": 30,
+    "cache.batch-prewarm-below-min": 30,
     "cache.consolidate-to-root-recommended": 30,
     "cache.first-call-write-penalty": 30,
     "cache.opaque-prompt": 30,
     # Tier 6 — cross-workflow alignment (informational; no concrete savings).
     "cache.cross-workflow-prose-mismatch": 50,
     "cache.cross-workflow-rename-detected": 50,
-}
-
-
-# ---------------------------------------------------------------------------
-# cache.discrepancy dispatch — three module-level constants per F1 plan
-# ---------------------------------------------------------------------------
-
-
-CACHE_DISCREPANCY_ACTION_TEMPLATES: dict[str, str] = {
-    "ttl_expiry": "Consider `- ttl: 1h` on the {affected_workflow} ## Cache block.",
-    "key_mismatch": (
-        "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction."
-    ),
-    "parallel_write_race": "Add `- prewarm: true` to the batch node to serialize the first write.",
-    "chunk_skipped": (
-        "Cache chunk `{skipped_chunk}` was skipped at runtime (branch absent); "
-        "declaration is correct but rendered subset is shorter."
-    ),
-    "unknown": (
-        "Cannot attribute discrepancy to root cause '{root_cause}' (not in known "
-        "set: ttl_expiry|key_mismatch|parallel_write_race|chunk_skipped); inspect "
-        "the trace events for {node_id} manually."
-    ),
-}
-
-
-CACHE_DISCREPANCY_REQUIRED_CONTEXT: dict[str, tuple[tuple[str, type], ...]] = {
-    "ttl_expiry": (("affected_workflow", str),),
-    "key_mismatch": (),
-    "parallel_write_race": (),
-    "chunk_skipped": (("skipped_chunk", str),),
-    "unknown": (),
-}
-
-
-CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
-    "ttl_expiry": ("suggested_ttl", "affected_workflow"),
-    "key_mismatch": ("upstream_value_changed",),
-    "parallel_write_race": ("recommended_fix",),
-    "chunk_skipped": ("skipped_chunk", "branch_node"),
-    "unknown": ("raw_root_cause",),
 }
 
 
@@ -980,56 +1041,6 @@ def _validate_required(
             )
 
 
-def _dispatch_discrepancy(
-    *, format_dict: dict[str, Any], context_kwargs: dict[str, Any]
-) -> tuple[list[str], dict[str, Any]]:
-    """cache.discrepancy: dispatch on root_cause and build typed payload.
-
-    Returns ``(suggestions, action_payload)``. The caller stores the payload
-    on ``context["root_cause_action"]`` so agents reading the JSON output
-    dispatch on typed data, not regex-parsed prose.
-    """
-    root_cause = context_kwargs["root_cause"]
-    template = CACHE_DISCREPANCY_ACTION_TEMPLATES.get(root_cause)
-    if template is None:
-        # Unknown enum — log and fall through to the 'unknown' template so
-        # the agent sees the rejected value, not silent degradation.
-        logger.warning(
-            "cache.discrepancy emitted with unrecognized root_cause %r — using fallback action template",
-            root_cause,
-        )
-        template = CACHE_DISCREPANCY_ACTION_TEMPLATES["unknown"]
-        action_payload: dict[str, Any] = {"raw_root_cause": root_cause}
-    else:
-        # Validate per-cause required keys (KeyError if missing).
-        for key, _ in CACHE_DISCREPANCY_REQUIRED_CONTEXT[root_cause]:
-            if key not in context_kwargs:
-                raise KeyError(
-                    f"make_diagnostic('cache.discrepancy', root_cause={root_cause!r}) missing required key '{key}'."
-                )
-        # Build the typed payload per the schema map.
-        if root_cause == "ttl_expiry":
-            action_payload = {
-                "suggested_ttl": "1h",
-                "affected_workflow": context_kwargs["affected_workflow"],
-            }
-        elif root_cause == "key_mismatch":
-            action_payload = {"upstream_value_changed": True}
-        elif root_cause == "parallel_write_race":
-            action_payload = {"recommended_fix": "prewarm:true"}
-        elif root_cause == "chunk_skipped":
-            action_payload = {
-                "skipped_chunk": context_kwargs["skipped_chunk"],
-                # Optional — analyzer may not always identify the branching node.
-                "branch_node": context_kwargs.get("branch_node"),
-            }
-        else:  # safety net — shouldn't fire because we hit the unknown branch above
-            action_payload = {"raw_root_cause": root_cause}
-
-    suggestions = [template.format(**format_dict)]
-    return suggestions, action_payload
-
-
 def _select_message_template(
     *,
     warning_id: str,
@@ -1042,13 +1053,80 @@ def _select_message_template(
     return spec.message_template
 
 
+def _augment_format_dict(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:
+    _add_savings_aliases(format_dict, context_kwargs)
+    _add_collection_aliases(format_dict, context_kwargs)
+    _add_plural_aliases(format_dict, context_kwargs)
+    _add_provider_clause(format_dict, context_kwargs)
+
+
+def _add_savings_aliases(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:
+    # Some templates use {savings_str} as a typed alias of savings_usd that
+    # gracefully degrades on None. ``savings_clause`` is the inline-parenthetical
+    # form that templates can append without producing the broken
+    # ``"saves savings unavailable/run"`` artifact when savings_usd is
+    # None/sub-cent.
+    if "savings_usd" in context_kwargs:
+        format_dict["savings_str"] = _format_savings(context_kwargs["savings_usd"])
+        format_dict["savings_clause"] = _format_savings_clause(context_kwargs["savings_usd"])
+
+    if "projected_ratio_pct" in context_kwargs and context_kwargs["projected_ratio_pct"] is None:
+        format_dict["projected_ratio_pct"] = "?"
+
+
+def _add_collection_aliases(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:
+    # ``*_csv`` aliases keep join logic centralized. The short chunk alias is
+    # headline-friendly; full values still pass through in context.
+    if "shared_chunks" in context_kwargs:
+        chunks = context_kwargs["shared_chunks"]
+        format_dict["shared_chunks_csv"] = ", ".join(str(c) for c in chunks) if chunks else ""
+        format_dict["shared_chunks_short"] = _format_chunks_short(chunks)
+        format_dict["shared_chunks_first"] = str(chunks[0]) if chunks else ""
+
+    if "sub_paths" in context_kwargs:
+        sub_paths = context_kwargs["sub_paths"]
+        format_dict["sub_paths_csv"] = ", ".join(str(p) for p in sub_paths) if sub_paths else ""
+
+    if "unresolved_refs" in context_kwargs:
+        refs = context_kwargs["unresolved_refs"]
+        format_dict["unresolved_refs_csv"] = ", ".join(str(r) for r in refs) if refs else ""
+
+    if "affected_nodes" in context_kwargs:
+        nodes = context_kwargs["affected_nodes"]
+        format_dict["affected_nodes_csv"] = ", ".join(str(n) for n in nodes) if nodes else ""
+
+
+def _add_plural_aliases(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:
+    # cache.invalid-on-non-llm: provide the lowercase form matching the shipped
+    # data_flow.py emitter (lowercase 'this'/'these').
+    if "is_or_are" in context_kwargs:
+        format_dict["is_or_are_capitalized"] = (
+            "this field is" if context_kwargs["is_or_are"] == "is" else "these fields are"
+        )
+
+    if "node_count" in context_kwargs:
+        format_dict["nodes_phrase"] = "node" if context_kwargs["node_count"] == 1 else "nodes"
+
+    if "affected_input_count" in context_kwargs:
+        format_dict["inputs_phrase"] = (
+            "entry in ## Cache" if context_kwargs["affected_input_count"] == 1 else "entries in ## Cache"
+        )
+
+
+def _add_provider_clause(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:
+    # Generic ``provider_clause`` derivation for catalog templates that include
+    # per-provider notes, currently ``cache.below-min-tokens`` and
+    # ``cache.batch-prewarm-below-min``.
+    if "provider_note" in context_kwargs:
+        note = str(context_kwargs["provider_note"])
+        format_dict["provider_clause"] = f"; {note}" if note else ""
+
+
 def _select_below_min_tokens_template(
     *,
     context_kwargs: dict[str, Any],
     format_dict: dict[str, Any],
 ) -> str:
-    provider_note = str(context_kwargs["provider_note"])
-    format_dict["provider_clause"] = f"; {provider_note}" if provider_note else ""
     evidence_kind = context_kwargs["evidence_kind"]
     template = _BELOW_MIN_TOKENS_DISPATCH.get(evidence_kind)
     if template is not None:
@@ -1070,79 +1148,24 @@ def make_diagnostic(
 
     Validates required context keys at construction so catalog-misuse bugs
     surface in tests, not in production renderers. Every key passed in survives
-    into ``diag.context`` byte-for-byte (the context-passthrough fidelity
-    contract from Round 5) — agents reading the JSON output dispatch on typed
-    context fields regardless of whether the human-rendered message references
-    them.
+    into ``diag.context`` except for JSON-stability normalization documented at
+    the normalization site below — agents reading the JSON output dispatch on
+    typed context fields regardless of whether the human-rendered message
+    references them.
 
-    Special case for ``cache.discrepancy``: the helper dispatches on
-    ``context_kwargs["root_cause"]`` and assembles the per-cause typed payload
-    at ``context["root_cause_action"]``.
     """
     if warning_id not in CACHE_WARNING_CATALOG:
         raise KeyError(f"Unknown cache warning ID: {warning_id!r}. Catalog has {len(CACHE_WARNING_CATALOG)} entries.")
     spec = CACHE_WARNING_CATALOG[warning_id]
     _ensure_discrepancy_workflow_scope(warning_id, context_kwargs)
+    _validate_discrepancy_root_cause(warning_id, context_kwargs)
     _validate_required(spec, context_kwargs, node_id, warning_id)
     _ensure_workflow_scope(warning_id, node_id, context_kwargs)
 
     # Format-dict merges node_id (helper kwarg) with all context kwargs so
     # message / suggestions / path templates can reference {node_id}.
     format_dict: dict[str, Any] = {**context_kwargs, "node_id": node_id}
-
-    # Some templates use {savings_str} as a typed alias of savings_usd that
-    # gracefully degrades on None. Compute on demand.
-    if "savings_usd" in context_kwargs:
-        format_dict["savings_str"] = _format_savings(context_kwargs["savings_usd"])
-        # ``savings_clause`` is the inline-parenthetical form that templates can
-        # append without producing the broken ``"saves savings unavailable/run"``
-        # artifact when savings_usd is None/sub-cent. Templates use one or the
-        # other depending on whether they want the bare amount (savings_str) or
-        # the full parenthetical (savings_clause).
-        format_dict["savings_clause"] = _format_savings_clause(context_kwargs["savings_usd"])
-
-    # ``shared_chunks_csv`` is a typed alias of ``shared_chunks`` (list) so
-    # message templates can render the discriminator without duplicating the
-    # join logic at every emission site. Without this, ``cache.shared-context-
-    # undeclared`` rendered three identical lines on lyrics-generator
-    # song-creator (one per cross-workflow boundary) — agents couldn't tell
-    # which chunk each line was about.
-    #
-    # ``shared_chunks_short`` is the headline-friendly compact form: keeps the
-    # first 2 chunks inline, then ``+N more`` for the rest. Long lists wrap
-    # awkwardly in the rank-line header; the full list still appears in the
-    # message body via ``shared_chunks_csv``.
-    if "shared_chunks" in context_kwargs:
-        chunks = context_kwargs["shared_chunks"]
-        format_dict["shared_chunks_csv"] = ", ".join(str(c) for c in chunks) if chunks else ""
-        format_dict["shared_chunks_short"] = _format_chunks_short(chunks)
-
-    # ``sub_paths_csv`` mirrors ``shared_chunks_csv`` for the consolidate-to-root
-    # advisory. Same join-free pattern; same passthrough-to-context fidelity.
-    if "sub_paths" in context_kwargs:
-        sub_paths = context_kwargs["sub_paths"]
-        format_dict["sub_paths_csv"] = ", ".join(str(p) for p in sub_paths) if sub_paths else ""
-
-    # cache.invalid-on-non-llm: provide the lowercase form matching the
-    # shipped data_flow.py emitter (lowercase 'this'/'these'). Synced with
-    # _make_invalid_on_non_llm_diagnostic at data_flow.py:719 — drift between
-    # the two would produce non-byte-equivalent messages for the same finding.
-    if "is_or_are" in context_kwargs:
-        format_dict["is_or_are_capitalized"] = (
-            "this field is" if context_kwargs["is_or_are"] == "is" else "these fields are"
-        )
-
-    # Pluralize "LLM node(s)" in templates that interpolate ``node_count``.
-    # Singular when count==1; plural otherwise. Mirrors the is_or_are pattern
-    # above — pluralization decision lives at dispatch, template substitutes.
-    if "node_count" in context_kwargs:
-        format_dict["nodes_phrase"] = "node" if context_kwargs["node_count"] == 1 else "nodes"
-
-    # Pluralize "input(s)" in the sub-workflow-cache-undeclared headline.
-    # The "(s)" reads as a typo to fresh agents; pick singular/plural at
-    # dispatch so the template substitutes the resolved noun.
-    if "affected_input_count" in context_kwargs:
-        format_dict["inputs_phrase"] = "input" if context_kwargs["affected_input_count"] == 1 else "inputs"
+    _augment_format_dict(format_dict, context_kwargs)
 
     selected_message_template = _select_message_template(
         warning_id=warning_id,
@@ -1151,23 +1174,12 @@ def make_diagnostic(
         format_dict=format_dict,
     )
 
-    # cache.discrepancy → dispatch; everything else → straight format.
-    if warning_id == "cache.discrepancy":
-        suggestions, action_payload = _dispatch_discrepancy(format_dict=format_dict, context_kwargs=context_kwargs)
-        message = spec.message_template.format(**format_dict)
-        path = spec.path_template.format(**format_dict)
-        # Build context: passthrough fidelity + category + typed action payload.
-        context: dict[str, Any] = dict(context_kwargs)
-        context["category"] = spec.category
-        context["root_cause_action"] = action_payload
-        context["path"] = path
-    else:
-        message = selected_message_template.format(**format_dict)
-        suggestions = [s.format(**format_dict) for s in spec.suggestions_template]
-        path = spec.path_template.format(**format_dict)
-        context = dict(context_kwargs)
-        context["category"] = spec.category
-        context["path"] = path
+    message = selected_message_template.format(**format_dict)
+    suggestions = [s.format(**format_dict) for s in spec.suggestions_template]
+    path = spec.path_template.format(**format_dict)
+    context = _context_for_diagnostic(context_kwargs)
+    context["category"] = spec.category
+    context["path"] = path
 
     # Headline rendering is now sourced via ``resolve_headline_for(diag)`` at
     # render time (catalog-as-SSoT). The make_diagnostic path no longer writes
@@ -1189,6 +1201,29 @@ def make_diagnostic(
         context=context,
         see_also=list(spec.see_also),
     )
+
+
+def _validate_discrepancy_root_cause(warning_id: str, context_kwargs: dict[str, Any]) -> None:
+    """Keep ``cache.discrepancy`` root causes as a closed public contract."""
+    if warning_id != "cache.discrepancy":
+        return
+    root_cause = context_kwargs.get("root_cause")
+    if root_cause is None:
+        return
+    if root_cause not in _CACHE_DISCREPANCY_ROOT_CAUSES:
+        allowed = ", ".join(sorted(_CACHE_DISCREPANCY_ROOT_CAUSES))
+        raise ValueError(f"cache.discrepancy root_cause must be one of: {allowed}. Got {root_cause!r}.")
+
+
+def _context_for_diagnostic(context_kwargs: dict[str, Any]) -> dict[str, Any]:
+    context = dict(context_kwargs)
+    if isinstance(context.get("unresolved_refs"), tuple):
+        # Diagnostic.to_dict() promises JSON-stable payloads. Tuples serialize
+        # to arrays and round-trip as lists, so normalize this public context
+        # field at construction while still accepting tuple input from the
+        # tokenizer helper and catalog required-key contract.
+        context["unresolved_refs"] = list(context["unresolved_refs"])
+    return context
 
 
 def _ensure_discrepancy_workflow_scope(warning_id: str, context_kwargs: dict[str, Any]) -> None:
@@ -1323,12 +1358,13 @@ def resolve_headline_for(diag: Diagnostic) -> str:
     if "shared_chunks" in ctx:
         ctx.setdefault("shared_chunks_short", _format_chunks_short(ctx["shared_chunks"]))
 
-    # Mirror ``inputs_phrase`` pluralization for the
-    # cache.sub-workflow-cache-undeclared headline. ``make_diagnostic`` writes
-    # this into its local ``format_dict`` but not into ``diag.context``; the
-    # headline renderer needs the same derivation to substitute the placeholder.
+    # Mirror ``inputs_phrase`` derivation for the
+    # cache.sub-workflow-cache-undeclared headline.
     if "affected_input_count" in ctx:
-        ctx.setdefault("inputs_phrase", "input" if ctx["affected_input_count"] == 1 else "inputs")
+        ctx.setdefault(
+            "inputs_phrase",
+            "entry in ## Cache" if ctx["affected_input_count"] == 1 else "entries in ## Cache",
+        )
 
     try:
         return template.format(**ctx)
@@ -1342,9 +1378,6 @@ def resolve_headline_for(diag: Diagnostic) -> str:
 
 
 __all__ = [
-    "CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS",
-    "CACHE_DISCREPANCY_ACTION_TEMPLATES",
-    "CACHE_DISCREPANCY_REQUIRED_CONTEXT",
     "CACHE_OPPORTUNITIES_NUDGE_ID",
     "CACHE_WARNING_CATALOG",
     "DEFAULT_RECOMMENDED_ACTION_PRIORITY",

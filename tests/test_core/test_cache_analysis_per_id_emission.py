@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ import pytest
 
 from pflow.core.cache_analysis.analyze import CrossWorkflowInputContribution, analyze
 from pflow.core.cache_analysis.cost_estimation import ModelPricing
+from pflow.core.cache_analysis.render_json import render_json
 from pflow.core.cache_analysis.render_text import render_text
 from pflow.core.file_resolver import resolve_file_references
 from pflow.core.markdown_parser import parse_markdown
@@ -96,8 +98,11 @@ def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: None)
 
 
-def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
+def test_batch_prewarm_recommended_fires_only_when_prewarm_absent(tmp_path: Path) -> None:
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
     prefix = "stable " * 100
+    workflow_path = str(tmp_path / "batch-prewarm.pflow.md")
     workflow_ir = {
         "nodes": [
             {
@@ -109,21 +114,253 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
             }
         ],
     }
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "anthropic/claude-sonnet-4-5",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(34)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
 
-    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
     diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-recommended")
     assert diag.context is not None
     assert diag.context["batch_size"] == 34
     assert diag.context["prefix_tokens_estimated"] == 100
     assert diag.context["savings_pct"] == 89
+    assert "cache.batch-prewarm-lower-bound-recommended" not in {d.id for d in result.warnings}
 
     workflow_ir["nodes"][0]["prewarm"] = False
-    opted_out = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    opted_out = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
     assert "cache.batch-prewarm-recommended" not in {d.id for d in opted_out.warnings}
 
 
-def test_inputs_indirection_does_not_suppress_prewarm_recommendation() -> None:
-    """Mutation contract: removing prompt-ref dealiasing loses batch_prefix evidence."""
+def test_batch_prewarm_lower_bound_recommended_fires_when_measurable_prefix_clears_min() -> None:
+    """Unresolved refs inside the prefix no longer suppress all prewarm advice.
+
+    The measurable stable bytes clear the provider minimum; the unresolved
+    upstream ref is named so the agent knows what to verify with ``--report``.
+    Mutation contract: restore the exact-or-nothing
+    ``prefix_tokens is None -> return []`` gate; this test fails because the
+    lower-bound diagnostic disappears.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "as": "item"},
+                "params": {"prompt": ("stable " * 20) + "${missing.context}\n${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    warning_ids = {warning.id for warning in result.warnings}
+    assert "cache.batch-prewarm-recommended" not in warning_ids
+    assert "cache.batch-prewarm-lower-bound-recommended" in warning_ids
+    diag = next(warning for warning in result.warnings if warning.id == "cache.batch-prewarm-lower-bound-recommended")
+    assert diag.context is not None
+    assert diag.context["measurable_tokens"] >= 10
+    assert diag.context["unresolved_refs"] == ["missing.context"]
+    text = render_text(result)
+    assert "savings need verification" in text
+    assert "--report" in text
+
+
+def test_batch_prewarm_lower_bound_recommended_silent_when_measurable_prefix_below_min() -> None:
+    """A lower-bound below the provider minimum proves no actionable prewarm
+    advice yet; unresolved refs may help, but the analyzer cannot count them
+    without a real run.
+
+    Mutation contract: emit whenever unresolved refs exist; this test fails
+    because the lower-bound diagnostic appears for a sub-threshold prefix.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": "short ${missing.context}\n${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    warning_ids = {warning.id for warning in result.warnings}
+    assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
+    assert "cache.batch-prewarm-recommended" not in warning_ids
+
+
+def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min() -> None:
+    """Prewarm declared but the static prefix tokenizes below the provider
+    minimum — the cache marker will silently no-op at the provider. Fresh
+    agent reading ``analyze-cache`` output today sees ``100% cache ratio``;
+    this warning is what corrects that.
+
+    Detector reads ``get_min_cache_tokens`` from ``llm_capabilities`` (NOT
+    the analyzer-patched stub at 10), so the real Sonnet-4-5 threshold of
+    1024 applies. A ~5-token prefix is honestly below it.
+    """
+    prefix = "tiny "  # 1 word → 1 token under the deterministic word-count tokenizer
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": [{"text": "a"}, {"text": "b"}, {"text": "c"}, {"text": "d"}], "as": "item"},
+                "params": {"prompt": prefix + "${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-below-min")
+    assert diag.context is not None
+    assert diag.context["model"] == "anthropic/claude-sonnet-4-5"
+    assert diag.context["min_tokens"] == 1024
+    assert diag.context["prefix_tokens"] < 1024
+    assert diag.context["prefix_tokens"] > 0
+    assert diag.context["batch_alias"] == "item"
+    # Anthropic provider note flows through to the rendered message.
+    assert "cache_control markers" in diag.message
+
+
+def test_batch_prewarm_below_min_silent_when_prefix_meets_provider_min() -> None:
+    """A 2000-token prefix on Sonnet (1024 min) is above the threshold — the
+    cache marker will fire at the provider, no warning needed."""
+    prefix = "stable " * 2000  # well above 1024 under word-count tokenizer
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": prefix + "${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+
+
+def test_batch_prewarm_below_min_silent_when_prewarm_not_declared() -> None:
+    """Without ``prewarm: true``, the boundary-classification check doesn't
+    run — this warning is specifically for declared-prewarm batches whose
+    prefix won't actually fire."""
+    prefix = "tiny "
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": prefix + "${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+
+
+def test_batch_prewarm_below_min_silent_when_first_per_item_at_position_zero() -> None:
+    """Position-zero per-item ref is the ``cache.prewarm-no-prefix`` case;
+    the two warnings are mutually exclusive on ``first_per_item_position``.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": "${item.text}\nScore this."},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    warning_ids = {d.id for d in result.warnings}
+    assert "cache.prewarm-no-prefix" in warning_ids
+    assert "cache.batch-prewarm-below-min" not in warning_ids
+
+
+def test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present() -> None:
+    """When ``## Cache`` is declared and the node has ``prompt_cache:``,
+    prewarm writes the declared chunk once via the serialized first call.
+    The prompt-body prefix length is irrelevant to whether caching fires —
+    the declared chunk is what gets cached. ``cache.below-min-tokens``
+    handles the declared-cache path (and would fire if the declared chunk
+    were below min, which is a separate scenario). The new ID stays silent.
+    """
+    short_prefix = "tiny "
+    workflow_ir = {
+        "cache": {"items": [{"name": "ctx", "var_expr": "ctx"}]},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "prompt_cache": ["ctx"],
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": short_prefix + "${item.text}"},
+            }
+        ],
+        "inputs": {"ctx": {"type": "string"}},
+    }
+
+    result = analyze(
+        workflow_ir,
+        parameters={"ctx": "x"},
+        workflow_path="x.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+
+
+def test_inputs_indirection_keeps_batch_prefix_projection_but_suppresses_unmeasurable_recommendation() -> None:
+    """Mutation contract: removing prompt-ref dealiasing loses batch_prefix evidence.
+
+    The ranked recommendation is intentionally suppressed in greenfield mode
+    because the dynamic tail contains a per-item alias with no representative
+    value. The row-level prefix projection still proves dealiasing works.
+    """
     fixture = Path(__file__).parents[1] / "fixtures" / "cache_analysis" / "inputs_indirection_batch.pflow.md"
     workflow_ir = parse_markdown(fixture.read_text(encoding="utf-8")).ir
 
@@ -136,7 +373,7 @@ def test_inputs_indirection_does_not_suppress_prewarm_recommendation() -> None:
     )
 
     warning_ids = {warning.id for warning in result.warnings}
-    assert "cache.batch-prewarm-recommended" in warning_ids
+    assert "cache.batch-prewarm-recommended" not in warning_ids
     row = next(row for row in result.per_call if row.node_path == "score")
     assert row.cacheable_data_source == "batch_prefix"
     assert row.cacheable_tokens_estimated is not None
@@ -242,8 +479,24 @@ def test_dynamic_before_static_not_guessed_for_repeated_non_batch_shape() -> Non
     assert "cache.dynamic-before-static" not in {d.id for d in result.warnings}
 
 
-def test_dynamic_before_static_uses_full_path_cache_names() -> None:
+def test_dynamic_before_static_uses_full_path_cache_names(tmp_path: Path) -> None:
+    """Mutation contract: comparing only root names treats the declared
+    ``creative-direction.response`` chunk as dynamic. The memo entry is
+    load-bearing after honest-region tokenization: without it the suffix is
+    unmeasurable and the warning correctly suppresses instead of fabricating
+    literal ``${creative-direction.response}`` bytes.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
     stable_suffix = "rubric " * 50
+    memo_cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    memo_cache.put(
+        cache_key="creative-direction-key",
+        node_id="creative-direction",
+        workflow_path="x.pflow.md",
+        action="default",
+        output={"response": "resolved direction " * 5000},
+    )
     workflow_ir = {
         "cache": {
             "items": [
@@ -269,7 +522,7 @@ def test_dynamic_before_static_uses_full_path_cache_names() -> None:
         ],
     }
 
-    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=memo_cache)
     diag = next(d for d in result.warnings if d.id == "cache.dynamic-before-static")
     assert diag.context is not None
     assert diag.context["dynamic_ref"] == "user_input"
@@ -397,6 +650,144 @@ def test_shared_context_undeclared_populates_suggested_block_with_dotted_path(
         "draft": ["concept", "concept-brief.response"],
         "review": ["concept", "concept-brief.response"],
     }
+
+
+def _shared_context_smoke_workflow(*, model: str | None = "anthropic/claude-haiku-4-5") -> dict[str, Any]:
+    model_fields = {"model": model} if model is not None else {}
+    return {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                **model_fields,
+                "params": {"prompt": "Summarize ${article}."},
+            },
+            {
+                "id": "tag",
+                "type": "llm",
+                **model_fields,
+                "params": {"prompt": "Tag ${article}."},
+            },
+            {
+                "id": "translate",
+                "type": "llm",
+                **model_fields,
+                "params": {"prompt": "Translate ${article}."},
+            },
+        ],
+    }
+
+
+def test_shared_context_undeclared_conditional_fires_for_greenfield_smoke_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the real analyzer path for smoke-test inputs below provider minimum.
+
+    Mutation contract: deleting the BELOW_THRESHOLD branch in
+    ``_populate_suggested_blocks`` makes this conditional warning disappear.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+
+    analysis = analyze(
+        _shared_context_smoke_workflow(),
+        parameters={"article": "hello"},
+        workflow_path="smoke.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" in ids
+    assert "cache.shared-context-undeclared" not in ids
+    diag = next(d for d in analysis.warnings if d.id == "cache.shared-context-undeclared-conditional")
+    assert diag.context is not None
+    assert diag.context["node_count"] == 3
+    assert diag.context["min_tokens"] == 4096
+    assert diag.context["shared_chunks"] == ["article"]
+    assert diag.context["affected_nodes"] == ["summarize", "tag", "translate"]
+
+    text = render_text(analysis, all_rows=True)
+    assert "Shared context conditional" in text
+    assert "Re-run with a representative value" in text
+    assert "article=@./real-input.md" in text
+    assert "If runtime values typically reach ≥4,096 tokens" in text
+    assert "declare `article` in `## Cache`" in text
+    assert "highest minimum across these nodes" in text
+    assert "<name>" not in text
+    assert "strictest consumer" not in text
+    assert "declare the shared refs" not in text
+    assert "below provider min (need ≥4,096 for this model)" in text
+    assert "paste-ready" not in text
+
+
+def test_shared_context_undeclared_conditional_silent_when_value_clears_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Above-threshold values keep the confident sibling as the only action."""
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+
+    analysis = analyze(
+        _shared_context_smoke_workflow(),
+        parameters={"article": "word " * 4100},
+        workflow_path="smoke.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" not in ids
+    assert "cache.shared-context-undeclared" in ids
+    assert analysis.suggested_blocks
+
+
+def test_shared_context_undeclared_conditional_silent_when_evidence_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+
+    analysis = analyze(
+        _shared_context_smoke_workflow(model=None),
+        parameters={"article": "word " * 2100},
+        workflow_path="smoke.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" not in ids
+    assert "cache.shared-context-undeclared" not in ids
+    assert any("the analyzer cannot yet tell whether a cache edit would fire" in note for note in analysis.notes)
+    assert "paste-ready" not in render_text(analysis, all_rows=True)
+
+
+def test_shared_context_undeclared_conditional_silent_for_single_node() -> None:
+    workflow_ir = {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Summarize ${article}."},
+            }
+        ],
+    }
+
+    analysis = analyze(
+        workflow_ir,
+        parameters={"article": "hello"},
+        workflow_path="single.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" not in ids
+    assert "cache.shared-context-undeclared" not in ids
 
 
 def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1339,8 +1730,18 @@ def test_sub_workflow_cache_undeclared_emits_for_batch_item_input(monkeypatch: p
     }
     child_ir = {
         "nodes": [
-            {"id": "draft", "type": "llm", "params": {"prompt": "Draft ${concept}"}},
-            {"id": "review", "type": "llm", "params": {"prompt": "Review ${concept}"}},
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept}"},
+            },
         ]
     }
     monkeypatch.setattr(
@@ -1690,7 +2091,7 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
         row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "use-concept"
     )
     assert row.cacheable_data_source == "cross_workflow_projection"
-    assert row.cacheable_tokens_estimated == 120
+    assert row.cacheable_tokens_estimated == 60
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
             child_input_name="concept",
@@ -1707,10 +2108,10 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Multiple undeclared cross-workflow inputs are independent prefix chunks;
-    the row should show their sum across observed calls.
+    the row should show their per-call sum.
 
     Mutation contract: change the row projection combinator from ``sum`` to
-    ``max``; this test fails because the row drops from 100 to 60 tokens.
+    ``max``; this test fails because the row drops from 50 to 30 tokens.
     """
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
@@ -1781,7 +2182,7 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
 
     row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
     assert row.cacheable_data_source == "cross_workflow_projection"
-    assert row.cacheable_tokens_estimated == 100
+    assert row.cacheable_tokens_estimated == 50
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
             child_input_name="a", tokens_per_call=30, model="anthropic/claude-haiku-4-5", parent_value_expr="a"
@@ -1880,7 +2281,7 @@ def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
     draft = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
     review = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
     assert draft.cacheable_data_source == "cross_workflow_projection"
-    assert draft.cacheable_tokens_estimated == 120
+    assert draft.cacheable_tokens_estimated == 60
     assert review.did_not_execute_in_trace is True
     assert review.cacheable_data_source != "cross_workflow_projection"
     assert review.cross_workflow_inputs == ()
@@ -2225,6 +2626,117 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
     assert diag.context["savings_usd"] is None
 
 
+def test_sub_workflow_cache_undeclared_splits_mixed_consumer_cases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One child can have both actionable and below-min cache edits.
+
+    Those must render as separate recommendations. Keeping them grouped forced
+    the body text to pick one representative token count, producing nonsense
+    like "~8,504 tokens per call, below the 1,024-token minimum".
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1024)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}, "rubric": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {
+                    "workflow": "./child.pflow.md",
+                    "inputs": {"concept": "${concept}", "rubric": "${rubric}"},
+                },
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}, "rubric": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Score ${concept.title}"},
+            },
+            {
+                "id": "select",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Select ${concept.title} ${rubric}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {
+                            "concept": {"title": "short title"},
+                            "rubric": "rubric " * 1500,
+                        },
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "score",
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 20,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "select",
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 1600,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ]
+                    * 2,
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    diagnostics = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert [d.context["case"] for d in diagnostics if d.context is not None] == ["actionable", "refactor"]
+
+    actionable = next(d for d in diagnostics if d.context and d.context["case"] == "actionable")
+    assert actionable.context is not None
+    assert [item["child_cache_ref"] for item in actionable.context["inputs"]] == ["concept.title", "rubric"]
+    assert "select: prompt_cache: [concept.title, rubric]" in actionable.message
+    assert "score: prompt_cache" not in actionable.message
+    assert "above anthropic/claude-sonnet-4-5's 1,024-token cache minimum" in actionable.message
+
+    refactor = next(d for d in diagnostics if d.context and d.context["case"] == "refactor")
+    assert refactor.context is not None
+    assert [item["child_cache_ref"] for item in refactor.context["inputs"]] == ["concept.title"]
+    assert "score: prompt_cache: [concept.title]" in refactor.message
+    assert "select: prompt_cache" not in refactor.message
+    assert "below the smallest provider cache minimum" in refactor.message
+
+
 def test_sub_workflow_cache_undeclared_case_unmeasurable_no_resolved_consumer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2314,14 +2826,639 @@ def test_sub_workflow_cache_undeclared_emits_cleanup_hint_when_body_uses_subpath
 
     diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
     assert diag.context is not None
-    assert "Per-consumer cache prefix" in diag.message
+    assert "Prompt-body templates to remove and per-consumer cache prefix" in diag.message
     assert "`${concept.title}`" in diag.message
     assert "`${concept.core_idea}`" in diag.message
-    refs_by_node = diag.context["inputs"][0]["template_var_refs_by_node"]
-    assert refs_by_node == {
-        "draft": ["concept.title"],
-        "review": ["concept.core_idea"],
+    assert [item["child_input_name"] for item in diag.context["inputs"]] == ["concept", "concept"]
+    assert [item["child_cache_ref"] for item in diag.context["inputs"]] == [
+        "concept.core_idea",
+        "concept.title",
+    ]
+    refs_by_cache_ref = {item["child_cache_ref"]: item["template_var_refs_by_node"] for item in diag.context["inputs"]}
+    assert refs_by_cache_ref == {
+        "concept.core_idea": {"review": ["concept.core_idea"]},
+        "concept.title": {"draft": ["concept.title"]},
     }
+    text = render_text(result)
+    assert "Do not cache full objects like `concept`" in text
+    assert "${concept.title}" in text
+    assert "${concept.core_idea}" in text
+    assert "`${concept}`" not in text
+
+
+def test_sub_workflow_cache_undeclared_direct_root_use_remains_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct root prompt use still recommends the child input root."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {"id": "draft", "type": "llm", "params": {"prompt": "Draft ${concept}"}},
+            {"id": "review", "type": "llm", "params": {"prompt": "Review ${concept}"}},
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert [item["child_cache_ref"] for item in diag.context["inputs"]] == ["concept"]
+    assert [item["parent_cache_ref"] for item in diag.context["inputs"]] == ["concept"]
+    assert "Do not cache full objects" not in render_text(result)
+
+
+def test_sub_workflow_cache_candidate_carries_parent_prose_from_matching_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parent prose is copied only when the parent chunk name exactly matches."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_prose = "Concept brief:\nUse the palette and narrator framing from the parent workflow.\n"
+    parent_ir = {
+        "inputs": {"concept_brief": {"type": "string"}},
+        "cache": {"items": [{"name": "concept_brief", "var": "concept_brief", "prose_before": parent_prose}]},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept_brief": "${concept_brief}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept_brief": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept_brief}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept_brief}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    # JSON-side context keeps the full untruncated parent prose so machine
+    # consumers can compare bytes against the parent's `## Cache` block.
+    assert input_info["parent_prose"] == parent_prose
+    assert input_info["parent_prose_origins_differ"] is False
+    text = render_text(result)
+    # Text rendering shows a 40-char single-line preview, then a blank line,
+    # then the `${var}` line. Mutation contracts:
+    #   * Drop truncation in `_exact_child_cache_block_content` and the
+    #     untruncated suffix "framing from the parent workflow." reappears.
+    #   * Re-introduce the blank-line filter in `_indent_message` and the
+    #     prose-to-var blank line disappears (regex fails).
+    assert "Concept brief: Use the palette and" in text
+    assert "framing from the parent workflow." not in text
+    assert re.search(
+        r"Concept brief: Use the palette and[^\n]*\.\.\.\n\s*\n\s*\$\{concept_brief\}",
+        text,
+    )
+    assert "parent_prose" not in text
+
+
+def test_sub_workflow_cache_candidate_omits_parent_prose_for_subpath_when_parent_caches_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root parent prose must not be copied onto a narrower child subpath."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {
+                    "name": "concept",
+                    "var": "concept",
+                    "prose_before": "The full concept object, including fields the child does not use:\n",
+                }
+            ]
+        },
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.core_idea}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept.core_idea}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"concept": {"core_idea": "idea " * 400, "unused": "unused " * 400}},
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.core_idea"
+    assert input_info["parent_cache_ref"] == "concept.core_idea"
+    assert input_info["parent_prose"] == ""
+    assert "The full concept object" not in render_text(result)
+
+
+def test_sub_workflow_cache_candidate_omits_prose_when_multiple_origins_disagree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ambiguous parent prose is flagged in JSON instead of choosing a winner."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept_a": {"type": "string"}, "concept_b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "concept_a", "var": "concept_a", "prose_before": "Concept A:\n"},
+                {"name": "concept_b", "var": "concept_b", "prose_before": "Concept B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "call-child-a",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept_a}"}},
+            },
+            {
+                "id": "call-child-b",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept_b}"}},
+            },
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["parent_prose"] == ""
+    assert input_info["parent_prose_origins_differ"] is True
+    text = render_text(result)
+    assert "Concept A" not in text
+    assert "Concept B" not in text
+
+
+def test_sub_workflow_cache_undeclared_mixed_root_and_subpath_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Root use by one node must not collapse a subpath-only node to root."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "headline",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Headline ${concept.title}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    by_ref = {item["child_cache_ref"]: item for item in diag.context["inputs"]}
+    assert sorted(by_ref) == ["concept", "concept.title"]
+    assert by_ref["concept"]["consumer_node_ids"] == ["draft"]
+    assert by_ref["concept.title"]["consumer_node_ids"] == ["headline"]
+
+
+def test_sub_workflow_cache_undeclared_maps_renamed_parent_subpath(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parent-side token resolution follows the child suffix through renames."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"song": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${song.concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.title}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept.title}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"song": {"concept": {"title": "title " * 30, "unused": "unused " * 1000}}},
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.title"
+    assert input_info["parent_cache_ref"] == "song.concept.title"
+    assert input_info["tokens_estimated"] is not None
+    assert input_info["tokens_estimated"] < 100
+
+
+def test_sub_workflow_cache_undeclared_trace_fallback_resolves_child_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trace fallback tokenizes the used child suffix, not the full invocation input."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"song": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${song.concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.title}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept.title}"},
+            },
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_type": "WorkflowExecutor",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"concept": {"title": "title " * 30, "unused": "unused " * 1000}},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "review",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.title"
+    assert input_info["parent_cache_ref"] == "song.concept.title"
+    assert input_info["tokens_estimated"] is not None
+    assert input_info["tokens_estimated"] < 100
+
+
+def test_cross_workflow_projection_uses_child_subpath_contribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-call projection uses the actual child cache ref, not the full input root."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {
+                    "name": "concept.title",
+                    "var": "concept.title",
+                    "prose_before": "Title only:\nParent-side label to preserve across workflows.\n",
+                }
+            ]
+        },
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.title}"},
+            }
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_type": "WorkflowExecutor",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"concept": {"title": "title " * 1100, "unused": "unused " * 5000}},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 6000,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 6000,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
+    assert row.cacheable_data_source == "cross_workflow_projection"
+    assert row.cacheable_tokens_estimated is not None
+    assert row.cacheable_tokens_estimated < 2_000
+    assert row.cross_workflow_inputs == (
+        CrossWorkflowInputContribution(
+            child_input_name="concept",
+            child_cache_ref="concept.title",
+            parent_value_expr="concept",
+            parent_cache_ref="concept.title",
+            parent_prose="Title only:\nParent-side label to preserve across workflows.\n",
+            tokens_per_call=row.cacheable_tokens_estimated,
+            model="anthropic/claude-haiku-4-5",
+        ),
+    )
+    payload = render_json(result)
+    child_row = next(item for item in payload["per_call"] if item["workflow_path"] == str(child_path))
+    assert child_row["cross_workflow_inputs"] == [
+        {
+            "child_input_name": "concept",
+            "child_cache_ref": "concept.title",
+            "parent_value_expr": "concept",
+            "parent_cache_ref": "concept.title",
+            "parent_prose": "Title only:\nParent-side label to preserve across workflows.\n",
+            "tokens_per_call": row.cacheable_tokens_estimated,
+            "model": "anthropic/claude-haiku-4-5",
+        }
+    ]
+
+
+def test_sub_workflow_cache_undeclared_params_inputs_cleanup_uses_prompt_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`params.inputs` dealiasing should cache the source ref and clean the alias."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"inputs": {"title": "${concept.title}"}, "prompt": "Draft ${title}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"inputs": {"title": "${concept.title}"}, "prompt": "Review ${title}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.title"
+    assert input_info["template_var_refs_by_node"] == {"draft": ["title"], "review": ["title"]}
+
+
+def test_sub_workflow_cache_declaration_coverage_is_path_aware(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declared ancestors suppress descendants without confusing similar names."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {"items": [{"name": "concept.title", "var": "${concept.title}", "prose_before": ""}]},
+        "nodes": [
+            {"id": "title-a", "type": "llm", "params": {"prompt": "A ${concept.title}"}},
+            {"id": "title-b", "type": "llm", "params": {"prompt": "B ${concept.title}"}},
+            {"id": "body-a", "type": "llm", "params": {"prompt": "A ${concept.body}"}},
+            {"id": "body-b", "type": "llm", "params": {"prompt": "B ${concept.body}"}},
+            {"id": "suffix-a", "type": "llm", "params": {"prompt": "A ${concept.title_suffix}"}},
+            {"id": "suffix-b", "type": "llm", "params": {"prompt": "B ${concept.title_suffix}"}},
+            {"id": "other-a", "type": "llm", "params": {"prompt": "A ${conceptual.title}"}},
+            {"id": "other-b", "type": "llm", "params": {"prompt": "B ${conceptual.title}"}},
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    refs = [item["child_cache_ref"] for item in diag.context["inputs"]]
+    assert "concept.title" not in refs
+    assert "concept.body" in refs
+    assert "concept.title_suffix" in refs
+    assert "conceptual.title" not in refs
 
 
 def test_child_cache_declaration_suppresses_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2617,99 +3754,6 @@ def _write_trace(tmp_path: Path, events: list[dict[str, Any]], *, format_version
     return trace_path
 
 
-def test_discrepancy_fires_for_ttl_expiry_with_implicit_default(tmp_path: Path) -> None:
-    trace_path = _write_trace(
-        tmp_path,
-        [
-            {
-                "node_id": "gen",
-                "llm_call": {
-                    "model": "anthropic/claude-sonnet-4-5",
-                    "cache_creation_input_tokens": 100,
-                    "cache_read_input_tokens": 0,
-                    "cache_age_sec": 301,
-                    "cache_chunks_skipped": [],
-                },
-            }
-        ],
-    )
-
-    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
-    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
-    assert diag.context is not None
-    assert diag.context["root_cause"] == "ttl_expiry"
-    assert diag.context["affected_invocations"] == 1
-
-
-def test_discrepancy_does_not_apply_default_ttl_to_unknown_provider(tmp_path: Path) -> None:
-    trace_path = _write_trace(
-        tmp_path,
-        [
-            {
-                "node_id": "gen",
-                "llm_call": {
-                    "model": "openrouter/anthropic/claude-sonnet-4-5",
-                    "cache_creation_input_tokens": 100,
-                    "cache_read_input_tokens": 0,
-                    "cache_age_sec": 301,
-                    "cache_chunks_skipped": [],
-                },
-            }
-        ],
-    )
-
-    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
-    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
-    assert diag.context is not None
-    assert diag.context["root_cause"] != "ttl_expiry"
-
-
-def test_discrepancy_uses_dynamic_ttl_seconds(tmp_path: Path) -> None:
-    fresh_trace = _write_trace(
-        tmp_path,
-        [
-            {
-                "node_id": "gen",
-                "llm_call": {
-                    "model": "gemini/gemini-2.5-flash",
-                    "cache_creation_input_tokens": 100,
-                    "cache_read_input_tokens": 0,
-                    "cache_age_sec": 659,
-                    "cache_chunks_skipped": [],
-                },
-            }
-        ],
-    )
-    workflow_ir = {"cache": {"ttl": "11m", "items": []}, "nodes": []}
-
-    fresh = analyze(workflow_ir, workflow_path="parent.pflow.md", trace_path=fresh_trace, memo_cache=None)
-    fresh_discrepancy = next(d for d in fresh.warnings if d.id == "cache.discrepancy")
-    assert fresh_discrepancy.context is not None
-    assert fresh_discrepancy.context["root_cause"] != "ttl_expiry"
-
-    expired_trace = _write_trace(
-        tmp_path,
-        [
-            {
-                "node_id": "gen",
-                "llm_call": {
-                    "model": "gemini/gemini-2.5-flash",
-                    "cache_creation_input_tokens": 100,
-                    "cache_read_input_tokens": 0,
-                    "cache_age_sec": 660,
-                    "cache_chunks_skipped": [],
-                },
-            }
-        ],
-    )
-
-    expired = analyze(workflow_ir, workflow_path="parent.pflow.md", trace_path=expired_trace, memo_cache=None)
-    diag = next(d for d in expired.warnings if d.id == "cache.discrepancy")
-    assert diag.context is not None
-    assert diag.context["root_cause"] == "ttl_expiry"
-    assert ">= 11m TTL" in diag.context["root_cause_summary"]
-
-
 def test_discrepancy_fires_for_chunk_skipped_with_dotted_path(tmp_path: Path) -> None:
     trace_path = _write_trace(
         tmp_path,
@@ -2769,84 +3813,6 @@ def test_discrepancy_fires_for_key_mismatch_when_prediction_available(
     assert diag.context["actual_cache_key"] == "actual-key"
 
 
-def test_discrepancy_ttl_attribution_uses_leaf_workflows_ttl_not_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Bug 9 regression: ``_attribute_root_cause`` reads TTL from the LEAF
-    event's workflow IR, not the analyzed root. Mixed parent/child TTLs
-    (parent declares ``ttl: 1h``, child declares ``ttl: 5m``) would
-    otherwise miss the child's actual ttl_expiry: a 600s cache_age in the
-    child looks fresh against parent's 1h window but is expired against
-    child's 5m. The analyzer would attribute it to ``unknown`` instead of
-    ``ttl_expiry``, giving agents the wrong remediation hint.
-    """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
-    parent_ir = {
-        "inputs": {"topic": {"type": "string"}},
-        "cache": {
-            "ttl": "1h",  # Parent declares hour-long cache.
-            "items": [{"name": "topic", "var": "topic", "prose_before": "Topic:\n"}],
-        },
-        "nodes": [
-            {
-                "id": "call-child",
-                "type": "workflow",
-                "params": {"workflow": "./child.pflow.md", "inputs": {"topic": "${topic}"}},
-            }
-        ],
-    }
-    child_ir = {
-        "cache": {
-            "ttl": "5m",  # Child declares the default 5-minute cache.
-            "items": [{"name": "topic", "var": "topic", "prose_before": "Topic:\n"}],
-        },
-        "inputs": {"topic": {"type": "string"}},
-        "nodes": [
-            {
-                "id": "review",
-                "type": "llm",
-                "model": "anthropic/claude-sonnet-4-5",
-                "prompt_cache": ["topic"],
-                "params": {"prompt": "Review for ${topic}"},
-            }
-        ],
-    }
-    child_path = Path("/abs/child.pflow.md")
-    monkeypatch.setattr(
-        cross_module,
-        "resolve_sub_workflow",
-        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
-    )
-    trace_path = _write_trace(
-        tmp_path,
-        [
-            {
-                "node_id": "call-child",
-                "sub_workflow_events": [
-                    {
-                        "node_id": "review",
-                        "llm_call": {
-                            "model": "anthropic/claude-sonnet-4-5",
-                            "cache_creation_input_tokens": 100,
-                            "cache_read_input_tokens": 0,
-                            "cache_age_sec": 600,  # 10m: expired against child 5m, fresh against parent 1h
-                            "cache_chunks_skipped": [],
-                        },
-                    }
-                ],
-            }
-        ],
-    )
-    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
-    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
-    assert diag.context is not None
-    assert diag.context["root_cause"] == "ttl_expiry", (
-        f"Bug 9: expected ttl_expiry against child's 5m TTL; got {diag.context['root_cause']!r}. "
-        "Pre-fix the analyzer used the parent's 1h TTL and the 600s cache age looked fresh."
-    )
-
-
 def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affected_workflow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2901,8 +3867,7 @@ def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affect
                             "model": "anthropic/claude-sonnet-4-5",
                             "cache_creation_input_tokens": 100,
                             "cache_read_input_tokens": 0,
-                            "cache_age_sec": 301,
-                            "cache_chunks_skipped": [],
+                            "cache_chunks_skipped": ["topic"],
                         },
                     }
                 ],
@@ -2918,6 +3883,7 @@ def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affect
         f"got {diag.context['affected_workflow']!r} (would be the analyzed root pre-fix)"
     )
     assert diag.context["workflow_path_short"] == "child"
+    assert diag.context["root_cause"] == "chunk_skipped"
 
 
 def test_discrepancy_recurses_into_sub_workflow_events(tmp_path: Path) -> None:
@@ -2933,8 +3899,7 @@ def test_discrepancy_recurses_into_sub_workflow_events(tmp_path: Path) -> None:
                             "model": "anthropic/claude-sonnet-4-5",
                             "cache_creation_input_tokens": 100,
                             "cache_read_input_tokens": 0,
-                            "cache_age_sec": 301,
-                            "cache_chunks_skipped": [],
+                            "cache_chunks_skipped": ["concept"],
                         },
                     }
                 ],
@@ -2944,6 +3909,8 @@ def test_discrepancy_recurses_into_sub_workflow_events(tmp_path: Path) -> None:
     result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
     diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
     assert diag.node_id == "child-gen"
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "chunk_skipped"
 
 
 # ---------------------------------------------------------------------------
@@ -2989,11 +3956,10 @@ def test_discrepancy_silent_when_actual_matches_prediction(
 
 
 def test_discrepancy_skips_when_cache_disengaged_and_no_chunks_skipped(tmp_path: Path) -> None:
-    """When cache_creation==0 AND cache_read==0 AND no chunks_skipped, the
-    cache wasn't engaged at all; no discrepancy possible.
+    """When no actual cache key and no chunks were skipped, no discrepancy possible.
 
-    Mutation-test guard: removing this gate would emit phantom unknowns
-    on every non-cache trace event.
+    Mutation-test guard: removing the missing-key gate would emit phantom
+    key_mismatch diagnostics on trace events with no comparable actual key.
     """
     trace_path = _write_trace(
         tmp_path,
@@ -3004,7 +3970,6 @@ def test_discrepancy_skips_when_cache_disengaged_and_no_chunks_skipped(tmp_path:
                     "model": "anthropic/claude-sonnet-4-5",
                     "cache_creation_input_tokens": 0,
                     "cache_read_input_tokens": 0,
-                    "cache_age_sec": 10,
                     "cache_chunks_skipped": [],
                 },
             }
@@ -3046,79 +4011,16 @@ def test_discrepancy_FIRES_when_cache_disengaged_BUT_chunks_skipped(tmp_path: Pa
     assert diag.context["skipped_chunk"] == "concept-brief.response"
 
 
-def test_discrepancy_skips_predicted_key_match_when_compile_fails_no_inputs(tmp_path: Path) -> None:
-    """D11-A path: when params={} and the workflow declares inputs, the
-    analyzer suppresses predicted-key matching (would produce false
-    key_mismatch on every input-referencing node) and emits a notes entry.
-    Observable signals (here: TTL expiry) still attribute correctly.
-    """
-    trace_path = _write_trace(
-        tmp_path,
-        [
-            {
-                "node_id": "gen",
-                "llm_call": {
-                    "model": "anthropic/claude-sonnet-4-5",
-                    "cache_key": "actual-from-trace",
-                    "cache_creation_input_tokens": 100,
-                    "cache_read_input_tokens": 0,
-                    "cache_age_sec": 301,
-                    "cache_chunks_skipped": [],
-                },
-            }
-        ],
-    )
-    workflow_ir = {
-        "inputs": {"topic": {"type": "string"}},
-        "nodes": [],
-    }
-
-    # Use a non-None memo_cache so we exercise the params-empty branch
-    # (memo_cache=None short-circuits earlier with a different note).
-    class _Stub:
-        pass
-
-    result = analyze(
-        workflow_ir,
-        workflow_path="parent.pflow.md",
-        trace_path=trace_path,
-        memo_cache=_Stub(),
-    )
-    # TTL-expiry attribution still fires (observable-only path).
-    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
-    assert diag.context is not None
-    assert diag.context["root_cause"] == "ttl_expiry"
-    assert diag.context["predicted_cache_key"] is None
-    # The notes entry surfaces why the fidelity check was skipped (Fix 8
-    # follow-up: plain-English wording via ``_format_fidelity_skip_note``).
-    assert any("Cache fidelity check skipped" in n and "weren't supplied" in n for n in result.notes)
-
-
-def test_discrepancy_predicted_label_distinguishes_match_mismatch_and_miss(
+def test_discrepancy_silently_skips_when_actual_key_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bug F regression — ``predicted_label`` distinguishes the three planner
-    prediction states. The prior implementation rendered all "predicted_key
-    not None" cases as "predicted hit_ratio 100%" — falsely implying a
-    measured hit ratio when actually it's a binary "did the planner produce
-    a cache_key" signal that may or may not match the trace's actual key.
+    """Regression: trace events lacking cache_key are skipped rather than
+    emitting false-positive key_mismatch with actual_key=None.
 
-    This test exercises three discrepancy emissions and verifies each gets
-    the correct label in its rendered message.
-
-    Mutation test: revert ``_compute_predicted_label`` to always return
-    ``"hit"``; the mismatched-key + miss assertions fail.
+    Mutation contract: revert the ``actual_key is None`` clause of the gate
+    and this emits a key_mismatch with predicted_key set, actual_key=None.
     """
-    from pflow.core.cache_analysis.analyze import _compute_predicted_label
-
-    # Helper logic — direct unit assertions on the predicate function.
-    assert _compute_predicted_label("abc", "abc") == "hit"
-    assert _compute_predicted_label("abc", "def") == "hit (bytes diverged at runtime)"
-    assert _compute_predicted_label(None, "abc") == "miss"
-    assert _compute_predicted_label(None, None) == "miss"
-
-    # End-to-end check: the rendered message uses the label, not "hit_ratio N%".
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
     monkeypatch.setattr(
         analyze_module,
@@ -3132,125 +4034,298 @@ def test_discrepancy_predicted_label_distinguishes_match_mismatch_and_miss(
                 "node_id": "gen",
                 "llm_call": {
                     "model": "anthropic/claude-sonnet-4-5",
-                    "cache_key": "actual-key",  # ≠ predicted-key
                     "cache_creation_input_tokens": 100,
                     "cache_read_input_tokens": 0,
-                    "cache_age_sec": 10,
                     "cache_chunks_skipped": [],
                 },
             }
         ],
     )
     result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
-    diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
-    # Rendered message uses the label — NOT "hit_ratio 100%".
-    assert "predicted hit (bytes diverged at runtime)" in diag.message
-    assert "hit_ratio" not in diag.message
-    # JSON consumers still see the binary predicted_pct.
-    assert diag.context is not None
-    assert diag.context["predicted_pct"] == 100
-    assert diag.context["predicted_label"] == "hit (bytes diverged at runtime)"
+    assert "cache.discrepancy" not in {d.id for d in result.warnings}
 
 
-def test_predict_cache_keys_catches_schema_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bug A regression — ``_predict_cache_keys`` must catch ``SchemaValidationError``
-    when the per-workflow compile path raises. They're sibling subclasses of
-    ``PflowError`` (not related to ``CompilationError``); the original except
-    clause let ``SchemaValidationError`` propagate uncaught and crashed
-    ``pflow analyze-cache`` whenever a 2.1.0 trace was auto-loaded for a
-    workflow with required-but-malformed inputs (the dominant agent flow).
+def test_attribute_root_cause_returns_chunk_skipped_for_truthy_chunks() -> None:
+    """Sanity guard: ``_attribute_root_cause`` keeps the two-branch shape."""
+    from pflow.core.cache_analysis.analyze import _attribute_root_cause
 
-    Mutation test: drop ``SchemaValidationError`` from the except tuple in
-    ``_build_predict_scaffold``; this test fails with an unhandled exception.
+    root_cause, summary, suggestion, extra = _attribute_root_cause(chunks_skipped=["X"])
+    assert root_cause == "chunk_skipped"
+    assert "X" in summary
+    assert "X" in suggestion
+    assert extra == {"skipped_chunk": "X"}
 
-    Patches ``compile_workflow`` AT the analyzer's call site
-    (``pflow.core.cache_analysis.analyze``) — patching the
-    ``pflow.runtime.compile_workflow`` re-export leaks into ``workflow_executor``'s
-    cached top-level binding (set at first import of ``pflow.runtime.workflow_executor``)
-    and breaks any subsequent test that calls ``WorkflowRunner.run``. Patching
-    the lazy import's resolved attribute keeps the patch local to the analyzer.
+
+def test_attribute_root_cause_returns_key_mismatch_for_falsy_chunks() -> None:
+    from pflow.core.cache_analysis.analyze import _attribute_root_cause
+
+    root_cause, summary, suggestion, extra = _attribute_root_cause(chunks_skipped=None)
+    assert root_cause == "key_mismatch"
+    assert "Upstream value changed" in summary
+    assert "re-run analyze-cache" in suggestion
+    assert extra == {}
+
+
+def test_predict_cache_keys_pads_partial_walker_params_no_schema_failure_note(tmp_path: Path) -> None:
+    """Bug 3 regression — when the cross-workflow walker resolves SOME but
+    not all of a sub-workflow's declared inputs (e.g. an input that flows
+    from an upstream sub-workflow output), the discrepancy stage must NOT
+    emit a "workflow failed to compile (SchemaValidationError)" Note for
+    that sub-workflow. The walker's partial params get padded with the
+    standard ``"__validation_placeholder__"`` for missing required slots
+    so compile succeeds; per-node prediction is skipped silently for any
+    node whose templates touch a padded slot.
+
+    Mutation contract: revert ``_predict_one_workflow``'s call to
+    ``_pad_inputs_for_prediction`` (pass raw walker params straight to
+    ``_build_predict_scaffold``) and ``compile_workflow`` raises
+    ``SchemaValidationError("Workflow requires input 'analyses'")`` for
+    the missing slot. The scaffold's broad catch then debug-logs and
+    returns None — but the OLD code path that paired that failure with a
+    user-facing Note via ``_format_fidelity_skip_note`` is gone, so the
+    test would only catch the regression if the padding were restored
+    AND a Note were emitted. Concretely: this test fails if a future
+    edit reintroduces a ``notes.append(...)`` on scaffold failure.
     """
     from types import SimpleNamespace
 
-    from pflow.core.cache_analysis.analyze import _build_predict_scaffold, _predict_cache_keys
+    from pflow.core.cache_analysis.analyze import _predict_cache_keys
     from pflow.core.cache_analysis.context import AnalysisContext
-    from pflow.core.exceptions import SchemaValidationError
+    from pflow.runtime.cache import MemoizationCache
 
-    # Inject a SchemaValidationError at the analyzer's compile boundary by
-    # replacing _build_predict_scaffold's behavior — same effect as patching
-    # compile_workflow but contained to the analyzer (no side-effect on
-    # workflow_executor's cached binding).
-    def _boom_scaffold(
-        _workflow_ir: Any, _params: Any, _memo_cache: Any, workflow_path: str | None
-    ) -> tuple[Any, str | None]:
-        # Mirror the real shape: scaffold=None + per-workflow error note.
-        # The note text must match production (Fix 8 follow-up: routed through
-        # ``_format_fidelity_skip_note``) so the assertion stays honest.
-        label = workflow_path or "<root>"
-        from pflow.core.cache_analysis.analyze import _format_fidelity_skip_note
-
-        return None, _format_fidelity_skip_note(label, "workflow failed to compile (SchemaValidationError)")
-
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_build_predict_scaffold", _boom_scaffold)
-    # Reference SchemaValidationError so the docstring's mutation-test claim
-    # stays honest (the catch list lives in ``_build_predict_scaffold`` and
-    # this test's stub mirrors what production would produce on that catch).
-    _ = SchemaValidationError
-
-    class _Stub:
-        pass
-
+    # Sub-workflow that declares two required inputs. Walker resolves
+    # only one (``brief``); ``analyses`` flows from an upstream node and
+    # is left empty by the walker. Mirrors the lyrics-generator
+    # ``concept-chooser`` case exactly (which was the source of Bug 3).
+    # Each node uses its input via the cache mechanism (``prompt_cache:``)
+    # — referencing it both inline and via cache trips the validator's
+    # ``cache.prompt-body-duplicates-cache`` rule.
     workflow_ir: dict[str, Any] = {
-        "inputs": {"name": {"type": "string"}},
+        "inputs": {
+            "brief": {"type": "string", "required": True},
+            "analyses": {"type": "any", "required": True},
+        },
+        "cache": {
+            "items": [
+                {"name": "brief", "var": "brief", "prose_before": "B:\n"},
+                {"name": "analyses", "var": "analyses", "prose_before": "A:\n"},
+            ]
+        },
         "nodes": [
             {
-                "id": "draft",
+                "id": "use-brief",
                 "type": "llm",
-                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "go ${name}"},
-                "prompt_cache": ["name"],
-            }
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Apply the brief shown above."},
+                "prompt_cache": ["brief"],
+            },
+            {
+                "id": "use-analyses",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Apply the analyses shown above."},
+                "prompt_cache": ["analyses"],
+            },
         ],
-        "cache": {"items": [{"name": "name", "var": "name", "prose_before": "N:\n"}]},
+        "edges": [{"from": "use-brief", "to": "use-analyses"}],
     }
     ctx = AnalysisContext.build(
         workflow_ir=workflow_ir,
-        parameters={"name": "alice"},
-        memo_cache=_Stub(),
+        parameters={"brief": "real brief content from upstream"},
+        memo_cache=MemoizationCache(db_path=tmp_path / "cache.db"),
         workflow_path="x.pflow.md",
     )
     cw_result = SimpleNamespace(irs_by_workflow={"x.pflow.md": workflow_ir}, edges=())
 
     keys, notes = _predict_cache_keys(cw_result, ctx)
-    assert keys == {}
-    # Fix 8 follow-up: jargon-free framing via ``_format_fidelity_skip_note``.
-    assert any("Cache fidelity check skipped for x.pflow.md" in n for n in notes)
-    assert any("SchemaValidationError" in n for n in notes)
-    # Sanity: the real _build_predict_scaffold's catch list still includes
-    # SchemaValidationError. Drop it from the production except tuple and this
-    # passes (the test's stub doesn't use the real catch), so we also exercise
-    # the production helper directly with a synthetic crashing IR.
+    # The misleading SchemaValidationError Note must not appear — this is
+    # the whole point of the fix.
+    assert not any("SchemaValidationError" in n for n in notes), f"unexpected: {notes!r}"
+    assert not any("failed to compile" in n for n in notes), f"unexpected: {notes!r}"
+    # ``use-brief`` references only walker-resolved ``brief`` → predicted.
+    # ``use-analyses`` references the padded ``analyses`` → silently skipped.
+    assert ("x.pflow.md", "use-brief") in keys, f"expected use-brief in {sorted(keys)}"
+    assert ("x.pflow.md", "use-analyses") not in keys, f"unexpected use-analyses in {sorted(keys)}"
+
+
+def test_build_predict_scaffold_silent_on_compile_failure() -> None:
+    """Bug 3 contract — when ``compile_workflow`` raises despite the
+    unified validator's earlier pass, the scaffold returns ``None`` and
+    emits no user-facing Note. Failures here only fire for compiler-
+    internal bugs the validator missed; debug logging keeps them
+    traceable without polluting agent output.
+
+    Mutation contract: restore ``notes.append(_format_fidelity_skip_note(...))``
+    on scaffold-failure paths (the pre-fix shape) and the negative
+    assertions below fail.
+    """
+    from pflow.core.cache_analysis.analyze import _build_predict_scaffold
+
+    class _Stub:
+        pass
+
+    # Required input ``x`` with empty params — compile raises
+    # SchemaValidationError. After the fix, this is reachable only when
+    # callers bypass ``_pad_inputs_for_prediction`` (production never
+    # does); the scaffold still degrades silently.
     bad_ir: dict[str, Any] = {
         "inputs": {"x": {"type": "string", "required": True}},
-        # Missing required "x" parameter → compile-time validation fails.
         "nodes": [{"id": "n", "type": "llm", "params": {"prompt": "${x}"}}],
     }
-    scaffold, note = _build_predict_scaffold(bad_ir, {}, _Stub(), "bad.pflow.md")
+    scaffold = _build_predict_scaffold(bad_ir, {}, _Stub(), "bad.pflow.md")
     assert scaffold is None
-    assert note is not None
-    assert "bad.pflow.md" in note
-    assert "failed to compile" in note
+
+
+def test_pad_inputs_for_prediction_preserves_walker_values_and_marks_missing() -> None:
+    """Padding helper: walker-resolved values pass through unchanged; only
+    missing declared inputs get the placeholder. Returned ``dummied_keys``
+    names exactly the slots that received a placeholder.
+
+    Mutation contract: change the ``if key not in padded`` guard to
+    unconditionally overwrite, and walker values get clobbered — the
+    discrepancy stage's predicted cache_keys would never match the trace.
+    """
+    from pflow.core.cache_analysis.analyze import _pad_inputs_for_prediction
+
+    declared = {
+        "brief": {"type": "string", "required": True},
+        "analyses": {"type": "any", "required": True},
+        "top_n": {"type": "integer", "required": False, "default": 4},
+    }
+    known = {"brief": "real value from upstream"}
+    padded, dummied = _pad_inputs_for_prediction(known, declared)
+    assert padded["brief"] == "real value from upstream"  # walker value preserved
+    assert padded["analyses"] == "__validation_placeholder__"
+    assert padded["top_n"] == "__validation_placeholder__"
+    assert dummied == frozenset({"analyses", "top_n"})
+
+
+def test_node_references_any_detects_cache_chunk_chain() -> None:
+    """A node taints when its ``prompt_cache:`` references a chunk whose
+    ``var`` traces to a dummied input — even if the node has no inline
+    template ref to the dummied input. This is the lyrics-generator
+    concept-chooser shape: ``cache.prompt-body-duplicates-cache``
+    forbids inlining the var in the prompt body, so the only path from
+    node to dummied input is via the cache chunk's ``var``.
+
+    Mutation contract: drop the ``prompt_cache`` check from
+    ``_node_references_any`` and ``use-analyses`` is no longer detected
+    as tainted — its predicted cache_key carries the placeholder bytes
+    and never matches the trace.
+    """
+    from pflow.core.cache_analysis.analyze import _dummied_cache_chunks, _node_references_any
+
+    workflow_ir = {
+        "cache": {
+            "items": [
+                {"name": "brief", "var": "brief", "prose_before": "B:\n"},
+                {"name": "analyses", "var": "analyses", "prose_before": "A:\n"},
+            ]
+        },
+    }
+    dummied_keys = frozenset({"analyses"})
+    dummied_chunks = _dummied_cache_chunks(workflow_ir, dummied_keys)
+    assert dummied_chunks == frozenset({"analyses"})
+
+    use_brief = {
+        "id": "use-brief",
+        "type": "llm",
+        "params": {"prompt": "Apply the brief above."},
+        "prompt_cache": ["brief"],
+    }
+    use_analyses = {
+        "id": "use-analyses",
+        "type": "llm",
+        "params": {"prompt": "Apply the analyses above."},
+        "prompt_cache": ["analyses"],
+    }
+    assert _node_references_any(use_brief, dummied_keys, dummied_chunks) is False
+    assert _node_references_any(use_analyses, dummied_keys, dummied_chunks) is True
+
+
+def test_node_references_any_detects_inline_template_ref() -> None:
+    """A node also taints when its IR contains a ``${var}`` template ref
+    whose root is in ``dummied_keys``. Covers the second path to taint
+    (the first is ``prompt_cache`` → cache chunk → var); both must be
+    checked because either alone is sufficient for the predicted
+    cache_key to carry placeholder bytes.
+
+    Mutation contract: drop the ``_walk_strings`` loop in
+    ``_node_references_any`` and code-block inputs (``inputs: x: ${k}``)
+    that reference dummied keys go undetected.
+    """
+    from pflow.core.cache_analysis.analyze import _node_references_any
+
+    code_node = {
+        "id": "build-items",
+        "type": "code",
+        "params": {"code": "items = raw"},
+        "inputs": {"raw": "${analyses}"},
+    }
+    assert _node_references_any(code_node, frozenset({"analyses"}), frozenset()) is True
+    # Coalesce: any operand referencing a dummied root taints.
+    coalesce_node = {
+        "id": "n",
+        "type": "llm",
+        "params": {"prompt": "${analyses ?? brief}"},
+    }
+    assert _node_references_any(coalesce_node, frozenset({"analyses"}), frozenset()) is True
+    # No refs to dummied roots → not tainted.
+    safe_node = {
+        "id": "n",
+        "type": "llm",
+        "params": {"prompt": "${brief}"},
+    }
+    assert _node_references_any(safe_node, frozenset({"analyses"}), frozenset()) is False
+
+
+def test_build_predict_scaffold_injects_pflow_workflow_file() -> None:
+    """The scaffold must inject ``_pflow_workflow_file`` into compile
+    params so relative file refs in child workflows resolve against the
+    workflow's directory instead of CWD — matches
+    ``WorkflowValidator._validate_one_child_call``'s pattern.
+
+    Mutation contract: drop the injection and ``@./file.ext`` refs in
+    sub-workflows resolve against CWD, silently misresolving for any
+    workflow not under the current directory.
+    """
+    from pflow.core.cache_analysis.analyze import _build_predict_scaffold
+    from pflow.runtime.cache import MemoizationCache
+
+    workflow_ir: dict[str, Any] = {
+        "inputs": {"name": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "n",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "hi"},
+            }
+        ],
+        "edges": [],
+    }
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = MemoizationCache(db_path=Path(tmp) / "cache.db")
+        scaffold = _build_predict_scaffold(workflow_ir, {"name": "alice"}, cache, "x.pflow.md")
+        assert scaffold is not None
+        assert scaffold.shared.get("_pflow_workflow_file") == "x.pflow.md"
 
 
 def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Path) -> None:
-    """When ``compile_workflow`` raises (here: a malformed IR shape that
-    fails compile checks), the analyzer catches the exception, appends a
-    notes entry, and falls back to observable-only attribution. The
-    discrepancy is still emitted via the chunk_skipped observable path.
+    """When ``compile_workflow`` raises (here: a malformed batch shape that
+    triggers a ValueError downstream of compile), the discrepancy stage
+    silently degrades — no user-facing Note — and observable-field
+    attribution (chunk_skipped) still emits the ``cache.discrepancy``
+    diagnostic.
 
-    Defends: the except clause must be broad enough to cover ValueError
-    (and other compile-time exceptions); narrowing back to just
-    CompilationError lets analyze() crash entirely on this fixture.
+    Bug 3 contract: the pre-fix code emitted a "Cache fidelity check
+    skipped for bad.pflow.md: workflow failed to compile (ValueError)"
+    Note for every compile failure during prediction, including for
+    workflows that ran fine end-to-end. The fix downgrades all scaffold
+    failures to a debug log; observable attribution is now the sole
+    agent-facing signal for this case.
+
+    Mutation contract: restore the ``notes.append(...)`` on scaffold
+    failure (pre-fix shape) and the negative assertions below fail.
     """
     trace_path = _write_trace(
         tmp_path,
@@ -3267,9 +4342,10 @@ def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Pat
             }
         ],
     )
-    # This IR has no ``inputs`` declaration so D11-A doesn't fire, but
-    # the malformed batch shape (string instead of dict) triggers a
-    # ValueError downstream of compile_workflow during planning.
+    # This IR has no ``inputs`` declaration so the cold-skip gate doesn't
+    # fire, but the malformed batch shape (string instead of dict)
+    # triggers a ValueError downstream of compile_workflow during
+    # planning.
     bad_ir = {
         "nodes": [
             {
@@ -3290,10 +4366,11 @@ def test_discrepancy_compile_failure_falls_back_to_observable_only(tmp_path: Pat
         trace_path=trace_path,
         memo_cache=_Stub(),
     )
-    # Per-workflow compile-failure note appended (compile fails before any node).
-    # Fix 8 follow-up: jargon-free framing via ``_format_fidelity_skip_note``.
-    assert any("Cache fidelity check skipped for bad.pflow.md" in n for n in result.notes)
-    assert any("failed to compile" in n for n in result.notes)
+    # No user-facing compile-failure Note (Bug 3 fix: silent degradation).
+    assert not any("Cache fidelity check skipped for bad.pflow.md" in n for n in result.notes), (
+        f"unexpected compile-failure note: {result.notes!r}"
+    )
+    assert not any("failed to compile" in n for n in result.notes), f"unexpected compile-failure note: {result.notes!r}"
     # Observable-only attribution still fires (chunk_skipped is observable).
     diag = next((d for d in result.warnings if d.id == "cache.discrepancy"), None)
     assert diag is not None
@@ -3522,12 +4599,9 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
         make_diagnostic(
             "cache.discrepancy",
             node_id="gen",
-            trace_path="t",
-            predicted_pct=100,
-            predicted_label="hit",
-            actual_pct=0,
-            root_cause="ttl_expiry",
+            root_cause="key_mismatch",
             root_cause_summary="x",
+            suggestion="x",
             affected_workflow="w",
         )
         for _ in range(3)
@@ -3536,13 +4610,11 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
         make_diagnostic(
             "cache.discrepancy",
             node_id="gen",
-            trace_path="t",
-            predicted_pct=100,
-            predicted_label="hit",
-            actual_pct=0,
-            root_cause="key_mismatch",
+            root_cause="chunk_skipped",
             root_cause_summary="y",
+            suggestion="y",
             affected_workflow="w",
+            skipped_chunk="concept",
         )
     )
 
@@ -3551,10 +4623,10 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
     assert len(aggregated) == 2
     assert aggregated[0].context is not None
     assert aggregated[0].context["affected_invocations"] == 3
-    assert aggregated[0].context["root_cause"] == "ttl_expiry"
+    assert aggregated[0].context["root_cause"] == "key_mismatch"
     assert aggregated[1].context is not None
     assert aggregated[1].context["affected_invocations"] == 1
-    assert aggregated[1].context["root_cause"] == "key_mismatch"
+    assert aggregated[1].context["root_cause"] == "chunk_skipped"
     # Cap not engaged — no truncation note.
     assert notes == []
 
@@ -3572,12 +4644,9 @@ def test_aggregator_caps_at_max_total_and_notes_truncation() -> None:
         make_diagnostic(
             "cache.discrepancy",
             node_id=f"node-{i}",
-            trace_path="t",
-            predicted_pct=100,
-            predicted_label="hit",
-            actual_pct=0,
             root_cause="key_mismatch",
             root_cause_summary="x",
+            suggestion="x",
             affected_workflow="w",
         )
         for i in range(25)
@@ -3595,7 +4664,7 @@ def test_aggregator_does_not_mutate_shared_context_refs() -> None:
     """
     from pflow.core.cache_analysis.analyze import _aggregate_and_cap_discrepancies
 
-    shared_context = {"category": "cache_advisory", "root_cause": "ttl_expiry"}
+    shared_context = {"category": "cache_advisory", "root_cause": "key_mismatch"}
     from pflow.core.diagnostic import Diagnostic, Severity
 
     d1 = Diagnostic(
@@ -5582,3 +6651,14 @@ def test_partial_prompt_cache_renderer_handles_many_affected_nodes() -> None:
 
     assert "Prompt-cache incomplete" in rendered
     assert rendered.count("Set prompt_cache: [a, b]") == 6
+    # The catalog template for ``cache.prompt-cache-incomplete`` embeds
+    # ``\n\n`` between the intro prose and the per-node findings block.
+    # Mutation contract: restore ``if line.strip()`` in ``_indent_message``
+    # and the blank-but-indented line between intro and findings disappears,
+    # collapsing "missing the 0.1x input-cost reuse." onto "Affected nodes:"
+    # with only one newline. This regex demands at least one whitespace-only
+    # line in between. End-to-end lock for the renderer change.
+    assert re.search(
+        r"missing the 0\.1x input-cost reuse\.\n[ \t]*\n[ \t]*Affected nodes:",
+        rendered,
+    )

@@ -3,20 +3,14 @@
 Locks the agent-facing contract: every catalog entry produces a Diagnostic with
 the documented severity / source / category / message / suggestions / context;
 adding a new ID without updating EXPECTED_CATALOG_COUNT (auto-derived) fails
-the integrity test; ``cache.discrepancy`` dispatch surfaces typed payloads on
-``context["root_cause_action"]`` per the F1 plan section.
+the integrity test.
 """
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 from pflow.core.cache_analysis.warning_catalog import (
-    CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS,
-    CACHE_DISCREPANCY_ACTION_TEMPLATES,
-    CACHE_DISCREPANCY_REQUIRED_CONTEXT,
     CACHE_OPPORTUNITIES_NUDGE_ID,
     CACHE_WARNING_CATALOG,
     EXPECTED_CATALOG_COUNT,
@@ -44,7 +38,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 23 entries (22 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 26 entries (25 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -69,10 +63,19 @@ def test_catalog_size_matches_v1_inventory() -> None:
       `## Cache`)
     - ``cache.unsupported-provider-ttl`` (Gemini dynamic-TTL follow-up:
       provider capability validation for minute-level TTLs)
+    - ``cache.batch-prewarm-below-min`` (Task 159 follow-up: prewarm batches
+      whose static prefix is below the provider minimum; warns that the
+      cache marker will silently no-op at the provider)
+    - ``cache.batch-prewarm-lower-bound-recommended`` (Task 159 follow-up:
+      restores prewarm advice when the measurable stable prefix clears the
+      provider minimum but unresolved upstream refs require verification)
+    - ``cache.shared-context-undeclared-conditional`` (Task 159 follow-up:
+      shared context is structurally reusable, but current values are below
+      provider cache minimums).
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 23
+    assert len(CACHE_WARNING_CATALOG) == 26
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -218,6 +221,129 @@ def test_make_diagnostic_below_min_tokens_unknown_evidence_kind_fallback(caplog:
     assert "unknown evidence_kind" in caplog.text
 
 
+def test_make_diagnostic_batch_prewarm_below_min_anthropic() -> None:
+    """Headline + message + suggestions render the prewarm-specific
+    remediation vocabulary, not declared-cache vocabulary. Provider note
+    is interpolated as the trailing clause."""
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="anthropic/claude-sonnet-4-5",
+        prefix_tokens=27,
+        min_tokens=1024,
+        batch_alias="item",
+        provider_note="cache_control markers will silently no-op at the provider",
+    )
+
+    assert diag.severity == Severity.WARNING
+    assert diag.id == "cache.batch-prewarm-below-min"
+    assert diag.context is not None
+    assert diag.context["category"] == CACHE_WARNING_CATEGORY
+
+    # Message frames the bytes-before-per-item-ref boundary, not declared cache.
+    assert "static prefix" in diag.message
+    assert "${item.X}" in diag.message
+    assert "1024" in diag.message
+    assert "anthropic/claude-sonnet-4-5" in diag.message
+    assert "cache_control markers" in diag.message
+    # Negative: prewarm vocabulary, not declared-cache vocabulary.
+    assert "declared cache" not in diag.message
+    assert "prompt_cache:" not in diag.message
+
+    # Suggestions name the two remediation paths.
+    suggestions_blob = "\n".join(diag.suggestions or ())
+    assert "Grow the static prefix" in suggestions_blob
+    assert "remove `- prewarm: true`" in suggestions_blob
+
+
+def test_make_diagnostic_batch_prewarm_below_min_gemini_implicit_cache_note() -> None:
+    """Gemini's provider note reaches the rendered message — the
+    implicit-cache hint is the key agent-UX signal for Gemini batches
+    where explicit ``cachedContents`` can't fire."""
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="gemini/gemini-2.5-flash",
+        prefix_tokens=512,
+        min_tokens=4096,
+        batch_alias="item",
+        provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply for stable prefixes",
+    )
+
+    assert "implicit cache" in diag.message
+    assert "4096" in diag.message
+
+
+def test_make_diagnostic_batch_prewarm_below_min_omits_provider_clause_when_note_empty() -> None:
+    """OpenAI / unknown providers produce empty provider notes; the message
+    must not render a stray ``; `` separator."""
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="openai/gpt-5",
+        prefix_tokens=512,
+        min_tokens=1024,
+        batch_alias="item",
+        provider_note="",
+    )
+    assert diag.message.endswith("minimum of 1024")
+
+
+def test_make_diagnostic_batch_prewarm_lower_bound_recommended() -> None:
+    """Lower-bound prewarm advice renders measurable tokens and unresolved refs.
+
+    Mutation contract: pass ``unresolved_refs`` as a string or omit the CSV
+    derivation; this test fails because the message would render comma-separated
+    characters or the raw tuple instead of ``a, b``.
+    """
+    diag = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        measurable_tokens=1200,
+        batch_alias="item",
+        unresolved_refs=("a", "b"),
+        savings_lower_bound_usd=0.02,
+        batch_size=12,
+    )
+
+    assert diag.severity == Severity.WARNING
+    assert diag.id == "cache.batch-prewarm-lower-bound-recommended"
+    assert "at least ~1200" in diag.message
+    assert "${item.X}" in diag.message
+    assert "a, b" in diag.message
+    assert "a,  , b" not in diag.message
+    suggestions_blob = "\n".join(diag.suggestions or ())
+    assert "--report" in suggestions_blob
+    assert "prewarm: true" in suggestions_blob
+    assert "wall-clock" in suggestions_blob
+
+
+def test_make_diagnostic_batch_prewarm_lower_bound_savings_unavailable() -> None:
+    """Nullable lower-bound savings is valid catalog data.
+
+    Mutation contract: forget ``savings_lower_bound_usd`` in nullable_cost_keys;
+    this test fails because ``make_diagnostic`` rejects the unavailable-cost
+    case before renderers can say "savings need verification".
+    """
+    diag = make_diagnostic(
+        "cache.batch-prewarm-lower-bound-recommended",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        measurable_tokens=1200,
+        batch_alias="item",
+        unresolved_refs=("a",),
+        savings_lower_bound_usd=None,
+        batch_size=12,
+    )
+
+    assert diag.context is not None
+    assert diag.context["savings_lower_bound_usd"] is None
+
+
 def test_make_diagnostic_padding_advisory_with_savings() -> None:
     diag = make_diagnostic(
         "cache.padding-advisory",
@@ -299,10 +425,9 @@ def test_make_diagnostic_invalid_on_non_llm_dedup() -> None:
 
 def test_sub_workflow_cache_undeclared_headline_pluralizes_input_count() -> None:
     """The `cache.sub-workflow-cache-undeclared` headline used to render
-    ``declare N input(s)`` regardless of count. Fresh agents read ``declare 1
-    input(s)`` as a typo. The catalog now interpolates ``{inputs_phrase}``,
-    derived from ``affected_input_count`` at both ``make_diagnostic`` time and
-    ``resolve_headline_for`` time.
+    ``declare N input(s)`` regardless of count. The finding now talks about
+    concrete child ``## Cache`` entries because candidates may be subpaths, not
+    boundary input roots.
 
     Mutation contract: remove the ``inputs_phrase`` derivation in
     ``resolve_headline_for`` and the singular-count assertion fails (the
@@ -349,11 +474,11 @@ def test_sub_workflow_cache_undeclared_headline_pluralizes_input_count() -> None
     singular_headline = resolve_headline_for(singular)
     plural_headline = resolve_headline_for(plural)
 
-    assert "declare 1 input" in singular_headline
+    assert "add 1 entry in ## Cache" in singular_headline
     assert "input(s)" not in singular_headline
-    assert "1 inputs" not in singular_headline  # not pluralized for count==1
+    assert "1 entries" not in singular_headline  # not pluralized for count==1
 
-    assert "declare 3 inputs" in plural_headline
+    assert "add 3 entries in ## Cache" in plural_headline
     assert "input(s)" not in plural_headline
 
 
@@ -427,115 +552,51 @@ def test_make_diagnostic_workflow_level_finding_does_not_require_affected_workfl
 
 
 # ---------------------------------------------------------------------------
-# cache.discrepancy dispatch — typed action payloads
+# cache.discrepancy
 # ---------------------------------------------------------------------------
 
 
 _BASE_DISCREPANCY_KWARGS = {
     "node_id": "X",
-    "trace_path": "songs[1]",
-    "affected_workflow": "x.pflow.md",
-    "predicted_pct": 80,
-    "predicted_label": "hit",
-    "actual_pct": 20,
-    "root_cause_summary": "auto",
-    "cache_age_sec": None,
+    "workflow_path_short": "workflow",
+    "root_cause_summary": "Upstream value changed between predicted run and actual run",
+    "suggestion": "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.",
     "predicted_cache_key": None,
     "actual_cache_key": None,
+    "affected_workflow": "workflow.pflow.md",
 }
 
 
-@pytest.mark.parametrize(
-    "root_cause, extra_kwargs, expected_action_text, expected_payload",
-    [
-        (
-            "ttl_expiry",
-            {},
-            "Consider `- ttl: 1h` on the x.pflow.md ## Cache block.",
-            {"suggested_ttl": "1h", "affected_workflow": "x.pflow.md"},
-        ),
-        (
-            "key_mismatch",
-            {},
-            "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.",
-            {"upstream_value_changed": True},
-        ),
-        (
-            "parallel_write_race",
-            {},
-            "Add `- prewarm: true` to the batch node to serialize the first write.",
-            {"recommended_fix": "prewarm:true"},
-        ),
-        (
-            "chunk_skipped",
-            {"skipped_chunk": "concept"},
-            "Cache chunk `concept` was skipped at runtime (branch absent); declaration is correct but rendered subset is shorter.",
-            {"skipped_chunk": "concept", "branch_node": None},
-        ),
-    ],
-)
-def test_cache_discrepancy_dispatch_per_cause(
-    root_cause: str,
-    extra_kwargs: dict,
-    expected_action_text: str,
-    expected_payload: dict,
-) -> None:
-    diag = make_diagnostic(
-        "cache.discrepancy",
-        root_cause=root_cause,
-        **_BASE_DISCREPANCY_KWARGS,
-        **extra_kwargs,
-    )
-    assert diag.suggestions == [expected_action_text]
-    assert diag.context is not None
-    assert diag.context["root_cause"] == root_cause  # original preserved
-    assert diag.context["root_cause_action"] == expected_payload  # typed payload
-
-
-def test_cache_discrepancy_missing_per_cause_required_key_raises() -> None:
-    """``chunk_skipped`` requires ``skipped_chunk`` on the per-cause action payload;
-    missing → KeyError. Uses ``chunk_skipped`` rather than ``ttl_expiry`` so the
-    per-cause check is what fires — ``ttl_expiry``'s required key is
-    ``affected_workflow`` which is also enforced by the workflow-scope contract,
-    making it impossible to test the per-cause check in isolation."""
-    with pytest.raises(KeyError, match="skipped_chunk"):
-        make_diagnostic(
-            "cache.discrepancy",
-            root_cause="chunk_skipped",
-            **_BASE_DISCREPANCY_KWARGS,
-        )
-
-
 def test_cache_discrepancy_missing_base_required_key_raises() -> None:
-    """root_cause itself is in the base required-list; missing → KeyError BEFORE dispatch."""
+    """root_cause itself is in the base required-list; missing → KeyError."""
     base = dict(_BASE_DISCREPANCY_KWARGS)
     with pytest.raises(KeyError):
         make_diagnostic("cache.discrepancy", **base)  # no root_cause
 
 
-def test_cache_discrepancy_unknown_enum_falls_through_with_warning(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Unknown root_cause values fall through to the 'unknown' template AND
-    log a warning so a future contributor adding an enum value but forgetting
-    the dispatch map doesn't degrade silently."""
-    caplog.set_level(logging.WARNING, logger="pflow.core.cache_analysis.warning_catalog")
+def test_cache_discrepancy_root_cause_is_closed_catalog_contract() -> None:
+    """New discrepancy causes require an explicit catalog update."""
+    with pytest.raises(ValueError, match="chunk_skipped, key_mismatch"):
+        make_diagnostic(
+            "cache.discrepancy",
+            root_cause="ttl_expiry",
+            **_BASE_DISCREPANCY_KWARGS,
+        )
+
+
+def test_cache_discrepancy_uses_flat_suggestion_template() -> None:
     diag = make_diagnostic(
         "cache.discrepancy",
-        root_cause="future_value",
+        root_cause="key_mismatch",
         **_BASE_DISCREPANCY_KWARGS,
     )
-    # Unknown-row template substitutes the rejected value so the agent sees what was rejected.
-    assert "future_value" in diag.suggestions[0]  # type: ignore[index]
+    assert diag.suggestions == [_BASE_DISCREPANCY_KWARGS["suggestion"]]
     assert diag.context is not None
-    assert diag.context["root_cause"] == "future_value"
-    assert diag.context["root_cause_action"] == {"raw_root_cause": "future_value"}
-    # logger.warning was emitted somewhere in the call.
-    assert any("future_value" in rec.message for rec in caplog.records)
+    assert "root_cause_action" not in diag.context
 
 
 def test_cache_discrepancy_chunk_skipped_branch_node_optional() -> None:
-    """branch_node is optional in chunk_skipped; analyzer may not always identify."""
+    """branch_node is optional passthrough context; analyzer may not always identify it."""
     diag = make_diagnostic(
         "cache.discrepancy",
         root_cause="chunk_skipped",
@@ -544,16 +605,7 @@ def test_cache_discrepancy_chunk_skipped_branch_node_optional() -> None:
         **_BASE_DISCREPANCY_KWARGS,
     )
     assert diag.context is not None
-    assert diag.context["root_cause_action"]["branch_node"] == "router"
-
-
-def test_discrepancy_dispatch_maps_consistent() -> None:
-    """The three dispatch maps must enumerate the same enum values."""
-    keys_templates = set(CACHE_DISCREPANCY_ACTION_TEMPLATES.keys())
-    keys_required = set(CACHE_DISCREPANCY_REQUIRED_CONTEXT.keys())
-    keys_payload = set(CACHE_DISCREPANCY_ACTION_PAYLOAD_KEYS.keys())
-    assert keys_templates == keys_required == keys_payload
-    assert "unknown" in keys_templates
+    assert diag.context["branch_node"] == "router"
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +682,13 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "affected_workflow": "x.pflow.md",
             "savings_usd": 0.78,
         },
+        "cache.shared-context-undeclared-conditional": {
+            "node_count": 2,
+            "shared_chunks": ["concept"],
+            "affected_workflow": "x.pflow.md",
+            "min_tokens": 2048,
+            "affected_nodes": ["draft", "review"],
+        },
         "cache.sub-workflow-cache-undeclared": {
             "affected_workflow": "child.pflow.md",
             "child_workflow": "child.pflow.md",
@@ -684,6 +743,15 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "prefix_tokens_estimated": 2100,
             "savings_pct": 89,
             "savings_usd": 0.12,
+        },
+        "cache.batch-prewarm-lower-bound-recommended": {
+            "node_id": "score",
+            "affected_workflow": "x.pflow.md",
+            "measurable_tokens": 1200,
+            "batch_alias": "item",
+            "unresolved_refs": ("a", "b"),
+            "savings_lower_bound_usd": 0.02,
+            "batch_size": 12,
         },
         "cache.dynamic-before-static": {
             "node_id": "score",
@@ -749,6 +817,15 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "affected_workflow": "x.pflow.md",
             "batch_alias": "item",
             "first_dynamic_position": 0,
+        },
+        "cache.batch-prewarm-below-min": {
+            "node_id": "score",
+            "affected_workflow": "x.pflow.md",
+            "model": "anthropic/claude-sonnet-4-5",
+            "prefix_tokens": 27,
+            "min_tokens": 1024,
+            "batch_alias": "item",
+            "provider_note": "cache_control markers will silently no-op at the provider",
         },
         "cache.consolidate-to-root-recommended": {
             "root": "concept",
@@ -833,11 +910,8 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
 
 
 # test_context_passthrough_fidelity removed: ``Diagnostic.context = {**kwargs}``
-# means every kwarg is preserved by construction. The dispatch tests above
-# (``test_make_discrepancy_diagnostic_dispatches_*`` lines 246-300) cover the
-# typed payload structure for each ``cache.discrepancy`` root_cause via
-# ``make_diagnostic`` against the actual dispatch table — that's the
-# production-shaped invariant.
+# means every kwarg is preserved by construction. The per-ID round-trip below
+# covers ``make_diagnostic`` against the actual catalog rows.
 
 
 @pytest.mark.parametrize("warning_id", sorted(CACHE_WARNING_CATALOG.keys()))

@@ -2,7 +2,7 @@
   "format_version": "2.1.0",
   "execution_id": "f2824480-bd88-4374-912e-3fdad67ec1d6",
   "workflow_name": "smoke-with-cache",
-  "workflow_path": "/Users/andfal/projects/pflow-feat-prompt-caching/scratchpads/stage2-verification/anthropic-smoke/smoke-with-cache.pflow.md",
+  "workflow_path": ".taskmaster/tasks/task_159/baseline/_shared/workflows/smoke-with-cache.pflow.md",
   "start_time": "2026-05-01T14:46:03.050565",
   "end_time": "2026-05-01T14:46:08.809284",
   "duration_ms": 5758.7,

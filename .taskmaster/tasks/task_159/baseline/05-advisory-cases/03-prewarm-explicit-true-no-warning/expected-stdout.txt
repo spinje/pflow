@@ -1,5 +1,5 @@
 {
-  "format_version": "4.1",
+  "format_version": "4.2",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -45,6 +45,8 @@
       "excluded_nodes": []
     },
     "trace_coverage": "none",
+    "trace_final_status": null,
+    "trace_recorded_at": null,
     "evidence_scope": "static_analysis",
     "trace_llm_nodes_static": 1,
     "trace_llm_nodes_executed": 0,
@@ -56,7 +58,7 @@
     "total_llm_nodes_estimated": 1,
     "total_llm_invocations_estimated": null,
     "dynamic_batch_node_count": 1,
-    "total_input_tokens_estimated": 26,
+    "total_input_tokens_estimated": 6024,
     "total_cacheable_tokens_estimated": 0,
     "models_in_use": [
       "anthropic/claude-sonnet-4-5"
@@ -79,7 +81,7 @@
     "root_llm_node_count": 1,
     "sub_workflow_llm_node_count": 0,
     "sub_workflow_rollup": null,
-    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md items=<value>"
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md context=<value> items=<value>"
   },
   "blocking_errors": [],
   "other_blocking_errors": [],
@@ -92,7 +94,9 @@
       "model": "anthropic/claude-sonnet-4-5",
       "is_batch": true,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 26,
+      "input_tokens_estimated": 6024,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 6024,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,

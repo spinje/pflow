@@ -1,4 +1,19 @@
-"""Unified detector for prompt-cache content below provider thresholds."""
+"""Detectors for prompt-cache content below provider thresholds.
+
+Two analyzer-facing detectors share the provider-min lookup and
+provider-note helper:
+
+* ``detect`` (declared cache): fires when a node has ``prompt_cache:`` AND
+  the declared chunks resolve to bytes below the provider's minimum.
+* ``detect_batch_prewarm_below_min`` (prewarm without declared cache):
+  fires when a batch node has ``prewarm: true`` AND the static prefix
+  before the first per-item ref is below the provider's minimum.
+
+The two paths differ in remediation: declared-cache callers grow the
+``## Cache`` block or drop ``prompt_cache:``; prewarm callers restructure
+the prompt prefix or remove ``- prewarm: true``. Keeping the detectors
+separate keeps each finding's agent-facing prose honest.
+"""
 
 from __future__ import annotations
 
@@ -41,6 +56,33 @@ class BelowMinTokensFinding:
     provider_note: str
 
 
+@dataclass(frozen=True)
+class BatchPrewarmBelowMinEvidence:
+    """Inputs for analyzer-predicted prewarm-prefix-too-short detection."""
+
+    node_id: str
+    model: str
+    prefix_tokens: int
+    batch_alias: str
+
+
+@dataclass(frozen=True)
+class BatchPrewarmBelowMinFinding:
+    """Finding for ``cache.batch-prewarm-below-min``.
+
+    Analyzer-only — the runtime cannot observe the byte boundary between
+    the static prefix and the first per-item reference, so there is no
+    observed counterpart.
+    """
+
+    node_id: str
+    model: str
+    min_tokens: int
+    prefix_tokens: int
+    batch_alias: str
+    provider_note: str
+
+
 def detect(evidence: BelowMinTokensEvidence) -> BelowMinTokensFinding | None:
     """Return a below-minimum finding when supplied evidence proves one."""
     if not evidence.declared_prompt_cache or not evidence.model:
@@ -75,6 +117,34 @@ def detect(evidence: BelowMinTokensEvidence) -> BelowMinTokensFinding | None:
         evidence_kind="predicted",
         cacheable_tokens=evidence.estimated_tokens,
         provider_note=provider_note,
+    )
+
+
+def detect_batch_prewarm_below_min(
+    evidence: BatchPrewarmBelowMinEvidence,
+) -> BatchPrewarmBelowMinFinding | None:
+    """Return a finding when a prewarm batch's static prefix is below the
+    provider minimum.
+
+    Caller contract: only invoke with ``prefix_tokens > 0`` — the zero-prefix
+    case is owned by ``cache.prewarm-no-prefix`` and conflating them would
+    double-emit. The detector still defends against bad callers by returning
+    ``None`` for non-positive prefixes.
+    """
+    if not evidence.model:
+        return None
+    if evidence.prefix_tokens <= 0:
+        return None
+    threshold = get_min_cache_tokens(evidence.model)
+    if evidence.prefix_tokens >= threshold:
+        return None
+    return BatchPrewarmBelowMinFinding(
+        node_id=evidence.node_id,
+        model=evidence.model,
+        min_tokens=threshold,
+        prefix_tokens=evidence.prefix_tokens,
+        batch_alias=evidence.batch_alias,
+        provider_note=_provider_note(evidence.model),
     )
 
 

@@ -23,7 +23,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable, Iterable, Mapping
+import os
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,7 +64,9 @@ from pflow.core.workflow_id import synthesize_inline_workflow_id
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .below_min_tokens_detector import (
+    BatchPrewarmBelowMinEvidence,
     BelowMinTokensEvidence,
+    detect_batch_prewarm_below_min,
 )
 from .below_min_tokens_detector import (
     detect as detect_below_min_tokens,
@@ -76,11 +79,25 @@ from .token_estimation import (
     estimate_cacheable_tokens,
     estimate_output_tokens,
     estimate_tokens,
+    tokenize_prompt_region,
+    tokenize_prompt_region_lower_bound,
+)
+from .token_estimation import (
+    build_shared_store_for_refs as _build_shared_store_for_refs,
+)
+from .token_estimation import (
+    extract_unique_refs as _extract_unique_refs,
 )
 from .view_helpers import per_call_row_has_real_data
 from .warning_catalog import CACHE_WARNING_CATALOG, make_diagnostic
 
 logger = logging.getLogger(__name__)
+
+_SUGGESTED_BLOCK_ACTIONABLE: str = "actionable"
+_SUGGESTED_BLOCK_BELOW_THRESHOLD: str = "below_threshold"
+_SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE: str = "evidence_incomplete"
+_SUGGESTED_BLOCK_INSUFFICIENT_NODES: str = "insufficient_nodes"
+_PARENT_PROSE_PREVIEW_LIMIT = 40
 
 
 # ---------------------------------------------------------------------------
@@ -92,17 +109,25 @@ logger = logging.getLogger(__name__)
 class CrossWorkflowInputContribution:
     """One cross-workflow value contributing to a per-call row projection.
 
-    Carries both the child-side input name (what the agent declares in the
-    child's ``## Cache``) and the parent-side value expression (where the
-    value originates upstream). Renderers pick whichever name fits the
-    context — the per-call row uses ``child_input_name``; the action body
-    surfaces ``parent_value_expr`` when it differs from the child name.
+    Carries both the child-side cache ref (what the agent declares in the
+    child's ``## Cache``) and the boundary input name (where that ref entered
+    the child workflow). Renderers use ``child_cache_ref`` for action text and
+    keep ``child_input_name`` as data-flow metadata.
     """
 
     child_input_name: str
     tokens_per_call: int | None
     model: str
     parent_value_expr: str | None = None
+    child_cache_ref: str | None = None
+    parent_cache_ref: str | None = None
+    parent_prose: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.child_cache_ref is None:
+            object.__setattr__(self, "child_cache_ref", self.child_input_name)
+        if self.parent_cache_ref is None:
+            object.__setattr__(self, "parent_cache_ref", self.parent_value_expr)
 
 
 @dataclass(frozen=True)
@@ -198,12 +223,21 @@ class PerCallRow:
     # row stays node-scoped while these fields preserve exact-model truth.
     observed_models: tuple[str, ...] = ()
     observed_call_count: int = 0
+    # Resolved declared ``## Cache`` chunk content included in
+    # ``input_tokens_estimated``. Consumers that need prompt-body-only costs
+    # derive them from the total instead of maintaining a second total.
+    chunk_tokens_estimated: int = 0
     # Stage 0.3 (Task 159): the inline ``warnings: tuple[str, ...]`` field was
     # vestigial — single production producer never populated it; renderer
     # fallbacks at ``render_text.py:497, 617`` and the JSON ``per_call.warnings``
     # key were dead. Per-row inline warning markers are derived at render time
     # from ``analysis.warnings`` filtered by node_id (see
     # ``render_text._render_per_call``).
+
+    @property
+    def body_tokens_estimated(self) -> int:
+        """Resolved prompt-body tokens, excluding declared cache chunk content."""
+        return self.input_tokens_estimated - self.chunk_tokens_estimated
 
 
 @dataclass(frozen=True)
@@ -255,6 +289,7 @@ class RecommendedAction:
     # message (safety net for diagnostics not yet catalog-driven).
     headline: str = ""
     suggestions: tuple[str, ...] = ()
+    context: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -262,7 +297,7 @@ class _PromptStaticTailFinding:
     dynamic_ref: str
     dynamic_line: int
     stable_tail_tokens: int
-    tokens_before_dynamic: int
+    tokens_before_dynamic: int | None
     template_refs_after_dynamic: int
     static_tail_excerpt: str
 
@@ -509,6 +544,16 @@ class AnalysisSummary:
     # keys). Renderers use it on unavailable-cost branches so agents see
     # the exact command that lights up cost figures.
     suggested_run_command: str | None = None
+    # Trace transparency (Bug 1 + Bug 10 follow-ups): when a trace was loaded
+    # (autoload or ``--from-trace``), surface its final outcome + recording
+    # timestamp so the agent can see at a glance which run produced the
+    # evidence being used. ``trace_final_status`` mirrors
+    # ``trace["final_status"]`` with the same back-compat fallback as
+    # ``_trace_coverage_for_rows`` (absent → ``"success"``); ``trace_recorded_at``
+    # is the ISO ``start_time`` from the trace JSON. Both ``None`` when no
+    # trace is loaded.
+    trace_final_status: str | None = None
+    trace_recorded_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -590,20 +635,8 @@ def analyze(
 
     trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
     ir_default_model = get_default_workflow_model()
-    # Auto-load only: if the workflow's current root-level LLM context drifted
-    # from the trace's recorded context, fall back to greenfield analysis and
-    # surface a note so agents can see why the auto-loaded trace was rejected.
-    # Mirrors the misalignment-fallback notes-entry pattern below; honest-
-    # unmeasurable convention — drift IS the measurement, not silent skip.
-    # Explicit ``--from-trace`` bypasses this gate.
-    if trace_path is None and trace_data is not None and not _trace_aligns_with_ir(trace_data, workflow_ir):
-        notes.append(
-            "Auto-loaded trace's root LLM context drifted from the current workflow "
-            "(renamed/added/removed root LLM nodes, or model swap); ignored. "
-            "Pass `--from-trace <path>` to use a specific trace anyway."
-        )
-        trace_data = None
-        used_trace_path = None
+
+    trace_root_workflow_path, scope_mismatch = _resolve_trace_scope(trace_data, lookup_path, notes)
 
     cache_block = workflow_ir.get("cache")
     declared_chunks = _extract_declared_chunks(cache_block)
@@ -618,7 +651,7 @@ def analyze(
     if dynamic_batch_note is not None:
         notes.append(dynamic_batch_note)
     edge_child_paths = _edge_child_paths(cw_result)
-    trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
+    trace_index = _build_trace_execution_index(trace_data, trace_root_workflow_path, edge_child_paths)
     parameters_by_workflow = _build_parameters_by_workflow(
         cw_result,
         parameters or {},
@@ -660,9 +693,12 @@ def analyze(
     # under the final_status discriminator but is misaligned for THIS analysis
     # call. Explicit ``--from-trace`` bypasses this gate (agent's choice).
     if trace_path is None and any(row.did_not_execute_in_trace for row in per_call_rows):
-        notes.append("Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis.")
+        notes.append(_format_rejection_note(used_trace_path, trace_data))
         trace_data = None
         used_trace_path = None
+        # trace_data is None here; the function short-circuits, but pass
+        # ``lookup_path`` (not trace_root_workflow_path) so the unused seed
+        # value matches the no-trace conceptual scope.
         trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
         parameters_by_workflow = _build_parameters_by_workflow(
             cw_result,
@@ -688,6 +724,20 @@ def analyze(
         )
         per_call_rows = per_call_result.rows
         warnings = per_call_result.warnings
+
+    # Per-node model-drift detection. Replaces the prior whole-trace drift gate
+    # (deleted): structural drift (renamed/added/removed nodes) now degrades
+    # per-row via ``PerCallRow.data_source``; only model drift needs explicit
+    # disclosure because ``_resolve_effective_row_model`` declares "trace wins"
+    # and projections would silently use stale pricing.
+    drift_note = _detect_per_node_model_drift(
+        per_call_rows,
+        getattr(cw_result, "irs_by_workflow", {}) or {ctx.workflow_path: dict(ctx.workflow_ir)},
+        ir_default_model,
+    )
+    if drift_note is not None:
+        notes.append(drift_note)
+
     # Root-only by design: suggested-block, padding, and consolidate advisories
     # edit the analyzed file's ## Cache block. Child workflow recommendations
     # are exposed through the per-call rollup plus renderer drill-in commands
@@ -785,6 +835,18 @@ def analyze(
 
     # --- Confidence aggregation (STRICT per DD#34) ---------------------------
     confidence, coverage = _aggregate_confidence(per_call_rows)
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None] = {
+        (row.workflow_path, row.node_path): row.output_tokens_estimated for row in per_call_rows
+    }
+    ttl_by_workflow = _cache_ttl_by_workflow(cw_result, fallback_workflow_path=lookup_path, fallback_cache=cache_block)
+    _enrich_shadow_warnings_with_costs(
+        rows=per_call_rows,
+        warnings=warnings,
+        output_tokens_by_node=output_tokens_by_node,
+        ttl_by_workflow=ttl_by_workflow,
+    )
+
+    scope_workflow_paths = _scope_workflow_paths(scope_mismatch, lookup_path, per_call_rows)
 
     summary = _build_summary(
         per_call_rows,
@@ -793,6 +855,7 @@ def analyze(
         ctx=ctx,
         edge_child_paths=edge_child_paths,
         ir_default_model=ir_default_model,
+        scope_workflow_paths=scope_workflow_paths,
     )
     summary = replace(
         summary,
@@ -896,31 +959,51 @@ def _load_trace_explicit(path: Path, notes: list[str]) -> dict[str, Any] | None:
     return data
 
 
-def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
-    """Find the newest 2.x trace whose ``workflow_path`` matches.
+def _format_rejection_note(
+    rejected_trace_path: str | None,
+    trace_data: dict[str, Any] | None,
+) -> str:
+    """Compose the Notes line emitted when the post-row-build gate rejects
+    an auto-loaded trace.
 
-    O(matching-traces) lookup, not O(directory-size): trace filenames encode
-    an 8-char md5 hash of ``workflow_path`` at write time (see
-    ``runtime/workflow_trace.format_trace_filename``). The reader globs by the
-    same hash prefix so we only read files that could match.
-
-    Per DD#34, auto-load is a convenience; explicit loading
-    (``--from-trace <path>``) is the contract.
-
-    When auto-load finds no match but other traces exist in the debug dir
-    (e.g. the workflow file was renamed/moved since traces were recorded),
-    appends a Notes line so the agent knows their evidence is unreachable
-    via auto-load and can pass ``--from-trace`` explicitly.
+    Names the rejected file + its run status so the agent can decide
+    whether to override with ``--from-trace`` or re-run. Used by the
+    rejection branch in ``analyze()``; extracted for C901.
     """
-    if workflow_path is None:
-        return None, None
-    debug_dir = Path.home() / ".pflow" / "debug"
-    if not debug_dir.exists():
-        return None, None
+    rejected_name = Path(rejected_trace_path).name if rejected_trace_path else None
+    rejected_status = str(trace_data.get("final_status") or "success") if isinstance(trace_data, dict) else "unknown"
+    if rejected_name:
+        return (
+            f"Auto-loaded trace `{rejected_name}` ({rejected_status}) did not "
+            f"cover all root LLM nodes (some root LLM nodes have no matching "
+            f"events — workflow may have been edited since the trace was "
+            f"recorded). Ignored for workflow-wide cache analysis. Pass "
+            f"`--from-trace <path>` to inspect a specific trace anyway."
+        )
+    # Defensive fallback — unreachable under current code paths (``trace_path
+    # is None`` here implies autoload ran AND set ``used_trace_path``), but
+    # preserve the original wording so any future regression is recognizable.
+    return "Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis."
 
+
+def _collect_candidate_traces(
+    debug_dir: Path,
+    workflow_path: str,
+) -> tuple[list[tuple[Path, dict[str, Any]]], list[tuple[Path, dict[str, Any]]]]:
+    """Walk ``debug_dir`` for 2.x traces matching ``workflow_path``; bucket by run outcome.
+
+    Returned tuple is ``(successful, failed)``, each newest-first by filename
+    (which embeds the recording timestamp). Absent ``final_status`` routes to
+    the successful bucket — matches the back-compat fallback at
+    ``_trace_coverage_for_rows`` and preserves selection for pre-2.1.0 traces.
+
+    Extracted from ``_autoload_trace`` for C901 — the trace-walking +
+    health-filter loop is independent of the rank-aware selection policy.
+    """
     wf_hash = hashlib.md5(workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
     pattern = f"workflow-trace-{wf_hash}-*.json"
-
+    successful: list[tuple[Path, dict[str, Any]]] = []
+    failed: list[tuple[Path, dict[str, Any]]] = []
     for trace_file in sorted(debug_dir.glob(pattern), reverse=True):
         try:
             data = json.loads(trace_file.read_text(encoding="utf-8"))
@@ -933,8 +1016,74 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
         # for trace files, but the inner check makes it impossible.
         if data.get("workflow_path") != workflow_path:
             continue
-        if str(data.get("format_version", "")).startswith("2."):
-            return data, str(trace_file)
+        if not str(data.get("format_version", "")).startswith("2."):
+            continue
+        status = str(data.get("final_status") or "success")
+        bucket = failed if status == "failed" else successful
+        bucket.append((trace_file, data))
+    return successful, failed
+
+
+def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
+    """Find the best matching 2.x trace for ``workflow_path``.
+
+    O(matching-traces) lookup, not O(directory-size): trace filenames encode
+    an 8-char md5 hash of ``workflow_path`` at write time (see
+    ``runtime/workflow_trace.format_trace_filename``). The reader globs by the
+    same hash prefix so we only read files that could match.
+
+    Per DD#34, auto-load is a convenience; explicit loading
+    (``--from-trace <path>``) is the contract.
+
+    Selection ranks ``final_status in {"success", "degraded"}`` over
+    ``"failed"`` (Bug 10: a newer failed run should not shadow an older
+    successful one). Within a tier, newest-by-filename-timestamp wins. Absent
+    ``final_status`` is treated as ``"success"`` for backward-compat with
+    pre-2.1 traces and synthetic test fixtures — matches the existing
+    fallback at ``_trace_coverage_for_rows``.
+
+    Discloses the choice via Notes when ranking caused a non-newest pick, OR
+    when only failed traces exist (so the agent knows recommendations may be
+    suppressed downstream).
+
+    When auto-load finds no match but other traces exist in the debug dir
+    (e.g. the workflow file was renamed/moved since traces were recorded),
+    appends a Notes line so the agent knows their evidence is unreachable
+    via auto-load and can pass ``--from-trace`` explicitly.
+    """
+    if workflow_path is None:
+        return None, None
+    debug_dir = Path.home() / ".pflow" / "debug"
+    if not debug_dir.exists():
+        return None, None
+
+    successful, failed = _collect_candidate_traces(debug_dir, workflow_path)
+
+    if successful:
+        chosen_file, chosen_data = successful[0]
+        # Bug 10 disclosure: newer failed trace was skipped in favor of an
+        # older success. Both filenames make the choice auditable for the
+        # agent; ``--from-trace`` is the escape hatch.
+        if failed and failed[0][0].name > chosen_file.name:
+            notes.append(
+                f"Skipped newer trace `{failed[0][0].name}` (failed run) in "
+                f"favor of `{chosen_file.name}` (success). Pass "
+                f"`--from-trace <path>` to override."
+            )
+        return chosen_data, str(chosen_file)
+
+    if failed:
+        chosen_file, chosen_data = failed[0]
+        # Failed trace selected only because no success exists. Downstream
+        # truncated-trace suppression already gates recommendations honestly;
+        # this disclosure routes the agent to the unblocking action.
+        notes.append(
+            f"Auto-loaded `{chosen_file.name}` (failed run); no successful "
+            f"trace exists for this workflow. Trace-dependent recommendations "
+            f"may be suppressed. Re-run the workflow to record a successful "
+            f"trace, or pass `--from-trace <path>` to use a specific trace."
+        )
+        return chosen_data, str(chosen_file)
 
     # No hash-scoped match. If the debug dir holds unrelated traces, surface
     # that so the agent doesn't read greenfield output as "no evidence
@@ -947,91 +1096,6 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
             "re-run the workflow to record a new one."
         )
     return None, None
-
-
-def _trace_aligns_with_ir(trace_data: Mapping[str, Any], workflow_ir: Mapping[str, Any]) -> bool:
-    """Return whether an auto-loaded trace matches the current root LLM IR.
-
-    The comparison is intentionally explicit instead of fingerprint based:
-    root-level LLM node ids must match exactly, and statically-known IR models
-    must be present in the trace's observed root models. Templated IR models
-    are excluded because runtime batch values are not knowable from the IR
-    alone.
-    """
-    trace_node_ids, trace_models = _collect_root_trace_llm_context(trace_data)
-    if not trace_node_ids:
-        return True
-
-    if trace_node_ids != _collect_ir_llm_node_ids(workflow_ir):
-        return False
-
-    ir_models = _collect_ir_static_llm_models(workflow_ir)
-    return not ir_models or ir_models <= trace_models
-
-
-def _collect_root_trace_llm_context(trace_data: Mapping[str, Any]) -> tuple[set[str], set[str]]:
-    """Collect root-level executed LLM ``(node_id, model)`` context.
-
-    Cached subtrees and sub-workflow descendants are excluded because this gate
-    is only deciding whether a root workflow should auto-load a trace that
-    actually ran for the same root LLM context.
-    """
-    from pflow.core.trace_tree import TraceTree
-
-    try:
-        tree = TraceTree.from_dict(trace_data)
-    except (TypeError, ValueError):
-        return set(), set()
-
-    node_ids: set[str] = set()
-    models: set[str] = set()
-    for leaf in tree.iter_llm_leaves(
-        descend_sub_workflows=False,
-        descend_cached_subtrees=False,
-    ):
-        node_id = leaf.owner_node_id if leaf.tier == "batch_item" else leaf.event_node_id
-        if node_id and node_id != "unknown":
-            node_ids.add(node_id)
-        call = leaf.llm_call
-        if call is None:
-            continue
-        model = call.get("model")
-        if isinstance(model, str) and model:
-            models.add(normalize_model_name(model))
-    return node_ids, models
-
-
-def _collect_ir_llm_node_ids(workflow_ir: Mapping[str, Any]) -> set[str]:
-    """Collect root LLM node ids from the current parent workflow IR."""
-    out: set[str] = set()
-    for node in workflow_ir.get("nodes", []) or []:
-        if not _is_llm_node(node):
-            continue
-        node_id = node.get("id")
-        if isinstance(node_id, str) and node_id:
-            out.add(node_id)
-    return out
-
-
-def _collect_ir_static_llm_models(workflow_ir: Mapping[str, Any]) -> set[str]:
-    """Collect statically resolvable root LLM models from current IR."""
-    out: set[str] = set()
-    has_unspecified = False
-    for node in workflow_ir.get("nodes", []) or []:
-        if not _is_llm_node(node):
-            continue
-        explicit = node.get("params", {}).get("model") or node.get("model")
-        if isinstance(explicit, str) and "${" in explicit:
-            continue
-        if explicit:
-            out.add(normalize_model_name(str(explicit)))
-        else:
-            has_unspecified = True
-    if has_unspecified:
-        default = get_default_workflow_model()
-        if default:
-            out.add(normalize_model_name(default))
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1047,16 +1111,99 @@ def _resolve_trace_data(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Load trace data via explicit path or autoload, returning ``(data, path)``.
 
-    The auto-load result may be discarded by the drift gate in ``analyze()``
-    (immediately after the call site) when current IR's root LLM context
-    differs from the trace's recorded context. Explicit ``trace_path`` is
-    never gated.
+    Trace validity is enforced per-row via ``PerCallRow.data_source`` — rows
+    without a matching trace event fall through to memo/estimator/heuristic.
+    Per-node model drift (trace recorded with a different model than the
+    current IR resolves to) surfaces via the model-drift Notes detector below.
     """
     if trace_path is not None:
         return _load_trace_explicit(trace_path, notes), str(trace_path)
     if auto_load_trace:
         return _autoload_trace(lookup_path, notes)
     return None, None
+
+
+def _resolve_trace_scope(
+    trace_data: dict[str, Any] | None,
+    lookup_path: str,
+    notes: list[str],
+) -> tuple[str, bool]:
+    """Determine the trace's root workflow path and whether scope is mismatched.
+
+    Bug 5: when a trace was recorded for a parent workflow that invoked the
+    analyzed workflow as a sub-workflow, the trace's ``workflow_path`` is the
+    parent's. Top-level events seeded with the analyzed workflow's path
+    look like they belong to the analyzed workflow (which they don't), so
+    cost summation includes them — producing the bug's nonsense ratios.
+
+    Returns ``(trace_root_workflow_path, scope_mismatch)``:
+
+    - When the trace's stored path refers to the same workflow as
+      ``lookup_path`` (relative vs absolute representations of the same
+      file): returns ``(lookup_path, False)``. Walker seed matches row
+      workflow_paths byte-exactly so per-row attribution works.
+    - When the trace's stored path refers to a different workflow: returns
+      ``(trace's stored path, True)``. Walker seed is the trace's actual
+      root so top-level events get correctly attributed to the parent
+      (not the analyzed child). The ``True`` flag activates per-workflow
+      scope filtering in ``compute_actually_paid`` and emits a Notes
+      disclosure.
+
+    Path identity uses ``_workflow_paths_refer_to_same`` (resolves relative
+    vs absolute via ``os.path.realpath``; ``ir-hash:`` synthetic ids
+    compare byte-exact).
+    """
+    raw_trace_root = (trace_data.get("workflow_path") if trace_data else None) or lookup_path
+    if trace_data is None or _workflow_paths_refer_to_same(raw_trace_root, lookup_path):
+        return lookup_path, False
+    notes.append(
+        f"The trace file references workflow `{raw_trace_root}`, which differs from the "
+        f"analyzed workflow `{lookup_path}`; cost figures show only events attributable "
+        f"to the analyzed workflow and its sub-workflows."
+    )
+    return raw_trace_root, True
+
+
+def _scope_workflow_paths(
+    scope_mismatch: bool,
+    lookup_path: str,
+    per_call_rows: list[PerCallRow],
+) -> frozenset[str] | None:
+    """Build the scope set for ``compute_actually_paid``'s event filter.
+
+    Returns ``None`` when trace root matches the analyzed workflow — preserves
+    tree-wide sum (today's common-case behavior). Returns the set of workflow
+    paths reachable from the analyzed workflow (the analyzed path plus every
+    statically-known child's path, derived from per-call rows) when scope
+    mismatch was detected; events with paths outside this set get filtered.
+    """
+    if not scope_mismatch:
+        return None
+    return frozenset({lookup_path} | {r.workflow_path for r in per_call_rows if r.workflow_path is not None})
+
+
+def _workflow_paths_refer_to_same(a: str | None, b: str | None) -> bool:
+    """Best-effort equality for workflow paths in scope-mismatch detection.
+
+    Handles three shapes:
+
+    - **Same string**: trivially equal.
+    - **Synthetic inline ids** (``ir-hash:<md5>``): compared as strings; never
+      normalized as filesystem paths.
+    - **Filesystem paths**: relative vs absolute can refer to the same file
+      (trace stores cwd-relative path; analyzer is called with absolute).
+      ``os.path.realpath`` resolves both to canonical absolute form without
+      requiring the file to exist.
+
+    Empty / None / mixed-shape values are treated as different.
+    """
+    if not a or not b:
+        return a == b
+    if a == b:
+        return True
+    if a.startswith("ir-hash:") or b.startswith("ir-hash:"):
+        return False
+    return os.path.realpath(a) == os.path.realpath(b)
 
 
 def _extract_declared_chunks(cache_block: Any) -> list[str]:
@@ -1067,6 +1214,103 @@ def _extract_declared_chunks(cache_block: Any) -> list[str]:
     if not isinstance(items, list):
         return []
     return [item.get("name", "") for item in items if isinstance(item, dict) and item.get("name")]
+
+
+def _resolve_ir_static_model_for_node(
+    node: Mapping[str, Any] | None,
+    default_model: str | None,
+) -> str | None:
+    """Return the IR-static model for a single LLM node, or ``None`` if unresolvable.
+
+    Templated ``${var}`` models return ``None`` (heterogeneous batch — model
+    varies per item; comparing against trace would be meaningless). Missing
+    explicit model falls back to the workflow default.
+    """
+    if node is None:
+        return None
+    explicit = node.get("params", {}).get("model") or node.get("model")
+    if isinstance(explicit, str) and "${" in explicit:
+        return None
+    if explicit:
+        return normalize_model_name(str(explicit))
+    if default_model:
+        return normalize_model_name(default_model)
+    return None
+
+
+def _row_model_drift(
+    row: PerCallRow,
+    irs_by_workflow: Mapping[str, Mapping[str, Any]],
+    default_model: str | None,
+) -> tuple[str, str] | None:
+    """Return ``(trace_model, ir_model)`` if this row has drift, else ``None``.
+
+    Skip conditions (all return ``None``): heterogeneous row, ambiguous or
+    missing trace model, missing workflow_path/IR, templated or absent
+    IR-static model, normalized models equal.
+    """
+    if row.model_is_heterogeneous or len(row.observed_models) != 1:
+        return None
+    trace_model = normalize_model_name(row.observed_models[0])
+    if not trace_model or row.workflow_path is None:
+        return None
+    ir = irs_by_workflow.get(row.workflow_path)
+    if ir is None:
+        return None
+    ir_node = next(
+        (n for n in (ir.get("nodes") or []) if isinstance(n, dict) and n.get("id") == row.node_path),
+        None,
+    )
+    ir_model = _resolve_ir_static_model_for_node(ir_node, default_model)
+    if ir_model is None or ir_model == trace_model:
+        return None
+    return trace_model, ir_model
+
+
+def _detect_per_node_model_drift(
+    per_call_rows: Sequence[PerCallRow],
+    irs_by_workflow: Mapping[str, Mapping[str, Any]],
+    default_model: str | None,
+) -> str | None:
+    """Detect per-node model drift between trace and current IR.
+
+    Compares each per-call row's single trace-observed model against the
+    IR-static model for that node. Returns one grouped Notes string when any
+    drift is found, else ``None``.
+
+    Why this matters: ``_resolve_effective_row_model`` declares "trace wins"
+    so ``row.model`` and downstream projections use trace-side pricing. If the
+    workflow's model changed after the trace was recorded, projections silently
+    misprice. Actually-paid (from recorded ``cost_usd``) is correct regardless.
+    """
+    drifts: list[tuple[str, str, str]] = []  # (node_id, trace_model, ir_model)
+    seen: set[tuple[str | None, str]] = set()
+    for row in per_call_rows:
+        key = (row.workflow_path, row.node_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        drift = _row_model_drift(row, irs_by_workflow, default_model)
+        if drift is not None:
+            drifts.append((row.node_path, drift[0], drift[1]))
+
+    if not drifts:
+        return None
+
+    if len(drifts) == 1:
+        node_id, trace_model, ir_model = drifts[0]
+        return (
+            f"Trace was recorded with model `{trace_model}` for node `{node_id}`; "
+            f"current workflow declares `{ir_model}`. Actually-paid is correct; "
+            f"cost projections use trace-side pricing. Re-record a trace to refresh."
+        )
+
+    items = ", ".join(f"`{node_id}` ({trace_model} → {ir_model})" for node_id, trace_model, ir_model in drifts)
+    return (
+        f"Trace was recorded with different models than current workflow for "
+        f"{len(drifts)} nodes: {items}. Actually-paid is correct; "
+        f"cost projections use trace-side pricing. Re-record a trace to refresh."
+    )
 
 
 def _extract_cache_ttl(cache_block: Any) -> str | None:
@@ -1083,6 +1327,30 @@ def _extract_cache_ttl(cache_block: Any) -> str | None:
     except ValueError:
         return None
     return ttl_value
+
+
+def _cache_ttl_by_workflow(
+    cw_result: Any,
+    *,
+    fallback_workflow_path: str,
+    fallback_cache: Any,
+) -> Mapping[str | None, str | None]:
+    """Map workflow path to its own cache TTL for row-scoped pricing.
+
+    Inline / synthesized workflows surface as rows with ``workflow_path=None``;
+    their TTL falls back to the analyzed workflow's cache block so Anthropic
+    1h declarations don't silently revert to the default write rate.
+    """
+    irs_by_workflow = getattr(cw_result, "irs_by_workflow", {}) or {}
+    result: dict[str | None, str | None] = {}
+    for workflow_path, workflow_ir in irs_by_workflow.items():
+        cache_block = workflow_ir.get("cache") if isinstance(workflow_ir, dict) else None
+        result[str(workflow_path)] = _extract_cache_ttl(cache_block)
+    fallback_ttl = _extract_cache_ttl(fallback_cache)
+    if fallback_workflow_path not in result:
+        result[fallback_workflow_path] = fallback_ttl
+    result.setdefault(None, fallback_ttl)
+    return result
 
 
 def _edge_child_paths(cw_result: Any) -> dict[str, str]:
@@ -1512,7 +1780,15 @@ def _build_per_call_rows_and_warnings(
             )
             rows.append(row)
             if not row.did_not_execute_in_trace:
-                warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks, nodes_by_id=nodes_by_id))
+                warnings.extend(
+                    _per_node_warnings(
+                        node,
+                        row,
+                        declared_chunks=declared_chunks,
+                        nodes_by_id=nodes_by_id,
+                        ctx=wf_ctx,
+                    )
+                )
     return _PerCallRowsResult(
         rows=rows,
         warnings=warnings,
@@ -1535,15 +1811,129 @@ def _build_call_counts_by_node(ctx: AnalysisContext, cw_result: Any) -> dict[tup
     return counts
 
 
+def _enrich_shadow_warnings_with_costs(
+    *,
+    rows: Sequence[PerCallRow],
+    warnings: Sequence[Diagnostic],
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None],
+    ttl_by_workflow: Mapping[str | None, str | None],
+) -> None:
+    """Attach body-only vs with-cache per-call costs to shadow warnings.
+
+    The validator owns the structural finding. Analyzer-tier enrichment adds
+    cost evidence only when pricing and output tokens are known; otherwise the
+    warning remains a pure structural suggestion.
+    """
+    rows_by_key = {(row.workflow_path, row.node_path): row for row in rows}
+    for diag in warnings:
+        _enrich_one_shadow_warning(
+            diag=diag,
+            rows=rows,
+            rows_by_key=rows_by_key,
+            output_tokens_by_node=output_tokens_by_node,
+            ttl_by_workflow=ttl_by_workflow,
+        )
+
+
+def _enrich_one_shadow_warning(
+    *,
+    diag: Diagnostic,
+    rows: Sequence[PerCallRow],
+    rows_by_key: Mapping[tuple[str | None, str], PerCallRow],
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None],
+    ttl_by_workflow: Mapping[str | None, str | None],
+) -> None:
+    from .cost_estimation import (
+        _per_call_body_only_cost,
+        _per_call_first_run_with_cache_cost,
+        get_model_pricing,
+    )
+
+    if diag.id != "cache.prompt-body-shadows-cache" or diag.context is None:
+        return
+    context = diag.context
+    cache_contains_body_pairs = _cache_contains_body_pairs(context.get("shadowing_pairs"))
+    node_id = context.get("node_id") or diag.node_id
+    if not cache_contains_body_pairs or not isinstance(node_id, str):
+        return
+    row = _row_for_shadow_warning(
+        rows=rows,
+        rows_by_key=rows_by_key,
+        affected_workflow=context.get("affected_workflow"),
+        node_id=node_id,
+    )
+    if row is None or not row.model:
+        return
+    pricing = get_model_pricing(row.model)
+    output_tokens = _output_tokens_for_row(row, output_tokens_by_node)
+    shadowed_chunks = _shadowed_chunk_names(cache_contains_body_pairs)
+    if pricing is None or output_tokens is None or not shadowed_chunks:
+        return
+
+    context["body_only_cost_usd_per_call"] = _per_call_body_only_cost(row, pricing, output_tokens)
+    context["with_cache_cost_usd_per_call"] = _per_call_first_run_with_cache_cost(
+        row,
+        pricing,
+        output_tokens,
+        ttl=_ttl_for_row(row, ttl_by_workflow),
+    )
+    context["shadowed_chunk_names"] = shadowed_chunks
+
+
+def _ttl_for_row(row: PerCallRow, ttl_by_workflow: Mapping[str | None, str | None]) -> str | None:
+    return ttl_by_workflow.get(row.workflow_path)
+
+
+def _output_tokens_for_row(
+    row: PerCallRow,
+    output_tokens_by_node: Mapping[tuple[str | None, str], int | None],
+) -> int | None:
+    return output_tokens_by_node.get((row.workflow_path, row.node_path))
+
+
+def _cache_contains_body_pairs(raw_pairs: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_pairs, list):
+        return []
+    return [pair for pair in raw_pairs if isinstance(pair, dict) and pair.get("direction") == "cache_contains_body"]
+
+
+def _row_for_shadow_warning(
+    *,
+    rows: Sequence[PerCallRow],
+    rows_by_key: Mapping[tuple[str | None, str], PerCallRow],
+    affected_workflow: Any,
+    node_id: str,
+) -> PerCallRow | None:
+    workflow_path = affected_workflow if isinstance(affected_workflow, str) else None
+    row = rows_by_key.get((workflow_path, node_id))
+    if row is not None:
+        return row
+    return next((candidate for candidate in rows if candidate.node_path == node_id), None)
+
+
+def _shadowed_chunk_names(pairs: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    return tuple(
+        sorted({
+            str(pair["chunk_name"])
+            for pair in pairs
+            if isinstance(pair.get("chunk_name"), str) and pair.get("chunk_name")
+        })
+    )
+
+
 @dataclass(frozen=True)
 class _RowCrossWorkflowCandidate:
     """Per-row cache opportunity from a cross-workflow boundary."""
 
     parent_workflow: str
     parent_value_expr: str
+    parent_cache_ref: str
     parent_node_id: str
     child_workflow: str
     child_input_name: str
+    child_cache_ref: str
+    parent_prose: str
+    child_node_ids: tuple[str, ...]
     estimated_tokens_per_call: int
     threshold_floor: int
 
@@ -1558,84 +1948,92 @@ def _build_cross_workflow_candidates_by_row(
     """Build row-level cross-workflow projections for trace-backed attribution."""
     candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] = {}
     for edge in getattr(cw_result, "edges", ()) or ():
-        candidate, consumer_node_ids = _row_cross_workflow_candidate_for_edge(
+        edge_candidates = _row_cross_workflow_candidates_for_edge(
             edge=edge,
             ctx=ctx,
             cw_result=cw_result,
             call_counts_by_node=call_counts_by_node,
             trace_index=trace_index,
         )
-        if candidate is None:
-            continue
-        for node_id in consumer_node_ids:
-            if call_counts_by_node.get((candidate.child_workflow, node_id), 0) <= 0:
-                continue
-            candidates_by_row.setdefault((candidate.child_workflow, node_id), []).append(candidate)
+        for candidate in edge_candidates:
+            for node_id in candidate.child_node_ids:
+                if call_counts_by_node.get((candidate.child_workflow, node_id), 0) <= 0:
+                    continue
+                candidates_by_row.setdefault((candidate.child_workflow, node_id), []).append(candidate)
     return candidates_by_row
 
 
-def _row_cross_workflow_candidate_for_edge(
+def _row_cross_workflow_candidates_for_edge(
     *,
     edge: Any,
     ctx: AnalysisContext,
     cw_result: Any,
     call_counts_by_node: dict[tuple[str | None, str], int],
     trace_index: TraceExecutionIndex,
-) -> tuple[_RowCrossWorkflowCandidate | None, tuple[str, ...]]:
-    """Return the gated row-level candidate for one cross-workflow edge."""
+) -> tuple[_RowCrossWorkflowCandidate, ...]:
+    """Return gated row-level candidates for one cross-workflow edge."""
     if getattr(edge, "is_batch_alias_root", False) or getattr(edge, "parent_value_expr", None) is None:
-        return None, ()
+        return ()
     child_workflow = str(edge.child_workflow)
     child_ir = cw_result.irs_by_workflow.get(child_workflow)
     if not child_ir:
-        return None, ()
+        return ()
     child_declared = set(_items_by_name(cw_result.cache_items_by_workflow.get(child_workflow, ())))
-    if edge.child_input_name in child_declared:
-        return None, ()
-    consumer_node_ids = tuple(_collect_llm_nodes_referencing_path(child_ir, edge.child_input_name))
-    if not consumer_node_ids:
-        return None, ()
-    total_invocations = _total_observed_invocations(
-        child_workflow=child_workflow,
-        child_node_ids=consumer_node_ids,
-        call_counts_by_node=call_counts_by_node,
-    )
-    if total_invocations < 2:
-        return None, ()
-    child_models = _resolved_models_for_child(
-        child_ir,
-        workflow_path=child_workflow,
-        node_ids=consumer_node_ids,
-        trace_index=trace_index,
-    )
-    if not child_models:
-        return None, ()
-    strictest_model = max(child_models, key=get_min_cache_tokens)
-    threshold_floor = get_min_cache_tokens(strictest_model)
-    token_estimate = _estimate_parent_value_tokens(
-        parent_workflow=edge.parent_workflow,
-        parent_value_expr=edge.parent_value_expr or "",
-        parent_node_id=edge.parent_node_id,
-        child_workflow=child_workflow,
-        child_input_name=edge.child_input_name,
-        model=strictest_model,
-        ctx=ctx,
-        cw_result=cw_result,
-    )
-    if token_estimate is None or token_estimate <= 0:
-        return None, ()
-    return (
-        _RowCrossWorkflowCandidate(
+    parent_items_by_name = _items_by_name(cw_result.cache_items_by_workflow.get(edge.parent_workflow, ()))
+    candidates: list[_RowCrossWorkflowCandidate] = []
+    for use in _child_cache_ref_consumers(child_ir, edge.child_input_name):
+        if _cache_ref_is_declared_or_covered(use.child_cache_ref, child_declared):
+            continue
+        total_invocations = _total_observed_invocations(
+            child_workflow=child_workflow,
+            child_node_ids=use.consumer_node_ids,
+            call_counts_by_node=call_counts_by_node,
+        )
+        if total_invocations < 2:
+            continue
+        child_models = _resolved_models_for_child(
+            child_ir,
+            workflow_path=child_workflow,
+            node_ids=use.consumer_node_ids,
+            trace_index=trace_index,
+        )
+        if not child_models:
+            continue
+        strictest_model = max(child_models, key=get_min_cache_tokens)
+        threshold_floor = get_min_cache_tokens(strictest_model)
+        parent_cache_ref = _append_child_suffix(
+            edge.parent_value_expr or "", edge.child_input_name, use.child_cache_ref
+        )
+        parent_prose = _parent_prose_for_cache_ref(parent_items_by_name, parent_cache_ref)
+        token_estimate = _estimate_parent_value_tokens(
             parent_workflow=edge.parent_workflow,
-            parent_value_expr=edge.parent_value_expr or "",
+            parent_value_expr=parent_cache_ref,
             parent_node_id=edge.parent_node_id,
             child_workflow=child_workflow,
             child_input_name=edge.child_input_name,
-            estimated_tokens_per_call=token_estimate,
-            threshold_floor=threshold_floor,
-        ),
-        consumer_node_ids,
-    )
+            child_cache_ref=use.child_cache_ref,
+            model=strictest_model,
+            ctx=ctx,
+            cw_result=cw_result,
+        )
+        if token_estimate is None or token_estimate <= 0:
+            continue
+        candidates.append(
+            _RowCrossWorkflowCandidate(
+                parent_workflow=edge.parent_workflow,
+                parent_value_expr=edge.parent_value_expr or "",
+                parent_cache_ref=parent_cache_ref,
+                parent_node_id=edge.parent_node_id,
+                child_workflow=child_workflow,
+                child_input_name=edge.child_input_name,
+                child_cache_ref=use.child_cache_ref,
+                parent_prose=parent_prose,
+                estimated_tokens_per_call=token_estimate,
+                threshold_floor=threshold_floor,
+                child_node_ids=use.consumer_node_ids,
+            )
+        )
+    return tuple(candidates)
 
 
 def _has_structural_cross_workflow_projection_candidate(cw_result: Any) -> bool:
@@ -1650,9 +2048,14 @@ def _has_structural_cross_workflow_projection_candidate(cw_result: Any) -> bool:
         if not child_ir:
             continue
         child_declared = set(_items_by_name(cw_result.cache_items_by_workflow.get(child_workflow, ())))
-        if edge.child_input_name in child_declared:
-            continue
-        if len(_collect_llm_nodes_referencing_path(child_ir, edge.child_input_name)) >= 2:
+        uses = _child_cache_ref_consumers(child_ir, edge.child_input_name)
+        consumer_ids = {
+            node_id
+            for use in uses
+            if not _cache_ref_is_declared_or_covered(use.child_cache_ref, child_declared)
+            for node_id in use.consumer_node_ids
+        }
+        if len(consumer_ids) >= 2:
             return True
     return False
 
@@ -1765,7 +2168,7 @@ def _build_per_call_row(
     declared_subset = node.get("prompt_cache") or None
     if declared_subset is not None and not isinstance(declared_subset, list):
         declared_subset = None
-    input_tokens, source, output_tokens, output_source = _estimate_row_tokens(
+    input_tokens, chunk_tokens, source, output_tokens, output_source = _estimate_row_tokens(
         model=model,
         resolved_prompt=resolved_prompt,
         memo_cache=memo_cache,
@@ -1788,6 +2191,7 @@ def _build_per_call_row(
             output_tokens=output_tokens,
             observed_call_count=observed_call_count,
         )
+        chunk_tokens = min(chunk_tokens, input_tokens)
 
     # Tiered cacheable estimation (mirrors ``estimate_tokens`` /
     # ``estimate_output_tokens``). Trace beats memo/parameters; honest
@@ -1815,11 +2219,12 @@ def _build_per_call_row(
     cacheable_tokens, cacheable_source = _prefer_batch_prefix_cacheable_tokens(
         node=node,
         model=model,
-        resolved_prompt=resolved_prompt,
+        prompt=prompt,
         declared_subset=declared_subset,
         observed_call_count=observed_call_count,
         current_tokens=cacheable_tokens,
         current_source=cacheable_source,
+        ctx=ctx,
     )
 
     cacheable_tokens, cacheable_source, cross_workflow_inputs = _apply_cross_workflow_projection(
@@ -1828,8 +2233,6 @@ def _build_per_call_row(
         model=model,
         cacheable_tokens=cacheable_tokens,
         cacheable_source=cacheable_source,
-        observed_call_count=observed_call_count,
-        is_static_batch_trace=is_static_batch_trace,
         cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
     )
 
@@ -1878,6 +2281,7 @@ def _build_per_call_row(
         is_batch=is_batch,
         batch_size_estimated=batch_size,
         input_tokens_estimated=input_tokens,
+        chunk_tokens_estimated=chunk_tokens,
         cacheable_tokens_estimated=cacheable_with_clamp,
         cache_ratio_pct=ratio,
         data_source=source,
@@ -1905,18 +2309,19 @@ def _apply_cross_workflow_projection(
     model: str,
     cacheable_tokens: int | None,
     cacheable_source: str,
-    observed_call_count: int,
-    is_static_batch_trace: bool,
     cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] | None,
 ) -> tuple[int | None, str, tuple[CrossWorkflowInputContribution, ...]]:
-    """Promote weak row evidence to a broader cross-workflow projection."""
+    """Promote weak row evidence to a broader cross-workflow projection.
+
+    Returns per-call projected tokens to match ``PerCallRow.cacheable_tokens_estimated``
+    semantics — downstream cost helpers multiply by invocation count themselves.
+    """
     if cross_workflow_candidates_by_row is None or cacheable_source not in {"unavailable", "parameters"}:
         return cacheable_tokens, cacheable_source, ()
     row_candidates = cross_workflow_candidates_by_row.get((workflow_path, node_id), [])
     if not row_candidates:
         return cacheable_tokens, cacheable_source, ()
-    per_call_sum = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
-    projected_tokens = per_call_sum if is_static_batch_trace else per_call_sum * max(1, observed_call_count)
+    projected_tokens = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
     threshold_floor = max(
         (candidate.threshold_floor for candidate in row_candidates), default=get_min_cache_tokens(model)
     )
@@ -1930,11 +2335,17 @@ def _apply_cross_workflow_projection(
         tuple(
             CrossWorkflowInputContribution(
                 child_input_name=candidate.child_input_name,
+                child_cache_ref=candidate.child_cache_ref,
                 parent_value_expr=candidate.parent_value_expr,
+                parent_cache_ref=candidate.parent_cache_ref,
+                parent_prose=candidate.parent_prose or None,
                 tokens_per_call=candidate.estimated_tokens_per_call,
                 model=model,
             )
-            for candidate in sorted(row_candidates, key=lambda c: c.child_input_name)
+            for candidate in sorted(
+                row_candidates,
+                key=lambda c: (c.child_cache_ref, c.parent_node_id, c.parent_workflow, c.parent_cache_ref),
+            )
         ),
     )
 
@@ -2009,7 +2420,7 @@ def _estimate_row_tokens(
     trace_llm_call: dict[str, Any] | None,
     declared_subset: list[str] | None = None,
     ctx: AnalysisContext | None = None,
-) -> tuple[int, str, int | None, str]:
+) -> tuple[int, int, str, int | None, str]:
     """Estimate input/output tokens for one workflow-scoped row.
 
     ``input_tokens`` is the LLM-billed total — prompt body PLUS cache content.
@@ -2030,6 +2441,20 @@ def _estimate_row_tokens(
             cache_read_input_tokens=int(trace_llm_call.get("cache_read_input_tokens") or 0),
         )
         input_tokens = normalized_usage.input_tokens
+        if declared_subset and ctx is not None and model:
+            chunk_tokens = min(
+                _tokenize_declared_cache_chunks(
+                    declared_subset=declared_subset,
+                    workflow_ir=ctx.workflow_ir,
+                    model=model,
+                    memo_cache=memo_cache,
+                    workflow_path=workflow_path,
+                    ctx=ctx,
+                ),
+                input_tokens,
+            )
+        else:
+            chunk_tokens = 0
         source = "trace"
     else:
         input_tokens, source = estimate_tokens(
@@ -2041,8 +2466,9 @@ def _estimate_row_tokens(
             workflow_path=workflow_path,
             has_unresolved_refs=has_unresolved,
         )
+        chunk_tokens = 0
         if declared_subset and ctx is not None and model:
-            input_tokens += _tokenize_declared_cache_chunks(
+            chunk_tokens = _tokenize_declared_cache_chunks(
                 declared_subset=declared_subset,
                 workflow_ir=ctx.workflow_ir,
                 model=model,
@@ -2050,6 +2476,7 @@ def _estimate_row_tokens(
                 workflow_path=workflow_path,
                 ctx=ctx,
             )
+            input_tokens += chunk_tokens
     if trace_llm_call is not None and isinstance(trace_llm_call.get("output_tokens"), int):
         output_tokens: int | None = int(trace_llm_call["output_tokens"])
         output_source = "trace"
@@ -2060,7 +2487,7 @@ def _estimate_row_tokens(
             node_id=node_id,
             workflow_path=workflow_path,
         )
-    return input_tokens, source, output_tokens, output_source
+    return input_tokens, chunk_tokens, source, output_tokens, output_source
 
 
 def _tokenize_declared_cache_chunks(
@@ -2150,16 +2577,6 @@ def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: di
     return resolved, has_unresolved
 
 
-def _extract_unique_refs(prompt: str) -> list[str]:
-    """Walk ``prompt`` for unique template refs (deduped, order-preserving)."""
-    refs: list[str] = []
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-            if operand and operand not in refs:
-                refs.append(operand)
-    return refs
-
-
 def _node_inputs(node: dict[str, Any]) -> Mapping[str, Any] | None:
     """Return an LLM node's ``params.inputs`` mapping, if present."""
     params = node.get("params")
@@ -2169,29 +2586,13 @@ def _node_inputs(node: dict[str, Any]) -> Mapping[str, Any] | None:
     return inputs if isinstance(inputs, Mapping) else None
 
 
-def _build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[str, Any]:
-    """Build a synthetic shared store keyed by root node ids for ``refs``."""
-    shared: dict[str, Any] = {}
-    for ref in refs:
-        root = TemplateResolver.extract_root_node_id(ref)
-        if not root or root in shared:
-            continue
-        # Resolve the ROOT, not the ref — TemplateResolver navigates dotted
-        # paths against the root's value. The context's resolution policy
-        # (parameters wins for input refs; memo for node-output refs) fires
-        # transparently here.
-        value = ctx.resolve_ref_value(root)
-        if value is not None:
-            shared[root] = value
-    return shared
-
-
 def _per_node_warnings(
     node: dict[str, Any],
     row: PerCallRow,
     *,
     declared_chunks: list[str],
     nodes_by_id: dict[str, dict[str, Any]],
+    ctx: AnalysisContext,
 ) -> list[Diagnostic]:
     """Emit analytical-tier warnings for one LLM node.
 
@@ -2229,17 +2630,25 @@ def _per_node_warnings(
                 )
             )
 
-    diagnostics.extend(_batch_prewarm_recommendations(node, row))
-    diagnostics.extend(_dynamic_before_static_warnings(node, row, declared_chunks=declared_chunks))
+    diagnostics.extend(_batch_prewarm_recommendations(node, row, ctx=ctx))
+    diagnostics.extend(_dynamic_before_static_warnings(node, row, declared_chunks=declared_chunks, ctx=ctx))
     diagnostics.extend(_opaque_prompt_warnings(node, row, nodes_by_id=nodes_by_id))
 
-    # cache.prewarm-no-prefix — prewarm: true with no static prefix before
-    # the first batch-scoped reference. Detected by inspecting the unresolved
-    # template at position 0.
-    #
-    # Boundary classification MUST match the runtime gate at
+    # Prewarm boundary classification MUST match the runtime gate at
     # ``nodes/llm/llm.py`` so analyzer and runtime agree on what counts as
     # batch-scoped, including refs indirected through ``params.inputs``.
+    #
+    # Two mutually-exclusive findings fire on the position of the first
+    # per-item ref:
+    #   * ``cache.prewarm-no-prefix`` — first == 0 (no static bytes before
+    #     the per-item ref; nothing to cache).
+    #   * ``cache.batch-prewarm-below-min`` — first > 0 but the bytes before
+    #     it tokenize below the provider's minimum (auto batch-prefix marker
+    #     will silently no-op at the provider). Gated on
+    #     ``not row.declared_prompt_cache``: when ``## Cache`` is declared,
+    #     prewarm writes that chunk once via the serialized first call —
+    #     the prompt-body prefix is irrelevant to whether caching fires,
+    #     and ``cache.below-min-tokens`` handles the declared-cache path.
     prewarm = node.get("prewarm")
     batch = node.get("batch")
     if prewarm is True and isinstance(batch, dict):
@@ -2258,11 +2667,41 @@ def _per_node_warnings(
                         first_dynamic_position=0,
                     )
                 )
+            elif first is not None and first > 0 and not row.declared_prompt_cache:
+                prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
+                if prefix_tokens is None:
+                    return diagnostics
+                prewarm_finding = detect_batch_prewarm_below_min(
+                    BatchPrewarmBelowMinEvidence(
+                        node_id=node_id,
+                        model=row.model,
+                        prefix_tokens=prefix_tokens,
+                        batch_alias=alias,
+                    )
+                )
+                if prewarm_finding is not None:
+                    diagnostics.append(
+                        make_diagnostic(
+                            "cache.batch-prewarm-below-min",
+                            node_id=prewarm_finding.node_id,
+                            affected_workflow=row.workflow_path,
+                            model=prewarm_finding.model,
+                            prefix_tokens=prewarm_finding.prefix_tokens,
+                            min_tokens=prewarm_finding.min_tokens,
+                            batch_alias=prewarm_finding.batch_alias,
+                            provider_note=prewarm_finding.provider_note,
+                        )
+                    )
 
     return diagnostics
 
 
-def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> list[Diagnostic]:
+def _batch_prewarm_recommendations(
+    node: dict[str, Any],
+    row: PerCallRow,
+    *,
+    ctx: AnalysisContext,
+) -> list[Diagnostic]:
     """Emit ``cache.batch-prewarm-recommended`` per DD#33.
 
     ``prewarm: false`` is an explicit opt-out and suppresses this warning; only
@@ -2282,14 +2721,17 @@ def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> lis
     uses_existing_prefix_evidence = False
     prefix_tokens: int | None = None
     dynamic_tokens: int | None = None
-    # Row-level greenfield batch-prefix evidence is clamped against per-call
-    # input tokens, so only observed rows can safely be reused here. The
-    # earlier affected_calls gate already rejected 0/1-call rows; >= 2 is the
-    # minimum observed row count that can carry reusable batch-prefix evidence.
-    # Greenfield recommendations compute the prefix directly below.
+    # Reuse row-level batch-prefix evidence when available. cacheable_tokens_estimated
+    # is per-call by contract. input_tokens_estimated is per-call for static-list
+    # batch trace rows (normalized by _divide_static_batch_trace_tokens) and for
+    # greenfield rows, but cohort for dynamic-batch trace rows — see the follow-up
+    # note about the broader per-call/cohort row-field asymmetry. Divide by
+    # affected_calls is correct for the cohort case and a coarse under-projection
+    # for the per-call cases; under-projection is directionally safe here (it
+    # suppresses borderline recommendations rather than over-promising savings).
     if row.observed_call_count >= 2 and row.cacheable_data_source == "batch_prefix" and row.cacheable_tokens_estimated:
         uses_existing_prefix_evidence = True
-        prefix_tokens = round(row.cacheable_tokens_estimated / affected_calls)
+        prefix_tokens = row.cacheable_tokens_estimated
         input_tokens_per_call = round(row.input_tokens_estimated / affected_calls)
         dynamic_tokens = max(0, input_tokens_per_call - prefix_tokens)
     else:
@@ -2297,9 +2739,52 @@ def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> lis
         first = first_per_item_position(prompt, alias, node_inputs)
         if first is None or first == 0:
             return []
-        prefix_tokens = estimate_tokens(row.model, prompt[:first])[0]
-        dynamic_tokens = estimate_tokens(row.model, prompt[first:])[0]
-    if not uses_existing_prefix_evidence and prefix_tokens < get_min_cache_tokens(row.model):
+        prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
+        dynamic_tokens = tokenize_prompt_region(prompt[first:], model=row.model, ctx=ctx)
+    if prefix_tokens is not None and dynamic_tokens is not None:
+        return _confident_batch_prewarm_recommendation(
+            row=row,
+            affected_calls=affected_calls,
+            prefix_tokens=prefix_tokens,
+            dynamic_tokens=dynamic_tokens,
+        )
+
+    if prefix_tokens is None and not uses_existing_prefix_evidence:
+        measurable_tokens, unresolved_refs = tokenize_prompt_region_lower_bound(
+            prompt[:first],
+            model=row.model,
+            ctx=ctx,
+        )
+        if measurable_tokens < get_min_cache_tokens(row.model) or not unresolved_refs:
+            return []
+        return [
+            make_diagnostic(
+                "cache.batch-prewarm-lower-bound-recommended",
+                node_id=row.node_path,
+                affected_workflow=row.workflow_path,
+                measurable_tokens=measurable_tokens,
+                batch_alias=alias,
+                unresolved_refs=unresolved_refs,
+                savings_lower_bound_usd=_estimate_token_savings_usd(
+                    row.model,
+                    measurable_tokens,
+                    affected_calls - 1,
+                ),
+                batch_size=affected_calls,
+            )
+        ]
+
+    return []
+
+
+def _confident_batch_prewarm_recommendation(
+    *,
+    row: PerCallRow,
+    affected_calls: int,
+    prefix_tokens: int,
+    dynamic_tokens: int,
+) -> list[Diagnostic]:
+    if prefix_tokens < get_min_cache_tokens(row.model):
         return []
 
     savings_ratio = ((affected_calls - 1) * 1.15 * prefix_tokens) / (
@@ -2328,6 +2813,7 @@ def _dynamic_before_static_warnings(
     row: PerCallRow,
     *,
     declared_chunks: list[str],
+    ctx: AnalysisContext,
 ) -> list[Diagnostic]:
     """Detect a dynamic template reference before a large stable suffix."""
     prompt = node.get("params", {}).get("prompt", "") or ""
@@ -2346,6 +2832,7 @@ def _dynamic_before_static_warnings(
             model=row.model,
             batch_alias=alias,
             node_inputs=node_inputs,
+            ctx=ctx,
         )
         if finding is None:
             return []
@@ -2359,9 +2846,13 @@ def _dynamic_before_static_warnings(
                 cacheable_tokens=finding.stable_tail_tokens,
                 affected_calls=affected_calls,
                 savings_usd=_estimate_token_savings_usd(row.model, finding.stable_tail_tokens, affected_calls),
-                projected_ratio_pct=_safe_pct(
-                    finding.stable_tail_tokens,
-                    finding.stable_tail_tokens + finding.tokens_before_dynamic,
+                projected_ratio_pct=(
+                    _safe_pct(
+                        finding.stable_tail_tokens,
+                        finding.stable_tail_tokens + finding.tokens_before_dynamic,
+                    )
+                    if finding.tokens_before_dynamic is not None
+                    else None
                 ),
                 detection_mode="batch_static_tail",
                 min_cache_tokens=get_min_cache_tokens(row.model),
@@ -2382,12 +2873,14 @@ def _dynamic_before_static_warnings(
         if any(path in declared for path in ref.operand_paths):
             continue
 
-        cacheable_tokens = estimate_tokens(row.model, prompt[ref.end :])[0]
+        cacheable_tokens = tokenize_prompt_region(prompt[ref.end :], model=row.model, ctx=ctx)
+        if cacheable_tokens is None:
+            continue
         if cacheable_tokens < get_min_cache_tokens(row.model):
             break
 
         affected_calls = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
-        tokens_before = estimate_tokens(row.model, prompt[: ref.position])[0]
+        tokens_before = tokenize_prompt_region(prompt[: ref.position], model=row.model, ctx=ctx)
         return [
             make_diagnostic(
                 "cache.dynamic-before-static",
@@ -2398,7 +2891,9 @@ def _dynamic_before_static_warnings(
                 cacheable_tokens=cacheable_tokens,
                 affected_calls=affected_calls,
                 savings_usd=_estimate_token_savings_usd(row.model, cacheable_tokens, affected_calls),
-                projected_ratio_pct=_safe_pct(cacheable_tokens, cacheable_tokens + tokens_before),
+                projected_ratio_pct=(
+                    _safe_pct(cacheable_tokens, cacheable_tokens + tokens_before) if tokens_before is not None else None
+                ),
                 detection_mode="declared_cache",
                 min_cache_tokens=get_min_cache_tokens(row.model),
                 model=row.model,
@@ -2416,6 +2911,7 @@ def _find_batch_static_tail_after_dynamic(
     model: str,
     batch_alias: str,
     node_inputs: Mapping[str, Any] | None = None,
+    ctx: AnalysisContext,
 ) -> _PromptStaticTailFinding | None:
     """Find a local-batch dynamic ref followed by enough literal stable text."""
     refs = list(classify_prompt_refs(prompt, batch_alias, node_inputs))
@@ -2424,14 +2920,15 @@ def _find_batch_static_tail_after_dynamic(
             continue
 
         literal_tail = _literal_spans_after_template(prompt, refs, index)
-        stable_tail_tokens = estimate_tokens(model, literal_tail)[0]
-        if stable_tail_tokens < get_min_cache_tokens(model):
+        stable_tail_tokens = tokenize_prompt_region(literal_tail, model=model, ctx=ctx)
+        if stable_tail_tokens is None or stable_tail_tokens < get_min_cache_tokens(model):
             return None
+        tokens_before_dynamic = tokenize_prompt_region(prompt[: ref.position], model=model, ctx=ctx)
         return _PromptStaticTailFinding(
             dynamic_ref=ref.raw_expr,
             dynamic_line=1 + prompt[: ref.position].count("\n"),
             stable_tail_tokens=stable_tail_tokens,
-            tokens_before_dynamic=estimate_tokens(model, prompt[: ref.position])[0],
+            tokens_before_dynamic=tokens_before_dynamic,
             template_refs_after_dynamic=len(refs) - index - 1,
             static_tail_excerpt=_static_excerpt(literal_tail),
         )
@@ -2550,14 +3047,18 @@ def _estimate_batch_prefix_cacheable_tokens(
     *,
     node: dict[str, Any],
     model: str,
-    resolved_prompt: str,
+    prompt: str,
     declared_subset: list[str] | None,
     observed_call_count: int,
+    ctx: AnalysisContext,
 ) -> int | None:
-    """Estimate repeated static prefix tokens before the first batch-item ref.
+    """Estimate per-call cacheable prefix tokens before the first batch-item ref.
 
-    Uses observed call count when available, otherwise falls back to static
-    ``batch.items`` length for greenfield static-list batches.
+    Returns ``None`` for non-batch nodes, nodes already declaring
+    ``prompt_cache:``, or batches with fewer than 2 calls (no cache fan-out
+    benefit). The call count is used only to gate the ``< 2`` precondition;
+    the returned value is per-call to match every consumer of
+    ``PerCallRow.cacheable_tokens_estimated``.
     """
     batch = node.get("batch")
     if declared_subset or not isinstance(batch, dict):
@@ -2567,36 +3068,38 @@ def _estimate_batch_prefix_cacheable_tokens(
         return None
     alias = str(batch.get("as", "item"))
     node_inputs = _node_inputs(node)
-    boundary = first_per_item_position(resolved_prompt, alias, node_inputs)
+    boundary = first_per_item_position(prompt, alias, node_inputs)
     if boundary is None or boundary == 0:
         return None
-    prefix_tokens = estimate_tokens(model, resolved_prompt[:boundary])[0]
-    if prefix_tokens <= 0:
+    prefix_tokens = tokenize_prompt_region(prompt[:boundary], model=model, ctx=ctx)
+    if prefix_tokens is None or prefix_tokens <= 0:
         return None
-    return prefix_tokens * affected_call_count
+    return prefix_tokens
 
 
 def _prefer_batch_prefix_cacheable_tokens(
     *,
     node: dict[str, Any],
     model: str,
-    resolved_prompt: str,
+    prompt: str,
     declared_subset: list[str] | None,
     observed_call_count: int,
     current_tokens: int | None,
     current_source: str,
+    ctx: AnalysisContext,
 ) -> tuple[int | None, str]:
     prefix_tokens = _estimate_batch_prefix_cacheable_tokens(
         node=node,
         model=model,
-        resolved_prompt=resolved_prompt,
+        prompt=prompt,
         declared_subset=declared_subset,
         observed_call_count=observed_call_count,
+        ctx=ctx,
     )
     if prefix_tokens is not None and prefix_tokens > (current_tokens or 0):
-        # Distinct tier label: this is a static-prefix scan + per-call
-        # multiplier, not chunk-resolution-via-CLI-parameters. Sharing the
-        # ``"parameters"`` label would violate the documented contract on
+        # Distinct tier label: this is a static-prefix scan, not
+        # chunk-resolution-via-CLI-parameters. Sharing the ``"parameters"``
+        # label would violate the documented contract on
         # ``cacheable_data_source`` and mis-route the confidence footer's
         # "first batch item as a representative sample" message (no batch
         # item content participates in this projection).
@@ -2698,9 +3201,27 @@ def _populate_suggested_blocks(
         memo_cache=memo_cache,
         workflow_path=workflow_path,
     )
-    actionability_note = _suggested_block_non_actionable_note(per_node_thresholds)
-    if actionability_note is not None:
-        notes.append(actionability_note)
+    actionability_state = _classify_suggested_block_actionability(per_node_thresholds)
+    if actionability_state == _SUGGESTED_BLOCK_BELOW_THRESHOLD:
+        min_tokens_strictest = max(
+            entry["min_tokens"] for entry in per_node_thresholds.values() if entry["min_tokens"] is not None
+        )
+        target_file = workflow_path or "<root>"
+        conditional = make_diagnostic(
+            "cache.shared-context-undeclared-conditional",
+            node_id=None,
+            node_count=len(affected_nodes),
+            shared_chunks=[chunk.name for chunk in chunks],
+            affected_workflow=target_file,
+            min_tokens=min_tokens_strictest,
+            affected_nodes=sorted(affected_nodes),
+        )
+        return [], [conditional]
+
+    if actionability_state != _SUGGESTED_BLOCK_ACTIONABLE:
+        note = _note_for_non_actionable_state(actionability_state)
+        if note is not None:
+            notes.append(note)
         return [], []
 
     for ref, node_ids in shared_refs:
@@ -2777,33 +3298,38 @@ def _skip_suggested_blocks_for_declared_cache(workflow_ir: dict[str, Any], notes
     return bool(_cache_item_names(workflow_ir))
 
 
-def _suggested_block_non_actionable_note(
+def _classify_suggested_block_actionability(
     per_node_thresholds: Mapping[str, PerNodeThresholdEntry],
-) -> str | None:
-    """Return a note when a greenfield suggested block is not paste-ready.
+) -> str:
+    """Classify the suggested-block state for dispatch.
 
-    ``cache.shared-context-undeclared`` means "paste the suggested block".
-    Keep that contract simple: every rendered assignment must have enough
-    evidence to clear the provider threshold, and at least two LLM nodes must
-    be able to reuse the cache.
+    The caller emits the confident ``cache.shared-context-undeclared`` only for
+    actionable blocks, emits a conditional advisory for known-below-threshold
+    blocks, and leaves only plain notes for incomplete evidence or too few
+    reusable nodes.
     """
     if len(per_node_thresholds) < 2:
-        return (
-            "Suggested-blocks: shared refs were found, but fewer than two LLM nodes can reuse "
-            "the provider cache; no paste-ready provider-cache edit is actionable yet."
-        )
+        return _SUGGESTED_BLOCK_INSUFFICIENT_NODES
     statuses = [entry["meets_threshold"] for entry in per_node_thresholds.values()]
     if any(status is None for status in statuses):
-        return (
-            "Suggested-blocks: shared refs were found, but model/token evidence is incomplete; "
-            "no paste-ready provider-cache edit is actionable yet. Set settings.default_model "
-            "or run the workflow once, then re-run analyze-cache."
-        )
+        return _SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE
     if any(status is False for status in statuses):
+        return _SUGGESTED_BLOCK_BELOW_THRESHOLD
+    return _SUGGESTED_BLOCK_ACTIONABLE
+
+
+def _note_for_non_actionable_state(state: str) -> str | None:
+    """Plain-English note text for states without a structured advisory."""
+    if state == _SUGGESTED_BLOCK_INSUFFICIENT_NODES:
         return (
-            "Suggested-blocks: shared refs were found, but at least one assigned LLM node is below "
-            "the provider cache threshold under current model/token evidence; no paste-ready "
-            "provider-cache edit is actionable yet."
+            "Suggested-blocks: shared refs were found, but fewer than two LLM nodes can "
+            "reuse the provider cache; no cache edit will fire at the provider yet."
+        )
+    if state == _SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE:
+        return (
+            "Suggested-blocks: shared refs were found, but the analyzer cannot yet tell "
+            "whether a cache edit would fire (set settings.default_model or run the "
+            "workflow once, then re-run analyze-cache)."
         )
     return None
 
@@ -4137,9 +4663,9 @@ def _build_cross_workflow_findings(
 
         if not is_rename:
             prose_mismatches.extend(_cross_workflow_prose_mismatches(edge, result.cache_items_by_workflow))
-        candidate = _sub_workflow_cache_candidate(edge, result.cache_items_by_workflow, result.irs_by_workflow)
-        if candidate is not None:
-            sub_workflow_cache_candidates.append(candidate)
+        sub_workflow_cache_candidates.extend(
+            _sub_workflow_cache_candidates_for_edge(edge, result.cache_items_by_workflow, result.irs_by_workflow)
+        )
 
     rows_by_node_path: dict[tuple[str | None, str], PerCallRow] = {
         (row.workflow_path, row.node_path): row for row in per_call_rows
@@ -4199,6 +4725,28 @@ class _SubWorkflowCacheCandidate:
     child_input_name: str
     child_count: int
     child_node_ids: tuple[str, ...]
+    parent_cache_ref: str = ""
+    child_cache_ref: str = ""
+    parent_prose: str = ""
+    parent_prose_origins_differ: bool = False
+    body_refs_by_node: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    origin_count: int = 1
+    has_multiple_parent_origins: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.child_cache_ref:
+            object.__setattr__(self, "child_cache_ref", self.child_input_name)
+        if not self.parent_cache_ref:
+            object.__setattr__(self, "parent_cache_ref", self.parent_value_expr)
+
+
+@dataclass(frozen=True)
+class _ChildCacheRefUse:
+    """Actual child prompt refs under a workflow input, grouped by cache entry."""
+
+    child_cache_ref: str
+    consumer_node_ids: tuple[str, ...]
+    body_refs_by_node: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -4234,67 +4782,178 @@ class _SubWorkflowCacheGroup:
     candidates: tuple[_SubWorkflowCacheCandidate, ...]
 
 
-def _sub_workflow_cache_candidate(
+def _sub_workflow_cache_candidates_for_edge(
     edge: Any,
     cache_items_by_workflow: dict[str, tuple[dict[str, Any], ...]],
     irs_by_workflow: dict[str, dict[str, Any]],
-) -> _SubWorkflowCacheCandidate | None:
-    """Return a candidate for one boundary edge, or None if suppressed.
+) -> tuple[_SubWorkflowCacheCandidate, ...]:
+    """Return prompt-ref-level candidates for one boundary edge.
 
     Suppression rules:
     - ``parent_value_expr is None``: literal or multi-ref string at the
       boundary; no template to track.
-    - the child already declares the receiving input in its own ``## Cache``.
-    - no LLM nodes in the child consume the input.
+    - the child already declares the receiving ref, or an ancestor ref, in its
+      own ``## Cache``.
+    - no LLM nodes in the child consume the ref.
 
     Batch-scoped parent values are still valid here: ``${item.concept}`` varies
     across parent fanout items, but inside each child invocation the receiving
     input can be stable context reused by multiple child LLM nodes.
     """
     if edge.parent_value_expr is None:
-        return None
+        return ()
     child_declared = set(_items_by_name(cache_items_by_workflow.get(edge.child_workflow, ())))
-    if edge.child_input_name in child_declared:
-        return None
+    parent_items_by_name = _items_by_name(cache_items_by_workflow.get(edge.parent_workflow, ()))
 
-    child_node_ids = _collect_llm_nodes_referencing_path(
-        irs_by_workflow.get(edge.child_workflow, {}),
-        edge.child_input_name,
-    )
-    if not child_node_ids:
-        return None
+    candidates: list[_SubWorkflowCacheCandidate] = []
+    for use in _child_cache_ref_consumers(irs_by_workflow.get(edge.child_workflow, {}), edge.child_input_name):
+        if _cache_ref_is_declared_or_covered(use.child_cache_ref, child_declared):
+            continue
+        parent_cache_ref = _append_child_suffix(edge.parent_value_expr, edge.child_input_name, use.child_cache_ref)
+        parent_prose = _parent_prose_for_cache_ref(parent_items_by_name, parent_cache_ref)
+        candidates.append(
+            _SubWorkflowCacheCandidate(
+                parent_workflow=edge.parent_workflow,
+                parent_value_expr=edge.parent_value_expr,
+                parent_cache_ref=parent_cache_ref,
+                parent_prose=parent_prose,
+                parent_node_id=edge.parent_node_id,
+                line_in_parent=edge.line_in_parent,
+                child_workflow=edge.child_workflow,
+                child_input_name=edge.child_input_name,
+                child_cache_ref=use.child_cache_ref,
+                child_count=len(use.consumer_node_ids),
+                child_node_ids=use.consumer_node_ids,
+                body_refs_by_node=use.body_refs_by_node,
+            )
+        )
+    return tuple(candidates)
 
-    return _SubWorkflowCacheCandidate(
-        parent_workflow=edge.parent_workflow,
-        parent_value_expr=edge.parent_value_expr,
-        parent_node_id=edge.parent_node_id,
-        line_in_parent=edge.line_in_parent,
-        child_workflow=edge.child_workflow,
-        child_input_name=edge.child_input_name,
-        child_count=len(child_node_ids),
-        child_node_ids=tuple(child_node_ids),
-    )
+
+def _child_cache_ref_consumers(child_ir: dict[str, Any], child_input_name: str) -> tuple[_ChildCacheRefUse, ...]:
+    """Return prompt refs under ``child_input_name``, grouped by cache entry."""
+    if not isinstance(child_ir, dict):
+        return ()
+    by_ref: dict[str, dict[str, list[str]]] = {}
+    first_seen: list[str] = []
+    for node in child_ir.get("nodes", []) or []:
+        node_id, node_refs = _node_child_cache_ref_body_refs(node, child_input_name)
+        if node_id is None:
+            continue
+        for child_cache_ref, body_refs in node_refs.items():
+            if child_cache_ref not in by_ref:
+                by_ref[child_cache_ref] = {}
+                first_seen.append(child_cache_ref)
+            by_ref[child_cache_ref][node_id] = body_refs
+    uses: list[_ChildCacheRefUse] = []
+    for child_cache_ref in first_seen:
+        refs_by_node = by_ref[child_cache_ref]
+        uses.append(
+            _ChildCacheRefUse(
+                child_cache_ref=child_cache_ref,
+                consumer_node_ids=tuple(refs_by_node),
+                body_refs_by_node={node_id: tuple(refs) for node_id, refs in refs_by_node.items()},
+            )
+        )
+    return tuple(uses)
+
+
+def _node_child_cache_ref_body_refs(
+    node: Any,
+    child_input_name: str,
+) -> tuple[str | None, dict[str, list[str]]]:
+    if not isinstance(node, dict) or node.get("type") != "llm":
+        return None, {}
+    node_id_raw = node.get("id")
+    prompt = node.get("params", {}).get("prompt", "")
+    if not isinstance(node_id_raw, str) or not node_id_raw or not isinstance(prompt, str):
+        return None, {}
+    node_refs: dict[str, list[str]] = {}
+    for ref in classify_prompt_refs(prompt, batch_alias=None, node_inputs=_node_inputs(node)):
+        for operand in ref.operand_paths:
+            if _path_is_equal_or_descendant(operand, child_input_name):
+                node_refs.setdefault(operand, []).append(ref.raw_expr)
+    if child_input_name in node_refs:
+        node_refs = {child_input_name: node_refs[child_input_name]}
+    return node_id_raw, {child_ref: list(dict.fromkeys(refs)) for child_ref, refs in node_refs.items()}
+
+
+def _path_is_equal_or_descendant(path: str, root: str) -> bool:
+    """True when ``path`` is ``root`` or a segment-aware descendant."""
+    if not path or not root:
+        return False
+    return path == root or path.startswith(f"{root}.") or path.startswith(f"{root}[")
+
+
+def _path_is_ancestor_or_equal(ancestor: str, child: str) -> bool:
+    return _path_is_equal_or_descendant(child, ancestor)
+
+
+def _child_suffix(child_input_name: str, child_ref: str) -> str:
+    """Return the suffix of ``child_ref`` after ``child_input_name``."""
+    if child_ref == child_input_name:
+        return ""
+    if child_ref.startswith(f"{child_input_name}."):
+        return child_ref[len(child_input_name) :]
+    if child_ref.startswith(f"{child_input_name}["):
+        return child_ref[len(child_input_name) :]
+    return ""
+
+
+def _append_child_suffix(parent_ref: str, child_input_name: str, child_ref: str) -> str:
+    """Map child ref ``concept.title`` through parent ref ``song.concept``."""
+    suffix = _child_suffix(child_input_name, child_ref)
+    return f"{parent_ref}{suffix}" if suffix else parent_ref
+
+
+def _parent_prose_for_cache_ref(parent_items_by_name: Mapping[str, dict[str, Any]], parent_cache_ref: str) -> str:
+    parent_chunk = parent_items_by_name.get(parent_cache_ref)
+    if parent_chunk is None:
+        return ""
+    return str(parent_chunk.get("prose_before", ""))
+
+
+def _cache_ref_is_declared_or_covered(child_ref: str, declared: set[str]) -> bool:
+    return any(_path_is_ancestor_or_equal(declared_ref, child_ref) for declared_ref in declared)
 
 
 def _aggregate_sub_workflow_cache_candidates_by_child(
     candidates: list[_SubWorkflowCacheCandidate],
 ) -> list[_SubWorkflowCacheGroup]:
-    """Return deterministic groups with one candidate per child input.
+    """Return deterministic groups with one candidate per child cache ref.
 
-    Tie-break: lex-smallest ``(parent_node_id, parent_workflow)`` wins.
-    Including ``parent_workflow`` in the tuple makes the order deterministic
-    even when two parents in different workflows share the same node id
-    (e.g., both named ``"main"``) and reach the same child + input — without
-    it, dict-insertion-order broke the deterministic claim.
+    Tie-break: lex-smallest ``(parent_node_id, parent_workflow, parent_cache_ref)``
+    wins for now. Multiple distinct origins for the same cache ref are still
+    surfaced as one child edit; token/savings estimates are guarded separately
+    so we do not present one origin as measured truth when estimates disagree.
     """
     by_child: dict[str, dict[str, _SubWorkflowCacheCandidate]] = {}
     for candidate in candidates:
-        by_input = by_child.setdefault(candidate.child_workflow, {})
-        existing = by_input.get(candidate.child_input_name)
-        if existing is None or (
-            (candidate.parent_node_id, candidate.parent_workflow) < (existing.parent_node_id, existing.parent_workflow)
+        by_ref = by_child.setdefault(candidate.child_workflow, {})
+        existing = by_ref.get(candidate.child_cache_ref)
+        if existing is None:
+            by_ref[candidate.child_cache_ref] = candidate
+            continue
+        merged_origin_count = existing.origin_count + candidate.origin_count
+        chosen = existing
+        if (candidate.parent_node_id, candidate.parent_workflow, candidate.parent_cache_ref) < (
+            existing.parent_node_id,
+            existing.parent_workflow,
+            existing.parent_cache_ref,
         ):
-            by_input[candidate.child_input_name] = candidate
+            chosen = candidate
+        parent_prose_origins_differ = (
+            existing.parent_prose_origins_differ
+            or candidate.parent_prose_origins_differ
+            or existing.parent_prose != candidate.parent_prose
+        )
+        by_ref[candidate.child_cache_ref] = replace(
+            chosen,
+            parent_prose="" if parent_prose_origins_differ else existing.parent_prose,
+            parent_prose_origins_differ=parent_prose_origins_differ,
+            origin_count=merged_origin_count,
+            has_multiple_parent_origins=True,
+        )
 
     groups: list[_SubWorkflowCacheGroup] = []
     for child_workflow in sorted(by_child):
@@ -4362,10 +5021,12 @@ def _resolve_value_in_workflow_parameters(
     current parameters win over historical memo values from prior runs.
     """
     params = ctx.parameters_for_workflow(workflow_path)
-    if not params:
-        return None
     root = TemplateResolver.extract_root_node_id(ref)
-    if not root or root not in params:
+    if not root:
+        return None
+    if root not in params and root in ctx.parameters:
+        params = ctx.parameters
+    if root not in params:
         return None
     try:
         resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: params[root]})
@@ -4444,6 +5105,7 @@ def _resolve_input_at_workflow_node_invocation(
     parent_node_id: str,
     parent_workflow: str,
     child_input_name: str,
+    child_cache_ref: str,
     ctx: AnalysisContext,
     cw_result: Any,
 ) -> Any | None:
@@ -4485,8 +5147,18 @@ def _resolve_input_at_workflow_node_invocation(
         candidate_value = inputs.get(child_input_name)
         if candidate_value is None:
             continue
-        resolved_value = candidate_value
+        resolved_value = _resolve_child_suffix_in_value(candidate_value, child_input_name, child_cache_ref)
     return _normalize_empty(resolved_value) if resolved_value is not None else None
+
+
+def _resolve_child_suffix_in_value(value: Any, child_input_name: str, child_cache_ref: str) -> Any | None:
+    suffix = _child_suffix(child_input_name, child_cache_ref)
+    if not suffix:
+        return value
+    synthetic_ref = f"__value{suffix}"
+    if not TemplateResolver.variable_exists(synthetic_ref, {"__value": value}):
+        return None
+    return TemplateResolver.resolve_value(synthetic_ref, {"__value": value})
 
 
 def _estimate_parent_value_tokens(
@@ -4496,6 +5168,7 @@ def _estimate_parent_value_tokens(
     parent_node_id: str,
     child_workflow: str,
     child_input_name: str,
+    child_cache_ref: str,
     model: str,
     ctx: AnalysisContext,
     cw_result: Any,
@@ -4532,6 +5205,7 @@ def _estimate_parent_value_tokens(
             parent_node_id=parent_node_id,
             parent_workflow=workflow_path,
             child_input_name=child_input_name,
+            child_cache_ref=child_cache_ref,
             ctx=ctx,
             cw_result=cw_result,
         )
@@ -4569,7 +5243,7 @@ def _project_grouped_cache_savings(
     strictest_model = next(
         row.model for _, row in consumer_rows if get_min_cache_tokens(row.model) == strictest_threshold
     )
-    tokens_per_input = _tokens_per_group_input(
+    tokens_per_ref = _tokens_per_group_ref(
         group,
         consumer_rows,
         strictest_model=strictest_model,
@@ -4579,9 +5253,9 @@ def _project_grouped_cache_savings(
     projections, total_savings = _grouped_consumer_projections(
         group,
         rows_by_node_path,
-        tokens_per_input=tokens_per_input,
+        tokens_per_ref=tokens_per_ref,
     )
-    return (strictest_threshold, total_savings, projections, tokens_per_input, strictest_model)
+    return (strictest_threshold, total_savings, projections, tokens_per_ref, strictest_model)
 
 
 def _executed_consumer_rows(
@@ -4604,7 +5278,7 @@ def _executed_consumer_rows(
     return consumer_rows
 
 
-def _tokens_per_group_input(
+def _tokens_per_group_ref(
     group: _SubWorkflowCacheGroup,
     consumer_rows: list[tuple[str, PerCallRow]],
     *,
@@ -4612,49 +5286,51 @@ def _tokens_per_group_input(
     ctx: AnalysisContext,
     cw_result: Any,
 ) -> dict[str, int | None]:
-    tokens_per_input: dict[str, int | None] = {}
+    tokens_per_ref: dict[str, int | None] = {}
     for candidate in group.candidates:
-        tokens = _tokens_from_cross_workflow_rows(candidate, consumer_rows)
-        if tokens is None:
+        tokens = None
+        if not candidate.has_multiple_parent_origins:
+            tokens = _tokens_from_cross_workflow_rows(candidate, consumer_rows)
+        if tokens is None and not candidate.has_multiple_parent_origins:
             tokens = _estimate_parent_value_tokens(
                 parent_workflow=candidate.parent_workflow,
-                parent_value_expr=candidate.parent_value_expr,
+                parent_value_expr=candidate.parent_cache_ref,
                 parent_node_id=candidate.parent_node_id,
                 child_workflow=candidate.child_workflow,
                 child_input_name=candidate.child_input_name,
+                child_cache_ref=candidate.child_cache_ref,
                 model=strictest_model,
                 ctx=ctx,
                 cw_result=cw_result,
             )
-        tokens_per_input[candidate.child_input_name] = tokens
-    return tokens_per_input
+        tokens_per_ref[candidate.child_cache_ref] = tokens
+    return tokens_per_ref
 
 
-def _inputs_by_consumer(group: _SubWorkflowCacheGroup) -> dict[str, list[str]]:
-    inputs_by_consumer: dict[str, list[str]] = {}
+def _cache_refs_by_consumer(group: _SubWorkflowCacheGroup) -> dict[str, list[str]]:
+    refs_by_consumer: dict[str, list[str]] = {}
     for candidate in group.candidates:
         for node_id in candidate.child_node_ids:
-            inputs_by_consumer.setdefault(node_id, []).append(candidate.child_input_name)
-    return inputs_by_consumer
+            refs_by_consumer.setdefault(node_id, []).append(candidate.child_cache_ref)
+    return refs_by_consumer
 
 
 def _grouped_consumer_projections(
     group: _SubWorkflowCacheGroup,
     rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
     *,
-    tokens_per_input: dict[str, int | None],
+    tokens_per_ref: dict[str, int | None],
 ) -> tuple[tuple[_GroupedConsumerProjection, ...], float | None]:
     projections: list[_GroupedConsumerProjection] = []
     total_savings: float | None = 0.0
-    for consumer_node_id, input_names in sorted(_inputs_by_consumer(group).items()):
+    for consumer_node_id, cache_refs in sorted(_cache_refs_by_consumer(group).items()):
         row = rows_by_node_path.get((group.child_workflow, consumer_node_id))
         if row is None or not row.model or row.did_not_execute_in_trace:
             continue
         multiplier = _cache_projection_multiplier(row)
-        per_call_sum = sum(
-            tokens_per_input[name] or 0 for name in input_names if tokens_per_input.get(name) is not None
-        )
-        savings = _estimate_token_savings_usd(row.model, per_call_sum, multiplier)
+        missing_tokens = any(tokens_per_ref.get(ref) is None for ref in cache_refs)
+        per_call_sum = sum(tokens_per_ref[ref] or 0 for ref in cache_refs if tokens_per_ref.get(ref) is not None)
+        savings = None if missing_tokens else _estimate_token_savings_usd(row.model, per_call_sum, multiplier)
         if savings is None:
             total_savings = None
         elif total_savings is not None:
@@ -4663,7 +5339,7 @@ def _grouped_consumer_projections(
             _GroupedConsumerProjection(
                 consumer_node_id=consumer_node_id,
                 model=row.model,
-                consumed_inputs=tuple(input_names),
+                consumed_inputs=tuple(cache_refs),
                 per_call_prefix_tokens=per_call_sum,
                 threshold=get_min_cache_tokens(row.model),
                 savings_usd=savings,
@@ -4682,7 +5358,8 @@ def _tokens_from_cross_workflow_rows(
         for contribution in row.cross_workflow_inputs:
             if not isinstance(contribution, CrossWorkflowInputContribution):
                 continue
-            if contribution.child_input_name == candidate.child_input_name:
+            contribution_ref = contribution.child_cache_ref or contribution.child_input_name
+            if contribution_ref == candidate.child_cache_ref:
                 return contribution.tokens_per_call
     return None
 
@@ -4717,20 +5394,97 @@ def _classify_group_case(projections: tuple[_GroupedConsumerProjection, ...]) ->
     """
     if not projections:
         return "unmeasurable"
-    per_consumer_cases: list[str] = []
-    for projection in projections:
-        per_call = projection.per_call_prefix_tokens
-        if per_call >= projection.threshold:
-            per_consumer_cases.append("actionable")
-        elif per_call >= _MODEL_SWITCH_BAND:
-            per_consumer_cases.append("model_switch")
-        else:
-            per_consumer_cases.append("refactor")
+    per_consumer_cases = [_projection_case(projection) for projection in projections]
     if "refactor" in per_consumer_cases:
         return "refactor"
     if "model_switch" in per_consumer_cases:
         return "model_switch"
     return "actionable"
+
+
+def _projection_case(projection: _GroupedConsumerProjection) -> str:
+    per_call = projection.per_call_prefix_tokens
+    if per_call >= projection.threshold:
+        return "actionable"
+    if per_call >= _MODEL_SWITCH_BAND:
+        return "model_switch"
+    return "refactor"
+
+
+def _split_group_by_projection_case(
+    group: _SubWorkflowCacheGroup,
+    projections: tuple[_GroupedConsumerProjection, ...],
+) -> list[tuple[_SubWorkflowCacheGroup, tuple[_GroupedConsumerProjection, ...], str]]:
+    """Split mixed-cacheability child recommendations by consumer case.
+
+    A child workflow can have one consumer whose proposed cache prefix clears
+    the provider minimum and another consumer whose narrower prefix is below
+    every provider tier. Rendering those as one recommendation forces the body
+    to choose one representative token count and produces incoherent text like
+    "~8,504 tokens per call, below the 1,024-token minimum". Split at the
+    producer boundary so every recommendation has one coherent threshold story.
+    """
+    if not projections:
+        return [(group, projections, "unmeasurable")]
+
+    by_case: dict[str, list[_GroupedConsumerProjection]] = {}
+    for projection in projections:
+        by_case.setdefault(_projection_case(projection), []).append(projection)
+
+    if len(by_case) == 1:
+        case = next(iter(by_case))
+        return [(group, projections, case)]
+
+    result: list[tuple[_SubWorkflowCacheGroup, tuple[_GroupedConsumerProjection, ...], str]] = []
+    for case in ("actionable", "model_switch", "refactor"):
+        case_projections = tuple(by_case.get(case, ()))
+        if not case_projections:
+            continue
+        consumer_ids = frozenset(projection.consumer_node_id for projection in case_projections)
+        result.append((_group_for_consumer_nodes(group, consumer_ids), case_projections, case))
+    return result
+
+
+def _group_for_consumer_nodes(group: _SubWorkflowCacheGroup, consumer_ids: frozenset[str]) -> _SubWorkflowCacheGroup:
+    candidates: list[_SubWorkflowCacheCandidate] = []
+    for candidate in group.candidates:
+        child_node_ids = tuple(node_id for node_id in candidate.child_node_ids if node_id in consumer_ids)
+        if not child_node_ids:
+            continue
+        body_refs_by_node = {
+            node_id: tuple(refs) for node_id, refs in candidate.body_refs_by_node.items() if node_id in consumer_ids
+        }
+        candidates.append(
+            replace(
+                candidate,
+                child_count=len(child_node_ids),
+                child_node_ids=child_node_ids,
+                body_refs_by_node=body_refs_by_node,
+            )
+        )
+    return _SubWorkflowCacheGroup(child_workflow=group.child_workflow, candidates=tuple(candidates))
+
+
+def _strictest_model_and_threshold(projections: tuple[_GroupedConsumerProjection, ...]) -> tuple[str, int]:
+    if not projections:
+        return "", 0
+    strictest = max(projections, key=lambda projection: projection.threshold)
+    return strictest.model, strictest.threshold
+
+
+def _total_savings_for_case(
+    projections: tuple[_GroupedConsumerProjection, ...],
+    *,
+    case: str,
+) -> float | None:
+    if case != "actionable":
+        return None
+    total = 0.0
+    for projection in projections:
+        if projection.savings_usd is None:
+            return None
+        total += projection.savings_usd
+    return total
 
 
 def _format_grouped_body_block(
@@ -4748,10 +5502,10 @@ def _format_grouped_body_block(
     provider's cache marker sees on each call. Cohort totals (per_call × calls)
     drive ``savings_usd`` only; they're irrelevant to whether the cache fires.
     """
-    candidates_by_input = {candidate.child_input_name: candidate for candidate in group.candidates}
+    candidates_by_ref = {candidate.child_cache_ref: candidate for candidate in group.candidates}
     parent_label = _workflow_basename(group.candidates[0].parent_workflow) if group.candidates else "parent workflow"
-    input_count = len(group.candidates)
-    input_phrase = _count_phrase(input_count, "value")
+    ref_count = len(group.candidates)
+    input_phrase = _count_phrase(ref_count, "value")
     # Per-call prefix size of the LARGEST consumer in the group — used as the
     # representative "what does the provider see per call" number for body text.
     # For multi-consumer groups we still render per-consumer lines below.
@@ -4759,30 +5513,22 @@ def _format_grouped_body_block(
     lines: list[str] = []
 
     if case == "unmeasurable":
-        lines.append(
-            f"{input_phrase.capitalize()} flow in but no consumer node has a resolved model — "
-            "cannot compute the cache threshold."
+        return _format_unmeasurable_grouped_body(
+            group=group,
+            input_phrase=input_phrase,
+            tokens_per_input=tokens_per_input,
+            cw_result=cw_result,
         )
-        lines.append(
-            "→ Set `settings.default_model` or add `- model:` to each consumer node in "
-            f"{_workflow_basename(group.child_workflow)}, then re-run analyze-cache."
-        )
-        return "\n".join(lines)
 
     if case == "refactor":
-        # Per-call view: caching depends on per-call prefix size, not cohort.
-        if input_count == 1:
-            input_name = group.candidates[0].child_input_name
-            subject = f"One value `{input_name}`"
-        else:
-            subject = f"{input_phrase.capitalize()}"
-        lines.append(
-            f"{subject} {_format_tokens_phrase(per_call_max)} per call, "
-            "below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5)."
+        return _format_refactor_grouped_body(
+            group=group,
+            input_phrase=input_phrase,
+            ref_count=ref_count,
+            per_call_max=per_call_max,
+            tokens_per_input=tokens_per_input,
+            cw_result=cw_result,
         )
-        lines.append("→ Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.")
-        lines.append(f"→ Verify: confirm {_format_tokens_phrase(per_call_max)} is the realistic per-call size.")
-        return "\n".join(lines)
 
     threshold_clause = (
         f"above {strictest_model}'s {strictest_threshold:,}-token cache minimum"
@@ -4791,32 +5537,28 @@ def _format_grouped_body_block(
     )
     if len(projections) > 1:
         lines.append(
-            f"{input_phrase.capitalize()} {_flow_verb(input_count)} in from parent {parent_label}, used by "
+            f"{input_phrase.capitalize()} {_flow_verb(ref_count)} in from parent {parent_label}, used by "
             f"{_count_phrase(len(projections), 'consumer node')}."
         )
-        lines.append("Per-consumer cache prefix (what the provider sees per call):")
+        _append_honest_edit_lines(
+            lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result, include_cleanup=False
+        )
+        lines.append("Prompt-body templates to remove and per-consumer cache prefix:")
         for projection in projections:
             lines.extend(
                 _format_per_consumer_input_lines(
                     projection=projection,
-                    candidates_by_input=candidates_by_input,
+                    candidates_by_input=candidates_by_ref,
                     tokens_per_input=tokens_per_input,
                     cw_result=cw_result,
                 )
             )
     else:
         lines.append(
-            f"{input_phrase.capitalize()} {_flow_verb(input_count)} in from parent {parent_label}: "
+            f"{input_phrase.capitalize()} {_flow_verb(ref_count)} in from parent {parent_label}: "
             f"{_format_tokens_phrase(per_call_max)} per call ({threshold_clause})."
         )
-        lines.append("Template variables to remove:")
-        lines.extend(
-            _format_single_consumer_input_lines(
-                candidates=group.candidates,
-                tokens_per_input=tokens_per_input,
-                cw_result=cw_result,
-            )
-        )
+        _append_honest_edit_lines(lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result)
 
     if case == "model_switch":
         alternatives = anthropic_models_at_threshold(_MODEL_SWITCH_BAND)
@@ -4839,6 +5581,116 @@ def _format_grouped_body_block(
     return "\n".join(lines)
 
 
+def _format_unmeasurable_grouped_body(
+    *,
+    group: _SubWorkflowCacheGroup,
+    input_phrase: str,
+    tokens_per_input: dict[str, int | None],
+    cw_result: Any,
+) -> str:
+    lines = [
+        f"{input_phrase.capitalize()} flow in but no consumer node has a resolved model — "
+        "cannot compute the cache threshold."
+    ]
+    _append_honest_edit_lines(lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result)
+    lines.append(
+        "→ Set `settings.default_model` or add `- model:` to each consumer node in "
+        f"{_workflow_basename(group.child_workflow)}, then re-run analyze-cache."
+    )
+    return "\n".join(lines)
+
+
+def _format_refactor_grouped_body(
+    *,
+    group: _SubWorkflowCacheGroup,
+    input_phrase: str,
+    ref_count: int,
+    per_call_max: int,
+    tokens_per_input: dict[str, int | None],
+    cw_result: Any,
+) -> str:
+    subject = f"One value `{group.candidates[0].child_cache_ref}`" if ref_count == 1 else input_phrase.capitalize()
+    lines = [
+        f"{subject} {_format_tokens_phrase(per_call_max)} per call, "
+        "below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5)."
+    ]
+    _append_honest_edit_lines(lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result)
+    lines.append("→ Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.")
+    lines.append(f"→ Verify: confirm {_format_tokens_phrase(per_call_max)} is the realistic per-call size.")
+    return "\n".join(lines)
+
+
+def _append_honest_edit_lines(
+    lines: list[str],
+    group: _SubWorkflowCacheGroup,
+    *,
+    tokens_per_input: dict[str, int | None],
+    cw_result: Any,
+    include_cleanup: bool = True,
+) -> None:
+    if _group_has_subpath_candidates(group):
+        lines.append(_subpath_honesty_sentence(group))
+    lines.extend(_format_exact_child_cache_edits(group))
+    if include_cleanup:
+        lines.append("Prompt-body templates to remove:")
+        lines.extend(
+            _format_single_consumer_input_lines(
+                candidates=group.candidates,
+                tokens_per_input=tokens_per_input,
+                cw_result=cw_result,
+            )
+        )
+
+
+def _group_has_subpath_candidates(group: _SubWorkflowCacheGroup) -> bool:
+    return any(candidate.child_cache_ref != candidate.child_input_name for candidate in group.candidates)
+
+
+def _subpath_honesty_sentence(group: _SubWorkflowCacheGroup) -> str:
+    roots = tuple(dict.fromkeys(candidate.child_input_name for candidate in group.candidates))
+    root_text = ", ".join(f"`{root}`" for root in roots)
+    return (
+        "Only these listed values are used by prompts. Do not cache full objects like "
+        f"{root_text} unless you intentionally want every field in that object sent to the model."
+    )
+
+
+def _format_exact_child_cache_edits(group: _SubWorkflowCacheGroup) -> list[str]:
+    lines = ["Edit child workflow:", "  Add or extend ## Cache:"]
+    lines.append("    ```cache")
+    lines.extend(f"    {line}" for line in _exact_child_cache_block_content(group).split("\n"))
+    lines.append("    ```")
+    lines.append("  Add prompt_cache entries:")
+    for node_id, refs in sorted(_cache_refs_by_consumer(group).items()):
+        ordered_refs = [
+            candidate.child_cache_ref for candidate in group.candidates if candidate.child_cache_ref in refs
+        ]
+        lines.append(f"    {node_id}: prompt_cache: [{', '.join(ordered_refs)}]")
+    return lines
+
+
+def _exact_child_cache_block_content(group: _SubWorkflowCacheGroup) -> str:
+    """Render the paste-ready child ``## Cache`` block content.
+
+    Each chunk emits the var line on its own; when a matching parent chunk
+    contributes prose, a 40-char single-line preview of that prose is rendered
+    immediately above the var line. Chunks are separated by blank lines to
+    mirror the parent's ``## Cache`` visual structure. The single-line preview
+    is intentional: it stays scannable for agents and (because
+    ``_static_excerpt`` collapses internal whitespace) survives the renderer's
+    line-by-line indenting without breaking the cache block layout.
+    """
+    parts: list[str] = []
+    for candidate in group.candidates:
+        chunk = ""
+        if candidate.parent_prose.strip() and not candidate.parent_prose_origins_differ:
+            chunk += _static_excerpt(candidate.parent_prose, limit=_PARENT_PROSE_PREVIEW_LIMIT)
+            chunk += "\n\n"
+        chunk += f"${{{candidate.child_cache_ref}}}"
+        parts.append(chunk)
+    return "\n\n".join(parts)
+
+
 def _threshold_relation(tokens: int, threshold: int) -> str:
     return "above" if tokens >= threshold else "below"
 
@@ -4851,9 +5703,9 @@ def _parent_origin_clause(candidate: _SubWorkflowCacheCandidate) -> str | None:
     multi-ref/literal parent values where ``parent_value_expr`` is empty.
     """
     expr = candidate.parent_value_expr
-    if not expr or expr == candidate.child_input_name:
+    if not expr or candidate.parent_cache_ref == candidate.child_cache_ref:
         return None
-    return f"flows in from parent as `${{{expr}}}`"
+    return f"flows in from parent as `${{{candidate.parent_cache_ref}}}`"
 
 
 def _format_per_consumer_input_lines(
@@ -4896,9 +5748,9 @@ def _format_single_consumer_input_lines(
         refs = tuple(ref for node_refs in refs_by_node.values() for ref in node_refs)
         consumer_text = ", ".join(f"`{node_id}`" for node_id in candidate.child_node_ids)
         lines.append(
-            f"  • `{candidate.child_input_name}` "
-            f"{_format_nullable_tokens(tokens_per_input.get(candidate.child_input_name))} — "
-            f"node(s) {consumer_text} use {_format_var_refs(refs, fallback=candidate.child_input_name)}"
+            f"  • `{candidate.child_cache_ref}` "
+            f"{_format_nullable_tokens(tokens_per_input.get(candidate.child_cache_ref))} — "
+            f"node(s) {consumer_text} use {_format_var_refs(refs, fallback=candidate.child_cache_ref)}"
         )
         origin = _parent_origin_clause(candidate)
         if origin is not None:
@@ -4936,26 +5788,7 @@ def _format_var_refs(refs: Iterable[str], *, fallback: str) -> str:
 
 def _per_input_var_refs(candidate: _SubWorkflowCacheCandidate, cw_result: Any) -> dict[str, tuple[str, ...]]:
     """Prompt `${var}` references that must be removed before caching the input."""
-    child_ir = cw_result.irs_by_workflow.get(candidate.child_workflow)
-    if not child_ir:
-        return {}
-    nodes_by_id = {
-        str(node.get("id")): node
-        for node in child_ir.get("nodes", []) or []
-        if isinstance(node, dict) and node.get("id")
-    }
-    cache_item_names = {candidate.child_input_name}
-    corrected = (candidate.child_input_name,)
-    refs_by_node: dict[str, tuple[str, ...]] = {}
-    for node_id in candidate.child_node_ids:
-        node = nodes_by_id.get(node_id)
-        if node is None:
-            continue
-        cleanup = _prompt_body_cleanup_for_node(node, corrected, cache_item_names)
-        if not cleanup:
-            continue
-        refs_by_node[node_id] = tuple(cleanup)
-    return refs_by_node
+    return {node_id: tuple(refs) for node_id, refs in candidate.body_refs_by_node.items()}
 
 
 def _grouped_inputs_context(
@@ -4969,11 +5802,17 @@ def _grouped_inputs_context(
         consumer_node_ids = list(candidate.child_node_ids)
         items.append({
             "child_input_name": candidate.child_input_name,
+            "child_cache_ref": candidate.child_cache_ref,
             "parent_value_expr": candidate.parent_value_expr,
+            "parent_cache_ref": candidate.parent_cache_ref,
             "parent_workflow": candidate.parent_workflow,
             "parent_node_id": candidate.parent_node_id,
             "line_in_parent": candidate.line_in_parent,
-            "tokens_estimated": tokens_per_input.get(candidate.child_input_name),
+            "tokens_estimated": tokens_per_input.get(candidate.child_cache_ref),
+            "parent_prose": candidate.parent_prose,
+            "parent_prose_origins_differ": candidate.parent_prose_origins_differ,
+            "origin_count": candidate.origin_count,
+            "has_multiple_parent_origins": candidate.has_multiple_parent_origins,
             "consumer_node_ids": consumer_node_ids,
             "consumer_node_ids_csv": ", ".join(f"`{node_id}`" for node_id in consumer_node_ids),
             "template_var_refs_by_node": {
@@ -4994,50 +5833,51 @@ def _emit_sub_workflow_cache_findings(
     """Emit one grouped diagnostic per child workflow."""
     diagnostics: list[Diagnostic] = []
     for group in _aggregate_sub_workflow_cache_candidates_by_child(candidates):
+        group_child_node_ids = tuple(sorted({node_id for c in group.candidates for node_id in c.child_node_ids}))
         if ctx.trace is None:
-            if all(candidate.child_count < 2 for candidate in group.candidates):
+            if len(group_child_node_ids) < 2:
                 continue
         else:
-            child_node_ids = tuple(sorted({node_id for c in group.candidates for node_id in c.child_node_ids}))
             total_invocations = _total_observed_invocations(
                 child_workflow=group.child_workflow,
-                child_node_ids=child_node_ids,
+                child_node_ids=group_child_node_ids,
                 call_counts_by_node=call_counts_by_node,
             )
             child_has_trace_evidence = any(
-                (group.child_workflow, node_id) in call_counts_by_node for node_id in child_node_ids
+                (group.child_workflow, node_id) in call_counts_by_node for node_id in group_child_node_ids
             )
             if child_has_trace_evidence and total_invocations < 2:
                 continue
-            if not child_has_trace_evidence and all(candidate.child_count < 2 for candidate in group.candidates):
+            if not child_has_trace_evidence and len(group_child_node_ids) < 2:
                 continue
 
-        strictest_threshold, total_savings, projections, tokens_per_input, strictest_model = (
+        _strictest_threshold, _total_savings, projections, tokens_per_input, _strictest_model = (
             _project_grouped_cache_savings(group, rows_by_node_path, ctx, cw_result)
         )
-        case = _classify_group_case(projections)
-        diagnostics.append(
-            make_diagnostic(
-                "cache.sub-workflow-cache-undeclared",
-                node_id=None,
-                affected_workflow=group.child_workflow,
-                child_workflow=group.child_workflow,
-                child_workflow_basename=_workflow_basename(group.child_workflow),
-                affected_input_count=len(group.candidates),
-                inputs=_grouped_inputs_context(group, tokens_per_input, cw_result),
-                body_block=_format_grouped_body_block(
-                    group,
-                    projections,
-                    tokens_per_input,
-                    strictest_model,
-                    strictest_threshold,
-                    case,
-                    cw_result,
-                ),
-                case=case,
-                savings_usd=total_savings if case == "actionable" else None,
+        for split_group, split_projections, case in _split_group_by_projection_case(group, projections):
+            strictest_model, strictest_threshold = _strictest_model_and_threshold(split_projections)
+            diagnostics.append(
+                make_diagnostic(
+                    "cache.sub-workflow-cache-undeclared",
+                    node_id=None,
+                    affected_workflow=split_group.child_workflow,
+                    child_workflow=split_group.child_workflow,
+                    child_workflow_basename=_workflow_basename(split_group.child_workflow),
+                    affected_input_count=len(split_group.candidates),
+                    inputs=_grouped_inputs_context(split_group, tokens_per_input, cw_result),
+                    body_block=_format_grouped_body_block(
+                        split_group,
+                        split_projections,
+                        tokens_per_input,
+                        strictest_model,
+                        strictest_threshold,
+                        case,
+                        cw_result,
+                    ),
+                    case=case,
+                    savings_usd=_total_savings_for_case(split_projections, case=case),
+                )
             )
-        )
     return diagnostics
 
 
@@ -5072,11 +5912,7 @@ def _collect_llm_nodes_referencing_path(ir: dict[str, Any], template_path: str) 
             continue
         node_inputs = _node_inputs(node)
         refs = classify_prompt_refs(prompt, batch_alias=None, node_inputs=node_inputs)
-        if any(
-            operand == template_path or operand.startswith(f"{template_path}.")
-            for ref in refs
-            for operand in ref.operand_paths
-        ):
+        if any(_path_is_equal_or_descendant(operand, template_path) for ref in refs for operand in ref.operand_paths):
             ids.append(node_id)
     return ids
 
@@ -5186,8 +6022,8 @@ def _format_fidelity_skip_note(target: str, reason: str, *, applicable: bool = T
     Every skip-note in the discrepancy stage describes the same shape: the
     analyzer wanted to compare predicted cache_keys against trace evidence
     for a specific target (workflow or workflow.node), couldn't, and falls
-    back to reporting explicit cache events (TTL expiry, chunk-skipped)
-    from the trace. The framing is jargon-free and consistent across all
+    back to reporting explicit skipped-chunk events from the trace. The
+    framing is jargon-free and consistent across all
     9 emit sites so an agent reading the Notes section never has to map
     "Discrepancy detection: predicted-key matching" → "cache fidelity
     check" by themselves.
@@ -5200,7 +6036,7 @@ def _format_fidelity_skip_note(target: str, reason: str, *, applicable: bool = T
     returns. The wording lives in this one place to prevent that drift.
     """
     prefix = "Cache fidelity check skipped for" if applicable else "Cache fidelity check not applicable to"
-    return f"{prefix} {target}: {reason}. TTL expiry and chunk-skip detection still apply."
+    return f"{prefix} {target}: {reason}. Chunk-skip detection still applies."
 
 
 def _format_skipped_workflows_note(paths: list[str]) -> str:
@@ -5243,31 +6079,188 @@ def _predict_one_workflow(
     build, per-node loop) that naturally cluster together.
     """
     params = ctx.parameters_for_workflow(workflow_path)
-    # Per-workflow input check: if THIS workflow declares inputs but no
-    # parameters resolved for it, derived keys would diverge from the
-    # trace's run-time values. Honest fallback is observable-only
-    # attribution. (The legacy implementation only checked the root
-    # workflow; child workflows silently degraded to defaults.)
-    # L-4: aggregate per-workflow skips into one summary note at the
-    # caller level, instead of emitting one note per sub-workflow.
-    if not params and isinstance(ir.get("inputs"), dict) and ir["inputs"]:
+    declared_inputs_raw = ir.get("inputs")
+    declared_inputs: Mapping[str, Any] | None = (
+        declared_inputs_raw if isinstance(declared_inputs_raw, Mapping) else None
+    )
+    # Truly cold case: walker resolved NOTHING and the workflow declares
+    # inputs. Skip the whole workflow and aggregate to a single Notes
+    # summary at the caller level (L-4). Distinct from the partial-params
+    # case below where some inputs were resolved and we want to predict
+    # what we can on a per-node basis.
+    if not params and declared_inputs:
         skipped_input_workflows.append(workflow_path or "<root>")
         return
     if not any(_is_llm_node(node) for node in ir.get("nodes", [])):
         return
-    scaffold, scaffold_error = _build_predict_scaffold(ir, params, ctx.memo_cache, workflow_path)
+    # Partial-params case: walker resolved some inputs but not all (e.g.,
+    # a child input that flows from an upstream sub-workflow output the
+    # walker can't reach statically). Pad the missing slots with the
+    # standard placeholder so compile succeeds; then skip prediction per
+    # node for any node whose templates or referenced cache chunks touch
+    # a padded slot — its predicted cache_key would be placeholder-
+    # tainted and never match the trace. Per-node skip is silent;
+    # skipped-chunk attribution covers real branch-absent misses on those
+    # nodes.
+    padded_params, dummied_keys = _pad_inputs_for_prediction(params, declared_inputs)
+    dummied_chunks = _dummied_cache_chunks(ir, dummied_keys)
+    scaffold = _build_predict_scaffold(ir, padded_params, ctx.memo_cache, workflow_path)
     if scaffold is None:
-        if scaffold_error:
-            notes.append(scaffold_error)
         return
     for node in ir.get("nodes", []):
         if not _is_llm_node(node):
+            continue
+        if _node_references_any(node, dummied_keys, dummied_chunks):
             continue
         cache_key, skip_reason = _predict_node_with_scaffold(node, scaffold, workflow_path)
         if cache_key is not None:
             predicted_keys[(workflow_path, str(node["id"]))] = cache_key
         elif skip_reason:
             notes.append(skip_reason)
+
+
+def _pad_inputs_for_prediction(
+    known_params: Mapping[str, Any],
+    declared_inputs: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Merge walker-resolved params with placeholders for missing inputs.
+
+    The discrepancy stage compiles every sub-workflow to predict runtime
+    cache_keys, but the cross-workflow walker can only resolve inputs
+    whose values flow statically from the parent. For inputs that come
+    from upstream node outputs (e.g. ``${upstream.results}``) the walker
+    leaves the slot empty — and ``compile_workflow`` would reject the
+    incomplete params dict with ``SchemaValidationError`` before any
+    per-node prediction could run, emitting a misleading "workflow failed
+    to compile" Note for workflows that run fine end-to-end.
+
+    Padding the missing slots with ``"__validation_placeholder__"`` lets
+    compile succeed (same idiom ``WorkflowValidator._validate_one_child_call``
+    uses for structural validation). The returned ``dummied_keys`` set
+    lets ``_predict_one_workflow`` skip prediction for any node whose
+    templates touch a placeholder; those predictions would never match
+    the trace's real values.
+    """
+    padded: dict[str, Any] = dict(known_params)
+    if not declared_inputs:
+        return padded, frozenset()
+    dummies = generate_dummy_parameters(dict(declared_inputs))
+    dummied: set[str] = set()
+    for key, placeholder in dummies.items():
+        if key not in padded:
+            padded[key] = placeholder
+            dummied.add(key)
+    return padded, frozenset(dummied)
+
+
+def _node_references_any(
+    node: Mapping[str, Any],
+    dummied_keys: frozenset[str],
+    dummied_chunks: frozenset[str],
+) -> bool:
+    """True iff ``node``'s cache_key would be placeholder-tainted.
+
+    Used by the discrepancy stage to skip cache_key prediction for nodes
+    whose inputs depend on dummied (un-walker-resolved) workflow inputs.
+    A node is tainted if EITHER:
+
+    - it declares ``prompt_cache: [name]`` referencing a chunk whose
+      ``var`` traces back to a dummied input (``dummied_chunks``), OR
+    - any ``${var}`` ref in the node's IR has a root in ``dummied_keys``.
+
+    Conservative on coalesce: if ANY operand of ``${a ?? b}`` has a root
+    in ``dummied_keys``, returns True. The alternative (only skip when
+    ALL operands are dummied) risks producing placeholder-tainted
+    predictions when the resolver happens to pick the dummied operand
+    first.
+    """
+    if not isinstance(node, Mapping):
+        return False
+    if _node_prompt_cache_touches(node, dummied_chunks):
+        return True
+    return _node_templates_touch(node, dummied_keys)
+
+
+def _node_prompt_cache_touches(node: Mapping[str, Any], dummied_chunks: frozenset[str]) -> bool:
+    """True iff the node's ``prompt_cache:`` lists any dummied chunk name."""
+    if not dummied_chunks:
+        return False
+    prompt_cache = node.get("prompt_cache")
+    if not isinstance(prompt_cache, list):
+        return False
+    return any(isinstance(name, str) and name in dummied_chunks for name in prompt_cache)
+
+
+def _node_templates_touch(node: Mapping[str, Any], dummied_keys: frozenset[str]) -> bool:
+    """True iff any ``${var}`` ref in the node's IR has a root in ``dummied_keys``.
+
+    Walks every nested string value in the node dict — broader than
+    ``_collect_llm_nodes_referencing_path`` (which only inspects
+    ``params.prompt``) because cache_key inputs come from any templated
+    field on the node (``params``, ``inputs``, ``batch``, nested
+    code-block inputs, etc.).
+    """
+    if not dummied_keys:
+        return False
+    for text in _walk_strings(node):
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(text):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                root = TemplateResolver.extract_root_node_id(operand)
+                if root and root in dummied_keys:
+                    return True
+    return False
+
+
+def _dummied_cache_chunks(
+    workflow_ir: Mapping[str, Any],
+    dummied_keys: frozenset[str],
+) -> frozenset[str]:
+    """Cache chunk names whose ``var`` traces back to a dummied input.
+
+    A ``## Cache`` block declares chunks with ``var: <ref>``; when a
+    node's ``prompt_cache:`` references such a chunk, the runtime
+    resolves ``var`` against parameters to produce the chunk's content.
+    If ``var``'s root is dummied, the chunk content carries the
+    placeholder and any node consuming it via ``prompt_cache`` would
+    produce a placeholder-tainted cache_key — same outcome as a direct
+    template ref to a dummied input.
+
+    Pre-computed once per workflow so the per-node check stays O(1) in
+    the number of chunks.
+    """
+    if not dummied_keys:
+        return frozenset()
+    cache = workflow_ir.get("cache") if isinstance(workflow_ir, Mapping) else None
+    if not isinstance(cache, Mapping):
+        return frozenset()
+    items = cache.get("items")
+    if not isinstance(items, list):
+        return frozenset()
+    tainted: set[str] = set()
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        var = item.get("var")
+        if not isinstance(var, str):
+            continue
+        root = TemplateResolver.extract_root_node_id(var)
+        if root and root in dummied_keys:
+            name = item.get("name")
+            if isinstance(name, str):
+                tainted.add(name)
+    return frozenset(tainted)
+
+
+def _walk_strings(value: Any) -> Iterable[str]:
+    """Yield every string value reachable from ``value`` via dict/list nesting."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for inner in value.values():
+            yield from _walk_strings(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            yield from _walk_strings(inner)
 
 
 def _is_llm_node(node: Any) -> bool:
@@ -5297,12 +6290,24 @@ def _build_predict_scaffold(
     params: Mapping[str, Any],
     memo_cache: Any,
     workflow_path: str | None,
-) -> tuple[_PredictScaffold | None, str | None]:
+) -> _PredictScaffold | None:
     """Compile + planner-shared once per workflow.
 
-    Returns ``(scaffold, error_note)``. On failure the scaffold is None and
-    ``error_note`` describes why (one note per workflow, not per node). Lazy
-    imports keep the analyzer package import-cheap (mirrors
+    Returns the scaffold, or ``None`` if compile/planner setup fails. The
+    unified validator (``_run_full_validation``) runs strictly earlier in
+    ``analyze()`` and surfaces structural errors via ``blocking_errors[]``
+    /``other_blocking_errors[]``, so this catch only fires for compiler-
+    internal failures the validator missed. Those degrade silently with
+    a debug log — the agent already has the actionable structural signal
+    from the validator pass, and a misleading "workflow failed to compile
+    (SchemaValidationError)" Note (the Bug 3 symptom) is worse than no
+    Note at all.
+
+    Callers inject ``_pflow_workflow_file`` so relative ``@./file.ext``
+    refs resolve against the workflow's own directory instead of CWD —
+    matches ``WorkflowValidator._validate_one_child_call``'s pattern.
+
+    Lazy imports keep the analyzer package import-cheap (mirrors
     ``token_estimation.py``'s LiteLLM lazy-import).
     """
     from pflow.core.exceptions import (
@@ -5315,9 +6320,11 @@ def _build_predict_scaffold(
     from pflow.registry import Registry
     from pflow.runtime import compile_workflow
 
-    workflow_label = workflow_path or "<root>"
+    compile_params: dict[str, Any] = dict(params)
+    if workflow_path is not None:
+        compile_params.setdefault("_pflow_workflow_file", str(workflow_path))
     try:
-        compiled = compile_workflow(dict(workflow_ir), Registry(), dict(params))
+        compiled = compile_workflow(dict(workflow_ir), Registry(), dict(compile_params))
     except (
         CompilationError,
         MarkdownParseError,
@@ -5326,10 +6333,16 @@ def _build_predict_scaffold(
         FileNotFoundError,
         ValueError,
     ) as exc:
-        return None, _format_fidelity_skip_note(workflow_label, f"workflow failed to compile ({type(exc).__name__})")
-    shared = create_planner_shared(compiled, dict(params), memo_cache, workflow_path)
+        logger.debug(
+            "predict-stage compile failed for %s: %s",
+            workflow_path or "<root>",
+            exc,
+            exc_info=True,
+        )
+        return None
+    shared = create_planner_shared(compiled, dict(compile_params), memo_cache, workflow_path)
     bare_nodes_by_id = _enumerate_compiled_bare_nodes(compiled)
-    return _PredictScaffold(compiled=compiled, shared=shared, bare_nodes_by_id=bare_nodes_by_id), None
+    return _PredictScaffold(compiled=compiled, shared=shared, bare_nodes_by_id=bare_nodes_by_id)
 
 
 def _predict_node_with_scaffold(
@@ -5384,13 +6397,17 @@ def _predict_node_cache_key(
     """Self-contained per-node prediction — builds its own scaffold.
 
     Production callers should use ``_predict_cache_keys`` (which hoists the
-    compile + shared per workflow). This helper is kept for direct test
-    callers that want a single-node prediction without setting up a
-    ``cw_result`` / ``AnalysisContext``.
+    compile + shared per workflow, applies dummy padding for partial
+    walker params, and skips nodes whose templates touch a padded slot).
+    This helper is kept for direct test callers that want a single-node
+    prediction without setting up a ``cw_result`` / ``AnalysisContext``;
+    they pass real (already-resolved) params, so no padding is needed.
+    Returns ``(None, None)`` on scaffold failure — the silent-skip
+    contract matches production.
     """
-    scaffold, error_note = _build_predict_scaffold(workflow_ir, params, memo_cache, workflow_path)
+    scaffold = _build_predict_scaffold(workflow_ir, params, memo_cache, workflow_path)
     if scaffold is None:
-        return None, error_note
+        return None, None
     return _predict_node_with_scaffold(node, scaffold, workflow_path)
 
 
@@ -5420,7 +6437,6 @@ def _emit_discrepancy_diagnostics(
     cw_result: Any,
     notes: list[str],
 ) -> list[Diagnostic]:
-    workflow_ir = dict(ctx.workflow_ir)
     trace_data = ctx.trace_data
     if trace_data is None:
         return []
@@ -5443,7 +6459,12 @@ def _emit_discrepancy_diagnostics(
         trace_tree = TraceTree.from_dict(trace_data)
     except ValueError:
         return []
-    for leaf in trace_tree.iter_llm_leaves(edges=edge_child_paths, workflow_path=workflow_path):
+    # Bug 5 fix: seed the walker with the trace's actual root workflow_path so
+    # that top-level events get attributed to whoever produced them rather than
+    # being mis-attributed to the analyzed workflow. When trace was recorded
+    # for the analyzed workflow itself, this is a no-op.
+    trace_root = trace_data.get("workflow_path") or workflow_path
+    for leaf in trace_tree.iter_llm_leaves(edges=edge_child_paths, workflow_path=trace_root):
         node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
         event = dict(leaf.event)
         leaf_workflow_path = leaf.workflow_path or workflow_path
@@ -5451,67 +6472,28 @@ def _emit_discrepancy_diagnostics(
         if not isinstance(llm_call, dict):
             continue
 
-        cache_create = int(llm_call.get("cache_creation_input_tokens") or 0)
-        cache_read = int(llm_call.get("cache_read_input_tokens") or 0)
         chunks_skipped = llm_call.get("cache_chunks_skipped")
-        # When cache wasn't engaged at all the discrepancy machinery has
-        # nothing to compare — UNLESS a chunk was skipped, which is exactly
-        # the reason the cache disengaged in the first place. Skipping that
-        # case would make `chunk_skipped` attribution unreachable for the
-        # branch-absent scenario it was designed for.
-        if cache_create == 0 and cache_read == 0 and not chunks_skipped:
-            continue
-
         actual_key = llm_call.get("cache_key") or event.get("cache_key")
-        cache_age_sec = llm_call.get("cache_age_sec") or event.get("cache_age_sec")
         predicted_key = _predicted_key_for_event(predicted_keys, workflow_path=leaf_workflow_path, node_id=node_id)
 
-        actual_pct = _safe_pct(cache_read, cache_read + cache_create)
-        predicted_pct = 100 if predicted_key is not None else 0
-        predicted_label = _compute_predicted_label(predicted_key, actual_key)
-
-        if predicted_key is None and not (chunks_skipped or (cache_age_sec is not None and float(cache_age_sec) > 300)):
-            # Cache engaged but we have no predicted_key AND no observable
-            # signal. Skip — per-node skip notes from ``_predict_cache_keys``
-            # already explain why prediction was unavailable for nodes in the
-            # analyzed IR; events outside the IR (typically batch sub-workflow
-            # per-item children with runtime-only context) are surfaced via
-            # the per-child analyze-cache commands section.
-            continue
-        if predicted_key is not None and abs(predicted_pct - actual_pct) < 5:
+        # Skip when there is no discrepancy to surface. Missing key cases are
+        # covered by prediction skip notes from ``_predict_cache_keys`` rather
+        # than by noisy observable-only discrepancy attributions.
+        if not chunks_skipped and (actual_key is None or predicted_key is None or predicted_key == actual_key):
             continue
 
-        # Bug 9 fix: TTL must come from the leaf event's workflow file —
-        # mixed parent/child TTLs (parent ``ttl: 1h``, child ``ttl: 5m``)
-        # would otherwise attribute child cache-age=600s as fresh against
-        # the parent's hour-long window, missing the child's actual expiry.
-        leaf_ir = (cw_result.irs_by_workflow.get(leaf_workflow_path) if leaf_workflow_path else None) or workflow_ir
-        root_cause, summary, extra = _attribute_root_cause(
-            cache_age_sec=cache_age_sec,
+        root_cause, summary, suggestion, extra = _attribute_root_cause(
             chunks_skipped=chunks_skipped,
-            predicted_key=predicted_key,
-            actual_key=actual_key,
-            ttl=_extract_cache_ttl(leaf_ir.get("cache")),
-            provider=detect_provider(llm_call.get("model")),
-            node_id=node_id,
-            leaf_workflow_path=leaf_workflow_path or workflow_path,
-            predicted_pct=predicted_pct,
-            actual_pct=actual_pct,
         )
         context_extra = dict(extra)
         context_extra.setdefault("affected_workflow", leaf_workflow_path or "<root>")
-        context_extra.setdefault("workflow_path_short", _workflow_short_name(leaf_workflow_path or "<root>"))
         diagnostics.append(
             make_diagnostic(
                 "cache.discrepancy",
                 node_id=node_id,
-                trace_path=str(trace_data.get("workflow_path") or "<unknown>"),
-                predicted_pct=predicted_pct,
-                predicted_label=predicted_label,
-                actual_pct=actual_pct,
                 root_cause=root_cause,
                 root_cause_summary=summary,
-                cache_age_sec=cache_age_sec,
+                suggestion=suggestion,
                 predicted_cache_key=predicted_key,
                 actual_cache_key=actual_key,
                 **context_extra,
@@ -5535,99 +6517,30 @@ def _predicted_key_for_event(
     return predicted_keys.get((workflow_path, node_id))
 
 
-def _workflow_short_name(path: str) -> str:
-    if "/" in path:
-        path = path.rsplit("/", 1)[-1]
-    if path.endswith(".pflow.md"):
-        return path[: -len(".pflow.md")]
-    return path
+def _attribute_root_cause(*, chunks_skipped: Any) -> tuple[str, str, str, dict[str, Any]]:
+    """Attribute a discrepancy event to one of two structural causes.
 
+    Returns ``(root_cause, summary, suggestion, extra_context)``.
 
-def _compute_predicted_label(predicted_key: str | None, actual_key: Any) -> str:
-    """Compute a human-readable label for the planner's prediction.
-
-    Bug F fix — ``predicted_pct`` is binary (100 if planner produced a
-    cache_key, 0 otherwise) and rendering it as ``"predicted hit_ratio 100%"``
-    is misleading: it sounds like a measured hit ratio. The label
-    distinguishes:
-
-    - ``"miss"`` — planner couldn't produce a cache_key (BFS-downstream,
-      heterogeneous batch, partial inputs); discrepancy attribution falls back
-      to observable signals.
-    - ``"hit (bytes diverged at runtime)"`` — both keys are present AND
-      different (e.g., upstream value changed between analyzer-time and the
-      traced run). Triggers ``key_mismatch`` attribution downstream.
-    - ``"hit"`` — predicted_key is set; the actual_key either matches OR was
-      not recorded by the trace (older fixtures, future schema changes).
-      Treating "actual_key absent" as a match avoids false-positive
-      "diverged" rendering on traces that simply lack the field.
-    """
-    if predicted_key is None:
-        return "miss"
-    if actual_key is not None and predicted_key != actual_key:
-        return "hit (bytes diverged at runtime)"
-    return "hit"
-
-
-def _attribute_root_cause(
-    *,
-    cache_age_sec: Any,
-    chunks_skipped: Any,
-    predicted_key: str | None,
-    actual_key: Any,
-    ttl: str | None,
-    provider: Any,
-    node_id: str,
-    leaf_workflow_path: str | None,
-    predicted_pct: int,
-    actual_pct: int,
-) -> tuple[str, str, dict[str, Any]]:
-    """Classify discrepancy root cause for one trace event.
-
-    ``leaf_workflow_path`` is the workflow file the leaf event belongs to —
-    parent for top-level events, child path for sub-workflow descendants.
-    The ``affected_workflow`` field is set from this so agents see the
-    workflow whose ``## Cache`` block actually needs editing, not the
-    analyzed root. Renderer scope-suppression at ``view_helpers.py`` then
-    composes correctly with Bug 1's per-node scope rendering.
+    The caller's gate guarantees we are only invoked when there is a
+    discrepancy to attribute: ``chunks_skipped`` is truthy, or both keys are
+    set and differ. No ``unknown`` fallback is reachable in this shape.
     """
     if chunks_skipped:
         skipped = str(chunks_skipped[0])
         return (
             "chunk_skipped",
             f"Cache chunk {skipped!r} skipped at runtime (branch absent)",
+            (
+                f"Cache chunk `{skipped}` was skipped at runtime (branch absent); "
+                "declaration is correct but rendered subset is shorter."
+            ),
             {"skipped_chunk": skipped},
         )
-    if chunks_skipped is None:
-        return (
-            "unknown",
-            f"Cache chunks-skipped field absent on this trace event "
-            f"(predicted={predicted_pct}%, actual={actual_pct}%); cannot attribute for {node_id}",
-            {},
-        )
-
-    if cache_age_sec is not None:
-        age = float(cache_age_sec)
-        provider_name = getattr(provider, "name", None)
-        effective_ttl = None
-        if ttl is not None:
-            effective_ttl = parse_cache_ttl(ttl)
-        elif provider_name in {"anthropic", "openai", "gemini"}:
-            effective_ttl = parse_cache_ttl(None)
-        if effective_ttl is not None and age >= effective_ttl.seconds:
-            return (
-                "ttl_expiry",
-                f"Cache entry was {age:.0f}s old (>= {effective_ttl.label} TTL); upstream write expired",
-                {"affected_workflow": leaf_workflow_path or "<root>"},
-            )
-
-    if predicted_key is not None and predicted_key != actual_key:
-        return ("key_mismatch", "Upstream value changed between predicted run and actual run", {})
-
     return (
-        "unknown",
-        f"Cannot attribute discrepancy to known causes "
-        f"(predicted={predicted_pct}%, actual={actual_pct}%); inspect trace events for {node_id}",
+        "key_mismatch",
+        "Upstream value changed between predicted run and actual run",
+        "Upstream value changed between predicted run and actual run; re-run analyze-cache to refresh the prediction.",
         {},
     )
 
@@ -5734,6 +6647,7 @@ def _build_summary(
     ctx: AnalysisContext | None = None,
     edge_child_paths: dict[str, str] | None = None,
     ir_default_model: str | None = None,
+    scope_workflow_paths: frozenset[str] | None = None,
 ) -> AnalysisSummary:
     """Aggregate per-call rows + warning counts into the spec's summary block.
 
@@ -5806,6 +6720,7 @@ def _build_summary(
         rows,
         trace=ctx.trace if ctx is not None else None,
         edges=edge_child_paths,
+        scope_workflow_paths=scope_workflow_paths,
     )
 
     # Partial flag: actually-paid trace_partial OR projection partial. The
@@ -5875,6 +6790,19 @@ def _build_summary(
             compared_to="actually_paid_usd",
         )
 
+    # Trace transparency fields: only populated when a trace was actually
+    # loaded (autoload or explicit). ``trace_data is None`` → both fields
+    # stay ``None`` (renderer reads ``analysis.trace_path`` to decide
+    # whether to show the header line). Back-compat fallback mirrors
+    # ``_trace_coverage_for_rows``: absent ``final_status`` → ``"success"``.
+    if ctx is not None and ctx.trace_data is not None:
+        trace_final_status: str | None = str(ctx.trace_data.get("final_status") or "success")
+        recorded = ctx.trace_data.get("start_time")
+        trace_recorded_at: str | None = str(recorded) if recorded is not None else None
+    else:
+        trace_final_status = None
+        trace_recorded_at = None
+
     return AnalysisSummary(
         actually_paid_usd=actually_paid.total_usd,
         actually_paid_tier=actually_paid.tier,
@@ -5909,6 +6837,8 @@ def _build_summary(
         root_llm_node_count=root_count,
         sub_workflow_llm_node_count=sub_workflow_count,
         projection_exclusions=projections.absolute_exclusions,
+        trace_final_status=trace_final_status,
+        trace_recorded_at=trace_recorded_at,
     )
 
 

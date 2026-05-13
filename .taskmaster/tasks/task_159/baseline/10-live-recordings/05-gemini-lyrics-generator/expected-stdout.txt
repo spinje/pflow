@@ -5,16 +5,17 @@
   Models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview
   Heterogeneous: generate-chorus-options (model varies per batch item)
   Evidence: complete trace (25 LLM nodes executed)
+  Trace: live-gemini-lyrics-generator.trace.json (success, recorded 2026-05-08 22:01)
   (2 in lyrics-generator.pflow.md, 23 in 14 sub-workflows)
 
 ## Summary
 
-  Actually paid:               ~$2.31 (trace)
+  Actually paid:               ~$2.31 (from trace)
   Cost without caching:        ~$2.42
   Cost on rerun (within TTL):  ~$2.34
 
-  · ~$0.27 of the above is pass-through for generate-chorus-options (model varies per call — projected savings unavailable; real savings could be higher if model+content combos repeat).
-  Actual savings (this run):    saves ~$0.11/run vs no-cache, 5% of no-cache cost
+  · ~$0.27 of the above was paid by generate-chorus-options but couldn't be analyzed for cache savings (model varies per call). Caching may still apply at runtime if its content repeats across calls.
+  Actual cost delta (this run): saves ~$0.11/run vs no-cache, 5% of no-cache cost
   Rerun delta (projected):      saves ~$0.09/run on rerun, 4% of no-cache cost
 
   12 recommended actions
@@ -31,99 +32,219 @@
 
   For each "Sub-workflow cache undeclared" finding, apply ALL THREE edits in the listed child workflow. Doing only some leaves the cache disabled:
     (1) Remove the `${var}` references from each affected node's prompt. Leaving them re-sends the content uncached.
-    (2) Add the input as a named entry under the child workflow's ## Cache section.
+    (2) Add the listed values as named entries under the child workflow's ## Cache section.
     (3) Reference that named entry in `prompt_cache:` on each consumer node.
 
-  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 inputs  saves ~$0.21/run
+  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — add 4 entries in ## Cache  saves ~$0.0092/run
      chorus-chooser.pflow.md
-     Three values flow in from parent song-creator.pflow.md, used by 2 consumer nodes.
-     Per-consumer cache prefix (what the provider sees per call):
-       Node `score-choruses` (~5,331 tokens per call — above 4,096-token minimum):
-         • `concept` ~5,331 tokens — uses `${concept.core_idea}`
-       Node `select-chorus` (~13,790 tokens per call — above 4,096-token minimum):
-         • `architecture` ~3,630 tokens — uses `${architecture}`
-             flows in from parent as `${song-architecture.response}`
-         • `concept` ~5,331 tokens — uses `${concept.core_idea}`, `${concept.title}`
-         • `creative_brief` ~4,829 tokens — uses `${creative_brief}`
-             flows in from parent as `${concept_brief}`
-     → Edit: song-creator/chorus-chooser/chorus-chooser.pflow.md
+     Four values flow in from parent song-creator.pflow.md: ~8,504 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
+     Only these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         The song architecture — section layout,...
 
-  2. Batch prewarm not declared — add `- prewarm: true` to score-choruses  saves ~$0.04/run
-     score-choruses in chorus-chooser.pflow.md
-     score-choruses: stable ~1061-token prompt prefix repeats across 136 batch calls. Prewarming writes the prefix once, then lets the remaining calls read it from cache; projected savings are aggregate for the batch, not per item.
-     → Add `- prewarm: true` to score-choruses to opt in.
-     → OR add `- prewarm: false` to score-choruses to opt out explicitly (suppresses this warning).
+         ${architecture}
 
-  3. Sub-workflow cache undeclared in review-emotional-architecture.pflow.md — declare 3 inputs  saves ~$0.0078/run
+         ${concept.core_idea}
+
+         ${concept.title}
+
+         The concept brief — material palette ta...
+
+         ${creative_brief}
+         ```
+       Add prompt_cache entries:
+         select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]
+     Prompt-body templates to remove:
+       • `architecture` ~3,630 tokens — node(s) `select-chorus` use `${architecture}`
+           flows in from parent as `${song-architecture.response}`
+       • `concept.core_idea` ~41 tokens — node(s) `select-chorus` use `${concept.core_idea}`
+       • `concept.title` ~4 tokens — node(s) `select-chorus` use `${concept.title}`
+       • `creative_brief` ~4,829 tokens — node(s) `select-chorus` use `${creative_brief}`
+           flows in from parent as `${concept_brief}`
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+
+  2. Sub-workflow cache undeclared in review-emotional-architecture.pflow.md — add 3 entries in ## Cache  saves ~$0.0078/run
      review-emotional-architecture.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~7,225 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         The concept brief — material palette ta...
+
+         ${concept_brief}
+
+         The creative direction — genre choice w...
+
+         ${creative_direction}
+
+         ${lyrics}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [concept_brief, creative_direction, lyrics]
+     Prompt-body templates to remove:
        • `concept_brief` ~4,829 tokens — node(s) `review` use `${concept_brief}`
        • `creative_direction` ~1,922 tokens — node(s) `review` use `${creative_direction}`
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~474 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${write-lyrics.response}`
-     → Edit: song-creator/reviews/review-emotional-architecture.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
 
-  4. Sub-workflow cache undeclared in review-accuracy.pflow.md — declare 3 inputs  saves ~$0.0076/run
+  3. Sub-workflow cache undeclared in review-accuracy.pflow.md — add 3 entries in ## Cache  saves ~$0.0076/run
      review-accuracy.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~7,036 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         The concept brief — material palette ta...
+
+         ${concept_brief}
+
+         The creative direction — genre choice w...
+
+         ${creative_direction}
+
+         ${lyrics}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [concept_brief, creative_direction, lyrics]
+     Prompt-body templates to remove:
        • `concept_brief` ~4,829 tokens — node(s) `review` use `${concept_brief}`
        • `creative_direction` ~1,922 tokens — node(s) `review` use `${creative_direction}`
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~285 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${extract-emotional-lyrics.result.lyrics}`
-     → Edit: song-creator/reviews/review-accuracy.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
 
-  5. Sub-workflow cache undeclared in review-genre.pflow.md — declare 3 inputs  saves ~$0.0063/run
+  4. Sub-workflow cache undeclared in review-genre.pflow.md — add 3 entries in ## Cache  saves ~$0.0063/run
      review-genre.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~5,837 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         The creative direction — genre choice w...
+
+         ${creative_direction}
+
+         ${lyrics}
+
+         The song architecture — section layout,...
+
+         ${song_architecture}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [creative_direction, lyrics, song_architecture]
+     Prompt-body templates to remove:
        • `creative_direction` ~1,922 tokens — node(s) `review` use `${creative_direction}`
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~285 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${extract-emotional-lyrics.result.lyrics}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-genre.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
 
-  6. Sub-workflow cache undeclared in review-rhyme.pflow.md — declare 3 inputs  saves ~$0.0063/run
+  5. Sub-workflow cache undeclared in review-rhyme.pflow.md — add 3 entries in ## Cache  saves ~$0.0063/run
      review-rhyme.pflow.md
      Three values flow in from parent song-creator.pflow.md: ~5,837 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         The creative direction — genre choice w...
+
+         ${creative_direction}
+
+         ${lyrics}
+
+         The song architecture — section layout,...
+
+         ${song_architecture}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [creative_direction, lyrics, song_architecture]
+     Prompt-body templates to remove:
        • `creative_direction` ~1,922 tokens — node(s) `review` use `${creative_direction}`
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~285 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${extract-emotional-lyrics.result.lyrics}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-rhyme.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
 
-  7. Sub-workflow cache undeclared in review-imagery.pflow.md — declare 2 inputs  saves ~$0.0044/run
+  6. Sub-workflow cache undeclared in review-imagery.pflow.md — add 2 entries in ## Cache  saves ~$0.0044/run
      review-imagery.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~4,104 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         ${lyrics}
+
+         The song architecture — section layout,...
+
+         ${song_architecture}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [lyrics, song_architecture]
+     Prompt-body templates to remove:
        • `lyrics` ~474 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${write-lyrics.response}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-imagery.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
 
-  8. Sub-workflow cache undeclared in review-narrative.pflow.md — declare 2 inputs  saves ~$0.0044/run
+  7. Sub-workflow cache undeclared in review-narrative.pflow.md — add 2 entries in ## Cache  saves ~$0.0044/run
      review-narrative.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~4,104 tokens per call (above gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         ${lyrics}
+
+         The song architecture — section layout,...
+
+         ${song_architecture}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [lyrics, song_architecture]
+     Prompt-body templates to remove:
        • `lyrics` ~474 tokens — node(s) `review` use `${lyrics}`
            flows in from parent as `${write-lyrics.response}`
        • `song_architecture` ~3,630 tokens — node(s) `review` use `${song_architecture}`
            flows in from parent as `${song-architecture.response}`
-     → Edit: song-creator/reviews/review-narrative.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
 
-  9. Sub-workflow cache undeclared in review-ai-tells.pflow.md — declare 2 inputs  savings available with model switch
+  8. Sub-workflow cache undeclared in chorus-chooser.pflow.md — add 1 entry in ## Cache  not yet cacheable
+     chorus-chooser.pflow.md
+     One value `concept.core_idea` ~41 tokens per call, below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5).
+     Only these listed values are used by prompts. Do not cache full objects like `concept` unless you intentionally want every field in that object sent to the model.
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         ${concept.core_idea}
+         ```
+       Add prompt_cache entries:
+         score-choruses: prompt_cache: [concept.core_idea]
+     Prompt-body templates to remove:
+       • `concept.core_idea` ~41 tokens — node(s) `score-choruses` use `${concept.core_idea}`
+     → Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.
+     → Verify: confirm ~41 tokens is the realistic per-call size.
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+
+  9. Sub-workflow cache undeclared in review-ai-tells.pflow.md — add 2 entries in ## Cache  savings available with model switch
      review-ai-tells.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~2,207 tokens per call (below gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         The creative direction — genre choice w...
+
+         ${creative_direction}
+
+         ${lyrics}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [creative_direction, lyrics]
+     Prompt-body templates to remove:
        • `creative_direction` ~1,922 tokens — node(s) `review` use `${creative_direction}`
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~285 tokens — node(s) `review` use `${lyrics}`
@@ -137,12 +258,23 @@
        These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide prompt-caching`.
      → Then: apply steps (1)(2)(3) above.
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
-     → Edit: song-creator/reviews/review-ai-tells.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
 
-  10. Sub-workflow cache undeclared in review-cliche.pflow.md — declare 2 inputs  savings available with model switch
+  10. Sub-workflow cache undeclared in review-cliche.pflow.md — add 2 entries in ## Cache  savings available with model switch
      review-cliche.pflow.md
      Two values flow in from parent song-creator.pflow.md: ~2,207 tokens per call (below gemini/gemini-2.5-flash's 4,096-token cache minimum).
-     Template variables to remove:
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         The creative direction — genre choice w...
+
+         ${creative_direction}
+
+         ${lyrics}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [creative_direction, lyrics]
+     Prompt-body templates to remove:
        • `creative_direction` ~1,922 tokens — node(s) `review` use `${creative_direction}`
            flows in from parent as `${creative-direction.response}`
        • `lyrics` ~285 tokens — node(s) `review` use `${lyrics}`
@@ -156,14 +288,24 @@
        These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. Switching providers changes base inference cost — see `pflow guide prompt-caching`.
      → Then: apply steps (1)(2)(3) above.
      → Monitor: re-run analyze-cache when per-call content grows past 4,096 tokens to enable caching at the current model.
-     → Edit: song-creator/reviews/review-cliche.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
 
-  11. Sub-workflow cache undeclared in review-stranger-summary.pflow.md — declare 1 input  not yet cacheable
+  11. Sub-workflow cache undeclared in review-stranger-summary.pflow.md — add 1 entry in ## Cache  not yet cacheable
      review-stranger-summary.pflow.md
      One value `lyrics` ~474 tokens per call, below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5).
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         ${lyrics}
+         ```
+       Add prompt_cache entries:
+         review: prompt_cache: [lyrics]
+     Prompt-body templates to remove:
+       • `lyrics` ~474 tokens — node(s) `review` use `${lyrics}`
+           flows in from parent as `${write-lyrics.response}`
      → Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.
      → Verify: confirm ~474 tokens is the realistic per-call size.
-     → Edit: song-creator/reviews/review-stranger-summary.pflow.md
+     → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
 
   12. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
@@ -172,10 +314,9 @@
      → See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern.
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
-    · cached_now: tokens that went through cache this run.
-    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
-    · — means the column does not apply to this row's tier.
+  How to read each row:
+    · cached_now: tokens served from cache during this run (requires trace).
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
   Showing 18 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   node                     model                      input  cached_now  could_cache  ratio  calls  notes
@@ -183,8 +324,8 @@
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
-  score-choruses           gemini/gemini-2.5-flash  158,704           —      144,296    91%    136  batch-prewarm-recommended
-  select-chorus            gemini/gemini-2.5-flash   36,289           —       36,289   100%      4  cacheable inputs: architecture, concept, creative_brief
+  score-choruses           gemini/gemini-2.5-flash  158,704           —           41     0%    136  below provider min (need ≥4,096 for this model)
+  select-chorus            gemini/gemini-2.5-flash   36,289           —        8,504    23%      4  cacheable values: architecture, concept.core_idea, concept.title, +1 more
 
 ### song-creator.pflow.md (called by create-songs)
   rewrite-emotional        gemini/gemini-2.5-flash   94,100      63,009            —    67%      4
@@ -192,31 +333,31 @@
   generate-suno-prompt     gemini/gemini-2.5-flash   13,776       7,909            —    57%      4
 
 ### lyrics-generator.pflow.md
-  curate-briefs            gemini/gemini-2.5-flash   54,752           —            ?     ?%      4  no stable 4,096-token repeated prefix found
+  curate-briefs            gemini/gemini-2.5-flash   54,752           —          103     0%      4  below provider min (need ≥4,096 for this model)
 
 ### review-accuracy.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   34,481           —       28,144    82%      4  cacheable inputs: concept_brief, creative_direction, lyrics
+  review                   gemini/gemini-2.5-flash   34,481           —        7,036    20%      4  cacheable values: concept_brief, creative_direction, lyrics
 
 ### review-emotional-architecture.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   32,873           —       28,900    88%      4  cacheable inputs: concept_brief, creative_direction, lyrics
+  review                   gemini/gemini-2.5-flash   32,873           —        7,225    22%      4  cacheable values: concept_brief, creative_direction, lyrics
 
 ### review-rhyme.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,917           —       23,348    90%      4  cacheable inputs: creative_direction, lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   25,917           —        5,837    23%      4  cacheable values: creative_direction, lyrics, song_architecture
 
 ### review-genre.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,693           —       23,348    91%      4  cacheable inputs: creative_direction, lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   25,693           —        5,837    23%      4  cacheable values: creative_direction, lyrics, song_architecture
 
 ### review-imagery.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   21,260           —       16,416    77%      4  cacheable inputs: lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   21,260           —        4,104    19%      4  cacheable values: lyrics, song_architecture
 
 ### review-narrative.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   16,736           —       16,416    98%      4  cacheable inputs: lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   16,736           —        4,104    25%      4  cacheable values: lyrics, song_architecture
 
 ### review-ai-tells.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   14,212           —        8,828    62%      4  cacheable inputs: creative_direction, lyrics
+  review                   gemini/gemini-2.5-flash   14,212           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
 
 ### review-cliche.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   13,760           —        8,828    64%      4  cacheable inputs: creative_direction, lyrics
+  review                   gemini/gemini-2.5-flash   13,760           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
 
 ### review-stranger-summary.pflow.md (called by emotional-reviews)
   review                   gemini/gemini-2.5-flash    6,467           —            ?     ?%      4  below cache minimum: lyrics ~474
@@ -227,30 +368,30 @@
 ### analyze-source.pflow.md (called by analyze-sources)
   analyze                  gemini/gemini-2.5-flash    1,058           —            ?     ?%      6  batch_items=6; no stable 4,096-token repeated prefix found
 
-  Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
-
   Token estimate confidence:
-    · score-choruses: savings projected from a stable prompt prefix repeated across observed calls. Declare prompt_cache to confirm.
-    · select-chorus, 8 review nodes: savings projected from values flowing in from parent workflow(s). See Recommended actions for the per-boundary fix.
+    · score-choruses: tokens estimated from the first batch item as a representative sample. Actual tokens may vary for later items.
+    · curate-briefs: savings projected from a stable prompt prefix repeated across the batch. Use `--report` to confirm with a real run.
+    · select-chorus, 6 review nodes: savings projected from values flowing in from parent workflow(s). See Recommended actions for the per-boundary fix.
+
+  Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    cd .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator
-    pflow analyze-cache analyze-source/analyze-source.pflow.md
-    pflow analyze-cache concept-chooser/concept-chooser.pflow.md
-    pflow analyze-cache enforce-diversity/enforce-diversity.pflow.md
-    pflow analyze-cache song-creator/chorus-chooser/chorus-chooser.pflow.md
-    pflow analyze-cache song-creator/reviews/review-accuracy.pflow.md
-    pflow analyze-cache song-creator/reviews/review-ai-tells.pflow.md
-    pflow analyze-cache song-creator/reviews/review-cliche.pflow.md
-    pflow analyze-cache song-creator/reviews/review-emotional-architecture.pflow.md
-    pflow analyze-cache song-creator/reviews/review-genre.pflow.md
-    pflow analyze-cache song-creator/reviews/review-imagery.pflow.md
-    pflow analyze-cache song-creator/reviews/review-narrative.pflow.md
-    pflow analyze-cache song-creator/reviews/review-rhyme.pflow.md
-    pflow analyze-cache song-creator/reviews/review-stranger-summary.pflow.md
-    pflow analyze-cache song-creator/song-creator.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md
 
 ## Notes
 

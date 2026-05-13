@@ -35,7 +35,12 @@ cannot be predicted ahead of an LLM call.
 
 Lazy-imports LiteLLM (mirrors ``llm_client.py`` lazy-import contract) to keep
 the analyzer package import-cheap. Lazy-imports ``TemplateResolver`` inside
-``_latest_value_for_ref`` to keep the layer-policy clean.
+template-resolution helpers to keep the layer-policy clean.
+
+``tokenize_prompt_region`` is exact: unresolved template refs make the region
+unmeasurable. ``tokenize_prompt_region_lower_bound`` is advisory-only: it
+counts resolvable bytes and treats unresolved refs as zero while returning the
+refs that need runtime verification.
 """
 
 from __future__ import annotations
@@ -286,6 +291,136 @@ def estimate_output_tokens(
     return None, "unavailable"
 
 
+def tokenize_prompt_region(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+) -> int | None:
+    """Tokenize a prompt slice after resolving ``${...}`` refs against ``ctx``.
+
+    This is the cacheable-region sibling of
+    ``analyze._resolve_prompt_for_tokenization``. That helper returns partial
+    text plus a confidence flag because ``input_tokens_estimated`` is always
+    populated by contract. This helper returns ``None`` when a cacheable region
+    cannot be fully resolved, so callers render ``?`` / ``unmeasurable`` rather
+    than counting the literal ``${...}`` bytes as if they were real prompt text.
+
+    Contract:
+    - Empty region returns 0.
+    - Regions with no template refs tokenize directly.
+    - Fully resolved refs tokenize the resolved bytes.
+    - Any unresolved ref after substitution returns None atomically.
+    - Single-ref non-string values serialize deterministically before counting.
+    """
+    if not region:
+        return 0
+    if "${" not in region:
+        return estimate_tokens(model, region)[0]
+
+    from pflow.core.cache_render import deterministic_serialize
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    refs = extract_unique_refs(region)
+    if not refs:
+        return estimate_tokens(model, region)[0]
+
+    shared = build_shared_store_for_refs(refs, ctx)
+    try:
+        resolved = TemplateResolver.resolve_template(region, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        logger.debug("tokenize_prompt_region: resolve_template raised", exc_info=True)
+        return None
+
+    if not isinstance(resolved, str):
+        resolved = deterministic_serialize(resolved)
+    if TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+        return None
+    return estimate_tokens(model, resolved)[0]
+
+
+def tokenize_prompt_region_lower_bound(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+) -> tuple[int, tuple[str, ...]]:
+    """Tokenize a prompt slice as an advisory lower bound.
+
+    Unlike :func:`tokenize_prompt_region`, this helper does not require atomic
+    full-template resolution. It resolves what the analyzer can know, strips
+    any remaining ``${...}`` placeholders, and returns both the measurable
+    token count and the unresolved refs that must be verified against a real
+    run before treating the recommendation as confident.
+
+    Contract:
+    - Empty region returns ``(0, ())``.
+    - Regions with no template refs tokenize directly.
+    - Fully resolved refs tokenize the resolved bytes and return no refs.
+    - Partial resolution strips unresolved placeholders before tokenization.
+    - Resolution exceptions return ``(0, raw_refs)`` conservatively.
+    - Single-ref non-string values serialize deterministically before counting.
+    """
+    if not region:
+        return 0, ()
+    if "${" not in region:
+        return estimate_tokens(model, region)[0], ()
+
+    from pflow.core.cache_render import deterministic_serialize
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    refs = extract_unique_refs(region)
+    if not refs:
+        return estimate_tokens(model, region)[0], ()
+
+    shared = build_shared_store_for_refs(refs, ctx)
+    try:
+        resolved = TemplateResolver.resolve_template(region, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        logger.debug("tokenize_prompt_region_lower_bound: resolve_template raised", exc_info=True)
+        return 0, tuple(refs)
+
+    if not isinstance(resolved, str):
+        resolved = deterministic_serialize(resolved)
+
+    unresolved = tuple(match.group(1) for match in TemplateResolver.TEMPLATE_PATTERN.finditer(resolved))
+    if not unresolved:
+        return estimate_tokens(model, resolved)[0], ()
+
+    stripped = TemplateResolver.TEMPLATE_PATTERN.sub("", resolved)
+    return estimate_tokens(model, stripped)[0], unresolved
+
+
+def extract_unique_refs(prompt: str) -> list[str]:
+    """Walk ``prompt`` for unique template refs, deduped in encounter order."""
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    refs: list[str] = []
+    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
+        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            if operand and operand not in refs:
+                refs.append(operand)
+    return refs
+
+
+def build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[str, Any]:
+    """Build a synthetic shared store keyed by root node ids for ``refs``."""
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    shared: dict[str, Any] = {}
+    for ref in refs:
+        root = TemplateResolver.extract_root_node_id(ref)
+        if not root or root in shared:
+            continue
+        # Resolve the root, not the full path. TemplateResolver performs
+        # dotted/indexed traversal against the root value, while AnalysisContext
+        # preserves the parameters-vs-memo resolution policy.
+        value = ctx.resolve_ref_value(root)
+        if value is not None:
+            shared[root] = value
+    return shared
+
+
 # ---------------------------------------------------------------------------
 # Per-tier resolvers
 # ---------------------------------------------------------------------------
@@ -447,4 +582,12 @@ def _latest_value_for_ref(
     return resolved
 
 
-__all__ = ["estimate_cacheable_tokens", "estimate_output_tokens", "estimate_tokens"]
+__all__ = [
+    "build_shared_store_for_refs",
+    "estimate_cacheable_tokens",
+    "estimate_output_tokens",
+    "estimate_tokens",
+    "extract_unique_refs",
+    "tokenize_prompt_region",
+    "tokenize_prompt_region_lower_bound",
+]

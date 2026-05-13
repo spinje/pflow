@@ -378,6 +378,461 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     )
 
 
+def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix(tmp_path: Path) -> None:
+    """CLI integration: unresolved code-node refs make could-cache unavailable.
+
+    History: ``bug-16-variant-inputs-indirection`` previously rendered a tiny
+    fabricated prefix count for ``batch-llm`` when no memo data existed.
+    Mutation contract: route batch-prefix scans back through raw
+    ``estimate_tokens(prompt[:first])``; this test fails because JSON reports a
+    small integer instead of ``null`` for ``cacheable_tokens_estimated``.
+    """
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Batch Inputs Indirection
+
+## Inputs
+
+### seed
+
+Optional seed.
+
+- type: string
+- required: false
+- default: "indir"
+
+## Steps
+
+### make-shared-bundle
+
+Code node returns dict with 3 fields.
+
+- type: code
+- inputs:
+    seed: ${seed}
+
+```python code
+seed: str
+
+base = (
+    "You are an experiment subject in a controlled test of caching mechanics. "
+    "This is a stable instruction block that does not vary across batch items. "
+    "Your job is to confirm you received this block by emitting a single sentence "
+    "that quotes the last word of this block. "
+)
+
+def make_field(label):
+    body = "\\n\\n".join(base * 5 for _ in range(50))
+    return f"[Field {label}]\\n{body}\\nEnd of field {label}, seed={seed}"
+
+result: dict = {
+    "field_a": make_field("A"),
+    "field_b": make_field("B"),
+    "field_c": make_field("C"),
+}
+```
+
+### batch-llm
+
+Batch of 4 LLM calls. Per-item refs go through inputs mapping.
+
+- type: llm
+- temperature: 0.3
+- prompt: |
+    Stable preamble for the analyzer to detect.
+    Field A:
+    ${make-shared-bundle.result.field_a}
+    Field B:
+    ${make-shared-bundle.result.field_b}
+    Field C:
+    ${make-shared-bundle.result.field_c}
+    Per-item task -- Task ${item_id}: respond with exactly one short sentence that includes the word "${item_cue}".
+- inputs:
+    item_id: ${item.id}
+    item_cue: ${item.cue}
+
+```yaml batch
+items:
+  - id: 1
+    cue: "alpha"
+  - id: 2
+    cue: "bravo"
+  - id: 3
+    cue: "charlie"
+  - id: 4
+    cue: "delta"
+parallel: true
+```
+
+## Outputs
+
+### responses
+
+The 4 LLM responses.
+
+- source: ${batch-llm.results}
+""",
+    )
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "--no-trace-autoload", "--format=json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    rows = {row["node_path"]: row for row in payload["per_call"]}
+    row = rows["batch-llm"]
+    assert row["cacheable_tokens_estimated"] is None
+    assert row["cache_ratio_pct"] is None
+    assert row["cacheable_data_source"] == "unavailable"
+    warning_ids = {warning["id"] for warning in payload["warnings"]}
+    action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
+    assert "cache.batch-prewarm-below-min" not in warning_ids
+    assert "cache.batch-prewarm-recommended" not in action_ids
+
+
+def test_analyze_cache_emits_lower_bound_prewarm_advisory_when_measurable_clears_min(tmp_path: Path) -> None:
+    """CLI integration: unresolved prefix refs can still produce lower-bound
+    prewarm advice when the measurable prefix clears the provider minimum.
+
+    Mutation contract: keep the old exact-or-nothing prewarm gate; this test
+    fails because the lower-bound warning/action disappears from JSON.
+    """
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Lower Bound Prewarm
+
+The stable literal prefix is long enough even before the unresolved upstream ref.
+
+## Inputs
+
+### missing
+
+Optional upstream object; intentionally omitted in this test.
+
+- type: object
+- required: false
+
+## Steps
+
+### score
+
+Score each item.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- batch:
+    items:
+      - text: alpha
+      - text: bravo
+      - text: charlie
+    as: item
+- prompt: |
+"""
+        + ("    stable " * 1800)
+        + """
+    ${missing.context}
+    ${item.text}
+""",
+    )
+
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--no-trace-autoload", "--format=json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    warning_ids = {warning.get("id") for warning in payload["warnings"]}
+    action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
+    assert "cache.batch-prewarm-lower-bound-recommended" in warning_ids
+    assert "cache.batch-prewarm-lower-bound-recommended" in action_ids
+    warning = next(
+        warning for warning in payload["warnings"] if warning["id"] == "cache.batch-prewarm-lower-bound-recommended"
+    )
+    assert warning["context"]["unresolved_refs"] == ["missing.context"]
+    assert "at least" in warning["message"]
+    action = next(
+        action
+        for action in payload["recommended_actions"]
+        if action["warning_id"] == "cache.batch-prewarm-lower-bound-recommended"
+    )
+    assert "verify" in " ".join(action["suggestions"]).lower()
+
+
+def test_analyze_cache_suppresses_lower_bound_advisory_when_measurable_below_min(tmp_path: Path) -> None:
+    """CLI integration: unresolved refs alone are not enough for advice.
+
+    Mutation contract: emit lower-bound diagnostics without checking the
+    measurable token minimum; this test fails because a one-word prefix becomes
+    a recommendation.
+    """
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Lower Bound Below Min
+
+The measurable prefix is too short.
+
+## Inputs
+
+### missing
+
+Optional upstream object; intentionally omitted in this test.
+
+- type: object
+- required: false
+
+## Steps
+
+### score
+
+Score each item.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- batch:
+    items:
+      - text: alpha
+      - text: bravo
+    as: item
+- prompt: |
+    short
+    ${missing.context}
+    ${item.text}
+""",
+    )
+
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--no-trace-autoload", "--format=json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    warning_ids = {warning.get("id") for warning in payload["warnings"]}
+    action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
+    assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
+    assert "cache.batch-prewarm-recommended" not in action_ids
+
+
+def test_analyze_cache_lower_bound_does_not_fire_when_confident_path_succeeds(tmp_path: Path) -> None:
+    """CLI integration: exact batch-prefix evidence keeps the confident ID.
+
+    Mutation contract: always emit the lower-bound ID for batch prefixes; this
+    test fails because the confident ``cache.batch-prewarm-recommended`` action
+    is replaced or duplicated.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Confident Batch Prewarm
+
+The prefix is fully measurable and trace-backed.
+
+## Steps
+
+### score
+
+Score each item.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- batch:
+    items:
+      - text: alpha
+      - text: bravo
+      - text: charlie
+      - text: delta
+    as: item
+- prompt: |
+"""
+        + ("    stable " * 1200)
+        + """
+    ${item.text}
+""",
+    )
+    trace_path = tmp_path / "trace.json"
+    builder = TraceFixtureBuilder()
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=str(workflow_path),
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "anthropic/claude-sonnet-4-5",
+                                    "input_tokens": 1300,
+                                    "output_tokens": 5,
+                                    "total_tokens": 1305,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(4)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "--from-trace", str(trace_path), "--format=json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    warning_ids = {warning.get("id") for warning in payload["warnings"]}
+    action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
+    assert "cache.batch-prewarm-recommended" in warning_ids
+    assert "cache.batch-prewarm-recommended" in action_ids
+    assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
+
+
+def test_analyze_cache_suppresses_dynamic_before_static_on_unmeasurable_suffix(tmp_path: Path) -> None:
+    """CLI integration: dynamic-before-static needs a measurable suffix.
+
+    History: the stable suffix token count is load-bearing evidence for this
+    finding. Mutation contract: count unresolved suffix refs as literal bytes;
+    this test fails because ``cache.dynamic-before-static`` appears even though
+    the suffix contains ``${missing_suffix}`` with no source value.
+    """
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Dynamic Suffix Unmeasurable
+
+The suffix after the dynamic ref contains an unresolved template.
+
+## Inputs
+
+### context
+
+Declared cache context.
+
+- type: string
+- required: false
+
+### question
+
+Dynamic question.
+
+- type: string
+
+## Cache
+
+```cache
+Context:
+${context}
+```
+
+## Steps
+
+### review
+
+Review the prompt.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt_cache: [context]
+
+```prompt
+Question: ${question}
+Stable tail starts here.
+"""
+        + ("stable suffix " * 5000)
+        + """
+${missing_suffix}
+```
+""",
+    )
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "--no-trace-autoload", "--format=json", "question=What now?"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert "cache.dynamic-before-static" not in {warning.get("id") for warning in payload["warnings"]}
+
+
+def test_analyze_cache_emits_dynamic_before_static_with_null_prefix_display(tmp_path: Path) -> None:
+    """CLI integration: preserve findings when only display prefix is unknown.
+
+    History: ``tokens_before_dynamic`` is display-only; a real stable suffix
+    should still emit even when the prefix contains an unmeasurable declared
+    cache ref. Mutation contract: skip when ``tokens_before_dynamic is None``;
+    this test fails because the actionable dynamic-before-static warning
+    disappears.
+    """
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Dynamic Prefix Unmeasurable
+
+The prefix contains an unresolved declared cache ref before the dynamic ref.
+
+## Inputs
+
+### context
+
+Declared cache context.
+
+- type: string
+- required: false
+
+### question
+
+Dynamic question.
+
+- type: string
+
+## Cache
+
+```cache
+Context:
+${context}
+```
+
+## Steps
+
+### review
+
+Review the prompt.
+
+- type: llm
+- model: anthropic/claude-sonnet-4-5
+- prompt_cache: [context]
+
+```prompt
+Context: ${context}
+Question: ${question}
+"""
+        + ("stable suffix " * 5000)
+        + """
+```
+""",
+    )
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(
+        cli,
+        ["analyze-cache", str(workflow_path), "--no-trace-autoload", "--format=json", "question=What now?"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    dynamic_warnings = [warning for warning in payload["warnings"] if warning["id"] == "cache.dynamic-before-static"]
+    assert len(dynamic_warnings) == 1, payload["warnings"]
+    context = dynamic_warnings[0]["context"]
+    assert context["dynamic_ref"] == "question"
+    assert context["tokens_before_dynamic"] is None
+    assert context["projected_ratio_pct"] is None
+
+
 def test_analyze_cache_json_includes_heterogeneous_model_fragmentation(tmp_path: Path) -> None:
     workflow_path = _write_workflow(tmp_path, _MIXED_MODEL_CACHE_WORKFLOW)
     runner = CliRunner(mix_stderr=False)

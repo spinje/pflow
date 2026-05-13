@@ -84,6 +84,13 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "rerun_delta": _delta_to_dict(s.rerun_delta),
         "actual_vs_no_cache_delta": _delta_to_dict(s.actual_vs_no_cache_delta),
         "trace_coverage": s.trace_coverage,
+        # Trace transparency (Bug 1 follow-up): ``trace_final_status`` is
+        # one of ``"success" | "degraded" | "failed" | null`` (null when no
+        # trace was loaded). ``trace_recorded_at`` is the ISO ``start_time``
+        # from the trace JSON (null when no trace or pre-2.1.0 trace lacking
+        # the field). Additive — same JSON major version.
+        "trace_final_status": s.trace_final_status,
+        "trace_recorded_at": s.trace_recorded_at,
         "evidence_scope": s.evidence_scope,
         "trace_llm_nodes_static": s.trace_llm_nodes_static,
         "trace_llm_nodes_executed": s.trace_llm_nodes_executed,
@@ -227,6 +234,8 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "is_batch": row.is_batch,
         "batch_size_estimated": row.batch_size_estimated,
         "input_tokens_estimated": row.input_tokens_estimated,
+        "chunk_tokens_estimated": row.chunk_tokens_estimated,
+        "body_tokens_estimated": row.body_tokens_estimated,
         "output_tokens_estimated": row.output_tokens_estimated,
         "output_data_source": row.output_data_source,
         "cacheable_tokens_estimated": row.cacheable_tokens_estimated,
@@ -244,7 +253,10 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "cross_workflow_inputs": [
             {
                 "child_input_name": contribution.child_input_name,
+                "child_cache_ref": contribution.child_cache_ref or contribution.child_input_name,
                 "parent_value_expr": contribution.parent_value_expr,
+                "parent_cache_ref": contribution.parent_cache_ref or contribution.parent_value_expr,
+                "parent_prose": contribution.parent_prose,
                 "tokens_per_call": contribution.tokens_per_call,
                 "model": contribution.model,
             }

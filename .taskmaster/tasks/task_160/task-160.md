@@ -147,6 +147,12 @@ This is **NOT in scope for this task** (it's a behavior change requiring DD#29 d
 
 Consider planning C-1 as a follow-up to Task 160 rather than a parallel effort.
 
+GH **#394** — unify `PerCallRow.*_tokens_estimated` to a per-call invariant. After the Bug A fix (per-call `cacheable_tokens_estimated`), `input_tokens_estimated` is the remaining mixed-unit field: per-call for static-list batch trace, single-call trace, and greenfield rows; cohort for dynamic-batch trace and non-batch repeated trace rows. The asymmetry is masked today by `_divide_static_batch_trace_tokens` + `_resolved_chunk_call_count` + consumer-side gates, and forces a documented `round(row.input_tokens_estimated / affected_calls)` divide in `_batch_prewarm_recommendations`. Issue #394 captures the row-type mapping, the visible scar, and the proposed per-call invariant.
+
+This is **NOT in scope for this task** (it's a behavior change disqualified by the zero-behavior-change bar). But Task 160's CLAUDE.md should commit to per-call as the documented contract for `PerCallRow` fields — that's the structural half of #394. Producer-side changes (normalizing `_aggregate_trace_llm_calls`, deleting `_resolved_chunk_call_count`, dropping the recommendation-site divide) then enforce the contract under the same shape Task 160 produces.
+
+Consider planning #394 as a follow-up to Task 160 rather than a parallel effort.
+
 ## Verification
 
 - All requirements above hold.

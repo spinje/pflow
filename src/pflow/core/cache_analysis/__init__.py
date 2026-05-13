@@ -54,7 +54,7 @@ Version history (``JSON_FORMAT_VERSION``):
 - ``"4.1"`` — cross_workflow_inputs naming + data-flow surfacing (same minor,
   pre-merge shape correction): ``per_call[].cross_workflow_inputs[*]``
   renamed ``name`` → ``child_input_name`` and added ``parent_value_expr``
-  (``string | null``). Text per-call row's ``cacheable inputs:`` note now
+  (``string | null``). Text per-call row's cacheable-values note now
   uses child input names, alphabetized; recommended action body surfaces
   parent expressions on a ``flows in from parent as `${...}` `` sub-line
   for renamed inputs only.
@@ -62,6 +62,11 @@ Version history (``JSON_FORMAT_VERSION``):
   shape correction): ``cache.sub-workflow-cache-undeclared`` now emits one
   diagnostic per child workflow. Its context uses ``inputs[]``, ``case``, and
   ``body_block`` instead of per-input top-level fields.
+- ``"4.1"`` — template-honest sub-workflow cache refs (additive, same minor):
+  ``cache.sub-workflow-cache-undeclared.context.inputs[]`` and
+  ``per_call[].cross_workflow_inputs[]`` gain ``child_cache_ref`` and
+  ``parent_cache_ref``. ``child_input_name`` remains the boundary input name;
+  ``child_cache_ref`` is the actual child ``## Cache`` entry to add.
 - ``"4.1"`` — B-9 split (additive, same minor): cache-domain ERRORs stay in
   ``blocking_errors[]`` (now matches ``summary.blocking_errors`` count);
   non-cache validator errors (unknown node types, schema errors) move to a
@@ -78,10 +83,31 @@ Version history (``JSON_FORMAT_VERSION``):
   ``"actually_paid_priced_cohort_usd"`` to disambiguate. Pre-fix,
   ``actual_vs_no_cache_delta.kind`` was ``"unavailable"`` whenever any
   exclusion existed even when math was possible.
+- ``"4.1"`` — Bug 4 disclosure fields (additive, same minor):
+  ``per_call[].chunk_tokens_estimated`` and derived
+  ``per_call[].body_tokens_estimated`` added. ``cache.prompt-body-shadows-cache``
+  diagnostics may carry optional analyzer-emitted context keys
+  ``body_only_cost_usd_per_call``, ``with_cache_cost_usd_per_call``, and
+  ``shadowed_chunk_names`` when pricing and output tokens are known.
+- ``"4.2"`` — Bug 8 discrepancy correction: ``cache.discrepancy`` diagnostic
+  context drops the stale rendered-prediction fields
+  ``trace_path``/``predicted_pct``/``predicted_label``/``actual_pct``/
+  ``cache_age_sec``. The root-cause shape is now limited to
+  ``chunk_skipped`` and ``key_mismatch``.
+- ``"4.2"`` — parent prose in sub-workflow cache recommendations
+  (additive, same minor): ``cache.sub-workflow-cache-undeclared.context.inputs[]``
+  gains ``parent_prose`` (raw parent-chunk preamble bytes) and
+  ``parent_prose_origins_differ`` (true when multiple parent origins disagree).
+  ``per_call[].cross_workflow_inputs[]`` gains ``parent_prose``. Text
+  recommendations render a 40-char single-line preview of the parent prose
+  above each ``${...}`` line in the suggested child ``## Cache`` block, with
+  blank lines between chunks to mirror the parent's visual structure. JSON
+  consumers receive the full untruncated prose.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning
-bump minor; field-shape removal bumps major.
+and per-warning diagnostic-context changes bump minor; typed top-level field
+removals bump major.
 """
 
 from __future__ import annotations
@@ -93,7 +119,7 @@ from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
 
-JSON_FORMAT_VERSION: Final[str] = "4.1"
+JSON_FORMAT_VERSION: Final[str] = "4.2"
 """Version string emitted as the first key by ``render_json``.
 
 Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.

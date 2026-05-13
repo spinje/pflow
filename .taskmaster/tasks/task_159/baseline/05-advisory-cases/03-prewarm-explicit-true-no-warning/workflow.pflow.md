@@ -2,6 +2,14 @@
 
 ## Inputs
 
+### context
+
+Long stable reference doc that puts the static prefix above the provider
+minimum, so the cache marker actually fires at the provider.
+
+- type: string
+- required: true
+
 ### items
 
 Items.
@@ -25,8 +33,9 @@ parallel: true
 ```
 
 ```prompt
-A long stable rubric to make the savings ratio favorable. Lots of fixed
-guidance text. Score: ${item.text}
+A long stable rubric to make the savings ratio favorable.
+${context}
+Lots of fixed guidance text. Score: ${item.text}
 ```
 
 ## Outputs

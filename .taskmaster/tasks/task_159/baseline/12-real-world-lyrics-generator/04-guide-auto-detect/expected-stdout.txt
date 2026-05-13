@@ -492,6 +492,14 @@ Use `output_schema` for structured responses (guarantees valid JSON via constrai
 
 **Iterating cheaply**: Use `--only <node>` to re-run a single LLM node (upstream cached, downstream skipped). Saves time and tokens when tuning prompts in multi-node workflows.
 
+**Prompt caching**: When several LLM nodes or batch items reuse the same long
+context, rubric, instructions, source text, or parent value, run
+`pflow analyze-cache workflow.pflow.md` before editing cache fields. The
+analyzer tells you when to add a workflow-level `## Cache`, add
+`prompt_cache: [...]` to LLM nodes, add `prewarm: true` for batch LLM nodes, or
+move stable prompt text before per-item data. Load `pflow guide prompt-caching`
+for the full rules and examples.
+
 ### Node Creation Pattern
 
 `````markdown
@@ -532,6 +540,12 @@ Criteria:
 3. Suggest improvements
 ```
 `````
+
+Optional cache fields for LLM nodes:
+
+- `prompt_cache: [chunk_name]` uses chunks declared in the workflow's `## Cache` block.
+- `prewarm: true` lets parallel batch LLM nodes write a shared prefix once,
+  then fan out as cache reads.
 
 ---
 
@@ -870,48 +884,85 @@ dynamic per-item text should come after stable instructions and cached chunks.
 
 ## TTL
 
-Default TTL is 5 minutes. Allowed values are exactly `5m` and `1h`; other TTLs
-are rejected. Omit `ttl` for the default `5m` behavior.
+Default TTL is 5 minutes. Omit `ttl` for the default `5m` behavior, or set
+`1m` through `60m`; `1h` is accepted as an alias for `60m`.
 
 ````markdown
 ## Cache
 
-- ttl: 1h
+- ttl: 11m
 
 ```cache
 ...
 ```
 ````
 
-Use `1h` when later calls or reruns will read the same prefix within an hour.
-Longer TTL writes cost more, so prefer the analyzer recommendation when unsure.
+Gemini supports minute-level TTLs through pflow. Anthropic and OpenAI only
+support pflow's discrete `5m` and `1h` behaviors today; pflow errors instead
+of silently rounding an unsupported value.
 
 ## Batch Nodes
 
-For `type: llm` nodes with `batch:`, add `prewarm: true` when the analyzer
-recommends it:
+For `type: llm` nodes with `batch:`, add `prewarm: true` when the stable
+text before the first per-item reference is large enough for the provider's
+prompt cache minimum (1k–4k tokens depending on the model):
 
-```markdown
+````markdown
 ### score-each-chorus
 
-Score every chorus against the rubric.
+Score every chorus against a multi-page rubric.
 
 - type: llm
 - prewarm: true
-- prompt: |
-    Use this rubric:
-    ${rubric}
-
-    Score this chorus:
-    ${item.text}
 - batch:
     items: ${choruses}
     parallel: true
-```
 
-Without `prewarm`, parallel batch items can all try to write the same provider
-cache prefix at once. With `prewarm`, the first item writes the prefix, then
-the remaining items fan out as reads.
+```prompt
+You are evaluating song choruses against the rubric below.
+
+${rubric}
+
+---
+
+Score this chorus:
+${item.text}
+```
+````
+
+`${rubric}` here is a placeholder for substantial stable text — detailed
+scoring criteria, reference materials, etc. — repeated identically across
+every batch call. With `prewarm`, the first item writes that prefix to the
+provider's cache, then the remaining items fan out as reads.
+
+**The cache prefix ends at the first per-item reference.** Everything
+before `${item.text}` — including static refs like `${rubric}` — is
+resolved into the cached prefix. If you mix per-item refs into the middle,
+the cached prefix is cut short, so put `${item.X}` content last.
+
+If the analyzer doesn't recommend `prewarm: true`, adding it won't help —
+the static prefix is below the provider's minimum or doesn't exist.
+
+`prewarm: false` is a **marker for the analyzer**, not a runtime toggle —
+runtime treats it the same as omitting the field. Use it to record that you've
+considered prewarming and decided against it; the analyzer will then stop
+recommending it on that node.
+
+### Combining `## Cache` with prewarm
+
+`## Cache` (declared chunks) and `prewarm: true` (auto batch-prefix) are
+**orthogonal** — they place cache markers in different message regions and
+can fire together. Pick by the shape of your workflow:
+
+- **Only `prewarm: true`** when the stable bytes are confined to one batch
+  node's template and don't appear elsewhere in the workflow.
+- **Only `## Cache` + `prompt_cache: [chunk]`** when a value (rubric,
+  reference document, instructions) is used by **multiple LLM nodes** that
+  should share the cache, but no individual node is a batch.
+- **Both** when a batch node uses a shared value AND has additional stable
+  instruction text before the first per-item ref — declare the shared
+  value in `## Cache` so other nodes also cache it, and add `prewarm: true`
+  so the extra template text caches across batch items.
 
 ## Python-Assembled Prompts
 
@@ -971,12 +1022,14 @@ Inline the stable prompt prefix in the LLM node.
 - type: llm
 - batch:
     items: ${prepare-items.result}
-- prompt: |
-    Use this rubric:
-    ${rubric}
 
-    Process this:
-    ${item.input_text}
+```prompt
+Use this rubric:
+${rubric}
+
+Process this:
+${item.input_text}
+```
 ````
 
 If each per-item prompt has different structure, different ordering, or
@@ -1036,6 +1089,7 @@ cache-shape advisories:
 |---|---|
 | `cache.order-mismatch` | Reorder `prompt_cache: [...]` to match the order of chunks in `## Cache`. |
 | `cache.invalid-on-non-llm` | Remove `prompt_cache:` or `prewarm:` from non-LLM nodes; those fields only apply to `type: llm`. |
+| `cache.unsupported-provider-ttl` | Use `5m`/`1h`, or switch cached LLM nodes to Gemini for minute-level TTLs. |
 | `cache.unused-chunk` | Remove the unused chunk from `## Cache`, or add it to a node's `prompt_cache: [...]` list. |
 | `cache.padding-advisory` | Extend the node's `prompt_cache: [...]` list to include the earlier chunks the analyzer suggests. |
 | `cache.prewarm-no-prefix` | Move stable instructions before the first `${item...}` reference, or remove `prewarm: true`. |
@@ -1043,7 +1097,7 @@ cache-shape advisories:
 | `cache.heterogeneous-models-fragment-cache` | Use one exact model for nodes that should share a cache, or accept that each model writes its own cache. |
 | `cache.first-call-write-penalty` | Remove `prompt_cache:` from one-off calls when no later call reads that cache. |
 | `cache.cross-workflow-prose-mismatch` | Use the same prose around the cached value in both workflows when you want cross-file cache reuse. |
-| `cache.discrepancy` | In trace mode, compare the reported cause: TTL expiry, skipped chunks, or runtime value changes. |
+| `cache.discrepancy` | In trace mode, compare the reported cause: skipped chunks or runtime value changes. |
 
 `cache.cross-workflow-rename-detected` is informational. Different variable
 names alone do not break provider cache hits; edit names only when it improves

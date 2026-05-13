@@ -182,7 +182,11 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
         priority = RECOMMENDED_ACTION_PRIORITY.get(d.id or "", DEFAULT_RECOMMENDED_ACTION_PRIORITY)
         savings = 0.0
         ctx = d.context or {}
-        savings_value = ctx.get("savings_usd")
+        savings_value = (
+            ctx.get("savings_lower_bound_usd")
+            if d.id == "cache.batch-prewarm-lower-bound-recommended"
+            else ctx.get("savings_usd")
+        )
         if isinstance(savings_value, (int, float)) and savings_value > 0:
             savings = float(savings_value)
         return (priority, -savings, -sev_weight, d.id or "")
@@ -191,9 +195,6 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
     actions: list[RecommendedAction] = []
     for rank, d in enumerate(sorted_warnings, start=1):
         ctx = d.context or {}
-        savings = ctx.get("savings_usd")
-        if not isinstance(savings, (int, float)) or savings <= 0:
-            savings = None
         # Workflow scope: when ``context.affected_workflow`` is set, surface it
         # for both workflow-level and per-node findings. Per-node diagnostics
         # need the location too because same node ids can appear in parent and
@@ -202,6 +203,12 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
         affected = ctx.get("affected_workflow")
         if isinstance(affected, str) and affected:
             scope_workflow = affected
+        savings_key = (
+            "savings_lower_bound_usd" if d.id == "cache.batch-prewarm-lower-bound-recommended" else "savings_usd"
+        )
+        savings = ctx.get(savings_key)
+        if not isinstance(savings, (int, float)) or savings <= 0:
+            savings = None
         # Catalog-as-SSoT: looks up headline_template by diag.id and formats
         # against context. Works whether the diag came from make_diagnostic OR
         # was built directly via Diagnostic(...) (validator emitters in
@@ -217,6 +224,7 @@ def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
                 message=d.message or "",
                 headline=headline,
                 suggestions=tuple(d.suggestions or ()),
+                context=dict(ctx),
             )
         )
     return actions

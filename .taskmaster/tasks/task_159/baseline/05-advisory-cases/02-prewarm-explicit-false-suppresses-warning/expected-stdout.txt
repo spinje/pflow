@@ -1,5 +1,5 @@
 {
-  "format_version": "4.1",
+  "format_version": "4.2",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -45,6 +45,8 @@
       "excluded_nodes": []
     },
     "trace_coverage": "none",
+    "trace_final_status": null,
+    "trace_recorded_at": null,
     "evidence_scope": "static_analysis",
     "trace_llm_nodes_static": 1,
     "trace_llm_nodes_executed": 0,
@@ -93,6 +95,8 @@
       "is_batch": true,
       "batch_size_estimated": null,
       "input_tokens_estimated": 26,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 26,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,

@@ -20,24 +20,34 @@
 
   For each "Sub-workflow cache undeclared" finding, apply ALL THREE edits in the listed child workflow. Doing only some leaves the cache disabled:
     (1) Remove the `${var}` references from each affected node's prompt. Leaving them re-sends the content uncached.
-    (2) Add the input as a named entry under the child workflow's ## Cache section.
+    (2) Add the listed values as named entries under the child workflow's ## Cache section.
     (3) Reference that named entry in `prompt_cache:` on each consumer node.
 
-  1. Sub-workflow cache undeclared in child.pflow.md — declare 1 input   saves ~$0.02/run
+  1. Sub-workflow cache undeclared in child.pflow.md — add 2 entries in ## Cache  saves ~$0.0086/run
      child.pflow.md
-     1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.
-     Per-consumer cache prefix (what the provider sees per call):
-       Node `summarize` (~3,207 tokens per call — above 1,024-token minimum):
-         • `article` ~3,207 tokens — uses `${article.title}`
-       Node `translate` (~3,207 tokens per call — above 1,024-token minimum):
-         • `article` ~3,207 tokens — uses `${article.body}`
-     → Edit: sub/child.pflow.md
+     Two values flow in from parent workflow.pflow.md, used by 2 consumer nodes.
+     Only these listed values are used by prompts. Do not cache full objects like `article` unless you intentionally want every field in that object sent to the model.
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         ${article.body}
+
+         ${article.title}
+         ```
+       Add prompt_cache entries:
+         summarize: prompt_cache: [article.title]
+         translate: prompt_cache: [article.body]
+     Prompt-body templates to remove and per-consumer cache prefix:
+       Node `summarize` (~1,601 tokens per call — above 1,024-token minimum):
+         • `article.title` ~1,601 tokens — uses `${article.title}`
+       Node `translate` (~1,601 tokens per call — above 1,024-token minimum):
+         • `article.body` ~1,601 tokens — uses `${article.body}`
+     → Edit: .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath/sub/child.pflow.md
 
 ## Per-child analyze-cache commands
 
   Sub-workflow opportunities don't surface here — run analyze-cache per child:
-    cd .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath
-    pflow analyze-cache sub/child.pflow.md
+    pflow analyze-cache .taskmaster/tasks/task_159/baseline/04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath/sub/child.pflow.md
 
 ## Notes
 

@@ -2,7 +2,7 @@
   "format_version": "2.2.0",
   "execution_id": "f1c47c8f-a0da-4b59-a4ac-e1842a7a467b",
   "workflow_name": "lyrics-generator",
-  "workflow_path": "/Users/andfal/projects/pflow-feat-prompt-caching/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+  "workflow_path": ".taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
   "start_time": "2026-05-08T22:01:39.072626",
   "end_time": "2026-05-08T22:11:19.593612",
   "duration_ms": 580520.97,

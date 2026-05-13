@@ -1,5 +1,5 @@
 {
-  "format_version": "4.1",
+  "format_version": "4.2",
   "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -45,6 +45,8 @@
       "excluded_nodes": []
     },
     "trace_coverage": "none",
+    "trace_final_status": null,
+    "trace_recorded_at": null,
     "evidence_scope": "static_analysis",
     "trace_llm_nodes_static": 25,
     "trace_llm_nodes_executed": 0,
@@ -401,7 +403,7 @@
       "node_id": null,
       "estimated_savings_usd": null,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-      "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+      "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
       "suggestions": [
         "Edit: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
       ]
@@ -428,6 +430,8 @@
       "is_batch": true,
       "batch_size_estimated": null,
       "input_tokens_estimated": 3869,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 3869,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -452,6 +456,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 782,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 782,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -476,6 +482,8 @@
       "is_batch": true,
       "batch_size_estimated": 6,
       "input_tokens_estimated": 3,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 3,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -500,6 +508,8 @@
       "is_batch": true,
       "batch_size_estimated": 4,
       "input_tokens_estimated": 3,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 3,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -524,6 +534,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 826,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 826,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -548,6 +560,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1348,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1348,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -572,6 +586,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1248,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1248,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -599,6 +615,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 2886,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 2886,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -627,6 +645,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1066,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1066,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -656,6 +676,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 3684,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 3684,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -686,6 +708,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 2575,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 2575,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -716,6 +740,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 2454,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 2454,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -745,6 +771,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1340,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1340,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -771,6 +799,8 @@
       "is_batch": true,
       "batch_size_estimated": null,
       "input_tokens_estimated": 3,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 3,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -795,6 +825,8 @@
       "is_batch": true,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1076,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1076,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -819,6 +851,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1209,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1209,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -843,6 +877,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 2020,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 2020,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -867,6 +903,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 838,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 838,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -891,6 +929,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 2129,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 2129,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -915,6 +955,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1376,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1376,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -939,6 +981,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1389,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1389,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -963,6 +1007,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1312,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1312,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -987,6 +1033,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1240,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1240,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -1011,6 +1059,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 2606,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 2606,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -1035,6 +1085,8 @@
       "is_batch": false,
       "batch_size_estimated": null,
       "input_tokens_estimated": 1136,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 1136,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -1452,7 +1504,7 @@
     "value_flow_opportunities": [
       {
         "severity": "info",
-        "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+        "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
         "source": "cache_analyzer",
         "id": "cache.sub-workflow-cache-undeclared",
         "title": "Cache Advisory",
@@ -1463,15 +1515,21 @@
           "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
           "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
           "child_workflow_basename": "chorus-chooser.pflow.md",
-          "affected_input_count": 3,
+          "affected_input_count": 4,
           "inputs": [
             {
               "child_input_name": "architecture",
+              "child_cache_ref": "architecture",
               "parent_value_expr": "song-architecture.response",
+              "parent_cache_ref": "song-architecture.response",
               "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
               "parent_node_id": "choose-chorus",
               "line_in_parent": 97,
               "tokens_estimated": null,
+              "parent_prose": "\n\nThe song architecture \u2014 section layout, per-section narrative arc, emotional trajectory, image system, hook design, and per-section syllable/rhyme constraints:\n\n",
+              "parent_prose_origins_differ": false,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
               "consumer_node_ids": [
                 "select-chorus"
               ],
@@ -1484,11 +1542,17 @@
             },
             {
               "child_input_name": "concept",
+              "child_cache_ref": "concept.core_idea",
               "parent_value_expr": "concept",
+              "parent_cache_ref": "concept.core_idea",
               "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
               "parent_node_id": "choose-chorus",
               "line_in_parent": 97,
               "tokens_estimated": null,
+              "parent_prose": "",
+              "parent_prose_origins_differ": false,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
               "consumer_node_ids": [
                 "score-choruses",
                 "select-chorus"
@@ -1499,18 +1563,46 @@
                   "concept.core_idea"
                 ],
                 "select-chorus": [
-                  "concept.core_idea",
+                  "concept.core_idea"
+                ]
+              }
+            },
+            {
+              "child_input_name": "concept",
+              "child_cache_ref": "concept.title",
+              "parent_value_expr": "concept",
+              "parent_cache_ref": "concept.title",
+              "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+              "parent_node_id": "choose-chorus",
+              "line_in_parent": 97,
+              "tokens_estimated": null,
+              "parent_prose": "",
+              "parent_prose_origins_differ": false,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
+              "consumer_node_ids": [
+                "select-chorus"
+              ],
+              "consumer_node_ids_csv": "`select-chorus`",
+              "template_var_refs_by_node": {
+                "select-chorus": [
                   "concept.title"
                 ]
               }
             },
             {
               "child_input_name": "creative_brief",
+              "child_cache_ref": "creative_brief",
               "parent_value_expr": "concept_brief",
+              "parent_cache_ref": "concept_brief",
               "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
               "parent_node_id": "choose-chorus",
               "line_in_parent": 97,
               "tokens_estimated": null,
+              "parent_prose": "\n\nThe concept brief \u2014 material palette tailored to this song's emotional core, genre, and narrator. Includes metaphor mappings, kill moments, contradictions, recognition moments, narrator's blind spot, vocabulary, and scenes:\n\n",
+              "parent_prose_origins_differ": false,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
               "consumer_node_ids": [
                 "select-chorus"
               ],
@@ -1522,7 +1614,7 @@
               }
             }
           ],
-          "body_block": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+          "body_block": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
           "case": "unmeasurable",
           "savings_usd": null,
           "category": "cache_advisory",
@@ -1966,7 +2058,7 @@
     },
     {
       "severity": "info",
-      "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+      "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
       "source": "cache_analyzer",
       "id": "cache.sub-workflow-cache-undeclared",
       "title": "Cache Advisory",
@@ -1977,15 +2069,21 @@
         "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "child_workflow_basename": "chorus-chooser.pflow.md",
-        "affected_input_count": 3,
+        "affected_input_count": 4,
         "inputs": [
           {
             "child_input_name": "architecture",
+            "child_cache_ref": "architecture",
             "parent_value_expr": "song-architecture.response",
+            "parent_cache_ref": "song-architecture.response",
             "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
             "parent_node_id": "choose-chorus",
             "line_in_parent": 97,
             "tokens_estimated": null,
+            "parent_prose": "\n\nThe song architecture \u2014 section layout, per-section narrative arc, emotional trajectory, image system, hook design, and per-section syllable/rhyme constraints:\n\n",
+            "parent_prose_origins_differ": false,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
             "consumer_node_ids": [
               "select-chorus"
             ],
@@ -1998,11 +2096,17 @@
           },
           {
             "child_input_name": "concept",
+            "child_cache_ref": "concept.core_idea",
             "parent_value_expr": "concept",
+            "parent_cache_ref": "concept.core_idea",
             "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
             "parent_node_id": "choose-chorus",
             "line_in_parent": 97,
             "tokens_estimated": null,
+            "parent_prose": "",
+            "parent_prose_origins_differ": false,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
             "consumer_node_ids": [
               "score-choruses",
               "select-chorus"
@@ -2013,18 +2117,46 @@
                 "concept.core_idea"
               ],
               "select-chorus": [
-                "concept.core_idea",
+                "concept.core_idea"
+              ]
+            }
+          },
+          {
+            "child_input_name": "concept",
+            "child_cache_ref": "concept.title",
+            "parent_value_expr": "concept",
+            "parent_cache_ref": "concept.title",
+            "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+            "parent_node_id": "choose-chorus",
+            "line_in_parent": 97,
+            "tokens_estimated": null,
+            "parent_prose": "",
+            "parent_prose_origins_differ": false,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
+            "consumer_node_ids": [
+              "select-chorus"
+            ],
+            "consumer_node_ids_csv": "`select-chorus`",
+            "template_var_refs_by_node": {
+              "select-chorus": [
                 "concept.title"
               ]
             }
           },
           {
             "child_input_name": "creative_brief",
+            "child_cache_ref": "creative_brief",
             "parent_value_expr": "concept_brief",
+            "parent_cache_ref": "concept_brief",
             "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
             "parent_node_id": "choose-chorus",
             "line_in_parent": 97,
             "tokens_estimated": null,
+            "parent_prose": "\n\nThe concept brief \u2014 material palette tailored to this song's emotional core, genre, and narrator. Includes metaphor mappings, kill moments, contradictions, recognition moments, narrator's blind spot, vocabulary, and scenes:\n\n",
+            "parent_prose_origins_differ": false,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
             "consumer_node_ids": [
               "select-chorus"
             ],
@@ -2036,7 +2168,7 @@
             }
           }
         ],
-        "body_block": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+        "body_block": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
         "case": "unmeasurable",
         "savings_usd": null,
         "category": "cache_advisory",

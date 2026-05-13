@@ -3,14 +3,15 @@
 
   Workflow: 2 LLM nodes using gemini/gemini-2.5-flash
   Evidence: trace truncated (1 of 2 LLM nodes executed)
+  Trace: partial-trace.json (failed, recorded 2026-05-08 21:51)
 
 ## Summary
 
   Trace-backed costs below cover executed nodes only.
-  Actually paid (executed trace):       ~$0.0006 (trace)
+  Actually paid (executed trace):       ~$0.0006 (from trace)
   Cost without caching (executed):      ~$0.0023
   Cost on rerun (executed, within TTL): ~$0.0006
-  Actual savings (this run):    saves ~$0.0016/run vs no-cache, 72% of no-cache cost
+  Actual cost delta (this run): saves ~$0.0016/run vs no-cache, 72% of no-cache cost
   Rerun delta (projected):      saves ~$0.0016/run on rerun, 72% of no-cache cost
 
   Trace-dependent optimization recommendations suppressed because the trace is truncated (workflow did not finish).
