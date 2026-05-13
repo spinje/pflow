@@ -300,8 +300,8 @@
 
 ## Per-call cache report
   How to read each row:
-    · cached_now: tokens served from cache during this run. `—` if no trace was recorded.
-    · could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. `?` if the analyzer couldn't project; `—` if cached_now already has the measured number.
+    · cached_now: tokens served from cache during this run (requires trace).
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically.
   Showing 18 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   node                     model                      input  cached_now  could_cache  ratio  calls  notes
@@ -353,12 +353,12 @@
 ### analyze-source.pflow.md (called by analyze-sources)
   analyze                  gemini/gemini-2.5-flash    1,058           —            ?     ?%      6  batch_items=6; no stable 4,096-token repeated prefix found
 
-  Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
-
   Token estimate confidence:
     · score-choruses: tokens estimated from the first batch item as a representative sample. Actual tokens may vary for later items.
     · curate-briefs: savings projected from a stable prompt prefix repeated across the batch. Declare prompt_cache to confirm.
     · select-chorus, 6 review nodes: savings projected from values flowing in from parent workflow(s). See Recommended actions for the per-boundary fix.
+
+  Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 
 ## Per-child analyze-cache commands
 

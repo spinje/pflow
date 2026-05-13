@@ -957,6 +957,29 @@ def _per_call_cells(text: str, node_path: str) -> list[str]:
     raise AssertionError(f"expected per-call row for {node_path!r} in:\n{text}")
 
 
+def _per_call_cells_by_header(text: str, node_path: str) -> dict[str, str]:
+    headers: list[str] | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("node  "):
+            headers = re.split(r" {2,}", stripped)
+            continue
+        if headers is not None and line.lstrip().startswith(f"{node_path}  "):
+            cells = re.split(r" {2,}", stripped, maxsplit=len(headers) - 1)
+            if len(cells) < len(headers):
+                cells.extend([""] * (len(headers) - len(cells)))
+            return dict(zip(headers, cells, strict=True))
+    raise AssertionError(f"expected per-call row for {node_path!r} in:\n{text}")
+
+
+def _per_call_header(text: str) -> list[str]:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("node  "):
+            return re.split(r" {2,}", stripped)
+    raise AssertionError(f"expected per-call header in:\n{text}")
+
+
 def test_text_default_hides_clean_rows_above_80_pct() -> None:
     rows = [_row("clean1", 90), _row("clean2", 95), _row("dirty", 30)]
     text = render_text(_make_analysis(rows=rows))
@@ -1507,6 +1530,20 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
             cacheable_data_source="trace",
             observed_call_count=4,
         ),
+        PerCallRow(
+            node_path="rewrite",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=False,
+            batch_size_estimated=None,
+            input_tokens_estimated=2000,
+            cacheable_tokens_estimated=1200,
+            cache_ratio_pct=60,
+            data_source="trace",
+            declared_prompt_cache=None,
+            workflow_path="/abs/x.pflow.md",
+            cacheable_data_source="memo",
+            observed_call_count=4,
+        ),
     ]
     analysis = _make_analysis(rows=rows, actually_paid=0.10, no_cache=0.20)
 
@@ -1514,10 +1551,10 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
 
     # Header and column bullets each on their own line — standalone substrings.
     assert "How to read each row:" in text
-    assert "· cached_now: tokens served from cache during this run. `—` if no trace was recorded." in text
+    assert "· cached_now: tokens served from cache during this run (requires trace)." in text
     assert (
-        "· could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. "
-        "`?` if the analyzer couldn't project; `—` if cached_now already has the measured number."
+        "· could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. "
+        "`?` if not projectable statically."
     ) in text
     # Run-on form with semicolon separators must NOT appear.
     assert "cached_now: tokens served from cache during this run; could_cache:" not in text
@@ -1572,7 +1609,7 @@ def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
 
 def test_static_mode_per_call_table_renders_em_dash_for_calls_column_e2e() -> None:
     """Fix C end-to-end: when ``evidence_scope == "static_analysis"`` the
-    rendered per-call table emits ``—`` in the calls column for every row.
+    rendered per-call table hides the calls column entirely.
     The ``calls=0`` rendering previously masqueraded as "this node never
     runs" for fresh agents running ``pflow analyze-cache`` on a sub-
     workflow standalone (which is what ``## Per-child analyze-cache
@@ -1606,16 +1643,13 @@ def test_static_mode_per_call_table_renders_em_dash_for_calls_column_e2e() -> No
 
     text = render_text(analysis)
     lines = text.splitlines()
+    header = _per_call_header(text)
+    assert "calls" not in header
     # Locate the per-call data row (after `node`/`---` header lines).
     data_lines = [line for line in lines if "generate" in line and "anthropic" in line]
     assert data_lines, f"per-call data row missing — text was:\n{text}"
     row_text = data_lines[0]
-    # Em-dash present in the calls column position. The `—` symbol is
-    # ASCII-distinct from the `cached_now` em-dash earlier in the row, so
-    # this assertion catches the calls-column substitution specifically
-    # via its trailing position in the row (followed only by an empty
-    # notes column).
-    assert row_text.rstrip().endswith("—"), f"expected calls column to render as '—' in static mode, got:\n{row_text!r}"
+    assert "  0" not in row_text
 
 
 def test_header_discloses_ir_default_when_overridden_by_trace(
@@ -3952,6 +3986,215 @@ def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> 
     assert "cacheable values: a, b, c, +1 more" in text
 
 
+def test_per_call_hides_universally_empty_cache_columns_in_static_mode() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row("write-lyrics", 0).__dict__,
+            "model": "",
+            "input_tokens_estimated": 3684,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        }),
+        PerCallRow(**{
+            **_row("song-architecture", 0).__dict__,
+            "model": "",
+            "input_tokens_estimated": 2886,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        }),
+    ]
+
+    text = render_text(_make_analysis(rows=rows))
+
+    header = _per_call_header(text)
+    assert header == ["node", "model", "input", "notes"]
+    assert "cached_now" not in header
+    assert "could_cache" not in header
+    assert "ratio" not in header
+    assert "calls" not in header
+
+
+def test_per_call_keeps_all_columns_in_mixed_mode() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row("cached", 75).__dict__,
+            "data_source": "trace",
+            "declared_prompt_cache": ["prefix"],
+            "cacheable_data_source": "trace",
+            "observed_call_count": 2,
+        }),
+        PerCallRow(**{
+            **_row("projected", 25).__dict__,
+            "data_source": "trace",
+            "cacheable_data_source": "memo",
+            "observed_call_count": 2,
+        }),
+    ]
+
+    text = render_text(_make_analysis(rows=rows, actually_paid=0.01, no_cache=0.02))
+
+    assert _per_call_header(text) == [
+        "node",
+        "model",
+        "input",
+        "cached_now",
+        "could_cache",
+        "ratio",
+        "calls",
+        "notes",
+    ]
+    cached = _per_call_cells_by_header(text, "cached")
+    projected = _per_call_cells_by_header(text, "projected")
+    assert cached["cached_now"] == "7,500"
+    assert cached["could_cache"] == "—"
+    assert projected["cached_now"] == "—"
+    assert projected["could_cache"] == "2,500"
+
+
+def test_per_call_dedups_repeated_notes_into_footer() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row(f"n{i}", 0).__dict__,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        })
+        for i in range(3)
+    ]
+
+    text = render_text(_make_analysis(rows=rows))
+
+    assert "Per-call notes:" in text
+    assert "3 nodes lack trace data — run with --report to populate cache columns." in text
+    assert text.count("no trace recorded — run with --report to populate this row") == 0
+    assert _per_call_cells_by_header(text, "n0")["notes"] == ""
+
+
+def test_per_call_dedup_handles_row_with_dedup_note_plus_inline_note() -> None:
+    rows = [
+        PerCallRow(**{
+            **_row(f"n{i}", 0).__dict__,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        })
+        for i in range(6)
+    ]
+    rows.append(
+        PerCallRow(**{
+            **_row("special", 0).__dict__,
+            "cacheable_tokens_estimated": None,
+            "cache_ratio_pct": None,
+            "cacheable_data_source": "unavailable",
+        })
+    )
+    warning = Diagnostic(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        id="cache.dynamic-before-static",
+        node_id="special",
+        message="Dynamic before static.",
+    )
+
+    text = render_text(_make_analysis(rows=rows, warnings=[warning]))
+
+    assert "7 nodes lack trace data — run with --report to populate cache columns." in text
+    assert _per_call_cells_by_header(text, "special")["notes"] == "dynamic-before-static"
+
+
+def test_per_call_inline_renders_unique_notes() -> None:
+    row = PerCallRow(**{
+        **_row("unique", 0).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+
+    text = render_text(_make_analysis(rows=[row]))
+
+    assert "Per-call notes:" not in text
+    assert (
+        _per_call_cells_by_header(text, "unique")["notes"]
+        == "no trace recorded — run with --report to populate this row"
+    )
+
+
+def test_per_call_explainer_adapts_to_visible_columns() -> None:
+    projected = PerCallRow(**{
+        **_row("projected", 50).__dict__,
+        "declared_prompt_cache": ["prefix"],
+        "cacheable_data_source": "memo",
+    })
+    unavailable = PerCallRow(**{
+        **_row("unavailable", 0).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+
+    projected_text = render_text(_make_analysis(rows=[projected]))
+    unavailable_text = render_text(_make_analysis(rows=[unavailable]))
+
+    assert "cached_now: tokens served from cache during this run" not in projected_text
+    assert "could_cache: extra tokens" in projected_text
+    assert "cached_now: tokens served from cache during this run" not in unavailable_text
+    assert "could_cache: extra tokens" not in unavailable_text
+
+
+def test_per_call_explainer_returns_empty_when_no_cache_columns_visible() -> None:
+    row = PerCallRow(**{
+        **_row("unavailable", 0).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+
+    text = render_text(_make_analysis(rows=[row]))
+
+    assert "How to read each row:" not in text
+    assert "cached_now:" not in text
+    assert "could_cache:" not in text
+
+
+def test_per_call_calls_column_hidden_in_static_mode() -> None:
+    row = PerCallRow(**{
+        **_row("projected", 50).__dict__,
+        "cacheable_data_source": "memo",
+    })
+
+    static_text = render_text(_make_analysis(rows=[row]))
+    trace_text = render_text(_make_analysis(rows=[dataclasses.replace(row, data_source="trace")], actually_paid=0.01))
+
+    assert "calls" not in _per_call_header(static_text)
+    assert "calls" in _per_call_header(trace_text)
+
+
+def test_per_call_all_rows_can_reexpose_hidden_columns() -> None:
+    visible_row = PerCallRow(**{
+        **_row("visible", 30).__dict__,
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+    })
+    hidden_row = PerCallRow(**{
+        **_row("hidden", 90).__dict__,
+        "declared_prompt_cache": ["prefix"],
+        "cacheable_data_source": "trace",
+    })
+    analysis = _make_analysis(rows=[visible_row, hidden_row])
+
+    default_text = render_text(analysis)
+    all_rows_text = render_text(analysis, all_rows=True)
+
+    assert "cached_now" not in _per_call_header(default_text)
+    assert "cached_now" in _per_call_header(all_rows_text)
+    with pytest.raises(AssertionError):
+        _per_call_cells_by_header(default_text, "hidden")
+    assert _per_call_cells_by_header(all_rows_text, "hidden")["cached_now"] == "9,000"
+
+
 def test_per_call_table_divider_excludes_notes_column_width() -> None:
     """The horizontal divider between header and data rows must size to the
     structured columns (``node`` through ``calls``), NOT to the unbounded
@@ -4047,7 +4290,7 @@ def test_text_per_call_explainer_renders_unified_block_for_post_run_greenfield()
     """
     # ``_row("n1", 50)`` defaults to data_source="memo", declared_prompt_cache=None
     # — the post-run greenfield path.
-    rows = [_row("n1", 50)]
+    rows = [PerCallRow(**{**_row("n1", 50).__dict__, "cacheable_data_source": "memo"})]
     text = render_text(_make_analysis(rows=rows))
     assert "## Per-call cache report" in text
     assert "How to read each row:" in text
@@ -4068,7 +4311,11 @@ def test_text_per_call_explainer_renders_unified_block_for_steady_state() -> Non
     assertion on the old "Actual cache ratios" string fires.
     """
     rows = [_row("n1", 0), _row("n2", 75)]
-    rows[1] = PerCallRow(**{**rows[1].__dict__, "declared_prompt_cache": ["concept", "concept_brief"]})
+    rows[1] = PerCallRow(**{
+        **rows[1].__dict__,
+        "declared_prompt_cache": ["concept", "concept_brief"],
+        "cacheable_data_source": "memo",
+    })
     text = render_text(_make_analysis(rows=rows))
     assert "How to read each row:" in text
     assert "Actual cache ratios" not in text
@@ -5352,9 +5599,9 @@ def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
         "cacheable_data_source": "trace",
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "write-lyrics")
-    assert cells[3] == "213,382"
-    assert cells[4] == "—"
+    cells = _per_call_cells_by_header(text, "write-lyrics")
+    assert cells["cached_now"] == "213,382"
+    assert cells["could_cache"] == "—"
 
 
 def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
@@ -5370,9 +5617,9 @@ def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
         "cacheable_data_source": "memo",
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "score-choruses")
-    assert cells[3] == "—"
-    assert cells[4] == "213,382"
+    cells = _per_call_cells_by_header(text, "score-choruses")
+    assert "cached_now" not in cells
+    assert cells["could_cache"] == "213,382"
 
 
 def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
@@ -5389,9 +5636,9 @@ def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
         "cacheable_data_source": "trace",
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "rewrite-emotional")
-    assert cells[3] == "63,009"
-    assert cells[4] == "—"
+    cells = _per_call_cells_by_header(text, "rewrite-emotional")
+    assert cells["cached_now"] == "63,009"
+    assert cells["could_cache"] == "—"
 
 
 def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
@@ -5407,8 +5654,9 @@ def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
         "cache_ratio_pct": None,
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    cells = _per_call_cells(text, "greenfield")
-    assert cells[4] == "?"
+    cells = _per_call_cells_by_header(text, "greenfield")
+    assert "could_cache" not in cells
+    assert cells["notes"] == "no trace recorded — run with --report to populate this row"
 
 
 def test_renderer_never_emits_cd_commands() -> None:

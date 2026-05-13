@@ -26,8 +26,8 @@
 
 ## Per-call cache report
   How to read each row:
-    · cached_now: tokens served from cache during this run. `—` if no trace was recorded.
-    · could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. `?` if the analyzer couldn't project; `—` if cached_now already has the measured number.
+    · cached_now: tokens served from cache during this run (requires trace).
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically.
 
   node  model                        input  cached_now  could_cache  ratio  calls  notes
   ---------------------------------------------------------------------------------

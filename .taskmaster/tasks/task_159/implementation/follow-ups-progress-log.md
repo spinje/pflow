@@ -1947,3 +1947,47 @@ Verification:
   panic tests plus four unrelated runtime/sub-workflow failures that reproduce
   independently: 6,719 passed, 19 skipped. The non-excluded first broad run
   showed those same unrelated failures before exclusion.
+
+## 2026-05-13 — Task 159 Followups — adaptive per-call columns + note de-dup
+
+Implemented adaptive text-only per-call table rendering in
+`render_text.py`. Per-call columns are now name-based constants instead of
+three synchronized hardcoded 8-column lists, and the renderer computes the
+visible column set from the post-filter rows. Static/no-trace reports hide
+placeholder-only columns (`cached_now`, `ratio`, `calls`, and sometimes
+`could_cache`); trace-backed reports keep the established full column shape.
+
+Row notes now stay as structured components until render time. Repeated
+`no trace recorded — run with --report to populate this row` components are
+removed from individual rows and summarized under a `Per-call notes:` footer,
+while unique components remain inline. This preserves the mixed case where one
+row has the repeated no-trace component plus a unique warning marker.
+
+Deviations / plan corrections:
+
+- Refined the raw visibility predicate after baseline inspection. The plan
+  simultaneously said trace/truncated-trace output should stay unchanged and
+  supplied a purely column-value predicate that would hide `could_cache` from
+  trace-only tables. Preserved the stronger user-facing invariant: trace modes
+  keep all columns; adaptive hiding is static-mode-only.
+- Static `could_cache` remains visible for declared-cache rows with a resolved
+  stable model, because the steady-state baseline needs `?` to explain that
+  cacheable bytes are not statically projectable. It hides for unresolved or
+  heterogeneous-model static rows, which is what removes the dead column from
+  the lyrics-generator cold-reader case.
+- Restored `15-run-flag-interactions/03-report-with-only` after full baseline
+  regeneration because the sandbox rewrote it with the known `/dev/fd`
+  process-substitution failure. That drift is unrelated to cache rendering and
+  should not be committed as expected output.
+
+Verification:
+
+- Focused renderer suite: 173 passed.
+- Focused cache-analysis + CLI suite: 699 passed.
+- Broad sandbox-safe core/CLI sweep with documented `uv`-spawning exclusions:
+  3,254 passed, 41 deselected.
+- Baseline harness regenerated 76 cases with a temporary sandbox `uv run`
+  wrapper. Verification after restoring the unrelated `/dev/fd` case: 75
+  passed, 1 known sandbox drift (`15-run-flag-interactions/03-report-with-only`).
+- `ruff check`, `ruff format --check`, and `mypy src/pflow/core/cache_analysis/`
+  clean.

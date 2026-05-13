@@ -58,6 +58,19 @@ from .analyze import (
 )
 
 _HIDDEN_RATIO_THRESHOLD = 80
+_PER_CALL_COLUMNS: tuple[str, ...] = (
+    "node",
+    "model",
+    "input",
+    "cached_now",
+    "could_cache",
+    "ratio",
+    "calls",
+    "notes",
+)
+_ALWAYS_VISIBLE_PER_CALL_COLUMNS: frozenset[str] = frozenset({"node", "model", "input", "notes"})
+_LEFT_ALIGNED_PER_CALL_COLUMNS: frozenset[str] = frozenset({"node", "model", "notes"})
+_NO_TRACE_RECORDED_NOTE = "no trace recorded — run with --report to populate this row"
 
 # Plain-English labels for ``ProjectionExclusion.reason``. Surfaced inline
 # in the Summary block's "Excluded from analysis" line so a fresh agent
@@ -1408,9 +1421,20 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # Full IDs stay in JSON for machine consumers (DD#27).
     warnings_by_node = _warnings_by_row_key(analysis)
     unavailable_notes_by_node = _unavailable_notes_by_row_key(analysis)
+    static_mode = analysis.summary.evidence_scope == "static_analysis"
+    visible_columns = _visible_per_call_columns(visible, static_mode=static_mode)
+    components_by_row = [
+        _cell_note_components(
+            row,
+            warnings_by_node.get((row.workflow_path, row.node_path), []),
+            unavailable_notes_by_node.get((row.workflow_path, row.node_path), []),
+        )
+        for row in visible
+    ]
+    deduped_components_by_row, per_call_notes = _dedup_row_note_components(visible, components_by_row)
 
     lines = ["## Per-call cache report"]
-    explainer_lines = _per_call_scope_explainer(rows, analysis.summary.evidence_scope)
+    explainer_lines = _per_call_scope_explainer(rows, analysis.summary.evidence_scope, visible_columns)
     for explainer_line in explainer_lines:
         lines.append(f"  {explainer_line}")
     if truncated_trace_default_view and len(visible) < len(rows):
@@ -1427,19 +1451,40 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
         )
     if visible:
         lines.append("")
-        _append_per_call_rows(lines, visible, warnings_by_node, unavailable_notes_by_node, analysis)
+        _append_per_call_rows(
+            lines,
+            visible,
+            warnings_by_node,
+            visible_columns=visible_columns,
+            deduped_components_by_row=deduped_components_by_row,
+            analysis=analysis,
+        )
+    _append_per_call_footer_blocks(lines, visible, hidden_count, per_call_notes)
+    return "\n".join(lines)
+
+
+def _append_per_call_footer_blocks(
+    lines: list[str],
+    visible: list[PerCallRow],
+    hidden_count: int,
+    per_call_notes: list[tuple[str, int]],
+) -> None:
+    notes_footer_lines = _render_per_call_notes_footer(per_call_notes)
+    if notes_footer_lines:
+        lines.append("")
+        for line in notes_footer_lines:
+            lines.append(f"  {line}")
+    footer_lines = _per_call_confidence_footer(visible)
+    if footer_lines is not None:
+        lines.append("")
+        for line in footer_lines:
+            lines.append(f"  {line}")
     if hidden_count > 0:
         lines.append("")
         lines.append(
             f"  Hidden: {hidden_count} low-signal nodes "
             "(no warnings or actionable cache projection; rerun with --all-rows)."
         )
-    footer_lines = _per_call_confidence_footer(visible)
-    if footer_lines is not None:
-        lines.append("")
-        for line in footer_lines:
-            lines.append(f"  {line}")
-    return "\n".join(lines)
 
 
 def _visible_per_call_rows(
@@ -1513,35 +1558,39 @@ def _append_per_call_rows(
     lines: list[str],
     visible: list[PerCallRow],
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
+    *,
+    visible_columns: tuple[str, ...],
+    deduped_components_by_row: list[list[str]],
     analysis: CacheAnalysis | None = None,
 ) -> None:
     # In static-analysis mode (no trace evidence) every row's
-    # ``observed_call_count`` is 0 by construction. Rendering ``0`` in the
-    # ``calls`` column reads as "this node never runs" — a misleading signal
-    # for a workflow analyzed standalone (see ``## Per-child analyze-cache
-    # commands``, which instructs agents to run the analyzer on sub-workflows
-    # directly). Render ``—`` instead so the column means "no execution
-    # evidence" consistent with the ``cached_now`` column's ``—`` semantics.
+    # ``observed_call_count`` is 0 by construction. The calls column is hidden
+    # in that mode so agents do not misread "0" as "this node never runs".
     static_mode = analysis is not None and analysis.summary.evidence_scope == "static_analysis"
     widths = _compute_per_call_column_widths(
         visible,
         warnings_by_node,
-        unavailable_notes_by_node,
+        visible_columns=visible_columns,
+        deduped_components_by_row=deduped_components_by_row,
         static_mode=static_mode,
     )
+    left_aligned_indices = {
+        visible_columns.index(name) for name in _LEFT_ALIGNED_PER_CALL_COLUMNS if name in visible_columns
+    }
     header = _format_table_row(
-        ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"],
+        list(visible_columns),
         widths,
+        left_aligned_indices,
     )
     lines.append(header)
-    # Divider tracks the structured-column width (everything left of and
-    # including ``calls``). The trailing ``notes`` column is unbounded prose
-    # whose length should not stretch the divider — when one row has long
-    # observed=... or warning IDs, the divider would otherwise blow out
-    # ~160 chars and overshoot every other row visually.
+    # Divider tracks the structured-column width (everything left of the
+    # trailing ``notes`` column). Notes are unbounded prose; one long
+    # observed=... or warning-ID cell should not stretch the divider.
     lines.append("  " + "-" * _structured_columns_width(widths))
     lines.append("")
+    components_by_row_id = {
+        id(row): components for row, components in zip(visible, deduped_components_by_row, strict=True)
+    }
     grouped = _group_rows_by_workflow(visible)
     multiple_workflows = len(grouped) > 1
     for workflow_path, group_rows in grouped:
@@ -1552,8 +1601,10 @@ def _append_per_call_rows(
                 _format_per_call_row(
                     row,
                     warnings_by_node,
-                    unavailable_notes_by_node,
                     widths,
+                    visible_columns=visible_columns,
+                    deduped_components=components_by_row_id[id(row)],
+                    left_aligned_indices=left_aligned_indices,
                     static_mode=static_mode,
                 )
             )
@@ -1589,37 +1640,42 @@ def _format_workflow_group_heading(workflow_path: str | None, analysis: CacheAna
 def _format_per_call_row(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     widths: tuple[int, ...],
     *,
+    visible_columns: tuple[str, ...],
+    deduped_components: list[str],
+    left_aligned_indices: set[int],
     static_mode: bool = False,
 ) -> str:
     return _format_table_row(
         _per_call_cells(
             row,
             warnings_by_node,
-            unavailable_notes_by_node,
+            visible_columns=visible_columns,
+            deduped_components=deduped_components,
             static_mode=static_mode,
         ),
         widths,
+        left_aligned_indices,
     )
 
 
 def _compute_per_call_column_widths(
     rows: list[PerCallRow],
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     *,
+    visible_columns: tuple[str, ...],
+    deduped_components_by_row: list[list[str]],
     static_mode: bool = False,
 ) -> tuple[int, ...]:
-    headers = ["node", "model", "input", "cached_now", "could_cache", "ratio", "calls", "notes"]
-    widths = [len(header) for header in headers]
-    for row in rows:
+    widths = [len(header) for header in visible_columns]
+    for row, deduped_components in zip(rows, deduped_components_by_row):
         for index, cell in enumerate(
             _per_call_cells(
                 row,
                 warnings_by_node,
-                unavailable_notes_by_node,
+                visible_columns=visible_columns,
+                deduped_components=deduped_components,
                 static_mode=static_mode,
             )
         ):
@@ -1627,10 +1683,9 @@ def _compute_per_call_column_widths(
     return tuple(widths)
 
 
-def _format_table_row(cells: list[str], widths: tuple[int, ...]) -> str:
-    left_aligned = {0, 1, 7}
+def _format_table_row(cells: list[str], widths: tuple[int, ...], left_aligned_indices: set[int]) -> str:
     padded = [
-        cell.ljust(widths[index]) if index in left_aligned else cell.rjust(widths[index])
+        cell.ljust(widths[index]) if index in left_aligned_indices else cell.rjust(widths[index])
         for index, cell in enumerate(cells)
     ]
     # Trim trailing whitespace on the (left-aligned) notes column. Padding
@@ -1646,10 +1701,11 @@ def _structured_columns_width(widths: tuple[int, ...]) -> int:
     The notes column trails as unbounded prose; including it in the divider
     width would let one long row (e.g., ``observed=A,B,C; warning-id``)
     stretch the divider far beyond every other row's width. The divider
-    is sized to span ``node`` through ``calls``: indent (2) + sum(column
-    widths 0..6) + separators (2 chars between each of 7 columns = 12).
+    is sized to span every visible column before ``notes``: indent (2) +
+    sum(structured widths) + separators (2 chars between each structured
+    column).
     """
-    structured = widths[:7]
+    structured = widths[:-1]
     separators = 2 * max(0, len(structured) - 1)
     return 2 + sum(structured) + separators
 
@@ -1657,22 +1713,23 @@ def _structured_columns_width(widths: tuple[int, ...]) -> int:
 def _per_call_cells(
     row: PerCallRow,
     warnings_by_node: dict[tuple[str | None, str], list[str]],
-    unavailable_notes_by_node: dict[tuple[str | None, str], list[str]],
     *,
+    visible_columns: tuple[str, ...],
+    deduped_components: list[str],
     static_mode: bool = False,
 ) -> list[str]:
     inline_warnings = warnings_by_node.get((row.workflow_path, row.node_path), [])
-    unavailable_notes = unavailable_notes_by_node.get((row.workflow_path, row.node_path), [])
-    return [
-        row.node_path,
-        _cell_model(row),
-        _cell_input(row, inline_warnings),
-        _cell_cached_now(row),
-        _cell_could_cache(row),
-        _cell_ratio(row),
-        _cell_calls(row, static_mode=static_mode),
-        _cell_notes(row, inline_warnings, unavailable_notes),
-    ]
+    all_cells = {
+        "node": row.node_path,
+        "model": _cell_model(row),
+        "input": _cell_input(row, inline_warnings),
+        "cached_now": _cell_cached_now(row),
+        "could_cache": _cell_could_cache(row),
+        "ratio": _cell_ratio(row),
+        "calls": _cell_calls(row, static_mode=static_mode),
+        "notes": "; ".join(deduped_components),
+    }
+    return [all_cells[column] for column in visible_columns]
 
 
 def _cell_model(row: PerCallRow) -> str:
@@ -1720,18 +1777,50 @@ def _cell_ratio(row: PerCallRow) -> str:
 
 
 def _cell_calls(row: PerCallRow, *, static_mode: bool = False) -> str:
-    # Static-analysis mode means no trace evidence is available, so every
-    # row's ``observed_call_count`` is 0 by construction. Render ``—``
-    # instead of ``0`` so the column reads as "no execution evidence"
-    # rather than the misleading "this node never runs". In trace mode,
-    # ``observed_call_count == 0`` is a real signal (conditional branch
-    # not taken) and must render as ``0``.
+    # Static-analysis mode means no trace evidence is available. The calls
+    # column is normally hidden in that mode; this fallback preserves the
+    # old "no execution evidence" marker for direct helper callers.
     if static_mode:
         return "—"
     return str(row.observed_call_count)
 
 
-def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: list[str]) -> str:
+def _visible_per_call_columns(rows: list[PerCallRow], *, static_mode: bool) -> tuple[str, ...]:
+    """Compute the per-call table columns from the rows that will render.
+
+    Identity columns and notes are always present. Trace-backed reports keep
+    the established full table. Static reports hide columns that would carry
+    only placeholders, except for resolved declared-cache rows where
+    ``could_cache: ?`` is the useful signal that projection needs trace data.
+    """
+    if not static_mode:
+        return _PER_CALL_COLUMNS
+    has_real = {
+        "cached_now": any(
+            row.cacheable_data_source == "trace"
+            and bool(row.declared_prompt_cache)
+            and row.cacheable_tokens_estimated is not None
+            for row in rows
+        ),
+        "could_cache": any(
+            (
+                row.cacheable_data_source in {"memo", "parameters", "batch_prefix", "cross_workflow_projection"}
+                and row.cacheable_tokens_estimated is not None
+            )
+            or (bool(row.declared_prompt_cache) and bool(row.model) and not row.model_is_heterogeneous)
+            for row in rows
+        ),
+        "ratio": any(row.cache_ratio_pct is not None for row in rows),
+        "calls": not static_mode,
+    }
+    return tuple(
+        column
+        for column in _PER_CALL_COLUMNS
+        if column in _ALWAYS_VISIBLE_PER_CALL_COLUMNS or has_real.get(column, False)
+    )
+
+
+def _cell_note_components(row: PerCallRow, inline_warnings: list[str], unavailable_notes: list[str]) -> list[str]:
     notes: list[str] = []
     if row.did_not_execute_in_trace:
         notes.append("[unexecuted]")
@@ -1750,7 +1839,52 @@ def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: 
         if fallback_note:
             notes.append(fallback_note)
     notes.extend(warning_id for warning_id in inline_warnings if warning_id != "opaque-prompt")
-    return "; ".join(notes)
+    return notes
+
+
+def _dedup_row_note_components(
+    rows: list[PerCallRow],
+    components_per_row: list[list[str]],
+    *,
+    threshold: int = 2,
+) -> tuple[list[list[str]], list[tuple[str, int]]]:
+    """Aggregate repeated note components into a footer.
+
+    Deduping by component, rather than whole note cell, preserves unique row
+    notes. A row with ``no trace recorded`` plus a unique warning marker still
+    keeps that warning inline while the repeated no-trace component is counted
+    in the footer.
+    """
+    del rows  # reserved for future row-aware aggregate copy without changing the call shape
+    counts: dict[str, int] = {}
+    for components in components_per_row:
+        for component in dict.fromkeys(components):
+            counts[component] = counts.get(component, 0) + 1
+    deduped_components = [
+        component for component, count in counts.items() if count >= threshold and component == _NO_TRACE_RECORDED_NOTE
+    ]
+    if not deduped_components:
+        return [list(components) for components in components_per_row], []
+
+    deduped_set = set(deduped_components)
+    per_row = [
+        [component for component in components if component not in deduped_set] for components in components_per_row
+    ]
+    footer_entries = [(component, counts[component]) for component in deduped_components]
+    return per_row, footer_entries
+
+
+def _render_per_call_notes_footer(footer_entries: list[tuple[str, int]]) -> list[str]:
+    if not footer_entries:
+        return []
+    lines = ["Per-call notes:"]
+    for component, count in footer_entries:
+        if component == _NO_TRACE_RECORDED_NOTE:
+            node_word = "node" if count == 1 else "nodes"
+            lines.append(f"  · {count} {node_word} lack trace data — run with --report to populate cache columns.")
+        else:
+            lines.append(f"  · {count} rows: {component}")
+    return lines
 
 
 def _format_cross_workflow_inputs_note(inputs: tuple[CrossWorkflowInputContribution, ...]) -> str:
@@ -1780,7 +1914,7 @@ def _unavailable_could_cache_note(
         # row with `cached_now: —`, `could_cache: ?`, `ratio: ?%`, `calls: —`
         # and a blank notes column. The agent saw only placeholders with no
         # explanation or next step. Name the cause and the unblocking action.
-        return "no trace recorded — run with --report to populate this row"
+        return _NO_TRACE_RECORDED_NOTE
     if row.observed_call_count == 1:
         return "single call; no repeated cache use observed"
     if not row.model:
@@ -1822,7 +1956,11 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
     return "\n".join(lines)
 
 
-def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "static_analysis") -> list[str]:
+def _per_call_scope_explainer(
+    rows: list[PerCallRow],
+    evidence_scope: str = "static_analysis",
+    visible_columns: tuple[str, ...] = _PER_CALL_COLUMNS,
+) -> list[str]:
     """Return multi-line explainer describing what the per-call columns mean.
 
     Two modes:
@@ -1843,14 +1981,20 @@ def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "sta
     into stdout and forced agents to infer enum semantics to read ``—``.
     The collapsed block explains each placeholder where it appears.
     """
+    del rows  # kept for call-site stability and older tests that pass rows explicitly
     if evidence_scope == "truncated_trace_executed_subset":
         return ["Executed trace rows are evidence-only; unexecuted rows are marked when shown."]
-    return [
-        "How to read each row:",
-        "  · cached_now: tokens served from cache during this run. `—` if no trace was recorded.",
-        "  · could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. "
-        "`?` if the analyzer couldn't project; `—` if cached_now already has the measured number.",
-    ]
+    bullets: list[str] = []
+    if "cached_now" in visible_columns:
+        bullets.append("cached_now: tokens served from cache during this run (requires trace).")
+    if "could_cache" in visible_columns:
+        bullets.append(
+            "could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. "
+            "`?` if not projectable statically."
+        )
+    if not bullets:
+        return []
+    return ["How to read each row:", *(f"  · {bullet}" for bullet in bullets)]
 
 
 def _format_node_list(node_paths: list[str]) -> str:
