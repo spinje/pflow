@@ -3758,9 +3758,9 @@ def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> 
         ),
     })
     text = render_text(_make_analysis(rows=[multi, single, many]))
-    assert "cacheable inputs: creative_direction, song_architecture" in text
-    assert "cacheable inputs: concept" not in text
-    assert "cacheable inputs: a, b, c, +1 more" in text
+    assert "cacheable values: creative_direction, song_architecture" in text
+    assert "cacheable values: concept" not in text
+    assert "cacheable values: a, b, c, +1 more" in text
 
 
 def test_per_call_table_divider_excludes_notes_column_width() -> None:

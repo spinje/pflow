@@ -293,10 +293,9 @@ def test_make_diagnostic_invalid_on_non_llm_dedup() -> None:
 
 def test_sub_workflow_cache_undeclared_headline_pluralizes_input_count() -> None:
     """The `cache.sub-workflow-cache-undeclared` headline used to render
-    ``declare N input(s)`` regardless of count. Fresh agents read ``declare 1
-    input(s)`` as a typo. The catalog now interpolates ``{inputs_phrase}``,
-    derived from ``affected_input_count`` at both ``make_diagnostic`` time and
-    ``resolve_headline_for`` time.
+    ``declare N input(s)`` regardless of count. The finding now talks about
+    concrete child ``## Cache`` entries because candidates may be subpaths, not
+    boundary input roots.
 
     Mutation contract: remove the ``inputs_phrase`` derivation in
     ``resolve_headline_for`` and the singular-count assertion fails (the
@@ -343,11 +342,11 @@ def test_sub_workflow_cache_undeclared_headline_pluralizes_input_count() -> None
     singular_headline = resolve_headline_for(singular)
     plural_headline = resolve_headline_for(plural)
 
-    assert "declare 1 input" in singular_headline
+    assert "add 1 entry in ## Cache" in singular_headline
     assert "input(s)" not in singular_headline
-    assert "1 inputs" not in singular_headline  # not pluralized for count==1
+    assert "1 entries" not in singular_headline  # not pluralized for count==1
 
-    assert "declare 3 inputs" in plural_headline
+    assert "add 3 entries in ## Cache" in plural_headline
     assert "input(s)" not in plural_headline
 
 

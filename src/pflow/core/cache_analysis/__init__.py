@@ -54,7 +54,7 @@ Version history (``JSON_FORMAT_VERSION``):
 - ``"4.1"`` — cross_workflow_inputs naming + data-flow surfacing (same minor,
   pre-merge shape correction): ``per_call[].cross_workflow_inputs[*]``
   renamed ``name`` → ``child_input_name`` and added ``parent_value_expr``
-  (``string | null``). Text per-call row's ``cacheable inputs:`` note now
+  (``string | null``). Text per-call row's cacheable-values note now
   uses child input names, alphabetized; recommended action body surfaces
   parent expressions on a ``flows in from parent as `${...}` `` sub-line
   for renamed inputs only.
@@ -62,6 +62,11 @@ Version history (``JSON_FORMAT_VERSION``):
   shape correction): ``cache.sub-workflow-cache-undeclared`` now emits one
   diagnostic per child workflow. Its context uses ``inputs[]``, ``case``, and
   ``body_block`` instead of per-input top-level fields.
+- ``"4.1"`` — template-honest sub-workflow cache refs (additive, same minor):
+  ``cache.sub-workflow-cache-undeclared.context.inputs[]`` and
+  ``per_call[].cross_workflow_inputs[]`` gain ``child_cache_ref`` and
+  ``parent_cache_ref``. ``child_input_name`` remains the boundary input name;
+  ``child_cache_ref`` is the actual child ``## Cache`` entry to add.
 - ``"4.1"`` — B-9 split (additive, same minor): cache-domain ERRORs stay in
   ``blocking_errors[]`` (now matches ``summary.blocking_errors`` count);
   non-cache validator errors (unknown node types, schema errors) move to a

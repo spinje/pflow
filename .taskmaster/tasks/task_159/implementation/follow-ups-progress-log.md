@@ -1148,3 +1148,70 @@ Verification:
   tests plus the known skill exclusions passed: 6,678 passed, 19 skipped.
 - `ruff check`, `ruff format --check`, and focused `mypy
   src/pflow/core/cache_analysis` clean.
+
+## 2026-05-13 — Task 159 Followups — Bug 4 fix: template-honest sub-workflow cache refs
+
+Implemented `scratchpads/bug-4-template-honest-subworkflow-cache/implementation-plan.md`.
+Sub-workflow cache recommendations now derive candidates from actual child
+prompt refs, not from the boundary input root. A child prompt using
+`${concept.core_idea}` and `${concept.title}` recommends `concept.core_idea`
+and `concept.title`; it no longer recommends caching full `concept` unless a
+prompt actually uses `${concept}`.
+
+Key implementation points:
+
+- Added path helpers and `_ChildCacheRefUse` in `analyze.py`. Both grouped
+  recommendations and per-call `cross_workflow_projection` rows consume that
+  shared prompt-ref extraction result.
+- Extended `_SubWorkflowCacheCandidate`, `_RowCrossWorkflowCandidate`, and
+  `CrossWorkflowInputContribution` with `child_cache_ref` / `parent_cache_ref`.
+  `child_input_name` remains boundary metadata; it is no longer the candidate
+  identity.
+- Updated trace fallback to resolve the child suffix inside
+  `node_params.inputs[child_input_name]`, so trace-backed subpath estimates
+  tokenize `inputs.concept.title` instead of the full resolved object.
+- Text recommendations now say "entries in ## Cache" / "values", include a
+  full-object exposure warning for subpath cases, and show exact child edits:
+  `## Cache` entries, per-node `prompt_cache`, and prompt-body templates to
+  remove.
+- JSON/MCP docs are additive: `inputs[]` and
+  `per_call[].cross_workflow_inputs[]` now carry `child_cache_ref` and
+  `parent_cache_ref` while preserving `child_input_name`.
+
+Deviations / learnings:
+
+- Kept direct-root behavior intact with compatibility defaults on the
+  dataclasses. Existing callers/tests constructing `CrossWorkflowInputContribution`
+  or `_SubWorkflowCacheCandidate` without the new fields still represent root
+  candidates correctly.
+- Multiple parent origins for the same child cache ref are not measured from a
+  lexicographic winner. Aggregation marks those entries as multi-origin and
+  leaves token estimates unmeasurable rather than presenting one origin as
+  truth.
+- The original no-trace gate had to change from "same ref consumed by at least
+  two nodes" to "the group has at least two child consumers." That is required
+  for the 05b shape where different subpaths under one input are consumed by
+  different child nodes; otherwise the analyzer would silently drop the exact
+  bug case this fix targets.
+- The baseline harness uses `uv run`, which panics in this sandbox. For
+  baseline verification only, used a temporary `/private/tmp` PATH wrapper that
+  maps `uv run pflow ...` to the project virtualenv `pflow`, following the
+  sandbox-testing skill's guidance to avoid Homebrew `uv`.
+
+Verification:
+
+- Focused requested tests:
+  `tests/test_core/test_cache_analysis_per_id_emission.py`,
+  `tests/test_core/test_cache_analysis_analyze.py`,
+  `tests/test_core/test_cache_analysis_renderers.py`: 458 passed.
+- Additional warning coverage: `tests/test_core/test_cache_analysis_warnings.py`:
+  61 passed.
+- Broader core suite, excluding three `/opt/homebrew/bin/uv` subprocess tests
+  that panic before Python starts in this sandbox: 2,548 passed, 1 skipped,
+  3 deselected.
+- Affected baselines verified clean after regeneration:
+  `04-warning-catalog/05`, `04-warning-catalog/05b`,
+  `10-live-recordings/05-gemini-lyrics-generator`, and all
+  `12-real-world-lyrics-generator` cases.
+- `ruff check` on touched files and `mypy src/pflow/core/cache_analysis/`
+  clean.

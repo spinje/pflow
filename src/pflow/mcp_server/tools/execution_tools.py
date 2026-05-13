@@ -473,10 +473,12 @@ async def analyze_cache(
     For ``cache.sub-workflow-cache-undeclared``, agents should read
     ``context.case`` (``actionable`` / ``model_switch`` / ``refactor`` /
     ``unmeasurable``), ``context.inputs[]`` (per incoming value with
-    ``child_input_name``, ``parent_value_expr``, ``tokens_estimated``, and
-    ``consumer_node_ids``), ``context.body_block`` (text-ready guidance), and
-    ``context.savings_usd``. Older per-input top-level fields such as
-    ``child_input_name`` and ``below_threshold_clause`` are no longer emitted.
+    ``child_cache_ref`` as the child ``## Cache`` entry to add,
+    ``child_input_name`` as the boundary input name, ``parent_cache_ref``,
+    ``parent_value_expr``, ``tokens_estimated``, and ``consumer_node_ids``),
+    ``context.body_block`` (text-ready guidance), and ``context.savings_usd``.
+    Older per-input top-level fields such as ``child_input_name`` and
+    ``below_threshold_clause`` are no longer emitted.
 
     **``warnings[].id`` shape**: either one of these cache catalog entries or
     ``None`` for un-IDed validator findings. Use ``severity`` for

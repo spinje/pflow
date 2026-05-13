@@ -894,7 +894,7 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
             "in the listed child workflow. Doing only some leaves the cache disabled:\n"
             "  (1) Remove the `${var}` references from each affected node's prompt. "
             "Leaving them re-sends the content uncached.\n"
-            "  (2) Add the input as a named entry under the child workflow's ## Cache section.\n"
+            "  (2) Add the listed values as named entries under the child workflow's ## Cache section.\n"
             "  (3) Reference that named entry in `prompt_cache:` on each consumer node."
         )
     return _render_action_list(
@@ -1480,7 +1480,7 @@ def _unavailable_notes_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | N
             if not isinstance(input_dict, dict):
                 continue
             tokens = input_dict.get("tokens_estimated")
-            input_name = input_dict.get("child_input_name", "")
+            input_name = input_dict.get("child_cache_ref") or input_dict.get("child_input_name", "")
             consumer_ids = input_dict.get("consumer_node_ids", [])
             if not isinstance(tokens, int) or not input_name or not isinstance(consumer_ids, list):
                 continue
@@ -1740,11 +1740,14 @@ def _cell_notes(row: PerCallRow, inline_warnings: list[str], unavailable_notes: 
 
 def _format_cross_workflow_inputs_note(inputs: tuple[CrossWorkflowInputContribution, ...]) -> str:
     names = tuple(
-        item.child_input_name if isinstance(item, CrossWorkflowInputContribution) else str(item) for item in inputs
+        (item.child_cache_ref or item.child_input_name)
+        if isinstance(item, CrossWorkflowInputContribution)
+        else str(item)
+        for item in inputs
     )
     if len(names) <= 3:
-        return f"cacheable inputs: {', '.join(names)}"
-    return f"cacheable inputs: {', '.join(names[:3])}, +{len(names) - 3} more"
+        return f"cacheable values: {', '.join(names)}"
+    return f"cacheable values: {', '.join(names[:3])}, +{len(names) - 3} more"
 
 
 def _unavailable_could_cache_note(

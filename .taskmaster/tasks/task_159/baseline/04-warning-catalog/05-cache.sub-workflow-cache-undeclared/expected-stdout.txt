@@ -113,7 +113,7 @@
       "node_id": null,
       "estimated_savings_usd": 0.008645400000000001,
       "scope_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
-      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${article}\n    ```\n  Add prompt_cache entries:\n    summarize: prompt_cache: [article]\n    translate: prompt_cache: [article]\nPrompt-body templates to remove and per-consumer cache prefix:\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
       "suggestions": [
         "Edit: <BASELINE_CASE_DIR>/sub/child.pflow.md"
       ]
@@ -181,7 +181,7 @@
     "value_flow_opportunities": [
       {
         "severity": "info",
-        "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+        "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${article}\n    ```\n  Add prompt_cache entries:\n    summarize: prompt_cache: [article]\n    translate: prompt_cache: [article]\nPrompt-body templates to remove and per-consumer cache prefix:\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
         "source": "cache_analyzer",
         "id": "cache.sub-workflow-cache-undeclared",
         "title": "Cache Advisory",
@@ -196,11 +196,15 @@
           "inputs": [
             {
               "child_input_name": "article",
+              "child_cache_ref": "article",
               "parent_value_expr": "article",
+              "parent_cache_ref": "article",
               "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
               "parent_node_id": "child",
               "line_in_parent": 14,
               "tokens_estimated": 1601,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
               "consumer_node_ids": [
                 "summarize",
                 "translate"
@@ -216,7 +220,7 @@
               }
             }
           ],
-          "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+          "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${article}\n    ```\n  Add prompt_cache entries:\n    summarize: prompt_cache: [article]\n    translate: prompt_cache: [article]\nPrompt-body templates to remove and per-consumer cache prefix:\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
           "case": "actionable",
           "savings_usd": 0.008645400000000001,
           "category": "cache_advisory",
@@ -231,7 +235,7 @@
   "warnings": [
     {
       "severity": "info",
-      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+      "message": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${article}\n    ```\n  Add prompt_cache entries:\n    summarize: prompt_cache: [article]\n    translate: prompt_cache: [article]\nPrompt-body templates to remove and per-consumer cache prefix:\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
       "source": "cache_analyzer",
       "id": "cache.sub-workflow-cache-undeclared",
       "title": "Cache Advisory",
@@ -246,11 +250,15 @@
         "inputs": [
           {
             "child_input_name": "article",
+            "child_cache_ref": "article",
             "parent_value_expr": "article",
+            "parent_cache_ref": "article",
             "parent_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
             "parent_node_id": "child",
             "line_in_parent": 14,
             "tokens_estimated": 1601,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
             "consumer_node_ids": [
               "summarize",
               "translate"
@@ -266,7 +274,7 @@
             }
           }
         ],
-        "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nPer-consumer cache prefix (what the provider sees per call):\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
+        "body_block": "1 value flows in from parent workflow.pflow.md, used by 2 consumer nodes.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${article}\n    ```\n  Add prompt_cache entries:\n    summarize: prompt_cache: [article]\n    translate: prompt_cache: [article]\nPrompt-body templates to remove and per-consumer cache prefix:\n  Node `summarize` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`\n  Node `translate` (~1,601 tokens per call \u2014 above 1,024-token minimum):\n    \u2022 `article` ~1,601 tokens \u2014 uses `${article}`",
         "case": "actionable",
         "savings_usd": 0.008645400000000001,
         "category": "cache_advisory",

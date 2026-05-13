@@ -21,12 +21,31 @@
 
   For each "Sub-workflow cache undeclared" finding, apply ALL THREE edits in the listed child workflow. Doing only some leaves the cache disabled:
     (1) Remove the `${var}` references from each affected node's prompt. Leaving them re-sends the content uncached.
-    (2) Add the input as a named entry under the child workflow's ## Cache section.
+    (2) Add the listed values as named entries under the child workflow's ## Cache section.
     (3) Reference that named entry in `prompt_cache:` on each consumer node.
 
-  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — declare 3 inputs  unmeasurable
+  1. Sub-workflow cache undeclared in chorus-chooser.pflow.md — add 4 entries in ## Cache  unmeasurable
      chorus-chooser.pflow.md
-     Three values flow in but no consumer node has a resolved model — cannot compute the cache threshold.
+     Four values flow in but no consumer node has a resolved model — cannot compute the cache threshold.
+     Only these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.
+     Edit child workflow:
+       Add or extend ## Cache:
+         ```cache
+         ${architecture}
+         ${concept.core_idea}
+         ${concept.title}
+         ${creative_brief}
+         ```
+       Add prompt_cache entries:
+         score-choruses: prompt_cache: [concept.core_idea]
+         select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]
+     Prompt-body templates to remove:
+       • `architecture` unmeasurable — node(s) `select-chorus` use `${architecture}`
+           flows in from parent as `${song-architecture.response}`
+       • `concept.core_idea` unmeasurable — node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`
+       • `concept.title` unmeasurable — node(s) `select-chorus` use `${concept.title}`
+       • `creative_brief` unmeasurable — node(s) `select-chorus` use `${creative_brief}`
+           flows in from parent as `${concept_brief}`
      → Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.
      → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
 

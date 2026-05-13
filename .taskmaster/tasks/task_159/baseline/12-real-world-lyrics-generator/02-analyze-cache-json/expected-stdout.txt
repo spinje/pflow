@@ -401,7 +401,7 @@
       "node_id": null,
       "estimated_savings_usd": null,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-      "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+      "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${architecture}\n\n    ${concept.core_idea}\n\n    ${concept.title}\n\n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
       "suggestions": [
         "Edit: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
       ]
@@ -1502,7 +1502,7 @@
     "value_flow_opportunities": [
       {
         "severity": "info",
-        "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+        "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${architecture}\n\n    ${concept.core_idea}\n\n    ${concept.title}\n\n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
         "source": "cache_analyzer",
         "id": "cache.sub-workflow-cache-undeclared",
         "title": "Cache Advisory",
@@ -1513,15 +1513,19 @@
           "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
           "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
           "child_workflow_basename": "chorus-chooser.pflow.md",
-          "affected_input_count": 3,
+          "affected_input_count": 4,
           "inputs": [
             {
               "child_input_name": "architecture",
+              "child_cache_ref": "architecture",
               "parent_value_expr": "song-architecture.response",
+              "parent_cache_ref": "song-architecture.response",
               "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
               "parent_node_id": "choose-chorus",
               "line_in_parent": 97,
               "tokens_estimated": null,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
               "consumer_node_ids": [
                 "select-chorus"
               ],
@@ -1534,11 +1538,15 @@
             },
             {
               "child_input_name": "concept",
+              "child_cache_ref": "concept.core_idea",
               "parent_value_expr": "concept",
+              "parent_cache_ref": "concept.core_idea",
               "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
               "parent_node_id": "choose-chorus",
               "line_in_parent": 97,
               "tokens_estimated": null,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
               "consumer_node_ids": [
                 "score-choruses",
                 "select-chorus"
@@ -1549,18 +1557,42 @@
                   "concept.core_idea"
                 ],
                 "select-chorus": [
-                  "concept.core_idea",
+                  "concept.core_idea"
+                ]
+              }
+            },
+            {
+              "child_input_name": "concept",
+              "child_cache_ref": "concept.title",
+              "parent_value_expr": "concept",
+              "parent_cache_ref": "concept.title",
+              "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+              "parent_node_id": "choose-chorus",
+              "line_in_parent": 97,
+              "tokens_estimated": null,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
+              "consumer_node_ids": [
+                "select-chorus"
+              ],
+              "consumer_node_ids_csv": "`select-chorus`",
+              "template_var_refs_by_node": {
+                "select-chorus": [
                   "concept.title"
                 ]
               }
             },
             {
               "child_input_name": "creative_brief",
+              "child_cache_ref": "creative_brief",
               "parent_value_expr": "concept_brief",
+              "parent_cache_ref": "concept_brief",
               "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
               "parent_node_id": "choose-chorus",
               "line_in_parent": 97,
               "tokens_estimated": null,
+              "origin_count": 1,
+              "has_multiple_parent_origins": false,
               "consumer_node_ids": [
                 "select-chorus"
               ],
@@ -1572,7 +1604,7 @@
               }
             }
           ],
-          "body_block": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+          "body_block": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${architecture}\n\n    ${concept.core_idea}\n\n    ${concept.title}\n\n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
           "case": "unmeasurable",
           "savings_usd": null,
           "category": "cache_advisory",
@@ -2016,7 +2048,7 @@
     },
     {
       "severity": "info",
-      "message": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+      "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${architecture}\n\n    ${concept.core_idea}\n\n    ${concept.title}\n\n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
       "source": "cache_analyzer",
       "id": "cache.sub-workflow-cache-undeclared",
       "title": "Cache Advisory",
@@ -2027,15 +2059,19 @@
         "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "child_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "child_workflow_basename": "chorus-chooser.pflow.md",
-        "affected_input_count": 3,
+        "affected_input_count": 4,
         "inputs": [
           {
             "child_input_name": "architecture",
+            "child_cache_ref": "architecture",
             "parent_value_expr": "song-architecture.response",
+            "parent_cache_ref": "song-architecture.response",
             "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
             "parent_node_id": "choose-chorus",
             "line_in_parent": 97,
             "tokens_estimated": null,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
             "consumer_node_ids": [
               "select-chorus"
             ],
@@ -2048,11 +2084,15 @@
           },
           {
             "child_input_name": "concept",
+            "child_cache_ref": "concept.core_idea",
             "parent_value_expr": "concept",
+            "parent_cache_ref": "concept.core_idea",
             "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
             "parent_node_id": "choose-chorus",
             "line_in_parent": 97,
             "tokens_estimated": null,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
             "consumer_node_ids": [
               "score-choruses",
               "select-chorus"
@@ -2063,18 +2103,42 @@
                 "concept.core_idea"
               ],
               "select-chorus": [
-                "concept.core_idea",
+                "concept.core_idea"
+              ]
+            }
+          },
+          {
+            "child_input_name": "concept",
+            "child_cache_ref": "concept.title",
+            "parent_value_expr": "concept",
+            "parent_cache_ref": "concept.title",
+            "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+            "parent_node_id": "choose-chorus",
+            "line_in_parent": 97,
+            "tokens_estimated": null,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
+            "consumer_node_ids": [
+              "select-chorus"
+            ],
+            "consumer_node_ids_csv": "`select-chorus`",
+            "template_var_refs_by_node": {
+              "select-chorus": [
                 "concept.title"
               ]
             }
           },
           {
             "child_input_name": "creative_brief",
+            "child_cache_ref": "creative_brief",
             "parent_value_expr": "concept_brief",
+            "parent_cache_ref": "concept_brief",
             "parent_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
             "parent_node_id": "choose-chorus",
             "line_in_parent": 97,
             "tokens_estimated": null,
+            "origin_count": 1,
+            "has_multiple_parent_origins": false,
             "consumer_node_ids": [
               "select-chorus"
             ],
@@ -2086,7 +2150,7 @@
             }
           }
         ],
-        "body_block": "Three values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+        "body_block": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    ${architecture}\n\n    ${concept.core_idea}\n\n    ${concept.title}\n\n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
         "case": "unmeasurable",
         "savings_usd": null,
         "category": "cache_advisory",

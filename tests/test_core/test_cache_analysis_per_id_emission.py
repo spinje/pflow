@@ -1339,8 +1339,18 @@ def test_sub_workflow_cache_undeclared_emits_for_batch_item_input(monkeypatch: p
     }
     child_ir = {
         "nodes": [
-            {"id": "draft", "type": "llm", "params": {"prompt": "Draft ${concept}"}},
-            {"id": "review", "type": "llm", "params": {"prompt": "Review ${concept}"}},
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept}"},
+            },
         ]
     }
     monkeypatch.setattr(
@@ -2314,14 +2324,426 @@ def test_sub_workflow_cache_undeclared_emits_cleanup_hint_when_body_uses_subpath
 
     diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
     assert diag.context is not None
-    assert "Per-consumer cache prefix" in diag.message
+    assert "Prompt-body templates to remove and per-consumer cache prefix" in diag.message
     assert "`${concept.title}`" in diag.message
     assert "`${concept.core_idea}`" in diag.message
-    refs_by_node = diag.context["inputs"][0]["template_var_refs_by_node"]
-    assert refs_by_node == {
-        "draft": ["concept.title"],
-        "review": ["concept.core_idea"],
+    assert [item["child_input_name"] for item in diag.context["inputs"]] == ["concept", "concept"]
+    assert [item["child_cache_ref"] for item in diag.context["inputs"]] == [
+        "concept.core_idea",
+        "concept.title",
+    ]
+    refs_by_cache_ref = {item["child_cache_ref"]: item["template_var_refs_by_node"] for item in diag.context["inputs"]}
+    assert refs_by_cache_ref == {
+        "concept.core_idea": {"review": ["concept.core_idea"]},
+        "concept.title": {"draft": ["concept.title"]},
     }
+    text = render_text(result)
+    assert "Do not cache full objects like `concept`" in text
+    assert "${concept.title}" in text
+    assert "${concept.core_idea}" in text
+    assert "`${concept}`" not in text
+
+
+def test_sub_workflow_cache_undeclared_direct_root_use_remains_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct root prompt use still recommends the child input root."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {"id": "draft", "type": "llm", "params": {"prompt": "Draft ${concept}"}},
+            {"id": "review", "type": "llm", "params": {"prompt": "Review ${concept}"}},
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert [item["child_cache_ref"] for item in diag.context["inputs"]] == ["concept"]
+    assert [item["parent_cache_ref"] for item in diag.context["inputs"]] == ["concept"]
+    assert "Do not cache full objects" not in render_text(result)
+
+
+def test_sub_workflow_cache_undeclared_mixed_root_and_subpath_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Root use by one node must not collapse a subpath-only node to root."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "headline",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Headline ${concept.title}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    by_ref = {item["child_cache_ref"]: item for item in diag.context["inputs"]}
+    assert sorted(by_ref) == ["concept", "concept.title"]
+    assert by_ref["concept"]["consumer_node_ids"] == ["draft"]
+    assert by_ref["concept.title"]["consumer_node_ids"] == ["headline"]
+
+
+def test_sub_workflow_cache_undeclared_maps_renamed_parent_subpath(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parent-side token resolution follows the child suffix through renames."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"song": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${song.concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.title}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept.title}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"song": {"concept": {"title": "title " * 30, "unused": "unused " * 1000}}},
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.title"
+    assert input_info["parent_cache_ref"] == "song.concept.title"
+    assert input_info["tokens_estimated"] is not None
+    assert input_info["tokens_estimated"] < 100
+
+
+def test_sub_workflow_cache_undeclared_trace_fallback_resolves_child_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trace fallback tokenizes the used child suffix, not the full invocation input."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"song": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${song.concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.title}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept.title}"},
+            },
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_type": "WorkflowExecutor",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"concept": {"title": "title " * 30, "unused": "unused " * 1000}},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "review",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 100,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.title"
+    assert input_info["parent_cache_ref"] == "song.concept.title"
+    assert input_info["tokens_estimated"] is not None
+    assert input_info["tokens_estimated"] < 100
+
+
+def test_cross_workflow_projection_uses_child_subpath_contribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-call projection uses the actual child cache ref, not the full input root."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.title}"},
+            }
+        ],
+    }
+    child_path = Path("/abs/child.pflow.md")
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_type": "WorkflowExecutor",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {"concept": {"title": "title " * 1100, "unused": "unused " * 5000}},
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 6000,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "draft",
+                            "llm_call": {
+                                "model": "anthropic/claude-haiku-4-5",
+                                "input_tokens": 6000,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
+    assert row.cacheable_data_source == "cross_workflow_projection"
+    assert row.cacheable_tokens_estimated is not None
+    assert row.cacheable_tokens_estimated < 2_000
+    assert row.cross_workflow_inputs == (
+        CrossWorkflowInputContribution(
+            child_input_name="concept",
+            child_cache_ref="concept.title",
+            parent_value_expr="concept",
+            parent_cache_ref="concept.title",
+            tokens_per_call=row.cacheable_tokens_estimated,
+            model="anthropic/claude-haiku-4-5",
+        ),
+    )
+
+
+def test_sub_workflow_cache_undeclared_params_inputs_cleanup_uses_prompt_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`params.inputs` dealiasing should cache the source ref and clean the alias."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"inputs": {"title": "${concept.title}"}, "prompt": "Draft ${title}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"inputs": {"title": "${concept.title}"}, "prompt": "Review ${title}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.title"
+    assert input_info["template_var_refs_by_node"] == {"draft": ["title"], "review": ["title"]}
+
+
+def test_sub_workflow_cache_declaration_coverage_is_path_aware(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declared ancestors suppress descendants without confusing similar names."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {"items": [{"name": "concept.title", "var": "${concept.title}", "prose_before": ""}]},
+        "nodes": [
+            {"id": "title-a", "type": "llm", "params": {"prompt": "A ${concept.title}"}},
+            {"id": "title-b", "type": "llm", "params": {"prompt": "B ${concept.title}"}},
+            {"id": "body-a", "type": "llm", "params": {"prompt": "A ${concept.body}"}},
+            {"id": "body-b", "type": "llm", "params": {"prompt": "B ${concept.body}"}},
+            {"id": "suffix-a", "type": "llm", "params": {"prompt": "A ${concept.title_suffix}"}},
+            {"id": "suffix-b", "type": "llm", "params": {"prompt": "B ${concept.title_suffix}"}},
+            {"id": "other-a", "type": "llm", "params": {"prompt": "A ${conceptual.title}"}},
+            {"id": "other-b", "type": "llm", "params": {"prompt": "B ${conceptual.title}"}},
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    refs = [item["child_cache_ref"] for item in diag.context["inputs"]]
+    assert "concept.title" not in refs
+    assert "concept.body" in refs
+    assert "concept.title_suffix" in refs
+    assert "conceptual.title" not in refs
 
 
 def test_child_cache_declaration_suppresses_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
