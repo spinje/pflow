@@ -98,8 +98,11 @@ def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: None)
 
 
-def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
+def test_batch_prewarm_recommended_fires_only_when_prewarm_absent(tmp_path: Path) -> None:
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
     prefix = "stable " * 100
+    workflow_path = str(tmp_path / "batch-prewarm.pflow.md")
     workflow_ir = {
         "nodes": [
             {
@@ -111,8 +114,37 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
             }
         ],
     }
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "anthropic/claude-sonnet-4-5",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(34)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
 
-    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
     diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-recommended")
     assert diag.context is not None
     assert diag.context["batch_size"] == 34
@@ -120,7 +152,7 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
     assert diag.context["savings_pct"] == 89
 
     workflow_ir["nodes"][0]["prewarm"] = False
-    opted_out = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    opted_out = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
     assert "cache.batch-prewarm-recommended" not in {d.id for d in opted_out.warnings}
 
 
@@ -261,8 +293,13 @@ def test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present() -> 
     assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
 
 
-def test_inputs_indirection_does_not_suppress_prewarm_recommendation() -> None:
-    """Mutation contract: removing prompt-ref dealiasing loses batch_prefix evidence."""
+def test_inputs_indirection_keeps_batch_prefix_projection_but_suppresses_unmeasurable_recommendation() -> None:
+    """Mutation contract: removing prompt-ref dealiasing loses batch_prefix evidence.
+
+    The ranked recommendation is intentionally suppressed in greenfield mode
+    because the dynamic tail contains a per-item alias with no representative
+    value. The row-level prefix projection still proves dealiasing works.
+    """
     fixture = Path(__file__).parents[1] / "fixtures" / "cache_analysis" / "inputs_indirection_batch.pflow.md"
     workflow_ir = parse_markdown(fixture.read_text(encoding="utf-8")).ir
 
@@ -275,7 +312,7 @@ def test_inputs_indirection_does_not_suppress_prewarm_recommendation() -> None:
     )
 
     warning_ids = {warning.id for warning in result.warnings}
-    assert "cache.batch-prewarm-recommended" in warning_ids
+    assert "cache.batch-prewarm-recommended" not in warning_ids
     row = next(row for row in result.per_call if row.node_path == "score")
     assert row.cacheable_data_source == "batch_prefix"
     assert row.cacheable_tokens_estimated is not None
@@ -381,8 +418,24 @@ def test_dynamic_before_static_not_guessed_for_repeated_non_batch_shape() -> Non
     assert "cache.dynamic-before-static" not in {d.id for d in result.warnings}
 
 
-def test_dynamic_before_static_uses_full_path_cache_names() -> None:
+def test_dynamic_before_static_uses_full_path_cache_names(tmp_path: Path) -> None:
+    """Mutation contract: comparing only root names treats the declared
+    ``creative-direction.response`` chunk as dynamic. The memo entry is
+    load-bearing after honest-region tokenization: without it the suffix is
+    unmeasurable and the warning correctly suppresses instead of fabricating
+    literal ``${creative-direction.response}`` bytes.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
     stable_suffix = "rubric " * 50
+    memo_cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    memo_cache.put(
+        cache_key="creative-direction-key",
+        node_id="creative-direction",
+        workflow_path="x.pflow.md",
+        action="default",
+        output={"response": "resolved direction " * 5000},
+    )
     workflow_ir = {
         "cache": {
             "items": [
@@ -408,7 +461,7 @@ def test_dynamic_before_static_uses_full_path_cache_names() -> None:
         ],
     }
 
-    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=memo_cache)
     diag = next(d for d in result.warnings if d.id == "cache.dynamic-before-static")
     assert diag.context is not None
     assert diag.context["dynamic_ref"] == "user_input"

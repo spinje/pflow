@@ -78,6 +78,13 @@ from .token_estimation import (
     estimate_cacheable_tokens,
     estimate_output_tokens,
     estimate_tokens,
+    tokenize_prompt_region,
+)
+from .token_estimation import (
+    build_shared_store_for_refs as _build_shared_store_for_refs,
+)
+from .token_estimation import (
+    extract_unique_refs as _extract_unique_refs,
 )
 from .view_helpers import per_call_row_has_real_data
 from .warning_catalog import CACHE_WARNING_CATALOG, make_diagnostic
@@ -282,7 +289,7 @@ class _PromptStaticTailFinding:
     dynamic_ref: str
     dynamic_line: int
     stable_tail_tokens: int
-    tokens_before_dynamic: int
+    tokens_before_dynamic: int | None
     template_refs_after_dynamic: int
     static_tail_excerpt: str
 
@@ -1671,7 +1678,15 @@ def _build_per_call_rows_and_warnings(
             )
             rows.append(row)
             if not row.did_not_execute_in_trace:
-                warnings.extend(_per_node_warnings(node, row, declared_chunks=declared_chunks, nodes_by_id=nodes_by_id))
+                warnings.extend(
+                    _per_node_warnings(
+                        node,
+                        row,
+                        declared_chunks=declared_chunks,
+                        nodes_by_id=nodes_by_id,
+                        ctx=wf_ctx,
+                    )
+                )
     return _PerCallRowsResult(
         rows=rows,
         warnings=warnings,
@@ -2102,11 +2117,12 @@ def _build_per_call_row(
     cacheable_tokens, cacheable_source = _prefer_batch_prefix_cacheable_tokens(
         node=node,
         model=model,
-        resolved_prompt=resolved_prompt,
+        prompt=prompt,
         declared_subset=declared_subset,
         observed_call_count=observed_call_count,
         current_tokens=cacheable_tokens,
         current_source=cacheable_source,
+        ctx=ctx,
     )
 
     cacheable_tokens, cacheable_source, cross_workflow_inputs = _apply_cross_workflow_projection(
@@ -2459,16 +2475,6 @@ def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: di
     return resolved, has_unresolved
 
 
-def _extract_unique_refs(prompt: str) -> list[str]:
-    """Walk ``prompt`` for unique template refs (deduped, order-preserving)."""
-    refs: list[str] = []
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
-        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-            if operand and operand not in refs:
-                refs.append(operand)
-    return refs
-
-
 def _node_inputs(node: dict[str, Any]) -> Mapping[str, Any] | None:
     """Return an LLM node's ``params.inputs`` mapping, if present."""
     params = node.get("params")
@@ -2478,29 +2484,13 @@ def _node_inputs(node: dict[str, Any]) -> Mapping[str, Any] | None:
     return inputs if isinstance(inputs, Mapping) else None
 
 
-def _build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[str, Any]:
-    """Build a synthetic shared store keyed by root node ids for ``refs``."""
-    shared: dict[str, Any] = {}
-    for ref in refs:
-        root = TemplateResolver.extract_root_node_id(ref)
-        if not root or root in shared:
-            continue
-        # Resolve the ROOT, not the ref — TemplateResolver navigates dotted
-        # paths against the root's value. The context's resolution policy
-        # (parameters wins for input refs; memo for node-output refs) fires
-        # transparently here.
-        value = ctx.resolve_ref_value(root)
-        if value is not None:
-            shared[root] = value
-    return shared
-
-
 def _per_node_warnings(
     node: dict[str, Any],
     row: PerCallRow,
     *,
     declared_chunks: list[str],
     nodes_by_id: dict[str, dict[str, Any]],
+    ctx: AnalysisContext,
 ) -> list[Diagnostic]:
     """Emit analytical-tier warnings for one LLM node.
 
@@ -2538,8 +2528,8 @@ def _per_node_warnings(
                 )
             )
 
-    diagnostics.extend(_batch_prewarm_recommendations(node, row))
-    diagnostics.extend(_dynamic_before_static_warnings(node, row, declared_chunks=declared_chunks))
+    diagnostics.extend(_batch_prewarm_recommendations(node, row, ctx=ctx))
+    diagnostics.extend(_dynamic_before_static_warnings(node, row, declared_chunks=declared_chunks, ctx=ctx))
     diagnostics.extend(_opaque_prompt_warnings(node, row, nodes_by_id=nodes_by_id))
 
     # Prewarm boundary classification MUST match the runtime gate at
@@ -2576,7 +2566,9 @@ def _per_node_warnings(
                     )
                 )
             elif first is not None and first > 0 and not row.declared_prompt_cache:
-                prefix_tokens = estimate_tokens(row.model, prompt[:first])[0]
+                prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
+                if prefix_tokens is None:
+                    return diagnostics
                 prewarm_finding = detect_batch_prewarm_below_min(
                     BatchPrewarmBelowMinEvidence(
                         node_id=node_id,
@@ -2602,7 +2594,12 @@ def _per_node_warnings(
     return diagnostics
 
 
-def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> list[Diagnostic]:
+def _batch_prewarm_recommendations(
+    node: dict[str, Any],
+    row: PerCallRow,
+    *,
+    ctx: AnalysisContext,
+) -> list[Diagnostic]:
     """Emit ``cache.batch-prewarm-recommended`` per DD#33.
 
     ``prewarm: false`` is an explicit opt-out and suppresses this warning; only
@@ -2640,8 +2637,10 @@ def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> lis
         first = first_per_item_position(prompt, alias, node_inputs)
         if first is None or first == 0:
             return []
-        prefix_tokens = estimate_tokens(row.model, prompt[:first])[0]
-        dynamic_tokens = estimate_tokens(row.model, prompt[first:])[0]
+        prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
+        dynamic_tokens = tokenize_prompt_region(prompt[first:], model=row.model, ctx=ctx)
+        if prefix_tokens is None or dynamic_tokens is None:
+            return []
     if not uses_existing_prefix_evidence and prefix_tokens < get_min_cache_tokens(row.model):
         return []
 
@@ -2671,6 +2670,7 @@ def _dynamic_before_static_warnings(
     row: PerCallRow,
     *,
     declared_chunks: list[str],
+    ctx: AnalysisContext,
 ) -> list[Diagnostic]:
     """Detect a dynamic template reference before a large stable suffix."""
     prompt = node.get("params", {}).get("prompt", "") or ""
@@ -2689,6 +2689,7 @@ def _dynamic_before_static_warnings(
             model=row.model,
             batch_alias=alias,
             node_inputs=node_inputs,
+            ctx=ctx,
         )
         if finding is None:
             return []
@@ -2702,9 +2703,13 @@ def _dynamic_before_static_warnings(
                 cacheable_tokens=finding.stable_tail_tokens,
                 affected_calls=affected_calls,
                 savings_usd=_estimate_token_savings_usd(row.model, finding.stable_tail_tokens, affected_calls),
-                projected_ratio_pct=_safe_pct(
-                    finding.stable_tail_tokens,
-                    finding.stable_tail_tokens + finding.tokens_before_dynamic,
+                projected_ratio_pct=(
+                    _safe_pct(
+                        finding.stable_tail_tokens,
+                        finding.stable_tail_tokens + finding.tokens_before_dynamic,
+                    )
+                    if finding.tokens_before_dynamic is not None
+                    else None
                 ),
                 detection_mode="batch_static_tail",
                 min_cache_tokens=get_min_cache_tokens(row.model),
@@ -2725,12 +2730,14 @@ def _dynamic_before_static_warnings(
         if any(path in declared for path in ref.operand_paths):
             continue
 
-        cacheable_tokens = estimate_tokens(row.model, prompt[ref.end :])[0]
+        cacheable_tokens = tokenize_prompt_region(prompt[ref.end :], model=row.model, ctx=ctx)
+        if cacheable_tokens is None:
+            continue
         if cacheable_tokens < get_min_cache_tokens(row.model):
             break
 
         affected_calls = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
-        tokens_before = estimate_tokens(row.model, prompt[: ref.position])[0]
+        tokens_before = tokenize_prompt_region(prompt[: ref.position], model=row.model, ctx=ctx)
         return [
             make_diagnostic(
                 "cache.dynamic-before-static",
@@ -2741,7 +2748,9 @@ def _dynamic_before_static_warnings(
                 cacheable_tokens=cacheable_tokens,
                 affected_calls=affected_calls,
                 savings_usd=_estimate_token_savings_usd(row.model, cacheable_tokens, affected_calls),
-                projected_ratio_pct=_safe_pct(cacheable_tokens, cacheable_tokens + tokens_before),
+                projected_ratio_pct=(
+                    _safe_pct(cacheable_tokens, cacheable_tokens + tokens_before) if tokens_before is not None else None
+                ),
                 detection_mode="declared_cache",
                 min_cache_tokens=get_min_cache_tokens(row.model),
                 model=row.model,
@@ -2759,6 +2768,7 @@ def _find_batch_static_tail_after_dynamic(
     model: str,
     batch_alias: str,
     node_inputs: Mapping[str, Any] | None = None,
+    ctx: AnalysisContext,
 ) -> _PromptStaticTailFinding | None:
     """Find a local-batch dynamic ref followed by enough literal stable text."""
     refs = list(classify_prompt_refs(prompt, batch_alias, node_inputs))
@@ -2767,14 +2777,15 @@ def _find_batch_static_tail_after_dynamic(
             continue
 
         literal_tail = _literal_spans_after_template(prompt, refs, index)
-        stable_tail_tokens = estimate_tokens(model, literal_tail)[0]
-        if stable_tail_tokens < get_min_cache_tokens(model):
+        stable_tail_tokens = tokenize_prompt_region(literal_tail, model=model, ctx=ctx)
+        if stable_tail_tokens is None or stable_tail_tokens < get_min_cache_tokens(model):
             return None
+        tokens_before_dynamic = tokenize_prompt_region(prompt[: ref.position], model=model, ctx=ctx)
         return _PromptStaticTailFinding(
             dynamic_ref=ref.raw_expr,
             dynamic_line=1 + prompt[: ref.position].count("\n"),
             stable_tail_tokens=stable_tail_tokens,
-            tokens_before_dynamic=estimate_tokens(model, prompt[: ref.position])[0],
+            tokens_before_dynamic=tokens_before_dynamic,
             template_refs_after_dynamic=len(refs) - index - 1,
             static_tail_excerpt=_static_excerpt(literal_tail),
         )
@@ -2893,9 +2904,10 @@ def _estimate_batch_prefix_cacheable_tokens(
     *,
     node: dict[str, Any],
     model: str,
-    resolved_prompt: str,
+    prompt: str,
     declared_subset: list[str] | None,
     observed_call_count: int,
+    ctx: AnalysisContext,
 ) -> int | None:
     """Estimate per-call cacheable prefix tokens before the first batch-item ref.
 
@@ -2913,11 +2925,11 @@ def _estimate_batch_prefix_cacheable_tokens(
         return None
     alias = str(batch.get("as", "item"))
     node_inputs = _node_inputs(node)
-    boundary = first_per_item_position(resolved_prompt, alias, node_inputs)
+    boundary = first_per_item_position(prompt, alias, node_inputs)
     if boundary is None or boundary == 0:
         return None
-    prefix_tokens = estimate_tokens(model, resolved_prompt[:boundary])[0]
-    if prefix_tokens <= 0:
+    prefix_tokens = tokenize_prompt_region(prompt[:boundary], model=model, ctx=ctx)
+    if prefix_tokens is None or prefix_tokens <= 0:
         return None
     return prefix_tokens
 
@@ -2926,18 +2938,20 @@ def _prefer_batch_prefix_cacheable_tokens(
     *,
     node: dict[str, Any],
     model: str,
-    resolved_prompt: str,
+    prompt: str,
     declared_subset: list[str] | None,
     observed_call_count: int,
     current_tokens: int | None,
     current_source: str,
+    ctx: AnalysisContext,
 ) -> tuple[int | None, str]:
     prefix_tokens = _estimate_batch_prefix_cacheable_tokens(
         node=node,
         model=model,
-        resolved_prompt=resolved_prompt,
+        prompt=prompt,
         declared_subset=declared_subset,
         observed_call_count=observed_call_count,
+        ctx=ctx,
     )
     if prefix_tokens is not None and prefix_tokens > (current_tokens or 0):
         # Distinct tier label: this is a static-prefix scan, not

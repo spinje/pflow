@@ -1869,3 +1869,81 @@ Verification: focused cache suite 561 passed; broader
 sandbox-only `uv run pflow` subprocess failure documented in earlier
 progress logs; `ruff check`, `ruff format --check`, and focused `mypy
 src/pflow/core/cache_analysis/` all clean.
+
+## 2026-05-13 — Task 159 Followups — honest unmeasurable prompt-region tokenization
+
+Implemented the F-04-style prompt-region tokenizer for analyzer cacheable
+prompt slices. `token_estimation.tokenize_prompt_region(...)` resolves
+`${...}` refs through `AnalysisContext`, serializes non-string simple-template
+values deterministically, and returns `None` when any template bytes survive
+resolution. The six raw prompt-slice tokenization sites in `analyze.py` now
+route through it; `cache.batch-prewarm-below-min` and
+`cache.batch-prewarm-recommended` suppress when required math is unmeasurable,
+while `cache.dynamic-before-static` still emits when the stable suffix is
+measurable and only display fields (`tokens_before_dynamic`,
+`projected_ratio_pct`) are unknown.
+
+Step 0 verification answers:
+
+- Cross-workflow row projection is already honest-unmeasurable:
+  `_estimate_parent_value_tokens` returns `None` before
+  `_RowCrossWorkflowCandidate` construction, so `_apply_cross_workflow_projection`
+  only sums concrete ints. No additional guard was needed.
+- `cache.dynamic-before-static` did not allow null
+  `projected_ratio_pct`; added `projected_ratio_pct` and
+  `tokens_before_dynamic` to its nullable keys and render `?%` in suggestions.
+- `TemplateResolver` resolves `${missing ?? fallback}` when `fallback` is
+  present; helper coverage pins this behavior.
+- `estimate_tokens("", text)` returns heuristic counts, including `0` for
+  empty text; helper coverage pins empty-model rows.
+
+Deviations / plan corrections:
+
+- Moved `extract_unique_refs` and `build_shared_store_for_refs` into
+  `token_estimation.py` as canonical helpers, imported back into `analyze.py`
+  under the existing private names. This is simpler than lazy-importing
+  `analyze.py` from `token_estimation.py` and avoids a reverse dependency.
+- Did not invoke the planned `/code-review` checkpoint because no code-review
+  skill is available in this Codex session. Substituted focused regression
+  tests plus the baseline harness before full verification.
+- The plan expected the lyrics-generator `curate-briefs` row to flip from
+  `103 / 0%` to `? / ?%`. That row's measured prefix is literal text before
+  the first per-item alias (`${concept_md}`), so the new unresolved-ref helper
+  correctly has nothing to mark unmeasurable there. Forcing `?` would conflate
+  this fix with the separate dynamic-before-static/interleaved-prefix problem.
+- The live lyrics baseline instead dropped the `score-choruses`
+  `cache.batch-prewarm-recommended` action. Its prefix contains unresolved
+  upstream refs, so the old `~1061` prefix estimate was not honest enough for
+  savings math. The row now shows the smaller parameter/cross-boundary
+  projection (`41 / 0%`) but no prewarm recommendation.
+- The 12-real-world lyrics-generator baselines did not drift after
+  regeneration; only `10-live-recordings/05-gemini-lyrics-generator` changed.
+
+Known limitations preserved:
+
+- `input_tokens_estimated` still undercounts when prompt resolution is partial;
+  fixing that requires widening the row/cost contracts to nullable input tokens.
+- Existing sub-threshold `break` behavior in declared-cache
+  dynamic-before-static scanning is unchanged; new unmeasurable suffixes use
+  `continue` because they say nothing about later refs.
+- `_find_batch_static_tail_after_dynamic` still returns after the first
+  per-item ref, so an unmeasurable first tail can hide later opportunities.
+
+Verification:
+
+- New helper + CLI integration coverage added; focused cache-analysis suite:
+  604 passed.
+- Manual smoke checks: bug-16 indirection and 6-field variants now report
+  `cacheable_tokens_estimated: null`; E3 below-min still emits
+  `cache.batch-prewarm-below-min`; E2 interleaved is honest (`null`) rather
+  than a fabricated 100% ratio.
+- Baseline harness verified regenerated/adjacent cases:
+  `10-live-recordings/05-gemini-lyrics-generator`,
+  `12-real-world-lyrics-generator/{01,02,03}`,
+  `04-warning-catalog/{06,07,13,22}`.
+- Quality: `ruff check`, `ruff format --check`, and
+  `mypy src/pflow/core/cache_analysis/` clean.
+- Broad sandbox-safe run passed after excluding known `/opt/homebrew/bin/uv`
+  panic tests plus four unrelated runtime/sub-workflow failures that reproduce
+  independently: 6,719 passed, 19 skipped. The non-excluded first broad run
+  showed those same unrelated failures before exclusion.

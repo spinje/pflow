@@ -5235,7 +5235,13 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
     ${items}`` rows have no static size even when trace observed repeated calls.
     """
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    monkeypatch.setattr(
+        token_estimation_module,
+        "estimate_tokens",
+        lambda _model, text, **_kwargs: (len(text.split()), "test"),
+    )
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
@@ -5746,17 +5752,17 @@ def test_tier2_chunk_cacheable_unresolved_repeated_row_stays_unavailable(
     assert row.cacheable_tokens_estimated is None
 
 
-def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> None:
-    """Real lyrics-generator canary for dynamic batch per-call projection.
+def test_real_trace_score_choruses_does_not_fabricate_unmeasurable_batch_prefix() -> None:
+    """Real lyrics-generator canary for honest unmeasurable batch prefixes.
 
     This intentionally covers the whole chain on the production-shaped fixture:
     nested batch aliases, minimized trace values, dynamic sub-workflow batch
-    attribution, external prompt loading, and repeated-prefix projection.
+    attribution, external prompt loading, and cross-workflow projection.
 
-    Mutation contract: remove either trace batch-item fallback or the batch
-    prefix projection path; this test fails because ``score-choruses`` no
-    longer has a large actionable ``could_cache`` estimate, or the dynamic
-    review workflows stop receiving their own executed rows.
+    Mutation contract: route ``_estimate_batch_prefix_cacheable_tokens`` back
+    through raw prompt-slice tokenization; this test fails because
+    ``score-choruses`` reports ``batch_prefix`` for a prefix that still
+    contains unresolved upstream refs.
     """
     from pflow.core.markdown_parser import parse_markdown
 
@@ -5776,15 +5782,8 @@ def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> 
 
     score_rows = [row for row in result.per_call if row.node_path == "score-choruses"]
     assert score_rows, "expected score-choruses row in lyrics-generator analysis"
-    assert any(row.cacheable_data_source == "batch_prefix" for row in score_rows)
-    # Per-call cacheable prefix should be substantial but smaller than per-call input.
-    # Pre-Bug-A this asserted > 100_000 (cohort = per_call x batch_size).
-    assert any(
-        row.cacheable_tokens_estimated is not None
-        and row.cacheable_tokens_estimated > 500
-        and row.cacheable_tokens_estimated < row.input_tokens_estimated
-        for row in score_rows
-    )
+    assert all(row.cacheable_data_source != "batch_prefix" for row in score_rows)
+    assert any(row.cacheable_data_source == "parameters" for row in score_rows)
     select_rows = [row for row in result.per_call if row.node_path == "select-chorus"]
     assert select_rows, "expected select-chorus row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "cross_workflow_projection" for row in select_rows)
@@ -5813,7 +5812,7 @@ def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> 
         for warning in result.warnings
         if warning.id == "cache.batch-prewarm-recommended" and warning.node_id == "score-choruses"
     ]
-    assert score_actions, "expected score-choruses batch-prefix evidence to appear as a recommended action"
+    assert not score_actions, "unmeasurable score-choruses prefix must not produce a prewarm action"
 
 
 def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:

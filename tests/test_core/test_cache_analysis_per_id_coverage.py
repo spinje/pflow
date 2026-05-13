@@ -429,9 +429,15 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     from pflow.core.workflow.data_flow import validate_data_flow
 
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
     monkeypatch.setattr(
         analyze_module,
+        "estimate_tokens",
+        lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
+    )
+    monkeypatch.setattr(
+        token_estimation_module,
         "estimate_tokens",
         lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
     )
@@ -630,7 +636,41 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         ],
         "edges": [],
     }
-    analysis = analyze(batch_recommended_ir)
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    batch_recommended_path = str(tmp_path / "batch-recommended.pflow.md")
+    batch_recommended_trace_path = tmp_path / "batch-recommended-trace.json"
+    builder = TraceFixtureBuilder()
+    batch_recommended_trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=batch_recommended_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "priced/model",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                },
+                            }
+                            for index in range(34)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    analysis = analyze(
+        batch_recommended_ir, workflow_path=batch_recommended_path, trace_path=batch_recommended_trace_path
+    )
     found = [d for d in analysis.warnings if d.id == "cache.batch-prewarm-recommended"]
     assert found, f"analyze did not emit cache.batch-prewarm-recommended: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
@@ -793,7 +833,18 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         ],
         "edges": [],
     }
-    analysis = analyze(dynamic_ir)
+    from pflow.runtime.cache import MemoizationCache
+
+    dynamic_cache = MemoizationCache(db_path=tmp_path / "dynamic-cache.db")
+    dynamic_workflow_path = str(tmp_path / "dynamic.pflow.md")
+    dynamic_cache.put(
+        cache_key="creative-direction-key",
+        node_id="creative-direction",
+        workflow_path=dynamic_workflow_path,
+        action="default",
+        output={"response": "resolved direction " * 5000},
+    )
+    analysis = analyze(dynamic_ir, workflow_path=dynamic_workflow_path, memo_cache=dynamic_cache)
     found = [d for d in analysis.warnings if d.id == "cache.dynamic-before-static"]
     assert found, f"analyze did not emit cache.dynamic-before-static: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])

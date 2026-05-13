@@ -382,7 +382,9 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "Projected cache ratio after fix: {projected_ratio_pct}%.",
         ),
         path_template="nodes[id={node_id}].prompt",
-        nullable_cost_keys=frozenset({"savings_usd"}),
+        # Prefix/display fields can be None when refs before the dynamic
+        # boundary are unmeasurable; the stable suffix remains actionable.
+        nullable_cost_keys=frozenset({"savings_usd", "projected_ratio_pct", "tokens_before_dynamic"}),
         headline_template="Dynamic ref blocks caching on {node_id} — move `${{{dynamic_ref}}}` after stable content",
     ),
     "cache.padding-advisory": CacheWarningSpec(
@@ -1037,6 +1039,9 @@ def make_diagnostic(
         # other depending on whether they want the bare amount (savings_str) or
         # the full parenthetical (savings_clause).
         format_dict["savings_clause"] = _format_savings_clause(context_kwargs["savings_usd"])
+
+    if "projected_ratio_pct" in context_kwargs and context_kwargs["projected_ratio_pct"] is None:
+        format_dict["projected_ratio_pct"] = "?"
 
     # ``shared_chunks_csv`` is a typed alias of ``shared_chunks`` (list) so
     # message templates can render the discriminator without duplicating the
