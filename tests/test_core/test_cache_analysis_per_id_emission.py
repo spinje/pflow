@@ -1690,7 +1690,7 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
         row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "use-concept"
     )
     assert row.cacheable_data_source == "cross_workflow_projection"
-    assert row.cacheable_tokens_estimated == 120
+    assert row.cacheable_tokens_estimated == 60
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
             child_input_name="concept",
@@ -1707,10 +1707,10 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Multiple undeclared cross-workflow inputs are independent prefix chunks;
-    the row should show their sum across observed calls.
+    the row should show their per-call sum.
 
     Mutation contract: change the row projection combinator from ``sum`` to
-    ``max``; this test fails because the row drops from 100 to 60 tokens.
+    ``max``; this test fails because the row drops from 50 to 30 tokens.
     """
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
@@ -1781,7 +1781,7 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
 
     row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
     assert row.cacheable_data_source == "cross_workflow_projection"
-    assert row.cacheable_tokens_estimated == 100
+    assert row.cacheable_tokens_estimated == 50
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
             child_input_name="a", tokens_per_call=30, model="anthropic/claude-haiku-4-5", parent_value_expr="a"
@@ -1880,7 +1880,7 @@ def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
     draft = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
     review = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
     assert draft.cacheable_data_source == "cross_workflow_projection"
-    assert draft.cacheable_tokens_estimated == 120
+    assert draft.cacheable_tokens_estimated == 60
     assert review.did_not_execute_in_trace is True
     assert review.cacheable_data_source != "cross_workflow_projection"
     assert review.cross_workflow_inputs == ()

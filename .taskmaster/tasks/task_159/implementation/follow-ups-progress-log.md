@@ -1,3 +1,221 @@
+## 2026-05-13 — Task 159 Followups — Bug A fix: batch-prefix + cross-workflow per-call unit
+
+Field-report Bug A (`scratchpads/experiments/prewarm-cache-interaction/FINDINGS.md`):
+`pflow analyze-cache` reports `cache_ratio_pct = 100%` for prewarm batches even
+when the per-item ref interleaves with stable content and truncates the
+cacheable prefix. Verified end-to-end on the gemini lyrics-generator baseline:
+`score-choruses` displayed `91%` ratio for what is actually `~1%` cacheable
+per-call. Fresh agents reading the output see "optimized" when the layout is
+broken.
+
+### Root cause investigation
+
+Four parallel `pflow-codebase-searcher` runs verified the bug pattern at
+the source:
+
+1. **`_estimate_batch_prefix_cacheable_tokens` (`analyze.py:2853`) returned
+   `prefix_tokens * affected_call_count`** — cohort tokens stored in a
+   `PerCallRow.cacheable_tokens_estimated` field that every downstream
+   consumer (table render, ratio compute, JSON emit, cost projection ×3,
+   below-min detector, summary aggregate, single-call penalty) reads as
+   per-call.
+2. **The clamp at `analyze.py:2105` (`min(cacheable_tokens, input_tokens)`)
+   silently collapses cohort > per-call to per-call input** — that's the
+   `100% ratio` symptom: for any batch_size ≥ 2 with a non-trivial prefix,
+   `cohort > per_call_input` is almost always true, so the clamp pins
+   `cacheable_with_clamp == input_tokens`.
+3. **`_batch_prewarm_recommendations` (`analyze.py:2569`) did
+   `round(row.cacheable_tokens_estimated / affected_calls)`** as a
+   compensating divide — but the clamp had already collapsed cohort to
+   per-call, so the divide produced `per_call_input / affected_calls`
+   (wrong by `affected_calls`). Two bugs cancelling each other into a
+   third wrong value.
+4. **`_apply_cross_workflow_projection` (`analyze.py:2180`) had the same
+   pattern** in the non-static-batch-trace branch:
+   `per_call_sum if is_static_batch_trace else per_call_sum * max(1, observed_call_count)`.
+   Same cohort-in-per-call-field shape, same clamp masking. Downstream
+   consumer audit confirmed the visible scar was limited to the per-call
+   table's `could_cache` column for cross-workflow-projection rows; cost
+   projections were saved by the `declared_prompt_cache` gate (empty by
+   construction for these rows) and aggregators by the same gate.
+
+The cross-workflow analog had a latent edge case in
+`total_cacheable_tokens_estimated` summary aggregate (analyze.py:6137):
+`cacheable * _row_invocation_count(row)` double-multiplies when the
+clamp didn't saturate. Same root cause.
+
+### Architectural reasoning
+
+The pre-fix architecture had two producers writing cohort tokens into a
+per-call field and a clamp + consumer-side gates masking the lie. The
+top-10% shape is to make the producers obey the contract every consumer
+already follows: `PerCallRow.cacheable_tokens_estimated` is per-call by
+definition (matches sibling fields). The fix is to delete the cohort
+multipliers, drop the compensating divide, and let the clamp become a
+defensive guard that fires only on real bugs.
+
+Considered alternatives (and rejected):
+
+- **`NewType("PerCallTokens", int)`** — viral typing convention used
+  nowhere else in pflow for one localized fix. Asymmetric.
+- **Suffix functions with `_per_call`** — sibling fields
+  (`input_tokens_estimated`, `output_tokens_estimated`,
+  `chunk_tokens_estimated`) are all per-call without suffix. Renaming
+  just one is inconsistent.
+- **Frozen dataclass `CacheablePrefix(tokens_per_call, call_count)`** —
+  locally clean but adds a wrapper the codebase doesn't use elsewhere
+  for token counts.
+- **Delete the clamp entirely** — appealing as "dead code now", but
+  rejected for this PR: `_apply_cross_workflow_projection`'s sibling
+  bug needed fixing in the same pass (confirmed via parallel agent
+  investigation), and deleting the clamp without ALSO fixing the
+  unrelated `input_tokens_estimated` mixed-unit problem (filed as
+  GH #394) would expose a latent failure mode in dynamic-batch trace
+  rows.
+
+### Implementation
+
+**Production (5 sites, all in `src/pflow/core/cache_analysis/analyze.py`):**
+
+1. `_estimate_batch_prefix_cacheable_tokens` (line 2853): dropped
+   `* affected_call_count`. Returns per-call. Docstring rewritten to
+   state the per-call return contract and that `affected_call_count`
+   now only gates the `< 2` precondition.
+2. `_batch_prewarm_recommendations` (line 2569): dropped the
+   compensating `/ affected_calls` divide and `round()` for prefix.
+   Replaced the 5-line justifying comment with a clear explanation of
+   the remaining input-divide (which compensates for the *separate*
+   `input_tokens_estimated` cohort-asymmetry bug — GH #394 — not Bug A).
+3. `_prefer_batch_prefix_cacheable_tokens` (line 2874): dropped the
+   misleading "per-call multiplier" phrase from the tier-label
+   justification comment.
+4. `_apply_cross_workflow_projection` (line 2180): collapsed
+   `per_call_sum if is_static_batch_trace else per_call_sum * max(1, observed_call_count)`
+   to `projected_tokens = sum(...)`. Dropped the `is_static_batch_trace`
+   parameter from the function signature; updated the single call site.
+   Added a docstring sentence committing to per-call return.
+
+**Tests (4 existing + 1 new, all production-shape per Pitfall #19):**
+
+- `test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch`
+  (`test_cache_analysis_analyze.py:5219`): dropped `× 3` cohort assertion;
+  docstring updated to name the per-call contract and explain that
+  `observed_call_count` now only gates `< 2`.
+- `test_per_call_could_cache_populated_for_score_choruses_with_real_trace`
+  (`test_cache_analysis_analyze.py:5713-5728`): replaced cohort thresholds
+  (`> 100_000`, `> 5_000`, `> 20_000`) with structural assertions —
+  per-call cacheable should be `> 0` and `<= input_tokens_estimated`,
+  with `> 500` only on the score-choruses row where the real per-call
+  prefix is well above noise floor.
+- `test_cross_workflow_projection_populates_row_and_recommendation_for_single_consumer_many_calls`
+  (`test_cache_analysis_per_id_emission.py:1693`): cohort `120` → per-call
+  `60` (the `CrossWorkflowInputContribution.tokens_per_call` field already
+  showed 60).
+- `test_cross_workflow_projection_sums_multiple_inputs_on_one_row`
+  (`test_cache_analysis_per_id_emission.py:1784`): cohort `100` → per-call
+  `50`. Docstring updated to call out the per-call sum (was "across observed
+  calls").
+- `test_cross_workflow_projection_skips_unreached_conditional_consumer_rows`
+  (`test_cache_analysis_per_id_emission.py:1883`): cohort `120` → per-call
+  `60`.
+- New: `test_batch_prefix_cacheable_does_not_inflate_to_100pct_when_prefix_is_truncated`
+  — FINDINGS E2 case. Interleaved per-item ref where prefix < input.
+  Asserts `cache_ratio_pct < 100` and the per-call cacheable matches direct
+  tokenization (mutation contract verified: restoring `* affected_call_count`
+  causes the per-call sanity assertion to fail with cohort=57 instead of
+  per-call=19).
+
+**Baseline (1 regenerated, behavior-correct drift):**
+
+- `.taskmaster/tasks/task_159/baseline/10-live-recordings/05-gemini-lyrics-generator/expected-stdout.txt`:
+  - `score-choruses` row: `144,296 / 91%` → `1,061 / 1%` (the canonical
+    Bug A repro on a real workflow).
+  - `select-chorus` row: `36,289 / 100%` (clipped to input) →
+    `13,790 / 38%`.
+  - `curate-briefs` row: `412 / 1%` → `103 / 0%`.
+  - 6 review-* rows: per-call cacheable values (each value × 4 reduction).
+  - `review-ai-tells` and `review-cliche`: were rendering fabricated cacheable
+    values via the cohort multiplier; now correctly show `below cache minimum`
+    because their per-call cross-workflow sums (~2,207 tokens each) are below
+    Gemini's 4,096 cachedContents minimum. Honest "won't fire at the provider"
+    output replaces misleading "8,828 cacheable" — the exact agent-UX
+    improvement Bug A targets.
+  - Footer count: "select-chorus, **8 review nodes**" → "select-chorus,
+    **6 review nodes**" (ai-tells and cliche correctly excluded from the
+    cross-workflow-projection set).
+
+### Verification
+
+- Focused cache-analysis + CLI suite: **532 passed**.
+- Core + CLI tests (`tests/test_core/` + `tests/test_cli/`): **3,201 passed**.
+- Near-full sandbox-safe suite (`-m "not e2e"`): **6,661 passed, 10 skipped**.
+- e2e suite: **43 passed**.
+- Baseline harness: **72 passed, 3 drifted** — all three drifts pre-existing
+  on HEAD (`01-parser-errors/{01,06,08}`, unrelated TTL wording; verified via
+  `git stash` comparison).
+- `ruff check`, `ruff format --check`, `mypy src/pflow/core/cache_analysis/`
+  clean on touched files.
+- End-to-end CLI smoke test on `scratchpads/experiments/prewarm-cache-interaction/E2-per-item-interleaved.pflow.md`:
+  ratio now `57%` (pre-fix: `100%`). Case A (no interleaving): `93%`
+  (legitimate high ratio, not the Bug A symptom). Output now distinguishes
+  truncated layouts from clean prefixes.
+
+### Tacit knowledge
+
+**The cross-workflow analog blast radius was narrower than batch_prefix.**
+Per agent-2 consumer audit, cost projection (`_per_call_first_run_with_cache_cost`,
+`_per_call_rerun_cost`) and aggregators are gated on `declared_prompt_cache`
+which is empty by construction for cross-workflow-projection rows — the cohort
+bug never reached cost arithmetic. The visible symptom was limited to the
+per-call table's `could_cache` column and a latent edge-case in the summary
+aggregate. Fixing it together with batch_prefix was strictly safer than not.
+
+**The remaining divide in `_batch_prewarm_recommendations` is the visible
+scar of a separate bug** — `PerCallRow.input_tokens_estimated` is mixed-unit
+(per-call for static-list batch trace and greenfield; cohort for dynamic-batch
+trace and non-batch repeated trace). Documented inline; filed as **GH #394**
+for follow-up after Task 160. Task 160's CLAUDE.md should commit to per-call
+as the documented `PerCallRow` contract; #394 then enforces it at the
+producers.
+
+**The clamp at `analyze.py:2105` is still load-bearing.** With `cacheable_tokens`
+now uniformly per-call by producer contract, the clamp only fires defensively
+when a future producer violates the contract. Deleting it would require also
+fixing the `input_tokens_estimated` cohort-asymmetry (GH #394) — out of scope
+here.
+
+**Cross-workflow-projection rows below provider min now correctly fall through
+to "below cache minimum" warnings.** Pre-fix, the cohort multiplier inflated
+per-call cross-workflow sums above the threshold check at
+`_apply_cross_workflow_projection:2183-2184`, projecting cacheable values that
+the provider would silently no-op. Post-fix, sub-threshold per-call sums
+correctly skip projection, and `below_min_tokens_detector` emits its
+`cache.below-min-tokens` warning instead. (FINDINGS Bug B — the analogous
+`batch_prefix`-source-below-min case — remains open; the detector still gates
+on `declared_prompt_cache` and doesn't yet handle batch_prefix evidence.)
+
+**Pitfall #19 hit count this branch: now ≥9.** Three of the four updated tests
+in this fix encoded the cohort bug verbatim. Production-shape fixtures
+matching wrong production code remains the dominant test-suite failure mode
+on this branch.
+
+### What's next (still open)
+
+- **GH #394** — `PerCallRow.input_tokens_estimated` unit unification. Filed
+  with row-type table, visible scar, proposed per-call invariant. Referenced
+  from `task-160.md` "Adjacent work to consider after this lands".
+- **FINDINGS Bug B** — prewarm-only below provider min silent. Extend
+  `below_min_tokens_detector` to gate on `cacheable_data_source == "batch_prefix"`
+  when per-call cacheable < provider min. Bug A's per-call fix made this
+  detector-side fix straightforward (the field is now honest per-call); the
+  curate-briefs `103 / 0%` row visible after baseline regen is the canonical
+  case waiting for the fix.
+- **FINDINGS Bug 17** — prewarm `wall-clock cost` disclosure in
+  `cache.batch-prewarm-recommended`. Doc-only addition to the action body.
+- **FINDINGS Bug C** — combined prewarm + declared cache: prewarm
+  contribution invisible in `cacheable_tokens_estimated`. Lower priority
+  (observability, not actively misleading).
+
 ## 2026-05-11 — Task 159 Followups — Fresh-eyes quick-win bundle (4 polish fixes)
 
 Four small UX fixes after a fresh-eyes read of the canonical lyrics-generator

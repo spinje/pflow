@@ -2088,8 +2088,6 @@ def _build_per_call_row(
         model=model,
         cacheable_tokens=cacheable_tokens,
         cacheable_source=cacheable_source,
-        observed_call_count=observed_call_count,
-        is_static_batch_trace=is_static_batch_trace,
         cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
     )
 
@@ -2166,18 +2164,19 @@ def _apply_cross_workflow_projection(
     model: str,
     cacheable_tokens: int | None,
     cacheable_source: str,
-    observed_call_count: int,
-    is_static_batch_trace: bool,
     cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] | None,
 ) -> tuple[int | None, str, tuple[CrossWorkflowInputContribution, ...]]:
-    """Promote weak row evidence to a broader cross-workflow projection."""
+    """Promote weak row evidence to a broader cross-workflow projection.
+
+    Returns per-call projected tokens to match ``PerCallRow.cacheable_tokens_estimated``
+    semantics — downstream cost helpers multiply by invocation count themselves.
+    """
     if cross_workflow_candidates_by_row is None or cacheable_source not in {"unavailable", "parameters"}:
         return cacheable_tokens, cacheable_source, ()
     row_candidates = cross_workflow_candidates_by_row.get((workflow_path, node_id), [])
     if not row_candidates:
         return cacheable_tokens, cacheable_source, ()
-    per_call_sum = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
-    projected_tokens = per_call_sum if is_static_batch_trace else per_call_sum * max(1, observed_call_count)
+    projected_tokens = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
     threshold_floor = max(
         (candidate.threshold_floor for candidate in row_candidates), default=get_min_cache_tokens(model)
     )
@@ -2559,14 +2558,17 @@ def _batch_prewarm_recommendations(node: dict[str, Any], row: PerCallRow) -> lis
     uses_existing_prefix_evidence = False
     prefix_tokens: int | None = None
     dynamic_tokens: int | None = None
-    # Row-level greenfield batch-prefix evidence is clamped against per-call
-    # input tokens, so only observed rows can safely be reused here. The
-    # earlier affected_calls gate already rejected 0/1-call rows; >= 2 is the
-    # minimum observed row count that can carry reusable batch-prefix evidence.
-    # Greenfield recommendations compute the prefix directly below.
+    # Reuse row-level batch-prefix evidence when available. cacheable_tokens_estimated
+    # is per-call by contract. input_tokens_estimated is per-call for static-list
+    # batch trace rows (normalized by _divide_static_batch_trace_tokens) and for
+    # greenfield rows, but cohort for dynamic-batch trace rows — see the follow-up
+    # note about the broader per-call/cohort row-field asymmetry. Divide by
+    # affected_calls is correct for the cohort case and a coarse under-projection
+    # for the per-call cases; under-projection is directionally safe here (it
+    # suppresses borderline recommendations rather than over-promising savings).
     if row.observed_call_count >= 2 and row.cacheable_data_source == "batch_prefix" and row.cacheable_tokens_estimated:
         uses_existing_prefix_evidence = True
-        prefix_tokens = round(row.cacheable_tokens_estimated / affected_calls)
+        prefix_tokens = row.cacheable_tokens_estimated
         input_tokens_per_call = round(row.input_tokens_estimated / affected_calls)
         dynamic_tokens = max(0, input_tokens_per_call - prefix_tokens)
     else:
@@ -2831,10 +2833,13 @@ def _estimate_batch_prefix_cacheable_tokens(
     declared_subset: list[str] | None,
     observed_call_count: int,
 ) -> int | None:
-    """Estimate repeated static prefix tokens before the first batch-item ref.
+    """Estimate per-call cacheable prefix tokens before the first batch-item ref.
 
-    Uses observed call count when available, otherwise falls back to static
-    ``batch.items`` length for greenfield static-list batches.
+    Returns ``None`` for non-batch nodes, nodes already declaring
+    ``prompt_cache:``, or batches with fewer than 2 calls (no cache fan-out
+    benefit). The call count is used only to gate the ``< 2`` precondition;
+    the returned value is per-call to match every consumer of
+    ``PerCallRow.cacheable_tokens_estimated``.
     """
     batch = node.get("batch")
     if declared_subset or not isinstance(batch, dict):
@@ -2850,7 +2855,7 @@ def _estimate_batch_prefix_cacheable_tokens(
     prefix_tokens = estimate_tokens(model, resolved_prompt[:boundary])[0]
     if prefix_tokens <= 0:
         return None
-    return prefix_tokens * affected_call_count
+    return prefix_tokens
 
 
 def _prefer_batch_prefix_cacheable_tokens(
@@ -2871,9 +2876,9 @@ def _prefer_batch_prefix_cacheable_tokens(
         observed_call_count=observed_call_count,
     )
     if prefix_tokens is not None and prefix_tokens > (current_tokens or 0):
-        # Distinct tier label: this is a static-prefix scan + per-call
-        # multiplier, not chunk-resolution-via-CLI-parameters. Sharing the
-        # ``"parameters"`` label would violate the documented contract on
+        # Distinct tier label: this is a static-prefix scan, not
+        # chunk-resolution-via-CLI-parameters. Sharing the ``"parameters"``
+        # label would violate the documented contract on
         # ``cacheable_data_source`` and mis-route the confidence footer's
         # "first batch item as a representative sample" message (no batch
         # item content participates in this projection).

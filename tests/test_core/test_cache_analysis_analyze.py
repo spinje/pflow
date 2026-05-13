@@ -5151,11 +5151,13 @@ def test_build_parameters_by_workflow_uses_trace_batch_item_when_items_expr_unre
 
 
 def test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch(tmp_path: Path) -> None:
-    """Dynamic batch rows project the repeated static prefix, not just refs.
+    """Dynamic batch rows project the per-call static prefix.
 
     This is the small-fixture version of the ``score-choruses`` canary: the
     actionable provider-cache opportunity is the prompt prefix before
-    ``${item...}``, multiplied by the observed batch call count.
+    ``${item...}``. ``observed_call_count`` only gates the ``< 2`` precondition;
+    the projected value is per-call to match ``PerCallRow.cacheable_tokens_estimated``
+    semantics. Downstream cost helpers multiply by invocation count themselves.
 
     Mutation contract: remove ``_prefer_batch_prefix_cacheable_tokens`` from
     ``_build_per_call_row``; this test fails because the row's
@@ -5216,7 +5218,7 @@ def test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch(tmp_pat
     )
 
     row = next(row for row in result.per_call if row.node_path == "score")
-    expected_prefix_tokens = estimate_tokens(model, f"{prefix}\n")[0] * 3
+    expected_prefix_tokens = estimate_tokens(model, f"{prefix}\n")[0]
     assert row.cacheable_data_source == "batch_prefix"
     assert row.cacheable_tokens_estimated == expected_prefix_tokens
     assert row.observed_call_count == 3
@@ -5294,6 +5296,69 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
     assert diag.context["batch_size"] == 4
     assert diag.context["prefix_tokens_estimated"] == len(f"{prefix}\n".split())
     assert diag.context["prefix_tokens_cohort_estimated"] == len(f"{prefix}\n".split()) * 4
+
+
+def test_batch_prefix_cacheable_does_not_inflate_to_100pct_when_prefix_is_truncated(
+    tmp_path: Path,
+) -> None:
+    """Interleaved per-item refs cut the cacheable prefix short — the row must
+    report a sub-100% ratio so agents see the layout problem.
+
+    Repro for FINDINGS E2 (``scratchpads/experiments/prewarm-cache-interaction``):
+    a per-item ref placed before the bulk of stable content terminates the
+    cacheable prefix at that ref, leaving most of the prompt outside the cache.
+    Pre-Bug-A, ``_estimate_batch_prefix_cacheable_tokens`` returned cohort
+    tokens (``prefix_per_call * call_count``) which the clamp at
+    ``_build_per_call_row`` collapsed to ``input_tokens`` for any batch_size >= 2,
+    masking the bug as a misleading 100% ratio.
+
+    Mutation contract: restore ``return prefix_tokens * affected_call_count`` in
+    ``_estimate_batch_prefix_cacheable_tokens``; this test fails because the
+    row's ``cache_ratio_pct`` jumps back to 100 and
+    ``cacheable_tokens_estimated`` equals ``input_tokens_estimated``.
+    """
+    from pflow.core.cache_analysis.token_estimation import estimate_tokens
+
+    model = "anthropic/claude-haiku-4-5"
+    prefix_before_item_ref = "Brief intro:\n" + ("stable sentence. " * 5)
+    suffix_after_item_ref = "\n" + ("more stable instructions sentence. " * 300)
+    # Per-item ref placed BEFORE the bulk of stable content — cuts the
+    # cacheable prefix short at the ref boundary.
+    prompt = f"{prefix_before_item_ref}${{item.id}}{suffix_after_item_ref}"
+    workflow_path = str(tmp_path / "interleaved-prefix.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "params": {"model": model, "prompt": prompt},
+                "batch": {"items": [{"id": "a"}, {"id": "b"}, {"id": "c"}], "as": "item"},
+            }
+        ]
+    }
+
+    result = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = next(row for row in result.per_call if row.node_path == "score")
+    assert row.cacheable_data_source == "batch_prefix"
+    assert row.cacheable_tokens_estimated is not None
+    assert row.cache_ratio_pct is not None
+    # The actual layout bug: cacheable should be strictly less than input,
+    # because the suffix after ``${item.id}`` is not part of the cached prefix.
+    assert row.cacheable_tokens_estimated < row.input_tokens_estimated, (
+        "expected cacheable < input when per-item ref interleaves with stable content"
+    )
+    assert row.cache_ratio_pct < 100, "expected sub-100% ratio for truncated prefix"
+    # Sanity: per-call cacheable should match direct tokenization of the
+    # pre-ref segment, not be inflated by call count.
+    expected_per_call_prefix = estimate_tokens(model, prefix_before_item_ref)[0]
+    # Allow ±10 token tolerance for whitespace/newline tokenization differences.
+    assert abs(row.cacheable_tokens_estimated - expected_per_call_prefix) < 20
 
 
 def test_batch_prefix_prewarm_action_respects_explicit_prewarm(
@@ -5712,11 +5777,23 @@ def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> 
     score_rows = [row for row in result.per_call if row.node_path == "score-choruses"]
     assert score_rows, "expected score-choruses row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "batch_prefix" for row in score_rows)
-    assert any((row.cacheable_tokens_estimated or 0) > 100_000 for row in score_rows)
+    # Per-call cacheable prefix should be substantial but smaller than per-call input.
+    # Pre-Bug-A this asserted > 100_000 (cohort = per_call x batch_size).
+    assert any(
+        row.cacheable_tokens_estimated is not None
+        and row.cacheable_tokens_estimated > 500
+        and row.cacheable_tokens_estimated < row.input_tokens_estimated
+        for row in score_rows
+    )
     select_rows = [row for row in result.per_call if row.node_path == "select-chorus"]
     assert select_rows, "expected select-chorus row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "cross_workflow_projection" for row in select_rows)
-    assert any((row.cacheable_tokens_estimated or 0) > 5_000 for row in select_rows)
+    assert any(
+        row.cacheable_tokens_estimated is not None
+        and row.cacheable_tokens_estimated > 0
+        and row.cacheable_tokens_estimated <= row.input_tokens_estimated
+        for row in select_rows
+    )
     review_rhyme_rows = [
         row
         for row in result.per_call
@@ -5725,7 +5802,12 @@ def test_per_call_could_cache_populated_for_score_choruses_with_real_trace() -> 
     assert review_rhyme_rows, "expected review-rhyme row in lyrics-generator analysis"
     assert all(not row.did_not_execute_in_trace for row in review_rhyme_rows)
     assert any(row.observed_call_count == 4 for row in review_rhyme_rows)
-    assert any((row.cacheable_tokens_estimated or 0) > 20_000 for row in review_rhyme_rows)
+    assert any(
+        row.cacheable_tokens_estimated is not None
+        and row.cacheable_tokens_estimated > 0
+        and row.cacheable_tokens_estimated <= row.input_tokens_estimated
+        for row in review_rhyme_rows
+    )
     score_actions = [
         warning
         for warning in result.warnings
