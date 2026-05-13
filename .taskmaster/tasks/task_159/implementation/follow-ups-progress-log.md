@@ -1502,3 +1502,114 @@ Negative-test assertions (`assert "implicit cache" not in text`,
   Probably best done alongside the trace-backed wall-clock number so the
   Gemini caveat can quote the agent's actual `cache_read_input_tokens`
   evidence instead of generic prose.
+
+## 2026-05-13 — Task 159 Followups — parent prose in sub-workflow cache edits
+
+Implemented parent-prose threading for sub-workflow cache recommendations.
+When a parent `## Cache` chunk exactly matches the parent-side cache ref, the
+suggested child `## Cache` block now renders the raw parent prose, including
+blank lines before `${...}`; conflicting parent origins suppress prose.
+
+Deviations: no prose is rendered for `${lyrics}` in the lyrics-generator
+review cases because the parent has no `## Cache` chunk for
+`write-lyrics.response`; the original 40-char preview idea was replaced because
+the parsed parent prose includes newline separators that matter for byte shape.
+
+Verification: raw `analyze-cache` output checked for agent-facing coherence;
+focused cache tests 371 passed; analyzer/CLI/MCP suite 690 passed; affected
+baselines regenerated and verified; near-full sandbox-safe suite 6,708 passed
+after documented unrelated exclusions; `ruff`, format check, and focused mypy
+clean.
+
+## 2026-05-13 — Task 159 Followups — parent-prose preview correction
+
+Same-day correction to the parent-prose work above. Code review revealed
+the "render the raw parent prose, including line breaks" claim did not
+survive the rendering pipeline: `_indent_message` in `render_text.py`
+filtered out blank-indented lines via `if line.strip()`, so the parent's
+`\n\n` chunk separators were silently stripped before reaching the user.
+The renderer-side unit tests asserted blank-indented lines at the
+`_format_exact_child_cache_edits` layer (intermediate output) and so
+passed while the byte shape was lost end-to-end — a textbook Pitfall #19
+case.
+
+Two coupled fixes:
+
+1. `render_text._indent_message` no longer filters whitespace-only lines.
+   The function's job is to indent; filtering was an undocumented
+   side-effect with one accidental beneficiary
+   (`cache.prompt-cache-incomplete`'s template embeds `\n\n` between intro
+   prose and findings — the catalog author's intent was being silently
+   overridden). The grep for `lines.append("")` confirmed no other
+   diagnostic body_block builder relies on the filter. The blank-line
+   preservation in `cache.prompt-cache-incomplete`'s rendered output is
+   a net UX improvement.
+2. `analyze._exact_child_cache_block_content` rewritten to use the
+   existing `_static_excerpt(prose, limit=40)` helper to render a
+   single-line 40-char preview of parent prose above each `${...}` line,
+   joined with `\n\n` between chunks. This matches the original plan
+   (the deviation was retracted) and gives agents a scannable label per
+   chunk without forcing them to read a 230-character paragraph per
+   recommended entry. JSON still receives the full untruncated parent
+   prose for machine consumers.
+
+Combined rendered shape (lyrics-generator review-emotional-architecture):
+
+```
+       Add or extend ## Cache:
+         ```cache
+         The concept brief — material palette ta...
+
+         ${concept_brief}
+
+         The creative direction — genre choice w...
+
+         ${creative_direction}
+
+         ${lyrics}
+         ```
+```
+
+40-char preview where the parent has a matching chunk by name; bare
+`${var}` where it doesn't (e.g. `${lyrics}` — parent caches
+`${write-lyrics.response}`, child renames to `lyrics`, no name match);
+blank lines between chunks throughout. Mirrors the parent's visual
+structure where it can, stays honest where it can't.
+
+Test surgery:
+
+- Dropped the 5 renderer tests that asserted against intermediate
+  `_format_exact_child_cache_edits` output (Pitfall #19 — they passed
+  while the end-to-end output failed). Replaced with one renderer-level
+  unit test that locks `_indent_message`'s blank-line preservation
+  (`test_indent_message_preserves_blank_lines`).
+- Updated the per-id end-to-end test
+  (`test_sub_workflow_cache_candidate_carries_parent_prose_from_matching_chunk`)
+  to assert the truncated form, that the untruncated suffix does NOT
+  appear, and that a blank line survives between prose and `${var}` via
+  regex on the full rendered text. Mutation contracts in the test
+  docstring cover both halves (truncation + blank preservation).
+- Added an end-to-end assertion in
+  `test_partial_prompt_cache_renderer_handles_many_affected_nodes`
+  locking that the catalog template's `\n\n` between intro and findings
+  block now reaches the user (mutation contract: restoring the
+  blank-line filter collapses the regex match).
+- `__init__.py` 4.2 docstring rewritten — replaced the inaccurate
+  "render the exact parent prose, including line breaks" claim with
+  the truthful "40-char single-line preview ... with blank lines
+  between chunks to mirror the parent's visual structure. JSON
+  consumers receive the full untruncated prose."
+
+Baselines regenerated for both the text and JSON paths
+(`10-live-recordings/05-gemini-lyrics-generator`,
+`04-warning-catalog/05-cache.sub-workflow-cache-undeclared`,
+`04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath`,
+`12-real-world-lyrics-generator/{01,02,03}`). Baseline harness shows
+3 pre-existing parser-error drifts only; everything cache-related is
+clean.
+
+Verification: focused cache suite 561 passed; broader
+`tests/test_core/ tests/test_cli/` 3,270 passed with 1 unrelated
+sandbox-only `uv run pflow` subprocess failure documented in earlier
+progress logs; `ruff check`, `ruff format --check`, and focused `mypy
+src/pflow/core/cache_analysis/` all clean.

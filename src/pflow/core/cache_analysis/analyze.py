@@ -106,6 +106,7 @@ class CrossWorkflowInputContribution:
     parent_value_expr: str | None = None
     child_cache_ref: str | None = None
     parent_cache_ref: str | None = None
+    parent_prose: str | None = None
 
     def __post_init__(self) -> None:
         if self.child_cache_ref is None:
@@ -1814,6 +1815,7 @@ class _RowCrossWorkflowCandidate:
     child_workflow: str
     child_input_name: str
     child_cache_ref: str
+    parent_prose: str
     child_node_ids: tuple[str, ...]
     estimated_tokens_per_call: int
     threshold_floor: int
@@ -1860,6 +1862,7 @@ def _row_cross_workflow_candidates_for_edge(
     if not child_ir:
         return ()
     child_declared = set(_items_by_name(cw_result.cache_items_by_workflow.get(child_workflow, ())))
+    parent_items_by_name = _items_by_name(cw_result.cache_items_by_workflow.get(edge.parent_workflow, ()))
     candidates: list[_RowCrossWorkflowCandidate] = []
     for use in _child_cache_ref_consumers(child_ir, edge.child_input_name):
         if _cache_ref_is_declared_or_covered(use.child_cache_ref, child_declared):
@@ -1884,6 +1887,7 @@ def _row_cross_workflow_candidates_for_edge(
         parent_cache_ref = _append_child_suffix(
             edge.parent_value_expr or "", edge.child_input_name, use.child_cache_ref
         )
+        parent_prose = _parent_prose_for_cache_ref(parent_items_by_name, parent_cache_ref)
         token_estimate = _estimate_parent_value_tokens(
             parent_workflow=edge.parent_workflow,
             parent_value_expr=parent_cache_ref,
@@ -1906,6 +1910,7 @@ def _row_cross_workflow_candidates_for_edge(
                 child_workflow=child_workflow,
                 child_input_name=edge.child_input_name,
                 child_cache_ref=use.child_cache_ref,
+                parent_prose=parent_prose,
                 estimated_tokens_per_call=token_estimate,
                 threshold_floor=threshold_floor,
                 child_node_ids=use.consumer_node_ids,
@@ -2215,6 +2220,7 @@ def _apply_cross_workflow_projection(
                 child_cache_ref=candidate.child_cache_ref,
                 parent_value_expr=candidate.parent_value_expr,
                 parent_cache_ref=candidate.parent_cache_ref,
+                parent_prose=candidate.parent_prose or None,
                 tokens_per_call=candidate.estimated_tokens_per_call,
                 model=model,
             )
@@ -4541,6 +4547,8 @@ class _SubWorkflowCacheCandidate:
     child_node_ids: tuple[str, ...]
     parent_cache_ref: str = ""
     child_cache_ref: str = ""
+    parent_prose: str = ""
+    parent_prose_origins_differ: bool = False
     body_refs_by_node: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     origin_count: int = 1
     has_multiple_parent_origins: bool = False
@@ -4615,17 +4623,20 @@ def _sub_workflow_cache_candidates_for_edge(
     if edge.parent_value_expr is None:
         return ()
     child_declared = set(_items_by_name(cache_items_by_workflow.get(edge.child_workflow, ())))
+    parent_items_by_name = _items_by_name(cache_items_by_workflow.get(edge.parent_workflow, ()))
 
     candidates: list[_SubWorkflowCacheCandidate] = []
     for use in _child_cache_ref_consumers(irs_by_workflow.get(edge.child_workflow, {}), edge.child_input_name):
         if _cache_ref_is_declared_or_covered(use.child_cache_ref, child_declared):
             continue
         parent_cache_ref = _append_child_suffix(edge.parent_value_expr, edge.child_input_name, use.child_cache_ref)
+        parent_prose = _parent_prose_for_cache_ref(parent_items_by_name, parent_cache_ref)
         candidates.append(
             _SubWorkflowCacheCandidate(
                 parent_workflow=edge.parent_workflow,
                 parent_value_expr=edge.parent_value_expr,
                 parent_cache_ref=parent_cache_ref,
+                parent_prose=parent_prose,
                 parent_node_id=edge.parent_node_id,
                 line_in_parent=edge.line_in_parent,
                 child_workflow=edge.child_workflow,
@@ -4715,6 +4726,13 @@ def _append_child_suffix(parent_ref: str, child_input_name: str, child_ref: str)
     return f"{parent_ref}{suffix}" if suffix else parent_ref
 
 
+def _parent_prose_for_cache_ref(parent_items_by_name: Mapping[str, dict[str, Any]], parent_cache_ref: str) -> str:
+    parent_chunk = parent_items_by_name.get(parent_cache_ref)
+    if parent_chunk is None:
+        return ""
+    return str(parent_chunk.get("prose_before", ""))
+
+
 def _cache_ref_is_declared_or_covered(child_ref: str, declared: set[str]) -> bool:
     return any(_path_is_ancestor_or_equal(declared_ref, child_ref) for declared_ref in declared)
 
@@ -4744,8 +4762,15 @@ def _aggregate_sub_workflow_cache_candidates_by_child(
             existing.parent_cache_ref,
         ):
             chosen = candidate
+        parent_prose_origins_differ = (
+            existing.parent_prose_origins_differ
+            or candidate.parent_prose_origins_differ
+            or existing.parent_prose != candidate.parent_prose
+        )
         by_ref[candidate.child_cache_ref] = replace(
             chosen,
+            parent_prose="" if parent_prose_origins_differ else existing.parent_prose,
+            parent_prose_origins_differ=parent_prose_origins_differ,
             origin_count=merged_origin_count,
             has_multiple_parent_origins=True,
         )
@@ -5376,10 +5401,7 @@ def _subpath_honesty_sentence(group: _SubWorkflowCacheGroup) -> str:
 def _format_exact_child_cache_edits(group: _SubWorkflowCacheGroup) -> list[str]:
     lines = ["Edit child workflow:", "  Add or extend ## Cache:"]
     lines.append("    ```cache")
-    for index, candidate in enumerate(group.candidates):
-        if index:
-            lines.append("")
-        lines.append(f"    ${{{candidate.child_cache_ref}}}")
+    lines.extend(f"    {line}" for line in _exact_child_cache_block_content(group).split("\n"))
     lines.append("    ```")
     lines.append("  Add prompt_cache entries:")
     for node_id, refs in sorted(_cache_refs_by_consumer(group).items()):
@@ -5388,6 +5410,31 @@ def _format_exact_child_cache_edits(group: _SubWorkflowCacheGroup) -> list[str]:
         ]
         lines.append(f"    {node_id}: prompt_cache: [{', '.join(ordered_refs)}]")
     return lines
+
+
+def _exact_child_cache_block_content(group: _SubWorkflowCacheGroup) -> str:
+    """Render the paste-ready child ``## Cache`` block content.
+
+    Each chunk emits the var line on its own; when a matching parent chunk
+    contributes prose, a 40-char single-line preview of that prose is rendered
+    immediately above the var line. Chunks are separated by blank lines to
+    mirror the parent's ``## Cache`` visual structure. The single-line preview
+    is intentional: it stays scannable for agents and (because
+    ``_static_excerpt`` collapses internal whitespace) survives the renderer's
+    line-by-line indenting without breaking the cache block layout.
+    """
+    parts: list[str] = []
+    for candidate in group.candidates:
+        chunk = ""
+        if candidate.parent_prose.strip() and not candidate.parent_prose_origins_differ:
+            chunk += _static_excerpt(candidate.parent_prose, limit=_PARENT_PROSE_PREVIEW_LIMIT)
+            chunk += "\n\n"
+        chunk += f"${{{candidate.child_cache_ref}}}"
+        parts.append(chunk)
+    return "\n\n".join(parts)
+
+
+_PARENT_PROSE_PREVIEW_LIMIT = 40
 
 
 def _threshold_relation(tokens: int, threshold: int) -> str:
@@ -5508,6 +5555,8 @@ def _grouped_inputs_context(
             "parent_node_id": candidate.parent_node_id,
             "line_in_parent": candidate.line_in_parent,
             "tokens_estimated": tokens_per_input.get(candidate.child_cache_ref),
+            "parent_prose": candidate.parent_prose,
+            "parent_prose_origins_differ": candidate.parent_prose_origins_differ,
             "origin_count": candidate.origin_count,
             "has_multiple_parent_origins": candidate.has_multiple_parent_origins,
             "consumer_node_ids": consumer_node_ids,

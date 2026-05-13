@@ -47,8 +47,14 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The concept brief — material palette ta...
+
          ${concept_brief}
+
+         The creative direction — genre choice w...
+
          ${creative_direction}
+
          ${lyrics}
          ```
        Add prompt_cache entries:
@@ -67,8 +73,14 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The concept brief — material palette ta...
+
          ${concept_brief}
+
+         The creative direction — genre choice w...
+
          ${creative_direction}
+
          ${lyrics}
          ```
        Add prompt_cache entries:
@@ -87,8 +99,14 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The creative direction — genre choice w...
+
          ${creative_direction}
+
          ${lyrics}
+
+         The song architecture — section layout,...
+
          ${song_architecture}
          ```
        Add prompt_cache entries:
@@ -108,8 +126,14 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The creative direction — genre choice w...
+
          ${creative_direction}
+
          ${lyrics}
+
+         The song architecture — section layout,...
+
          ${song_architecture}
          ```
        Add prompt_cache entries:
@@ -130,6 +154,9 @@
        Add or extend ## Cache:
          ```cache
          ${lyrics}
+
+         The song architecture — section layout,...
+
          ${song_architecture}
          ```
        Add prompt_cache entries:
@@ -148,6 +175,9 @@
        Add or extend ## Cache:
          ```cache
          ${lyrics}
+
+         The song architecture — section layout,...
+
          ${song_architecture}
          ```
        Add prompt_cache entries:
@@ -166,9 +196,16 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The song architecture — section layout,...
+
          ${architecture}
+
          ${concept.core_idea}
+
          ${concept.title}
+
+         The concept brief — material palette ta...
+
          ${creative_brief}
          ```
        Add prompt_cache entries:
@@ -191,7 +228,10 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The creative direction — genre choice w...
+
          ${creative_direction}
+
          ${lyrics}
          ```
        Add prompt_cache entries:
@@ -218,7 +258,10 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The creative direction — genre choice w...
+
          ${creative_direction}
+
          ${lyrics}
          ```
        Add prompt_cache entries:

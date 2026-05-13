@@ -2942,6 +2942,26 @@ def test_text_sub_workflow_cache_finding_emits_child_action_line() -> None:
     assert "[cache.sub-workflow-cache-undeclared]" not in text
 
 
+def test_indent_message_preserves_blank_lines() -> None:
+    """`_indent_message` must keep blank lines from the source message verbatim.
+
+    Several diagnostic message templates (notably
+    ``cache.prompt-cache-incomplete`` and the paste-ready ``## Cache`` block
+    rendered by ``cache.sub-workflow-cache-undeclared``) embed ``\\n\\n`` to
+    visually separate sections. If the renderer silently filters those out,
+    the catalog author's intent never reaches the agent.
+
+    Mutation contract: re-introduce ``if line.strip()`` in
+    ``_indent_message`` and the blank-indented row between the prose lines
+    disappears, this assertion fails.
+    """
+    from pflow.core.cache_analysis.render_text import _indent_message
+
+    rendered = _indent_message("alpha\n\nbeta", prefix=">>>")
+
+    assert rendered == [">>>alpha", ">>>", ">>>beta"]
+
+
 def test_text_sub_workflow_boundaries_omits_rename_diagnostics() -> None:
     """Rename diagnostics remain in the analysis data but are text-silent."""
     rename = _rename_diag(

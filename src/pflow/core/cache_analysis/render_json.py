@@ -249,6 +249,7 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
                 "child_cache_ref": contribution.child_cache_ref or contribution.child_input_name,
                 "parent_value_expr": contribution.parent_value_expr,
                 "parent_cache_ref": contribution.parent_cache_ref or contribution.parent_value_expr,
+                "parent_prose": contribution.parent_prose,
                 "tokens_per_call": contribution.tokens_per_call,
                 "model": contribution.model,
             }

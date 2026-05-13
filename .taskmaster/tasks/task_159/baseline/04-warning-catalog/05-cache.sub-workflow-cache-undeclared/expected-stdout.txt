@@ -203,6 +203,8 @@
               "parent_node_id": "child",
               "line_in_parent": 14,
               "tokens_estimated": 1601,
+              "parent_prose": "",
+              "parent_prose_origins_differ": false,
               "origin_count": 1,
               "has_multiple_parent_origins": false,
               "consumer_node_ids": [
@@ -257,6 +259,8 @@
             "parent_node_id": "child",
             "line_in_parent": 14,
             "tokens_estimated": 1601,
+            "parent_prose": "",
+            "parent_prose_origins_differ": false,
             "origin_count": 1,
             "has_multiple_parent_origins": false,
             "consumer_node_ids": [

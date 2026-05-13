@@ -31,6 +31,7 @@
        Add or extend ## Cache:
          ```cache
          ${article.body}
+
          ${article.title}
          ```
        Add prompt_cache entries:

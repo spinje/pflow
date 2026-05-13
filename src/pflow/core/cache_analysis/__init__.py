@@ -94,6 +94,15 @@ Version history (``JSON_FORMAT_VERSION``):
   ``trace_path``/``predicted_pct``/``predicted_label``/``actual_pct``/
   ``cache_age_sec``. The root-cause shape is now limited to
   ``chunk_skipped`` and ``key_mismatch``.
+- ``"4.2"`` — parent prose in sub-workflow cache recommendations
+  (additive, same minor): ``cache.sub-workflow-cache-undeclared.context.inputs[]``
+  gains ``parent_prose`` (raw parent-chunk preamble bytes) and
+  ``parent_prose_origins_differ`` (true when multiple parent origins disagree).
+  ``per_call[].cross_workflow_inputs[]`` gains ``parent_prose``. Text
+  recommendations render a 40-char single-line preview of the parent prose
+  above each ``${...}`` line in the suggested child ``## Cache`` block, with
+  blank lines between chunks to mirror the parent's visual structure. JSON
+  consumers receive the full untruncated prose.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning

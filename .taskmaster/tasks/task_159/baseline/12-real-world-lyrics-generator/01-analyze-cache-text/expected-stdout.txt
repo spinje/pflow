@@ -36,9 +36,16 @@
      Edit child workflow:
        Add or extend ## Cache:
          ```cache
+         The song architecture — section layout,...
+
          ${architecture}
+
          ${concept.core_idea}
+
          ${concept.title}
+
+         The concept brief — material palette ta...
+
          ${creative_brief}
          ```
        Add prompt_cache entries:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ import pytest
 
 from pflow.core.cache_analysis.analyze import CrossWorkflowInputContribution, analyze
 from pflow.core.cache_analysis.cost_estimation import ModelPricing
+from pflow.core.cache_analysis.render_json import render_json
 from pflow.core.cache_analysis.render_text import render_text
 from pflow.core.file_resolver import resolve_file_references
 from pflow.core.markdown_parser import parse_markdown
@@ -2516,6 +2518,196 @@ def test_sub_workflow_cache_undeclared_direct_root_use_remains_root(monkeypatch:
     assert "Do not cache full objects" not in render_text(result)
 
 
+def test_sub_workflow_cache_candidate_carries_parent_prose_from_matching_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parent prose is copied only when the parent chunk name exactly matches."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_prose = "Concept brief:\nUse the palette and narrator framing from the parent workflow.\n"
+    parent_ir = {
+        "inputs": {"concept_brief": {"type": "string"}},
+        "cache": {"items": [{"name": "concept_brief", "var": "concept_brief", "prose_before": parent_prose}]},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept_brief": "${concept_brief}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept_brief": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept_brief}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept_brief}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    # JSON-side context keeps the full untruncated parent prose so machine
+    # consumers can compare bytes against the parent's `## Cache` block.
+    assert input_info["parent_prose"] == parent_prose
+    assert input_info["parent_prose_origins_differ"] is False
+    text = render_text(result)
+    # Text rendering shows a 40-char single-line preview, then a blank line,
+    # then the `${var}` line. Mutation contracts:
+    #   * Drop truncation in `_exact_child_cache_block_content` and the
+    #     untruncated suffix "framing from the parent workflow." reappears.
+    #   * Re-introduce the blank-line filter in `_indent_message` and the
+    #     prose-to-var blank line disappears (regex fails).
+    assert "Concept brief: Use the palette and" in text
+    assert "framing from the parent workflow." not in text
+    assert re.search(
+        r"Concept brief: Use the palette and[^\n]*\.\.\.\n\s*\n\s*\$\{concept_brief\}",
+        text,
+    )
+    assert "parent_prose" not in text
+
+
+def test_sub_workflow_cache_candidate_omits_parent_prose_for_subpath_when_parent_caches_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root parent prose must not be copied onto a narrower child subpath."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {
+                    "name": "concept",
+                    "var": "concept",
+                    "prose_before": "The full concept object, including fields the child does not use:\n",
+                }
+            ]
+        },
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept}"}},
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept.core_idea}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept.core_idea}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"concept": {"core_idea": "idea " * 400, "unused": "unused " * 400}},
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["child_cache_ref"] == "concept.core_idea"
+    assert input_info["parent_cache_ref"] == "concept.core_idea"
+    assert input_info["parent_prose"] == ""
+    assert "The full concept object" not in render_text(result)
+
+
+def test_sub_workflow_cache_candidate_omits_prose_when_multiple_origins_disagree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ambiguous parent prose is flagged in JSON instead of choosing a winner."""
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    parent_ir = {
+        "inputs": {"concept_a": {"type": "string"}, "concept_b": {"type": "string"}},
+        "cache": {
+            "items": [
+                {"name": "concept_a", "var": "concept_a", "prose_before": "Concept A:\n"},
+                {"name": "concept_b", "var": "concept_b", "prose_before": "Concept B:\n"},
+            ]
+        },
+        "nodes": [
+            {
+                "id": "call-child-a",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept_a}"}},
+            },
+            {
+                "id": "call-child-b",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${concept_b}"}},
+            },
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    input_info = diag.context["inputs"][0]
+    assert input_info["parent_prose"] == ""
+    assert input_info["parent_prose_origins_differ"] is True
+    text = render_text(result)
+    assert "Concept A" not in text
+    assert "Concept B" not in text
+
+
 def test_sub_workflow_cache_undeclared_mixed_root_and_subpath_use(monkeypatch: pytest.MonkeyPatch) -> None:
     """Root use by one node must not collapse a subpath-only node to root."""
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
@@ -2711,6 +2903,15 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "object"}},
+        "cache": {
+            "items": [
+                {
+                    "name": "concept.title",
+                    "var": "concept.title",
+                    "prose_before": "Title only:\nParent-side label to preserve across workflows.\n",
+                }
+            ]
+        },
         "nodes": [
             {
                 "id": "call-child",
@@ -2786,10 +2987,24 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
             child_cache_ref="concept.title",
             parent_value_expr="concept",
             parent_cache_ref="concept.title",
+            parent_prose="Title only:\nParent-side label to preserve across workflows.\n",
             tokens_per_call=row.cacheable_tokens_estimated,
             model="anthropic/claude-haiku-4-5",
         ),
     )
+    payload = render_json(result)
+    child_row = next(item for item in payload["per_call"] if item["workflow_path"] == str(child_path))
+    assert child_row["cross_workflow_inputs"] == [
+        {
+            "child_input_name": "concept",
+            "child_cache_ref": "concept.title",
+            "parent_value_expr": "concept",
+            "parent_cache_ref": "concept.title",
+            "parent_prose": "Title only:\nParent-side label to preserve across workflows.\n",
+            "tokens_per_call": row.cacheable_tokens_estimated,
+            "model": "anthropic/claude-haiku-4-5",
+        }
+    ]
 
 
 def test_sub_workflow_cache_undeclared_params_inputs_cleanup_uses_prompt_alias(
@@ -6073,3 +6288,14 @@ def test_partial_prompt_cache_renderer_handles_many_affected_nodes() -> None:
 
     assert "Prompt-cache incomplete" in rendered
     assert rendered.count("Set prompt_cache: [a, b]") == 6
+    # The catalog template for ``cache.prompt-cache-incomplete`` embeds
+    # ``\n\n`` between the intro prose and the per-node findings block.
+    # Mutation contract: restore ``if line.strip()`` in ``_indent_message``
+    # and the blank-but-indented line between intro and findings disappears,
+    # collapsing "missing the 0.1x input-cost reuse." onto "Affected nodes:"
+    # with only one newline. This regex demands at least one whitespace-only
+    # line in between. End-to-end lock for the renderer change.
+    assert re.search(
+        r"missing the 0\.1x input-cost reuse\.\n[ \t]*\n[ \t]*Affected nodes:",
+        rendered,
+    )

@@ -1035,9 +1035,13 @@ def _indent_message(message: str, *, prefix: str) -> list[str]:
     """Indent each line of a multi-line message under a recommendations bullet.
 
     Long messages render as multiple lines; the prefix keeps them visually
-    aligned with the rank line above.
+    aligned with the rank line above. Blank lines are preserved verbatim so
+    that diagnostics whose message templates embed `\\n\\n` between sections
+    (e.g. ``cache.prompt-cache-incomplete``'s intro vs. findings block, the
+    paste-ready ``## Cache`` block in ``cache.sub-workflow-cache-undeclared``)
+    render with the visual separation their authors intended.
     """
-    return [f"{prefix}{line}" for line in message.splitlines() if line.strip()]
+    return [f"{prefix}{line}" for line in message.splitlines()]
 
 
 def _replace_action_scope_in_prose(text: str, action: RecommendedAction, workflow_path: str) -> str:
