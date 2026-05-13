@@ -122,6 +122,143 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent() -> None:
     assert "cache.batch-prewarm-recommended" not in {d.id for d in opted_out.warnings}
 
 
+def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min() -> None:
+    """Prewarm declared but the static prefix tokenizes below the provider
+    minimum — the cache marker will silently no-op at the provider. Fresh
+    agent reading ``analyze-cache`` output today sees ``100% cache ratio``;
+    this warning is what corrects that.
+
+    Detector reads ``get_min_cache_tokens`` from ``llm_capabilities`` (NOT
+    the analyzer-patched stub at 10), so the real Sonnet-4-5 threshold of
+    1024 applies. A ~5-token prefix is honestly below it.
+    """
+    prefix = "tiny "  # 1 word → 1 token under the deterministic word-count tokenizer
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": [{"text": "a"}, {"text": "b"}, {"text": "c"}, {"text": "d"}], "as": "item"},
+                "params": {"prompt": prefix + "${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-below-min")
+    assert diag.context is not None
+    assert diag.context["model"] == "anthropic/claude-sonnet-4-5"
+    assert diag.context["min_tokens"] == 1024
+    assert diag.context["prefix_tokens"] < 1024
+    assert diag.context["prefix_tokens"] > 0
+    assert diag.context["batch_alias"] == "item"
+    # Anthropic provider note flows through to the rendered message.
+    assert "cache_control markers" in diag.message
+
+
+def test_batch_prewarm_below_min_silent_when_prefix_meets_provider_min() -> None:
+    """A 2000-token prefix on Sonnet (1024 min) is above the threshold — the
+    cache marker will fire at the provider, no warning needed."""
+    prefix = "stable " * 2000  # well above 1024 under word-count tokenizer
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": prefix + "${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+
+
+def test_batch_prewarm_below_min_silent_when_prewarm_not_declared() -> None:
+    """Without ``prewarm: true``, the boundary-classification check doesn't
+    run — this warning is specifically for declared-prewarm batches whose
+    prefix won't actually fire."""
+    prefix = "tiny "
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": prefix + "${item.text}"},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+
+
+def test_batch_prewarm_below_min_silent_when_first_per_item_at_position_zero() -> None:
+    """Position-zero per-item ref is the ``cache.prewarm-no-prefix`` case;
+    the two warnings are mutually exclusive on ``first_per_item_position``.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": "${item.text}\nScore this."},
+            }
+        ],
+    }
+
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+    warning_ids = {d.id for d in result.warnings}
+    assert "cache.prewarm-no-prefix" in warning_ids
+    assert "cache.batch-prewarm-below-min" not in warning_ids
+
+
+def test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present() -> None:
+    """When ``## Cache`` is declared and the node has ``prompt_cache:``,
+    prewarm writes the declared chunk once via the serialized first call.
+    The prompt-body prefix length is irrelevant to whether caching fires —
+    the declared chunk is what gets cached. ``cache.below-min-tokens``
+    handles the declared-cache path (and would fire if the declared chunk
+    were below min, which is a separate scenario). The new ID stays silent.
+    """
+    short_prefix = "tiny "
+    workflow_ir = {
+        "cache": {"items": [{"name": "ctx", "var_expr": "ctx"}]},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "prompt_cache": ["ctx"],
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": short_prefix + "${item.text}"},
+            }
+        ],
+        "inputs": {"ctx": {"type": "string"}},
+    }
+
+    result = analyze(
+        workflow_ir,
+        parameters={"ctx": "x"},
+        workflow_path="x.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+
+
 def test_inputs_indirection_does_not_suppress_prewarm_recommendation() -> None:
     """Mutation contract: removing prompt-ref dealiasing loses batch_prefix evidence."""
     fixture = Path(__file__).parents[1] / "fixtures" / "cache_analysis" / "inputs_indirection_batch.pflow.md"

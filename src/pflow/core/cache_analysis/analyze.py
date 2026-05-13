@@ -63,7 +63,9 @@ from pflow.core.workflow_id import synthesize_inline_workflow_id
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .below_min_tokens_detector import (
+    BatchPrewarmBelowMinEvidence,
     BelowMinTokensEvidence,
+    detect_batch_prewarm_below_min,
 )
 from .below_min_tokens_detector import (
     detect as detect_below_min_tokens,
@@ -2534,13 +2536,21 @@ def _per_node_warnings(
     diagnostics.extend(_dynamic_before_static_warnings(node, row, declared_chunks=declared_chunks))
     diagnostics.extend(_opaque_prompt_warnings(node, row, nodes_by_id=nodes_by_id))
 
-    # cache.prewarm-no-prefix — prewarm: true with no static prefix before
-    # the first batch-scoped reference. Detected by inspecting the unresolved
-    # template at position 0.
-    #
-    # Boundary classification MUST match the runtime gate at
+    # Prewarm boundary classification MUST match the runtime gate at
     # ``nodes/llm/llm.py`` so analyzer and runtime agree on what counts as
     # batch-scoped, including refs indirected through ``params.inputs``.
+    #
+    # Two mutually-exclusive findings fire on the position of the first
+    # per-item ref:
+    #   * ``cache.prewarm-no-prefix`` — first == 0 (no static bytes before
+    #     the per-item ref; nothing to cache).
+    #   * ``cache.batch-prewarm-below-min`` — first > 0 but the bytes before
+    #     it tokenize below the provider's minimum (auto batch-prefix marker
+    #     will silently no-op at the provider). Gated on
+    #     ``not row.declared_prompt_cache``: when ``## Cache`` is declared,
+    #     prewarm writes that chunk once via the serialized first call —
+    #     the prompt-body prefix is irrelevant to whether caching fires,
+    #     and ``cache.below-min-tokens`` handles the declared-cache path.
     prewarm = node.get("prewarm")
     batch = node.get("batch")
     if prewarm is True and isinstance(batch, dict):
@@ -2559,6 +2569,29 @@ def _per_node_warnings(
                         first_dynamic_position=0,
                     )
                 )
+            elif first is not None and first > 0 and not row.declared_prompt_cache:
+                prefix_tokens = estimate_tokens(row.model, prompt[:first])[0]
+                prewarm_finding = detect_batch_prewarm_below_min(
+                    BatchPrewarmBelowMinEvidence(
+                        node_id=node_id,
+                        model=row.model,
+                        prefix_tokens=prefix_tokens,
+                        batch_alias=alias,
+                    )
+                )
+                if prewarm_finding is not None:
+                    diagnostics.append(
+                        make_diagnostic(
+                            "cache.batch-prewarm-below-min",
+                            node_id=prewarm_finding.node_id,
+                            affected_workflow=row.workflow_path,
+                            model=prewarm_finding.model,
+                            prefix_tokens=prewarm_finding.prefix_tokens,
+                            min_tokens=prewarm_finding.min_tokens,
+                            batch_alias=prewarm_finding.batch_alias,
+                            provider_note=prewarm_finding.provider_note,
+                        )
+                    )
 
     return diagnostics
 

@@ -38,7 +38,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 23 entries (22 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 24 entries (23 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -63,10 +63,13 @@ def test_catalog_size_matches_v1_inventory() -> None:
       `## Cache`)
     - ``cache.unsupported-provider-ttl`` (Gemini dynamic-TTL follow-up:
       provider capability validation for minute-level TTLs)
+    - ``cache.batch-prewarm-below-min`` (Task 159 follow-up: prewarm batches
+      whose static prefix is below the provider minimum; warns that the
+      cache marker will silently no-op at the provider).
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 23
+    assert len(CACHE_WARNING_CATALOG) == 24
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -210,6 +213,77 @@ def test_make_diagnostic_below_min_tokens_unknown_evidence_kind_fallback(caplog:
     )
     assert "declared cache below openai/gpt-5's minimum of 1024" in diag.message
     assert "unknown evidence_kind" in caplog.text
+
+
+def test_make_diagnostic_batch_prewarm_below_min_anthropic() -> None:
+    """Headline + message + suggestions render the prewarm-specific
+    remediation vocabulary, not declared-cache vocabulary. Provider note
+    is interpolated as the trailing clause."""
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="anthropic/claude-sonnet-4-5",
+        prefix_tokens=27,
+        min_tokens=1024,
+        batch_alias="item",
+        provider_note="cache_control markers will silently no-op at the provider",
+    )
+
+    assert diag.severity == Severity.WARNING
+    assert diag.id == "cache.batch-prewarm-below-min"
+    assert diag.context is not None
+    assert diag.context["category"] == CACHE_WARNING_CATEGORY
+
+    # Message frames the bytes-before-per-item-ref boundary, not declared cache.
+    assert "static prefix" in diag.message
+    assert "${item.X}" in diag.message
+    assert "1024" in diag.message
+    assert "anthropic/claude-sonnet-4-5" in diag.message
+    assert "cache_control markers" in diag.message
+    # Negative: prewarm vocabulary, not declared-cache vocabulary.
+    assert "declared cache" not in diag.message
+    assert "prompt_cache:" not in diag.message
+
+    # Suggestions name the two remediation paths.
+    suggestions_blob = "\n".join(diag.suggestions or ())
+    assert "Grow the static prefix" in suggestions_blob
+    assert "remove `- prewarm: true`" in suggestions_blob
+
+
+def test_make_diagnostic_batch_prewarm_below_min_gemini_implicit_cache_note() -> None:
+    """Gemini's provider note reaches the rendered message — the
+    implicit-cache hint is the key agent-UX signal for Gemini batches
+    where explicit ``cachedContents`` can't fire."""
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="gemini/gemini-2.5-flash",
+        prefix_tokens=512,
+        min_tokens=4096,
+        batch_alias="item",
+        provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply for stable prefixes",
+    )
+
+    assert "implicit cache" in diag.message
+    assert "4096" in diag.message
+
+
+def test_make_diagnostic_batch_prewarm_below_min_omits_provider_clause_when_note_empty() -> None:
+    """OpenAI / unknown providers produce empty provider notes; the message
+    must not render a stray ``; `` separator."""
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="openai/gpt-5",
+        prefix_tokens=512,
+        min_tokens=1024,
+        batch_alias="item",
+        provider_note="",
+    )
+    assert diag.message.endswith("minimum of 1024")
 
 
 def test_make_diagnostic_padding_advisory_with_savings() -> None:
@@ -659,6 +733,15 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "affected_workflow": "x.pflow.md",
             "batch_alias": "item",
             "first_dynamic_position": 0,
+        },
+        "cache.batch-prewarm-below-min": {
+            "node_id": "score",
+            "affected_workflow": "x.pflow.md",
+            "model": "anthropic/claude-sonnet-4-5",
+            "prefix_tokens": 27,
+            "min_tokens": 1024,
+            "batch_alias": "item",
+            "provider_note": "cache_control markers will silently no-op at the provider",
         },
         "cache.consolidate-to-root-recommended": {
             "root": "concept",

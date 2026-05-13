@@ -2652,6 +2652,92 @@ def test_text_recommended_actions_render_savings_with_adaptive_precision() -> No
     assert "[cache.batch-prewarm-recommended]" not in text
 
 
+def test_batch_prewarm_recommended_discloses_wall_clock_tradeoff() -> None:
+    """Bug 17: the prewarm recommendation surfaces the wall-clock trade-off
+    so agents can make an informed decision.
+
+    Pre-fix output framed ``prewarm: true`` as pure upside (``saves ~$X/run``)
+    with no mention that prewarm serializes the first batch item (~T(slowest)
+    extra wall-clock per run). For latency-sensitive workflows this could
+    make the recommendation a net loss.
+
+    A provider-specific Gemini implicit-cache caveat was considered and
+    rejected: it would need per-row model dispatch to apply cleanly, and
+    the "measure end-to-end duration" guidance in the wall-clock bullet
+    already covers the same reasoning agents would do on Gemini.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.batch-prewarm-recommended",
+        node_id="score",
+        affected_workflow="/abs/wf.pflow.md",
+        batch_size=8,
+        prefix_tokens_estimated=2000,
+        savings_pct=89,
+        savings_usd=0.42,
+    )
+
+    text = render_text(_make_analysis(warnings=[diag]))
+
+    # Positive: savings still rendered (Bug 17 doesn't suppress savings, just
+    # contextualizes them).
+    assert "saves ~$0.42/run" in text
+    # Positive: wall-clock trade-off is surfaced with the actionable hint.
+    assert "wall-clock" in text
+    assert "Measure end-to-end duration" in text
+    # Positive: the framing names this as a trade-off, not pure upside.
+    assert "Trade-off" in text
+    # Negative regression: the provider-specific implicit-cache caveat is
+    # NOT rendered. It used to fire unconditionally for every batch node;
+    # an agent reading it for an Anthropic workflow would treat the
+    # ``On Gemini, ...`` prefix as noise. Re-introducing the caveat
+    # requires per-row model dispatch, not a static suggestion bullet.
+    assert "implicit cache" not in text
+    assert "cache_read_input_tokens" not in text
+
+
+def test_batch_prewarm_below_min_renders_prewarm_remediation_not_declared_cache() -> None:
+    """The new ``cache.batch-prewarm-below-min`` ID must render the
+    prewarm-specific remediation path (restructure the prompt, OR remove
+    ``- prewarm: true``) — NOT the declared-cache remediation path
+    (``Increase cache content`` / ``remove prompt_cache:``).
+
+    Agents reading this ID have NO ``prompt_cache:`` declaration to remove,
+    so leaking declared-cache vocabulary would mislead.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score-choruses",
+        affected_workflow="/abs/wf.pflow.md",
+        model="anthropic/claude-sonnet-4-5",
+        prefix_tokens=27,
+        min_tokens=1024,
+        batch_alias="item",
+        provider_note="cache_control markers will silently no-op at the provider",
+    )
+
+    text = render_text(_make_analysis(warnings=[diag]))
+
+    # Headline + message render with the prewarm boundary vocabulary.
+    assert "Batch prewarm prefix below provider minimum" in text
+    assert "static prefix" in text
+    assert "${item.X}" in text
+    assert "1024" in text
+    # Provider note flows through.
+    assert "cache_control markers" in text
+    # Suggestions name the two prewarm remediation paths.
+    assert "Grow the static prefix" in text
+    assert "remove `- prewarm: true`" in text
+    # Negative regression: lock declared-cache vocabulary OUT of this code path.
+    # The agent has no ``prompt_cache:`` to remove; mentioning it would
+    # mislead about the remediation.
+    assert "Increase cache content" not in text
+    assert "remove `prompt_cache:`" not in text
+
+
 # ---------------------------------------------------------------------------
 # Text renderer — notes
 # ---------------------------------------------------------------------------

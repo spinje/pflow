@@ -1215,3 +1215,290 @@ Verification:
   `12-real-world-lyrics-generator` cases.
 - `ruff check` on touched files and `mypy src/pflow/core/cache_analysis/`
   clean.
+
+## 2026-05-13 — Task 159 Followups — FINDINGS Bug B + Bug 17: prewarm prefix-below-min + wall-clock disclosure
+
+Two field-report items shipped together because they share `_provider_note`
+and the "what does `prewarm: true` mean to the agent" mental model.
+
+### Problem statement
+
+**FINDINGS Bug B** (`scratchpads/experiments/prewarm-cache-interaction/FINDINGS.md`):
+batch nodes with `prewarm: true` and a static prefix below the provider's
+minimum produce `cache_ratio_pct = 100` in analyze-cache output with no
+warning. At runtime the provider silently no-ops the `cache_control`
+marker; the agent pays full price plus the prewarm wall-clock penalty.
+The E3 experiment workflow (27-token prefix on Sonnet-4-5, 1024 min) is
+the canonical first-contact agent failure case.
+
+**FINDINGS Bug 17** (`cache-analyzer-feedback-part2-20260511.md`): the
+existing `cache.batch-prewarm-recommended` action presents `prewarm: true`
+as pure upside (`saves ~$0.0007/run`) without disclosing that it
+serializes the first batch item, adding ~T(slowest item) of wall-clock to
+every run. Verified 4.2–4.6× wall-clock penalty in isolation. For
+latency-sensitive workflows the recommendation can be a net loss.
+
+### Root cause investigation
+
+`below_min_tokens_detector.detect` (the existing detector behind
+`cache.below-min-tokens`) gates on `evidence.declared_prompt_cache`
+non-empty. The outer call site at `analyze.py:_per_node_warnings` mirrors
+that gate with `if row.declared_prompt_cache:`. Prewarm-only batches —
+where there is no `## Cache` block but `prewarm: true` is declared — skip
+both gates entirely. Post-Bug-A (per-call honest `cacheable_tokens_estimated`
+for `batch_prefix` rows) the data needed to fire a below-min warning is
+already on `PerCallRow`; the missing piece was an emission path.
+
+`cache.batch-prewarm-recommended` is emitted by
+`_batch_prewarm_recommendations` (`analyze.py:2566-2627`) only when
+`"prewarm" not in node`. The savings formula is pure tokens × rate, no
+wall-clock factor; no trace per-event duration ever flows into
+`PerCallRow`.
+
+### Architectural reasoning
+
+**New catalog ID vs extending `cache.below-min-tokens`.** Considered both;
+chose new ID `cache.batch-prewarm-below-min` because the remediation
+prose differs fundamentally. `cache.below-min-tokens` suggests "Increase
+cache content above {min_tokens} tokens by adding more chunks to
+## Cache, OR remove `prompt_cache:` from {node_id}" — both phrases
+assume declared cache. The prewarm path's agent has no `prompt_cache:`
+to remove; their options are restructure the prompt prefix or drop
+`prewarm: true`. Leaking declared-cache vocabulary into prewarm
+diagnostics would mislead. DD#27/29 (closed catalog) is honored — this
+counts as the design review for adding the new ID.
+
+**Static caveat vs trace-backed wall-clock number.** Considered plumbing
+`slowest_item_duration_ms` from trace into a new `PerCallRow` field and
+rendering `adds ~9.2s wall-clock per run (from trace)` when available.
+Rejected for this PR: prematurely adds a field nothing else consumes
+("design for hypothetical future requirements" smell), and the
+qualitative caveat already addresses the actively-misleading framing.
+The wall-clock bullet's "Measure end-to-end duration before committing"
+hint gives agents the same actionable reasoning a concrete number
+would — without the plumbing risk. Trace-backed seconds can land later
+when a second consumer for per-row latency shows up.
+
+**Gemini implicit-cache caveat — considered and rejected.** First draft
+included an "On Gemini, the provider's implicit cache may already capture
+most prefix savings without `prewarm: true`" bullet. Removed after review
+on three grounds: (1) it fired unconditionally for every batch node
+because catalog suggestions don't dispatch on `row.model`, making it
+noise for Anthropic/OpenAI agents; (2) it's based on one experimental
+data point and Gemini's implicit-cache behavior isn't precisely
+documented; (3) it effectively second-guesses the headline recommendation
+("we recommend X, but maybe ignore it"), undermining its actionability.
+If a stronger version is wanted later, it needs per-row provider dispatch
+at emission time and ideally trace evidence — not a static suggestion.
+
+**Shared `provider_clause` derivation.** Lifted the inline
+`format_dict["provider_clause"] = "; " + provider_note` from
+`_select_below_min_tokens_template` into `make_diagnostic` itself,
+guarded by `if "provider_note" in context_kwargs`. Both catalog IDs share
+it; any future provider-aware ID gets it automatically. Mirrors the
+existing `node_count → nodes_phrase` and `affected_input_count →
+inputs_phrase` derivations.
+
+### Implementation
+
+**Detector (`below_min_tokens_detector.py`, +47 LOC):**
+- `BatchPrewarmBelowMinEvidence` (frozen dataclass) — fields `node_id`,
+  `model`, `prefix_tokens`, `batch_alias`.
+- `BatchPrewarmBelowMinFinding` — adds `min_tokens`, `provider_note`.
+- `detect_batch_prewarm_below_min(evidence)` returns finding when
+  `prefix_tokens > 0` AND `prefix_tokens < get_min_cache_tokens(model)`.
+  Reuses the existing `_provider_note(model)` helper — no new
+  provider-string vocabulary. The `prefix_tokens > 0` floor is
+  load-bearing: the zero-prefix case is owned by `cache.prewarm-no-prefix`
+  and the two warnings must be mutually exclusive.
+
+**Catalog (`warning_catalog.py`, +50 LOC):**
+- `_BATCH_PREWARM_BELOW_MIN_MESSAGE` template — message names the bytes
+  before the first `${{<batch_alias>.X}}` reference (not "declared
+  cache").
+- `cache.batch-prewarm-below-min` spec — severity WARNING, category
+  `CACHE_WARNING_CATEGORY`, required context
+  `(node_id, model, prefix_tokens, min_tokens, batch_alias,
+  provider_note)`, two suggestions (restructure prompt OR remove
+  `- prewarm: true`).
+- Priority slot 30 — Tier 5 (informational warnings that surface latent
+  issues), peer with `cache.below-min-tokens` and
+  `cache.prewarm-no-prefix`.
+- `cache.batch-prewarm-recommended` `suggestions_template` extended with
+  one wall-clock trade-off bullet between the existing "Add `- prewarm:
+  true`" line and the "OR add `- prewarm: false`" line. No new context
+  keys; no emission-side change.
+- `make_diagnostic` shared `provider_clause` derivation (see
+  Architectural reasoning).
+
+**Emission (`analyze.py:_per_node_warnings`, +29 LOC):**
+- Extended the existing prewarm block. Mutual exclusion is per
+  `first_per_item_position(prompt, alias, node_inputs)`:
+  - `first == 0` → `cache.prewarm-no-prefix` (existing).
+  - `first > 0` AND `not row.declared_prompt_cache` →
+    `cache.batch-prewarm-below-min` (new). The `not declared_prompt_cache`
+    guard is critical: when `## Cache` is declared, prewarm writes the
+    declared chunk via the serialized first call — the prompt-body prefix
+    is irrelevant. Caught by the baseline harness on
+    `13-happy-path-interactions/01-batch-cache-prewarm-happy` (the
+    "already-optimal" case) before merging. `cache.below-min-tokens`
+    owns the declared-cache below-min path.
+- `prefix_tokens` computed via `estimate_tokens(row.model, prompt[:first])`
+  — mirrors `_batch_prewarm_recommendations`'s own boundary tokenization,
+  not the `PerCallRow.cacheable_tokens_estimated` field. More robust
+  against future projection-tier changes.
+
+**MCP docstring (`mcp_server/tools/execution_tools.py`, +1 LOC):** new
+ID added to the public-API docstring list per the
+`test_docstring_lists_every_catalog_id` contract.
+
+### Tests added (+10)
+
+**Detector unit tests (`test_below_min_tokens_detector.py`):**
+- `test_prewarm_below_min_prefix_under_threshold_returns_finding`
+- `test_prewarm_below_min_prefix_at_threshold_returns_none`
+- `test_prewarm_below_min_prefix_above_threshold_returns_none`
+- `test_prewarm_below_min_zero_or_negative_prefix_returns_none` —
+  documents the mutual-exclusion floor.
+- `test_prewarm_below_min_empty_model_returns_none`
+- `test_prewarm_below_min_provider_notes_are_provider_specific` —
+  Anthropic, Gemini, OpenAI distinct prose.
+- `test_prewarm_below_min_threshold_varies_by_model` — Sonnet-4-5 (1024)
+  vs Opus-4-7 (4096) on the same 2048-token prefix, verifies the
+  threshold lookup isn't hardcoded.
+
+**Catalog/make_diagnostic tests (`test_cache_analysis_warnings.py`):**
+- Bumped `test_catalog_size_matches_v1_inventory` from 23 → 24 + added
+  the new ID to the docstring inventory.
+- `test_make_diagnostic_batch_prewarm_below_min_anthropic` — positive
+  + negative substring assertions; locks declared-cache vocabulary
+  (`declared cache`, `prompt_cache:`) OUT of this code path.
+- `test_make_diagnostic_batch_prewarm_below_min_gemini_implicit_cache_note`
+  — verifies the Gemini provider-note prose reaches the message.
+- `test_make_diagnostic_batch_prewarm_below_min_omits_provider_clause_when_note_empty`
+  — OpenAI / unknown providers produce empty notes; message must not
+  render a stray `; ` separator.
+- Added the new ID's sample context to the parametrized
+  `test_every_id_round_trips_through_make_diagnostic` table.
+
+**End-to-end emission tests (`test_cache_analysis_per_id_emission.py`):**
+- `test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min`
+  — the headline positive case.
+- `test_batch_prewarm_below_min_silent_when_prefix_meets_provider_min`
+- `test_batch_prewarm_below_min_silent_when_prewarm_not_declared`
+- `test_batch_prewarm_below_min_silent_when_first_per_item_at_position_zero`
+  — mutual exclusion vs `cache.prewarm-no-prefix`.
+- `test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present`
+  — locks the `not row.declared_prompt_cache` guard discovered via
+  baseline drift on `13-happy-path-interactions/01-batch-cache-prewarm-happy`.
+
+**Round-trip test (`test_cache_analysis_per_id_coverage.py`):** added a
+real-producer-path emission case for the new ID — drives `analyze()` on
+a minimal workflow, asserts the diagnostic surfaces, JSON-round-trips
+the result. Also added the new ID's sample to the parametrized samples
+dict so `test_every_catalog_id_has_a_kwargs_sample` passes.
+
+**Renderer tests (`test_cache_analysis_renderers.py`):**
+- `test_batch_prewarm_recommended_discloses_wall_clock_tradeoff` —
+  positive assertions on `wall-clock`, `Trade-off`, `Measure end-to-end
+  duration`. Negative assertions lock out `implicit cache` and
+  `cache_read_input_tokens` (the rejected Gemini caveat).
+- `test_batch_prewarm_below_min_renders_prewarm_remediation_not_declared_cache`
+  — positive on `Batch prewarm prefix below provider minimum`,
+  `static prefix`, `${item.X}`, `Grow the static prefix`,
+  `remove \`- prewarm: true\``; negative on `Increase cache content` and
+  `remove \`prompt_cache:\`` (declared-cache vocabulary lockout).
+
+### Baselines
+
+- **New**: `04-warning-catalog/22-cache.batch-prewarm-below-min/` — minimal
+  fixture mirroring the E3 experiment (Sonnet-4-5 + `prewarm: true` + ~5-
+  token prompt prefix + 4-item static batch). README documents the
+  mutation contract.
+- **Regenerated**: `10-live-recordings/05-gemini-lyrics-generator/` —
+  locks the Bug 17 wall-clock trade-off in the real lyrics-generator
+  output. This is the canonical workflow this fix was motivated by.
+- **Repaired**: `05-advisory-cases/03-prewarm-explicit-true-no-warning/`
+  — the fixture README claimed "adequate static prefix" but the prompt
+  was ~23 tokens, well below Sonnet's 1024. The new emission correctly
+  fired here. Fixed the fixture to actually have an adequate prefix
+  (added `${context}` input loaded from `_shared/long-stable-text.txt`)
+  so the original "no warning when prewarm explicit + adequate prefix"
+  contract holds. Test contract preserved: with adequate prefix, neither
+  `cache.batch-prewarm-recommended` nor `cache.batch-prewarm-below-min`
+  fires.
+- **README**: surface-04 inventory updated to 23 cases, 20/23 trigger
+  target ID; status table row updated to match.
+
+### Verification
+
+- Focused cache-analysis + CLI suite: 568 passed.
+- Round-trip + per-id coverage tests: 7 passed.
+- MCP analyze_cache tool tests (docstring contract): 11 passed.
+- Full sandbox-safe suite (`-m "not e2e"`, excluding `uv`-spawning
+  subprocess tests that panic before Python starts in this sandbox):
+  **6,686 passed, 10 skipped, 43 deselected**.
+- Baseline harness: 72 passed, 4 drifted — all 4 drifts confirmed
+  pre-existing via `git stash` + rerun:
+  `01-parser-errors/{01,06,08}` (TTL wording, ongoing) and
+  `04-warning-catalog/12-cache.discrepancy` (uses `uv run python -` which
+  the sandbox `uv` wrapper doesn't handle).
+- `ruff check`, `ruff format --check`, `mypy src/pflow/core/cache_analysis/
+  src/pflow/mcp_server/tools/` — clean on all 18 touched source files.
+
+### Tacit knowledge
+
+**The two-gate pattern in `_per_node_warnings`.** The outer `if
+row.declared_prompt_cache:` block routes to `cache.below-min-tokens`; the
+new `elif first > 0 and not row.declared_prompt_cache:` routes to
+`cache.batch-prewarm-below-min`. The two paths are now symmetric in
+shape and mutually exclusive on declared-cache presence. Future
+prewarm/cache-tier diagnostics that want to distinguish "declared cache
+agent" from "prewarm-only agent" can reuse the same gating predicate.
+
+**`first_per_item_position` is the canonical boundary primitive.** Both
+`cache.prewarm-no-prefix` and the new `cache.batch-prewarm-below-min`
+read it. The unified `prompt_refs.classify_prompt_refs` helper covers
+`- inputs:` dealiasing so the analyzer matches the runtime gate at
+`nodes/llm/llm.py`. Three different prewarm-adjacent warnings now agree
+on what "first per-item position" means.
+
+**Adjacent threshold-gate asymmetry in `_batch_prewarm_recommendations`.**
+Noted in plan review; not addressed in this PR. The function's
+`uses_existing_prefix_evidence` branch (line 2594-2598) skips the
+provider-min threshold check the prompt-walk branch enforces (line
+2606). For a row with `cacheable_data_source == "batch_prefix"`,
+`cacheable_tokens_estimated < min`, AND `prewarm not in node`, the
+function would emit `cache.batch-prewarm-recommended` — recommending
+prewarm for a prefix that would silently no-op. Narrow case (requires
+batch_prefix evidence WITHOUT prewarm being declared, which the analyzer
+sets when stable bytes exist regardless of prewarm). With Bug B in place
+the same agent gets the new warning *after* they declare prewarm, but
+catching it pre-declaration would be cleaner. Worth a small GH item.
+
+**Rejected: Gemini-specific implicit-cache caveat.** First draft included
+"On Gemini, the provider's implicit cache may already capture most
+prefix savings without `prewarm: true`" as a third suggestion bullet.
+Removed because catalog suggestions render unconditionally per
+diagnostic ID — the bullet showed for Anthropic and OpenAI agents too,
+where the prefix `On Gemini, ...` made it self-scoping but still noisy.
+Stronger version would require per-row provider dispatch at emission
+time, ideally with trace evidence showing the implicit cache is firing.
+Negative-test assertions (`assert "implicit cache" not in text`,
+`assert "cache_read_input_tokens" not in text`) lock the rejection in.
+
+### What's next (still open)
+
+- **Adjacent threshold-gate asymmetry** (above). File as a small GH item;
+  fix shape is a one-line guard in `_batch_prewarm_recommendations`
+  before line 2615.
+- **Per-row trace-backed wall-clock estimate**. Deferred; would surface
+  as `Trade-off: ... adds ~9.2s wall-clock per run (from trace)` when
+  trace data is available. Requires `PerCallRow.duration_ms` (currently
+  `duration_ms` lives only on trace LLM events). Second consumer for
+  per-row latency would justify the plumbing.
+- **Gemini implicit-cache caveat** (if wanted): needs per-row model
+  dispatch + a `provider_specific_note` derivation in `make_diagnostic`.
+  Probably best done alongside the trace-backed wall-clock number so the
+  Gemini caveat can quote the agent's actual `cache_read_input_tokens`
+  evidence instead of generic prose.

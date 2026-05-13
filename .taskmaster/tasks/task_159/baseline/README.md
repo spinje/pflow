@@ -30,7 +30,7 @@ for the initial construction findings.
 | Surface 01 — parser errors (10 cases) | ✅ done; 1 finding (F-01) |
 | Surface 02 — validator errors (8 cases) | ✅ done |
 | Surface 03 — analyze-cache modes (8 cases, compressed from 17) | ✅ done |
-| Surface 04 — warning catalog (22 cases: 21 IDs + subpath variant) | ✅ done; 19/22 trigger target ID; 3 non-trigger cases intentionally lock current silence |
+| Surface 04 — warning catalog (23 cases: 22 IDs + subpath variant) | ✅ done; 20/23 trigger target ID; 3 non-trigger cases intentionally lock current silence |
 | Surface 05 — advisory cases (5 cases) | ✅ done |
 | **Surface 06 — dry-run nudge (3 cases)** | ✅ done; positive nudge, optimal silence, and structural cache error |
 | **Surface 10 — live recordings (2 cases)** | ✅ partial; Gemini translation + real lyrics-generator trace committed |
@@ -118,7 +118,7 @@ cases. The remaining original Surface 11 variants (`with-fixture-trace` and
 example dry-run footer) are optional because trace mode is covered by Surface
 03/10 and dry-run behavior is covered by Surface 06.
 
-### Surface 04 — Warning catalog (22/22 cases captured; 19 trigger target ID)
+### Surface 04 — Warning catalog (23/23 cases captured; 20 trigger target ID)
 
 | # | ID | Triggered |
 |---|---|---|
@@ -144,6 +144,7 @@ example dry-run footer) are optional because trace mode is covered by Surface
 | 19 | cache.prompt-body-shadows-cache | ⏭ (intentional silence fixture — fires duplicates instead) |
 | 20 | llm.thinking-temperature-mismatch | ✓ |
 | 21 | cache.prompt-cache-incomplete | ✓ |
+| 22 | cache.batch-prewarm-below-min | ✓ |
 
 The 3 untriggered cases STILL serve as regression gates: they capture the
 analyzer's current output on the fixture; if a code change makes one of these

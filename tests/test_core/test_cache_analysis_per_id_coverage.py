@@ -200,6 +200,17 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
             "score",
             {"batch_alias": "item", "first_dynamic_position": 0, "affected_workflow": "x.pflow.md"},
         ),
+        "cache.batch-prewarm-below-min": (
+            "score",
+            {
+                "model": "anthropic/claude-sonnet-4-5",
+                "prefix_tokens": 27,
+                "min_tokens": 1024,
+                "batch_alias": "item",
+                "provider_note": "cache_control markers will silently no-op at the provider",
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
         "cache.consolidate-to-root-recommended": (
             None,
             {
@@ -580,6 +591,30 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.prewarm-no-prefix: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.prewarm-no-prefix")
+
+    # cache.batch-prewarm-below-min: prewarm: true with a short static prefix
+    # before ${item.X}. The detector reads the real ``get_min_cache_tokens``
+    # from ``llm_capabilities`` (not the analyzer-patched stub at 10), so a
+    # ~5-token prefix on Sonnet-4-5 is honestly below the 1024 minimum.
+    batch_prewarm_below_min_ir: dict[str, Any] = {
+        "inputs": {"items": {"type": "list"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "Score this: ${item.text}"},
+            }
+        ],
+        "edges": [],
+    }
+    analysis = analyze(batch_prewarm_below_min_ir)
+    found = [d for d in analysis.warnings if d.id == "cache.batch-prewarm-below-min"]
+    assert found, f"analyze did not emit cache.batch-prewarm-below-min: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.batch-prewarm-below-min")
 
     # cache.batch-prewarm-recommended: batch with large static prefix, no
     # explicit prewarm decision.

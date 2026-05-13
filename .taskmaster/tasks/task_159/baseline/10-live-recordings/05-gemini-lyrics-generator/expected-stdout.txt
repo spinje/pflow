@@ -38,6 +38,7 @@
      score-choruses in chorus-chooser.pflow.md
      score-choruses: stable ~1061-token prompt prefix repeats across 136 batch calls. Prewarming writes the prefix once, then lets the remaining calls read it from cache; projected savings are aggregate for the batch, not per item.
      → Add `- prewarm: true` to score-choruses to opt in.
+     → Trade-off: `prewarm: true` runs the first batch item alone before fanning out the rest, adding roughly one item's wall-clock latency to every run. Measure end-to-end duration before committing on latency-sensitive workflows.
      → OR add `- prewarm: false` to score-choruses to silence this recommendation (use when you've decided not to prewarm — `false` is a marker for the analyzer, not a runtime toggle).
 
   2. Sub-workflow cache undeclared in review-emotional-architecture.pflow.md — add 3 entries in ## Cache  saves ~$0.0078/run

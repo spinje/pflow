@@ -168,6 +168,17 @@ _BELOW_MIN_TOKENS_DISPATCH = {
     "observed": _BELOW_MIN_TOKENS_MESSAGE_OBSERVED,
 }
 
+# cache.batch-prewarm-below-min — analyzer-only counterpart for prewarm
+# declarations whose static prefix is below the provider minimum. Vocabulary
+# differs from ``cache.below-min-tokens`` because the remediation differs
+# (restructure the prompt or remove ``prewarm: true`` — not "add chunks to
+# ## Cache" or "remove ``prompt_cache:``").
+_BATCH_PREWARM_BELOW_MIN_MESSAGE = (
+    "{node_id}: the static prefix before the first `${{{batch_alias}.X}}` "
+    "reference is ~{prefix_tokens} tokens, below {model}'s minimum of "
+    "{min_tokens}{provider_clause}"
+)
+
 
 def _basename_for_workflow(path: str) -> str:
     """Strip directory components and the workflow suffix for compact rendering."""
@@ -337,6 +348,10 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         suggestions_template=(
             "Add `- prewarm: true` to {node_id} to opt in.",
+            "Trade-off: `prewarm: true` runs the first batch item alone before "
+            "fanning out the rest, adding roughly one item's wall-clock latency "
+            "to every run. Measure end-to-end duration before committing on "
+            "latency-sensitive workflows.",
             "OR add `- prewarm: false` to {node_id} to silence this recommendation (use when you've decided not to prewarm — `false` is a marker for the analyzer, not a runtime toggle).",
         ),
         path_template="nodes[id={node_id}]",
@@ -506,6 +521,30 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         path_template="nodes[id={node_id}].prompt",
         headline_template="Prewarm has no static prefix on {node_id}",
+    ),
+    "cache.batch-prewarm-below-min": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=_BATCH_PREWARM_BELOW_MIN_MESSAGE,
+        required_context_keys=(
+            ("node_id", str),
+            ("model", str),
+            ("prefix_tokens", int),
+            ("min_tokens", int),
+            ("batch_alias", str),
+            ("provider_note", str),
+        ),
+        suggestions_template=(
+            "Grow the static prefix above {min_tokens} tokens — move shared "
+            "instructions, examples, or rubric content into the bytes before "
+            "`${{{batch_alias}.X}}` so the cached region clears the provider "
+            "threshold.",
+            "OR remove `- prewarm: true` from {node_id} — the prewarm marker will "
+            "not fire at the provider with a ~{prefix_tokens}-token prefix.",
+        ),
+        path_template="nodes[id={node_id}].prompt",
+        headline_template="Batch prewarm prefix below provider minimum on {node_id}",
     ),
     "cache.consolidate-to-root-recommended": CacheWarningSpec(
         severity=Severity.INFO,
@@ -818,6 +857,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.unused-chunk": 30,
     "cache.below-min-tokens": 30,
     "cache.prewarm-no-prefix": 30,
+    "cache.batch-prewarm-below-min": 30,
     "cache.consolidate-to-root-recommended": 30,
     "cache.first-call-write-penalty": 30,
     "cache.opaque-prompt": 30,
@@ -949,8 +989,6 @@ def _select_below_min_tokens_template(
     context_kwargs: dict[str, Any],
     format_dict: dict[str, Any],
 ) -> str:
-    provider_note = str(context_kwargs["provider_note"])
-    format_dict["provider_clause"] = f"; {provider_note}" if provider_note else ""
     evidence_kind = context_kwargs["evidence_kind"]
     template = _BELOW_MIN_TOKENS_DISPATCH.get(evidence_kind)
     if template is not None:
@@ -1043,6 +1081,18 @@ def make_diagnostic(
         format_dict["inputs_phrase"] = (
             "entry in ## Cache" if context_kwargs["affected_input_count"] == 1 else "entries in ## Cache"
         )
+
+    # Generic ``provider_clause`` derivation. Any catalog template that ends
+    # with ``{provider_clause}`` interpolates a "; <note>" suffix when the
+    # detector produced a per-provider hint (e.g. "cache_control markers will
+    # silently no-op at the provider"), or an empty string for providers
+    # without a hint. Shared by ``cache.below-min-tokens`` and
+    # ``cache.batch-prewarm-below-min``; future catalog entries that include
+    # ``provider_note`` in required_context_keys get the same derivation
+    # automatically.
+    if "provider_note" in context_kwargs:
+        note = str(context_kwargs["provider_note"])
+        format_dict["provider_clause"] = f"; {note}" if note else ""
 
     selected_message_template = _select_message_template(
         warning_id=warning_id,

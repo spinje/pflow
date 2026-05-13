@@ -56,7 +56,7 @@
     "total_llm_nodes_estimated": 1,
     "total_llm_invocations_estimated": null,
     "dynamic_batch_node_count": 1,
-    "total_input_tokens_estimated": 6024,
+    "total_input_tokens_estimated": 9,
     "total_cacheable_tokens_estimated": 0,
     "models_in_use": [
       "anthropic/claude-sonnet-4-5"
@@ -79,7 +79,7 @@
     "root_llm_node_count": 1,
     "sub_workflow_llm_node_count": 0,
     "sub_workflow_rollup": null,
-    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md context=<value> items=<value>"
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md items=<value>"
   },
   "blocking_errors": [],
   "other_blocking_errors": [],
@@ -90,10 +90,10 @@
       "node_id": "scoring",
       "estimated_savings_usd": null,
       "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
-      "message": "scoring: the static prefix before the first `${item.X}` reference is ~24 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
+      "message": "scoring: the static prefix before the first `${item.X}` reference is ~5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
       "suggestions": [
         "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
-        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~24-token prefix."
+        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~5-token prefix."
       ]
     }
   ],
@@ -105,9 +105,9 @@
       "model": "anthropic/claude-sonnet-4-5",
       "is_batch": true,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 6024,
+      "input_tokens_estimated": 9,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 6024,
+      "body_tokens_estimated": 9,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cacheable_tokens_estimated": null,
@@ -135,19 +135,19 @@
   "warnings": [
     {
       "severity": "warning",
-      "message": "scoring: the static prefix before the first `${item.X}` reference is ~24 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
+      "message": "scoring: the static prefix before the first `${item.X}` reference is ~5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
       "source": "cache_analyzer",
       "id": "cache.batch-prewarm-below-min",
       "title": "Cache Warning",
       "suggestions": [
         "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
-        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~24-token prefix."
+        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~5-token prefix."
       ],
       "node_id": "scoring",
       "context": {
         "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "model": "anthropic/claude-sonnet-4-5",
-        "prefix_tokens": 24,
+        "prefix_tokens": 5,
         "min_tokens": 1024,
         "batch_alias": "item",
         "provider_note": "cache_control markers will silently no-op at the provider",

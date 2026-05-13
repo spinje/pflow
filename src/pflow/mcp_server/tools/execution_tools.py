@@ -499,6 +499,7 @@ async def analyze_cache(
       - cache.invalid-on-non-llm
       - cache.unsupported-provider-ttl
       - cache.prewarm-no-prefix
+      - cache.batch-prewarm-below-min
       - cache.consolidate-to-root-recommended
       - cache.heterogeneous-models-fragment-cache
       - cache.first-call-write-penalty
