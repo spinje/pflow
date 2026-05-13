@@ -17,6 +17,10 @@
 
 Task 159 ships provider-level prompt caching as a declarative workflow surface (`## Cache` block + per-node `prompt_cache:` opt-in), auto batch-prefix caching gated on `prewarm: true`, a new `pflow analyze-cache` command with text/JSON/MCP parity, and trace-format extensions to record cache fidelity. The cache rendering layer was end-to-end verified on real Anthropic + Gemini calls (−25% first-run, −73% rerun-within-TTL). Most volume is in the **analyzer** (`src/pflow/core/cache_analysis/`), whose final shape is a diagnostic/projection engine: it now handles validator errors, prompt-shape recommendations, cross-workflow projections, trace coverage semantics, and renderer/MCP/JSON contracts in addition to "where should I cache?"
 
+## Goal
+
+Make it as easy as possible for an AI agent — given **either a simple or a very complex `.pflow.md` workflow** — to understand what changes it needs to make to get optimal prompt caching for that workflow. The analyzer must handle batch, sub-workflows, and other complex features, and explain everything with **great agent UX**. **No pflow internals exposed in agent-facing output**: just high-signal, easy-to-understand information for AI agents.
+
 ## Fast Navigation
 
 - **Changing provider cache rendering**: start at `src/pflow/core/cache_render.py`, `src/pflow/nodes/llm/llm.py`, `src/pflow/runtime/engine/plan_node.py`, then run the hash/render parity tests.
