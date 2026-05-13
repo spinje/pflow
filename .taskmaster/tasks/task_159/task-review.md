@@ -11,7 +11,7 @@
 - **Catalog size**: closed list of **22 entries** (21 `cache.*` + `llm.thinking-temperature-mismatch`)
 - **Spec**: `.taskmaster/tasks/task_159/task-159.md` (~617 lines, 37 design decisions)
 - **Implementation log**: `.taskmaster/tasks/task_159/implementation/implementation-progress-log.md` (11,777 lines — read it; do not skim)
-- **Review trust boundary**: this file is a distilled navigation artifact. For disputed implementation details, verify against `src/pflow/core/cache_analysis/CLAUDE.md`, source, tests, and the progress log entries dated 2026-05-08 → 2026-05-11.
+- **Review trust boundary**: this file is a distilled navigation artifact. For disputed implementation details, verify against `src/pflow/core/cache_analysis/CLAUDE.md`, source, tests, and the progress log entries dated 2026-05-08 → 2026-05-11. For unresolved follow-ups and GitHub tracking, use `.taskmaster/tasks/task_159/reports/open-bugs-and-ux-followups.md`.
 
 ## Executive Summary
 
@@ -48,7 +48,7 @@ Make it as easy as possible for an AI agent — given **either a simple or a ver
 - Independently sourced token estimation for `input_tokens_estimated`, `output_tokens_estimated`, and `cacheable_tokens_estimated`. **Important final contract**: `cacheable_tokens_estimated` no longer has the old Tier-3 75%-of-prompt heuristic; unresolved declared chunks return `(None, "unavailable")`.
 - 4-state cost (`trace` / `trace_partial` / `recomputed` / `unavailable`).
 - Cross-workflow walker (Tier 2) detects rename-across-boundary, prose mismatches, value-flow opportunities, and parent→child undeclared-cache projections. Rename diagnostics are JSON/raw-only in text mode because variable names do not reach the provider wire.
-- Discrepancy attribution (`--from-trace`): TTL expiry / chunks_skipped / key_mismatch / unknown.
+- Discrepancy attribution (`--from-trace`): chunks_skipped / key_mismatch / unknown. The old TTL-expiry branch was removed because it conflated local memo-cache age with provider prompt-cache TTL; real provider TTL detection is deferred in the follow-up backlog.
 - 22 stable catalog entries at `src/pflow/core/cache_analysis/warning_catalog.py::CACHE_WARNING_CATALOG`.
 
 **Trace format**:

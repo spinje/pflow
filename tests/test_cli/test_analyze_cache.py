@@ -378,7 +378,7 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     )
 
 
-def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix() -> None:
+def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix(tmp_path: Path) -> None:
     """CLI integration: unresolved code-node refs make could-cache unavailable.
 
     History: ``bug-16-variant-inputs-indirection`` previously rendered a tiny
@@ -387,7 +387,93 @@ def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix() -> None:
     ``estimate_tokens(prompt[:first])``; this test fails because JSON reports a
     small integer instead of ``null`` for ``cacheable_tokens_estimated``.
     """
-    workflow_path = Path("scratchpads/experiments/bug-16-variant-inputs-indirection.pflow.md")
+    workflow_path = _write_workflow(
+        tmp_path,
+        """\
+# Batch Inputs Indirection
+
+## Inputs
+
+### seed
+
+Optional seed.
+
+- type: string
+- required: false
+- default: "indir"
+
+## Steps
+
+### make-shared-bundle
+
+Code node returns dict with 3 fields.
+
+- type: code
+- inputs:
+    seed: ${seed}
+
+```python code
+seed: str
+
+base = (
+    "You are an experiment subject in a controlled test of caching mechanics. "
+    "This is a stable instruction block that does not vary across batch items. "
+    "Your job is to confirm you received this block by emitting a single sentence "
+    "that quotes the last word of this block. "
+)
+
+def make_field(label):
+    body = "\\n\\n".join(base * 5 for _ in range(50))
+    return f"[Field {label}]\\n{body}\\nEnd of field {label}, seed={seed}"
+
+result: dict = {
+    "field_a": make_field("A"),
+    "field_b": make_field("B"),
+    "field_c": make_field("C"),
+}
+```
+
+### batch-llm
+
+Batch of 4 LLM calls. Per-item refs go through inputs mapping.
+
+- type: llm
+- temperature: 0.3
+- prompt: |
+    Stable preamble for the analyzer to detect.
+    Field A:
+    ${make-shared-bundle.result.field_a}
+    Field B:
+    ${make-shared-bundle.result.field_b}
+    Field C:
+    ${make-shared-bundle.result.field_c}
+    Per-item task -- Task ${item_id}: respond with exactly one short sentence that includes the word "${item_cue}".
+- inputs:
+    item_id: ${item.id}
+    item_cue: ${item.cue}
+
+```yaml batch
+items:
+  - id: 1
+    cue: "alpha"
+  - id: 2
+    cue: "bravo"
+  - id: 3
+    cue: "charlie"
+  - id: 4
+    cue: "delta"
+parallel: true
+```
+
+## Outputs
+
+### responses
+
+The 4 LLM responses.
+
+- source: ${batch-llm.results}
+""",
+    )
     runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         cli,
