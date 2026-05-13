@@ -415,6 +415,16 @@ async def analyze_cache(
         values like ``article=<value>``). ``null`` for inline IR or
         ``ir-hash:`` lookup keys. Surfaced on unavailable-cost branches so
         agents see the exact command that lights up cost figures.
+      - ``trace_final_status`` (string | null): outcome of the run that
+        produced the loaded trace; one of ``"success"`` / ``"degraded"`` /
+        ``"failed"``. ``null`` when no trace was loaded. Auto-load prefers
+        ``"success"``/``"degraded"`` over ``"failed"`` — when a newer failed
+        trace was skipped or an older successful one was selected, a Notes
+        entry names both files.
+      - ``trace_recorded_at`` (string | null): ISO 8601 ``start_time`` from
+        the trace JSON, indicating when the run that produced the loaded
+        trace started. ``null`` when no trace was loaded or the trace
+        predates 2.1.0 (lacks ``start_time``).
 
     Sub-workflow rollup entries carry the same four primitives at child
     scope.

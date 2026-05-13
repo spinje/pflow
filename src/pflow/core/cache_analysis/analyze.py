@@ -542,6 +542,16 @@ class AnalysisSummary:
     # keys). Renderers use it on unavailable-cost branches so agents see
     # the exact command that lights up cost figures.
     suggested_run_command: str | None = None
+    # Trace transparency (Bug 1 + Bug 10 follow-ups): when a trace was loaded
+    # (autoload or ``--from-trace``), surface its final outcome + recording
+    # timestamp so the agent can see at a glance which run produced the
+    # evidence being used. ``trace_final_status`` mirrors
+    # ``trace["final_status"]`` with the same back-compat fallback as
+    # ``_trace_coverage_for_rows`` (absent → ``"success"``); ``trace_recorded_at``
+    # is the ISO ``start_time`` from the trace JSON. Both ``None`` when no
+    # trace is loaded.
+    trace_final_status: str | None = None
+    trace_recorded_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -681,7 +691,7 @@ def analyze(
     # under the final_status discriminator but is misaligned for THIS analysis
     # call. Explicit ``--from-trace`` bypasses this gate (agent's choice).
     if trace_path is None and any(row.did_not_execute_in_trace for row in per_call_rows):
-        notes.append("Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis.")
+        notes.append(_format_rejection_note(used_trace_path, trace_data))
         trace_data = None
         used_trace_path = None
         # trace_data is None here; the function short-circuits, but pass
@@ -947,31 +957,51 @@ def _load_trace_explicit(path: Path, notes: list[str]) -> dict[str, Any] | None:
     return data
 
 
-def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
-    """Find the newest 2.x trace whose ``workflow_path`` matches.
+def _format_rejection_note(
+    rejected_trace_path: str | None,
+    trace_data: dict[str, Any] | None,
+) -> str:
+    """Compose the Notes line emitted when the post-row-build gate rejects
+    an auto-loaded trace.
 
-    O(matching-traces) lookup, not O(directory-size): trace filenames encode
-    an 8-char md5 hash of ``workflow_path`` at write time (see
-    ``runtime/workflow_trace.format_trace_filename``). The reader globs by the
-    same hash prefix so we only read files that could match.
-
-    Per DD#34, auto-load is a convenience; explicit loading
-    (``--from-trace <path>``) is the contract.
-
-    When auto-load finds no match but other traces exist in the debug dir
-    (e.g. the workflow file was renamed/moved since traces were recorded),
-    appends a Notes line so the agent knows their evidence is unreachable
-    via auto-load and can pass ``--from-trace`` explicitly.
+    Names the rejected file + its run status so the agent can decide
+    whether to override with ``--from-trace`` or re-run. Used by the
+    rejection branch in ``analyze()``; extracted for C901.
     """
-    if workflow_path is None:
-        return None, None
-    debug_dir = Path.home() / ".pflow" / "debug"
-    if not debug_dir.exists():
-        return None, None
+    rejected_name = Path(rejected_trace_path).name if rejected_trace_path else None
+    rejected_status = str(trace_data.get("final_status") or "success") if isinstance(trace_data, dict) else "unknown"
+    if rejected_name:
+        return (
+            f"Auto-loaded trace `{rejected_name}` ({rejected_status}) did not "
+            f"cover all root LLM nodes (some root LLM nodes have no matching "
+            f"events — workflow may have been edited since the trace was "
+            f"recorded). Ignored for workflow-wide cache analysis. Pass "
+            f"`--from-trace <path>` to inspect a specific trace anyway."
+        )
+    # Defensive fallback — unreachable under current code paths (``trace_path
+    # is None`` here implies autoload ran AND set ``used_trace_path``), but
+    # preserve the original wording so any future regression is recognizable.
+    return "Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis."
 
+
+def _collect_candidate_traces(
+    debug_dir: Path,
+    workflow_path: str,
+) -> tuple[list[tuple[Path, dict[str, Any]]], list[tuple[Path, dict[str, Any]]]]:
+    """Walk ``debug_dir`` for 2.x traces matching ``workflow_path``; bucket by run outcome.
+
+    Returned tuple is ``(successful, failed)``, each newest-first by filename
+    (which embeds the recording timestamp). Absent ``final_status`` routes to
+    the successful bucket — matches the back-compat fallback at
+    ``_trace_coverage_for_rows`` and preserves selection for pre-2.1.0 traces.
+
+    Extracted from ``_autoload_trace`` for C901 — the trace-walking +
+    health-filter loop is independent of the rank-aware selection policy.
+    """
     wf_hash = hashlib.md5(workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
     pattern = f"workflow-trace-{wf_hash}-*.json"
-
+    successful: list[tuple[Path, dict[str, Any]]] = []
+    failed: list[tuple[Path, dict[str, Any]]] = []
     for trace_file in sorted(debug_dir.glob(pattern), reverse=True):
         try:
             data = json.loads(trace_file.read_text(encoding="utf-8"))
@@ -984,8 +1014,74 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
         # for trace files, but the inner check makes it impossible.
         if data.get("workflow_path") != workflow_path:
             continue
-        if str(data.get("format_version", "")).startswith("2."):
-            return data, str(trace_file)
+        if not str(data.get("format_version", "")).startswith("2."):
+            continue
+        status = str(data.get("final_status") or "success")
+        bucket = failed if status == "failed" else successful
+        bucket.append((trace_file, data))
+    return successful, failed
+
+
+def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
+    """Find the best matching 2.x trace for ``workflow_path``.
+
+    O(matching-traces) lookup, not O(directory-size): trace filenames encode
+    an 8-char md5 hash of ``workflow_path`` at write time (see
+    ``runtime/workflow_trace.format_trace_filename``). The reader globs by the
+    same hash prefix so we only read files that could match.
+
+    Per DD#34, auto-load is a convenience; explicit loading
+    (``--from-trace <path>``) is the contract.
+
+    Selection ranks ``final_status in {"success", "degraded"}`` over
+    ``"failed"`` (Bug 10: a newer failed run should not shadow an older
+    successful one). Within a tier, newest-by-filename-timestamp wins. Absent
+    ``final_status`` is treated as ``"success"`` for backward-compat with
+    pre-2.1 traces and synthetic test fixtures — matches the existing
+    fallback at ``_trace_coverage_for_rows``.
+
+    Discloses the choice via Notes when ranking caused a non-newest pick, OR
+    when only failed traces exist (so the agent knows recommendations may be
+    suppressed downstream).
+
+    When auto-load finds no match but other traces exist in the debug dir
+    (e.g. the workflow file was renamed/moved since traces were recorded),
+    appends a Notes line so the agent knows their evidence is unreachable
+    via auto-load and can pass ``--from-trace`` explicitly.
+    """
+    if workflow_path is None:
+        return None, None
+    debug_dir = Path.home() / ".pflow" / "debug"
+    if not debug_dir.exists():
+        return None, None
+
+    successful, failed = _collect_candidate_traces(debug_dir, workflow_path)
+
+    if successful:
+        chosen_file, chosen_data = successful[0]
+        # Bug 10 disclosure: newer failed trace was skipped in favor of an
+        # older success. Both filenames make the choice auditable for the
+        # agent; ``--from-trace`` is the escape hatch.
+        if failed and failed[0][0].name > chosen_file.name:
+            notes.append(
+                f"Skipped newer trace `{failed[0][0].name}` (failed run) in "
+                f"favor of `{chosen_file.name}` (success). Pass "
+                f"`--from-trace <path>` to override."
+            )
+        return chosen_data, str(chosen_file)
+
+    if failed:
+        chosen_file, chosen_data = failed[0]
+        # Failed trace selected only because no success exists. Downstream
+        # truncated-trace suppression already gates recommendations honestly;
+        # this disclosure routes the agent to the unblocking action.
+        notes.append(
+            f"Auto-loaded `{chosen_file.name}` (failed run); no successful "
+            f"trace exists for this workflow. Trace-dependent recommendations "
+            f"may be suppressed. Re-run the workflow to record a successful "
+            f"trace, or pass `--from-trace <path>` to use a specific trace."
+        )
+        return chosen_data, str(chosen_file)
 
     # No hash-scoped match. If the debug dir holds unrelated traces, surface
     # that so the agent doesn't read greenfield output as "no evidence
@@ -6619,6 +6715,19 @@ def _build_summary(
             compared_to="actually_paid_usd",
         )
 
+    # Trace transparency fields: only populated when a trace was actually
+    # loaded (autoload or explicit). ``trace_data is None`` → both fields
+    # stay ``None`` (renderer reads ``analysis.trace_path`` to decide
+    # whether to show the header line). Back-compat fallback mirrors
+    # ``_trace_coverage_for_rows``: absent ``final_status`` → ``"success"``.
+    if ctx is not None and ctx.trace_data is not None:
+        trace_final_status: str | None = str(ctx.trace_data.get("final_status") or "success")
+        recorded = ctx.trace_data.get("start_time")
+        trace_recorded_at: str | None = str(recorded) if recorded is not None else None
+    else:
+        trace_final_status = None
+        trace_recorded_at = None
+
     return AnalysisSummary(
         actually_paid_usd=actually_paid.total_usd,
         actually_paid_tier=actually_paid.tier,
@@ -6653,6 +6762,8 @@ def _build_summary(
         root_llm_node_count=root_count,
         sub_workflow_llm_node_count=sub_workflow_count,
         projection_exclusions=projections.absolute_exclusions,
+        trace_final_status=trace_final_status,
+        trace_recorded_at=trace_recorded_at,
     )
 
 

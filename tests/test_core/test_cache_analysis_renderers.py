@@ -55,6 +55,9 @@ def _make_analysis(
     actual_delta_unavailable_reason: str | None = None,
     workflow_path: str = "/abs/x.pflow.md",
     ir_default_model: str | None = None,
+    trace_path: str | None = None,
+    trace_final_status: str | None | type(Ellipsis) = Ellipsis,
+    trace_recorded_at: str | None | type(Ellipsis) = Ellipsis,
 ) -> CacheAnalysis:
     """Construct a renderable analysis with atomic cost primitives.
 
@@ -111,7 +114,7 @@ def _make_analysis(
             "heuristic": 0,
             "total": len(rows),
         },
-        trace_path=None,
+        trace_path=trace_path,
         summary=AnalysisSummary(
             actually_paid_usd=actually_paid,
             actually_paid_tier=(
@@ -151,6 +154,23 @@ def _make_analysis(
             # Builder doesn't model declared inputs, so the command shape
             # is the no-inputs variant.
             suggested_run_command=_format_workflow_run_command(workflow_path, None),
+            # Mirrors production: when a trace contributed evidence
+            # (``actually_paid is not None``), default the trace status to
+            # "success" + an arbitrary recorded timestamp unless the test
+            # opted in to a specific value (including explicit None).
+            # Ellipsis sentinel distinguishes "caller didn't specify" from
+            # "caller wants None" — needed by tests exercising the
+            # legacy-trace-missing-timestamp path.
+            trace_final_status=(
+                cast(str | None, trace_final_status)
+                if trace_final_status is not Ellipsis
+                else ("success" if actually_paid is not None else None)
+            ),
+            trace_recorded_at=(
+                cast(str | None, trace_recorded_at)
+                if trace_recorded_at is not Ellipsis
+                else ("2026-04-29T12:00:00" if actually_paid is not None else None)
+            ),
         ),
         suggested_blocks=(),
         per_call=tuple(rows),
@@ -585,6 +605,68 @@ def test_text_renders_unavailable_cost_explicitly_not_zero() -> None:
     text = render_text(_make_analysis())
     assert "$0.00" not in text
     assert "unavailable" in text.lower()
+
+
+def test_text_render_shows_trace_header_line_when_loaded() -> None:
+    """Bug 1 follow-up: when a trace was loaded, the header includes a
+    ``Trace: <filename> (<status>, recorded <ts>)`` line so the agent can
+    see which trace produced the evidence without inspecting JSON output.
+
+    Mutation contract: deleting the ``if analysis.trace_path is not None``
+    branch in ``_render_header`` removes the line → assertion fails.
+    """
+    analysis = _make_analysis(
+        actually_paid=2.18,
+        no_cache=0.84,
+        rerun=0.42,
+        trace_path="/home/user/.pflow/debug/workflow-trace-abc12345-lyrics-generator-20260511-153228.json",
+        trace_final_status="success",
+        trace_recorded_at="2026-05-11T15:32:28.123456",
+    )
+    text = render_text(analysis)
+    assert "Trace: workflow-trace-abc12345-lyrics-generator-20260511-153228.json" in text
+    assert "(success, recorded 2026-05-11 15:32)" in text
+
+
+def test_text_render_omits_trace_header_when_no_trace_loaded() -> None:
+    """When ``trace_path`` is None (greenfield or autoload-rejected), no
+    ``Trace:`` line appears."""
+    analysis = _make_analysis(trace_path=None)
+    text = render_text(analysis)
+    assert "Trace:" not in text
+
+
+def test_text_render_trace_header_drops_recorded_suffix_when_timestamp_missing() -> None:
+    """Defensive: legacy traces from before 2.1.0 may lack ``start_time``.
+    The ``Trace:`` line still renders, just without the ``recorded ...``
+    suffix."""
+    analysis = _make_analysis(
+        actually_paid=2.18,
+        no_cache=0.84,
+        rerun=0.42,
+        trace_path="/abs/trace.json",
+        trace_final_status="success",
+        trace_recorded_at=None,
+    )
+    text = render_text(analysis)
+    assert "Trace: trace.json (success)" in text
+    assert "recorded" not in text.split("Trace:")[1].split("\n")[0]
+
+
+def test_text_render_trace_header_shows_failed_status_honestly() -> None:
+    """Bug 10 cousin: when autoload picked a failed trace (no success
+    existed), the agent learns the status in the header — not just the
+    Notes section."""
+    analysis = _make_analysis(
+        actually_paid=2.18,
+        no_cache=0.84,
+        rerun=0.42,
+        trace_path="/abs/workflow-trace-bad.json",
+        trace_final_status="failed",
+        trace_recorded_at="2026-05-11T16:30:27",
+    )
+    text = render_text(analysis)
+    assert "Trace: workflow-trace-bad.json (failed, recorded 2026-05-11 16:30)" in text
 
 
 def test_text_renders_partial_cost_with_marker() -> None:

@@ -2125,3 +2125,228 @@ Verification: affected baselines regenerated and verified
 `24-cache.shared-context-undeclared-conditional`: 1 passed); focused
 cache-analysis/MCP subset: 413 passed; `ruff check`, `ruff format --check`,
 and `mypy src/pflow/core/cache_analysis/ src/pflow/mcp_server/tools/` clean.
+
+## 2026-05-13 — Task 159 Followups — Bug 1 + Bug 10: trace selection policy + transparency
+
+Three coordinated changes to make `pflow analyze-cache` honest about which
+trace it loaded, and to stop newer failed traces from shadowing older
+successful ones.
+
+### Problem statement
+
+Two named agent-UX gaps in `_autoload_trace`:
+
+- **Bug 10**: `_autoload_trace` (`analyze.py:950-1000`) picked the first
+  healthy 2.x trace by filename-timestamp sort. It never inspected
+  `trace["final_status"]`. An agent iterating (edit → run → fail → fix →
+  re-run) had a newer failed run silently shadow an older success.
+- **Bug 1**: auto-load decisions were invisible to text consumers.
+  `analysis.trace_path` was JSON-only; `render_text.py` had no `Trace:`
+  header line. When the post-row-build rejection gate fired
+  (`analyze.py:683-700`) the Notes line said only "Auto-loaded trace did
+  not cover all root LLM nodes; ignored for workflow-wide cache
+  analysis." — no filename, no `final_status`.
+
+### Architectural reasoning
+
+The earlier "delete whole-trace drift gate" decision rejected walking back
+to older traces on the principle that "older traces are monotonically more
+drifted." That principle holds for *workflow source drift* (older nodes,
+older prompts) and is exactly what the per-row `did_not_execute_in_trace`
+gate already handles. **Bug 10 is on a different axis: run outcome.** A
+newer failed run from the same workflow source is not "less drifted" than
+an older successful run — they share structure, only run-outcome differs.
+
+The fix collects all healthy 2.x candidates into success/failed buckets,
+prefers success-or-degraded over failed, and within a tier picks
+newest-by-filename. Absent `final_status` routes to success — mirrors the
+existing `_trace_coverage_for_rows` fallback so legacy 2.1.0 traces and
+synthetic test fixtures keep working unchanged. Per-row safety net still
+fires if the chosen older success doesn't structurally match the current
+IR; the rejection note now names the file.
+
+Considered and rejected alternatives:
+
+- **Hybrid γ (prefer success only when newest failure is "unusable")** —
+  adds a third state ("usable failed" vs "unusable failed") for marginal
+  additional safety. The per-row safety net already handles the case
+  cleanly; the hybrid adds complexity without clear yield.
+- **Bounded walk-back (Hybrid δ, time-windowed preference)** — arbitrary
+  cutoff codifying "session" semantics nowhere else in pflow.
+- **Walk-back through `did_not_execute_in_trace` rejection** — same case
+  the prior decision explicitly rejected. Fix C just names the file.
+
+### Implementation
+
+**Production (`src/pflow/core/cache_analysis/`):**
+
+1. `_autoload_trace` (analyze.py:984): two-pass collect-then-rank.
+   `_collect_candidate_traces` extracted to keep C901 happy. Emits one
+   of three Notes: "Skipped newer trace … (failed) in favor of … (success)"
+   when ranking caused a non-newest pick, "Auto-loaded `…` (failed); no
+   successful trace exists" when only failed traces match, or the existing
+   rename-detection note for zero matches.
+2. `AnalysisSummary` (analyze.py:546-555): two additive nullable fields,
+   `trace_final_status` and `trace_recorded_at`. Populated in
+   `_build_summary` from `trace_data["final_status"] or "success"` and
+   `trace_data["start_time"]`. Mirrors the back-compat fallback at
+   `_trace_coverage_for_rows`.
+3. `render_text.py`: new `_format_trace_header_line` helper emits
+   `  Trace: <filename> (<status>, recorded <YYYY-MM-DD HH:MM>)` whenever
+   `analysis.trace_path is not None`. Drops the "recorded …" suffix when
+   `start_time` is missing (defensive for pre-2.1 traces).
+   `_format_recorded_timestamp` does ISO → `YYYY-MM-DD HH:MM` conversion
+   with graceful fallback to None on any parse failure.
+4. Rejection gate at `analyze.py:716-720` now delegates to a new
+   `_format_rejection_note(used_trace_path, trace_data)` helper that
+   includes the rejected filename + final_status. C901 decomposition.
+5. `render_json.py`: additive `trace_final_status` and `trace_recorded_at`
+   fields next to `trace_coverage`. No JSON major version bump (additive
+   minor change).
+
+**Tests (5 new in `test_cache_analysis_analyze.py`, 4 new in
+`test_cache_analysis_renderers.py`, 1 updated):**
+
+- `test_autoload_prefers_success_over_newer_failed` — Bug 10 canonical
+  case with mutation contract.
+- `test_autoload_uses_newest_when_all_successful` — same-tier ranking
+  preserved.
+- `test_autoload_uses_newest_failed_when_no_success_exists` — failed
+  fallback disclosure.
+- `test_autoload_treats_degraded_as_preferable_over_failed` —
+  `final_status="degraded"` ranks with success.
+- `test_autoload_treats_absent_final_status_as_success_for_backcompat`
+  — mutation contract on the `or "success"` fallback (removing it
+  regresses legacy 2.1.0 traces).
+- `test_autoload_ignores_misaligned_trace_with_no_root_llm_activity`
+  updated for the new rejection-note wording (filename + status).
+- `test_text_render_shows_trace_header_line_when_loaded` — header line
+  positive case.
+- `test_text_render_omits_trace_header_when_no_trace_loaded` —
+  greenfield negative case.
+- `test_text_render_trace_header_drops_recorded_suffix_when_timestamp_missing`
+  — legacy-trace defensive path.
+- `test_text_render_trace_header_shows_failed_status_honestly` —
+  failed-trace transparency.
+
+The `_make_analysis` renderer helper grew `trace_path` /
+`trace_final_status` / `trace_recorded_at` kwargs. Defaults use an
+`Ellipsis` sentinel so tests can explicitly pass `None` for the
+"legacy-trace missing start_time" case while still letting cost-branch
+tests auto-populate the fields. Shape-parity test passes after migration.
+
+`_write_trace` helper in `test_cache_analysis_analyze.py` grew
+optional `final_status`, `failed_node_ids`, `start_time`, `timestamp`
+kwargs. All default to absent, preserving back-compat with existing
+autoload tests.
+
+### Baselines
+
+39 existing baselines regenerated + 3 new baselines added. Existing drifts
+split between:
+
+- Text outputs gaining the `Trace:` header line:
+  `03-analyze-cache-modes/05`, `04-warning-catalog/12`,
+  `10-live-recordings/03`, `10-live-recordings/05`,
+  `15-run-flag-interactions/01`.
+- JSON outputs gaining the two additive nullable fields
+  (`trace_final_status`, `trace_recorded_at`): every JSON case that
+  produces a `summary` block.
+
+**Gap caught in post-implementation review and fixed.** Initial sweep
+showed only the universal `Trace:` line in baselines — none of the existing
+baselines exercised the multi-trace autoload selection path or the
+post-row-build rejection-naming path. Every `analyze-cache` baseline uses
+either `--from-trace` (bypasses autoload) or `--no-trace-autoload` (opts
+out). The new Notes wording for Bug 10 (success-preference) and Bug 1
+(rejection-naming) was unit-tested but not cold-reader-visible. Three new
+baselines added to lock the agent-visible output:
+
+- `03-analyze-cache-modes/07-autoload-prefers-success` — seeds older
+  success + newer failed traces; locks `Skipped newer trace
+  workflow-trace-…-163000.json (failed run) in favor of
+  workflow-trace-…-153200.json (success). Pass --from-trace <path> to
+  override.`
+- `03-analyze-cache-modes/08-autoload-failed-only` — seeds only a failed
+  trace; locks `Auto-loaded workflow-trace-…-163000.json (failed run); no
+  successful trace exists for this workflow. Trace-dependent
+  recommendations may be suppressed. Re-run the workflow to record a
+  successful trace, or pass --from-trace <path> to use a specific trace.`
+- `03-analyze-cache-modes/09-autoload-rejected-names-file` — seeds a
+  trace whose root LLM events don't match the current IR (simulates
+  post-edit workflow drift); locks `Auto-loaded trace
+  workflow-trace-…-153200.json (success) did not cover all root LLM
+  nodes (some root LLM nodes have no matching events — workflow may have
+  been edited since the trace was recorded). Ignored for workflow-wide
+  cache analysis. Pass --from-trace <path> to inspect a specific trace
+  anyway.`
+
+Each baseline's seed script computes the autoload-required
+`hashlib.md5(workflow_path)[:8]` prefix so the synthetic traces match the
+glob pattern at `_autoload_trace`. README in each baseline documents the
+mutation contract so future regressions are caught loudly.
+
+Cold-reader spot-check on the canonical lyrics-generator baseline
+(`10-live-recordings/05-gemini-lyrics-generator`): the new line
+`Trace: live-gemini-lyrics-generator.trace.json (success, recorded
+2026-05-08 22:01)` reads cleanly with filename, run outcome, and recording
+timestamp visible to a fresh agent without inspecting JSON. The failed-trace
+baseline (`15-run-flag-interactions/01-partial-trace-analyze-cache`) shows
+`Trace: partial-trace.json (failed, recorded 2026-05-08 21:51)` — the agent
+immediately learns both that a trace was loaded AND that it captured a
+failed run.
+
+### Verification
+
+- Focused cache-analysis + CLI suite: 736 passed.
+- Mutation contracts on `test_autoload_prefers_success_over_newer_failed`
+  and `test_autoload_treats_absent_final_status_as_success_for_backcompat`
+  verified via `git stash` of `analyze.py`: both fail when production
+  change is reverted.
+- Broad sandbox-safe core/CLI sweep: 3,291 passed, 41 deselected.
+- Baseline harness: 79 passed, 0 drifted (post-regen).
+- `ruff check`, `ruff format --check`, `mypy
+  src/pflow/core/cache_analysis/` clean on touched files.
+
+### Tacit knowledge
+
+**The `_BUILDER_DOCUMENTED_DEFAULTS` shape-parity test in
+`test_cache_analysis_renderers.py` is load-bearing for additive
+`AnalysisSummary` fields.** It fails noisily when a field is added without
+populating it in `_make_analysis`. For trace-related fields specifically,
+the natural pattern is conditional on `actually_paid is not None` (the
+test helper's "a trace contributed evidence" signal) — but tests that need
+to override the auto-fill (e.g., the legacy-trace defensive path) must use
+the `Ellipsis` sentinel pattern. Future trace-related summary fields
+should follow this convention rather than introducing a third pattern.
+
+**The C901 threshold (10) hit both `analyze()` (which I didn't decompose
+during the previous TTL-attribution deletion sweep, so 10→11 was the
+last straw) and the rewritten `_autoload_trace`.** Both decomposed
+cleanly into named helpers (`_format_rejection_note`,
+`_collect_candidate_traces`) rather than adding `# noqa: C901`
+suppressions. The decomposition shape matches the orchestrator+helper
+pattern used by the other complex functions in `analyze.py`.
+
+**`workflow_trace.py`'s `start_time` field is `datetime.now().isoformat()`
+— microsecond-precision (`2026-05-11T15:32:28.123456`).** The renderer
+strips microseconds via `time_part[:5]` (minute precision) for readability;
+JSON keeps the raw ISO string for machine consumers. If a future
+trace-format change drops microseconds or adds timezone, the slice-by-5
+approach still works (the ISO format is positional).
+
+### What's next (still open)
+
+- **`--list-traces` CLI flag (F2)** — feature request; not first-contact
+  UX harm. Would synergize with the new `Trace:` line ("here are the
+  alternatives if you don't like this pick").
+- **CLAUDE.md staleness re `_trace_aligns_with_ir`** — confirmed stale
+  reference at `cache_analysis/CLAUDE.md:59` and in `runtime/CLAUDE.md`.
+  The function was deleted in the earlier Bug 1 / drift-gate fix; the
+  docs reference outlived the code. Task 160 sweep territory.
+- **Validation-failure trace saving (Agent-UX 6)** — different
+  subsystem (`cli/commands/run.py`); validation failures save no trace,
+  so the new rank-aware autoload has no candidate to find. Not
+  addressed here.
+- **Provider-cache TTL detection from trace timestamps** — separate
+  feature; needs new catalog ID per DD#29.

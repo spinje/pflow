@@ -2435,6 +2435,10 @@ def _write_trace(
     format_version: str,
     nodes: list[dict[str, Any]] | None = None,
     workflow_name: str = "x",
+    timestamp: str | None = None,
+    final_status: str | None = None,
+    failed_node_ids: list[str] | None = None,
+    start_time: str | None = None,
 ) -> Path:
     """Write a synthetic trace under the production filename schema.
 
@@ -2445,17 +2449,31 @@ def _write_trace(
     The trace body uses the production ``nodes`` key (events list); a
     pre-existing ``events`` shape was test-fixture-only and never matched
     real traces. New consumers walk ``trace_data["nodes"]`` via TraceTree.
+
+    Optional ``final_status`` / ``failed_node_ids`` / ``start_time`` /
+    ``timestamp`` kwargs let tests exercise the autoload rank-aware selection
+    (Bug 10) and the trace-header rendering. Defaults preserve backward-compat
+    with pre-existing tests that omit these fields.
     """
     from pflow.runtime.workflow_trace import format_trace_filename
 
     debug_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = f"20260430-{time.time_ns() % 1_000_000:06d}"
+    if timestamp is None:
+        timestamp = f"20260430-{time.time_ns() % 1_000_000:06d}"
     name = format_trace_filename(workflow_path, workflow_name, timestamp)
     path = debug_dir / name
-    path.write_text(
-        json.dumps({"format_version": format_version, "workflow_path": workflow_path, "nodes": nodes or []}),
-        encoding="utf-8",
-    )
+    payload: dict[str, Any] = {
+        "format_version": format_version,
+        "workflow_path": workflow_path,
+        "nodes": nodes or [],
+    }
+    if final_status is not None:
+        payload["final_status"] = final_status
+    if failed_node_ids is not None:
+        payload["failed_node_ids"] = failed_node_ids
+    if start_time is not None:
+        payload["start_time"] = start_time
+    path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
@@ -2619,9 +2637,14 @@ def test_autoload_ignores_misaligned_trace_with_no_root_llm_activity(
         ],
     )
     assert result.trace_path is None
-    assert (
-        "Auto-loaded trace did not cover all root LLM nodes; ignored for workflow-wide cache analysis." in result.notes
-    )
+    # Bug 1 follow-up: the rejection Notes line now names the rejected trace
+    # filename + its run status so the agent knows what was attempted.
+    rejection_notes = [n for n in result.notes if "did not cover all root LLM nodes" in n]
+    assert len(rejection_notes) == 1, f"expected one rejection note, got: {result.notes}"
+    assert "workflow-trace-" in rejection_notes[0]
+    assert ".json" in rejection_notes[0]
+    assert "(success)" in rejection_notes[0]
+    assert "--from-trace" in rejection_notes[0]
 
 
 def test_autoload_proceeds_when_ir_has_no_llm_nodes_and_trace_matches(
@@ -2801,6 +2824,167 @@ def test_autoload_ignores_sub_workflow_llm_events(tmp_path: Path, monkeypatch: p
     )
     assert result.trace_path == str(trace_path)
     assert not any("recorded with model" in n for n in result.notes)
+
+
+def test_autoload_prefers_success_over_newer_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bug 10: a newer failed trace must not shadow an older successful one.
+
+    Mutation contract: deleting the success-tier branch in ``_autoload_trace``
+    → newest (failed) trace wins → ``result.trace_path`` points at the failed
+    file → ``Path(result.trace_path).name == failed_path.name`` instead of
+    ``success_path.name`` → assertion fails.
+    """
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    success_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-153228",
+        final_status="success",
+    )
+    failed_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5", success=False)],
+        timestamp="20260511-163027",
+        final_status="failed",
+        failed_node_ids=["ask"],
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path == str(success_path)
+    skip_notes = [n for n in result.notes if "Skipped newer trace" in n]
+    assert len(skip_notes) == 1, f"expected one skip note, got: {result.notes}"
+    assert failed_path.name in skip_notes[0]
+    assert success_path.name in skip_notes[0]
+
+
+def test_autoload_uses_newest_when_all_successful(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Standard case: among same-tier traces, newest-by-filename wins. No
+    "Skipped newer trace" Notes line."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-153228",
+        final_status="success",
+    )
+    newer_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-163027",
+        final_status="success",
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path == str(newer_path)
+    assert not any("Skipped newer trace" in n for n in result.notes)
+
+
+def test_autoload_uses_newest_failed_when_no_success_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When only failed traces exist, the newest is loaded with a disclosure
+    Notes line. Downstream truncated-trace suppression handles cost
+    correctness."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5", success=False)],
+        timestamp="20260511-153228",
+        final_status="failed",
+        failed_node_ids=["ask"],
+    )
+    newer_failed = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5", success=False)],
+        timestamp="20260511-163027",
+        final_status="failed",
+        failed_node_ids=["ask"],
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path == str(newer_failed)
+    no_success_notes = [n for n in result.notes if "no successful trace exists" in n]
+    assert len(no_success_notes) == 1
+    assert newer_failed.name in no_success_notes[0]
+
+
+def test_autoload_treats_degraded_as_preferable_over_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``degraded`` runs completed with runtime warnings but produced full
+    evidence; they rank with success, ahead of failed."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    degraded_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-153228",
+        final_status="degraded",
+    )
+    _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5", success=False)],
+        timestamp="20260511-163027",
+        final_status="failed",
+        failed_node_ids=["ask"],
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path == str(degraded_path)
+
+
+def test_autoload_treats_absent_final_status_as_success_for_backcompat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy 2.1.0 traces lack ``final_status``. The rank-aware selection
+    must treat absent as success or every existing autoload test regresses.
+
+    Mutation contract: removing the ``or "success"`` fallback in
+    ``_autoload_trace`` → absent-status trace routes to the failed bucket
+    → newer failed trace wins → assertion fails.
+    """
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    legacy_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.1.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-153228",
+        # No final_status — legacy 2.1.0 trace
+    )
+    _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5", success=False)],
+        timestamp="20260511-163027",
+        final_status="failed",
+        failed_node_ids=["ask"],
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path == str(legacy_path)
 
 
 def test_explicit_from_trace_loads_regardless_of_model(tmp_path: Path) -> None:

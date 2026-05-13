@@ -84,6 +84,13 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "rerun_delta": _delta_to_dict(s.rerun_delta),
         "actual_vs_no_cache_delta": _delta_to_dict(s.actual_vs_no_cache_delta),
         "trace_coverage": s.trace_coverage,
+        # Trace transparency (Bug 1 follow-up): ``trace_final_status`` is
+        # one of ``"success" | "degraded" | "failed" | null`` (null when no
+        # trace was loaded). ``trace_recorded_at`` is the ISO ``start_time``
+        # from the trace JSON (null when no trace or pre-2.1.0 trace lacking
+        # the field). Additive — same JSON major version.
+        "trace_final_status": s.trace_final_status,
+        "trace_recorded_at": s.trace_recorded_at,
         "evidence_scope": s.evidence_scope,
         "trace_llm_nodes_static": s.trace_llm_nodes_static,
         "trace_llm_nodes_executed": s.trace_llm_nodes_executed,

@@ -5,6 +5,7 @@
   Models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview
   Heterogeneous: generate-chorus-options (model varies per batch item)
   Evidence: complete trace (25 LLM nodes executed)
+  Trace: live-gemini-lyrics-generator.trace.json (success, recorded 2026-05-08 22:01)
   (2 in lyrics-generator.pflow.md, 23 in 14 sub-workflows)
 
 ## Summary

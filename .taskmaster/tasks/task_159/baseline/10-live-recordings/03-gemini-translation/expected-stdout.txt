@@ -3,6 +3,7 @@
 
   Workflow: 2 LLM nodes using gemini/gemini-2.5-flash
   Evidence: complete trace (2 LLM nodes executed)
+  Trace: live-gemini-translation.trace.json (success, recorded 2026-05-08 21:51)
 
 ## Summary
 

@@ -3,6 +3,7 @@
 
   Workflow: 2 LLM nodes using gemini/gemini-2.5-flash
   Evidence: trace truncated (1 of 2 LLM nodes executed)
+  Trace: partial-trace.json (failed, recorded 2026-05-08 21:51)
 
 ## Summary
 

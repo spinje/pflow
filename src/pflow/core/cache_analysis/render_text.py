@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import cast
 
 from pflow.core.diagnostic import Diagnostic
@@ -194,6 +195,13 @@ def _render_header(analysis: CacheAnalysis) -> str:
             )
         else:
             lines.append(f"  Evidence: complete trace ({s.trace_llm_nodes_executed} LLM nodes executed)")
+    # Trace transparency (Bug 1 follow-up): name the loaded trace file +
+    # outcome + recording timestamp whenever a trace was loaded. Fires for
+    # both autoload and ``--from-trace``. ``analysis.trace_path`` is the
+    # authoritative "was a trace loaded" signal — the rejection gate at
+    # ``analyze.py:683`` sets it to None when rebuilding to greenfield.
+    if analysis.trace_path is not None:
+        lines.append(_format_trace_header_line(analysis.trace_path, s))
     if s.observed_models_in_trace and s.ir_default_model and s.ir_default_model not in s.observed_models_in_trace:
         lines.append(f"  IR/settings declares: {s.ir_default_model} (overridden by trace evidence)")
     sub_line = _format_sub_workflow_breakdown_line(analysis)
@@ -240,6 +248,48 @@ def _format_confidence_line(label: str, source_count: int, total_rows: int) -> s
         source = "token counts from memoized prior runs"
         tier = "medium"
     return f"  Confidence: {tier} — {source} ({source_count} of {total_rows} nodes)"
+
+
+def _format_trace_header_line(trace_path: str, summary: AnalysisSummary) -> str:
+    """Render the ``Trace:`` header line for a loaded trace.
+
+    Shape: ``  Trace: <filename> (<status>, recorded <YYYY-MM-DD HH:MM>)``.
+    The ``recorded ...`` suffix is dropped when ``trace_recorded_at`` is None
+    (defensive — legacy traces from before 2.1.0 may lack ``start_time``).
+
+    The filename alone is the agent-visible identity; the rest of the
+    pflow ecosystem already exposes the directory (``~/.pflow/debug/``)
+    via ``pflow analyze-cache --help`` text and the trace-saved stderr
+    line at run time.
+    """
+    filename = Path(trace_path).name
+    status = summary.trace_final_status or "unknown"
+    recorded = _format_recorded_timestamp(summary.trace_recorded_at)
+    if recorded is None:
+        return f"  Trace: {filename} ({status})"
+    return f"  Trace: {filename} ({status}, recorded {recorded})"
+
+
+def _format_recorded_timestamp(iso: str | None) -> str | None:
+    """Convert ``start_time`` ISO 8601 to ``YYYY-MM-DD HH:MM`` for display.
+
+    Returns None on missing input or any parse failure — the caller drops
+    the "recorded ..." suffix when None.
+    """
+    if iso is None:
+        return None
+    # ISO format from ``workflow_trace.py:528`` is
+    # ``datetime.now().isoformat()`` → ``2026-05-11T15:32:28.123456``.
+    # Strip microseconds via the ``T`` split and slice minute-precision.
+    try:
+        date_part, time_part = iso.split("T", 1)
+        # ``time_part`` is HH:MM:SS[.fraction]; trim to HH:MM.
+        hhmm = time_part[:5]
+        if len(date_part) != 10 or len(hhmm) != 5 or hhmm[2] != ":":
+            return None
+        return f"{date_part} {hhmm}"
+    except (ValueError, AttributeError):
+        return None
 
 
 def _llm_bearing_rollup_entries(

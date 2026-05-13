@@ -3,6 +3,7 @@
 
   Workflow: 1 LLM node using anthropic/claude-sonnet-4-5
   Evidence: complete trace (1 LLM nodes executed)
+  Trace: discrepancy-trace.json (success, recorded 2026-05-11 10:00)
 
 ## Summary
 

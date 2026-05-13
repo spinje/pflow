@@ -45,6 +45,8 @@
       "excluded_nodes": []
     },
     "trace_coverage": "none",
+    "trace_final_status": null,
+    "trace_recorded_at": null,
     "evidence_scope": "static_analysis",
     "trace_llm_nodes_static": 25,
     "trace_llm_nodes_executed": 0,
