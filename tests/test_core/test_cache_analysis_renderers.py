@@ -45,6 +45,7 @@ def _make_analysis(
     warnings: list[Diagnostic] | None = None,
     notes: list[str] | None = None,
     actually_paid: float | None = None,
+    actually_paid_tier: CostTier | None = None,
     no_cache: float | None = None,
     first_run_with_cache: float | None = None,
     rerun: float | None = None,
@@ -113,7 +114,11 @@ def _make_analysis(
         trace_path=None,
         summary=AnalysisSummary(
             actually_paid_usd=actually_paid,
-            actually_paid_tier=CostTier.TRACE if actually_paid is not None else CostTier.UNAVAILABLE,
+            actually_paid_tier=(
+                actually_paid_tier
+                if actually_paid_tier is not None
+                else (CostTier.TRACE if actually_paid is not None else CostTier.UNAVAILABLE)
+            ),
             no_cache_hypothetical_usd=no_cache,
             first_run_with_cache_hypothetical_usd=first_run_with_cache,
             rerun_within_ttl_hypothetical_usd=rerun,
@@ -1255,13 +1260,16 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
 
     text = render_text(analysis)
 
-    assert "Actually paid:               ~$0.05 (trace)" in text
-    assert "Actually paid:               ~$0.05 (partial) (trace)" not in text
-    # Label is bare ``Actually paid:`` — the value's tier annotation
-    # (``(trace)`` / ``(trace_partial)``) carries the tier signal; ``(trace)``
-    # on the label too would be redundant. Truncated branch keeps
-    # ``(executed trace)`` because "executed" is the unique signal there.
-    assert "Actually paid (trace):" not in text
+    assert "Actually paid:               ~$0.05 (from trace)" in text
+    assert "Actually paid:               ~$0.05 (partial) (from trace)" not in text
+    # Label is bare ``Actually paid:`` — the value's parenthetical
+    # (``(from trace)`` / ``(from partial trace)``) carries the tier
+    # signal; repeating it on the label would be redundant. Truncated
+    # branch keeps ``(executed trace)`` because "executed" is the unique
+    # signal there. Raw snake_case enum values (``trace_partial``) must
+    # NOT leak into stdout.
+    assert "Actually paid (from trace):" not in text
+    assert "trace_partial" not in text
     # Excluded node + reason render even without a dollar figure (cost is None).
     assert "Excluded from analysis:      generate: no pricing data for model" in text
     # Cohort qualifiers on no-cache/rerun labels are gone — the explicit
@@ -1472,15 +1480,17 @@ def test_greenfield_no_cache_keeps_partial_qualifier_no_other_signal() -> None:
 
 
 def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -> None:
-    """Fix B: ``_per_call_scope_explainer`` returns a multi-line bullet block
-    (lead sentence + 3 bullets) instead of a 60-word run-on. The prior
-    "divide by calls for per-call values" advice was structurally wrong
-    after Pass A2 normalized static-list batch trace rows to per-call
-    units; the blanket guidance is dropped rather than caveated.
+    """``_per_call_scope_explainer`` returns a multi-line block — a "How to
+    read each row:" header plus two column bullets, each explaining its own
+    placeholders inline (``?`` / ``—``). The prior "divide by calls for
+    per-call values" advice was structurally wrong after Pass A2 normalized
+    static-list batch trace rows to per-call units, and the prior
+    ``"tier"`` phrasing leaked internal vocabulary into stdout.
 
     Mutation contract: revert the function to return a single string with
     the run-on text → the multi-line shape assertions fail AND the
-    ``divide by calls`` negative assertion fails.
+    ``divide by calls`` negative assertion fails. Re-introduce ``"tier"``
+    in the prose → the negative assertion below fires.
     """
     rows = [
         PerCallRow(
@@ -1502,19 +1512,24 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
 
     text = render_text(analysis)
 
-    # Lead sentence and bullets each on their own line — standalone substrings.
-    assert "Actual cache ratios from declared `prompt_cache:` subsets." in text
-    assert "· cached_now: tokens that went through cache this run." in text
+    # Header and column bullets each on their own line — standalone substrings.
+    assert "How to read each row:" in text
+    assert "· cached_now: tokens served from cache during this run. `—` if no trace was recorded." in text
     assert (
-        "· could_cache: tokens that could be cached if you declare/extend prompt_cache:; "
-        "? means no cacheable chunk could be projected."
+        "· could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. "
+        "`?` if the analyzer couldn't project; `—` if cached_now already has the measured number."
     ) in text
-    assert "· — means the column does not apply to this row's tier." in text
     # Run-on form with semicolon separators must NOT appear.
-    assert "cached_now: tokens that went through cache this run; could_cache:" not in text
+    assert "cached_now: tokens served from cache during this run; could_cache:" not in text
     # The wrong-after-Pass-A2 advice is gone.
     assert "divide by calls" not in text
     assert "Numbers aggregate across all calls" not in text
+    # The prior "tier" jargon and "sibling column" abstraction must NOT leak.
+    assert "this row's tier" not in text
+    assert "sibling column" not in text
+    # The collapsed block replaces the old steady-state / greenfield split.
+    assert "Actual cache ratios from declared" not in text
+    assert "Projected cache ratios from prior run data" not in text
 
 
 def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
@@ -2226,6 +2241,74 @@ def test_text_unavailable_row_notes_below_min_cross_workflow_candidate() -> None
     assert "case=refactor" not in text
     assert "case=model_switch" not in text
     assert "no stable" not in text
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param("anthropic/claude-sonnet-4-5", id="model-resolved"),
+        pytest.param("", id="model-unresolved"),
+    ],
+)
+def test_text_unavailable_row_notes_static_mode_zero_calls(model: str) -> None:
+    """Static-mode rows (no trace, ``observed_call_count == 0``) with an
+    unavailable projection had no fallback note before — the row rendered
+    ``cached_now: —``, ``could_cache: ?``, ``ratio: ?%``, ``calls: —`` with
+    an empty notes column. A fresh agent saw only placeholders with no
+    explanation and no next step.
+
+    The new fallback names the cause (``no trace recorded``) and the
+    unblocking action (``run with --report``). The note fires regardless
+    of whether the model resolved statically — the model column shows
+    ``<unresolved>`` or the model name; the action is identical.
+
+    The row passes the visibility filter via ``declared_prompt_cache`` —
+    static-mode lyrics-generator rows pass via the same path because
+    ``song-creator.pflow.md`` and friends declare cache that hasn't been
+    measured yet.
+
+    Mutation contract: remove the ``observed_call_count == 0`` branch from
+    ``_unavailable_could_cache_note`` → the note disappears.
+    """
+    row = PerCallRow(**{
+        **_row("write-lyrics", 0).__dict__,
+        "model": model,
+        "data_source": "estimator",
+        "cacheable_tokens_estimated": None,
+        "cache_ratio_pct": None,
+        "cacheable_data_source": "unavailable",
+        "observed_call_count": 0,
+        "declared_prompt_cache": ("article",),
+    })
+
+    text = render_text(_make_analysis(rows=[row]))
+
+    assert "write-lyrics" in text
+    assert "no trace recorded — run with --report to populate this row" in text
+    # Existing fallbacks for ``observed_call_count`` of 1 or ≥2 must NOT fire here.
+    assert "single call" not in text
+    assert "no stable" not in text
+
+
+def test_text_cost_tier_annotation_renders_plain_english() -> None:
+    """``actually_paid_usd``'s tier parenthetical is rendered as plain
+    English via ``_TIER_LABELS`` so agents read ``(from trace)`` /
+    ``(from partial trace)`` rather than the raw snake_case enum value.
+
+    Mutation contract: revert ``_format_cost`` to pass ``tier_annotation``
+    through unchanged → the negative assertion on ``trace_partial`` fires.
+    """
+    analysis = _make_analysis(
+        actually_paid=0.05,
+        no_cache=0.10,
+        partial=True,
+        actually_paid_tier=CostTier.TRACE_PARTIAL,
+    )
+    text = render_text(analysis)
+
+    assert "(from partial trace)" in text
+    # Raw enum value must NOT leak.
+    assert "trace_partial" not in text
 
 
 def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findings() -> None:
@@ -3943,53 +4026,52 @@ def test_text_pure_greenfield_hides_per_call_section_with_explanatory_note() -> 
     # Notes entry surfaces the explanatory message.
     assert "Per-call cache report hidden" in text
     assert "no run data yet" in text
-    # Mode-specific explainers must NOT render either (the section is gone).
+    # The collapsed explainer must NOT render (the section is gone).
+    assert "How to read each row:" not in text
+    # Legacy mode-specific explainer phrases must NOT render either.
     assert "Actual cache ratios" not in text
     assert "Projected cache ratios" not in text
     assert "No shared context detected" not in text
 
 
-def test_text_per_call_explainer_post_run_greenfield_says_projected() -> None:
-    """Option C: post-run greenfield workflows (no ``prompt_cache:`` declared
-    but rows have memo/trace data) show the "Projected cache ratios from prior
-    run data." explainer.
+def test_text_per_call_explainer_renders_unified_block_for_post_run_greenfield() -> None:
+    """The per-call explainer collapses post-run-greenfield and steady-state
+    into one shared "How to read each row:" block — both modes need the same
+    column documentation, and the prior split-leads (``"Actual cache ratios
+    from declared prompt_cache: subsets."`` vs ``"Projected cache ratios from
+    prior run data."``) required agents to understand the steady-state vs
+    greenfield distinction before they could read the table.
 
-    Two explainer modes survive Option C's row filter:
-    - **Steady-state** (any row has ``declared_prompt_cache``):
-      "Actual cache ratios from declared `prompt_cache:` subsets."
-    - **Post-run greenfield** (memo/trace rows, no declared):
-      "Projected cache ratios from prior run data."
-
-    The pure-greenfield "no shared context" branch was removed — those rows
-    are filtered out before reaching the explainer (see
-    ``test_text_pure_greenfield_hides_per_call_section_with_explanatory_note``).
-
-    Mutation test: invert ``is_steady_state`` detection or change the
-    post-run explainer string; this test fails because the wrong explainer
-    renders for a memo-data row with no declared subset.
+    Mutation test: re-introduce the split lead path → both post-run and
+    steady-state tests below fire because the new header is missing.
     """
     # ``_row("n1", 50)`` defaults to data_source="memo", declared_prompt_cache=None
-    # — the post-run greenfield path that survives the Option C filter.
+    # — the post-run greenfield path.
     rows = [_row("n1", 50)]
     text = render_text(_make_analysis(rows=rows))
     assert "## Per-call cache report" in text
-    assert "Projected cache ratios from prior run data." in text
-    # Other modes' explainers must NOT render here.
-    assert "Actual cache ratios" not in text
+    assert "How to read each row:" in text
+    # Old split-lead phrasings must NOT render.
+    assert "Actual cache ratios from declared" not in text
+    assert "Projected cache ratios from prior run data" not in text
     assert "No shared context detected" not in text
 
 
-def test_text_per_call_explainer_steady_state_says_actual_ratios() -> None:
-    """CP4 #7 — steady-state workflows (≥1 node has declared prompt_cache)
-    show the "Actual cache ratios" explainer.
+def test_text_per_call_explainer_renders_unified_block_for_steady_state() -> None:
+    """Same collapsed block applies when ≥1 node has declared ``prompt_cache``.
+    The new header doesn't differentiate steady-state vs greenfield because
+    the column documentation is identical for both — and the per-row data
+    already signals which mode this run is in (a populated ``cached_now``
+    means a trace fired).
 
-    Mutation test: invert the ``is_steady_state`` detection; this test fails.
+    Mutation test: re-introduce the ``is_steady_state`` branch → the negative
+    assertion on the old "Actual cache ratios" string fires.
     """
     rows = [_row("n1", 0), _row("n2", 75)]
     rows[1] = PerCallRow(**{**rows[1].__dict__, "declared_prompt_cache": ["concept", "concept_brief"]})
     text = render_text(_make_analysis(rows=rows))
-    assert "Actual cache ratios" in text
-    assert "Current ratios" not in text or "pre-cache" not in text
+    assert "How to read each row:" in text
+    assert "Actual cache ratios" not in text
 
 
 def test_text_header_drops_low_no_data_confidence() -> None:

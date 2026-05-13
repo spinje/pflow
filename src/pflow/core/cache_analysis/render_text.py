@@ -751,6 +751,12 @@ def _format_unavailable_models(analysis: CacheAnalysis) -> str:
     return ", ".join(parts)
 
 
+_TIER_LABELS: dict[str, str] = {
+    "trace": "from trace",
+    "trace_partial": "from partial trace",
+}
+
+
 def _format_cost(
     value: float | None,
     partial: bool,
@@ -764,11 +770,15 @@ def _format_cost(
     agent doesn't have to scan ``models_in_use`` to find the culprit. The
     plural-count phrasing remains for N>1.
 
-    Optional ``tier_annotation`` (e.g. ``"trace"``, ``"trace_partial"``)
-    appended in parentheses so the agent sees the confidence tier when
-    rendering ``actually_paid_usd``. Empty string skips the suffix
-    (the no_cache / first_run / rerun projection lines stay unannotated —
-    they're hypotheticals; the tier-confidence concept doesn't apply).
+    Optional ``tier_annotation`` (a ``CostTier`` enum value like ``"trace"``
+    or ``"trace_partial"``) appended in parentheses as plain English via
+    ``_TIER_LABELS`` so the agent reads ``(from trace)`` / ``(from partial
+    trace)`` rather than the raw snake_case enum. Empty string skips the
+    suffix (the no_cache / first_run / rerun projection lines stay
+    unannotated — they're hypotheticals; the tier-confidence concept
+    doesn't apply). Unknown tier values fall through to the raw string,
+    preserving information if a new enum value reaches this code path
+    without a label mapping.
     """
     if value is None:
         if len(unavailable_models) == 1:
@@ -776,7 +786,8 @@ def _format_cost(
         if unavailable_models:
             return f"unavailable (all {len(unavailable_models)} models lack pricing data)"
         return "unavailable"
-    annotation = f" ({tier_annotation})" if tier_annotation else ""
+    label = _TIER_LABELS.get(tier_annotation, tier_annotation)
+    annotation = f" ({label})" if label else ""
     amount = _format_dollar_amount(value)
     if partial:
         # Partial — caller must already have appended " (partial — N of M ...)" to value.
@@ -1764,10 +1775,14 @@ def _unavailable_could_cache_note(
         return None
     if row.model_is_heterogeneous or "opaque-prompt" in inline_warnings:
         return None
+    if row.observed_call_count == 0:
+        # Static-mode rows (no trace) had no fallback note before, leaving the
+        # row with `cached_now: —`, `could_cache: ?`, `ratio: ?%`, `calls: —`
+        # and a blank notes column. The agent saw only placeholders with no
+        # explanation or next step. Name the cause and the unblocking action.
+        return "no trace recorded — run with --report to populate this row"
     if row.observed_call_count == 1:
         return "single call; no repeated cache use observed"
-    if row.observed_call_count < 2:
-        return None
     if not row.model:
         return "no stable repeated cache prefix found"
     return f"no stable {get_min_cache_tokens(row.model):,}-token repeated prefix found"
@@ -1810,34 +1825,31 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
 def _per_call_scope_explainer(rows: list[PerCallRow], evidence_scope: str = "static_analysis") -> list[str]:
     """Return multi-line explainer describing what the per-call columns mean.
 
-    Two modes that survive the Option C row filter:
+    Two modes:
 
-    - **Steady-state**: at least one row has ``declared_prompt_cache``.
-      Values reflect declared subsets.
-    - **Post-run greenfield**: rows have memo/trace data; values are projected
-      from real run history.
+    - **Truncated trace**: the trace covered only an executed subset.
+      Distinct lead because partial coverage changes how missing values
+      should be interpreted.
+    - **All other modes**: one shared block that names each column and
+      explains the ``?`` / ``—`` placeholders in the column they appear in.
 
-    Returned as ``list[str]`` so the caller can emit one indented line per
-    bullet — the prior single-line form packed four facts into a 60-word
-    run-on that agents skimmed past. The prior form also carried a
-    "divide by calls for per-call values" hint that became wrong after
-    static-list batch trace rows were normalized to per-call units; the
-    blanket advice is dropped here rather than caveated, since column-by-
-    column meaning is the agent-actionable signal.
+    Caller renders each string as its own line (indented at the call site).
+
+    The prior version split the all-other-modes case into "steady-state"
+    vs "post-run greenfield" leads with a four-bullet block whose last
+    line read ``"— means the column does not apply to this row's tier."``
+    That phrasing leaked pflow-internal vocabulary (``tier`` is shorthand
+    for the ``data_source`` / ``cacheable_data_source`` enum classification)
+    into stdout and forced agents to infer enum semantics to read ``—``.
+    The collapsed block explains each placeholder where it appears.
     """
     if evidence_scope == "truncated_trace_executed_subset":
         return ["Executed trace rows are evidence-only; unexecuted rows are marked when shown."]
-    is_steady_state = any(row.declared_prompt_cache is not None for row in rows)
-    lead = (
-        "Actual cache ratios from declared `prompt_cache:` subsets."
-        if is_steady_state
-        else "Projected cache ratios from prior run data."
-    )
     return [
-        lead,
-        "  · cached_now: tokens that went through cache this run.",
-        "  · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.",
-        "  · — means the column does not apply to this row's tier.",
+        "How to read each row:",
+        "  · cached_now: tokens served from cache during this run. `—` if no trace was recorded.",
+        "  · could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. "
+        "`?` if the analyzer couldn't project; `—` if cached_now already has the measured number.",
     ]
 
 

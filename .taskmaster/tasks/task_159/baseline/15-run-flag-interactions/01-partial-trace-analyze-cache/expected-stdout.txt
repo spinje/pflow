@@ -7,7 +7,7 @@
 ## Summary
 
   Trace-backed costs below cover executed nodes only.
-  Actually paid (executed trace):       ~$0.0006 (trace)
+  Actually paid (executed trace):       ~$0.0006 (from trace)
   Cost without caching (executed):      ~$0.0023
   Cost on rerun (executed, within TTL): ~$0.0006
   Actual savings (this run):    saves ~$0.0016/run vs no-cache, 72% of no-cache cost

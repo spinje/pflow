@@ -68,23 +68,22 @@
      → See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern.
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
-    · cached_now: tokens that went through cache this run.
-    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
-    · — means the column does not apply to this row's tier.
+  How to read each row:
+    · cached_now: tokens served from cache during this run. `—` if no trace was recorded.
+    · could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. `?` if the analyzer couldn't project; `—` if cached_now already has the measured number.
   Showing 8 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   node                     model         input  cached_now  could_cache  ratio  calls  notes
   -------------------------------------------------------------------------------------
 
 ### song-creator.pflow.md (called by create-songs)
-  write-lyrics             <unresolved>  3,684           —            ?     ?%      —
-  song-architecture        <unresolved>  2,886           —            ?     ?%      —
-  rewrite-emotional        <unresolved>  2,575           —            ?     ?%      —
-  rewrite-craft            <unresolved>  2,454           —            ?     ?%      —
-  generate-suno-prompt     <unresolved>  1,340           —            ?     ?%      —
-  creative-direction       <unresolved>  1,248           —            ?     ?%      —
-  easter-eggs              <unresolved>  1,066           —            ?     ?%      —
+  write-lyrics             <unresolved>  3,684           —            ?     ?%      —  no trace recorded — run with --report to populate this row
+  song-architecture        <unresolved>  2,886           —            ?     ?%      —  no trace recorded — run with --report to populate this row
+  rewrite-emotional        <unresolved>  2,575           —            ?     ?%      —  no trace recorded — run with --report to populate this row
+  rewrite-craft            <unresolved>  2,454           —            ?     ?%      —  no trace recorded — run with --report to populate this row
+  generate-suno-prompt     <unresolved>  1,340           —            ?     ?%      —  no trace recorded — run with --report to populate this row
+  creative-direction       <unresolved>  1,248           —            ?     ?%      —  no trace recorded — run with --report to populate this row
+  easter-eggs              <unresolved>  1,066           —            ?     ?%      —  no trace recorded — run with --report to populate this row
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>          ?           —            ?     ?%      —  opaque-prompt

@@ -1,3 +1,259 @@
+## 2026-05-13 — Task 159 Followups — UX 10 fix: plain-English per-call explainer + static-mode trace hint + cost tier label
+
+Three coordinated agent-UX polish fixes after a cold-reader pass over the
+canonical lyrics-generator capture. Each had a different root cause but all
+exposed pflow-internal vocabulary to fresh AI agents reading
+`pflow analyze-cache` text output. Bundled because they all touched
+`render_text.py` and shared one baseline-regen pass.
+
+Durable user directive captured this session: **always apply the cold-reader
+test to ALL CLI outputs**. Every fix below was validated by reading the
+post-regen baseline as a fresh agent who has never read pflow source.
+
+### Problem statement
+
+Field-report UX 10 (`scratchpads/cache-analyzer-feedback-20260511.md`)
+flagged the per-call table as "mostly blank ink" when no trace was loaded.
+Investigation surfaced three distinct agent-UX failures stacked on the same
+output region:
+
+1. **Per-call explainer leaked `tier` jargon.** Line 1840 of `render_text.py`
+   read `"— means the column does not apply to this row's tier"`. "Tier" is
+   pflow-internal shorthand for the `data_source` / `cacheable_data_source`
+   enum classification (values: `trace`, `memo`, `estimator`, `heuristic`,
+   `parameters`, `batch_prefix`, `cross_workflow_projection`, `unavailable`).
+   A fresh agent reading the stdout had no way to know what "tier" meant or
+   which combinations made `—` "apply" — the column-by-column mapping is
+   only readable from source. The full four-line explainer block was
+   written for the implementer, not the agent.
+
+2. **Static-mode rows had empty notes.** `_unavailable_could_cache_note`
+   short-circuited to `None` when `observed_call_count == 0`. For workflows
+   analyzed without a trace (the lyrics-generator's canonical case), every
+   sub-workflow row rendered with `cached_now: —`, `could_cache: ?`,
+   `ratio: ?%`, `calls: —`, and a blank notes column. The agent saw
+   placeholders with no explanation and no next step. The fallback function
+   handled `observed_call_count == 1` (`"single call …"`) and `≥ 2`
+   (`"no stable N-token repeated prefix found"`) but treated `== 0` as
+   "nothing to say."
+
+3. **Cost block leaked snake_case enum.** `_format_cost`'s tier parenthetical
+   passed `s.actually_paid_tier.value` through unchanged, producing
+   `Actually paid: ~$2.31 (trace_partial)` for partial-trace cases. The
+   `(trace)` variant happens to read cleanly as plain English; `(trace_partial)`
+   reads as a raw `CostTier` enum value.
+
+### Root-cause investigation
+
+Three parallel `pflow-codebase-searcher` runs verified the bug landscape:
+
+1. **Vocabulary audit** (stdout-bound strings only — code comments out of
+   scope): one real jargon leak at `render_text.py:1840`, one enum leak at
+   `render_text.py:779`, no other agent-facing strings used pflow-internal
+   vocabulary. The "Confidence: high — …" line at `:229` was a false alarm
+   (the word `tier` only appears in the Python variable name, not stdout).
+
+2. **Row-state landscape**: enumerated 14 distinct row states across
+   `(trace_loaded?, cacheable_data_source, observed_call_count, model-kind)`.
+   Cases #11 (model resolved, 0 calls, no trace), #12 (model unresolved),
+   and #13 (heterogeneous IR + no observed) all fell through every branch
+   of `_unavailable_could_cache_note` to return `None`. The `<unresolved>` /
+   `<varies>` model strings are render-time only; the underlying state lives
+   in `(model_is_heterogeneous, observed_models, model)`. **Recommendation:
+   extend the existing fallback function; do not introduce a new
+   abstraction.** Six leaves is well within the size where one switch-style
+   function is the most readable shape; top-10% CLI codebases (ruff, click,
+   rich) use plain if-elif ladders at this scale.
+
+3. **Blast radius scoping**: 17 baselines contain the explainer text,
+   ~5 high-confidence baselines would gain the new note, 2 test functions
+   in 1 file (`test_cache_analysis_renderers.py`) cover ~9 wording
+   assertions. Regen harness exists (`regenerate.sh`).
+
+### Architectural reasoning
+
+The user-stated priority hierarchy this session:
+
+1. Agent UX is the absolute highest priority.
+2. Simplicity of FINAL code (not how easy it is to get there).
+3. What would the top 10% of codebases similar to this one implement?
+
+Applied to each fix:
+
+- **Explainer**: collapsed steady-state (B2) and post-run-greenfield (B3)
+  leads into one shared block. The prior split forced agents to know the
+  steady-state-vs-greenfield distinction before they could read the column
+  documentation — the column meaning is identical in both modes. The
+  truncated-trace branch (B1) preserved verbatim because partial coverage
+  changes how missing values should be interpreted. Dropped the dead
+  `is_steady_state` local. Each `?` / `—` placeholder now explained in the
+  column it appears in — no "sibling column" abstraction, no "tier"
+  vocabulary.
+
+- **Static-mode note**: added one branch before the `observed_call_count == 1`
+  check. Names the cause (`no trace recorded`) AND the unblocking action
+  (`run with --report to populate this row`). One unified note for cases
+  #11 / #12 / #13 — the `model` column already shows `<unresolved>` /
+  `<varies>` for the WHY; `--report` is the universal action regardless of
+  model state. Removed the now-dead `observed_call_count < 2` check
+  (unreachable after the `== 0` and `== 1` branches above it).
+
+- **Cost tier label**: introduced `_TIER_LABELS = {"trace": "from trace",
+  "trace_partial": "from partial trace"}` with `.get(tier, tier)` fallback.
+  Defensive: unknown enum values pass through unchanged, preserving
+  information if a new `CostTier` reaches this code path. Only `TRACE` and
+  `TRACE_PARTIAL` reach `_format_cost` today (verified at the call site —
+  `_render_trace_cost_lines` is only entered when `actually_paid_usd is not
+  None`, which `RECOMPUTED` and `UNAVAILABLE` never produce).
+
+**Rejected refactors** considered and dropped:
+
+- `row_state_phrase(row) -> str` predicate centralizing all jargon
+  translation. Would earn its keep if multiple consumers needed the same
+  state phrasing — today exactly one (text render) does. Premature.
+- Frozen-dataclass `RowState` enum at row-build time in `analyze.py`. JSON
+  consumers can derive the same from existing fields. Task 160 may
+  formalize this as part of `PerCallRow` taxonomy.
+- Predicate→note registry. Adds dispatch indirection for one caller, one
+  extension point per release, no ranking, no third-party registration.
+  Warning catalog uses the registry shape correctly because warnings ARE
+  data; per-row notes are render logic.
+
+### Implementation
+
+**Production (`src/pflow/core/cache_analysis/render_text.py`, +72/-79 LOC):**
+
+1. `_per_call_scope_explainer` (lines 1810-1838): kept `truncated_trace_executed_subset`
+   early return; merged B2/B3 into one shared block. Two column bullets,
+   each explaining its own `?` / `—` placeholders inline.
+
+   ```
+   How to read each row:
+     · cached_now: tokens served from cache during this run. `—` if no trace was recorded.
+     · could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. `?` if the analyzer couldn't project; `—` if cached_now already has the measured number.
+   ```
+
+2. `_unavailable_could_cache_note` (lines 1757-1775): new branch:
+
+   ```python
+   if row.observed_call_count == 0:
+       return "no trace recorded — run with --report to populate this row"
+   ```
+
+   Deleted the now-dead `if row.observed_call_count < 2: return None` check
+   that previously sat between the `== 1` branch and the model-aware
+   branches. With `== 0` and `== 1` both handled above, the `< 2` check
+   only caught negative values — impossible for a count.
+
+3. `_format_cost` (lines 754-797): added module-level `_TIER_LABELS` dict
+   and `.get(tier_annotation, tier_annotation)` lookup. Single-line semantic
+   change; the rest of the function unchanged.
+
+**Tests (`tests/test_core/test_cache_analysis_renderers.py`, +180/-79 LOC):**
+
+- Rewrote 4 explainer tests for the collapsed block with negative
+  assertions locking out `this row's tier`, `sibling column`, and the
+  legacy split-lead strings (`Actual cache ratios from declared`,
+  `Projected cache ratios from prior run data`).
+- Extended `_make_analysis` test helper to accept
+  `actually_paid_tier: CostTier | None` so tests can exercise non-default
+  tiers without contortion.
+- Added parametrized
+  `test_text_unavailable_row_notes_static_mode_zero_calls` covering
+  both `model="anthropic/claude-sonnet-4-5"` and `model=""` (case #11 /
+  #12 unification). Mutation contract documented inline: remove the
+  `== 0` branch → note disappears.
+- Added `test_text_cost_tier_annotation_renders_plain_english` for the
+  `(from partial trace)` rendering. Negative assertion locks out raw
+  `trace_partial`.
+- Updated trace-mode parenthetical test for `(from trace)`.
+
+### Baselines
+
+Regenerated 21 baselines via `regenerate.sh`. Surfaces affected:
+
+- Explainer rewrite: `01-parser-errors/{03,09}`, `02-validator-errors/{06,07,08}`,
+  `03-analyze-cache-modes/{01,03,05,06,08}`, `04-warning-catalog/{08,12,14}`,
+  `10-live-recordings/{03,05}`, `12-real-world-lyrics-generator/{01,03}`.
+- Cost parenthetical: `15-run-flag-interactions/01-partial-trace-analyze-cache`
+  (the canonical `trace_partial` repro).
+- New static-mode note: `12-real-world-lyrics-generator/{01,03}` (the
+  canonical lyrics-generator no-trace case — 7 rows under `song-creator`
+  now show `no trace recorded — run with --report to populate this row`).
+
+Three baselines that were drifting pre-existing (`01-parser-errors/{01,06,08}`
+and `04-warning-catalog/12-cache.discrepancy`) also resolved in this regen
+pass — incidental cleanup.
+
+### Verification
+
+- Focused renderer tests: **164 passed**.
+- Cache-analysis + CLI suite (`tests/test_core/test_cache_analysis_*.py` +
+  `tests/test_cli/test_analyze_cache.py`): **678 passed**.
+- Broad sandbox-safe sweep (`tests/test_core/` + `tests/test_cli/`, excluding
+  e2e): **3,233 passed, 0 failures, 41 deselected**.
+- Baseline harness: **76 passed, 0 drifted, 0 harness errors**.
+- `ruff check`, `ruff format --check`, `mypy src/pflow/core/cache_analysis/`
+  — clean on all touched source files.
+- **Cold-reader spot check** on
+  `baseline/12-real-world-lyrics-generator/01-analyze-cache-text/expected-stdout.txt`
+  and `baseline/10-live-recordings/05-gemini-lyrics-generator/expected-stdout.txt`:
+  explainer reads cleanly with no "tier" / "sibling column" jargon; per-row
+  notes carry both cause and action; trace-mode rows correctly skip the new
+  note (existing `observed_call_count > 0` paths unchanged).
+
+### Tacit knowledge
+
+**The `<unresolved>` / `<varies>` model strings are render-only.** Producer
+state is `(row.model_is_heterogeneous, len(row.observed_models), bool(row.model))`.
+Any future note function consulting model state should check the underlying
+tuple, not parse the rendered cell. Worth a docstring note on `_cell_model`
+if a second consumer appears.
+
+**The `_TIER_LABELS` map is closed on the public enum (`CostTier`).** New
+enum values that reach `_format_cost` will render as raw strings (the
+`.get()` fallback). This is intentional — silent dropping would be worse —
+but means new enum values need a paired label entry. Test
+`test_text_cost_tier_annotation_renders_plain_english` covers `TRACE_PARTIAL`;
+adding new values requires extending the test.
+
+**Residual visual density in static-mode rows.** Post-fix, the lyrics-generator
+no-trace output still has two layers of repetition: 4 columns of
+placeholder values (`—  ?  ?%  —`) repeated on every row, AND the new
+note repeated verbatim on 7 contiguous rows. The cold-reader test on the
+shipped output passes for clarity but flags repetition as residual noise.
+Follow-up considered: column-hiding (Alternative A from the original UX 10
+options) combined with note de-duplication (footer-style aggregation).
+Together those would deliver a genuinely scannable static-mode table; either
+in isolation leaves the other as residual noise. **Not in this PR** — see
+"What's next" below.
+
+**The cold-reader directive applies to all CLI surfaces going forward.**
+This PR confined the audit to `analyze-cache` text output. UX 8 (`pricing
+unavailable for: unknown` in post-run cost summary at `success_formatter.py`
+and `cli/workflow_output.py`) is a confirmed separate-subsystem leak that
+should be addressed in a `pflow run` polish pass.
+
+### What's next (still open)
+
+- **Column hiding + note de-dup bundle.** ~80–110 LOC, ~20 baseline regens,
+  ~4 new tests. Combines Alternative A (hide universally-empty columns) and
+  footer-style note aggregation. Cold-reader test on the post-fix output
+  shows the repetition is the largest remaining UX gap; the bundle would
+  close it.
+- **`settings.default_model` in static mode.** The lyrics-generator no-trace
+  baseline shows `<unresolved>` model for every static-mode row — investigate
+  whether this is the analyzer not reading user settings, or expected
+  behavior for the baseline harness (which runs in a clean environment).
+  If the analyzer SHOULD read settings, case #12 (model unresolved) would
+  collapse into case #11 for most real-world invocations.
+- **UX 8 (post-run cost summary `pricing unavailable for: unknown`).**
+  Different subsystem; not in this PR's scope. Confirmed leak at
+  `success_formatter.py:278` and `cli/workflow_output.py:471`.
+- **Concept 4 — guide section on per-item interleaved content.** Biggest
+  empirical win in the field report (curate-briefs went from ~0 to ~30K
+  cacheable after reorder), still undocumented as a pattern.
+
 ## 2026-05-13 — Task 159 Followups — Bug A fix: batch-prefix + cross-workflow per-call unit
 
 Field-report Bug A (`scratchpads/experiments/prewarm-cache-interaction/FINDINGS.md`):

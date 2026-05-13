@@ -23,10 +23,9 @@
      → Extend `prompt_cache:` to `['a', 'b', 'c']` to gain prefix-cache hits from upstream writes.
 
 ## Per-call cache report
-  Actual cache ratios from declared `prompt_cache:` subsets.
-    · cached_now: tokens that went through cache this run.
-    · could_cache: tokens that could be cached if you declare/extend prompt_cache:; ? means no cacheable chunk could be projected.
-    · — means the column does not apply to this row's tier.
+  How to read each row:
+    · cached_now: tokens served from cache during this run. `—` if no trace was recorded.
+    · could_cache: extra cacheable tokens if you declared/extended `prompt_cache:`. `?` if the analyzer couldn't project; `—` if cached_now already has the measured number.
   Showing 1 of 2 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   node      model                      input  cached_now  could_cache  ratio  calls  notes
