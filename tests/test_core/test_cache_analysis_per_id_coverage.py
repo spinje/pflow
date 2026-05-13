@@ -55,6 +55,16 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
             None,
             {"node_count": 3, "shared_chunks": ["concept"], "affected_workflow": "x.pflow.md", "savings_usd": 0.78},
         ),
+        "cache.shared-context-undeclared-conditional": (
+            None,
+            {
+                "node_count": 2,
+                "shared_chunks": ["concept"],
+                "affected_workflow": "x.pflow.md",
+                "min_tokens": 2048,
+                "affected_nodes": ["draft", "review"],
+            },
+        ),
         "cache.sub-workflow-cache-undeclared": (
             None,
             {
@@ -941,6 +951,38 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert found, f"analyze did not emit cache.shared-context-undeclared: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
     seen_ids.add("cache.shared-context-undeclared")
+
+    # cache.shared-context-undeclared-conditional: same structural opportunity,
+    # but current resolved values are below the provider minimum. No suggested
+    # paste block is emitted; the advisory tells agents to retry with
+    # representative runtime values before editing.
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    conditional_ir: dict[str, Any] = {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "priced/model",
+                "params": {"prompt": "Draft ${article}."},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "priced/model",
+                "params": {"prompt": "Review ${article}."},
+            },
+        ],
+        "edges": [],
+    }
+    analysis = analyze(conditional_ir, parameters={"article": "hi"}, workflow_path="conditional.pflow.md")
+    found = [d for d in analysis.warnings if d.id == "cache.shared-context-undeclared-conditional"]
+    assert found, (
+        f"analyze did not emit cache.shared-context-undeclared-conditional: ids={[d.id for d in analysis.warnings]}"
+    )
+    _round_trip(found[0])
+    seen_ids.add("cache.shared-context-undeclared-conditional")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
 
     # cache.prompt-cache-incomplete: workflow already declares ## Cache, but
     # each LLM node's prompt_cache omits a shared chunk it references.

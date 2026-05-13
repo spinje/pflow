@@ -38,7 +38,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 25 entries (24 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 26 entries (25 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -68,11 +68,14 @@ def test_catalog_size_matches_v1_inventory() -> None:
       cache marker will silently no-op at the provider)
     - ``cache.batch-prewarm-lower-bound-recommended`` (Task 159 follow-up:
       restores prewarm advice when the measurable stable prefix clears the
-      provider minimum but unresolved upstream refs require verification).
+      provider minimum but unresolved upstream refs require verification)
+    - ``cache.shared-context-undeclared-conditional`` (Task 159 follow-up:
+      shared context is structurally reusable, but current values are below
+      provider cache minimums).
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 25
+    assert len(CACHE_WARNING_CATALOG) == 26
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -668,6 +671,13 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "shared_chunks": ["concept"],
             "affected_workflow": "x.pflow.md",
             "savings_usd": 0.78,
+        },
+        "cache.shared-context-undeclared-conditional": {
+            "node_count": 2,
+            "shared_chunks": ["concept"],
+            "affected_workflow": "x.pflow.md",
+            "min_tokens": 2048,
+            "affected_nodes": ["draft", "review"],
         },
         "cache.sub-workflow-cache-undeclared": {
             "affected_workflow": "child.pflow.md",

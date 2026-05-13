@@ -30,7 +30,7 @@ for the initial construction findings.
 | Surface 01 — parser errors (10 cases) | ✅ done; 1 finding (F-01) |
 | Surface 02 — validator errors (8 cases) | ✅ done |
 | Surface 03 — analyze-cache modes (8 cases, compressed from 17) | ✅ done |
-| Surface 04 — warning catalog (25 cases: 23 IDs + subpath/text variants) | ✅ done; 22/25 trigger target ID; 3 non-trigger cases intentionally lock current silence |
+| Surface 04 — warning catalog (26 cases: 24 IDs + subpath/text variants) | ✅ done; 23/26 trigger target ID; 3 non-trigger cases intentionally lock current silence |
 | Surface 05 — advisory cases (5 cases) | ✅ done |
 | **Surface 06 — dry-run nudge (3 cases)** | ✅ done; positive nudge, optimal silence, and structural cache error |
 | **Surface 10 — live recordings (2 cases)** | ✅ partial; Gemini translation + real lyrics-generator trace committed |
@@ -80,7 +80,7 @@ baseline/
 ├── 01-parser-errors/                  (10 cases)
 ├── 02-validator-errors/               (8 cases)
 ├── 03-analyze-cache-modes/            (8 cases)
-├── 04-warning-catalog/                (25 cases)
+├── 04-warning-catalog/                (26 cases)
 ├── 05-advisory-cases/                 (5 cases)
 ├── 06-dry-run-nudge/                  (3 cases)
 ├── 10-live-recordings/                (2 cases)
@@ -118,7 +118,7 @@ cases. The remaining original Surface 11 variants (`with-fixture-trace` and
 example dry-run footer) are optional because trace mode is covered by Surface
 03/10 and dry-run behavior is covered by Surface 06.
 
-### Surface 04 — Warning catalog (25/25 cases captured; 22 trigger target ID)
+### Surface 04 — Warning catalog (26/26 cases captured; 23 trigger target ID)
 
 | # | ID | Triggered |
 |---|---|---|
@@ -147,6 +147,7 @@ example dry-run footer) are optional because trace mode is covered by Surface
 | 22 | cache.batch-prewarm-below-min | ✓ |
 | 23 | cache.batch-prewarm-lower-bound-recommended | ✓ |
 | 23b | cache.batch-prewarm-lower-bound-recommended-text | ✓ |
+| 24 | cache.shared-context-undeclared-conditional | ✓ |
 
 The 3 untriggered cases STILL serve as regression gates: they capture the
 analyzer's current output on the fixture; if a code change makes one of these

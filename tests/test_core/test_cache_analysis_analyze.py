@@ -197,10 +197,14 @@ def test_confidence_high_when_all_trace() -> None:
     assert coverage == {"trace": 2, "memo": 0, "estimator": 0, "heuristic": 0, "total": 2}
 
 
-def test_suggested_block_suppressed_when_all_assigned_nodes_below_threshold(
+def test_below_threshold_emits_conditional_recommendation_not_paste_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Below-threshold-only shared refs produce no paste-ready edit."""
+    """Below-threshold shared refs produce a conditional advisory, not a paste block.
+
+    Mutation contract: removing the BELOW_THRESHOLD branch from
+    ``_populate_suggested_blocks`` makes the conditional diagnostic disappear.
+    """
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
@@ -228,7 +232,17 @@ def test_suggested_block_suppressed_when_all_assigned_nodes_below_threshold(
 
     assert result.suggested_blocks == ()
     assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
-    assert any("at least one assigned LLM node is below the provider cache threshold" in note for note in result.notes)
+    conditional = next(d for d in result.warnings if d.id == "cache.shared-context-undeclared-conditional")
+    assert conditional.context is not None
+    assert conditional.context["min_tokens"] == 1000
+    assert conditional.context["node_count"] == 2
+    assert conditional.context["affected_nodes"] == ["draft", "review"]
+    assert conditional.context["shared_chunks"] == ["topic"]
+    from pflow.core.cache_analysis.render_text import render_text
+
+    text = render_text(result)
+    assert "Shared context conditional" in text
+    assert "paste-ready" not in text
 
 
 def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,7 +265,7 @@ def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.M
     assert result.suggested_blocks == ()
     assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
     assert result.summary.actionable_opportunities == 0
-    assert any("model/token evidence is incomplete" in note for note in result.notes)
+    assert any("the analyzer cannot yet tell whether a cache edit would fire" in note for note in result.notes)
     from pflow.core.cache_analysis.render_json import render_json
     from pflow.core.cache_analysis.render_text import render_text
 
@@ -261,7 +275,8 @@ def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.M
     text = render_text(result)
     assert "## Recommended actions" not in text
     assert "## Suggested ## Cache block" not in text
-    assert "model/token evidence is incomplete" in text
+    assert "the analyzer cannot yet tell whether a cache edit would fire" in text
+    assert "paste-ready" not in text
 
 
 def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,10 +316,14 @@ def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatc
     assert any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
 
 
-def test_suggested_block_suppressed_when_any_assigned_node_below_threshold(
+def test_below_threshold_emits_conditional_even_when_only_one_node_below(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A partially actionable block is not paste-ready enough to render."""
+    """Any below-threshold consumer makes the edit conditional.
+
+    Mutation contract: using the least restrictive provider minimum instead of
+    the strictest one reports ``10`` here and understates the precondition.
+    """
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
@@ -342,7 +361,10 @@ def test_suggested_block_suppressed_when_any_assigned_node_below_threshold(
 
     assert result.suggested_blocks == ()
     assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
-    assert any("at least one assigned LLM node is below the provider cache threshold" in note for note in result.notes)
+    conditional = next(d for d in result.warnings if d.id == "cache.shared-context-undeclared-conditional")
+    assert conditional.context is not None
+    assert conditional.context["min_tokens"] == 1000
+    assert conditional.context["affected_nodes"] == ["reader", "too-small", "writer"]
 
 
 def test_analyze_cache_validation_replaces_unknown_scope() -> None:

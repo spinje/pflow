@@ -5,7 +5,7 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-25 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
+26 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
 ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
@@ -18,7 +18,9 @@ detect cross-node cache fragmentation caused by divergent ``system:`` strings) +
 ``cache.sub-workflow-cache-undeclared`` (Stage 2 follow-up: sub-workflows need
 their own cache declarations) + ``cache.batch-prewarm-below-min`` and
 ``cache.batch-prewarm-lower-bound-recommended`` (Task 159 follow-ups: prewarm
-threshold and lower-bound advisory gaps). The base 14 covers the 9 from
+threshold and lower-bound advisory gaps) + ``cache.shared-context-undeclared-
+conditional`` (Task 159 follow-up: shared context is structurally cacheable but
+current values are below provider minimums). The base 14 covers the 9 from
 spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2),
 ``cache.invalid-on-non-llm`` (Round 3, validator-
 reach gap closure for non-LLM nodes), ``cache.prewarm-no-prefix`` (Round 3,
@@ -282,6 +284,32 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="workflows[path={affected_workflow}]",
         nullable_cost_keys=frozenset({"savings_usd"}),
         headline_template=_SHARED_CONTEXT_WORKFLOW_HEADLINE,
+    ),
+    "cache.shared-context-undeclared-conditional": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        message_template=(
+            "Used by {node_count} LLM nodes. Chunks: {shared_chunks_csv}. "
+            "Resolved values are below the provider cache minimum "
+            "(≥{min_tokens:,} tokens; this is the highest minimum across these nodes); "
+            "caching will only fire if runtime values are larger."
+        ),
+        required_context_keys=(
+            ("node_count", int),
+            ("shared_chunks", list),
+            ("affected_workflow", str),
+            ("min_tokens", int),
+            ("affected_nodes", list),
+        ),
+        suggestions_template=(
+            "Re-run with a representative value (e.g. `{shared_chunks_first}=@./real-input.md`) and re-run analyze-cache to confirm whether caching fires.",
+            "If runtime values typically reach ≥{min_tokens:,} tokens, declare {shared_chunks_short} in `## Cache` and add `prompt_cache: [{shared_chunks_csv}]` to: {affected_nodes_csv}.",
+        ),
+        path_template="workflows[path={affected_workflow}]",
+        headline_template=(
+            "Shared context conditional — declare {shared_chunks_short} in ## Cache if runtime values reach ≥{min_tokens:,} tokens"
+        ),
     ),
     "cache.sub-workflow-cache-undeclared": CacheWarningSpec(
         severity=Severity.INFO,
@@ -870,6 +898,7 @@ DEFAULT_RECOMMENDED_ACTION_PRIORITY: Final[int] = 100
 RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     # Tier 1 — actionable opportunities with concrete suggestions agents can apply.
     "cache.shared-context-undeclared": 10,
+    "cache.shared-context-undeclared-conditional": 10,
     "cache.sub-workflow-cache-undeclared": 10,
     "cache.prompt-cache-incomplete": 11,
     "cache.dynamic-before-static": 10,
@@ -1050,6 +1079,7 @@ def _add_collection_aliases(format_dict: dict[str, Any], context_kwargs: dict[st
         chunks = context_kwargs["shared_chunks"]
         format_dict["shared_chunks_csv"] = ", ".join(str(c) for c in chunks) if chunks else ""
         format_dict["shared_chunks_short"] = _format_chunks_short(chunks)
+        format_dict["shared_chunks_first"] = str(chunks[0]) if chunks else ""
 
     if "sub_paths" in context_kwargs:
         sub_paths = context_kwargs["sub_paths"]
@@ -1058,6 +1088,10 @@ def _add_collection_aliases(format_dict: dict[str, Any], context_kwargs: dict[st
     if "unresolved_refs" in context_kwargs:
         refs = context_kwargs["unresolved_refs"]
         format_dict["unresolved_refs_csv"] = ", ".join(str(r) for r in refs) if refs else ""
+
+    if "affected_nodes" in context_kwargs:
+        nodes = context_kwargs["affected_nodes"]
+        format_dict["affected_nodes_csv"] = ", ".join(str(n) for n in nodes) if nodes else ""
 
 
 def _add_plural_aliases(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:

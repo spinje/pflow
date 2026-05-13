@@ -487,6 +487,7 @@ async def analyze_cache(
       - cache.order-mismatch
       - cache.unused-chunk
       - cache.shared-context-undeclared
+      - cache.shared-context-undeclared-conditional
       - cache.sub-workflow-cache-undeclared
       - cache.prompt-cache-incomplete
       - cache.batch-prewarm-recommended

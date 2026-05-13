@@ -652,6 +652,144 @@ def test_shared_context_undeclared_populates_suggested_block_with_dotted_path(
     }
 
 
+def _shared_context_smoke_workflow(*, model: str | None = "anthropic/claude-haiku-4-5") -> dict[str, Any]:
+    model_fields = {"model": model} if model is not None else {}
+    return {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                **model_fields,
+                "params": {"prompt": "Summarize ${article}."},
+            },
+            {
+                "id": "tag",
+                "type": "llm",
+                **model_fields,
+                "params": {"prompt": "Tag ${article}."},
+            },
+            {
+                "id": "translate",
+                "type": "llm",
+                **model_fields,
+                "params": {"prompt": "Translate ${article}."},
+            },
+        ],
+    }
+
+
+def test_shared_context_undeclared_conditional_fires_for_greenfield_smoke_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the real analyzer path for smoke-test inputs below provider minimum.
+
+    Mutation contract: deleting the BELOW_THRESHOLD branch in
+    ``_populate_suggested_blocks`` makes this conditional warning disappear.
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+
+    analysis = analyze(
+        _shared_context_smoke_workflow(),
+        parameters={"article": "hello"},
+        workflow_path="smoke.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" in ids
+    assert "cache.shared-context-undeclared" not in ids
+    diag = next(d for d in analysis.warnings if d.id == "cache.shared-context-undeclared-conditional")
+    assert diag.context is not None
+    assert diag.context["node_count"] == 3
+    assert diag.context["min_tokens"] == 4096
+    assert diag.context["shared_chunks"] == ["article"]
+    assert diag.context["affected_nodes"] == ["summarize", "tag", "translate"]
+
+    text = render_text(analysis, all_rows=True)
+    assert "Shared context conditional" in text
+    assert "Re-run with a representative value" in text
+    assert "article=@./real-input.md" in text
+    assert "If runtime values typically reach ≥4,096 tokens" in text
+    assert "declare `article` in `## Cache`" in text
+    assert "highest minimum across these nodes" in text
+    assert "<name>" not in text
+    assert "strictest consumer" not in text
+    assert "declare the shared refs" not in text
+    assert "below provider min (need ≥4,096 for this model)" in text
+    assert "paste-ready" not in text
+
+
+def test_shared_context_undeclared_conditional_silent_when_value_clears_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Above-threshold values keep the confident sibling as the only action."""
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+
+    analysis = analyze(
+        _shared_context_smoke_workflow(),
+        parameters={"article": "word " * 4100},
+        workflow_path="smoke.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" not in ids
+    assert "cache.shared-context-undeclared" in ids
+    assert analysis.suggested_blocks
+
+
+def test_shared_context_undeclared_conditional_silent_when_evidence_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+
+    analysis = analyze(
+        _shared_context_smoke_workflow(model=None),
+        parameters={"article": "word " * 2100},
+        workflow_path="smoke.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" not in ids
+    assert "cache.shared-context-undeclared" not in ids
+    assert any("the analyzer cannot yet tell whether a cache edit would fire" in note for note in analysis.notes)
+    assert "paste-ready" not in render_text(analysis, all_rows=True)
+
+
+def test_shared_context_undeclared_conditional_silent_for_single_node() -> None:
+    workflow_ir = {
+        "inputs": {"article": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "model": "anthropic/claude-haiku-4-5",
+                "params": {"prompt": "Summarize ${article}."},
+            }
+        ],
+    }
+
+    analysis = analyze(
+        workflow_ir,
+        parameters={"article": "hello"},
+        workflow_path="single.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    ids = {d.id for d in analysis.warnings}
+    assert "cache.shared-context-undeclared-conditional" not in ids
+    assert "cache.shared-context-undeclared" not in ids
+
+
 def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest.MonkeyPatch) -> None:
     cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
     parent_ir = {

@@ -7,23 +7,32 @@
 
   Cost per run:                unavailable
 
+  1 recommended action
+
   Cost data unavailable: run the workflow once for cost figures.
   Suggested:  pflow run .taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md article=<value>
 
+## Recommended actions (1)
+
+  Each item below is a cache-optimization opportunity for this workflow.
+  Declared values are sent once and reused at 0.1× input cost.
+
+  1. Shared context conditional — declare `article` in ## Cache if runtime values reach ≥4,096 tokens  savings unavailable
+     workflow.pflow.md
+     Used by 3 LLM nodes. Chunks: article. Resolved values are below the provider cache minimum (≥4,096 tokens; this is the highest minimum across these nodes); caching will only fire if runtime values are larger.
+     → Re-run with a representative value (e.g. `article=@./real-input.md`) and re-run analyze-cache to confirm whether caching fires.
+     → If runtime values typically reach ≥4,096 tokens, declare `article` in `## Cache` and add `prompt_cache: [article]` to: summarize, tag, translate.
+
 ## Per-call cache report
   How to read each row:
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically.
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
 
   node       model                       input  could_cache  ratio  notes
   ------------------------------------------------------------------
 
-  tag        anthropic/claude-haiku-4-5      9            1    11%
-  summarize  anthropic/claude-haiku-4-5      7            1    14%
-  translate  anthropic/claude-haiku-4-5      7            1    14%
+  tag        anthropic/claude-haiku-4-5      9            1    11%  below provider min (need ≥4,096 for this model)
+  summarize  anthropic/claude-haiku-4-5      7            1    14%  below provider min (need ≥4,096 for this model)
+  translate  anthropic/claude-haiku-4-5      7            1    14%  below provider min (need ≥4,096 for this model)
 
   Token estimate confidence:
     · Projected input tokens for: tag, summarize, translate.
-
-## Notes
-
-  · Suggested-blocks: shared refs were found, but at least one assigned LLM node is below the provider cache threshold under current model/token evidence; no paste-ready provider-cache edit is actionable yet.

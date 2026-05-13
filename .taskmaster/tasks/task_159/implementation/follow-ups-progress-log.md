@@ -2045,3 +2045,83 @@ Verification:
   6,750 passed, 19 skipped.
 - `ruff check`, `ruff format --check`, and `mypy src/pflow/core/cache_analysis/`
   clean.
+
+## 2026-05-13 — Task 159 Followups — conditional shared-context advisory below provider minimum
+
+Implemented `cache.shared-context-undeclared-conditional` for greenfield shared
+`## Inputs` refs whose current resolved values are below provider cache
+minimums. The confident `cache.shared-context-undeclared` path remains reserved
+for paste-ready edits; below-threshold cases now emit a structured conditional
+recommendation with no suggested block and no old "paste-ready" note.
+
+Key points:
+
+- Refactored suggested-block gating into explicit actionability states:
+  actionable, below-threshold, evidence-incomplete, insufficient-nodes.
+  Below-threshold dispatches to the new catalog ID; incomplete evidence keeps a
+  plain note because the analyzer cannot know whether caching would fire.
+- Added row-level `below provider min (need ≥N for this model)` notes for
+  undeclared projected cacheable rows from `parameters`, `memo`, `batch_prefix`,
+  and `cross_workflow_projection`; declared-cache rows stay owned by
+  `cache.below-min-tokens`.
+- Updated the per-call explainer so small `could_cache` numbers are not read as
+  provider-cacheable unless they clear the model minimum.
+- Added MCP docstring/catalog/sample coverage, production emission tests,
+  renderer note tests, and baseline updates. The confident
+  `04-warning-catalog/04-cache.shared-context-undeclared` baseline stayed
+  byte-identical.
+
+Deviations / learnings:
+
+- Used the maximum provider minimum across consumer nodes for the conditional
+  precondition. The plan text said "strictest consumer" but one code snippet
+  used `min(...)`; using the lower threshold would understate mixed-model
+  requirements and tell agents a cache edit can work before every consumer can
+  actually write/read the provider cache.
+- Current `anthropic/claude-haiku-4-5` resolves to a 4,096-token minimum in
+  `llm_capabilities`, not the plan's 2,048-token example. Baselines and tests
+  follow the live capability table rather than the stale example.
+- Did not add the planned production-shaped "fewer than two nodes" note test.
+  `_populate_suggested_blocks` only reaches actionability classification after
+  `_collect_llm_template_references` finds refs used by at least two LLM nodes,
+  so that state is defensive but unreachable through `analyze(...)` today.
+  Added a single-node silence test instead to document the real integration
+  boundary.
+
+Verification:
+
+- Focused cache-analysis/MCP suite: 580 passed.
+- Full cache-analysis glob + analyze-cache CLI/MCP tests: 738 passed.
+- Manual smoke: `article=hello` emits the conditional recommendation and row
+  below-min notes; long `article` still emits the confident suggested block.
+- Baseline harness with sandbox `uv run` wrapper: 77 passed, 1 known unrelated
+  sandbox drift (`15-run-flag-interactions/03-report-with-only` `/dev/fd`).
+- Near-full sandbox-safe suite: first run hit 4 additional Homebrew-`uv`
+  subprocess panics before Python; rerun excluding those same-class sandbox
+  tests plus documented exclusions passed: 6,760 passed, 19 skipped.
+- `ruff check`, `ruff format --check`, and `mypy src/pflow/core/cache_analysis/
+  src/pflow/mcp_server/tools/` clean.
+
+## 2026-05-13 — Task 159 Followups — conditional advisory wording polish
+
+Fixed the review-found agent-UX leaks in
+`cache.shared-context-undeclared-conditional`:
+
+- The representative-input example now uses the actual first shared chunk
+  (`article=@./real-input.md`) instead of the abstract `<name>` placeholder.
+- The threshold message now says "highest minimum across these nodes" instead
+  of "strictest consumer".
+- The conditional edit suggestion now says `declare `article` in ## Cache`
+  via `shared_chunks_short`, avoiding awkward singular/plural "shared refs"
+  wording.
+
+Added `shared_chunks_first` as a catalog-format alias next to
+`shared_chunks_csv` / `shared_chunks_short`, and extended the production-shaped
+emission test with negative assertions for `<name>`, `strictest consumer`, and
+`declare the shared refs`.
+
+Verification: affected baselines regenerated and verified
+(`03-analyze-cache-modes`: 8 passed; catalog case
+`24-cache.shared-context-undeclared-conditional`: 1 passed); focused
+cache-analysis/MCP subset: 413 passed; `ruff check`, `ruff format --check`,
+and `mypy src/pflow/core/cache_analysis/ src/pflow/mcp_server/tools/` clean.

@@ -5624,6 +5624,79 @@ def test_per_call_row_tokens_use_thousands_separator() -> None:
     assert "tokens=266728" not in text
 
 
+def test_below_provider_min_note_renders_for_projected_undeclared_rows() -> None:
+    """Projected undeclared cacheable bytes below the provider minimum need row context.
+
+    Mutation contract: removing the projected-tier predicate from
+    ``_below_provider_min_note_by_row_key`` makes this note leak to trace rows,
+    while removing the helper entirely makes this assertion fail.
+    """
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "parameters",
+        "declared_prompt_cache": None,
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert cells["notes"] == "below provider min (need ≥4,096 for this model)"
+
+
+def test_below_provider_min_note_silent_when_cache_declared() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "parameters",
+        "declared_prompt_cache": ["article"],
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert "below provider min" not in cells["notes"]
+
+
+def test_below_provider_min_note_silent_when_tokens_above_min() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 5000,
+        "cacheable_data_source": "parameters",
+        "declared_prompt_cache": None,
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert "below provider min" not in cells["notes"]
+
+
+def test_below_provider_min_note_silent_for_trace_tier() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "model": "anthropic/claude-haiku-4-5",
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "trace",
+        "declared_prompt_cache": None,
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    cells = _per_call_cells_by_header(text, "summarize")
+    assert "below provider min" not in cells["notes"]
+
+
+def test_per_call_explainer_mentions_provider_minimum() -> None:
+    row = PerCallRow(**{
+        **_row("summarize", 0).__dict__,
+        "cacheable_tokens_estimated": 1,
+        "cacheable_data_source": "parameters",
+    })
+
+    text = render_text(_make_analysis(rows=[row]), all_rows=True)
+    assert "Numbers below your model's provider minimum won't cache" in text
+
+
 def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
     """Tier 1 active provider-cache evidence renders in ``cached_now``.
 

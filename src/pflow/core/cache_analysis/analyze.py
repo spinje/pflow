@@ -92,6 +92,11 @@ from .warning_catalog import CACHE_WARNING_CATALOG, make_diagnostic
 
 logger = logging.getLogger(__name__)
 
+_SUGGESTED_BLOCK_ACTIONABLE: str = "actionable"
+_SUGGESTED_BLOCK_BELOW_THRESHOLD: str = "below_threshold"
+_SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE: str = "evidence_incomplete"
+_SUGGESTED_BLOCK_INSUFFICIENT_NODES: str = "insufficient_nodes"
+
 
 # ---------------------------------------------------------------------------
 # Result dataclasses
@@ -3100,9 +3105,27 @@ def _populate_suggested_blocks(
         memo_cache=memo_cache,
         workflow_path=workflow_path,
     )
-    actionability_note = _suggested_block_non_actionable_note(per_node_thresholds)
-    if actionability_note is not None:
-        notes.append(actionability_note)
+    actionability_state = _classify_suggested_block_actionability(per_node_thresholds)
+    if actionability_state == _SUGGESTED_BLOCK_BELOW_THRESHOLD:
+        min_tokens_strictest = max(
+            entry["min_tokens"] for entry in per_node_thresholds.values() if entry["min_tokens"] is not None
+        )
+        target_file = workflow_path or "<root>"
+        conditional = make_diagnostic(
+            "cache.shared-context-undeclared-conditional",
+            node_id=None,
+            node_count=len(affected_nodes),
+            shared_chunks=[chunk.name for chunk in chunks],
+            affected_workflow=target_file,
+            min_tokens=min_tokens_strictest,
+            affected_nodes=sorted(affected_nodes),
+        )
+        return [], [conditional]
+
+    if actionability_state != _SUGGESTED_BLOCK_ACTIONABLE:
+        note = _note_for_non_actionable_state(actionability_state)
+        if note is not None:
+            notes.append(note)
         return [], []
 
     for ref, node_ids in shared_refs:
@@ -3179,33 +3202,38 @@ def _skip_suggested_blocks_for_declared_cache(workflow_ir: dict[str, Any], notes
     return bool(_cache_item_names(workflow_ir))
 
 
-def _suggested_block_non_actionable_note(
+def _classify_suggested_block_actionability(
     per_node_thresholds: Mapping[str, PerNodeThresholdEntry],
-) -> str | None:
-    """Return a note when a greenfield suggested block is not paste-ready.
+) -> str:
+    """Classify the suggested-block state for dispatch.
 
-    ``cache.shared-context-undeclared`` means "paste the suggested block".
-    Keep that contract simple: every rendered assignment must have enough
-    evidence to clear the provider threshold, and at least two LLM nodes must
-    be able to reuse the cache.
+    The caller emits the confident ``cache.shared-context-undeclared`` only for
+    actionable blocks, emits a conditional advisory for known-below-threshold
+    blocks, and leaves only plain notes for incomplete evidence or too few
+    reusable nodes.
     """
     if len(per_node_thresholds) < 2:
-        return (
-            "Suggested-blocks: shared refs were found, but fewer than two LLM nodes can reuse "
-            "the provider cache; no paste-ready provider-cache edit is actionable yet."
-        )
+        return _SUGGESTED_BLOCK_INSUFFICIENT_NODES
     statuses = [entry["meets_threshold"] for entry in per_node_thresholds.values()]
     if any(status is None for status in statuses):
-        return (
-            "Suggested-blocks: shared refs were found, but model/token evidence is incomplete; "
-            "no paste-ready provider-cache edit is actionable yet. Set settings.default_model "
-            "or run the workflow once, then re-run analyze-cache."
-        )
+        return _SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE
     if any(status is False for status in statuses):
+        return _SUGGESTED_BLOCK_BELOW_THRESHOLD
+    return _SUGGESTED_BLOCK_ACTIONABLE
+
+
+def _note_for_non_actionable_state(state: str) -> str | None:
+    """Plain-English note text for states without a structured advisory."""
+    if state == _SUGGESTED_BLOCK_INSUFFICIENT_NODES:
         return (
-            "Suggested-blocks: shared refs were found, but at least one assigned LLM node is below "
-            "the provider cache threshold under current model/token evidence; no paste-ready "
-            "provider-cache edit is actionable yet."
+            "Suggested-blocks: shared refs were found, but fewer than two LLM nodes can "
+            "reuse the provider cache; no cache edit will fire at the provider yet."
+        )
+    if state == _SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE:
+        return (
+            "Suggested-blocks: shared refs were found, but the analyzer cannot yet tell "
+            "whether a cache edit would fire (set settings.default_model or run the "
+            "workflow once, then re-run analyze-cache)."
         )
     return None
 

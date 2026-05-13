@@ -12,7 +12,7 @@
 
 ## Per-call cache report
   How to read each row:
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically.
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
 
   node       model                       input  could_cache  notes
   -----------------------------------------------------------

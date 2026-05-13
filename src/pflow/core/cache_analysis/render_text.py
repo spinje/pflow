@@ -1431,6 +1431,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     # Full IDs stay in JSON for machine consumers (DD#27).
     warnings_by_node = _warnings_by_row_key(analysis)
     unavailable_notes_by_node = _unavailable_notes_by_row_key(analysis)
+    below_min_notes_by_node = _below_provider_min_note_by_row_key(analysis)
     static_mode = analysis.summary.evidence_scope == "static_analysis"
     visible_columns = _visible_per_call_columns(visible, static_mode=static_mode)
     components_by_row = [
@@ -1438,6 +1439,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
             row,
             warnings_by_node.get((row.workflow_path, row.node_path), []),
             unavailable_notes_by_node.get((row.workflow_path, row.node_path), []),
+            below_min_notes_by_node.get((row.workflow_path, row.node_path), []),
         )
         for row in visible
     ]
@@ -1557,6 +1559,27 @@ def _unavailable_notes_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | N
             note = f"below cache minimum: {input_name} ~{tokens:,}"
             for node_id in consumer_ids:
                 notes_by_node.setdefault((str(child_workflow), str(node_id)), []).append(note)
+    return notes_by_node
+
+
+def _below_provider_min_note_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | None, str], list[str]]:
+    """Per-row notes for projected cacheable tokens below the provider minimum."""
+    notes_by_node: dict[tuple[str | None, str], list[str]] = {}
+    projected_tiers = {"parameters", "memo", "batch_prefix", "cross_workflow_projection"}
+    for row in analysis.per_call:
+        if row.cacheable_data_source not in projected_tiers:
+            continue
+        if row.declared_prompt_cache:
+            continue
+        if row.cacheable_tokens_estimated is None:
+            continue
+        if not row.model:
+            continue
+        min_tokens = get_min_cache_tokens(row.model)
+        if row.cacheable_tokens_estimated >= min_tokens:
+            continue
+        key = (row.workflow_path, row.node_path)
+        notes_by_node.setdefault(key, []).append(f"below provider min (need ≥{min_tokens:,} for this model)")
     return notes_by_node
 
 
@@ -1830,7 +1853,12 @@ def _visible_per_call_columns(rows: list[PerCallRow], *, static_mode: bool) -> t
     )
 
 
-def _cell_note_components(row: PerCallRow, inline_warnings: list[str], unavailable_notes: list[str]) -> list[str]:
+def _cell_note_components(
+    row: PerCallRow,
+    inline_warnings: list[str],
+    unavailable_notes: list[str],
+    below_min_notes: list[str],
+) -> list[str]:
     notes: list[str] = []
     if row.did_not_execute_in_trace:
         notes.append("[unexecuted]")
@@ -1848,6 +1876,7 @@ def _cell_note_components(row: PerCallRow, inline_warnings: list[str], unavailab
         fallback_note = _unavailable_could_cache_note(row, inline_warnings, has_specific_note=bool(unavailable_notes))
         if fallback_note:
             notes.append(fallback_note)
+    notes.extend(below_min_notes)
     notes.extend(warning_id for warning_id in inline_warnings if warning_id != "opaque-prompt")
     return notes
 
@@ -2000,7 +2029,8 @@ def _per_call_scope_explainer(
     if "could_cache" in visible_columns:
         bullets.append(
             "could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. "
-            "`?` if not projectable statically."
+            "`?` if not projectable statically. "
+            "Numbers below your model's provider minimum won't cache — see notes column."
         )
     if not bullets:
         return []

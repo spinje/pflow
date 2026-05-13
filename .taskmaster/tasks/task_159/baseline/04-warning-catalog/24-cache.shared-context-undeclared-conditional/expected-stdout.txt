@@ -1,6 +1,6 @@
 {
   "format_version": "4.2",
-  "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
   "estimate_confidence_coverage": {
@@ -68,19 +68,19 @@
     "unavailable_models_by_workflow": {},
     "projection_exclusions": [
       {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "node_path": "summarize",
         "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "node_path": "translate",
         "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+        "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "node_path": "tag",
         "reason": "missing_output_tokens",
         "actual_cost_usd": null
@@ -91,7 +91,7 @@
     "root_llm_node_count": 3,
     "sub_workflow_llm_node_count": 0,
     "sub_workflow_rollup": null,
-    "suggested_run_command": "pflow run <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md article=<value>"
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md article=<value>"
   },
   "blocking_errors": [],
   "other_blocking_errors": [],
@@ -101,7 +101,7 @@
       "warning_id": "cache.shared-context-undeclared-conditional",
       "node_id": null,
       "estimated_savings_usd": null,
-      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
       "message": "Used by 3 LLM nodes. Chunks: article. Resolved values are below the provider cache minimum (\u22654,096 tokens; this is the highest minimum across these nodes); caching will only fire if runtime values are larger.",
       "suggestions": [
         "Re-run with a representative value (e.g. `article=@./real-input.md`) and re-run analyze-cache to confirm whether caching fires.",
@@ -113,7 +113,7 @@
   "per_call": [
     {
       "node_path": "summarize",
-      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
       "model": "anthropic/claude-haiku-4-5",
       "is_batch": false,
       "batch_size_estimated": null,
@@ -139,7 +139,7 @@
     },
     {
       "node_path": "translate",
-      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
       "model": "anthropic/claude-haiku-4-5",
       "is_batch": false,
       "batch_size_estimated": null,
@@ -165,7 +165,7 @@
     },
     {
       "node_path": "tag",
-      "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
       "model": "anthropic/claude-haiku-4-5",
       "is_batch": false,
       "batch_size_estimated": null,
@@ -212,7 +212,7 @@
         "shared_chunks": [
           "article"
         ],
-        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "min_tokens": 4096,
         "affected_nodes": [
           "summarize",
@@ -220,7 +220,7 @@
           "translate"
         ],
         "category": "cache_advisory",
-        "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md]"
+        "path": "workflows[path=<BASELINE_CASE_DIR>/workflow.pflow.md]"
       },
       "see_also": [
         "prompt-caching"

@@ -301,7 +301,7 @@
 ## Per-call cache report
   How to read each row:
     · cached_now: tokens served from cache during this run (requires trace).
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically.
+    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
   Showing 18 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   node                     model                      input  cached_now  could_cache  ratio  calls  notes
@@ -309,7 +309,7 @@
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
-  score-choruses           gemini/gemini-2.5-flash  158,704           —           41     0%    136
+  score-choruses           gemini/gemini-2.5-flash  158,704           —           41     0%    136  below provider min (need ≥4,096 for this model)
   select-chorus            gemini/gemini-2.5-flash   36,289           —        8,504    23%      4  cacheable values: architecture, concept.core_idea, concept.title, +1 more
 
 ### song-creator.pflow.md (called by create-songs)
@@ -318,7 +318,7 @@
   generate-suno-prompt     gemini/gemini-2.5-flash   13,776       7,909            —    57%      4
 
 ### lyrics-generator.pflow.md
-  curate-briefs            gemini/gemini-2.5-flash   54,752           —          103     0%      4
+  curate-briefs            gemini/gemini-2.5-flash   54,752           —          103     0%      4  below provider min (need ≥4,096 for this model)
 
 ### review-accuracy.pflow.md (called by craft-reviews)
   review                   gemini/gemini-2.5-flash   34,481           —        7,036    20%      4  cacheable values: concept_brief, creative_direction, lyrics
