@@ -2350,3 +2350,50 @@ approach still works (the ISO format is positional).
   addressed here.
 - **Provider-cache TTL detection from trace timestamps** — separate
   feature; needs new catalog ID per DD#29.
+
+## 2026-05-13 — Task 159 Followups — split mixed sub-workflow cacheability recommendations
+
+Fixed the lyrics-generator cold-reader failure where one `chorus-chooser`
+recommendation said `~8,504 tokens per call` was "below the smallest provider
+cache minimum (1,024)". The group mixed two consumer cases: `select-chorus`
+could cache four values above Gemini's 4,096-token minimum, while
+`score-choruses` only used `concept.core_idea` (~41 tokens), below every
+provider tier. The renderer had to pick one representative token count for the
+whole child workflow, which made the text logically impossible.
+
+Implementation follows option 1 from triage: split mixed child-workflow
+recommendations by per-consumer cacheability case before diagnostics are
+created. Same-case groups still render as one child-scoped action. Mixed
+groups now produce separate recommendations, each with:
+
+- only the consumer nodes in that case in `prompt_cache:` edits,
+- only the cache refs those consumers use,
+- its own coherent provider-minimum story,
+- actionable savings only for the `actionable` split.
+
+The live lyrics-generator baseline now has two `chorus-chooser` actions:
+
+- actionable `select-chorus`: four entries, `~8,504` tokens, above Gemini's
+  4,096-token minimum, saves `~$0.0092/run`;
+- below-min `score-choruses`: one entry, `concept.core_idea ~41` tokens,
+  below the 1,024-token minimum.
+
+Tradeoff accepted: a cache ref shared across cases can appear in both
+recommendations. That is preferable to one incoherent recommendation because
+each action is locally truthful and `Add or extend ## Cache` remains the edit
+shape. A future UX pass could collapse duplicate cache-block lines across
+split actions, but that is polish; the first-contact correctness bug is fixed.
+
+Verification:
+
+- Focused split + sibling tests: 4 passed.
+- All `cache.sub-workflow-cache-undeclared` emission tests: 27 passed.
+- Renderer + per-id emission suites: 331 passed.
+- Cache-analysis + analyze-cache CLI suite: 737 passed.
+- Baselines verified clean with the sandbox `uv run` wrapper:
+  `10-live-recordings/05-gemini-lyrics-generator`,
+  `04-warning-catalog/05-cache.sub-workflow-cache-undeclared`,
+  `04-warning-catalog/05b-cache.sub-workflow-cache-undeclared-subpath`, and
+  all `12-real-world-lyrics-generator` cases.
+- `ruff check`, `ruff format --check`, and focused
+  `mypy src/pflow/core/cache_analysis/` clean.

@@ -1329,7 +1329,7 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     assert "couldn't be analyzed for cache savings" in text
     assert "model varies per call" in text  # now in the footnote
     assert "pass-through" not in text
-    assert "Actual savings (this run):" in text
+    assert "Actual cost delta (this run):" in text
     # The savings line no longer inlines (excludes ...); the cohort context
     # is in the footnote below.
     assert "(excludes generate)" not in text

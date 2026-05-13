@@ -1384,7 +1384,7 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
     assert "Cost on rerun (within TTL):" in text
     assert "Cost on rerun (within TTL, projected subset):" not in text
     # Savings line is bare ``unavailable`` — the excluded line above explains why.
-    assert "Actual savings (this run):    unavailable" in text
+    assert "Actual cost delta (this run): unavailable" in text
     assert "unavailable (projection excludes" not in text
     assert "Actual trace delta:" not in text
 
@@ -1812,18 +1812,17 @@ def test_actual_savings_delta_first_in_trace_mode(
     )
 
     text = render_text(analysis)
-    assert "Actual savings (this run):" in text
+    assert "Actual cost delta (this run):" in text
     assert "First-run delta" not in text
-    # The row label "Actual savings (this run):" already says "actual";
-    # the inner _format_delta label was simplified from "actual vs no-cache"
-    # to "vs no-cache" so the rendered value reads as "saves $X/run vs
-    # no-cache, Y% of baseline" rather than the doubled-"actual" form.
+    # The row label is a neutral delta, so the inner _format_delta label stays
+    # "vs no-cache" and the rendered value reads as "saves/adds $X vs
+    # no-cache" rather than leaking an internal "actual vs no-cache" phrase.
     # Mutation contract: revert _format_delta label arg back to
     # "actual vs no-cache" → this assertion fails.
     assert "actual vs no-cache" not in text
     assert "vs no-cache" in text
     lines = text.splitlines()
-    actual_idx = next(i for i, line in enumerate(lines) if "Actual savings (this run):" in line)
+    actual_idx = next(i for i, line in enumerate(lines) if "Actual cost delta (this run):" in line)
     rerun_idx = next(i for i, line in enumerate(lines) if "Rerun delta (projected):" in line)
     assert actual_idx < rerun_idx
 
@@ -1903,8 +1902,8 @@ def test_actual_savings_label_replaces_actual_trace_delta_both_sites(
     unavailable_text = render_text(unavailable)
     assert "Actual trace delta:" not in priced_text
     assert "Actual trace delta:" not in unavailable_text
-    assert "Actual savings (this run):" in priced_text
-    assert "Actual savings (this run):" in unavailable_text
+    assert "Actual cost delta (this run):" in priced_text
+    assert "Actual cost delta (this run):" in unavailable_text
 
 
 def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
@@ -1913,8 +1912,8 @@ def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
 ) -> None:
     """Truncated trace mode (Option B): first-run delta is dropped, rerun
     uses ``(projected)`` suffix (not ``(executed)``), and the actual savings
-    label stays unqualified — no ``(executed)`` decoration. The actual
-    savings line itself still renders because L-12 work computes the delta
+    label stays unqualified — no ``(executed)`` decoration. The actual cost
+    delta line itself still renders because L-12 work computes the delta
     over the executed subset when pricing is otherwise available.
     """
     from pflow.core.cache_analysis.analyze import analyze
@@ -1946,8 +1945,8 @@ def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
     # otherwise available — no projection_exclusions, so the delta is
     # priced and the line renders. The label stays unqualified —
     # "(executed)" is not appended.
-    assert "Actual savings (this run):" in text
-    assert "Actual savings (this run, executed):" not in text
+    assert "Actual cost delta (this run):" in text
+    assert "Actual cost delta (this run, executed):" not in text
     # Option B: First-run delta is dropped from trace mode (any coverage).
     assert "First-run delta" not in text
     # Rerun delta carries the (projected) suffix in trace mode; the
@@ -1960,7 +1959,7 @@ def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
 
 def test_first_run_delta_present_in_greenfield_mode() -> None:
     """Greenfield mode (no trace data) renders First-run + Rerun deltas as
-    projections. The Actual savings line is suppressed because there's no
+    projections. The actual cost delta line is suppressed because there's no
     ``actually_paid_usd`` to compare against. Mutation contract: route
     greenfield through ``_render_trace_deltas`` and this fails (no first-run
     line) or ``_render_greenfield_deltas`` swaps the labels.
@@ -1974,7 +1973,7 @@ def test_first_run_delta_present_in_greenfield_mode() -> None:
     text = render_text(analysis)
     assert "First-run delta:" in text
     assert "Rerun delta:" in text
-    assert "Actual savings" not in text
+    assert "Actual cost delta" not in text
     assert "(projected)" not in text  # greenfield labels stay unqualified
 
 
@@ -2023,7 +2022,7 @@ def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp
 
     Mutation contract: drop the ``no_cache > 0`` gate in ``analyze.py`` →
     ``_cost_delta`` returns unavailable without a reason → renderer's
-    elif branch doesn't fire → the ``Actual savings (this run):`` label
+    elif branch doesn't fire → the ``Actual cost delta (this run):`` label
     disappears from text → assertion fails.
     """
     from pflow.core.cache_analysis.analyze import analyze
@@ -2083,7 +2082,7 @@ def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp
     # Savings line is bare ``unavailable`` — the explicit ``Excluded from
     # analysis`` line in the cost block above carries the node + reason
     # context, so the savings line doesn't need to repeat it.
-    assert "Actual savings (this run):    unavailable" in text
+    assert "Actual cost delta (this run): unavailable" in text
     assert "unavailable (projection excludes" not in text
     # Excluded node + reason render in the cost block (no $ since trace
     # has cost on the heterogeneous row but the row is the only one in the
@@ -2929,7 +2928,7 @@ def test_batch_prewarm_lower_bound_renders_at_least_savings_and_verification() -
     text = render_text(_make_analysis(warnings=[priced, unpriced]))
 
     assert "savings at least ~$0.01/run" in text
-    assert "savings at least unknown" in text
+    assert "savings need verification" in text
     assert "Run once with `--report`" in text
     assert "Unresolved refs (concept.core_idea)" in text
     assert "saves ~$0.01/run" not in text
@@ -3962,7 +3961,7 @@ def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_proje
     assert "Token estimate confidence:" in text
     assert (
         "score-choruses: savings projected from a stable prompt prefix repeated across the batch. "
-        "Declare prompt_cache to confirm."
+        "Use `--report` to confirm with a real run."
     ) in text
     assert "first batch item as a representative sample" not in text
 

@@ -58,6 +58,8 @@ from pflow.core.diagnostic import (
 
 logger = logging.getLogger(__name__)
 
+_CACHE_DISCREPANCY_ROOT_CAUSES: Final[frozenset[str]] = frozenset({"chunk_skipped", "key_mismatch"})
+
 
 # ---------------------------------------------------------------------------
 # Spec dataclass — frozen so the module-load catalog cannot drift at runtime.
@@ -1156,6 +1158,7 @@ def make_diagnostic(
         raise KeyError(f"Unknown cache warning ID: {warning_id!r}. Catalog has {len(CACHE_WARNING_CATALOG)} entries.")
     spec = CACHE_WARNING_CATALOG[warning_id]
     _ensure_discrepancy_workflow_scope(warning_id, context_kwargs)
+    _validate_discrepancy_root_cause(warning_id, context_kwargs)
     _validate_required(spec, context_kwargs, node_id, warning_id)
     _ensure_workflow_scope(warning_id, node_id, context_kwargs)
 
@@ -1198,6 +1201,18 @@ def make_diagnostic(
         context=context,
         see_also=list(spec.see_also),
     )
+
+
+def _validate_discrepancy_root_cause(warning_id: str, context_kwargs: dict[str, Any]) -> None:
+    """Keep ``cache.discrepancy`` root causes as a closed public contract."""
+    if warning_id != "cache.discrepancy":
+        return
+    root_cause = context_kwargs.get("root_cause")
+    if root_cause is None:
+        return
+    if root_cause not in _CACHE_DISCREPANCY_ROOT_CAUSES:
+        allowed = ", ".join(sorted(_CACHE_DISCREPANCY_ROOT_CAUSES))
+        raise ValueError(f"cache.discrepancy root_cause must be one of: {allowed}. Got {root_cause!r}.")
 
 
 def _context_for_diagnostic(context_kwargs: dict[str, Any]) -> dict[str, Any]:

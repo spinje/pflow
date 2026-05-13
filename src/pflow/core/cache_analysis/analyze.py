@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -96,6 +97,7 @@ _SUGGESTED_BLOCK_ACTIONABLE: str = "actionable"
 _SUGGESTED_BLOCK_BELOW_THRESHOLD: str = "below_threshold"
 _SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE: str = "evidence_incomplete"
 _SUGGESTED_BLOCK_INSUFFICIENT_NODES: str = "insufficient_nodes"
+_PARENT_PROSE_PREVIEW_LIMIT = 40
 
 
 # ---------------------------------------------------------------------------
@@ -1201,8 +1203,6 @@ def _workflow_paths_refer_to_same(a: str | None, b: str | None) -> bool:
         return True
     if a.startswith("ir-hash:") or b.startswith("ir-hash:"):
         return False
-    import os
-
     return os.path.realpath(a) == os.path.realpath(b)
 
 
@@ -5394,20 +5394,97 @@ def _classify_group_case(projections: tuple[_GroupedConsumerProjection, ...]) ->
     """
     if not projections:
         return "unmeasurable"
-    per_consumer_cases: list[str] = []
-    for projection in projections:
-        per_call = projection.per_call_prefix_tokens
-        if per_call >= projection.threshold:
-            per_consumer_cases.append("actionable")
-        elif per_call >= _MODEL_SWITCH_BAND:
-            per_consumer_cases.append("model_switch")
-        else:
-            per_consumer_cases.append("refactor")
+    per_consumer_cases = [_projection_case(projection) for projection in projections]
     if "refactor" in per_consumer_cases:
         return "refactor"
     if "model_switch" in per_consumer_cases:
         return "model_switch"
     return "actionable"
+
+
+def _projection_case(projection: _GroupedConsumerProjection) -> str:
+    per_call = projection.per_call_prefix_tokens
+    if per_call >= projection.threshold:
+        return "actionable"
+    if per_call >= _MODEL_SWITCH_BAND:
+        return "model_switch"
+    return "refactor"
+
+
+def _split_group_by_projection_case(
+    group: _SubWorkflowCacheGroup,
+    projections: tuple[_GroupedConsumerProjection, ...],
+) -> list[tuple[_SubWorkflowCacheGroup, tuple[_GroupedConsumerProjection, ...], str]]:
+    """Split mixed-cacheability child recommendations by consumer case.
+
+    A child workflow can have one consumer whose proposed cache prefix clears
+    the provider minimum and another consumer whose narrower prefix is below
+    every provider tier. Rendering those as one recommendation forces the body
+    to choose one representative token count and produces incoherent text like
+    "~8,504 tokens per call, below the 1,024-token minimum". Split at the
+    producer boundary so every recommendation has one coherent threshold story.
+    """
+    if not projections:
+        return [(group, projections, "unmeasurable")]
+
+    by_case: dict[str, list[_GroupedConsumerProjection]] = {}
+    for projection in projections:
+        by_case.setdefault(_projection_case(projection), []).append(projection)
+
+    if len(by_case) == 1:
+        case = next(iter(by_case))
+        return [(group, projections, case)]
+
+    result: list[tuple[_SubWorkflowCacheGroup, tuple[_GroupedConsumerProjection, ...], str]] = []
+    for case in ("actionable", "model_switch", "refactor"):
+        case_projections = tuple(by_case.get(case, ()))
+        if not case_projections:
+            continue
+        consumer_ids = frozenset(projection.consumer_node_id for projection in case_projections)
+        result.append((_group_for_consumer_nodes(group, consumer_ids), case_projections, case))
+    return result
+
+
+def _group_for_consumer_nodes(group: _SubWorkflowCacheGroup, consumer_ids: frozenset[str]) -> _SubWorkflowCacheGroup:
+    candidates: list[_SubWorkflowCacheCandidate] = []
+    for candidate in group.candidates:
+        child_node_ids = tuple(node_id for node_id in candidate.child_node_ids if node_id in consumer_ids)
+        if not child_node_ids:
+            continue
+        body_refs_by_node = {
+            node_id: tuple(refs) for node_id, refs in candidate.body_refs_by_node.items() if node_id in consumer_ids
+        }
+        candidates.append(
+            replace(
+                candidate,
+                child_count=len(child_node_ids),
+                child_node_ids=child_node_ids,
+                body_refs_by_node=body_refs_by_node,
+            )
+        )
+    return _SubWorkflowCacheGroup(child_workflow=group.child_workflow, candidates=tuple(candidates))
+
+
+def _strictest_model_and_threshold(projections: tuple[_GroupedConsumerProjection, ...]) -> tuple[str, int]:
+    if not projections:
+        return "", 0
+    strictest = max(projections, key=lambda projection: projection.threshold)
+    return strictest.model, strictest.threshold
+
+
+def _total_savings_for_case(
+    projections: tuple[_GroupedConsumerProjection, ...],
+    *,
+    case: str,
+) -> float | None:
+    if case != "actionable":
+        return None
+    total = 0.0
+    for projection in projections:
+        if projection.savings_usd is None:
+            return None
+        total += projection.savings_usd
+    return total
 
 
 def _format_grouped_body_block(
@@ -5614,9 +5691,6 @@ def _exact_child_cache_block_content(group: _SubWorkflowCacheGroup) -> str:
     return "\n\n".join(parts)
 
 
-_PARENT_PROSE_PREVIEW_LIMIT = 40
-
-
 def _threshold_relation(tokens: int, threshold: int) -> str:
     return "above" if tokens >= threshold else "below"
 
@@ -5777,32 +5851,33 @@ def _emit_sub_workflow_cache_findings(
             if not child_has_trace_evidence and len(group_child_node_ids) < 2:
                 continue
 
-        strictest_threshold, total_savings, projections, tokens_per_input, strictest_model = (
+        _strictest_threshold, _total_savings, projections, tokens_per_input, _strictest_model = (
             _project_grouped_cache_savings(group, rows_by_node_path, ctx, cw_result)
         )
-        case = _classify_group_case(projections)
-        diagnostics.append(
-            make_diagnostic(
-                "cache.sub-workflow-cache-undeclared",
-                node_id=None,
-                affected_workflow=group.child_workflow,
-                child_workflow=group.child_workflow,
-                child_workflow_basename=_workflow_basename(group.child_workflow),
-                affected_input_count=len(group.candidates),
-                inputs=_grouped_inputs_context(group, tokens_per_input, cw_result),
-                body_block=_format_grouped_body_block(
-                    group,
-                    projections,
-                    tokens_per_input,
-                    strictest_model,
-                    strictest_threshold,
-                    case,
-                    cw_result,
-                ),
-                case=case,
-                savings_usd=total_savings if case == "actionable" else None,
+        for split_group, split_projections, case in _split_group_by_projection_case(group, projections):
+            strictest_model, strictest_threshold = _strictest_model_and_threshold(split_projections)
+            diagnostics.append(
+                make_diagnostic(
+                    "cache.sub-workflow-cache-undeclared",
+                    node_id=None,
+                    affected_workflow=split_group.child_workflow,
+                    child_workflow=split_group.child_workflow,
+                    child_workflow_basename=_workflow_basename(split_group.child_workflow),
+                    affected_input_count=len(split_group.candidates),
+                    inputs=_grouped_inputs_context(split_group, tokens_per_input, cw_result),
+                    body_block=_format_grouped_body_block(
+                        split_group,
+                        split_projections,
+                        tokens_per_input,
+                        strictest_model,
+                        strictest_threshold,
+                        case,
+                        cw_result,
+                    ),
+                    case=case,
+                    savings_usd=_total_savings_for_case(split_projections, case=case),
+                )
             )
-        )
     return diagnostics
 
 

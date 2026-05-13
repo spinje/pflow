@@ -187,7 +187,7 @@ def test_batch_prewarm_lower_bound_recommended_fires_when_measurable_prefix_clea
     assert diag.context["measurable_tokens"] >= 10
     assert diag.context["unresolved_refs"] == ["missing.context"]
     text = render_text(result)
-    assert "savings at least unknown" in text
+    assert "savings need verification" in text
     assert "--report" in text
 
 
@@ -2624,6 +2624,117 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
         "The threshold gate is using cohort tokens instead of per-call prefix."
     )
     assert diag.context["savings_usd"] is None
+
+
+def test_sub_workflow_cache_undeclared_splits_mixed_consumer_cases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One child can have both actionable and below-min cache edits.
+
+    Those must render as separate recommendations. Keeping them grouped forced
+    the body text to pick one representative token count, producing nonsense
+    like "~8,504 tokens per call, below the 1,024-token minimum".
+    """
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1024)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+
+    parent_ir = {
+        "inputs": {"concept": {"type": "object"}, "rubric": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "call-child",
+                "type": "workflow",
+                "params": {
+                    "workflow": "./child.pflow.md",
+                    "inputs": {"concept": "${concept}", "rubric": "${rubric}"},
+                },
+            }
+        ],
+    }
+    child_ir = {
+        "inputs": {"concept": {"type": "object"}, "rubric": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Score ${concept.title}"},
+            },
+            {
+                "id": "select",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Select ${concept.title} ${rubric}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
+    )
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "parent.pflow.md",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "call-child",
+                    "node_params": {
+                        "workflow": "./child.pflow.md",
+                        "inputs": {
+                            "concept": {"title": "short title"},
+                            "rubric": "rubric " * 1500,
+                        },
+                    },
+                    "sub_workflow_events": [
+                        {
+                            "node_id": "score",
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 20,
+                                "output_tokens": 1,
+                            },
+                        },
+                        {
+                            "node_id": "select",
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 1600,
+                                "output_tokens": 1,
+                            },
+                        },
+                    ]
+                    * 2,
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+
+    diagnostics = [d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared"]
+    assert [d.context["case"] for d in diagnostics if d.context is not None] == ["actionable", "refactor"]
+
+    actionable = next(d for d in diagnostics if d.context and d.context["case"] == "actionable")
+    assert actionable.context is not None
+    assert [item["child_cache_ref"] for item in actionable.context["inputs"]] == ["concept.title", "rubric"]
+    assert "select: prompt_cache: [concept.title, rubric]" in actionable.message
+    assert "score: prompt_cache" not in actionable.message
+    assert "above anthropic/claude-sonnet-4-5's 1,024-token cache minimum" in actionable.message
+
+    refactor = next(d for d in diagnostics if d.context and d.context["case"] == "refactor")
+    assert refactor.context is not None
+    assert [item["child_cache_ref"] for item in refactor.context["inputs"]] == ["concept.title"]
+    assert "score: prompt_cache: [concept.title]" in refactor.message
+    assert "select: prompt_cache" not in refactor.message
+    assert "below the smallest provider cache minimum" in refactor.message
 
 
 def test_sub_workflow_cache_undeclared_case_unmeasurable_no_resolved_consumer(

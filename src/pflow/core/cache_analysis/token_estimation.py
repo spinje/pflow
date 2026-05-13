@@ -328,7 +328,7 @@ def tokenize_prompt_region(
     shared = build_shared_store_for_refs(refs, ctx)
     try:
         resolved = TemplateResolver.resolve_template(region, shared)
-    except Exception:
+    except (AttributeError, KeyError, TypeError, ValueError):
         logger.debug("tokenize_prompt_region: resolve_template raised", exc_info=True)
         return None
 
@@ -376,7 +376,7 @@ def tokenize_prompt_region_lower_bound(
     shared = build_shared_store_for_refs(refs, ctx)
     try:
         resolved = TemplateResolver.resolve_template(region, shared)
-    except Exception:
+    except (AttributeError, KeyError, TypeError, ValueError):
         logger.debug("tokenize_prompt_region_lower_bound: resolve_template raised", exc_info=True)
         return 0, tuple(refs)
 

@@ -490,24 +490,46 @@ def test_lower_bound_strips_unresolved_refs_and_returns_them() -> None:
     assert unresolved == ("missing.ref",)
 
 
-def test_lower_bound_returns_zero_when_resolution_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Behavior: resolver exceptions produce a conservative zero.
+def test_lower_bound_returns_zero_when_resolution_has_user_data_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Behavior: expected resolver data errors produce a conservative zero.
 
     History: lower-bound numbers must never be inflated by partial work after a
-    template resolver failure. Mutation contract: fall back to tokenizing the
-    raw region on exception; this test fails because measurable tokens become
-    positive instead of zero.
+    template resolver data failure. Mutation contract: fall back to tokenizing
+    the raw region on ValueError; this test fails because measurable tokens
+    become positive instead of zero.
     """
     from pflow.runtime.template_resolver import TemplateResolver
 
     def _boom(*_args: Any, **_kwargs: Any) -> str:
-        raise RuntimeError("synthetic resolver failure")
+        raise ValueError("synthetic resolver data failure")
 
     monkeypatch.setattr(TemplateResolver, "resolve_template", staticmethod(_boom))
     assert tokenize_prompt_region_lower_bound("Use ${known} and ${missing}", model="", ctx=_analysis_ctx({})) == (
         0,
         ("known", "missing"),
     )
+
+
+def test_prompt_region_tokenizers_do_not_swallow_programming_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unexpected resolver failures should stay visible to developers.
+
+    The analyzer degrades on normal resolution/data errors, but broad
+    ``except Exception`` hid programming bugs as "unmeasurable" cache regions.
+    Mutation contract: restore a bare Exception catch in either helper; this
+    test fails because RuntimeError no longer propagates.
+    """
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    def _boom(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("synthetic programming failure")
+
+    monkeypatch.setattr(TemplateResolver, "resolve_template", staticmethod(_boom))
+    ctx = _analysis_ctx({})
+
+    with pytest.raises(RuntimeError, match="synthetic programming failure"):
+        tokenize_prompt_region("Use ${known}", model="", ctx=ctx)
+    with pytest.raises(RuntimeError, match="synthetic programming failure"):
+        tokenize_prompt_region_lower_bound("Use ${known}", model="", ctx=ctx)
 
 
 def test_lower_bound_handles_dict_valued_single_ref() -> None:

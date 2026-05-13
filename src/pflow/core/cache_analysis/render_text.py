@@ -752,7 +752,7 @@ def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
 def _render_trace_deltas(s: AnalysisSummary) -> list[str]:
     lines: list[str] = []
     actual = _format_delta(s.actual_vs_no_cache_delta, label="vs no-cache")
-    actual_label = "Actual savings (this run):"
+    actual_label = "Actual cost delta (this run):"
     if actual:
         lines.append(f"  {actual_label:29s} {actual}")
     elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:
@@ -1270,7 +1270,7 @@ def _format_action_savings(action: RecommendedAction) -> str:
 
 def _format_lower_bound_action_savings(value: object) -> str:
     if not isinstance(value, (int, float)) or value < 0.0001:
-        return "savings at least unknown"
+        return "savings need verification"
     if value < 0.01:
         return f"savings at least ~${value:.4f}/run"
     return f"savings at least ~${value:.2f}/run"
@@ -1493,10 +1493,10 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
         )
         for row in visible
     ]
-    deduped_components_by_row, per_call_notes = _dedup_row_note_components(visible, components_by_row)
+    deduped_components_by_row, per_call_notes = _collapse_no_trace_notes(components_by_row)
 
     lines = ["## Per-call cache report"]
-    explainer_lines = _per_call_scope_explainer(rows, analysis.summary.evidence_scope, visible_columns)
+    explainer_lines = _per_call_scope_explainer(analysis.summary.evidence_scope, visible_columns)
     for explainer_line in explainer_lines:
         lines.append(f"  {explainer_line}")
     if truncated_trace_default_view and len(visible) < len(rows):
@@ -1931,20 +1931,17 @@ def _cell_note_components(
     return notes
 
 
-def _dedup_row_note_components(
-    rows: list[PerCallRow],
+def _collapse_no_trace_notes(
     components_per_row: list[list[str]],
     *,
     threshold: int = 2,
 ) -> tuple[list[list[str]], list[tuple[str, int]]]:
-    """Aggregate repeated note components into a footer.
+    """Move repeated no-trace notes from rows into a footer.
 
-    Deduping by component, rather than whole note cell, preserves unique row
-    notes. A row with ``no trace recorded`` plus a unique warning marker still
-    keeps that warning inline while the repeated no-trace component is counted
-    in the footer.
+    This intentionally collapses only ``_NO_TRACE_RECORDED_NOTE``. Other
+    repeated notes may carry row-specific meaning, so keeping them inline is
+    simpler and safer than a generic deduplication policy.
     """
-    del rows  # reserved for future row-aware aggregate copy without changing the call shape
     counts: dict[str, int] = {}
     for components in components_per_row:
         for component in dict.fromkeys(components):
@@ -2046,7 +2043,6 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
 
 
 def _per_call_scope_explainer(
-    rows: list[PerCallRow],
     evidence_scope: str = "static_analysis",
     visible_columns: tuple[str, ...] = _PER_CALL_COLUMNS,
 ) -> list[str]:
@@ -2070,7 +2066,6 @@ def _per_call_scope_explainer(
     into stdout and forced agents to infer enum semantics to read ``—``.
     The collapsed block explains each placeholder where it appears.
     """
-    del rows  # kept for call-site stability and older tests that pass rows explicitly
     if evidence_scope == "truncated_trace_executed_subset":
         return ["Executed trace rows are evidence-only; unexecuted rows are marked when shown."]
     bullets: list[str] = []
@@ -2133,7 +2128,7 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
         # content participates, so the message must not claim sampling.
         bullets.append(
             f"{_format_node_list(batch_prefix_nodes)}: savings projected from a stable prompt prefix "
-            "repeated across the batch. Declare prompt_cache to confirm."
+            "repeated across the batch. Use `--report` to confirm with a real run."
         )
     if cross_workflow_nodes:
         bullets.append(

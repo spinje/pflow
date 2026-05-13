@@ -327,7 +327,7 @@ def test_make_diagnostic_batch_prewarm_lower_bound_savings_unavailable() -> None
 
     Mutation contract: forget ``savings_lower_bound_usd`` in nullable_cost_keys;
     this test fails because ``make_diagnostic`` rejects the unavailable-cost
-    case before renderers can say "savings at least unknown".
+    case before renderers can say "savings need verification".
     """
     diag = make_diagnostic(
         "cache.batch-prewarm-lower-bound-recommended",
@@ -572,6 +572,16 @@ def test_cache_discrepancy_missing_base_required_key_raises() -> None:
     base = dict(_BASE_DISCREPANCY_KWARGS)
     with pytest.raises(KeyError):
         make_diagnostic("cache.discrepancy", **base)  # no root_cause
+
+
+def test_cache_discrepancy_root_cause_is_closed_catalog_contract() -> None:
+    """New discrepancy causes require an explicit catalog update."""
+    with pytest.raises(ValueError, match="chunk_skipped, key_mismatch"):
+        make_diagnostic(
+            "cache.discrepancy",
+            root_cause="ttl_expiry",
+            **_BASE_DISCREPANCY_KWARGS,
+        )
 
 
 def test_cache_discrepancy_uses_flat_suggestion_template() -> None:
