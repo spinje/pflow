@@ -445,11 +445,13 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         # cohort by construction). Unchanged by Fix 7.
         no_cache_str = _format_cost(s.no_cache_hypothetical_usd, False, s.unavailable_models)
         rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, False, s.unavailable_models)
-        return [
+        lines = [
             f"  Actually paid (executed trace):       {actually_paid_str}",
             f"  Cost without caching (executed):      {no_cache_str}",
             f"  Cost on rerun (executed, within TTL): {rerun_str}",
         ]
+        lines.extend(_format_trace_cache_layer_lines(s))
+        return lines
     # Complete-trace branch — try to fold pass-through.
     can_fold = (
         bool(s.projection_exclusions)
@@ -477,6 +479,7 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         if footnote is not None:
             lines.append("")
             lines.append(footnote)
+        lines.extend(_format_trace_cache_layer_lines(s))
         return lines
     # Fall back: keep the standalone Excluded line + priced-cohort projections.
     projection_partial_marker = s.partial_cost_usd and not s.projection_exclusions
@@ -488,6 +491,43 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         lines.append(excluded_line)
     lines.append(f"  Cost without caching:        {no_cache_str}")
     lines.append(f"  Cost on rerun (within TTL):  {rerun_str}")
+    lines.extend(_format_trace_cache_layer_lines(s))
+    return lines
+
+
+def _format_trace_cache_layer_lines(s: AnalysisSummary) -> list[str]:
+    """Separate provider prompt-cache evidence from pflow local memo reuse.
+
+    Cached LLM events preserve historical ``llm_call`` data so the analyzer can
+    still recover token counts for projections. That historical payload must not
+    read as provider cache activity in the current trace. These lines name the
+    two cache layers when local reuse happened.
+    """
+    local_hits = s.trace_local_memo_llm_hit_count + s.trace_local_in_process_llm_hit_count
+    if local_hits == 0:
+        return []
+
+    local_parts: list[str] = []
+    if s.trace_local_memo_llm_hit_count:
+        local_parts.append(f"{s.trace_local_memo_llm_hit_count:,} memo")
+    if s.trace_local_in_process_llm_hit_count:
+        local_parts.append(f"{s.trace_local_in_process_llm_hit_count:,} in-process")
+    local_label = " + ".join(local_parts)
+
+    provider_bits = [
+        f"{s.trace_provider_llm_call_count:,} provider LLM call(s)",
+        f"{s.trace_provider_cache_read_input_tokens:,} cache-read tokens",
+    ]
+    if s.trace_provider_cache_creation_input_tokens:
+        provider_bits.append(f"{s.trace_provider_cache_creation_input_tokens:,} cache-write tokens")
+
+    lines = [
+        "",
+        f"  Local pflow cache reuse:     skipped {local_label} LLM call(s)"
+        f" ({s.trace_local_cache_input_tokens:,} historical input tokens)",
+        f"  Provider cache in this run:  {', '.join(provider_bits)}",
+        "  · Actual cost delta includes local pflow cache reuse; run with --no-cache to measure provider prompt caching cleanly.",
+    ]
     return lines
 
 
@@ -752,7 +792,8 @@ def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
 def _render_trace_deltas(s: AnalysisSummary) -> list[str]:
     lines: list[str] = []
     actual = _format_delta(s.actual_vs_no_cache_delta, label="vs no-cache")
-    actual_label = "Actual cost delta (this run):"
+    local_hits = s.trace_local_memo_llm_hit_count + s.trace_local_in_process_llm_hit_count
+    actual_label = "Actual cost delta (incl. local cache):" if local_hits else "Actual cost delta (this run):"
     if actual:
         lines.append(f"  {actual_label:29s} {actual}")
     elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:

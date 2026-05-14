@@ -58,6 +58,12 @@ def _make_analysis(
     trace_path: str | None = None,
     trace_final_status: str | None | type(Ellipsis) = Ellipsis,
     trace_recorded_at: str | None | type(Ellipsis) = Ellipsis,
+    trace_provider_llm_call_count: int = 0,
+    trace_local_memo_llm_hit_count: int = 0,
+    trace_local_in_process_llm_hit_count: int = 0,
+    trace_local_cache_input_tokens: int = 0,
+    trace_provider_cache_creation_input_tokens: int = 0,
+    trace_provider_cache_read_input_tokens: int = 0,
 ) -> CacheAnalysis:
     """Construct a renderable analysis with atomic cost primitives.
 
@@ -171,6 +177,12 @@ def _make_analysis(
                 if trace_recorded_at is not Ellipsis
                 else ("2026-04-29T12:00:00" if actually_paid is not None else None)
             ),
+            trace_provider_llm_call_count=trace_provider_llm_call_count,
+            trace_local_memo_llm_hit_count=trace_local_memo_llm_hit_count,
+            trace_local_in_process_llm_hit_count=trace_local_in_process_llm_hit_count,
+            trace_local_cache_input_tokens=trace_local_cache_input_tokens,
+            trace_provider_cache_creation_input_tokens=trace_provider_cache_creation_input_tokens,
+            trace_provider_cache_read_input_tokens=trace_provider_cache_read_input_tokens,
         ),
         suggested_blocks=(),
         per_call=tuple(rows),
@@ -265,6 +277,12 @@ class TestMakeAnalysisShapeParity:
             projection_exclusions=(_make_exclusion(),),
             actual_delta_unavailable_reason="trace_coverage_truncated",
             ir_default_model="anthropic/claude-sonnet-4-5",
+            trace_provider_llm_call_count=2,
+            trace_local_memo_llm_hit_count=1,
+            trace_local_in_process_llm_hit_count=1,
+            trace_local_cache_input_tokens=100,
+            trace_provider_cache_creation_input_tokens=50,
+            trace_provider_cache_read_input_tokens=25,
         )
 
         def _at_default(summary: AnalysisSummary, field: dataclasses.Field[Any]) -> bool:
@@ -1434,6 +1452,28 @@ def test_trace_mode_folds_excluded_passthrough_into_projections() -> None:
     assert "Caching may still apply at runtime" in text
     # Negative assertion: lock the jargon-free wording.
     assert "pass-through" not in text
+
+
+def test_trace_mode_separates_local_memo_reuse_from_provider_prompt_cache() -> None:
+    analysis = _make_analysis(
+        actually_paid=0.09,
+        no_cache=0.37,
+        rerun=0.12,
+        trace_provider_llm_call_count=3,
+        trace_local_memo_llm_hit_count=56,
+        trace_local_cache_input_tokens=551_454,
+        trace_provider_cache_read_input_tokens=12_345,
+    )
+
+    text = render_text(analysis)
+    payload = render_json(analysis)
+
+    assert "Actual cost delta (incl. local cache):" in text
+    assert "Local pflow cache reuse:     skipped 56 memo LLM call(s) (551,454 historical input tokens)" in text
+    assert "Provider cache in this run:  3 provider LLM call(s), 12,345 cache-read tokens" in text
+    assert "run with --no-cache to measure provider prompt caching cleanly" in text
+    assert payload["summary"]["trace_local_memo_llm_hit_count"] == 56
+    assert payload["summary"]["trace_provider_cache_read_input_tokens"] == 12_345
 
 
 def test_trace_mode_falls_back_to_excluded_line_when_excluded_cost_unknown() -> None:

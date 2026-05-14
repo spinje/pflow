@@ -398,9 +398,17 @@ class TraceExecutionIndex:
     costs_by_key: dict[tuple[str | None, str], tuple[float | None, str]]
     llm_calls_by_key: dict[tuple[str | None, str], dict[str, Any]]
     llm_call_lists_by_key: dict[tuple[str | None, str], tuple[dict[str, Any], ...]]
+    provider_llm_calls_by_key: dict[tuple[str | None, str], dict[str, Any]]
+    provider_llm_call_lists_by_key: dict[tuple[str | None, str], tuple[dict[str, Any], ...]]
     executed_keys: set[tuple[str | None, str]]
     workflows_with_trace: set[str | None]
     current_cost_by_workflow: dict[str | None, float | None]
+    provider_llm_call_count: int = 0
+    local_memo_llm_hit_count: int = 0
+    local_in_process_llm_hit_count: int = 0
+    local_cache_input_tokens: int = 0
+    provider_cache_creation_input_tokens: int = 0
+    provider_cache_read_input_tokens: int = 0
     trace_loaded: bool = False
 
 
@@ -554,6 +562,16 @@ class AnalysisSummary:
     # trace is loaded.
     trace_final_status: str | None = None
     trace_recorded_at: str | None = None
+    # Trace cache-layer split. Provider prompt caching and pflow's local memo
+    # cache are independent layers; a resumed run can skip LLM calls before the
+    # provider ever sees them. These fields keep that visible in text/JSON so
+    # agents do not mistake memo reuse for provider prompt-cache savings.
+    trace_provider_llm_call_count: int = 0
+    trace_local_memo_llm_hit_count: int = 0
+    trace_local_in_process_llm_hit_count: int = 0
+    trace_local_cache_input_tokens: int = 0
+    trace_provider_cache_creation_input_tokens: int = 0
+    trace_provider_cache_read_input_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -856,6 +874,7 @@ def analyze(
         edge_child_paths=edge_child_paths,
         ir_default_model=ir_default_model,
         scope_workflow_paths=scope_workflow_paths,
+        trace_index=trace_index,
     )
     summary = replace(
         summary,
@@ -1405,42 +1424,45 @@ def _build_trace_execution_index(
     inside :meth:`TraceTree.walk`.
     """
     if trace_data is None:
-        return TraceExecutionIndex({}, {}, {}, set(), set(), {}, trace_loaded=False)
+        return _empty_trace_execution_index()
     from pflow.core.trace_tree import TraceTree
 
     try:
         tree = TraceTree.from_dict(trace_data)
     except ValueError:
-        return TraceExecutionIndex({}, {}, {}, set(), set(), {}, trace_loaded=False)
+        return _empty_trace_execution_index()
 
     totals: dict[tuple[str | None, str], float] = {}
     workflow_totals: dict[str | None, float] = {}
     workflow_found: set[str | None] = set()
     found: set[tuple[str | None, str]] = set()
     partial: set[tuple[str | None, str]] = set()
-    llm_calls_by_key: dict[tuple[str | None, str], dict[str, Any]] = {}
-    llm_call_lists_by_key: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
-    executed_keys: set[tuple[str | None, str]] = set()
-    workflows_with_trace: set[str | None] = set()
-    for we in tree.walk(edges=edge_child_paths, workflow_path=root_workflow_path):
-        # Batch items typically lack their own node_id; fall back to the
-        # owner (the batch parent's id) so they're attributed to the parent.
-        node_id = str(we.event.get("node_id", we.owner_node_id))
-        executed_keys.add((we.workflow_path, node_id))
-        workflows_with_trace.add(we.workflow_path)
-    for leaf in tree.iter_llm_leaves(edges=edge_child_paths, workflow_path=root_workflow_path):
-        call = leaf.llm_call
-        if call is None:
-            continue
-        node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
-        key = (leaf.workflow_path or root_workflow_path, node_id)
-        # Always populate the call index — cached events carry historical
-        # ``input_tokens`` / ``output_tokens`` preserved from the original
-        # run, which downstream tier-1 token readers (``_estimate_row_tokens``)
-        # need to project costs for memo-hit-only traces. Current-cost
-        # summation happens in the actual-cost pass below.
-        llm_call_lists_by_key.setdefault(key, []).append(dict(call))
+    executed_keys, workflows_with_trace, local_counts = _collect_trace_walk_metadata(
+        tree,
+        root_workflow_path=root_workflow_path,
+        edge_child_paths=edge_child_paths,
+    )
+    # Always populate the historical call index — cached events carry
+    # ``input_tokens`` / ``output_tokens`` preserved from the original run,
+    # which downstream tier-1 token readers need to project costs for
+    # memo-hit-only traces. Current-cost summation happens in the actual-cost
+    # pass below.
+    llm_call_lists_by_key = _collect_trace_llm_call_lists(
+        tree,
+        root_workflow_path=root_workflow_path,
+        edge_child_paths=edge_child_paths,
+        descend_cached_subtrees=True,
+    )
     llm_calls_by_key = {key: _aggregate_trace_llm_calls(calls) for key, calls in llm_call_lists_by_key.items()}
+    provider_llm_call_lists_by_key = _collect_trace_llm_call_lists(
+        tree,
+        root_workflow_path=root_workflow_path,
+        edge_child_paths=edge_child_paths,
+        descend_cached_subtrees=False,
+    )
+    provider_llm_calls_by_key = {
+        key: _aggregate_trace_llm_calls(calls) for key, calls in provider_llm_call_lists_by_key.items()
+    }
     for leaf in tree.iter_actual_cost_events(edges=edge_child_paths, workflow_path=root_workflow_path):
         _record_trace_cost_leaf(
             leaf,
@@ -1459,11 +1481,81 @@ def _build_trace_execution_index(
         costs_by_key=costs_by_key,
         llm_calls_by_key=llm_calls_by_key,
         llm_call_lists_by_key={key: tuple(calls) for key, calls in llm_call_lists_by_key.items()},
+        provider_llm_calls_by_key=provider_llm_calls_by_key,
+        provider_llm_call_lists_by_key={key: tuple(calls) for key, calls in provider_llm_call_lists_by_key.items()},
         executed_keys=executed_keys,
         workflows_with_trace=workflows_with_trace,
         current_cost_by_workflow=cost_by_workflow,
+        provider_llm_call_count=sum(len(calls) for calls in provider_llm_call_lists_by_key.values()),
+        local_memo_llm_hit_count=local_counts["memo"],
+        local_in_process_llm_hit_count=local_counts["in_process"],
+        local_cache_input_tokens=local_counts["input_tokens"],
+        provider_cache_creation_input_tokens=_sum_trace_call_int_field(
+            provider_llm_call_lists_by_key,
+            "cache_creation_input_tokens",
+        ),
+        provider_cache_read_input_tokens=_sum_trace_call_int_field(
+            provider_llm_call_lists_by_key,
+            "cache_read_input_tokens",
+        ),
         trace_loaded=True,
     )
+
+
+def _empty_trace_execution_index() -> TraceExecutionIndex:
+    return TraceExecutionIndex({}, {}, {}, {}, {}, set(), set(), {}, trace_loaded=False)
+
+
+def _collect_trace_walk_metadata(
+    tree: Any,
+    *,
+    root_workflow_path: str,
+    edge_child_paths: dict[str, str],
+) -> tuple[set[tuple[str | None, str]], set[str | None], dict[str, int]]:
+    executed_keys: set[tuple[str | None, str]] = set()
+    workflows_with_trace: set[str | None] = set()
+    local_counts = {"memo": 0, "in_process": 0, "input_tokens": 0}
+    for we in tree.walk(edges=edge_child_paths, workflow_path=root_workflow_path):
+        # Batch items typically lack their own node_id; fall back to the
+        # owner (the batch parent's id) so they're attributed to the parent.
+        node_id = str(we.event.get("node_id", we.owner_node_id))
+        executed_keys.add((we.workflow_path, node_id))
+        workflows_with_trace.add(we.workflow_path)
+        if we.is_cached and we.llm_call is not None:
+            cache_source = str(we.llm_call.get("cache_source") or "")
+            if cache_source in {"memo", "in_process"}:
+                local_counts[cache_source] += 1
+                local_counts["input_tokens"] += int(we.llm_call.get("input_tokens") or 0)
+    return executed_keys, workflows_with_trace, local_counts
+
+
+def _collect_trace_llm_call_lists(
+    tree: Any,
+    *,
+    root_workflow_path: str,
+    edge_child_paths: dict[str, str],
+    descend_cached_subtrees: bool,
+) -> dict[tuple[str | None, str], list[dict[str, Any]]]:
+    calls_by_key: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
+    for leaf in tree.iter_llm_leaves(
+        descend_cached_subtrees=descend_cached_subtrees,
+        edges=edge_child_paths,
+        workflow_path=root_workflow_path,
+    ):
+        call = leaf.llm_call
+        if call is None:
+            continue
+        node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
+        key = (leaf.workflow_path or root_workflow_path, node_id)
+        calls_by_key.setdefault(key, []).append(dict(call))
+    return calls_by_key
+
+
+def _sum_trace_call_int_field(
+    calls_by_key: dict[tuple[str | None, str], list[dict[str, Any]]],
+    field_name: str,
+) -> int:
+    return sum(int(call.get(field_name) or 0) for calls in calls_by_key.values() for call in calls)
 
 
 def _aggregate_trace_llm_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1773,6 +1865,8 @@ def _build_per_call_rows_and_warnings(
                 trace_cost=trace_index.costs_by_key.get((workflow_path, node_id)),
                 trace_llm_call=trace_index.llm_calls_by_key.get((workflow_path, node_id)),
                 trace_llm_calls=trace_index.llm_call_lists_by_key.get((workflow_path, node_id), ()),
+                provider_trace_llm_call=trace_index.provider_llm_calls_by_key.get((workflow_path, node_id)),
+                provider_trace_llm_calls=trace_index.provider_llm_call_lists_by_key.get((workflow_path, node_id), ()),
                 did_not_execute_in_trace=(
                     trace_index.trace_loaded and (workflow_path, node_id) not in trace_index.executed_keys
                 ),
@@ -2138,6 +2232,8 @@ def _build_per_call_row(
     trace_cost: tuple[float | None, str] | None = None,
     trace_llm_call: dict[str, Any] | None = None,
     trace_llm_calls: tuple[dict[str, Any], ...] = (),
+    provider_trace_llm_call: dict[str, Any] | None = None,
+    provider_trace_llm_calls: tuple[dict[str, Any], ...] = (),
     did_not_execute_in_trace: bool = False,
     cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] | None = None,
 ) -> PerCallRow:
@@ -2148,6 +2244,7 @@ def _build_per_call_row(
     explicit = node.get("params", {}).get("model") or node.get("model")
     observed_models = tuple(sorted({str(call.get("model")) for call in trace_llm_calls if call.get("model")}))
     observed_call_count = len(trace_llm_calls)
+    provider_observed_call_count = len(provider_trace_llm_calls)
     model, model_is_heterogeneous = _resolve_effective_row_model(explicit, observed_models)
     prompt = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt, str):
@@ -2199,18 +2296,17 @@ def _build_per_call_row(
     # ## Cache items) is consumed elsewhere; here we pass declared_subset
     # (this node's ``prompt_cache:``) and candidate_subset (greenfield
     # candidates from shared template references).
-    trace_event = trace_llm_call
     cacheable_tokens, cacheable_source = estimate_cacheable_tokens(
         declared_subset=declared_subset,
         candidate_subset=candidate_subset,
-        trace_event=trace_event,
+        trace_event=provider_trace_llm_call,
         memo_cache=memo_cache,
         model=model,
         workflow_path=workflow_path,
         prompt=resolved_prompt,
         ctx=ctx,
         is_static_batch_trace=is_static_batch_trace,
-        observed_call_count=observed_call_count,
+        observed_call_count=provider_observed_call_count,
         resolved_chunk_call_count=_resolved_chunk_call_count(
             is_batch=is_batch,
             observed_call_count=observed_call_count,
@@ -2271,9 +2367,15 @@ def _build_per_call_row(
         cost_source = "recomputed"
 
     trace_cache_creation = (
-        int(trace_llm_call.get("cache_creation_input_tokens") or 0) if trace_llm_call is not None else None
+        int(provider_trace_llm_call.get("cache_creation_input_tokens") or 0)
+        if provider_trace_llm_call is not None
+        else None
     )
-    trace_cache_read = int(trace_llm_call.get("cache_read_input_tokens") or 0) if trace_llm_call is not None else None
+    trace_cache_read = (
+        int(provider_trace_llm_call.get("cache_read_input_tokens") or 0)
+        if provider_trace_llm_call is not None
+        else None
+    )
 
     return PerCallRow(
         node_path=node_id,
@@ -6648,6 +6750,7 @@ def _build_summary(
     edge_child_paths: dict[str, str] | None = None,
     ir_default_model: str | None = None,
     scope_workflow_paths: frozenset[str] | None = None,
+    trace_index: TraceExecutionIndex | None = None,
 ) -> AnalysisSummary:
     """Aggregate per-call rows + warning counts into the spec's summary block.
 
@@ -6839,6 +6942,18 @@ def _build_summary(
         projection_exclusions=projections.absolute_exclusions,
         trace_final_status=trace_final_status,
         trace_recorded_at=trace_recorded_at,
+        trace_provider_llm_call_count=trace_index.provider_llm_call_count if trace_index is not None else 0,
+        trace_local_memo_llm_hit_count=trace_index.local_memo_llm_hit_count if trace_index is not None else 0,
+        trace_local_in_process_llm_hit_count=(
+            trace_index.local_in_process_llm_hit_count if trace_index is not None else 0
+        ),
+        trace_local_cache_input_tokens=trace_index.local_cache_input_tokens if trace_index is not None else 0,
+        trace_provider_cache_creation_input_tokens=(
+            trace_index.provider_cache_creation_input_tokens if trace_index is not None else 0
+        ),
+        trace_provider_cache_read_input_tokens=(
+            trace_index.provider_cache_read_input_tokens if trace_index is not None else 0
+        ),
     )
 
 

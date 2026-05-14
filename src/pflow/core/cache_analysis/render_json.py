@@ -71,7 +71,7 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
 
 def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
     s = analysis.summary
-    return {
+    summary = {
         # Atomic cost primitives. Each field carries one meaning.
         # ``actually_paid_usd`` is ``null`` for greenfield (no trace);
         # the three hypothetical fields are projections from IR rows.
@@ -146,6 +146,16 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         # the agent can re-run). See ``AnalysisSummary.suggested_run_command``.
         "suggested_run_command": s.suggested_run_command,
     }
+    if s.trace_coverage != "none":
+        summary.update({
+            "trace_provider_llm_call_count": s.trace_provider_llm_call_count,
+            "trace_local_memo_llm_hit_count": s.trace_local_memo_llm_hit_count,
+            "trace_local_in_process_llm_hit_count": s.trace_local_in_process_llm_hit_count,
+            "trace_local_cache_input_tokens": s.trace_local_cache_input_tokens,
+            "trace_provider_cache_creation_input_tokens": s.trace_provider_cache_creation_input_tokens,
+            "trace_provider_cache_read_input_tokens": s.trace_provider_cache_read_input_tokens,
+        })
+    return summary
 
 
 def _delta_to_dict(delta: CostDelta) -> dict[str, Any]:
