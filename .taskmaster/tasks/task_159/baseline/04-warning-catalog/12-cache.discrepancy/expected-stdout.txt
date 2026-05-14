@@ -7,11 +7,9 @@
 
 ## Summary
 
-  Actually paid:               ~$0.0058 (from trace)
+  Actually paid:               ~$0.0058 (from trace)  (adds 1% vs cost without caching)
   Cost without caching:        ~$0.0058
-  Cost on rerun (within TTL):  ~$0.0058
-  Actual cost delta (this run): adds ~<$0.0001 vs no-cache, 1% of no-cache cost
-  Rerun delta (projected):      no meaningful cost change
+  Cost on rerun (within TTL):  ~$0.0058  (no meaningful cost change)
 
   1 recommended action
 

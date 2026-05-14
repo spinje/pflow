@@ -1551,12 +1551,17 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     assert "couldn't be analyzed for cache savings" in text
     assert "model varies per call" in text  # now in the footnote
     assert "pass-through" not in text
-    assert "Actual cost delta (this run):" in text
-    # The savings line no longer inlines (excludes ...); the cohort context
-    # is in the footnote below.
+    # Candidate A: the actual-vs-no-cache savings now render as a parenthetical
+    # on the ``Actually paid`` line, not as a separate ``Actual cost delta``
+    # line. The legacy labels must not reappear.
+    assert "Actual cost delta" not in text
+    assert "Actual trace delta:" not in text
+    actually_paid_line = next(line for line in text.splitlines() if "Actually paid:" in line)
+    assert "vs cost without caching" in actually_paid_line
+    # The savings parenthetical does not inline ``(excludes ...)``; the
+    # cohort context is in the footnote below.
     assert "(excludes generate)" not in text
     assert "unavailable (projection excludes generate)" not in text
-    assert "Actual trace delta:" not in text
 
 
 def test_observed_model_replaces_ir_when_trace_consistent(
@@ -2219,7 +2224,16 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
     rendered = render_text(result)
     assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field`" in rendered
     assert "would drop per-call cost" in rendered
-    assert "compares against inlining the full chunk uncached" in rendered
+    # Bundle 1: the "compares against inlining the full chunk uncached"
+    # footnote was removed. The summary baseline is the honest answer to
+    # "what would caching the same prompt cost without the discount"; the
+    # local recommendation already shows the alternative (remove the
+    # cache declaration to get body-only cost). Mutation contract:
+    # restoring that footnote to ``_format_shadow_cache_cost_comparison``
+    # fails this negative assertion.
+    assert "compares against inlining the full chunk uncached" not in rendered
+    assert "different baseline than your body" not in rendered
+    assert "unused by your prompt" not in rendered
 
 
 def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> None:

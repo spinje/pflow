@@ -850,9 +850,9 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="validator",
         category=CACHE_FAILURE_CATEGORY,
         message_template=(
-            "Node '{node_id}' duplicates cached chunks in the prompt body — the cache "
-            "stores these values at 0.1× rate but the body sends them inline at 1.0× "
-            "every call:\n{overlap_lines}"
+            "Node '{node_id}' sends the same value twice in each call — once as a cached "
+            "chunk AND inline in the prompt body. The cached copy is paid at 0.1× rate but "
+            "the inline copy is paid at 1.0× every call:\n{overlap_lines}"
         ),
         required_context_keys=(
             ("node_id", str),
@@ -882,7 +882,8 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="validator",
         category=CACHE_WARNING_CATEGORY,
         message_template=(
-            "Node '{node_id}' has overlapping cached chunks and `${{var}}` references (sub-path overlap):\n{overlap_lines}"
+            "Node '{node_id}' may be sending the same value twice in each call — cached "
+            "chunks and prompt-body `${{var}}` references overlap on a sub-path:\n{overlap_lines}"
         ),
         required_context_keys=(
             ("node_id", str),
@@ -891,9 +892,9 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("overlap_lines", str),
         ),
         suggestions_template=(
-            "Either narrow the cached chunks to only the sub-paths the body uses, OR "
-            "remove the listed `${{...}}` references from the prompt body. Sub-path "
-            "overlap can quietly inflate input tokens without firing the cache reliably.",
+            "If only the sub-path is needed in the prompt, narrow the cached chunk to that "
+            "sub-path. If the full chunk is needed as context, remove the prompt-body "
+            "`${{...}}` references — they're already supplied by the cache.",
         ),
         path_template="nodes[id={node_id}].params.prompt",
         headline_template="Prompt body shadows cached chunks on {node_id}",

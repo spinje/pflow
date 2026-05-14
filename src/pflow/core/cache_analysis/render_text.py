@@ -440,15 +440,24 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         s.unavailable_models,
         tier_annotation=tier,
     )
+    local_hits = s.trace_local_memo_llm_hit_count + s.trace_local_in_process_llm_hit_count
+    actual_paren = _format_delta_parenthetical(
+        s.actual_vs_no_cache_delta, local_cache_reuse=bool(local_hits)
+    )
+    rerun_paren = _format_delta_parenthetical(s.rerun_delta)
     if s.evidence_scope == "truncated_trace_executed_subset":
         # Truncated branch is structurally different (executed subset is the
         # cohort by construction). Unchanged by Fix 7.
         no_cache_str = _format_cost(s.no_cache_hypothetical_usd, False, s.unavailable_models)
         rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, False, s.unavailable_models)
         lines = [
-            f"  Actually paid (executed trace):       {actually_paid_str}",
+            _append_parenthetical(
+                f"  Actually paid (executed trace):       {actually_paid_str}", actual_paren
+            ),
             f"  Cost without caching (executed):      {no_cache_str}",
-            f"  Cost on rerun (executed, within TTL): {rerun_str}",
+            _append_parenthetical(
+                f"  Cost on rerun (executed, within TTL): {rerun_str}", rerun_paren
+            ),
         ]
         lines.extend(_format_trace_cache_layer_lines(s))
         return lines
@@ -471,9 +480,9 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         no_cache_str = _format_cost(no_cache_folded, False, s.unavailable_models)
         rerun_str = _format_cost(rerun_folded, False, s.unavailable_models)
         lines = [
-            f"  Actually paid:               {actually_paid_str}",
+            _append_parenthetical(f"  Actually paid:               {actually_paid_str}", actual_paren),
             f"  Cost without caching:        {no_cache_str}",
-            f"  Cost on rerun (within TTL):  {rerun_str}",
+            _append_parenthetical(f"  Cost on rerun (within TTL):  {rerun_str}", rerun_paren),
         ]
         footnote = _format_passthrough_footnote(s, excluded_total)
         if footnote is not None:
@@ -485,12 +494,12 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     projection_partial_marker = s.partial_cost_usd and not s.projection_exclusions
     no_cache_str = _format_cost(s.no_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, projection_partial_marker, s.unavailable_models)
-    lines = [f"  Actually paid:               {actually_paid_str}"]
+    lines = [_append_parenthetical(f"  Actually paid:               {actually_paid_str}", actual_paren)]
     excluded_line = _format_excluded_from_analysis_line(s)
     if excluded_line is not None:
         lines.append(excluded_line)
     lines.append(f"  Cost without caching:        {no_cache_str}")
-    lines.append(f"  Cost on rerun (within TTL):  {rerun_str}")
+    lines.append(_append_parenthetical(f"  Cost on rerun (within TTL):  {rerun_str}", rerun_paren))
     lines.extend(_format_trace_cache_layer_lines(s))
     return lines
 
@@ -617,10 +626,12 @@ def _render_greenfield_with_cache_lines(s: AnalysisSummary) -> list[str]:
     rerun_label = (
         "Cost on rerun (within TTL, projected subset)" if s.projection_exclusions else "Cost on rerun (within TTL)"
     )
+    first_run_paren = _format_delta_parenthetical(s.first_run_delta)
+    rerun_paren = _format_delta_parenthetical(s.rerun_delta)
     return [
         f"  {no_cache_label}:        {no_cache_str}",
-        f"  {first_run_label}:   {first_run_str}",
-        f"  {rerun_label}:  {rerun_str}",
+        _append_parenthetical(f"  {first_run_label}:   {first_run_str}", first_run_paren),
+        _append_parenthetical(f"  {rerun_label}:  {rerun_str}", rerun_paren),
     ]
 
 
@@ -666,10 +677,6 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     if s.evidence_scope == "truncated_trace_executed_subset":
         summary_lines.append("  Trace-backed costs below cover executed nodes only.")
     summary_lines.extend(_render_cost_block(s))
-
-    delta_lines = _render_summary_deltas(s)
-    if delta_lines:
-        summary_lines.extend(delta_lines)
 
     _append_summary_counts(summary_lines, analysis)
 
@@ -774,72 +781,52 @@ def _append_summary_counts(summary_lines: list[str], analysis: CacheAnalysis) ->
         )
 
 
-def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
-    """Render savings deltas for the Summary block.
-
-    Trace mode shows the measured savings as the headline plus the
-    steady-state rerun projection. The first-run-with-cache projection is
-    suppressed when actual data exists: the projection models neither memo
-    cache hits nor provider implicit caching, so it can be off by an order
-    of magnitude and visually compete with the actual figure (BASELINE-AUDIT
-    L-3). Greenfield mode only has projections, so both are rendered.
-    """
-    if s.evidence_scope in {"complete_trace", "truncated_trace_executed_subset"}:
-        return _render_trace_deltas(s)
-    return _render_greenfield_deltas(s)
-
-
-def _render_trace_deltas(s: AnalysisSummary) -> list[str]:
-    lines: list[str] = []
-    actual = _format_delta(s.actual_vs_no_cache_delta, label="vs no-cache")
-    local_hits = s.trace_local_memo_llm_hit_count + s.trace_local_in_process_llm_hit_count
-    actual_label = "Actual cost delta (incl. local cache):" if local_hits else "Actual cost delta (this run):"
-    if actual:
-        lines.append(f"  {actual_label:29s} {actual}")
-    elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:
-        # Excluded nodes are surfaced via the ``Excluded from analysis`` line
-        # in the cost block above; here we just signal that savings can't be
-        # computed for the remaining cohort.
-        lines.append(f"  {actual_label:29s} unavailable")
-    rerun = _format_delta(s.rerun_delta, label="on rerun")
-    if rerun:
-        lines.append(f"  {'Rerun delta (projected):':29s} {rerun}")
-    return lines
-
-
-def _render_greenfield_deltas(s: AnalysisSummary) -> list[str]:
-    lines: list[str] = []
-    first = _format_delta(s.first_run_delta, label="on first run")
-    if first:
-        lines.append(f"  {'First-run delta:':29s} {first}")
-    rerun = _format_delta(s.rerun_delta, label="on rerun")
-    if rerun:
-        lines.append(f"  {'Rerun delta:':29s} {rerun}")
-    return lines
-
-
 _BASELINE_LABELS: dict[str, str] = {
-    "no_cache_hypothetical_usd": "no-cache cost",
+    "no_cache_hypothetical_usd": "cost without caching",
 }
 
 
-def _format_delta(delta: CostDelta, *, label: str) -> str:
+def _format_delta_parenthetical(delta: CostDelta, *, local_cache_reuse: bool = False) -> str:
+    """Render a CostDelta as a trailing parenthetical for a cost line.
+
+    Candidate A summary shape: deltas are no longer rendered as separate
+    summary lines. Instead each cost line that has a comparison (e.g.
+    "Actually paid" vs no-cache hypothetical, "Cost on rerun" vs no-cache
+    hypothetical) carries its own parenthetical:
+
+        ``Actually paid:    ~$0.0087  (saves 26% vs cost without caching)``
+
+    Returns empty string when the delta carries no comparison information
+    (``unavailable`` kind, missing percentage, etc.) — callers strip trailing
+    whitespace to avoid a dangling double-space.
+
+    Dollar deltas are deliberately dropped from the parenthetical: they're
+    derivable by subtraction from the two cost lines above, and re-emitting
+    them creates a third number that has to stay in sync. The percentage
+    carries the load-bearing signal.
+    """
     if delta.kind == "unavailable":
         return ""
     if delta.kind == "break_even":
-        return "no meaningful cost change"
-    if delta.amount_usd is None:
+        return "(no meaningful cost change)"
+    if delta.pct_of_baseline is None:
         return ""
-    amount = _format_dollar_amount(delta.amount_usd)
     baseline_label = _BASELINE_LABELS.get(delta.baseline, "baseline")
-    pct = f", {delta.pct_of_baseline}% of {baseline_label}" if delta.pct_of_baseline is not None else ""
-    # Note: ``delta.excluded_nodes`` is preserved on the dataclass and emitted
-    # in JSON output (``render_json.py``). The text renderer surfaces excluded
-    # nodes via the ``Excluded from analysis`` line in the cost block instead
-    # so the cohort is established once, near the dollar figures it explains.
-    if delta.kind == "savings":
-        return f"saves {amount}/run {label}{pct}"
-    return f"adds {amount} {label}{pct}"
+    verb = "saves" if delta.kind == "savings" else "adds"
+    suffix = ", incl. local cache reuse" if local_cache_reuse else ""
+    return f"({verb} {delta.pct_of_baseline}% vs {baseline_label}{suffix})"
+
+
+def _append_parenthetical(line: str, parenthetical: str) -> str:
+    """Compose a cost line with its optional trailing delta parenthetical.
+
+    Two spaces separate the dollar value from the parenthetical. Returns the
+    bare line when the parenthetical is empty so unavailable deltas don't
+    leave trailing whitespace.
+    """
+    if not parenthetical:
+        return line
+    return f"{line}  {parenthetical}"
 
 
 def _format_unavailable_models(analysis: CacheAnalysis) -> str:
@@ -1118,10 +1105,6 @@ def _format_shadow_cache_cost_comparison(action: RecommendedAction) -> list[str]
     return [
         f"     → Removing `prompt_cache:` for {chunks_csv} from `{node_id}` "
         f"would drop per-call cost from {cache_str} to {body_str}{ratio_phrase}.",
-        "       The body only references a sub-path of the cached value; the rest is sent to the model "
-        "but unused by your prompt.",
-        "       Note: the summary's 'saves N%' compares against inlining the full chunk uncached — "
-        "a different baseline than your body actually uses.",
     ]
 
 

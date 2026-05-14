@@ -98,16 +98,20 @@ def _make_analysis(
         if dynamic_batch_count
         else sum(r.batch_size_estimated if r.is_batch and r.batch_size_estimated is not None else 1 for r in rows)
     )
-    first_run_delta = _test_delta(no_cache, first_run_with_cache, "no_cache", "first_run")
-    rerun_delta = _test_delta(no_cache, rerun, "no_cache", "rerun")
-    actual_delta = _test_delta(no_cache, actually_paid, "no_cache", "actual")
+    first_run_delta = _test_delta(
+        no_cache, first_run_with_cache, "no_cache_hypothetical_usd", "first_run_with_cache_hypothetical_usd"
+    )
+    rerun_delta = _test_delta(
+        no_cache, rerun, "no_cache_hypothetical_usd", "rerun_within_ttl_hypothetical_usd"
+    )
+    actual_delta = _test_delta(no_cache, actually_paid, "no_cache_hypothetical_usd", "actually_paid_usd")
     if actual_delta_unavailable_reason is not None:
         actual_delta = CostDelta(
             None,
             None,
             "unavailable",
-            "no_cache",
-            "actual",
+            "no_cache_hypothetical_usd",
+            "actually_paid_usd",
             actual_delta_unavailable_reason,
         )
     return CacheAnalysis(
@@ -1406,9 +1410,17 @@ def test_text_summary_explains_projection_excluded_actual_delta() -> None:
     assert "Cost without caching (projected subset):" not in text
     assert "Cost on rerun (within TTL):" in text
     assert "Cost on rerun (within TTL, projected subset):" not in text
-    # Savings line is bare ``unavailable`` — the excluded line above explains why.
-    assert "Actual cost delta (this run): unavailable" in text
-    assert "unavailable (projection excludes" not in text
+    # Candidate A: when the actual delta is ``unavailable`` (here because the
+    # exclusion lacks pricing data), the parenthetical drops entirely — no
+    # dangling "(saves N% vs ...)" on the Actually paid line, no separate
+    # ``Actual cost delta (this run): unavailable`` line. The excluded line
+    # above carries the "why."
+    actually_paid_line = next(line for line in text.splitlines() if "Actually paid:" in line)
+    assert "(saves" not in actually_paid_line
+    assert "(adds" not in actually_paid_line
+    assert "unavailable" not in actually_paid_line
+    # Legacy delta lines must not appear anywhere in the output.
+    assert "Actual cost delta" not in text
     assert "Actual trace delta:" not in text
 
 
@@ -1473,7 +1485,12 @@ def test_trace_mode_separates_local_memo_reuse_from_provider_prompt_cache() -> N
     text = render_text(analysis)
     payload = render_json(analysis)
 
-    assert "Actual cost delta (incl. local cache):" in text
+    # Candidate A: ``incl. local cache reuse`` moves into the
+    # ``Actually paid`` parenthetical so the qualifier appears on the
+    # same line as the dollar figure. The separate cache-layer lines
+    # below still spell out the underlying counts.
+    actually_paid_line = next(line for line in text.splitlines() if "Actually paid:" in line)
+    assert "incl. local cache reuse" in actually_paid_line
     assert "Local pflow cache reuse:     skipped 56 memo LLM call(s) (551,454 historical input tokens)" in text
     assert "Provider cache in this run:  3 provider LLM call(s), 12,345 cache-read tokens" in text
     assert "run with --no-cache to measure provider prompt caching cleanly" in text
@@ -1836,10 +1853,19 @@ def test_header_does_not_disclose_when_no_observed(monkeypatch: pytest.MonkeyPat
     assert "IR/settings declares:" not in render_text(analysis)
 
 
-def test_actual_savings_delta_first_in_trace_mode(
+def test_trace_mode_attaches_delta_parenthetical_to_actually_paid_line(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Candidate A: trace mode embeds the actual-vs-no-cache delta as a
+    parenthetical on the ``Actually paid`` line and the rerun delta as a
+    parenthetical on the ``Cost on rerun`` line. No separate ``Actual
+    cost delta`` / ``Rerun delta`` lines; no greenfield-only
+    ``First-run delta`` line in trace mode.
+
+    Mutation contract: restoring the deleted ``_render_trace_deltas`` →
+    a separate ``Actual cost delta`` line reappears.
+    """
     from pflow.core.cache_analysis.analyze import analyze
 
     analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
@@ -1857,25 +1883,31 @@ def test_actual_savings_delta_first_in_trace_mode(
     )
 
     text = render_text(analysis)
-    assert "Actual cost delta (this run):" in text
+    # Legacy delta-line labels must not appear.
+    assert "Actual cost delta" not in text
+    assert "Rerun delta" not in text
     assert "First-run delta" not in text
-    # The row label is a neutral delta, so the inner _format_delta label stays
-    # "vs no-cache" and the rendered value reads as "saves/adds $X vs
-    # no-cache" rather than leaking an internal "actual vs no-cache" phrase.
-    # Mutation contract: revert _format_delta label arg back to
-    # "actual vs no-cache" → this assertion fails.
-    assert "actual vs no-cache" not in text
-    assert "vs no-cache" in text
-    lines = text.splitlines()
-    actual_idx = next(i for i, line in enumerate(lines) if "Actual cost delta (this run):" in line)
-    rerun_idx = next(i for i, line in enumerate(lines) if "Rerun delta (projected):" in line)
-    assert actual_idx < rerun_idx
+    # The actually-paid line carries the savings parenthetical (the synthetic
+    # trace's measured cost is below the no-cache hypothetical).
+    actually_paid_line = next(line for line in text.splitlines() if "Actually paid:" in line)
+    rerun_line = next(line for line in text.splitlines() if "Cost on rerun (within TTL):" in line)
+    assert "vs cost without caching" in actually_paid_line
+    # Rerun line carries a parenthetical too (kind depends on the synthetic
+    # trace's numbers — savings, cost_increase, or break_even). Locking that
+    # SOME parenthetical attaches; the per-kind shape is covered by the
+    # dedicated _format_delta_parenthetical unit tests above.
+    assert "(" in rerun_line and ")" in rerun_line
 
 
-def test_actual_savings_label_replaces_actual_trace_delta_both_sites(
+def test_trace_mode_parentheticals_use_consistent_baseline_phrase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The parenthetical phrase ``vs cost without caching`` is consistent
+    across priced and heterogeneous-batch traces (where the actual delta
+    may be unavailable, but the rerun delta is still computed). The
+    legacy ``Actual trace delta:`` label must NOT reappear.
+    """
     from pflow.core.cache_analysis.analyze import analyze
 
     analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
@@ -1947,19 +1979,26 @@ def test_actual_savings_label_replaces_actual_trace_delta_both_sites(
     unavailable_text = render_text(unavailable)
     assert "Actual trace delta:" not in priced_text
     assert "Actual trace delta:" not in unavailable_text
-    assert "Actual cost delta (this run):" in priced_text
-    assert "Actual cost delta (this run):" in unavailable_text
+    assert "Actual cost delta" not in priced_text
+    assert "Actual cost delta" not in unavailable_text
+    # Priced workflow's Actually paid line carries the parenthetical.
+    priced_actually_paid = next(line for line in priced_text.splitlines() if "Actually paid:" in line)
+    assert "vs cost without caching" in priced_actually_paid
 
 
-def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
+def test_truncated_trace_attaches_parentheticals_without_executed_suffix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Truncated trace mode (Option B): first-run delta is dropped, rerun
-    uses ``(projected)`` suffix (not ``(executed)``), and the actual savings
-    label stays unqualified — no ``(executed)`` decoration. The actual cost
-    delta line itself still renders because L-12 work computes the delta
-    over the executed subset when pricing is otherwise available.
+    """Truncated trace mode: the executed-subset cost lines (with ``(executed)``
+    label suffixes) still carry parentheticals on Actually paid + Cost on
+    rerun. The legacy ``Actual cost delta (this run, executed):`` /
+    ``Rerun delta (executed):`` separate lines do NOT appear — those were
+    retired alongside Candidate A.
+
+    The first-run delta still has no rendering surface in trace mode (no
+    ``Cost on first run`` cost line in trace mode at all), so we just
+    confirm the legacy label doesn't appear.
     """
     from pflow.core.cache_analysis.analyze import analyze
 
@@ -1985,29 +2024,22 @@ def test_truncated_trace_drops_first_run_and_uses_projected_suffix(
     )
 
     text = render_text(analysis)
-    # Truncated trace mode (final_status=failed) still computes the
-    # actual-vs-no-cache delta over the executed subset when pricing is
-    # otherwise available — no projection_exclusions, so the delta is
-    # priced and the line renders. The label stays unqualified —
-    # "(executed)" is not appended.
-    assert "Actual cost delta (this run):" in text
-    assert "Actual cost delta (this run, executed):" not in text
-    # Option B: First-run delta is dropped from trace mode (any coverage).
+    # Truncated cost label suffix stays — "(executed)" still distinguishes
+    # the partial-cohort lines from a complete trace.
+    assert "Actually paid (executed trace):" in text
+    assert "Cost on rerun (executed, within TTL):" in text
+    # Legacy delta-line labels must not appear.
+    assert "Actual cost delta" not in text
+    assert "Rerun delta" not in text
     assert "First-run delta" not in text
-    # Rerun delta carries the (projected) suffix in trace mode; the
-    # legacy (executed) qualifier was retired alongside Option B since
-    # the truncated suppression note already conveys executed-subset
-    # context.
-    assert "Rerun delta (projected):" in text
-    assert "Rerun delta (executed):" not in text
 
 
-def test_first_run_delta_present_in_greenfield_mode() -> None:
-    """Greenfield mode (no trace data) renders First-run + Rerun deltas as
-    projections. The actual cost delta line is suppressed because there's no
-    ``actually_paid_usd`` to compare against. Mutation contract: route
-    greenfield through ``_render_trace_deltas`` and this fails (no first-run
-    line) or ``_render_greenfield_deltas`` swaps the labels.
+def test_greenfield_attaches_parentheticals_to_cache_cost_lines() -> None:
+    """Greenfield mode (no trace data) renders parentheticals on the
+    ``Cost on first run (cache)`` and ``Cost on rerun (within TTL)`` cost
+    lines instead of separate delta lines. The ``Cost without caching``
+    baseline line stays bare — it's the reference against which the others
+    compare.
     """
     analysis = _make_analysis(
         no_cache=0.10,
@@ -2016,46 +2048,19 @@ def test_first_run_delta_present_in_greenfield_mode() -> None:
     )
 
     text = render_text(analysis)
-    assert "First-run delta:" in text
-    assert "Rerun delta:" in text
+    # Legacy delta-line labels removed.
+    assert "First-run delta:" not in text
+    assert "Rerun delta:" not in text
     assert "Actual cost delta" not in text
-    assert "(projected)" not in text  # greenfield labels stay unqualified
-
-
-def test_rerun_delta_carries_projected_suffix_only_in_trace_mode(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The ``(projected)`` suffix on Rerun delta is the trace-mode signal
-    that the line is a hypothetical, not a measurement. Greenfield mode
-    omits the suffix because both deltas are projections by construction
-    and the suffix would be redundant. Mutation contract: drop the suffix
-    from ``_render_trace_deltas`` → trace assertion fails. Add the suffix
-    to ``_render_greenfield_deltas`` → greenfield assertion fails.
-    """
-    from pflow.core.cache_analysis.analyze import analyze
-
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
-    workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
-    trace_analysis = analyze(
-        workflow_ir,
-        workflow_path="x",
-        trace_path=_trace_path(
-            tmp_path,
-            workflow_path="x",
-            nodes=[_llm_event("generate", model="anthropic/claude-sonnet-4-5")],
-            name="trace-mode-trace.json",
-        ),
-        auto_load_trace=False,
-    )
-    greenfield_analysis = _make_analysis(no_cache=0.10, first_run_with_cache=0.09, rerun=0.04)
-
-    trace_lines = render_text(trace_analysis).splitlines()
-    greenfield_lines = render_text(greenfield_analysis).splitlines()
-    assert any(line.strip().startswith("Rerun delta (projected):") for line in trace_lines)
-    assert any(line.strip().startswith("Rerun delta:") for line in greenfield_lines)
-    assert not any(line.strip().startswith("Rerun delta (projected):") for line in greenfield_lines)
+    # Cost-line labels still here.
+    first_run_line = next(line for line in text.splitlines() if "Cost on first run (cache):" in line)
+    rerun_line = next(line for line in text.splitlines() if "Cost on rerun (within TTL):" in line)
+    no_cache_line = next(line for line in text.splitlines() if "Cost without caching:" in line)
+    # Parentheticals attach to first-run and rerun (both have deltas);
+    # the baseline stays bare (no self-comparison).
+    assert "vs cost without caching" in first_run_line
+    assert "vs cost without caching" in rerun_line
+    assert "vs cost without caching" not in no_cache_line
 
 
 def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp_path: Path) -> None:
@@ -2124,33 +2129,37 @@ def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp
     assert delta.excluded_nodes == ()  # not populated when fallback fires
 
     text = render_text(analysis)
-    # Savings line is bare ``unavailable`` — the explicit ``Excluded from
-    # analysis`` line in the cost block above carries the node + reason
-    # context, so the savings line doesn't need to repeat it.
-    assert "Actual cost delta (this run): unavailable" in text
+    # Candidate A: when the actual delta is unavailable, the parenthetical
+    # drops entirely — no dangling "(saves N% vs ...)" on Actually paid,
+    # no separate ``Actual cost delta (this run): unavailable`` line.
+    # The ``Excluded from analysis`` line in the cost block carries the
+    # node + reason context.
+    actually_paid_line = next(line for line in text.splitlines() if "Actually paid:" in line)
+    assert "(saves" not in actually_paid_line
+    assert "(adds" not in actually_paid_line
+    assert "unavailable" not in actually_paid_line
+    assert "Actual cost delta" not in text
     assert "unavailable (projection excludes" not in text
-    # Excluded node + reason render in the cost block (no $ since trace
-    # has cost on the heterogeneous row but the row is the only one in the
-    # cohort, so $0.01 is shown if present).
+    # Excluded node + reason render in the cost block.
     assert "Excluded from analysis:" in text
     assert "generate: model varies per call" in text
 
 
-def test_format_delta_translates_baseline_identifier_to_human_phrase() -> None:
-    """N-4: ``Y% of baseline`` is meaningless without naming the baseline.
-
-    The typed ``CostDelta.baseline`` field carries
-    ``"no_cache_hypothetical_usd"``; the text renderer translates it via
-    ``_BASELINE_LABELS`` to ``"no-cache cost"`` so the percentage is
+def test_format_delta_parenthetical_translates_baseline_identifier_to_human_phrase() -> None:
+    """Candidate A: the typed ``CostDelta.baseline`` field carries
+    ``"no_cache_hypothetical_usd"``; ``_format_delta_parenthetical``
+    translates it via ``_BASELINE_LABELS`` to ``"cost without caching"`` so
+    the parenthetical reads ``(saves N% vs cost without caching)`` —
     anchored to the ``Cost without caching`` line above it. Unknown
     identifiers fall back to ``baseline`` (won't crash if a future producer
     adds a new value before the map is updated).
 
-    Mutation contract: drop the ``_BASELINE_LABELS`` lookup → ``of baseline``
-    reappears, this test fails on the explicit ``not in`` assertion.
+    Mutation contract: drop the ``_BASELINE_LABELS`` lookup → ``vs baseline``
+    reappears for the known producer value, this test fails on the explicit
+    ``not in`` assertion.
     """
     from pflow.core.cache_analysis.analyze import CostDelta
-    from pflow.core.cache_analysis.render_text import _format_delta
+    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
 
     savings = CostDelta(
         amount_usd=0.10,
@@ -2159,11 +2168,11 @@ def test_format_delta_translates_baseline_identifier_to_human_phrase() -> None:
         baseline="no_cache_hypothetical_usd",
         compared_to="actually_paid_usd",
     )
-    rendered = _format_delta(savings, label="vs no-cache")
-    assert "20% of no-cache cost" in rendered
-    assert "of baseline" not in rendered
+    rendered = _format_delta_parenthetical(savings)
+    assert rendered == "(saves 20% vs cost without caching)"
+    assert "vs baseline" not in rendered
 
-    # Cost increases route through the same translation.
+    # Cost increases route through the same translation, with the ``adds`` verb.
     cost_increase = CostDelta(
         amount_usd=0.05,
         pct_of_baseline=10,
@@ -2171,9 +2180,8 @@ def test_format_delta_translates_baseline_identifier_to_human_phrase() -> None:
         baseline="no_cache_hypothetical_usd",
         compared_to="actually_paid_priced_cohort_usd",
     )
-    rendered = _format_delta(cost_increase, label="vs no-cache")
-    assert "10% of no-cache cost" in rendered
-    assert "of baseline" not in rendered
+    rendered = _format_delta_parenthetical(cost_increase)
+    assert rendered == "(adds 10% vs cost without caching)"
 
     # Unknown baseline identifiers fall back to "baseline" (defense against
     # future producer adding a new value without updating the map).
@@ -2184,26 +2192,25 @@ def test_format_delta_translates_baseline_identifier_to_human_phrase() -> None:
         baseline="future_unknown_baseline_usd",
         compared_to="actually_paid_usd",
     )
-    rendered = _format_delta(unknown, label="vs no-cache")
-    assert "20% of baseline" in rendered
+    rendered = _format_delta_parenthetical(unknown)
+    assert rendered == "(saves 20% vs baseline)"
 
 
-def test_format_delta_does_not_inline_excluded_nodes_qualifier() -> None:
-    """``_format_delta`` does NOT inline ``(excludes node1, node2)`` next to
-    the savings amount, even when ``CostDelta.excluded_nodes`` is populated.
-    The cohort context is established once via the ``Excluded from analysis``
-    line in the cost block above (rendered by
-    ``_format_excluded_from_analysis_line``); duplicating it on the savings
-    line would be analyst-speak the agent has to translate twice.
+def test_format_delta_parenthetical_drops_dollar_and_excluded_nodes() -> None:
+    """Candidate A drops the per-run dollar figure from the parenthetical:
+    it's derivable by subtraction from the two cost lines and re-emitting it
+    creates a third number that has to stay in sync. ``excluded_nodes`` also
+    stays out of the parenthetical — the ``Excluded from analysis`` cost-block
+    line establishes the cohort once.
 
     The ``excluded_nodes`` data field is preserved for JSON consumers
-    (``render_json.py``) — only the text rendering is simplified.
+    (``render_json.py``) — only the text parenthetical is minimal.
 
-    Mutation contract: re-add the ``excluded_nodes`` formatting to
-    ``_format_delta`` → the ``(excludes`` substring reappears.
+    Mutation contract: re-add a dollar amount or ``(excludes ...)`` qualifier
+    to ``_format_delta_parenthetical`` → these ``not in`` assertions fail.
     """
     from pflow.core.cache_analysis.analyze import CostDelta
-    from pflow.core.cache_analysis.render_text import _format_delta
+    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
 
     with_excludes = CostDelta(
         amount_usd=0.49,
@@ -2213,9 +2220,83 @@ def test_format_delta_does_not_inline_excluded_nodes_qualifier() -> None:
         compared_to="actually_paid_priced_cohort_usd",
         excluded_nodes=("generate-chorus-options", "score-choruses"),
     )
-    rendered = _format_delta(with_excludes, label="vs no-cache")
-    assert rendered == "saves ~$0.49/run vs no-cache, 19% of no-cache cost"
-    assert "(excludes" not in rendered
+    rendered = _format_delta_parenthetical(with_excludes)
+    assert rendered == "(saves 19% vs cost without caching)"
+    assert "$" not in rendered
+    assert "excludes" not in rendered
+
+
+def test_format_delta_parenthetical_unavailable_returns_empty() -> None:
+    """``kind == "unavailable"`` returns empty string so the cost line is
+    rendered bare (no trailing whitespace, no dangling parenthetical).
+    Same for missing ``pct_of_baseline`` — the parenthetical leans on the
+    percentage as the load-bearing signal, so without it there's nothing
+    useful to render.
+    """
+    from pflow.core.cache_analysis.analyze import CostDelta
+    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+
+    unavailable = CostDelta(
+        amount_usd=None,
+        pct_of_baseline=None,
+        kind="unavailable",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_usd",
+        unavailable_reason="no_trace",
+    )
+    assert _format_delta_parenthetical(unavailable) == ""
+
+    no_pct = CostDelta(
+        amount_usd=0.05,
+        pct_of_baseline=None,
+        kind="savings",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_usd",
+    )
+    assert _format_delta_parenthetical(no_pct) == ""
+
+
+def test_format_delta_parenthetical_break_even_returns_neutral_phrase() -> None:
+    """``break_even`` renders ``(no meaningful cost change)`` so an agent
+    reading the cost line knows the delta WAS computed (vs. ``unavailable``
+    which means we couldn't compute it). Different signal from absent.
+    """
+    from pflow.core.cache_analysis.analyze import CostDelta
+    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+
+    break_even = CostDelta(
+        amount_usd=0.0,
+        pct_of_baseline=0,
+        kind="break_even",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_usd",
+    )
+    assert _format_delta_parenthetical(break_even) == "(no meaningful cost change)"
+
+
+def test_format_delta_parenthetical_local_cache_reuse_qualifier() -> None:
+    """When the trace recorded local pflow memo reuse, the parenthetical
+    suffixes ``, incl. local cache reuse`` so an agent reading the
+    "Actually paid" line knows the discount mixes provider prompt caching
+    with pflow's local memo cache. Without the qualifier the agent might
+    over-attribute savings to provider caching alone.
+    """
+    from pflow.core.cache_analysis.analyze import CostDelta
+    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+
+    delta = CostDelta(
+        amount_usd=0.1,
+        pct_of_baseline=26,
+        kind="savings",
+        baseline="no_cache_hypothetical_usd",
+        compared_to="actually_paid_usd",
+    )
+    assert _format_delta_parenthetical(delta, local_cache_reuse=False) == (
+        "(saves 26% vs cost without caching)"
+    )
+    assert _format_delta_parenthetical(delta, local_cache_reuse=True) == (
+        "(saves 26% vs cost without caching, incl. local cache reuse)"
+    )
 
 
 def test_baseline_labels_map_covers_every_producer_value() -> None:
@@ -2572,6 +2653,14 @@ def test_text_recommended_actions_single_workflow_omits_scope_suffix() -> None:
 
 
 def test_shadow_warning_text_renders_cost_comparison_with_ratio() -> None:
+    """The shadow warning's per-call cost evidence still renders as a single
+    line (``Removing prompt_cache: ... would drop per-call cost from X to Y``)
+    so an agent can see the dollar impact of narrowing or removing the cache
+    declaration. The old "The body only references a sub-path..." prose and
+    the "compares against inlining the full chunk uncached" footnote were
+    removed in Bundle 1 \u2014 they asserted "unused" (unprovable) and conceded
+    a "different baseline" framing that F#1 reframing closed out.
+    """
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
     warning = make_diagnostic(
@@ -2589,8 +2678,12 @@ def test_shadow_warning_text_renders_cost_comparison_with_ratio() -> None:
 
     assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field` would drop per-call cost" in text
     assert "160\u00d7 more expensive" in text
-    assert "The body only references a sub-path of the cached value" in text
-    assert "compares against inlining the full chunk uncached" in text
+    # Bundle 1 negative assertions: the old "unused" and "different baseline"
+    # phrases were removed. Mutation contract: restoring either string to
+    # ``_format_shadow_cache_cost_comparison`` \u2192 these assertions fail.
+    assert "unused by your prompt" not in text
+    assert "different baseline than your body" not in text
+    assert "compares against inlining the full chunk uncached" not in text
 
 
 def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> None:

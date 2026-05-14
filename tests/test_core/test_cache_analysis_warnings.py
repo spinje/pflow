@@ -1102,3 +1102,64 @@ def test_format_dry_run_nudge_renders_at_one_cent_threshold() -> None:
     # Below the floor — figure dropped.
     below_floor = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.00009)
     assert below_floor == "Cache: 1 design opportunity available."
+
+
+def test_shadow_warning_message_uses_duplication_framing() -> None:
+    """Bundle 1 reframing: the shadow warning's rendered message asks a
+    duplication question rather than asserting "unused" or "different
+    baseline" (both unprovable from workflow shape alone).
+
+    Mutation contract: restoring the old "overlapping cached chunks and
+    `${var}` references (sub-path overlap)" message or the
+    "Sub-path overlap can quietly inflate input tokens without firing the
+    cache reliably" suggestion → these assertions fail.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.prompt-body-shadows-cache",
+        node_id="use-tiny-field",
+        shadowing_pairs=[{"chunk_name": "bundle", "body_ref": "bundle.tiny_field", "direction": "cache_contains_body"}],
+        overlap_lines="  - cached `${bundle}` overlaps inline `${bundle.tiny_field}`",
+        affected_workflow="/abs/x.pflow.md",
+    )
+    # Positive: duplication framing.
+    assert "may be sending the same value twice in each call" in diag.message
+    # Negative: removed phrases.
+    assert "has overlapping cached chunks and" not in diag.message
+    assert "unused by your prompt" not in diag.message
+    assert "without firing the cache reliably" not in " ".join(diag.suggestions)
+    # The two-direction guidance is still present in the suggestion.
+    suggestions_text = " ".join(diag.suggestions)
+    assert "narrow the cached chunk" in suggestions_text
+    assert "remove the prompt-body" in suggestions_text
+
+
+def test_duplicates_warning_message_uses_duplication_framing() -> None:
+    """The duplicates warning's reframed message leads with "sends the same
+    value twice in each call" so the shadow and duplicates warnings rhyme
+    tonally. The rate mechanism (cached at 0.1x vs body at 1.0x) is preserved
+    as honest cost context.
+
+    Mutation contract: restoring "duplicates cached chunks in the prompt
+    body" as the message lead → this assertion fails.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.prompt-body-duplicates-cache",
+        node_id="rewrite",
+        overlapping_pairs=[{"chunk_name": "concept", "body_ref": "concept"}],
+        overlap_lines="  - cached `${concept}` AND inline `${concept}`",
+        affected_workflow="/abs/x.pflow.md",
+    )
+    assert "sends the same value twice in each call" in diag.message
+    # Rate mechanism is preserved so the agent understands WHY this is an error.
+    # The U+00D7 multiplication sign is the canonical ratio notation for the
+    # catalog (see the `src/pflow/core/cache_analysis/*` per-file ruff ignore
+    # in pyproject.toml); the noqa suppresses the equivalent ambiguity check
+    # at the test-assertion site.
+    assert "0.1×" in diag.message  # noqa: RUF001
+    assert "1.0×" in diag.message  # noqa: RUF001
+    # The legacy lead phrasing is gone.
+    assert "duplicates cached chunks in the prompt body" not in diag.message

@@ -49,45 +49,78 @@ Related but not fully covering tracking found:
 
 Highest-value open items:
 
-1. Full shadowed-cache summary math still uses an inflated baseline.
-2. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence.
-3. `PerCallRow.input_tokens_estimated` still has mixed units.
-4. Prewarm recommendation can still ignore provider minimum in one path.
-5. Run output still hides the actionable provider error behind large payloads.
-6. Runtime cost summary still says `pricing unavailable for: unknown`.
+1. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence.
+2. Prewarm recommendation can still ignore provider minimum in one path.
+3. Run output still hides the actionable provider error behind large payloads.
+4. Runtime cost summary still says `pricing unavailable for: unknown`.
+
+Closed:
+
+- ~~Full shadowed-cache summary math~~ — closed as misframed in Bundle 1
+  (2026-05-14). See section 1 below for the reasoning.
+- ~~`PerCallRow.input_tokens_estimated` still has mixed units~~ — closed in
+  follow-ups-2 (per-call unit contract normalized; JSON 4.3).
 
 ## Analyze-cache Correctness
 
-### 1. Full shadowed-cache summary math remains deferred
+### 1. Full shadowed-cache summary math — CLOSED AS MISFRAMED (Bundle 1, 2026-05-14)
 
-Original failure: when a cache chunk contains a large object but the prompt body
-uses only a tiny subfield, analyzer savings can still compare against a
-strawman baseline: "send the full cache prefix uncached." The PR fixed the
-local `cache.prompt-body-shadows-cache` recommendation by adding body-only vs
-with-cache cost disclosure, but it did not rewrite the broader summary math.
+**Status: closed.** Investigation showed the followups doc's framing
+conflated two different counterfactuals:
 
-Trigger shape:
+- **Counterfactual #1** ("same prompt, no discount"): if you keep the
+  prompt exactly as written and turn off the cache discount, the cost is
+  `input_tokens × rate`. This is what the summary baseline computes today,
+  and it is the honest answer to *"is the cache discount earning its
+  keep?"*
+- **Counterfactual #2** ("no cache declaration at all"): if you delete the
+  `## Cache` block and the chunk bytes never get inserted into the prompt,
+  the cost is `body_tokens × rate`. This is what the followups doc thought
+  the summary should compute. It is the honest answer to a different
+  question: *"do I need this content in my prompt at all?"*
 
-- `## Cache` declares a parent object or large bundle.
-- One or more prompt bodies reference only a small subpath, such as
-  `${concept.core_idea}` or `${bundle.tiny_field}`.
-- Summary/projection math treats the full cached object as the no-cache
-  baseline.
+The original framing assumed #2 was the right baseline because the body
+references only a sub-path of the cached value. But the cache chunks ARE
+part of the prompt the model sees — the user opted in via `prompt_cache:`
+on the node because they want that content prepended. The body's
+sub-path reference is additional, focused content. The analyzer cannot
+tell whether the rest of the cached object is "unused dead weight" or
+"intentional context the agent wanted the model to have."
 
-Why it matters: the summary can still overstate savings or make cache look
-beneficial when the real current prompt is much cheaper because it sends only
-the referenced subfield. In correctness-sensitive prompts, caching the full
-object can also expose context intentionally omitted from the prompt.
+The summary baseline is correct as-is for counterfactual #1. The local
+`cache.prompt-body-shadows-cache` recommendation correctly discloses the
+counterfactual-#2 cost (per-call body-only vs with-cache cost) so an
+agent who suspects over-broad caching can act on it.
 
-Desired fix:
+**What changed in Bundle 1:**
 
-- Compute the current prompt-body cost for the bytes actually used.
-- Compare cache recommendations against that real current-state baseline.
-- Suppress or clearly annotate summary-level savings when shadowed-cache
-  evidence proves the summary comparison is not valid.
+- Reframed `cache.prompt-body-shadows-cache` message text to ask a
+  duplication question (`"may be sending the same value twice in each
+  call"`) instead of asserting *"the rest is sent to the model but unused
+  by your prompt"* (unprovable from workflow shape).
+- Reframed `cache.prompt-body-duplicates-cache` to rhyme with shadow:
+  `"sends the same value twice in each call"`.
+- Dropped the shadow render hook's footnote *"Note: the summary's 'saves
+  N%' compares against inlining the full chunk uncached — a different
+  baseline than your body actually uses"* — it was a hedge that conceded
+  the bug we now believe doesn't exist.
+- Collapsed the summary `Actual cost delta` and `Rerun delta` lines into
+  parentheticals on the `Actually paid` and `Cost on rerun` cost lines:
+  `Actually paid: ~$0.0087  (saves 26% vs cost without caching)`. Closes
+  the label-fragmentation issue (5 different strings for the same
+  baseline concept, including F#20's "Actual savings ... adds ~$X" sign
+  confusion).
+- Unified terminology: the baseline is consistently called `"cost without
+  caching"` across cost-block labels and delta parentheticals.
 
-Trust boundary: the local recommendation disclosure is fixed and should be
-kept. The open issue is the aggregate summary/projection model.
+**Future contributors:** if you find yourself wanting to reopen this as
+"the summary baseline is wrong," first map your scenario to one of the
+two counterfactuals above. If the user's workflow uses cache chunks they
+genuinely want in the prompt, baseline #1 is correct. If the analyzer
+detects clear over-caching, the local recommendation surfaces the
+counterfactual-#2 cost. The summary-level baseline should NOT be
+re-routed to body-only — doing so answers a different question than the
+summary advertises.
 
 ### 2. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence
 
@@ -477,22 +510,16 @@ Desired fix:
 - Split truly blocking errors from conditional/error-path limitations.
 - Explain which path is affected.
 
-### 20. Negative "Actual savings" wording is confusing
+### 20. Negative "Actual savings" wording is confusing — CLOSED in Bundle 1 (2026-05-14)
 
-Original failure: output could say `Actual savings ... adds ~$X vs no-cache`.
-The label says savings, while the value means overhead.
-
-Trigger shape: cache costs more than the no-cache projection for that run,
-often due to first-run write cost or low cache reuse.
-
-Why it matters: users have to infer that a positive "adds" value means cache
-was more expensive.
-
-Desired fix:
-
-- Render `Overhead vs no-cache: +$X` when cache increases cost.
-- Render `Savings vs no-cache: -$X` or equivalent when cache reduces cost.
-- Avoid using "savings" as the label for both signs.
+**Status: closed.** Bundle 1's summary-block UX rewrite collapsed the
+`Actual cost delta` / `Rerun delta` lines into parentheticals on the
+cost lines they describe. The parenthetical uses verb-encoded direction:
+`(saves N% vs cost without caching)` when cache reduces cost,
+`(adds N% vs cost without caching)` when cache increases cost, and
+`(no meaningful cost change)` for break-even. No standalone "Savings"
+label appears that could flip semantic meaning under sign change. See
+the Bundle 1 closeout under section 1 above.
 
 ### 21. Validation-time provider constraints are not caught
 

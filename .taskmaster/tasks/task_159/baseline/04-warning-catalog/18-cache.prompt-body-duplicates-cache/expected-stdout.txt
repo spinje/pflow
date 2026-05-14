@@ -90,7 +90,7 @@
       "node_id": "summarize",
       "estimated_savings_usd": null,
       "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
-      "message": "Node 'summarize' duplicates cached chunks in the prompt body \u2014 the cache stores these values at 0.1\u00d7 rate but the body sends them inline at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
+      "message": "Node 'summarize' sends the same value twice in each call \u2014 once as a cached chunk AND inline in the prompt body. The cached copy is paid at 0.1\u00d7 rate but the inline copy is paid at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
       "suggestions": [
         "Remove the listed `${...}` references from the prompt body \u2014 the cached chunks already supply these values via the system prompt."
       ]
@@ -138,7 +138,7 @@
   "warnings": [
     {
       "severity": "error",
-      "message": "Node 'summarize' duplicates cached chunks in the prompt body \u2014 the cache stores these values at 0.1\u00d7 rate but the body sends them inline at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
+      "message": "Node 'summarize' sends the same value twice in each call \u2014 once as a cached chunk AND inline in the prompt body. The cached copy is paid at 0.1\u00d7 rate but the inline copy is paid at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
       "source": "validator",
       "id": "cache.prompt-body-duplicates-cache",
       "title": "Cache Failure",

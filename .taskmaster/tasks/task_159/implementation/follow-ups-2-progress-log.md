@@ -203,3 +203,170 @@ Behavior-change call-out for reviewers: `_estimate_total_invocations` now contri
 Code review against the rev-2 plan caught one orphan-field nit: `_aggregate_trace_llm_calls` was still summing `cost_usd` across calls into `aggregate["cost_usd"]`, but no downstream code in the package reads cost from that aggregate dict (`row.cost_usd` flows through `AnalysisContext.cost_usd_for_node` / `TraceTree.total_cost` instead). Verified by grep across `src/pflow/core/cache_analysis/`: zero consumers read `aggregate["cost_usd"]` or `trace_llm_call["cost_usd"]` or `provider_trace_llm_call["cost_usd"]`. Raw per-event lists (`trace_llm_calls`, `provider_trace_llm_calls`) are only consumed for `model`, `cache_skipped_reason`, and `len()` counts.
 
 Fix: dropped the `cost_usd` sum entirely and added `aggregate.pop("cost_usd", None)` so calls[0]'s cost value can't be silently re-introduced as a row-level total by a future consumer. Updated the docstring to call out the asymmetry explicitly. 404 cache-analysis tests still pass.
+
+## 2026-05-14 — Bundle 1: shadow/duplicates warning reframing + summary block UX (closes F#1 + F#20)
+
+Bundle 1 from the F#1 deep-dive. The followups doc's F#1 — "summary
+uses inflated baseline when prompt body shadows the cached value" — was
+investigated and determined to be **misframed**, not a math bug. The
+summary's `input_tokens_estimated × rate` baseline correctly answers
+counterfactual #1 ("same prompt, no cache discount"); the followups doc
+assumed it should answer counterfactual #2 ("no cache declaration at
+all"), which is the local recommendation's job. Detail in
+`open-bugs-and-ux-followups.md` section 1 (now marked CLOSED).
+
+The real friction was twofold and fixed in Bundle 1:
+
+### 1. Shadow + duplicates warning text overclaimed
+
+`cache.prompt-body-shadows-cache` asserted *"the rest is sent to the
+model but unused by your prompt"* (unprovable — the cached object's
+unreferenced fields might be intentional implicit context) and *"a
+different baseline than your body actually uses"* (the hedge that
+conceded a bug we no longer believe exists).
+
+Reframed both warnings around a duplication question:
+
+- shadows: `"may be sending the same value twice in each call — cached
+  chunks and prompt-body ${var} references overlap on a sub-path"`
+- duplicates: `"sends the same value twice in each call — once as a
+  cached chunk AND inline in the prompt body"` (mechanism explanation
+  preserved as parenthetical)
+
+Suggestion templates now offer two clear directions matching the two
+possible intents (narrow the cached chunk vs. remove the body
+reference). Dropped two prose lines from
+`_format_shadow_cache_cost_comparison` in `render_text.py`; kept the
+per-call cost disclosure (`Removing prompt_cache: ... would drop
+per-call cost from X to Y`) which is honest action evidence.
+
+### 2. Summary block had 5 strings for one baseline concept + redundant deltas
+
+Old trace-mode summary rendered 5 lines: 3 cost lines (`Actually
+paid`, `Cost without caching`, `Cost on rerun (within TTL)`) plus 2
+delta lines (`Actual cost delta (this run): saves ~$X/run vs no-cache,
+N% of no-cache cost`, `Rerun delta (projected): saves ~$X/run on
+rerun, N% of no-cache cost`). The deltas were derivable arithmetic on
+the cost lines; only the percentages carried unique signal. Worse: the
+no-cache baseline was labelled inconsistently across lines (`"Cost
+without caching"`, `"no-cache cost"`, `"vs no-cache"`, `"no_cache
+hypothetical"`, `"Cost without caching (executed)"`).
+
+Candidate A collapse: each cost line carries its own parenthetical:
+
+```
+Actually paid:               ~$0.0087 (from trace)  (saves 26% vs cost without caching)
+Cost without caching:        ~$0.01
+Cost on rerun (within TTL):  ~$0.0031  (saves 73% vs cost without caching)
+```
+
+- Dollar deltas dropped (derivable); percentages preserved (load-bearing).
+- Verb-encoded direction: `saves`/`adds`/`no meaningful cost change`.
+- Single unified phrase `"cost without caching"` across all references.
+- `(incl. local cache reuse)` qualifier moves into the `Actually paid`
+  parenthetical so local-cache attribution stays visible.
+- Closes F#20 (sign confusion) — the verb carries direction, no separate
+  "Savings" label that flips meaning under sign change.
+
+Greenfield Mode B and truncated trace Mode A' get the same parenthetical
+treatment; greenfield no-cache (Mode C) is unchanged (already a single
+collapsed line).
+
+### Implementation notes
+
+- New helpers in `render_text.py`: `_format_delta_parenthetical(delta,
+  *, local_cache_reuse=False)` and `_append_parenthetical(line,
+  parenthetical)`. Old `_format_delta`, `_render_summary_deltas`,
+  `_render_trace_deltas`, `_render_greenfield_deltas` deleted.
+- `_BASELINE_LABELS` map renamed `"no-cache cost"` → `"cost without
+  caching"`.
+- No JSON shape change. `CostDelta` keys (`amount_usd`, `pct_of_baseline`,
+  `kind`, `baseline`, `compared_to`, `unavailable_reason`,
+  `excluded_nodes`) preserved on all three deltas. `format_version` stays
+  at 4.3 — text-only changes are not a minor bump per the documented
+  additive policy. MCP `analyze_cache` returns JSON only; consumers see
+  the new `warnings[].message` text but no key/type changes.
+
+### Testing
+
+- 5 new `_format_delta_parenthetical` unit tests cover translation,
+  drop-dollar-and-excluded, unavailable → empty, break_even neutral
+  phrase, and local-cache-reuse suffix.
+- 9 integration tests in renderers + analyze updated for the new
+  parenthetical shape; legacy `Actual cost delta` / `First-run delta` /
+  `Rerun delta` line labels are now negative assertions
+  (mutation-protective).
+- 2 new catalog regression tests
+  (`test_shadow_warning_message_uses_duplication_framing`,
+  `test_duplicates_warning_message_uses_duplication_framing`) lock the
+  new wording.
+- Negative assertions added that "unused by your prompt" and "different
+  baseline than your body" do NOT appear anywhere in rendered text.
+
+`tests/test_core/` near-full pytest: **2647 passed, 4 deselected**.
+Full sandbox-safe pytest (excluding e2e + integration): **6588 passed,
+10 skipped, 42 deselected**.
+
+### Baseline regeneration
+
+10 baselines regenerated (1 pre-existing sandbox-only drift remains —
+`15-run-flag-interactions/03-report-with-only`, the `/dev/fd/62`
+issue documented in the prior progress log entry):
+
+- Summary block shape: `03-analyze-cache-modes/{05,07,08}`,
+  `04-warning-catalog/12`, `10-live-recordings/{03,05}`,
+  `15-run-flag-interactions/01`.
+- Warning text shape: `01-parser-errors/09`,
+  `04-warning-catalog/{18,19}`.
+
+`verify.sh` with sandbox-safe `uv` shim: **85 pass / 1 drift / 0
+harness errors** (same state as prior progress log entry).
+
+### Key insights / learnings
+
+1. **The "shadow" detection is structurally honest, not a bug.** The
+   cache chunks ARE part of the prompt the model sees. The analyzer
+   cannot distinguish "user over-cached by mistake" from "user
+   intentionally provides rich context, focuses prompt narrowly." Both
+   are legitimate. Reframing the warning as a question (rather than an
+   assertion) respects that.
+
+2. **The followups doc had it wrong, and it took deep counterfactual
+   analysis to see why.** Documenting WHY F#1 is closed (the two-
+   counterfactual mapping) protects future contributors from reopening
+   it on the same misreading. The closeout note is the highest-
+   leverage docs change.
+
+3. **Label fragmentation is its own UX bug, distinct from any math
+   bug.** Five strings for one baseline concept forces agents to map
+   between vocabularies. Unifying to `"cost without caching"`
+   everywhere is purely terminology hygiene — no behavior change — but
+   the agent-readability gain is real.
+
+4. **Deltas can be parenthetical, not lines.** The arithmetic was
+   derivable from cost lines; only the percentage was load-bearing.
+   Folding into parentheticals removes the third number that has to
+   stay in sync, and keeps cohesion (each cost line carries its own
+   comparison signal).
+
+### Files touched
+
+Production:
+- `src/pflow/core/cache_analysis/warning_catalog.py` (shadow + duplicates message + suggestion templates)
+- `src/pflow/core/cache_analysis/render_text.py` (parenthetical builder, summary cost composition, removed deltas section)
+
+Tests:
+- `tests/test_core/test_cache_analysis_renderers.py` (test helper baseline-value fix, 7 integration tests updated, 5 new unit tests for parenthetical builder)
+- `tests/test_core/test_cache_analysis_analyze.py` (2 shadow + heterogeneous-exclusion tests updated)
+- `tests/test_core/test_cache_analysis_warnings.py` (2 new catalog regression tests)
+
+Docs:
+- `.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md` (F#1 closeout + reasoning; F#20 closeout)
+
+Baselines:
+- 10 expected-stdout.txt regenerated under `.taskmaster/tasks/task_159/baseline/`
+
+### Closes
+
+- F#1 (full shadowed-cache summary math) — closed as misframed
+- F#20 (negative savings wording) — closed by verb-encoded parenthetical

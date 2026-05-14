@@ -8,11 +8,9 @@
 ## Summary
 
   Trace-backed costs below cover executed nodes only.
-  Actually paid (executed trace):       ~$0.0006 (from trace)
+  Actually paid (executed trace):       ~$0.0006 (from trace)  (saves 72% vs cost without caching)
   Cost without caching (executed):      ~$0.0023
-  Cost on rerun (executed, within TTL): ~$0.0006
-  Actual cost delta (this run): saves ~$0.0016/run vs no-cache, 72% of no-cache cost
-  Rerun delta (projected):      saves ~$0.0016/run on rerun, 72% of no-cache cost
+  Cost on rerun (executed, within TTL): ~$0.0006  (saves 72% vs cost without caching)
 
   Trace-dependent optimization recommendations suppressed because the trace is truncated (workflow did not finish).
 
