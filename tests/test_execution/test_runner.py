@@ -162,7 +162,11 @@ def test_runtime_warning_diagnostic_missing_node_id_gets_store_key() -> None:
     assert warnings[0].node_id == "ask"
 
 
-def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_client) -> None:
+def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_client, monkeypatch) -> None:
+    # Bypass the runtime pre-dispatch strip so this test isolates the
+    # post-call observed-tier path. Strip behavior is exercised in
+    # tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
     mock_llm_client.set_response(
         "*",
         None,
@@ -195,7 +199,11 @@ def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_
     assert any(w.id == "cache.below-min-tokens" for w in result.warnings)
 
 
-def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(mock_llm_client) -> None:
+def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(mock_llm_client, monkeypatch) -> None:
+    # Bypass the runtime pre-dispatch strip so this test isolates the
+    # post-call observed-tier path. Strip behavior is exercised in
+    # tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
     mock_llm_client.set_response(
         "*",
         None,

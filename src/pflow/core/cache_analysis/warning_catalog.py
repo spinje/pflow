@@ -157,8 +157,10 @@ _SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE = (
     "Sub-workflow cache undeclared in {child_workflow_basename} — add {affected_input_count} {inputs_phrase}"
 )
 
-# cache.below-min-tokens has two evidence tiers with different remediation
-# framing: predicted analyzer estimates and observed provider telemetry.
+# cache.below-min-tokens has three evidence tiers with different remediation
+# framing: predicted analyzer estimates, observed provider telemetry, and
+# runtime pre-dispatch stripping (the LLM dispatch seam measured the rendered
+# cache content and stripped the cache_control marker before sending).
 _BELOW_MIN_TOKENS_MESSAGE_PREDICTED = (
     "{node_id}: declared cache content is ~{cacheable_tokens} tokens, "
     "below {model}'s minimum of {min_tokens}{provider_clause}"
@@ -168,10 +170,16 @@ _BELOW_MIN_TOKENS_MESSAGE_OBSERVED = (
     "0 cache_creation + 0 cache_read tokens) — likely because rendered content "
     "is below {model}'s minimum of {min_tokens}{provider_clause}"
 )
+_BELOW_MIN_TOKENS_MESSAGE_PRE_DISPATCH = (
+    "{node_id}: cache marker stripped before send — rendered cache content was "
+    "{cacheable_tokens} tokens, below {model}'s minimum of {min_tokens}. "
+    "The LLM call ran uncached for this invocation{provider_clause}"
+)
 _BELOW_MIN_TOKENS_MESSAGE_UNKNOWN = "{node_id}: declared cache below {model}'s minimum of {min_tokens}{provider_clause}"
 _BELOW_MIN_TOKENS_DISPATCH = {
     "predicted": _BELOW_MIN_TOKENS_MESSAGE_PREDICTED,
     "observed": _BELOW_MIN_TOKENS_MESSAGE_OBSERVED,
+    "pre_dispatch": _BELOW_MIN_TOKENS_MESSAGE_PRE_DISPATCH,
 }
 
 # cache.batch-prewarm-below-min — analyzer-only counterpart for prewarm

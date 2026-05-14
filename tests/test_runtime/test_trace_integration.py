@@ -1017,12 +1017,19 @@ class TestCachedSystemEndToEnd:
     except via raw JSON inspection.
     """
 
-    def test_cached_system_reaches_report_for_llm_node_with_cache_block(self, tmp_path: "Any") -> None:
+    def test_cached_system_reaches_report_for_llm_node_with_cache_block(
+        self, tmp_path: "Any", monkeypatch: "Any"
+    ) -> None:
         """Run a workflow with a ## Cache block; verify the trace records
         ``llm_system`` AND the generated report has a ``## Cached System``
         section with the cache_control marker visible.
         """
         import json
+
+        # Bypass the runtime pre-dispatch strip so the tiny fixture content
+        # ("Reference doc body") doesn't get its marker stripped. The strip
+        # is exercised in tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
+        monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
 
         ir = {
             "ir_version": "0.1.0",

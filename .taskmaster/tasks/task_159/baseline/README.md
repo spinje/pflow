@@ -131,7 +131,7 @@ example dry-run footer) are optional because trace mode is covered by Surface
 | 06 | cache.batch-prewarm-recommended | ⏭ (intentional silence fixture) |
 | 07 | cache.dynamic-before-static | ⏭ (intentional silence fixture) |
 | 08 | cache.padding-advisory | ✓ |
-| 09 | cache.below-min-tokens | ✓ |
+| 09 | cache.below-min-tokens | ✓ (predicted + observed; `pre_dispatch` deferred — see note below) |
 | 10 | cache.cross-workflow-prose-mismatch | ✓ |
 | 11 | cache.cross-workflow-rename-detected | ✓ |
 | 12 | cache.discrepancy | ✓ |
@@ -153,6 +153,21 @@ The 3 untriggered cases STILL serve as regression gates: they capture the
 analyzer's current output on the fixture; if a code change makes one of these
 IDs start firing on the existing fixture, the case fails, surfacing the
 behavior change for review.
+
+**`cache.below-min-tokens / pre_dispatch` deferral.** The runtime-side
+pre-dispatch strip (`src/pflow/nodes/llm/llm.py::_strip_below_min_cache_markers`)
+emits a third `evidence_kind="pre_dispatch"` Diagnostic when the rendered
+cache content is below the provider minimum and the marker is stripped
+before send. This event has no observable signal in the analyzer's
+output today because trace 2.x has no `cache_skipped_reason` field — the
+analyzer cannot distinguish "we stripped it" from "cache silently failed
+for some other reason." Coverage for this tier lives in unit tests
+(`tests/test_core/test_cache_analysis_warnings.py::test_make_diagnostic_below_min_tokens_pre_dispatch_message`
+and `tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py`).
+A baseline case becomes trivial to add once trace 2.3.0 records
+`cache_skipped_reason` — at which point the natural shape is a
+Surface-04-style `analyze-cache --from-trace` case backed by a recorded
+trace with the strip event.
 
 ### Surface 05 — Advisory (5/5 pass)
 

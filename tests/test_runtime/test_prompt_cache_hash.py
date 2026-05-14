@@ -341,3 +341,77 @@ def test_render_cache_for_hash_returns_none_on_empty_subset() -> None:
         "__pflow_cache_render__": build_cache_render_dict(workflow),
     }
     assert _render_cache_for_hash(config, shared) is None
+
+
+# --- Pre-dispatch strip vs hash byte-identity (DD#19) ----------------------
+
+
+def test_pre_dispatch_strip_does_not_mutate_text_bytes() -> None:
+    """The runtime pre-dispatch strip removes ``cache_control`` markers
+    when rendered content is below the provider minimum, but it must NOT
+    mutate the underlying text content of any block. Text bytes are what
+    flow into ``compute_node_config(prompt_cache_content=...)`` via the
+    hash-side render — preserving them is what makes DD#19 byte-identity
+    invariant to whether the strip ultimately fires for any given call.
+    """
+    from pflow.nodes.llm.llm import _strip_below_min_cache_markers
+
+    def _blocks() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        system = [
+            {"type": "text", "text": "system instructions"},
+            {"type": "text", "text": "cached chunk one"},
+            {"type": "text", "text": "cached chunk two", "cache_control": {"type": "ephemeral"}},
+        ]
+        user = [
+            {"type": "text", "text": "static prefix", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "dynamic suffix"},
+        ]
+        return system, user
+
+    # Identical input; only the simulated token count differs across runs.
+    sys_strip, user_strip = _blocks()
+    sys_keep, user_keep = _blocks()
+
+    # Run with token-count BELOW threshold via heuristic on tiny text
+    # (each block is ~20 chars → ~5 tokens via len//4 heuristic; well under
+    # any provider minimum). Force exception so the heuristic path fires
+    # deterministically without depending on litellm.
+    import pflow.core.litellm_runtime as litellm_runtime
+
+    class _BoomLitellm:
+        def token_counter(self, **_: Any) -> int:
+            raise RuntimeError("simulated")
+
+    original_import = litellm_runtime.import_litellm
+    try:
+        litellm_runtime.import_litellm = lambda: _BoomLitellm()  # type: ignore[assignment]
+        result_strip = _strip_below_min_cache_markers(
+            system_blocks=sys_strip,
+            user_message_blocks=user_strip,
+            model="anthropic/claude-sonnet-4-5",  # 1024 min
+        )
+        # And a no-strip baseline by passing an unknown model with content
+        # that has been pre-counted above-threshold via large text payload.
+        sys_keep[-1]["text"] = "x" * 32_000  # 8k+ tokens via heuristic
+        result_keep = _strip_below_min_cache_markers(
+            system_blocks=sys_keep,
+            user_message_blocks=user_keep,
+            model="anthropic/claude-sonnet-4-5",
+        )
+    finally:
+        litellm_runtime.import_litellm = original_import  # type: ignore[assignment]
+
+    assert result_strip is not None, "strip should have fired on tiny content"
+    assert result_keep is None, "strip should not fire on large content"
+
+    # Text bytes are identical for blocks-1 (system instructions), blocks-2
+    # (cached chunk one), and user block 2 (dynamic suffix). The cache_control
+    # keys differ but the ``text`` values must be byte-identical.
+    assert sys_strip[0]["text"] == sys_keep[0]["text"] == "system instructions"
+    assert sys_strip[1]["text"] == sys_keep[1]["text"] == "cached chunk one"
+    assert sys_strip[2]["text"] == "cached chunk two"  # text preserved
+    assert "cache_control" not in sys_strip[2]  # marker stripped
+    assert "cache_control" in sys_keep[2]  # marker preserved
+    assert user_strip[0]["text"] == "static prefix"  # text preserved
+    assert "cache_control" not in user_strip[0]  # marker stripped
+    assert user_strip[1]["text"] == user_keep[1]["text"] == "dynamic suffix"

@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pflow.core.cache_analysis.below_min_tokens_detector import (
     BelowMinTokensEvidence,
+    _provider_note,
 )
 from pflow.core.cache_analysis.below_min_tokens_detector import (
     detect as detect_below_min_tokens,
@@ -26,6 +27,7 @@ from pflow.core.cache_render import (
 )
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
 from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
+from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_providers import detect_provider
 from pflow.core.llm_reasoning_map import (
@@ -218,6 +220,97 @@ def _emit_observed_below_min_cache_warning(
         provider_note=finding.provider_note,
     )
     shared.setdefault("__warnings__", {}).setdefault(node_id, diagnostic)
+
+
+def _count_text_tokens(text: str, model: str) -> int:
+    """Best-effort token count for ``text`` under ``model``.
+
+    Primary: ``litellm.token_counter`` (the same primitive
+    ``cache_analysis.token_estimation`` uses). Fallback on any failure: a
+    ``len(text) // 4`` heuristic — the worst-case bias is toward
+    underestimating tokens for normal English, which biases the threshold
+    check toward false-strip (lost savings, no error) over false-keep
+    (Gemini hard-rejection). Acceptable for a binary above/below check.
+    """
+    try:
+        from pflow.core.litellm_runtime import import_litellm
+
+        return int(import_litellm().token_counter(model=model, text=text))
+    except Exception:
+        return len(text) // 4
+
+
+def _strip_below_min_cache_markers(
+    *,
+    system_blocks: list[dict[str, Any]] | None,
+    user_message_blocks: list[dict[str, Any]] | None,
+    model: str,
+) -> tuple[int, int] | None:
+    """Strip ``cache_control`` markers whose cumulative cache scope is below
+    the provider minimum.
+
+    Each ``cache_control`` marker creates an independent provider cache
+    scope spanning all preceding text content (including earlier blocks in
+    the same message AND prior message sections — v1 order:
+    ``system_blocks`` → ``user_message_blocks``). For each marker, we
+    measure cumulative tokens through its block and strip the marker when
+    below ``get_min_cache_tokens(model)``.
+
+    Returns ``(measured_tokens, threshold)`` for the smallest stripped scope
+    (most informative for "how far below was I?"), or ``None`` when no
+    markers were stripped. Mutates the block dicts in place via
+    ``del block["cache_control"]`` — block text content is unchanged so the
+    call still goes out, it just no longer claims a cache.
+    """
+    threshold = get_min_cache_tokens(model)
+    cumulative = 0
+    stripped_scopes: list[int] = []
+
+    for blocks in (system_blocks, user_message_blocks):
+        if not blocks:
+            continue
+        for block in blocks:
+            cumulative += _count_text_tokens(str(block.get("text", "")), model)
+            if "cache_control" in block and cumulative < threshold:
+                del block["cache_control"]
+                stripped_scopes.append(cumulative)
+
+    if not stripped_scopes:
+        return None
+    return min(stripped_scopes), threshold
+
+
+def _emit_pre_dispatch_below_min_warning(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    model: str,
+    measured_tokens: int,
+    min_tokens: int,
+) -> None:
+    """Emit pre-dispatch tier ``cache.below-min-tokens`` for stripped markers.
+
+    Authoritative for this run (``=`` assignment per ``nodes/CLAUDE.md``):
+    the strip is a definitive event for the LLM call about to go out. The
+    observed-tier emission in ``_emit_observed_below_min_cache_warning``
+    naturally suppresses itself afterward because — with the marker gone —
+    the provider does not return cache telemetry, so ``has_cache_telemetry``
+    is false.
+    """
+    if node_id is None:
+        return
+    workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
+    diagnostic = make_diagnostic(
+        "cache.below-min-tokens",
+        node_id=node_id,
+        affected_workflow=workflow_path,
+        model=model,
+        min_tokens=min_tokens,
+        evidence_kind="pre_dispatch",
+        cacheable_tokens=measured_tokens,
+        provider_note=_provider_note(model),
+    )
+    shared.setdefault("__warnings__", {})[node_id] = diagnostic
 
 
 def _build_openai_cache_kwargs(
@@ -547,6 +640,26 @@ def _assemble_cache_prep(
         attachments=attachments,
         node_id=node_id,
     )
+    # Pre-dispatch strip: when the rendered cache content for any marker
+    # is below the provider's minimum-cacheable-tokens, strip the marker
+    # before sending. Otherwise Gemini hard-rejects the call ("Cached
+    # content is too small") and Anthropic silently no-ops the marker
+    # without surfacing a warning until post-call telemetry.
+    stripped = _strip_below_min_cache_markers(
+        system_blocks=system_blocks,
+        user_message_blocks=user_message_blocks,
+        model=model,
+    )
+    if stripped is not None:
+        measured_tokens, threshold = stripped
+        _emit_pre_dispatch_below_min_warning(
+            shared=shared,
+            node_id=node_id,
+            model=model,
+            measured_tokens=measured_tokens,
+            min_tokens=threshold,
+        )
+
     options = dict(user_model_options)
     provider = detect_provider(model)
     if provider is not None and provider.name == "openai":

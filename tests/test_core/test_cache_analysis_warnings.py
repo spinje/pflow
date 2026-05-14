@@ -206,6 +206,23 @@ def test_make_diagnostic_below_min_tokens_observed_message() -> None:
     assert "Gemini's automatic implicit cache" in diag.message
 
 
+def test_make_diagnostic_below_min_tokens_pre_dispatch_message() -> None:
+    diag = make_diagnostic(
+        "cache.below-min-tokens",
+        node_id="rewrite",
+        affected_workflow="x.pflow.md",
+        model="gemini/gemini-2.5-pro",
+        cacheable_tokens=1135,
+        min_tokens=4096,
+        evidence_kind="pre_dispatch",
+        provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply",
+    )
+    assert "cache marker stripped before send" in diag.message
+    assert "1135 tokens" in diag.message
+    assert "ran uncached for this invocation" in diag.message
+    assert "Gemini's automatic implicit cache" in diag.message
+
+
 def test_make_diagnostic_below_min_tokens_unknown_evidence_kind_fallback(caplog: pytest.LogCaptureFixture) -> None:
     diag = make_diagnostic(
         "cache.below-min-tokens",
