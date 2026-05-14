@@ -35,9 +35,9 @@ from pflow.core.cache_analysis.analyze import PerCallRow, ProjectionExclusion, a
 from pflow.core.cache_analysis.cost_estimation import (
     ModelPricing,
     _aggregate_with_cache_projection,
-    _per_call_body_only_cost,
-    _per_call_first_run_with_cache_cost,
     _pricing_from_dict,
+    _row_body_only_cost,
+    _row_first_run_with_cache_cost,
     compute_actually_paid,
     compute_projections,
     get_model_pricing,
@@ -68,17 +68,17 @@ def _row(
     )
 
 
-def test_per_call_body_only_cost_excludes_chunks() -> None:
+def test_row_body_only_cost_excludes_chunks() -> None:
     row = PerCallRow(**{
         **_row(input_tokens=1_200).__dict__,
         "chunk_tokens_estimated": 1_000,
     })
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
-    assert _per_call_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
+    assert _row_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
 
 
-def test_per_call_first_run_with_cache_cost_matches_single_row_projection() -> None:
+def test_row_first_run_with_cache_cost_matches_single_row_projection() -> None:
     row = PerCallRow(**{
         **_row(
             input_tokens=1_200,
@@ -91,10 +91,10 @@ def test_per_call_first_run_with_cache_cost_matches_single_row_projection() -> N
     })
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
-    per_row = _per_call_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
+    row_cost = _row_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
     projection = _aggregate_with_cache_projection([(row, pricing, 3)], ttl="5m")
 
-    assert projection == pytest.approx(per_row)
+    assert projection == pytest.approx(row_cost)
 
 
 def _write_trace(tmp_path: Path, workflow_path: str, nodes: list[dict[str, Any]]) -> Path:
@@ -322,11 +322,17 @@ def test_dynamic_batch_no_cache_cost_unchanged_after_static_batch_fix(tmp_path: 
 
     row = analysis.per_call[0]
     assert row.batch_size_estimated is None
-    assert row.input_tokens_estimated == 3000
-    assert row.output_tokens_estimated == 30
+    assert row.input_tokens_estimated == 1000
+    assert row.output_tokens_estimated == 10
+    pricing = get_model_pricing(row.model)
+    assert pricing is not None
+    expected_no_cache = row.observed_call_count * (
+        row.input_tokens_estimated * pricing.input_rate + row.output_tokens_estimated * pricing.output_rate
+    )
+    assert analysis.summary.no_cache_hypothetical_usd == pytest.approx(expected_no_cache)
 
 
-def test_non_batch_repeated_calls_remain_cohort_rows(tmp_path: Path) -> None:
+def test_non_batch_repeated_calls_yield_per_call_rows(tmp_path: Path) -> None:
     workflow_path = str(tmp_path / "parent-repeated.pflow.md")
     workflow_ir = {
         "nodes": [
@@ -361,8 +367,14 @@ def test_non_batch_repeated_calls_remain_cohort_rows(tmp_path: Path) -> None:
     row = analysis.per_call[0]
     assert row.is_batch is False
     assert row.observed_call_count == 4
-    assert row.input_tokens_estimated == 4000
-    assert row.output_tokens_estimated == 80
+    assert row.input_tokens_estimated == 1000
+    assert row.output_tokens_estimated == 20
+    pricing = get_model_pricing(row.model)
+    assert pricing is not None
+    expected_no_cache = row.observed_call_count * (
+        row.input_tokens_estimated * pricing.input_rate + row.output_tokens_estimated * pricing.output_rate
+    )
+    assert analysis.summary.no_cache_hypothetical_usd == pytest.approx(expected_no_cache)
 
 
 def test_static_batch_conditional_dispatch_divisor_uses_observed_count(tmp_path: Path) -> None:

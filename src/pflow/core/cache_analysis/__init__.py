@@ -103,6 +103,15 @@ Version history (``JSON_FORMAT_VERSION``):
   above each ``${...}`` line in the suggested child ``## Cache`` block, with
   blank lines between chunks to mirror the parent's visual structure. JSON
   consumers receive the full untruncated prose.
+- ``"4.3"`` — per-call unit contract correction: all
+  ``PerCallRow.*_tokens_estimated`` fields are normalized to per-call for all
+  row types instead of mixing per-call and cohort units. Trace-sourced
+  ``per_call[].cache_creation_input_tokens`` and
+  ``per_call[].cache_read_input_tokens`` also shift to per-call. ``cost_usd``
+  remains cohort by design because it represents actually-paid workflow-level
+  trace cost. Consumers gating on ``format_version.startswith("4.")`` continue
+  to work; consumers caching specific token values across 4.2 -> 4.3 will see
+  the per-call shift.
 
 Consumer rule: gate on ``format_version.startswith("4.")`` for the current
 shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning
@@ -119,7 +128,7 @@ from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
 
-JSON_FORMAT_VERSION: Final[str] = "4.2"
+JSON_FORMAT_VERSION: Final[str] = "4.3"
 """Version string emitted as the first key by ``render_json``.
 
 Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.

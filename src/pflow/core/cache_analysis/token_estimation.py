@@ -134,9 +134,6 @@ def estimate_cacheable_tokens(
     workflow_path: str | None,
     prompt: str = "",
     ctx: AnalysisContext | None = None,
-    is_static_batch_trace: bool = False,
-    observed_call_count: int = 1,
-    resolved_chunk_call_count: int = 1,
 ) -> tuple[int | None, str]:
     """Return ``(cacheable_tokens, source)`` using highest-fidelity available data.
 
@@ -145,13 +142,10 @@ def estimate_cacheable_tokens(
     Tier order:
 
     - Tier 1 (``"trace"``): declared subset + trace event with
-      ``cache_creation+cache_read > 0``. Returns the sum. For static-list
-      batch trace rows, the row-level trace event is a cohort aggregate, so
-      the returned value is divided to per-call units at the producer.
+      ``cache_creation+cache_read > 0``. Returns the per-call trace value; the
+      trace aggregator divides token fields at the producer boundary.
     - Tier 2 (``"memo"`` / ``"parameters"``): all chunks resolve to real
-      values via memo or workflow parameters. Returns the chunk sum multiplied
-      by ``resolved_chunk_call_count`` so repeated non-batch trace rows use
-      the same cohort units as their input tokens.
+      values via memo or workflow parameters. Returns the per-call chunk sum.
     - Tier 3 (``"unavailable"``): nothing else is honestly measurable.
       Returns ``(None, "unavailable")``.
 
@@ -175,10 +169,7 @@ def estimate_cacheable_tokens(
         creation = int(trace_event.get("cache_creation_input_tokens") or 0)
         read = int(trace_event.get("cache_read_input_tokens") or 0)
         if creation + read > 0:
-            trace_total = creation + read
-            if is_static_batch_trace:
-                trace_total = round(trace_total / max(1, observed_call_count))
-            return (trace_total, "trace")
+            return (creation + read, "trace")
         # Fall through: declared but didn't fire. Tier 2/3 computes
         # "what was attempted" so cache.below-min-predicted fires correctly.
 
@@ -194,7 +185,6 @@ def estimate_cacheable_tokens(
             memo_cache,
             workflow_path,
             ctx=ctx,
-            call_count=resolved_chunk_call_count,
         )
         if total is not None:
             # When the source is exclusively parameters, label accordingly so
@@ -216,7 +206,6 @@ def _sum_resolved_chunk_tokens(
     workflow_path: str | None,
     *,
     ctx: AnalysisContext | None = None,
-    call_count: int = 1,
 ) -> int | None:
     """Sum chunk token counts via parameters (preferred) then memo.
 
@@ -228,7 +217,7 @@ def _sum_resolved_chunk_tokens(
         if tokens is None:
             return None
         total += tokens
-    return total * max(1, call_count)
+    return total
 
 
 def _classify_resolution_source(chunks: list[str], ctx: AnalysisContext | None) -> str:

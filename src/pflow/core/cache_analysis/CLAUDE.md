@@ -115,6 +115,16 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 **1h-TTL Anthropic multiplier**: LiteLLM's `cache_creation_input_token_cost` is the 5-min rate (1.25× base); 1h-TTL writes cost 2× base. `_write_rate_for_ttl` applies the multiplier. Mirrors the runtime override at `llm_client.py::_maybe_normalize_anthropic_1h_cost` — keep in lockstep so predicted and actual costs price the same byte at the same rate.
 
+### Per-call Unit Contract
+
+`PerCallRow` token fields are per-call by contract. This includes `input_tokens_estimated`, `output_tokens_estimated`, `cacheable_tokens_estimated`, `chunk_tokens_estimated`, `body_tokens_estimated`, `cache_creation_input_tokens`, and `cache_read_input_tokens`. Trace rows are normalized once at the producer boundary in `_aggregate_trace_llm_calls`; downstream code must not divide again.
+
+Workflow-level consumers multiply token fields with `invocation_count_for(row)`. That helper lives beside `PerCallRow` in `analyze.py` because it is part of the row contract: static batches use `batch_size_estimated` when known, dynamic batches use observed call count, and non-batch rows repeated through a parent batch use `observed_call_count`.
+
+`row.cost_usd` is the deliberate exception. It is cohort actually-paid trace cost sourced through `AnalysisContext.cost_usd_for_node()` / `TraceTree.total_cost`, not through `_aggregate_trace_llm_calls`. Cost projection helpers ignore `row.cost_usd`; actual-paid aggregation sums it only on the no-trace fallback path.
+
+The row invariant is `cacheable_tokens_estimated <= input_tokens_estimated`. `_build_per_call_row` keeps a clamp for rare tokenizer-drift overshoots and logs at debug when it fires. `test_per_call_row_invariant_cacheable_le_input` is the contract test to update if this behavior changes.
+
 ### token_estimation.py
 
 **4-tier hierarchy with documented fall-through rules**: `trace → memo → estimator → heuristic`. The `estimator-partial` source is emitted when the prompt was partially-resolvable (some `${...}` refs missed); confidence aggregation treats it as estimator-tier (not heuristic) so a partially-resolved row doesn't classify the workflow as `low_no_data`.

@@ -1,7 +1,7 @@
 # Cache Analysis: lyrics-generator.pflow.md
   File: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
 
-  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes)
+  Workflow: 25 LLM nodes, ~253 invocations
   Models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview
   Heterogeneous: generate-chorus-options (model varies per batch item)
   Evidence: complete trace (25 LLM nodes executed)
@@ -319,54 +319,54 @@
     · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
   Showing 18 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
-  node                     model                      input  cached_now  could_cache  ratio  calls  notes
-  --------------------------------------------------------------------------------------------------
-
-### chorus-chooser.pflow.md (called by choose-chorus)
-  generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
-  score-choruses           gemini/gemini-2.5-flash  158,704           —           41     0%    136  below provider min (need ≥4,096 for this model)
-  select-chorus            gemini/gemini-2.5-flash   36,289           —        8,504    23%      4  cacheable values: architecture, concept.core_idea, concept.title, +1 more
+  node                     model                     input  cached_now  could_cache  ratio  calls  notes
+  -------------------------------------------------------------------------------------------------
 
 ### song-creator.pflow.md (called by create-songs)
-  rewrite-emotional        gemini/gemini-2.5-flash   94,100      63,009            —    67%      4
-  rewrite-craft            gemini/gemini-2.5-flash   84,124      56,785            —    68%      4
-  generate-suno-prompt     gemini/gemini-2.5-flash   13,776       7,909            —    57%      4
+  rewrite-emotional        gemini/gemini-2.5-flash  23,525      15,752            —    67%      4
+  rewrite-craft            gemini/gemini-2.5-flash  21,031      14,196            —    68%      4
+  generate-suno-prompt     gemini/gemini-2.5-flash   3,444       1,977            —    57%      4
 
 ### lyrics-generator.pflow.md
-  curate-briefs            gemini/gemini-2.5-flash   54,752           —          103     0%      4  below provider min (need ≥4,096 for this model)
+  curate-briefs            gemini/gemini-2.5-flash  13,688           —          103     1%      4  below provider min (need ≥4,096 for this model)
+
+### chorus-chooser.pflow.md (called by choose-chorus)
+  select-chorus            gemini/gemini-2.5-flash   9,072           —        8,504    94%      4  cacheable values: architecture, concept.core_idea, concept.title, +1 more
+  generate-chorus-options  <varies>                      ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
+  score-choruses           gemini/gemini-2.5-flash   1,167           —           41     4%    136  below provider min (need ≥4,096 for this model)
 
 ### review-accuracy.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   34,481           —        7,036    20%      4  cacheable values: concept_brief, creative_direction, lyrics
+  review                   gemini/gemini-2.5-flash   8,620           —        7,036    82%      4  cacheable values: concept_brief, creative_direction, lyrics
 
 ### review-emotional-architecture.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   32,873           —        7,225    22%      4  cacheable values: concept_brief, creative_direction, lyrics
+  review                   gemini/gemini-2.5-flash   8,218           —        7,225    88%      4  cacheable values: concept_brief, creative_direction, lyrics
 
 ### review-rhyme.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,917           —        5,837    23%      4  cacheable values: creative_direction, lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   6,479           —        5,837    90%      4  cacheable values: creative_direction, lyrics, song_architecture
 
 ### review-genre.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,693           —        5,837    23%      4  cacheable values: creative_direction, lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   6,423           —        5,837    91%      4  cacheable values: creative_direction, lyrics, song_architecture
 
 ### review-imagery.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   21,260           —        4,104    19%      4  cacheable values: lyrics, song_architecture
-
-### review-narrative.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   16,736           —        4,104    25%      4  cacheable values: lyrics, song_architecture
-
-### review-ai-tells.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   14,212           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
-
-### review-cliche.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   13,760           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
-
-### review-stranger-summary.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash    6,467           —            ?     ?%      4  below cache minimum: lyrics ~474
+  review                   gemini/gemini-2.5-flash   5,315           —        4,104    77%      4  cacheable values: lyrics, song_architecture
 
 ### concept-chooser.pflow.md (called by choose-concepts)
-  generate-concepts        gemini/gemini-2.5-flash    5,166           —            ?     ?%      4  batch_items=4; no stable 4,096-token repeated prefix found
+  generate-concepts        gemini/gemini-2.5-flash   5,166           —            ?     ?%      4  batch_items=4; no stable 4,096-token repeated prefix found
+
+### review-narrative.pflow.md (called by emotional-reviews)
+  review                   gemini/gemini-2.5-flash   4,184           —        4,104    98%      4  cacheable values: lyrics, song_architecture
+
+### review-ai-tells.pflow.md (called by craft-reviews)
+  review                   gemini/gemini-2.5-flash   3,553           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
+
+### review-cliche.pflow.md (called by craft-reviews)
+  review                   gemini/gemini-2.5-flash   3,440           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
+
+### review-stranger-summary.pflow.md (called by emotional-reviews)
+  review                   gemini/gemini-2.5-flash   1,617           —            ?     ?%      4  below cache minimum: lyrics ~474
 
 ### analyze-source.pflow.md (called by analyze-sources)
-  analyze                  gemini/gemini-2.5-flash    1,058           —            ?     ?%      6  batch_items=6; no stable 4,096-token repeated prefix found
+  analyze                  gemini/gemini-2.5-flash   1,058           —            ?     ?%      6  batch_items=6; no stable 4,096-token repeated prefix found
 
   Token estimate confidence:
     · score-choruses: tokens estimated from the first batch item as a representative sample. Actual tokens may vary for later items.

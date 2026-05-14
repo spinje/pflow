@@ -179,3 +179,27 @@ Verification:
 - Manual repro `scratchpads/pflow-cache-repros/repro-08-batch-error-large-item.pflow.md --no-cache --report`: stderr, JSON, and generated report contain compact item summaries and no `PAYLOAD-START`, `PAYLOAD-END`, or `token199`.
 - Task 159 baseline oracle with sandbox-safe `uv` shim: 86 passed, 0 drifted, 0 harness errors.
 - Targeted ruff and mypy on touched source/test files passed.
+
+## 2026-05-14 — PerCallRow token fields normalized to per-call
+
+Implemented F#3 / GH #394. `_aggregate_trace_llm_calls` is now the single producer-side normalization point for token integer fields: trace input/output/cache creation/cache read tokens are summed then divided by observed calls. Removed the old static-batch and repeated-non-batch compensators from `analyze.py` and `token_estimation.py`. `PerCallRow.cost_usd` intentionally remains cohort because it flows through `TraceTree` cost walkers, not the token aggregator.
+
+Consolidated row-to-cohort multiplication into `invocation_count_for(row)` and routed summary totals, cost projections, cross-workflow/grouped savings, dynamic-before-static savings, padding advisories, shared-context savings, and total invocation estimates through that contract. The code-review checkpoint caught three local multiplier bypasses plus `_estimate_total_invocations`; those were real misses and were fixed before baseline regeneration.
+
+JSON output is bumped to `format_version: "4.3"` and docs/MCP schema text now state the per-call token contract plus the `cost_usd` asymmetry. Baselines were regenerated after audit: most drift was the version bump; the load-bearing numeric drift is `10-live-recordings/05-gemini-lyrics-generator`, where previously cohort-looking rows now render per-call values and sort accordingly.
+
+Verification:
+- `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest tests/test_core/test_cache_analysis_*.py -q` → 727 passed.
+- Baseline oracle `verify.sh` with sandbox-safe PATH → 86 passed, 0 drifted, 0 harness errors.
+- Targeted `ruff`, source-file `mypy`, and `deptry src` clean.
+- Near-full sandbox run → 6820 passed, 19 skipped after excluding seven `/opt/homebrew/bin/uv` subprocess tests that panic in this sandbox before Python starts.
+
+Deviation: I updated `_estimate_total_invocations` and advisory savings paths beyond the literal producer/test edits because leaving them on hand-rolled static-only multipliers would have preserved wrong cohort values after the row contract changed. This is not optional cleanup; it is required for the new unit boundary to be coherent.
+
+Behavior-change call-out for reviewers: `_estimate_total_invocations` now contributes `observed_call_count` for dynamic-batch and non-batch-repeated rows that have observations, where it previously fell through to "invocation count unavailable" whenever any dynamic batch was present. User-visible effect: the `Workflow: N LLM nodes, ~X invocations` header line in `pflow analyze-cache` now reports a real total on traces that previously showed "invocation count unavailable". The lyrics-generator baseline regen captures this: `~253 invocations` replaces the prior `invocation count unavailable (3 dynamic batch nodes)`. Reviewers should expect this line to change on any workflow with dynamic batches; treat it as a correction, not a regression.
+
+## 2026-05-14 — Per-call unit contract review polish
+
+Code review against the rev-2 plan caught one orphan-field nit: `_aggregate_trace_llm_calls` was still summing `cost_usd` across calls into `aggregate["cost_usd"]`, but no downstream code in the package reads cost from that aggregate dict (`row.cost_usd` flows through `AnalysisContext.cost_usd_for_node` / `TraceTree.total_cost` instead). Verified by grep across `src/pflow/core/cache_analysis/`: zero consumers read `aggregate["cost_usd"]` or `trace_llm_call["cost_usd"]` or `provider_trace_llm_call["cost_usd"]`. Raw per-event lists (`trace_llm_calls`, `provider_trace_llm_calls`) are only consumed for `model`, `cache_skipped_reason`, and `len()` counts.
+
+Fix: dropped the `cost_usd` sum entirely and added `aggregate.pop("cost_usd", None)` so calls[0]'s cost value can't be silently re-introduced as a row-level total by a future consumer. Updated the docstring to call out the asymmetry explicitly. 404 cache-analysis tests still pass.

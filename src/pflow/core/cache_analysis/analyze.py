@@ -135,6 +135,26 @@ class CrossWorkflowInputContribution:
 class PerCallRow:
     """One row of the per-call cache report.
 
+    Token-field units (load-bearing contract):
+
+    - All ``*_tokens_estimated`` fields are per-call by contract.
+      ``input_tokens_estimated``, ``cacheable_tokens_estimated``,
+      ``output_tokens_estimated``, ``chunk_tokens_estimated``, and the
+      ``body_tokens_estimated`` property represent one invocation of this
+      node. ``cache_creation_input_tokens`` and ``cache_read_input_tokens``
+      are also per-call, sourced via ``_aggregate_trace_llm_calls``.
+    - ``cost_usd`` is cohort by design: it represents actually-paid
+      workflow-level cost sourced through ``ctx.cost_usd_for_node`` and
+      ``TraceTree.total_cost``, not through ``_aggregate_trace_llm_calls``.
+      ``compute_actually_paid`` sums this directly for the workflow total.
+    - Cohort consumers (workflow totals, cost summaries) must multiply token
+      fields by ``invocation_count_for(row)`` at the use site.
+    - The invariant ``cacheable_tokens_estimated <= input_tokens_estimated``
+      holds row-wise. The clamp in ``_build_per_call_row`` remains as
+      defense-in-depth against rare tokenizer-drift overshoots and logs when
+      it fires. Verified by
+      ``test_per_call_row_invariant_cacheable_le_input``.
+
     Tri-state nullability for tokens / cacheable / ratio:
 
     - ``input_tokens_estimated`` is always populated (template tokenization
@@ -179,8 +199,8 @@ class PerCallRow:
     # ``"batch_prefix"``, ``"cross_workflow_projection"``,
     # ``"unavailable"``. ``"parameters"`` covers workflow-input refs resolved
     # via positional ``key=value`` params; ``"batch_prefix"`` covers the
-    # batch-node static-prefix projection (repeated bytes before the first
-    # ``${alias.X}`` ref multiplied by observed call count). ``"cross_workflow_projection"``
+    # batch-node per-call static-prefix projection (repeated bytes before the first
+    # ``${alias.X}`` ref). ``"cross_workflow_projection"``
     # covers a parent-declared value flowing into a child workflow that has not
     # declared that receiving input in its own ``## Cache``. Projection tiers
     # fire when the agent has not declared ``prompt_cache:`` but a stable
@@ -198,7 +218,7 @@ class PerCallRow:
     # which is an analyzer projection of cacheable input bytes.
     cache_creation_input_tokens: int | None = None
     cache_read_input_tokens: int | None = None
-    # Track A (Phase A): per-call recorded cost from the trace (sum of
+    # Track A (Phase A): cohort recorded cost from the trace (sum of
     # llm_call + batch_items[*].llm_call costs for this node's event tree).
     # ``None`` when no trace event matched. Read by the renderer for the
     # per-call display column and by ``compute_actually_paid``'s row fallback
@@ -1607,10 +1627,24 @@ def _sum_trace_call_int_field(
 
 
 def _aggregate_trace_llm_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Collapse multiple trace calls into row-level telemetry."""
+    """Collapse multiple trace calls into row-level telemetry.
+
+    Token integer fields are normalized to per-call by dividing the cohort sum
+    by ``len(calls)``. This is the producer-side normalization point for
+    ``PerCallRow`` token fields; downstream consumers multiply by
+    ``invocation_count_for(row)`` when they need workflow-level totals.
+
+    ``cost_usd`` is deliberately NOT carried through. ``PerCallRow.cost_usd``
+    is sourced via a separate ``TraceTree`` cost walker
+    (``AnalysisContext.cost_usd_for_node``). Dropping it from the aggregate
+    prevents a future consumer from silently reading the first event's cost
+    as if it were the row total.
+    """
     if not calls:
         return {}
     aggregate = dict(calls[0])
+    aggregate.pop("cost_usd", None)
+    divisor = max(1, len(calls))
     int_fields = (
         "input_tokens",
         "output_tokens",
@@ -1624,10 +1658,7 @@ def _aggregate_trace_llm_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
     for field_name in int_fields:
         values = [call.get(field_name) for call in calls]
         if any(value is not None for value in values):
-            aggregate[field_name] = sum(int(value or 0) for value in values)
-    cost_values = [call.get("cost_usd") for call in calls]
-    if any(value is not None for value in cost_values):
-        aggregate["cost_usd"] = sum(float(value or 0.0) for value in cost_values)
+            aggregate[field_name] = round(sum(int(value or 0) for value in values) / divisor)
     models = sorted({str(call.get("model")) for call in calls if call.get("model")})
     aggregate["model"] = models[0] if len(models) == 1 else ""
     skipped: list[str] = []
@@ -1986,8 +2017,8 @@ def _enrich_one_shadow_warning(
     ttl_by_workflow: Mapping[str | None, str | None],
 ) -> None:
     from .cost_estimation import (
-        _per_call_body_only_cost,
-        _per_call_first_run_with_cache_cost,
+        _row_body_only_cost,
+        _row_first_run_with_cache_cost,
         get_model_pricing,
     )
 
@@ -2012,12 +2043,16 @@ def _enrich_one_shadow_warning(
     if pricing is None or output_tokens is None or not shadowed_chunks:
         return
 
-    context["body_only_cost_usd_per_call"] = _per_call_body_only_cost(row, pricing, output_tokens)
-    context["with_cache_cost_usd_per_call"] = _per_call_first_run_with_cache_cost(
-        row,
-        pricing,
-        output_tokens,
-        ttl=_ttl_for_row(row, ttl_by_workflow),
+    invocation_count = invocation_count_for(row)
+    context["body_only_cost_usd_per_call"] = _row_body_only_cost(row, pricing, output_tokens) / invocation_count
+    context["with_cache_cost_usd_per_call"] = (
+        _row_first_run_with_cache_cost(
+            row,
+            pricing,
+            output_tokens,
+            ttl=_ttl_for_row(row, ttl_by_workflow),
+        )
+        / invocation_count
     )
     context["shadowed_chunk_names"] = shadowed_chunks
 
@@ -2292,7 +2327,6 @@ def _build_per_call_row(
     explicit = node.get("params", {}).get("model") or node.get("model")
     observed_models = tuple(sorted({str(call.get("model")) for call in trace_llm_calls if call.get("model")}))
     observed_call_count = len(trace_llm_calls)
-    provider_observed_call_count = len(provider_trace_llm_calls)
     model, model_is_heterogeneous = _resolve_effective_row_model(explicit, observed_models)
     prompt = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt, str):
@@ -2324,19 +2358,10 @@ def _build_per_call_row(
         declared_subset=declared_subset,
         ctx=ctx,
     )
-    is_static_batch_trace = _is_static_batch_trace_row(
-        is_batch=is_batch,
-        batch_size=batch_size,
-        observed_call_count=observed_call_count,
-        source=source,
-    )
-    if is_static_batch_trace:
-        input_tokens, output_tokens = _divide_static_batch_trace_tokens(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            observed_call_count=observed_call_count,
-        )
-        chunk_tokens = min(chunk_tokens, input_tokens)
+    # Trace token fields are per-call by contract via _aggregate_trace_llm_calls.
+    # Keep the clamp as defense for rare tokenizer drift between declared-cache
+    # tokenization and provider trace accounting.
+    chunk_tokens = min(chunk_tokens, input_tokens)
 
     # Tiered cacheable estimation (mirrors ``estimate_tokens`` /
     # ``estimate_output_tokens``). Trace beats memo/parameters; honest
@@ -2353,12 +2378,6 @@ def _build_per_call_row(
         workflow_path=workflow_path,
         prompt=resolved_prompt,
         ctx=ctx,
-        is_static_batch_trace=is_static_batch_trace,
-        observed_call_count=provider_observed_call_count,
-        resolved_chunk_call_count=_resolved_chunk_call_count(
-            is_batch=is_batch,
-            observed_call_count=observed_call_count,
-        ),
     )
     cacheable_tokens, cacheable_source = _prefer_batch_prefix_cacheable_tokens(
         node=node,
@@ -2389,6 +2408,19 @@ def _build_per_call_row(
         cacheable_with_clamp = None
         ratio = None
     elif cacheable_tokens > 0:
+        if cacheable_tokens > input_tokens:
+            logger.debug(
+                "cacheable_tokens (%d, source=%s) exceeded input_tokens (%d, source=%s) "
+                "for node=%s workflow=%s model=%s; clamping. Likely tokenizer drift "
+                "between projection and prompt-resolution paths; see PerCallRow docstring.",
+                cacheable_tokens,
+                cacheable_source,
+                input_tokens,
+                source,
+                node_id,
+                workflow_path,
+                model,
+            )
         cacheable_with_clamp = min(cacheable_tokens, input_tokens)
         ratio = _safe_pct(cacheable_with_clamp, input_tokens)
     else:
@@ -2516,48 +2548,6 @@ def _resolve_effective_row_model(explicit: Any, observed_models: tuple[str, ...]
     if explicit:
         return str(explicit), model_is_heterogeneous
     return get_default_workflow_model() or "", model_is_heterogeneous
-
-
-def _is_static_batch_trace_row(
-    *,
-    is_batch: bool,
-    batch_size: int | None,
-    observed_call_count: int,
-    source: str,
-) -> bool:
-    return is_batch and batch_size is not None and observed_call_count >= 2 and source == "trace"
-
-
-def _divide_static_batch_trace_tokens(
-    *,
-    input_tokens: int,
-    output_tokens: int | None,
-    observed_call_count: int,
-) -> tuple[int, int | None]:
-    """Normalize static-list batch trace cohort sums to per-call row units."""
-    # Static-list batch trace rows arrive from _aggregate_trace_llm_calls as
-    # cohort sums over observed events. Cost helpers later multiply static
-    # batches by batch_size_estimated, so row fields must be normalized here.
-    # Python round() uses bankers rounding; exact reconstruction is less
-    # important than avoiding floor bias on odd token totals.
-    divisor = max(1, observed_call_count)
-    divided_output = None if output_tokens is None else round(output_tokens / divisor)
-    return round(input_tokens / divisor), divided_output
-
-
-def _resolved_chunk_call_count(*, is_batch: bool, observed_call_count: int) -> int:
-    """Return the Tier 2 chunk multiplier for row-unit consistency.
-
-    Non-batch repeated trace rows arrive with cohort input tokens from
-    ``_aggregate_trace_llm_calls``. Resolved chunk estimates are per-call by
-    construction, so multiply them to cohort units. Batch rows keep existing
-    semantics: static-list batch rows are normalized to per-call units, and
-    dynamic batch opportunities are covered by batch-prefix projection where
-    safe.
-    """
-    if is_batch:
-        return 1
-    return max(1, observed_call_count)
 
 
 def _estimate_row_tokens(
@@ -2890,19 +2880,12 @@ def _batch_prewarm_recommendations(
     uses_existing_prefix_evidence = False
     prefix_tokens: int | None = None
     dynamic_tokens: int | None = None
-    # Reuse row-level batch-prefix evidence when available. cacheable_tokens_estimated
-    # is per-call by contract. input_tokens_estimated is per-call for static-list
-    # batch trace rows (normalized by _divide_static_batch_trace_tokens) and for
-    # greenfield rows, but cohort for dynamic-batch trace rows — see the follow-up
-    # note about the broader per-call/cohort row-field asymmetry. Divide by
-    # affected_calls is correct for the cohort case and a coarse under-projection
-    # for the per-call cases; under-projection is directionally safe here (it
-    # suppresses borderline recommendations rather than over-promising savings).
+    # Reuse row-level batch-prefix evidence when available. Row token fields
+    # are per-call by contract; cohort math happens only at explicit consumers.
     if row.observed_call_count >= 2 and row.cacheable_data_source == "batch_prefix" and row.cacheable_tokens_estimated:
         uses_existing_prefix_evidence = True
         prefix_tokens = row.cacheable_tokens_estimated
-        input_tokens_per_call = round(row.input_tokens_estimated / affected_calls)
-        dynamic_tokens = max(0, input_tokens_per_call - prefix_tokens)
+        dynamic_tokens = max(0, row.input_tokens_estimated - prefix_tokens)
     else:
         node_inputs = _node_inputs(node)
         first = first_per_item_position(prompt, alias, node_inputs)
@@ -3048,7 +3031,7 @@ def _dynamic_before_static_warnings(
         if is_below_min_cache(row.model, cacheable_tokens):
             break
 
-        affected_calls = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
+        affected_calls = invocation_count_for(row)
         tokens_before = tokenize_prompt_region(prompt[: ref.position], model=row.model, ctx=ctx)
         return [
             make_diagnostic(
@@ -4529,7 +4512,9 @@ def _project_partial_declaration_savings(
         row = rows_by_node_path.get((workflow_path, finding.node_id))
         if row is None or not row.model:
             return None
-        calls = row.observed_call_count or _row_invocation_count(row)
+        # Trace observations win when present; greenfield rows fall back to the
+        # row contract multiplier (batch size or 1).
+        calls = row.observed_call_count or invocation_count_for(row)
         savings = _estimate_token_savings_usd(row.model, finding.missing_chunks_tokens, calls)
         if savings is None:
             return None
@@ -4602,7 +4587,7 @@ def _emit_padding_advisories(
         if rate is None:
             continue
         prefix_tokens = sum(_estimate_chunk_tokens(item, row.model) for item in cache_items[:first_pos])
-        call_count = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
+        call_count = invocation_count_for(row)
         savings_usd = 0.9 * prefix_tokens * call_count * rate
         candidates.append(
             PaddingCandidate(
@@ -4744,7 +4729,7 @@ def _savings_for_shared_ref(
         row = rows_by_node.get(node_id)
         if row is None:
             return None
-        savings = _estimate_token_savings_usd(row.model, tokens, 1)
+        savings = _estimate_token_savings_usd(row.model, tokens, invocation_count_for(row))
         if savings is None:
             return None
         total += savings
@@ -5500,7 +5485,7 @@ def _grouped_consumer_projections(
         row = rows_by_node_path.get((group.child_workflow, consumer_node_id))
         if row is None or not row.model or row.did_not_execute_in_trace:
             continue
-        multiplier = _cache_projection_multiplier(row)
+        multiplier = invocation_count_for(row)
         missing_tokens = any(tokens_per_ref.get(ref) is None for ref in cache_refs)
         per_call_sum = sum(tokens_per_ref[ref] or 0 for ref in cache_refs if tokens_per_ref.get(ref) is not None)
         savings = None if missing_tokens else _estimate_token_savings_usd(row.model, per_call_sum, multiplier)
@@ -5535,17 +5520,6 @@ def _tokens_from_cross_workflow_rows(
             if contribution_ref == candidate.child_cache_ref:
                 return contribution.tokens_per_call
     return None
-
-
-def _cache_projection_multiplier(row: PerCallRow) -> int:
-    if _is_static_batch_trace_row(
-        is_batch=row.is_batch,
-        batch_size=row.batch_size_estimated,
-        observed_call_count=row.observed_call_count,
-        source=row.data_source,
-    ):
-        return 1
-    return max(1, row.observed_call_count)
 
 
 def _classify_group_case(projections: tuple[_GroupedConsumerProjection, ...]) -> str:
@@ -6805,10 +6779,20 @@ def _format_workflow_run_command(workflow_path: str | None, inputs: Mapping[str,
     return " ".join(parts)
 
 
-def _row_invocation_count(row: PerCallRow) -> int:
-    """Return the workflow-level call count represented by one row."""
-    if row.is_batch and row.batch_size_estimated is not None:
-        return max(1, row.batch_size_estimated)
+def invocation_count_for(row: PerCallRow) -> int:
+    """Return the number of LLM calls represented by a per-call row.
+
+    Batch rows use ``batch_size_estimated`` when available, then observed trace
+    count, then 1. Non-batch rows that executed multiple times (for example a
+    sub-workflow LLM under a parent batch) use ``observed_call_count``. This is
+    the single per-call-to-cohort multiplier for ``PerCallRow`` token fields.
+    """
+    if row.is_batch:
+        if row.batch_size_estimated is not None:
+            return max(1, row.batch_size_estimated)
+        return max(1, row.observed_call_count or 1)
+    if row.observed_call_count > 1:
+        return row.observed_call_count
     return 1
 
 
@@ -6861,13 +6845,13 @@ def _build_summary(
     root_count = sum(1 for row in rows if root_workflow_path is None or row.workflow_path == root_workflow_path)
     sub_workflow_count = total_nodes - root_count
     total_invocations, dynamic_batch_count = _estimate_total_invocations(rows)
-    total_input = sum(r.input_tokens_estimated * _row_invocation_count(r) for r in rows)
+    total_input = sum(r.input_tokens_estimated * invocation_count_for(r) for r in rows)
     # ``cacheable_tokens_estimated`` may be ``None`` for greenfield rows
     # without memo (Option C — projection unmeasurable). Sum only the known
     # values; None rows contribute 0 to the aggregate (honest "we don't know"
     # rather than fabricated 0). Top-level summary still useful — agents
     # see the partial signal from steady-state / post-run rows.
-    total_cacheable = sum((r.cacheable_tokens_estimated or 0) * _row_invocation_count(r) for r in rows)
+    total_cacheable = sum((r.cacheable_tokens_estimated or 0) * invocation_count_for(r) for r in rows)
     trace_coverage, executed_count, unexecuted_nodes = _trace_coverage_for_rows(rows, ctx)
     models_observed_in_trace = tuple(sorted({model for row in rows for model in row.observed_models}))
     # Stage C.1: heterogeneous rows have ``model = ""`` AND
@@ -7138,16 +7122,14 @@ def _unavailable_delta(baseline: str, compared_to: str, *, reason: str | None = 
 
 
 def _estimate_total_invocations(rows: list[PerCallRow]) -> tuple[int | None, int]:
-    """Estimate runtime LLM invocations from statically-known batch sizes."""
+    """Estimate runtime LLM invocations from static sizes or observed trace counts."""
     total = 0
     dynamic_batch_count = 0
     for row in rows:
-        if not row.is_batch:
-            total += 1
-        elif row.batch_size_estimated is None:
+        if row.is_batch and row.batch_size_estimated is None and row.observed_call_count <= 0:
             dynamic_batch_count += 1
         else:
-            total += row.batch_size_estimated
+            total += invocation_count_for(row)
     if dynamic_batch_count:
         return None, dynamic_batch_count
     return total, dynamic_batch_count

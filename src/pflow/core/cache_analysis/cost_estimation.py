@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING
 from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
 
-from .analyze import PerCallRow, ProjectionExclusion
+from .analyze import PerCallRow, ProjectionExclusion, invocation_count_for
 
 if TYPE_CHECKING:
     from pflow.core.trace_tree import TraceTree
@@ -257,40 +257,40 @@ def _write_rate_for_ttl(pricing: ModelPricing, ttl: str | None, model: str) -> f
     return pricing.cache_creation_rate
 
 
-def _per_call_no_cache_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
-    """Recompute one call's cost as ``input × input_rate + output × output_rate``.
+def _row_no_cache_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
+    """Recompute the row cohort cost without provider prompt caching.
 
-    The "what would this cost without any caching?" projection per row.
-    Multiplied by ``invocations`` for batch rows. Never reads ``row.cost_usd``.
+    Multiplies the row's per-call token fields by ``invocation_count_for(row)``.
+    Never reads ``row.cost_usd``.
     """
-    invocations = _invocation_count(row)
+    invocations = invocation_count_for(row)
     return float(invocations) * (row.input_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
 
 
-def _per_call_body_only_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
-    """Cost of one call if ``## Cache`` declarations were removed from this node.
+def _row_body_only_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
+    """Row cohort cost if ``## Cache`` declarations were removed from this node.
 
     The model receives only the resolved prompt body; declared chunks disappear
     instead of being inlined uncached. This is the body-only baseline used for
     ``cache.prompt-body-shadows-cache`` disclosure.
     """
-    invocations = _invocation_count(row)
+    invocations = invocation_count_for(row)
     return float(invocations) * (row.body_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
 
 
-def _per_call_first_run_with_cache_cost(
+def _row_first_run_with_cache_cost(
     row: PerCallRow,
     pricing: ModelPricing,
     output_tokens: int,
     *,
     ttl: str | None,
 ) -> float:
-    """Cost of this row with declared cache on the first workflow run.
+    """Row cohort cost with declared cache on the first workflow run.
 
     Mirrors ``_aggregate_with_cache_projection`` for a one-row cohort: one
     cache write, then cache reads for additional static-batch invocations.
     """
-    invocations = _invocation_count(row)
+    invocations = invocation_count_for(row)
     cacheable = row.cacheable_tokens_estimated or 0
     non_cacheable = max(0, row.input_tokens_estimated - cacheable)
     write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
@@ -301,8 +301,8 @@ def _per_call_first_run_with_cache_cost(
     return total
 
 
-def _per_call_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int | None) -> float | None:
-    """Cost of one call with all cacheable tokens at read rate.
+def _row_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int | None) -> float | None:
+    """Row cohort cost with all cacheable tokens at read rate.
 
     Equivalent to: every call after the first, within TTL.
 
@@ -318,7 +318,7 @@ def _per_call_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: 
     """
     if output_tokens is None:
         return None
-    invocations = _invocation_count(row)
+    invocations = invocation_count_for(row)
     # Undeclared rows: treat cacheable as 0 (no caching → cost reduces to
     # all-input-rate). Declared rows: Option C — cacheable may be None when
     # greenfield-no-memo (no projection data); treat as 0 there too.
@@ -326,13 +326,6 @@ def _per_call_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: 
     non_cacheable = max(0, row.input_tokens_estimated - cacheable)
     per_call_input = cacheable * pricing.cache_read_rate + non_cacheable * pricing.input_rate
     return float(invocations) * (per_call_input + output_tokens * pricing.output_rate)
-
-
-def _invocation_count(row: PerCallRow) -> int:
-    """Number of LLM calls one row represents (1 normally, ``batch_size`` for batches)."""
-    if row.is_batch and row.batch_size_estimated is not None:
-        return max(1, row.batch_size_estimated)
-    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +391,9 @@ def compute_projections(
 
     if rows_with_output:
         no_cache_hypothetical_usd = sum(
-            _per_call_no_cache_cost(row, pricing, output) for row, pricing, output in rows_with_output
+            _row_no_cache_cost(row, pricing, output) for row, pricing, output in rows_with_output
         )
-        rerun_within_ttl_hypothetical_usd = sum(_per_call_rerun_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
+        rerun_within_ttl_hypothetical_usd = sum(_row_rerun_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
         no_cache_undeclared = _aggregate_no_cache_cost(
             [r for r in rows_with_output if not r[0].declared_prompt_cache], ttl
         )
@@ -505,7 +498,7 @@ def _aggregate_no_cache_cost(
     del ttl
     if not priced_rows:
         return None
-    return sum(_per_call_no_cache_cost(row, pricing, output) for row, pricing, output in priced_rows)
+    return sum(_row_no_cache_cost(row, pricing, output) for row, pricing, output in priced_rows)
 
 
 def _aggregate_with_cache_projection(
@@ -529,7 +522,7 @@ def _aggregate_with_cache_projection(
     for group in by_subset.values():
         first = True
         for row, pricing, output_tokens in group:
-            invocations = _invocation_count(row)
+            invocations = invocation_count_for(row)
             cacheable = row.cacheable_tokens_estimated or 0
             non_cacheable = max(0, row.input_tokens_estimated - cacheable)
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
@@ -566,7 +559,7 @@ def _aggregate_first_run_savings(
             continue  # No caching declared; no savings possible for this group.
         first = True
         for row, pricing in group:
-            invocations = _invocation_count(row)
+            invocations = invocation_count_for(row)
             # See Option C note above — None → 0.
             cacheable = row.cacheable_tokens_estimated or 0
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
@@ -593,7 +586,7 @@ def _aggregate_rerun_savings(
     for row, pricing, _output in priced_rows:
         if not row.declared_prompt_cache:
             continue
-        invocations = _invocation_count(row)
+        invocations = invocation_count_for(row)
         # See Option C note in ``_aggregate_with_cache_projection`` — None → 0.
         cacheable = row.cacheable_tokens_estimated or 0
         # no-cache: cacheable * input_rate ; rerun: cacheable * read_rate
@@ -667,8 +660,8 @@ __all__ = [
     "ProjectionBreakdown",
     "_aggregate_no_cache_cost",
     "_aggregate_with_cache_projection",
-    "_per_call_body_only_cost",
-    "_per_call_first_run_with_cache_cost",
+    "_row_body_only_cost",
+    "_row_first_run_with_cache_cost",
     "compute_actually_paid",
     "compute_projections",
     "get_model_pricing",

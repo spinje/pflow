@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
+import math
 import os
 import sys
 import time
@@ -20,6 +22,7 @@ from pflow.core.cache_analysis.analyze import (
     _build_summary,
     _maybe_append_gemini_note,
     analyze,
+    invocation_count_for,
 )
 from pflow.core.cache_analysis.context import AnalysisContext
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -116,7 +119,8 @@ def test_summary_reports_static_batch_invocation_estimate() -> None:
     assert summary.dynamic_batch_node_count == 0
 
 
-def test_summary_static_batch_input_and_cacheable_totals_are_cohort() -> None:
+def test_summary_static_batch_input_and_cacheable_totals_are_per_call_with_cohort_multiplication() -> None:
+    """Summary totals multiply per-call row tokens by the row invocation count."""
     rows = [
         PerCallRow(
             node_path="batch-llm",
@@ -135,6 +139,115 @@ def test_summary_static_batch_input_and_cacheable_totals_are_cohort() -> None:
 
     assert summary.total_input_tokens_estimated == 400
     assert summary.total_cacheable_tokens_estimated == 240
+
+
+def test_summary_dynamic_batch_input_is_per_call(tmp_path: Path) -> None:
+    workflow_path = str(tmp_path / "dynamic-batch.pflow.md")
+    workflow_ir = {
+        "inputs": {"items": {"type": "array"}},
+        "nodes": [
+            {
+                "id": "batch",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "${item}"},
+            }
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[
+            _llm_trace_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+        ],
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        parameters={"items": ["a", "b", "c"]},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = analysis.per_call[0]
+    assert row.input_tokens_estimated == 100
+    assert row.output_tokens_estimated == 10
+    assert analysis.summary.total_input_tokens_estimated == 300
+    assert analysis.summary.total_llm_invocations_estimated == 3
+    assert analysis.summary.dynamic_batch_node_count == 0
+
+
+def test_summary_non_batch_repeated_input_is_per_call(tmp_path: Path) -> None:
+    workflow_path = str(tmp_path / "repeated.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "select",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Select"},
+            }
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+        ],
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = analysis.per_call[0]
+    assert row.input_tokens_estimated == 100
+    assert row.output_tokens_estimated == 10
+    assert analysis.summary.total_input_tokens_estimated == 400
+    assert analysis.summary.total_llm_invocations_estimated == 4
+
+
+def test_arithmetic_identity_no_cache_minus_first_run_equals_savings() -> None:
+    rows = [
+        PerCallRow(
+            node_path="batch-llm",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=True,
+            batch_size_estimated=4,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=60,
+            cache_ratio_pct=60,
+            data_source="trace",
+            declared_prompt_cache=["context"],
+            output_tokens_estimated=10,
+            output_data_source="trace",
+        )
+    ]
+
+    summary = _build_summary(rows, warnings=[], ttl="5m")
+
+    assert summary.no_cache_hypothetical_usd is not None
+    assert summary.first_run_with_cache_hypothetical_usd is not None
+    assert summary.first_run_delta.amount_usd is not None
+    assert summary.first_run_delta.kind == "savings"
+    assert math.isclose(
+        summary.no_cache_hypothetical_usd - summary.first_run_with_cache_hypothetical_usd,
+        summary.first_run_delta.amount_usd,
+        rel_tol=1e-6,
+    )
 
 
 def test_analyze_no_run_data_note_suppressed_when_parameter_backed_cacheable_present() -> None:
@@ -314,6 +427,37 @@ def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatc
     assert block.per_node_thresholds["reader"]["meets_threshold"] is True
     assert block.estimated_savings_usd == pytest.approx(90.0)
     assert any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
+
+
+def test_suggested_block_savings_multiplies_batch_consumer_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "writer",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "First ${topic}."},
+            },
+            {
+                "id": "reader",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": ["a", "b", "c"], "as": "item"},
+                "params": {"prompt": "Second ${topic} for ${item}."},
+            },
+        ],
+    }
+
+    result = analyze(workflow_ir, parameters={"topic": "small"}, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    assert result.suggested_blocks
+    assert result.suggested_blocks[0].estimated_savings_usd == pytest.approx(270.0)
 
 
 def test_below_threshold_emits_conditional_even_when_only_one_node_below(
@@ -1148,7 +1292,7 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
                                 "input_tokens": 100,
                                 "output_tokens": 10,
                                 "cost_usd": 0.01,
-                                "cache_creation_input_tokens": 3,
+                                "cache_creation_input_tokens": 4,
                                 "cache_read_input_tokens": 0,
                             },
                         },
@@ -1184,10 +1328,12 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
     assert row.model_is_heterogeneous is True
     assert row.observed_call_count == 2
     assert row.observed_models == ("gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview")
-    assert row.input_tokens_estimated == 300
-    assert row.output_tokens_estimated == 30
-    assert row.cache_creation_input_tokens == 3
-    assert row.cache_read_input_tokens == 4
+    assert row.input_tokens_estimated == 150
+    assert row.output_tokens_estimated == 15
+    assert row.cache_creation_input_tokens == 2
+    assert row.cache_read_input_tokens == 2
+    assert result.summary.trace_provider_cache_creation_input_tokens == 4
+    assert result.summary.trace_provider_cache_read_input_tokens == 4
     assert row.cost_usd == pytest.approx(0.03)
     assert result.summary.trace_coverage == "complete"
     assert result.summary.observed_models_in_trace == row.observed_models
@@ -1858,7 +2004,7 @@ def test_analyze_skips_non_llm_nodes_in_per_call() -> None:
     assert {row.node_path for row in result.per_call} == {"llm-step"}
 
 
-def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
+def test_per_call_row_invariant_cacheable_le_input() -> None:
     """Cacheable tokens never exceed total input tokens.
 
     The invariant is now structural: ``input_tokens_estimated`` equals total
@@ -1900,6 +2046,49 @@ def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
             f"cacheable={row.cacheable_tokens_estimated} > input={row.input_tokens_estimated} "
             "violates the 'cache cannot exceed total' invariant"
         )
+
+
+def test_clamp_logs_debug_when_cacheable_exceeds_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 200 if ref == "context" else None)
+
+    workflow_path = str(tmp_path / "clamp.pflow.md")
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "P:\n"}]},
+        "nodes": [
+            {
+                "id": "judge",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Judge ${context}."},
+            }
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[_llm_trace_event("judge", model="anthropic/claude-sonnet-4-5", input_tokens=100)],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="pflow.core.cache_analysis.analyze"):
+        result = analyze(
+            workflow_ir,
+            parameters={"context": "stable"},
+            workflow_path=workflow_path,
+            trace_path=trace_path,
+            auto_load_trace=False,
+            memo_cache=None,
+        )
+
+    row = result.per_call[0]
+    assert row.cacheable_tokens_estimated == row.input_tokens_estimated == 100
+    assert any("cacheable_tokens (200, source=parameters) exceeded input_tokens (100" in m for m in caplog.messages)
 
 
 def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block() -> None:
@@ -2035,7 +2224,7 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
 
 def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> None:
     from pflow.core.cache_analysis.cost_estimation import (
-        _per_call_first_run_with_cache_cost,
+        _row_first_run_with_cache_cost,
         get_model_pricing,
     )
 
@@ -2087,8 +2276,9 @@ def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> Non
     assert row.output_tokens_estimated is not None
     warning = next(d for d in result.warnings if d.id == "cache.prompt-body-shadows-cache")
 
-    expected_1h = _per_call_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="1h")
-    default_5m = _per_call_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="5m")
+    invocation_count = invocation_count_for(row)
+    expected_1h = _row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="1h") / invocation_count
+    default_5m = _row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="5m") / invocation_count
     assert warning.context["with_cache_cost_usd_per_call"] == pytest.approx(expected_1h)
     assert warning.context["with_cache_cost_usd_per_call"] > default_5m
 
@@ -5741,10 +5931,10 @@ def test_batch_prefix_projection_does_not_ripple_into_rerun_cost_for_undeclared_
     Without this gate, the headline cost block would carry an internal
     contradiction: ``actually_paid - rerun_hypothetical`` would diverge from
     ``first_run_delta`` because ``_aggregate_first_run_savings`` correctly
-    skips undeclared rows but ``_per_call_rerun_cost`` ungated would not.
+    skips undeclared rows but ``_row_rerun_cost`` ungated would not.
 
     Mutation contract: remove the ``if row.declared_prompt_cache`` gate from
-    ``_per_call_rerun_cost`` in ``cost_estimation.py``; this test fails
+    ``_row_rerun_cost`` in ``cost_estimation.py``; this test fails
     because the rerun hypothetical drops below the no-cache hypothetical for
     a workflow with no declared cache.
     """
@@ -5885,16 +6075,11 @@ def test_batch_prefix_projection_does_not_fire_for_non_batch_repeated_call_nodes
     assert row.cacheable_data_source != "batch_prefix"
 
 
-def test_tier2_chunk_cacheable_multiplies_for_repeated_non_batch_trace_rows(
+def test_tier2_chunk_cacheable_stays_per_call_for_repeated_non_batch_trace_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2 chunk estimates use cohort units when trace input is cohort.
-
-    Mutation contract: force ``resolved_chunk_call_count`` to always return 1;
-    this test fails because the repeated non-batch row falls back to the
-    per-call chunk size while ``input_tokens_estimated`` remains cohort-summed.
-    """
+    """Tier 2 chunk estimates use the same per-call units as trace input."""
     token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 123 if ref == "context" else None)
 
@@ -5938,9 +6123,12 @@ def test_tier2_chunk_cacheable_multiplies_for_repeated_non_batch_trace_rows(
     row = next(row for row in result.per_call if row.node_path == "judge")
     assert row.is_batch is False
     assert row.observed_call_count == 4
-    assert row.input_tokens_estimated == 4_000
+    assert row.input_tokens_estimated == 1_000
     assert row.cacheable_data_source == "parameters"
-    assert row.cacheable_tokens_estimated == 492
+    assert row.cacheable_tokens_estimated == 123
+    assert result.summary.total_cacheable_tokens_estimated == sum(
+        (row.cacheable_tokens_estimated or 0) * invocation_count_for(row) for row in result.per_call
+    )
 
 
 def test_tier2_chunk_cacheable_single_call_remains_per_call(

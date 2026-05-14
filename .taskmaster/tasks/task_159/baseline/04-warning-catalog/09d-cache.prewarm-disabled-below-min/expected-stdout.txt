@@ -1,5 +1,5 @@
 {
-  "format_version": "4.2",
+  "format_version": "4.3",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "high_from_trace",
@@ -56,8 +56,8 @@
     "warnings_count": 2,
     "info_count": 0,
     "total_llm_nodes_estimated": 1,
-    "total_llm_invocations_estimated": null,
-    "dynamic_batch_node_count": 1,
+    "total_llm_invocations_estimated": 1,
+    "dynamic_batch_node_count": 0,
     "total_input_tokens_estimated": 24,
     "total_cacheable_tokens_estimated": 0,
     "models_in_use": [

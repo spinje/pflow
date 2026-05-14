@@ -34,6 +34,7 @@ from pflow.core.cache_analysis.analyze import (
     SubWorkflowRollupEntry,
     TraceUnexecutedLLMRow,
     _format_workflow_run_command,
+    invocation_count_for,
 )
 from pflow.core.cache_analysis.cost_estimation import CostTier
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -146,8 +147,12 @@ def _make_analysis(
             total_llm_nodes_estimated=len(rows),
             total_llm_invocations_estimated=total_invocations,
             dynamic_batch_node_count=dynamic_batch_count,
-            total_input_tokens_estimated=sum(r.input_tokens_estimated for r in rows),
-            total_cacheable_tokens_estimated=sum(r.cacheable_tokens_estimated or 0 for r in rows),
+            # Mirror production summary totals: row token fields are per-call,
+            # so workflow totals multiply by the row invocation count.
+            total_input_tokens_estimated=sum(r.input_tokens_estimated * invocation_count_for(r) for r in rows),
+            total_cacheable_tokens_estimated=sum(
+                (r.cacheable_tokens_estimated or 0) * invocation_count_for(r) for r in rows
+            ),
             models_in_use=tuple(sorted({r.model for r in rows if r.model})),
             ir_default_model=ir_default_model,
             partial_cost_usd=partial,

@@ -1,5 +1,5 @@
 {
-  "format_version": "4.2",
+  "format_version": "4.3",
   "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/03-analyze-cache-modes/01-greenfield-text/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
