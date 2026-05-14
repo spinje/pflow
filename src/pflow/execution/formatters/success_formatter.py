@@ -10,6 +10,16 @@ from typing import Any, Optional
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
+from pflow.execution.formatters.batch_errors import (
+    _truncate_error_message as _shared_truncate_error_message,
+)
+from pflow.execution.formatters.batch_errors import (
+    compact_batch_error_detail,
+    compact_batch_output_value,
+)
+from pflow.execution.formatters.batch_errors import (
+    format_batch_errors_section as _shared_format_batch_errors_section,
+)
 
 
 def format_execution_success(
@@ -88,6 +98,7 @@ def format_execution_success(
 
             steps = build_execution_steps(workflow_ir, shared_storage, metrics_summary)
             if steps:
+                steps = _compact_batch_error_details(steps)
                 # Count nodes by status
                 completed_count = sum(1 for s in steps if s["status"] == "completed")
                 nodes_total = len(steps)
@@ -119,6 +130,19 @@ def format_execution_success(
         result["trace_path"] = trace_path
 
     return result
+
+
+def _compact_batch_error_details(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact_steps: list[dict[str, Any]] = []
+    for step in steps:
+        step_copy = dict(step)
+        details = step_copy.get("batch_error_details")
+        if isinstance(details, list):
+            step_copy["batch_error_details"] = [
+                compact_batch_error_detail(detail) if isinstance(detail, dict) else detail for detail in details
+            ]
+        compact_steps.append(step_copy)
+    return compact_steps
 
 
 def _mirror_pricing_tri_state(result: dict[str, Any], metrics_summary: dict[str, Any]) -> None:
@@ -165,7 +189,7 @@ def _collect_outputs(
     if output_key:
         # Specific key requested
         if output_key in shared_storage:
-            result[output_key] = parse_json_or_original(shared_storage[output_key])
+            result[output_key] = compact_batch_output_value(parse_json_or_original(shared_storage[output_key]))
 
     elif (
         workflow_ir
@@ -179,7 +203,7 @@ def _collect_outputs(
 
         for output_name in declared:
             if output_name in shared_storage:
-                result[output_name] = parse_json_or_original(shared_storage[output_name])
+                result[output_name] = compact_batch_output_value(parse_json_or_original(shared_storage[output_name]))
 
     elif only_node := shared_storage.get("__execution__", {}).get("only_node"):
         # --only is target-scoped: declared full-run outputs and unrelated
@@ -188,7 +212,7 @@ def _collect_outputs(
 
         key_found, value = find_only_output(shared_storage, only_node if isinstance(only_node, str) else None)
         if key_found:
-            result[key_found] = parse_json_or_original(value)
+            result[key_found] = compact_batch_output_value(parse_json_or_original(value))
 
     else:
         # Auto-detect output for full runs without declared outputs.
@@ -196,7 +220,7 @@ def _collect_outputs(
 
         key_found, value = find_auto_output(shared_storage)
         if key_found:
-            result[key_found] = parse_json_or_original(value)
+            result[key_found] = compact_batch_output_value(parse_json_or_original(value))
 
     return result
 
@@ -434,52 +458,8 @@ def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None
 
 
 def _truncate_error_message(message: str, max_length: int = 200) -> str:
-    """Truncate error message to max length with ellipsis.
-
-    Args:
-        message: Error message to truncate
-        max_length: Maximum characters (default 200)
-
-    Returns:
-        Truncated message with "..." if over limit
-    """
-    if len(message) <= max_length:
-        return message
-    return message[: max_length - 3] + "..."
+    return _shared_truncate_error_message(message, max_length)
 
 
 def _format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
-    """Format batch errors section for all batch nodes with failures.
-
-    Example output:
-        Batch 'process' errors:
-          [1] Command failed with exit code 1
-          [4] Connection timeout after 30s
-          ...and 3 more errors
-
-    Args:
-        steps: List of execution step dicts
-
-    Returns:
-        List of formatted lines (empty if no batch errors)
-    """
-    lines: list[str] = []
-
-    for step in steps:
-        if not step.get("is_batch") or step.get("batch_errors", 0) == 0:
-            continue
-
-        node_id = step.get("node_id", "unknown")
-        error_details = step.get("batch_error_details", [])
-        truncated = step.get("batch_errors_truncated", 0)
-
-        lines.append(f"\nBatch '{node_id}' errors:")
-        for err in error_details:
-            idx = err.get("index", "?")
-            msg = _truncate_error_message(str(err.get("error", "Unknown error")))
-            lines.append(f"  [{idx}] {msg}")
-
-        if truncated > 0:
-            lines.append(f"  ...and {truncated} more errors")
-
-    return lines
+    return _shared_format_batch_errors_section(steps)

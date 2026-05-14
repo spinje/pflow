@@ -89,6 +89,9 @@ def _output_with_header(value: Any, print_flag: bool, description: str | None = 
     - TTY stdout: header to stderr, data to stdout — the description is
       useful interactive context.
     """
+    from pflow.execution.formatters.batch_errors import compact_batch_output_value
+
+    value = compact_batch_output_value(value)
     if print_flag or not _stdout_is_tty():
         safe_output(value)
         return
@@ -386,9 +389,9 @@ def _warn_missing_declared_outputs(declared_outputs: dict[str, Any], verbose: bo
 
 def _truncate_error_message(message: str, max_length: int = 200) -> str:
     """Truncate error message to max length with ellipsis."""
-    if len(message) <= max_length:
-        return message
-    return message[: max_length - 3] + "..."
+    from pflow.execution.formatters.batch_errors import _truncate_error_message as shared_truncate_error_message
+
+    return shared_truncate_error_message(message, max_length)
 
 
 def _display_batch_errors(steps: list[dict[str, Any]]) -> None:
@@ -397,22 +400,10 @@ def _display_batch_errors(steps: list[dict[str, Any]]) -> None:
     Args:
         steps: List of execution step dicts
     """
-    for step in steps:
-        if not step.get("is_batch") or step.get("batch_errors", 0) == 0:
-            continue
+    from pflow.execution.formatters.batch_errors import format_batch_errors_section
 
-        node_id = step.get("node_id", "unknown")
-        error_details = step.get("batch_error_details", [])
-        truncated = step.get("batch_errors_truncated", 0)
-
-        click.echo(f"\nBatch '{node_id}' errors:", err=True)
-        for err in error_details:
-            idx = err.get("index", "?")
-            msg = _truncate_error_message(str(err.get("error", "Unknown error")))
-            click.echo(f"  [{idx}] {msg}", err=True)
-
-        if truncated > 0:
-            click.echo(f"  ...and {truncated} more errors", err=True)
+    for line in format_batch_errors_section(steps):
+        click.echo(line, err=True)
 
 
 def _display_stderr_warnings(steps: list[dict[str, Any]]) -> None:

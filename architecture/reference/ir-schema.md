@@ -467,13 +467,15 @@ Batch nodes write aggregated results to the shared store:
   "count": 10,
   "success_count": 9,
   "error_count": 1,
-  "errors": [{"index": 3, "item": {...}, "error": "..."}]
+  "errors": [{"index": 3, "item": {...}, "item_summary": {...}, "error": "..."}]
 }
 ```
 
 Each result in the `results` array contains:
 - `item`: The original batch input (always present)
 - Inner node outputs (e.g., `response`, `stdout`, etc.)
+
+Each failed item in the `errors` array preserves the full original `item` for runtime/template use and carries `item_summary` as the bounded display/API companion. User-facing renderers must use the summary instead of dumping the full item.
 
 **Execution Semantics:**
 

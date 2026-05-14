@@ -20,12 +20,42 @@ from pflow.core.exceptions import CompilationError
 from pflow.core.json_utils import try_parse_json
 from pflow.runtime.template_resolver import TemplateResolver
 
+from .batch_item_summary import summarize_batch_item
 from .types import BatchConfig, NodeConfig
 
 logger = logging.getLogger(__name__)
 
 # Keys injected by the batch framework, not by the inner node.
 _BATCH_META_KEYS = frozenset({"item", "original_index", "error", "exception"})
+
+
+def _build_batch_error(index: int, item: Any, error: str, exception: Exception | None) -> dict[str, Any]:
+    return {
+        "index": index,
+        "item": item,
+        "item_summary": summarize_batch_item(item),
+        "error": error,
+        "exception": exception,
+    }
+
+
+def _batch_item_summary_text(error: dict[str, Any]) -> str:
+    summary = error.get("item_summary")
+    if isinstance(summary, dict):
+        text = summary.get("summary")
+        if isinstance(text, str) and text:
+            return text
+    return "<item summary unavailable>"
+
+
+def _split_batch_error_text(error_text: Any) -> tuple[str, str]:
+    lines = str(error_text or "Unknown error").splitlines()
+    for index, line in enumerate(lines):
+        headline = line.strip()
+        if headline:
+            details = "\n".join(lines[index + 1 :]).strip()
+            return headline, details
+    return "Unknown error", ""
 
 
 def resolve_batch_items(items_template: Any, shared: dict[str, Any]) -> Any:
@@ -237,10 +267,12 @@ def execute_batch(
         first_error = errors[0]
         if first_error.get("exception") is not None:
             raise first_error["exception"]
-        raise RuntimeError(
-            f"Batch '{config.node_id}' failed at item [{first_error['index']}] "
-            f"(value: {first_error['item']!r}): {first_error['error']}"
-        )
+        summary = _batch_item_summary_text(first_error)
+        headline, details = _split_batch_error_text(first_error.get("error"))
+        message = f"Batch '{config.node_id}' failed at item [{first_error['index']}]: {headline}\n  item: {summary}"
+        if details:
+            message = f"{message}\n\n{details}"
+        raise RuntimeError(message)
 
     return action, batch_trace_items
 
@@ -315,7 +347,7 @@ def _execute_batch_item(
 
             duration_ms = (time.perf_counter() - start_time) * 1000
             if error_msg:
-                error_info = {"index": idx, "item": item, "error": error_msg, "exception": None}
+                error_info = _build_batch_error(idx, item, error_msg, None)
                 _capture_item_trace(
                     parent_shared,
                     config.node_id,
@@ -356,7 +388,7 @@ def _execute_batch_item(
 
     # All retries exhausted
     duration_ms = (time.perf_counter() - start_time) * 1000
-    error_info = {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception}
+    error_info = _build_batch_error(idx, item, str(last_exception), last_exception)
     _capture_item_trace(
         parent_shared,
         config.node_id,
@@ -529,12 +561,7 @@ def _collect_parallel_results(
             raise
         except Exception as e:
             idx = future_to_idx[future]
-            pending_errors.append({
-                "index": idx,
-                "item": items[idx],
-                "error": f"Executor error: {e}",
-                "exception": e,
-            })
+            pending_errors.append(_build_batch_error(idx, items[idx], f"Executor error: {e}", e))
             timings[idx] = 0.0
             completed_count += 1
             _report_batch_progress(callback, config.node_id, 0.0, depth, completed_count, total, False)

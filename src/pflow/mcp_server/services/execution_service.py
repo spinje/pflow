@@ -147,6 +147,9 @@ def _build_error_text(
     errors: list[Diagnostic],
     warnings: list[Diagnostic],
     trace_path: str = "",
+    *,
+    result: Any | None = None,
+    workflow_ir: dict[str, Any] | None = None,
 ) -> str:
     """Build detailed error text from diagnostics for MCP agent consumption.
 
@@ -171,6 +174,13 @@ def _build_error_text(
     else:
         # Single error: format_diagnostic provides the complete titled output
         lines.append(format_diagnostic(errors[0]))
+
+    if result is not None and workflow_ir is not None:
+        from pflow.execution.execution_state import build_execution_steps
+        from pflow.execution.formatters.batch_errors import format_batch_errors_section
+
+        steps = build_execution_steps(workflow_ir, result.shared_after, metrics_summary=None)
+        lines.extend(format_batch_errors_section(steps))
 
     if warnings:
         lines.append("\nWarnings:")
@@ -256,7 +266,15 @@ class ExecutionService(BaseService):
                 trace_path = (
                     str(result.trace.trace_path) if result.trace and hasattr(result.trace, "trace_path") else ""
                 )
-                raise RuntimeError(_build_error_text(error_diagnostics, warning_diagnostics, trace_path))
+                raise RuntimeError(
+                    _build_error_text(
+                        error_diagnostics,
+                        warning_diagnostics,
+                        trace_path,
+                        result=result,
+                        workflow_ir=resolved.ir,
+                    )
+                )
         except RuntimeError:
             raise
         except Exception as e:

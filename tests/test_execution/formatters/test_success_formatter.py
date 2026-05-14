@@ -138,6 +138,41 @@ class TestBatchErrorsSectionFormatting:
 
         assert len(lines) == 0
 
+    def test_batch_errors_summarize_large_item_without_payload_dump(self):
+        """UX: Batch error text shows compact item identity, not raw payload."""
+        payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+        steps = [
+            {
+                "node_id": "process",
+                "is_batch": True,
+                "batch_errors": 1,
+                "batch_error_details": [
+                    {
+                        "index": 0,
+                        "item": {"label": "oversized-item", "payload": payload},
+                        "item_summary": {
+                            "summary": "label='oversized-item'; payload=<str 1909 chars sha256=123456789abc>",
+                            "sha256": "123456789abc",
+                        },
+                        "error": "forced batch failure",
+                    }
+                ],
+            }
+        ]
+
+        lines = _format_batch_errors_section(steps)
+        rendered = "\n".join(lines)
+
+        assert "Batch 'process' errors:" in rendered
+        assert "[0] forced batch failure" in rendered
+        assert "oversized-item" in rendered
+        assert "payload=<str" in rendered
+        assert "sha256=" in rendered
+        assert "PAYLOAD-START" not in rendered
+        assert "PAYLOAD-END" not in rendered
+        assert "token199" not in rendered
+        assert "'payload':" not in rendered
+
 
 class TestErrorMessageTruncation:
     """Tests for error message truncation."""
@@ -176,6 +211,21 @@ class TestErrorMessageTruncation:
         result = _truncate_error_message(message)
 
         assert result.startswith("Important error:")
+
+    def test_multiline_message_uses_root_cause_headline(self):
+        """UX: Compact batch sections should not repeat diagnostic details."""
+        message = (
+            "RuntimeError: forced batch failure for oversized-item\n"
+            "  Location: line 45\n"
+            "Suggestions:\n"
+            "  - Fix the error in the code string above"
+        )
+
+        result = _truncate_error_message(message)
+
+        assert result == "RuntimeError: forced batch failure for oversized-item"
+        assert "Location:" not in result
+        assert "Suggestions:" not in result
 
 
 class TestFormatSuccessAsText:
@@ -396,6 +446,61 @@ class TestFormatSuccessAsText:
                 "node_id": "run-shell",
             }
         ]
+
+    def test_format_execution_success_compacts_degraded_batch_error_details_for_json(self):
+        """Degraded success JSON must not expose full failed batch items."""
+
+        class Metrics:
+            def get_summary(self, llm_calls=None):
+                return {
+                    "duration_ms": 100,
+                    "metrics": {"workflow": {"nodes_executed": 1, "node_timings": {"process": 100}}},
+                }
+
+        payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+        shared = {
+            "__execution__": {"completed_nodes": ["process"], "failed_node": None},
+            "process": {
+                "count": 2,
+                "success_count": 1,
+                "error_count": 1,
+                "results": [{"item": "ok", "response": "ok"}],
+                "errors": [
+                    {
+                        "index": 1,
+                        "item": {"label": "oversized-item", "payload": payload},
+                        "item_summary": {
+                            "summary_version": 1,
+                            "type": "dict",
+                            "label": "oversized-item",
+                            "size_chars": len(payload),
+                            "sha256": "123456789abc",
+                            "summary": "label='oversized-item'; payload=<str 1909 chars sha256=123456789abc>",
+                            "truncated": True,
+                        },
+                        "error": "forced batch failure",
+                        "exception": RuntimeError("boom"),
+                    }
+                ],
+                "batch_metadata": {"execution_mode": "sequential"},
+            },
+        }
+        workflow_ir = {"nodes": [{"id": "process"}]}
+
+        output = format_execution_success(shared, workflow_ir, metrics_collector=Metrics())
+
+        detail = output["execution"]["steps"][0]["batch_error_details"][0]
+        assert detail["item_summary"]["label"] == "oversized-item"
+        assert detail["item_ref"] == "123456789abc"
+        assert detail["has_full_item"] is True
+        assert "item" not in detail
+        assert "exception" not in detail
+
+        output_error = output["result"]["process"]["errors"][0]
+        assert output_error["item_summary"]["label"] == "oversized-item"
+        assert output_error["has_full_item"] is True
+        assert "item" not in output_error
+        assert output["result"]["process"]["results"][0]["item"] == "ok"
 
 
 class TestPricingUnavailableWarning:

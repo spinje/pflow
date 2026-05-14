@@ -51,6 +51,23 @@ FAILING_COMMAND_IR = {
 }
 
 
+def _large_batch_failure_ir() -> dict:
+    payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+    return {
+        "nodes": [
+            {
+                "id": "fail-batch",
+                "type": "shell",
+                "params": {"command": 'echo "forced batch failure for ${item.label}" >&2; exit 1'},
+                "batch": {
+                    "items": [{"label": "oversized-item", "payload": payload}],
+                    "error_handling": "fail_fast",
+                },
+            }
+        ]
+    }
+
+
 class TestExecuteWorkflowSuccess:
     """Tests for successful workflow execution paths."""
 
@@ -120,3 +137,23 @@ class TestExecuteWorkflowErrors:
 
         with pytest.raises(RuntimeError):
             ExecutionService.execute_workflow(str(workflow_path))
+
+    def test_large_batch_failure_text_uses_compact_item_summary(self, tmp_path):
+        workflow_path = tmp_path / "large-batch-fail.pflow.md"
+        write_workflow_file(_large_batch_failure_ir(), workflow_path)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            ExecutionService.execute_workflow(str(workflow_path))
+
+        text = str(exc_info.value)
+        assert "fail-batch" in text
+        assert "[0]" in text
+        assert "oversized-item" in text
+        assert "forced batch failure" in text
+        assert "payload=<str" in text
+        assert "PAYLOAD-START" not in text
+        assert "PAYLOAD-END" not in text
+        assert "token199" not in text
+        assert "batch_error_details" not in text
+        assert "item_summary" not in text
+        assert "__failures__" not in text

@@ -941,27 +941,72 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
                 elif val is not None and str(val).strip():
                     lines.append(str(val))
                 lines.append("")
-        # Catch-all: render remaining keys not already shown
-        shown_keys = {
-            "stdout",
-            "stderr",
-            "result",
-            "item",
-            "exit_code",
-            "command",
-            "stdout_is_binary",
-            "stderr_is_binary",
-            "llm_usage",
-            "response",
-        }
-        remaining = {
-            k: v for k, v in output.items() if k not in shown_keys and not (isinstance(k, str) and k.startswith("_"))
-        }
-        if remaining:
-            lines.append("## Output")
-            lines.append("")
-            lines.append(f"```json\n{json.dumps(remaining, indent=2, default=str)}\n```")
-            lines.append("")
+        _format_batch_errors_output(output, lines)
+        _format_remaining_node_output(output, lines)
+
+
+def _format_remaining_node_output(output: dict[str, Any], lines: list[str]) -> None:
+    shown_keys = {
+        "stdout",
+        "stderr",
+        "result",
+        "item",
+        "exit_code",
+        "command",
+        "stdout_is_binary",
+        "stderr_is_binary",
+        "llm_usage",
+        "response",
+    }
+    if _has_batch_error_output(output):
+        shown_keys.update({"errors", "count", "success_count", "error_count", "batch_metadata"})
+        if output.get("results") == []:
+            shown_keys.add("results")
+    remaining = {
+        k: v for k, v in output.items() if k not in shown_keys and not (isinstance(k, str) and k.startswith("_"))
+    }
+    if remaining:
+        lines.append("## Output")
+        lines.append("")
+        lines.append(f"```json\n{json.dumps(remaining, indent=2, default=str)}\n```")
+        lines.append("")
+
+
+def _has_batch_error_output(output: dict[str, Any]) -> bool:
+    errors = output.get("errors")
+    if output.get("batch_metadata") and isinstance(errors, list):
+        return True
+    return _looks_like_batch_error_list(errors)
+
+
+def _looks_like_batch_error_list(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    return all(isinstance(item, dict) and "index" in item and "error" in item for item in value)
+
+
+def _format_batch_errors_output(output: dict[str, Any], lines: list[str]) -> None:
+    if not _has_batch_error_output(output):
+        return
+    errors = output.get("errors") or []
+    if not isinstance(errors, list) or not errors:
+        return
+
+    from pflow.execution.formatters.batch_errors import compact_batch_error_detail, format_batch_item_summary
+
+    lines.append("## Batch Errors")
+    lines.append("")
+    for error in errors[:5]:
+        if not isinstance(error, dict):
+            continue
+        detail = compact_batch_error_detail(error)
+        lines.append(f"- [{detail.get('index', '?')}] {detail.get('error', 'Unknown error')}")
+        item_summary = format_batch_item_summary(detail)
+        if item_summary:
+            lines.append(f"  item: {item_summary}")
+    if len(errors) > 5:
+        lines.append(f"- ...and {len(errors) - 5} more errors")
+    lines.append("")
 
 
 def _format_cached_system(event: dict[str, Any], lines: list[str]) -> None:

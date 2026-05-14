@@ -146,3 +146,36 @@ Open shape issue worth flagging: `is_below_min_cache` is overloaded across claim
 - Touched-file `ruff` + `mypy` clean.
 - `verify.sh`: 85 pass / 1 drift (`15-run-flag-interactions/03-report-with-only` — pre-existing `/dev/fd/62: Operation not permitted` sandbox issue, unrelated).
 - Regenerated 6 baselines whose `cache.dynamic-before-static` items were the false-positive shape: `10-live-recordings/05-gemini-lyrics-generator`, `12-real-world-lyrics-generator/{01-text,02-json,03-song-creator-text,04-guide}`, plus the dedicated `04-warning-catalog/07-cache.dynamic-before-static` (which was always empty — workflow has neither `prompt_cache` nor `batch`, no emission path fires; the directory is an orphan stub).
+
+## 2026-05-14 — Batch large-item failure UX bounded summaries
+
+Implemented the batch-error large-item UX plan. Failed batch records now keep the full original `errors[].item` for runtime/template use and add a bounded summary companion at every batch error creation path: action/error-output failures, retry-exhausted exceptions, and parallel executor-level exceptions. The fail-fast no-exception raise now names the node/index/root cause plus compact item identity instead of `repr(item)`.
+
+User-facing boundaries now render the compact shape: shared batch-error text formatter for CLI/MCP success/degraded summaries, hard-failure CLI text, MCP failure text, CLI JSON/API failure output, degraded success JSON/stdout output, and generated trace reports. Reports now detect batch aggregate outputs and render `## Batch Errors` while suppressing raw aggregate keys from the catch-all `## Output` block.
+
+Key deviation from the scratchpad plan: I also compacted `format_execution_success(...)` execution steps and auto-detected batch aggregate workflow output for degraded successful runs. The plan explicitly covered error JSON, but the stated contract was broader: CLI JSON/API output and text output must not become second unbounded payload surfaces. Leaving degraded success output raw would have preserved the leak for `error_handling: continue`.
+
+Validation:
+- Focused regression set: 464 passed.
+- Targeted ruff on touched Python files passed.
+- Targeted mypy on touched source files passed.
+- Manual repro `scratchpads/pflow-cache-repros/repro-08-batch-error-large-item.pflow.md --no-cache --report` fails as intended; stderr and generated report contain compact item summaries and no `PAYLOAD-START`, `PAYLOAD-END`, or `token199`.
+- Near-full sandbox-safe pytest: 6813 passed, 19 skipped, excluding seven subprocess tests that invoke Homebrew `uv` and panic in this sandbox before Python starts. An unfiltered near-full run failed only on four of those uv-subprocess tests with the known `Tokio executor failed` panic.
+
+Learning: the raw payload leak was not one renderer bug. The clean fix is to preserve full-fidelity runtime data at the batch executor boundary, then make every public formatter cross the same compact-item boundary. The important extra check was degraded success output: summaries were safe, but auto-detected workflow output still needed the same display/API boundary treatment.
+
+## 2026-05-14 — Batch large-item failure UX post-review polish
+
+Post-implementation review found the payload was bounded but the real code-node repro still had noisy structure: the item summary was appended to the last suggestion line in the primary diagnostic, and compact batch sections repeated multi-line diagnostic details before truncating mid-message.
+
+Fixes:
+- Fail-fast no-exception batch errors now split the root-cause headline from diagnostic details and render the compact item identity on its own line.
+- Shared batch-error formatting now uses a single root-cause headline for compact text/JSON/report sections, so Location/Source/Suggestions stay in the primary diagnostic instead of being duplicated in the batch summary.
+- Generated reports suppress empty `results: []` aggregate output for failed batch nodes, removing the leftover empty `## Output` block.
+- Added a code-node CLI regression matching the spend-free repro shape, plus formatter/report assertions for the cleaned structure.
+
+Verification:
+- Focused batch UX regression set: 466 passed.
+- Manual repro `scratchpads/pflow-cache-repros/repro-08-batch-error-large-item.pflow.md --no-cache --report`: stderr, JSON, and generated report contain compact item summaries and no `PAYLOAD-START`, `PAYLOAD-END`, or `token199`.
+- Task 159 baseline oracle with sandbox-safe `uv` shim: 86 passed, 0 drifted, 0 harness errors.
+- Targeted ruff and mypy on touched source/test files passed.

@@ -623,6 +623,40 @@ def test_fail_fast_batch_preserves_batch_metadata_in_failures():
     assert "boom" in str(failing_error.get("item", ""))
 
 
+def test_large_item_fail_fast_batch_preserves_full_item_with_compact_summary():
+    payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+    large_item = {"label": "oversized-item", "payload": payload}
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fail_fast_batch",
+                "type": "shell",
+                "purpose": "Fail one oversized batch item.",
+                "params": {"command": 'echo "forced batch failure for ${item.label}" >&2; exit 1'},
+                "batch": {
+                    "items": [large_item],
+                    "error_handling": "fail_fast",
+                },
+            },
+        ],
+        "edges": [],
+        "start_node": "fail_fast_batch",
+    }
+
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+    assert result.success is False
+    failure = result.shared_after["__failures__"]["fail_fast_batch"]
+    error = failure["data"]["errors"][0]
+    assert error["item"] == large_item
+    assert error["item_summary"]["label"] == "oversized-item"
+    assert "payload=<str" in error["item_summary"]["summary"]
+    assert "PAYLOAD-START" not in result.errors[0].message
+    assert "PAYLOAD-END" not in result.errors[0].message
+    assert "token199" not in result.errors[0].message
+
+
 def test_failed_batch_surfaces_error_details_in_execution_steps():
     """End-to-end spec acceptance test — guards the 4-layer pipeline that
     produces ``batch_error_details`` in the CLI/MCP execution summary for a

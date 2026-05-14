@@ -126,6 +126,59 @@ class TestGenerateReport:
         assert (report_dir / "01-fetch.md").exists()
         assert (report_dir / "02-transform.md").exists()
 
+    def test_failed_batch_aggregate_report_compacts_error_items(self, tmp_path: Path) -> None:
+        payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+        batch_event = _make_event(
+            node_id="fail-batch",
+            node_type="ShellNode",
+            success=False,
+            error="Batch 'fail-batch' failed at item [0]: forced batch failure for oversized-item",
+            node_output={
+                "count": 1,
+                "success_count": 0,
+                "error_count": 1,
+                "errors": [
+                    {
+                        "index": 0,
+                        "item": {"label": "oversized-item", "payload": payload},
+                        "item_summary": {
+                            "summary_version": 1,
+                            "type": "dict",
+                            "label": "oversized-item",
+                            "size_chars": len(payload),
+                            "sha256": "123456789abc",
+                            "summary": "label='oversized-item'; payload=<str 1909 chars sha256=123456789abc>",
+                            "truncated": True,
+                        },
+                        "error": "RuntimeError: forced batch failure for oversized-item",
+                    }
+                ],
+                "batch_metadata": {"execution_mode": "sequential"},
+                "results": [],
+            },
+        )
+        trace = _make_trace(
+            nodes=[batch_event],
+            final_status="failed",
+            nodes_failed=1,
+            failed_node_ids=["fail-batch"],
+        )
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(trace))
+
+        report_dir = generate_report(trace_file, str(tmp_path / "report"))
+
+        assert report_dir is not None
+        markdown = (report_dir / "01-fail-batch.md").read_text()
+        assert "## Batch Errors" in markdown
+        assert "[0] RuntimeError: forced batch failure for oversized-item" in markdown
+        assert "label='oversized-item'; payload=<str" in markdown
+        assert "PAYLOAD-START" not in markdown
+        assert "PAYLOAD-END" not in markdown
+        assert "token199" not in markdown
+        assert "```json" not in markdown
+        assert "## Output" not in markdown
+
     def test_batch_node_creates_directory(self, tmp_path: Path) -> None:
         batch_event = _make_event(
             node_id="process",

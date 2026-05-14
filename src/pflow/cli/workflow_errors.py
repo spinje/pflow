@@ -39,6 +39,10 @@ def _display_single_error(
 def _display_text_error_details(
     result: Any,
     verbose: bool = False,
+    *,
+    shared_storage: dict[str, Any] | None = None,
+    ir_data: dict[str, Any] | None = None,
+    metrics_collector: Any | None = None,
 ) -> None:
     """Display detailed text error output.
 
@@ -66,6 +70,14 @@ def _display_text_error_details(
         # Single error: format_diagnostic provides the complete titled output
         click.echo("", err=True)
         _display_single_error(errors[0], error_number=None, verbose=verbose)
+
+    if shared_storage is not None and ir_data is not None:
+        from pflow.execution.execution_state import build_execution_steps
+        from pflow.execution.formatters.batch_errors import format_batch_errors_section
+
+        steps = build_execution_steps(ir_data, shared_storage, metrics_summary=None)
+        for line in format_batch_errors_section(steps):
+            click.echo(line, err=True)
 
     if warnings:
         click.echo("", err=True)

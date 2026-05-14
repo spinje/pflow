@@ -187,6 +187,12 @@ def output_error(
         elif result is not None:
             from pflow.cli.workflow_errors import _display_text_error_details
 
-            _display_text_error_details(result, verbose)
+            _display_text_error_details(
+                result,
+                verbose,
+                shared_storage=shared_storage,
+                ir_data=ir_data,
+                metrics_collector=metrics_collector,
+            )
         else:
             click.echo("cli: Unknown error", err=True)

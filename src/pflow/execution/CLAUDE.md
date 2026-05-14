@@ -269,7 +269,7 @@ Diagnostic(
 
 ## execution_state.py
 
-`build_execution_steps(workflow_ir, shared_storage, metrics_summary)` produces the per-node row list consumed by `success_formatter` and `error_formatter` for CLI/MCP execution summaries. **Status comes from `node_state.get_node_status`** (mapped through `_STATUS_MAP` to `completed`/`failed`/`not_executed`) — NOT from the singular `__execution__["failed_node"]` pointer, which loses earlier failures in multi-failure workflows. Batch metadata is read via `get_node_output` so failed batch nodes still surface `batch_metadata` / `batch_error_details` in the summary.
+`build_execution_steps(workflow_ir, shared_storage, metrics_summary)` produces the per-node row list consumed by `success_formatter` and `error_formatter` for CLI/MCP execution summaries. **Status comes from `node_state.get_node_status`** (mapped through `_STATUS_MAP` to `completed`/`failed`/`not_executed`) — NOT from the singular `__execution__["failed_node"]` pointer, which loses earlier failures in multi-failure workflows. Batch metadata is read via `get_node_output` so failed batch nodes still surface `batch_metadata` / `batch_error_details` in the summary. Those step rows are in-process and may carry full failed batch inputs; user-facing formatters must render compact item descriptions via `execution/formatters/batch_errors.py` and must not print raw `batch_error_details[*].item`.
 
 
 ## Integration

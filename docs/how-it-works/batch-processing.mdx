@@ -209,6 +209,16 @@ During batch execution, pflow shows real-time progress:
 
 Failed items are marked with `✗` and summarized at the end.
 
+When a failed item is large, pflow shows a compact description instead of printing the full item. For example, a record with a label and a long payload is shown with the label, payload size, and a stable reference:
+
+```text
+Batch 'classify' errors:
+  [3] File not found
+      item: label='issue-42'; payload=<str 1909 chars sha256=7c9a2b6f1d3e>
+```
+
+The original failed input remains available in runtime data and trace files for debugging. Terminal output, MCP output, JSON error responses, and generated reports use the compact form so the actionable error stays visible.
+
 ## Output structure
 
 Batch nodes write a special output structure to the shared store:
